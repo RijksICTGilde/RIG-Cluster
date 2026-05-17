@@ -20,13 +20,20 @@ rules:
   # `get_secret`; tenant secrets are delivered via GitOps/ArgoCD, not written
   # directly by OPI). `update` cluster-wide was also removed.
   #
+  # `delete` is required: project_manager._ensure_sops_secret deletes the
+  # stale "sops-age-key" Secret in a tenant namespace when the project's
+  # SOPS keypair rotates (project_manager.py, delete_resource("secret",
+  # "sops-age-key", namespace)) before recreating it. This is the exact
+  # prod RBAC the code exercises; declaring it here keeps the in-repo
+  # ClusterRole authoritative instead of silently narrower than reality.
+  #
   # REQUIRED FOLLOW-UP (needs app-code change, tracked in the PR): the
-  # remaining create/get/patch on secrets should move to per-namespace
-  # Role+RoleBinding objects that OPI generates alongside each tenant
-  # namespace in _create_namespace_with_argocd_label
+  # remaining create/get/patch/delete on secrets should move to
+  # per-namespace Role+RoleBinding objects that OPI generates alongside
+  # each tenant namespace in _create_namespace_with_argocd_label
   # (operations-manager/python/opi/manager/project_manager.py). Until that
-  # lands, create/get/patch are kept cluster-wide as the tightest set that
-  # does not break provisioning.
+  # lands, create/get/patch/delete are kept cluster-wide as the tightest
+  # set that does not break provisioning.
   - apiGroups:
       - ""
     resources:
@@ -35,6 +42,7 @@ rules:
       - create
       - get
       - patch
+      - delete
   # Prometheus service discovery - read-only access to pods/services/endpoints/nodes
   - apiGroups:
       - ""

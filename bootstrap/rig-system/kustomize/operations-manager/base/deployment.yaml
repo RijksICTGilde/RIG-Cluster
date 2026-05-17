@@ -129,10 +129,22 @@ spec:
       # pattern as the sops-age-key Secret referenced above): the key
       # material is never committed to this repo and is NOT baked into the
       # image. Keys: "git-server-key" (private), "git-server-key.pub".
+      #
+      # optional: true is REQUIRED. None of the in-repo overlays (local,
+      # sandboxed-local, odcn-production) push to the GitOps repos over SSH:
+      # they all use HTTPS + a SOPS-encrypted PAT (GIT_ARGO_APPLICATIONS_URL
+      # is https://, GIT_ARGO_APPLICATIONS_KEY is ""). The SSH key is only
+      # consumed when a deployment is configured with a git://, ssh:// URL.
+      # Without optional: true a non-existent Secret keeps the pod stuck in
+      # ContainerCreating forever (MountVolume.SetUp failed: secret
+      # "git-server-key" not found), breaking OPI in every environment even
+      # though the key is unused. This mirrors the sops-age-key reference,
+      # which is likewise optional: true.
       - name: git-server-key
         secret:
           secretName: git-server-key
           defaultMode: 0400
+          optional: true
           items:
           - key: git-server-key
             path: git-server-key
