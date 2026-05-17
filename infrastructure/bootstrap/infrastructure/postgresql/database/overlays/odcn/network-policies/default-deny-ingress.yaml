@@ -1,23 +1,33 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: default-deny-ingress
+  name: default-deny-ingress-postgres
   namespace: rig-system
 spec:
-  # Backstop for the shared rig-system datastore namespace.
+  # Deny-by-default backstop for the PostgreSQL datastore pods only.
   #
-  # podSelector: {} selects every pod in the namespace and, because
-  # policyTypes only lists Ingress, denies all ingress that is not
-  # explicitly allowed by another NetworkPolicy (allow-postgres-access,
-  # allow-minio-access, allow-vault-access, allow-postgres-monitoring).
+  # IMPORTANT: rig-system is NOT a datastore-only namespace. In the odcn
+  # production bundle (infrastructure/bootstrap/clusters/odcn) the following
+  # also deploy into rig-system WITHOUT any NetworkPolicy:
+  #   - Keycloak (keycloak/controller + keycloak/config overlays)
+  #   - Redis    (redis/controller overlay)
+  # A cluster-wide `podSelector: {}` deny here would select those pods and,
+  # since no allow policy exists for them, black-hole all their ingress:
+  # OPI -> Keycloak / Redis, ingress-nginx -> Keycloak, tenant apps -> OIDC.
+  # That is a platform-wide outage worse than the cross-tenant exposure this
+  # PR closes. The selector is therefore scoped to the CNPG postgres pods.
   #
-  # Purpose: if a future change reintroduces an empty `namespaceSelector: {}`
-  # in one of the datastore policies, that policy would only be ADDITIVE on
-  # top of this deny baseline for its own pods. This does not by itself undo
-  # an over-broad allow rule, but it guarantees that any datastore pod with
-  # NO matching allow policy is unreachable by default instead of open.
-  # Egress is intentionally left unmanaged here so this policy cannot break
-  # outbound traffic for unrelated rig-system workloads.
-  podSelector: {}
+  # For those pods this is redundant with allow-postgres-access /
+  # allow-postgres-monitoring (which already select the same pods and make
+  # them deny-by-default under Kubernetes NetworkPolicy semantics), but it
+  # is kept as an explicit, self-documenting baseline: if a future change
+  # removes the allow policies, the postgres pods stay closed instead of
+  # falling back to open.
+  #
+  # Egress is intentionally left unmanaged so this policy cannot break
+  # outbound traffic.
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: rig-db
   policyTypes:
     - Ingress
