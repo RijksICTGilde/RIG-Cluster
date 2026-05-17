@@ -201,6 +201,19 @@ class ArgoManager:
         if password:
             decrypted_password = await decrypt_password_smart(password, settings.SOPS_AGE_PRIVATE_KEY)
 
+        # SSH deploy key for git repositories. Read from the configured key
+        # path at render time instead of hard-coding it in the template, so no
+        # private key material lives in version control. The rendered secret is
+        # SOPS-encrypted before being written (use_sops=True).
+        ssh_private_key = ""
+        if not is_https:
+            ssh_key_path = settings.GIT_SERVER_KEY_PATH
+            try:
+                with open(ssh_key_path) as f:
+                    ssh_private_key = f.read()
+            except OSError as e:
+                raise RuntimeError(f"Cannot read git SSH deploy key from {ssh_key_path} for repository '{name}'") from e
+
         # Prepare variables for template
         return {
             "name": name,
@@ -210,6 +223,7 @@ class ArgoManager:
             "is_https": is_https,
             "username": username or "",
             "password": decrypted_password or "",
+            "ssh_private_key": ssh_private_key,
         }
 
     async def generate_repository_manifest(
