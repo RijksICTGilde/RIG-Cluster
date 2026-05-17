@@ -53,7 +53,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: app
-          image: "{{ imageURL }}"
+          image: {{ (imageURL | default('', true)) | tojson }}
           imagePullPolicy: {{ imagePullPolicy }}
           ports:
             - containerPort: {{ application_port }}
@@ -76,14 +76,14 @@ spec:
           env:
           {% if env_vars %}
           {% for env_name, env_value in env_vars.items() %}
-            - name: {{ env_name }}
-              value: "{{ env_value }}"
+            - name: {{ env_name | tojson }}
+              value: {{ env_value | tojson }}
           {% endfor %}
           {% endif %}
           {% if ca_config and ca_config.enabled and ca_config.env_vars %}
           {% for env_name, env_value in ca_config.env_vars.items() %}
-            - name: {{ env_name }}
-              value: "{{ env_value }}"
+            - name: {{ env_name | tojson }}
+              value: {{ env_value | tojson }}
           {% endfor %}
           {% endif %}
           {% endif %}
@@ -98,8 +98,8 @@ spec:
           volumeMounts:
           {% if storage_configs %}
           {% for storage in storage_configs %}
-            - name: {{ storage.name }}
-              mountPath: {{ storage['mount-path'] }}
+            - name: {{ storage.name | tojson }}
+              mountPath: {{ storage['mount-path'] | tojson }}
           {% endfor %}
           {% endif %}
           {% if ca_config and ca_config.enabled %}
@@ -149,13 +149,13 @@ spec:
       {% if storage_configs %}
       {% for storage in storage_configs %}
         {% if storage.type == 'persistent' %}
-        - name: {{ storage.name }}
+        - name: {{ storage.name | tojson }}
           persistentVolumeClaim:
-            claimName: {{ storage.pvc_name }}
+            claimName: {{ storage.pvc_name | tojson }}
         {% elif storage.type == 'ephemeral' %}
-        - name: {{ storage.name }}
+        - name: {{ storage.name | tojson }}
           emptyDir:
-            sizeLimit: {{ storage.size }}
+            sizeLimit: {{ storage.size | tojson }}
         {% endif %}
       {% endfor %}
       {% endif %}

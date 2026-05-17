@@ -9,7 +9,7 @@ metadata:
     haproxy.router.openshift.io/ip_whitelist: {{ ip_whitelist | default("0.0.0.0/0,::/0") }}
     haproxy.router.openshift.io/timeout: "300s"
 {% if rewrite %}
-    haproxy.router.openshift.io/rewrite-target: {{ rewrite }}
+    haproxy.router.openshift.io/rewrite-target: {{ (rewrite | default('', true)) | tojson }}
 {% endif %}
 {% if enable_tls %}
     # HSTS for internet.nl compliance (1 year, includeSubDomains, preload)
@@ -47,6 +47,9 @@ metadata:
     nginx.ingress.kubernetes.io/configuration-snippet: |
 {% if rewrite %}
 {% set rewrite_base = '' if rewrite == '/' else rewrite %}
+      # path / rewrite_base are validated against a strict URL-path charset
+      # (_SAFE_PATH_PATTERN in project_file_handler.py) before reaching this
+      # template, so they cannot inject nginx directives, quotes or newlines.
       rewrite "^{{ path }}/?(.*)$" "{{ rewrite_base }}/$1" break;
 {% endif %}
       more_set_headers "X-Content-Type-Options: nosniff";
@@ -65,26 +68,27 @@ metadata:
     # ============================================================
     # External-DNS target - overrides the default LB-status hostname
     # ============================================================
-    external-dns.alpha.kubernetes.io/target: {{ external_dns_target }}
+    external-dns.alpha.kubernetes.io/target: {{ (external_dns_target | default('', true)) | tojson }}
 {% endif %}
+{% set effective_service_name = service_name if service_name is defined and service_name else (name if name is defined else '') %}
 spec:
   rules:
-    - host: {{ hostname }}
+    - host: {{ (hostname | default('', true)) | tojson }}
       http:
         paths:
-          - path: {{ path | default('/') }}
+          - path: {{ (path | default('/', true)) | tojson }}
             pathType: Prefix
             backend:
               service:
-                name: {{ service_name | default(name) }}
+                name: {{ effective_service_name | tojson }}
                 port:
                   number: {{ service_port | default(80) }}
 {% if enable_tls %}
   tls:
 {% if issuer_name or cluster_issuer %}
     - hosts:
-        - {{ hostname }}
-      secretName: {{ tls_secret_name }}
+        - {{ (hostname | default('', true)) | tojson }}
+      secretName: {{ (tls_secret_name | default('', true)) | tojson }}
 {% else %}
     - {}
 {% endif %}
