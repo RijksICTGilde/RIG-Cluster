@@ -47,6 +47,7 @@ from opi.core.cluster_config import (
     uses_capsule,
 )
 from opi.core.config import settings
+from opi.core.project_schema import validate_project_schema
 from opi.extensions import load_extensions
 from opi.generation.manifests import ManifestGenerator
 from opi.handlers.project_file_handler import (
@@ -2137,6 +2138,10 @@ class ProjectManager:
                 await git_connector_for_project_files.commit_and_push(
                     f"auto-migrate {project_name} to schema v{current_yaml.get('schema-version', '?')}"
                 )
+
+            # Security gate: validate against the project schema before any
+            # processing. Fails closed - a schema violation aborts the run.
+            validate_project_schema(current_yaml)
 
             previous_yaml = analysis["previous_yaml"]
             changes = analysis["changes"]

@@ -7,7 +7,7 @@
   "required": ["name"],
   "additionalProperties": false,
   "properties": {
-    "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 30 },
     "display-name": { "type": "string" },
     "description": { "type": "string" },
     "schema-version": { "type": "number" },
@@ -149,7 +149,7 @@
       "additionalProperties": false,
       "properties": {
         "email": { "type": "string", "format": "email" },
-        "role": { "type": "string", "enum": ["admin", "owner", "member"] }
+        "role": { "type": "string", "enum": ["admin", "owner", "member", "developer"] }
       }
     },
 
@@ -232,8 +232,8 @@
       "required": ["match"],
       "additionalProperties": false,
       "properties": {
-        "match": { "type": "string" },
-        "rewrite": { "type": "string" }
+        "match": { "type": "string", "pattern": "^[A-Za-z0-9/_.\\-]*$" },
+        "rewrite": { "type": "string", "pattern": "^[A-Za-z0-9/_.\\-]*$" }
       }
     },
 
@@ -297,12 +297,22 @@
       }
     },
 
+    "storage-entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string" },
+        "size": { "type": "string" },
+        "mount-path": { "type": "string", "pattern": "^/[\\w./-]+$" }
+      }
+    },
+
     "component": {
       "type": "object",
       "required": ["name"],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string" },
+        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63 },
         "type": { "type": "string" },
         "image": { "type": "string" },
         "ports": {
@@ -348,7 +358,7 @@
         "storage": {
           "description": "Legacy v1 field — should be migrated to services.",
           "type": "array",
-          "items": { "type": "object" }
+          "items": { "$ref": "#/$defs/storage-entry" }
         }
       }
     },
@@ -358,9 +368,9 @@
       "required": ["name", "cluster", "namespace"],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string" },
-        "cluster": { "type": "string" },
-        "namespace": { "type": "string" },
+        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63 },
+        "cluster": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63 },
+        "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63 },
         "repository": { "type": "string" },
         "base-domain": { "type": ["string", "null"] },
         "subdomain": { "type": ["string", "null"] },
@@ -418,6 +428,7 @@
         },
         "env-vars": {
           "type": "object",
+          "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
           "additionalProperties": { "type": "string" }
         },
         "disabled": { "type": "boolean" },
