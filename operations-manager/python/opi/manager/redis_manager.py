@@ -1,5 +1,7 @@
 """Redis service manager for handling Redis cache resources."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
@@ -31,7 +33,7 @@ class RedisManager:
               acl-key-prefix: false
     """
 
-    def __init__(self, project_manager: "ProjectManager") -> None:
+    def __init__(self, project_manager: ProjectManager) -> None:
         self.project_manager = project_manager
 
     async def create_resources_for_deployment(

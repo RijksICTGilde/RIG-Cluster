@@ -16,7 +16,7 @@ USER_EMAIL_EDITABLE = Editable(
 USER_ROLE_EDITABLE = Editable(
     yaml_path="users[*]/role",
     required=True,
-    default="administrator",
+    default="admin",
 )
 
 USERS_SEQUENCE_EDITABLE = Editable(

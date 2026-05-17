@@ -8,7 +8,7 @@ editing of project configurations.
 
 from typing import Annotated
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from opi.forms.layout import (
     ButtonGroup,
@@ -19,6 +19,56 @@ from opi.forms.layout import (
     Submit,
 )
 from opi.forms.schema import FormMeta
+
+
+class DomainHistoryEntry(BaseModel):
+    """Single audit trail entry for a domain/subdomain status change."""
+
+    date: str
+    status: str = Field(pattern=r"^(requested|approved|denied)$")
+    by: str | None = None
+    message: str | None = None
+
+
+class AllowedDomainEntry(BaseModel):
+    """A domain approved (or requested) for use in a project.
+
+    Used for ALL non-default domains — both platform and custom.
+    The cluster default domain doesn't need an entry.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    domain: str
+    status: str = Field(pattern=r"^(requested|approved|denied)$")
+    supports_dots: Annotated[bool, Field(alias="supports-dots")] = False
+    issuer: str | None = None
+    restricted_subdomains: Annotated[bool, Field(alias="restricted-subdomains")] = False
+    history: list[DomainHistoryEntry] = Field(default_factory=list)
+
+
+class AllowedSubdomainDetail(BaseModel):
+    """Individual subdomain with approval status."""
+
+    name: str
+    status: str = Field(pattern=r"^(requested|approved|denied)$")
+    history: list[DomainHistoryEntry] = Field(default_factory=list)
+
+
+class AllowedSubdomainEntry(BaseModel):
+    """Allowed subdomains for a specific platform domain."""
+
+    domain: str
+    subdomains: list[AllowedSubdomainDetail] = Field(default_factory=list)
+
+
+class DomainsModel(BaseModel):
+    """Project-level domain configuration: domain and subdomain approval."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    allowed_domains: list[AllowedDomainEntry] = Field(default_factory=list, alias="allowed-domains")
+    allowed_subdomains: list[AllowedSubdomainEntry] = Field(default_factory=list, alias="allowed-subdomains")
 
 
 class ProjectUserModel(BaseModel):
@@ -175,6 +225,8 @@ class ComponentModel(BaseModel):
         ),
     ] = Field(default=None)
 
+    model_config = ConfigDict(populate_by_name=True)
+
     user_env_vars: Annotated[
         str | None,
         FormMeta(
@@ -184,9 +236,6 @@ class ComponentModel(BaseModel):
             placeholder="KEY=value",
         ),
     ] = Field(default=None, alias="user-env-vars")
-
-    class Config:
-        populate_by_name = True
 
 
 class DeploymentComponentModel(BaseModel):
@@ -483,11 +532,13 @@ class ProjectFileModel(BaseModel):
         ),
     ] = Field(default_factory=list)
 
-    class Config:
-        populate_by_name = True
+    # Domain restrictions (not editable via forms — managed manually or by admin)
+    domains: DomainsModel | None = Field(default=None)
+
+    model_config = ConfigDict(populate_by_name=True)
 
     @model_validator(mode="after")
-    def validate_admin_user_exists(self) -> "ProjectFileModel":
+    def validate_admin_user_exists(self) -> ProjectFileModel:
         """Ensure at least one user has admin role."""
         if not self.users:
             return self  # Empty users list is handled by min_items constraint
@@ -498,7 +549,7 @@ class ProjectFileModel(BaseModel):
         return self
 
     @classmethod
-    def from_yaml_dict(cls, data: dict) -> "ProjectFileModel":
+    def from_yaml_dict(cls, data: dict) -> ProjectFileModel:
         """
         Create a ProjectFileModel from a parsed YAML dict.
 

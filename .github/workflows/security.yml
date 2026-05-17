@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install dependencies
         run: uv sync --all-groups
@@ -75,7 +75,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image.name }}
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           image-ref: '${{ matrix.image.name }}:scan'
           format: 'sarif'
@@ -110,7 +110,7 @@ jobs:
           cache-from: type=gha,scope=operations-manager
 
       - name: Generate SBOM with Trivy
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           image-ref: 'operations-manager:sbom'
           format: 'cyclonedx'

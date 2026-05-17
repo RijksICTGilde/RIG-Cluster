@@ -2,14 +2,14 @@ import asyncio
 import contextlib
 import logging
 import os
-from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import jinja_roos_components
 from authlib.integrations.starlette_client import OAuth  # type: ignore
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -38,6 +38,9 @@ from opi.core.startup import run_startup_tasks
 from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
 from opi.middleware.authorization import AuthorizationMiddleware
 from opi.web.router import web_router
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +99,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             task_service = AsyncTaskService(pool=pool, cluster=settings.CLUSTER_MANAGER)
             app.state.task_service = task_service
 
+            from opi.services.oom_watcher import set_task_service
+
+            set_task_service(task_service)
+
             _worker_instance = TaskWorker(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
 
             # Register handlers (imported locally to avoid circular imports)
+            from opi.core.task_handlers_backup import (  # type: ignore[reportMissingImports]
+                handle_backup,
+                handle_restore,
+            )
             from opi.core.task_handlers_components import (  # type: ignore[reportMissingImports]
                 handle_add_component,
                 handle_add_component_to_deployment,
@@ -130,11 +141,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             _worker_instance.register_handler(TaskType.ADD_COMPONENT, handle_add_component)
             _worker_instance.register_handler(TaskType.ADD_COMPONENT_TO_DEPLOYMENT, handle_add_component_to_deployment)
             _worker_instance.register_handler(TaskType.ADD_SERVICE, handle_add_service)
+            _worker_instance.register_handler(TaskType.BACKUP, handle_backup)
+            _worker_instance.register_handler(TaskType.RESTORE, handle_restore)
+
+            # Limit concurrent backup/restore tasks to avoid resource contention
+            _worker_instance.set_type_concurrency_limit(TaskType.BACKUP, settings.BACKUP_MAX_CONCURRENT)
+            _worker_instance.set_type_concurrency_limit(TaskType.RESTORE, settings.BACKUP_MAX_CONCURRENT)
 
             _worker_asyncio_task = asyncio.create_task(_worker_instance.run())
             logger.info("Task worker started in combined mode")
+
+            # Start backup scheduler if enabled
+            if settings.BACKUP_SCHEDULER_ENABLED:
+                try:
+                    from opi.core.backup_scheduler import BackupScheduler
+
+                    _backup_scheduler = BackupScheduler(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
+                    await _backup_scheduler.start()
+                    app.state.backup_scheduler = _backup_scheduler
+                except Exception as e:
+                    logger.error("Failed to start backup scheduler: %s", e)
+
         except Exception as e:
-            logger.error(f"Failed to start task worker: {e}")
+            logger.error("Failed to start task worker: %s", e)
     else:
         # Frontend-only mode: still create task_service for API endpoints
         try:
@@ -144,6 +173,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             pool = get_database_pool("main")
             task_service = AsyncTaskService(pool=pool, cluster=settings.CLUSTER_MANAGER)
             app.state.task_service = task_service
+
+            from opi.services.oom_watcher import set_task_service
+
+            set_task_service(task_service)
             logger.info("Task service initialized (worker disabled)")
         except Exception as e:
             logger.warning(f"Failed to initialize task service: {e}")
@@ -166,9 +199,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     yield
 
-    # Stop task worker
+    # Begin graceful drain: reject new task creation via API immediately
+    from opi.core.shutdown import begin_drain
+
+    begin_drain()
+
+    # Stop backup scheduler
+    backup_scheduler = getattr(app.state, "backup_scheduler", None)
+    if backup_scheduler is not None:
+        await backup_scheduler.stop()
+
+    # Stop task worker: stop claiming new tasks, then wait for active tasks to finish
     if _worker_instance is not None:
         await _worker_instance.stop()
+    # Cancel the worker asyncio task to clean up helper loops (stale recovery, cleanup)
     if _worker_asyncio_task is not None:
         _worker_asyncio_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -288,10 +332,17 @@ def create_app() -> FastAPI:
         logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
         raise exc
 
+    from opi.middleware.security_headers import SecurityHeadersMiddleware
+
     app.add_middleware(CSRFMiddleware)
     app.add_middleware(AuthorizationMiddleware)
     app.add_middleware(MaintenanceMiddleware)
     app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
+    app.add_middleware(
+        SecurityHeadersMiddleware,
+        keycloak_url=settings.KEYCLOAK_URL,
+        prometheus_url=settings.PROMETHEUS_EXTERNAL_URL or settings.PROMETHEUS_URL,
+    )
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])  # type: ignore[arg-type]
 
     # Flow ID middleware - runs first (outermost) to tag all log lines for this request
@@ -346,6 +397,23 @@ def create_app() -> FastAPI:
     if os.path.exists(static_dir):
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
         logger.info(f"Regular static files mounted at /static from {static_dir}")
+
+    # Favicon at the root path (browsers request /favicon.ico automatically)
+    favicon_path = os.path.join(static_dir, "favicon.ico")
+
+    @app.get("/favicon.ico", include_in_schema=False, response_class=FileResponse)
+    async def favicon():
+        """Serve favicon from the expected root path."""
+        return FileResponse(favicon_path, media_type="image/x-icon")
+
+    # security.txt: redirect to NCSC central file per Rijksoverheid guidance
+    # https://www.ncsc.nl/.well-known/security.txt
+    @app.get("/.well-known/security.txt", include_in_schema=False)
+    async def security_txt() -> RedirectResponse:
+        return RedirectResponse(
+            url="https://www.ncsc.nl/.well-known/security.txt",
+            status_code=302,
+        )
 
     # Liveness probe - always OK (keeps the pod alive)
     @app.get("/health", include_in_schema=False, response_class=JSONResponse)

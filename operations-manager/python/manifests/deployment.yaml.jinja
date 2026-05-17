@@ -5,6 +5,7 @@ metadata:
   namespace: "{{ namespace }}"
   labels:
     app: "{{ name }}"
+    deployment: "{{ deployment_name }}"
     project: "{{ project.name }}"
     component: application
 spec:
@@ -27,6 +28,7 @@ spec:
 {% endif %}
       labels:
         app: "{{ name }}"
+        deployment: "{{ deployment_name }}"
         project: "{{ project.name }}"
         component: application
         network-policy: allow-db-access

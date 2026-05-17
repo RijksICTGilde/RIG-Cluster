@@ -1,0 +1,2 @@
+- UI components must use the Jinja ROOS components as much as possible, if a component seems to be missing, add it to the list of components in request_for_components.md with a detailed request for it so it can be built later
+- Python imports must always be at the top of the file, never inline or local. Use `ruff check --select I --fix` to sort and organize imports, then `ruff format .` to format.

@@ -44,7 +44,7 @@
         <div class="deployment-global-selector">
             <label for="global-deployment-selector"><strong>Deployment:</strong></label>
             <select id="global-deployment-selector" class="deployment-select" onchange="switchDeployment(this.value)">
-                {% for deployment in project.deployments %}
+                {% for deployment in project.deployments | sort(attribute='name') %}
                 <option value="{{ deployment.name }}">{{ deployment.name }} ({{ deployment.cluster }})</option>
                 {% endfor %}
             </select>
@@ -66,6 +66,7 @@
 
 {% block additional_styles %}
 <link rel="stylesheet" href="/static/css/wizard.css">
+<link rel="stylesheet" href="/static/css/modal.css">
 <style>
     /* Project Badge */
     .project-badge {
@@ -1110,171 +1111,6 @@
         font-size: 0.75rem;
     }
 
-    /* Edit Section Modal */
-    .edit-section-backdrop {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0, 0, 0, 0.5);
-        z-index: 999;
-        display: none;
-        opacity: 0;
-        transition: opacity 0.3s ease;
-    }
-
-    .edit-section-backdrop.is-open {
-        display: block;
-        opacity: 1;
-    }
-
-    .edit-section-modal {
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%) scale(0.95);
-        background: var(--rvo-color-wit);
-        border-radius: var(--rvo-border-radius-lg);
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-        width: 80%;
-        max-width: 80vw;
-        max-height: 80vh;
-        overflow-y: auto;
-        z-index: 1000;
-        display: none;
-        opacity: 0;
-        transition: opacity 0.3s ease, transform 0.3s ease;
-        padding: var(--rvo-space-xl);
-    }
-
-    .edit-section-modal.is-open {
-        display: block;
-        opacity: 1;
-        transform: translate(-50%, -50%) scale(1);
-    }
-
-    .edit-section-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: var(--rvo-space-md);
-        margin-bottom: var(--rvo-space-xl);
-        padding-bottom: var(--rvo-space-md);
-        border-bottom: 1px solid var(--rvo-color-grijs-200);
-    }
-
-    .edit-modal-close-btn {
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: var(--rvo-space-xs);
-        border-radius: 4px;
-        display: flex;
-        align-items: center;
-    }
-
-    .edit-modal-close-btn:hover {
-        background: var(--rvo-color-grijs-100);
-    }
-
-    .edit-section-content {
-        margin-bottom: var(--rvo-space-lg);
-    }
-
-    .edit-section-loading {
-        text-align: center;
-        padding: var(--rvo-space-xl);
-        color: var(--rvo-color-grijs-500);
-    }
-
-    .edit-section-error {
-        background: var(--rvo-color-rood-100);
-        color: var(--rvo-color-rood-800);
-        border: 1px solid var(--rvo-color-rood-300);
-        padding: var(--rvo-space-md);
-        border-radius: 4px;
-        margin-bottom: var(--rvo-space-md);
-    }
-
-    .edit-section-success {
-        text-align: center;
-        padding: var(--rvo-space-xl) var(--rvo-space-lg);
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: var(--rvo-space-md);
-    }
-
-    .edit-section-success p {
-        font-size: 1.125rem;
-        font-weight: 600;
-        color: var(--rvo-color-groen);
-        margin: 0;
-    }
-
-    /* In-modal progress view */
-    .edit-progress-view {
-        padding: var(--rvo-space-md) 0;
-    }
-
-    .edit-progress-bar-wrapper {
-        width: 100%;
-        height: 8px;
-        background: var(--rvo-color-grijs-200);
-        border-radius: 4px;
-        overflow: hidden;
-        margin-bottom: var(--rvo-space-md);
-    }
-
-    .edit-progress-bar {
-        height: 100%;
-        background: var(--rvo-color-hemelblauw);
-        border-radius: 4px;
-        transition: width 0.5s ease;
-    }
-
-    .edit-progress-step {
-        font-size: 0.9375rem;
-        color: var(--rvo-color-grijs-700);
-        margin: 0 0 var(--rvo-space-md) 0;
-    }
-
-    .edit-progress-step.edit-progress-error {
-        color: var(--rvo-color-rood-700);
-    }
-
-    .edit-progress-tasks {
-        display: flex;
-        flex-direction: column;
-        gap: var(--rvo-space-xs);
-        margin-bottom: var(--rvo-space-lg);
-    }
-
-    .edit-progress-task-item {
-        display: flex;
-        align-items: center;
-        gap: var(--rvo-space-sm);
-        font-size: 0.875rem;
-        color: var(--rvo-color-grijs-700);
-    }
-
-    .edit-progress-actions {
-        display: flex;
-        gap: var(--rvo-space-md);
-        justify-content: flex-end;
-        padding-top: var(--rvo-space-md);
-        border-top: 1px solid var(--rvo-color-grijs-200);
-    }
-
-    .edit-section-actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: var(--rvo-space-md);
-        padding-top: var(--rvo-space-md);
-        border-top: 1px solid var(--rvo-color-grijs-200);
-    }
-
     .domain-badge {
         background: var(--rvo-color-hemelblauw-100);
         color: var(--rvo-color-hemelblauw-700);
@@ -1357,7 +1193,7 @@
 
         // HTMX: load metrics for selected deployment
         var metricsEl = document.getElementById('metrics-content');
-        if (metricsEl) {
+        if (metricsEl && typeof htmx !== 'undefined') {
             var projectName = metricsEl.dataset.projectName;
             htmx.ajax('GET', '/projects/details/' + projectName + '/metrics/' + deploymentName, {
                 target: '#metrics-content',
@@ -1488,7 +1324,7 @@
             updateStatus('connecting', 'Connecting...');
 
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/api/logs/stream/${currentProject}?deployment=${encodeURIComponent(currentDeployment)}&component=${encodeURIComponent(currentComponent)}&lines=100`;
+            const wsUrl = `${protocol}//${window.location.host}/api/logs/stream/${currentProject}?deployment=${encodeURIComponent(currentDeployment)}&component=${encodeURIComponent(currentComponent)}&lines=250`;
 
             logSocket = new WebSocket(wsUrl);
 
@@ -1911,11 +1747,13 @@
 
     /* ---------------------------------------------------------------
      * Edit Section Modal - server-driven wizard via HTMX
+     *
+     * The submit-in-flight flag lives on ``window`` in
+     * /static/js/edit_modal.js so the shared close helpers can read it.
      * --------------------------------------------------------------- */
-    let isEditSubmitting = false;
 
-    function openEditModal(flowId, title) {
-        isEditSubmitting = false;
+    function openEditModal(flowId, title, params) {
+        window.isEditSubmitting = false;
 
         // Set title text (icon is already in the DOM via Jinja preprocessing)
         document.getElementById('edit-section-title-text').textContent = title;
@@ -1936,8 +1774,14 @@
         document.getElementById('edit-section-modal').classList.add('is-open');
         document.body.style.overflow = 'hidden';
 
-        // Fetch first step from server-driven modal wizard
-        fetch('/projects/{{ project.name }}/modal-wizard/' + flowId, {
+        // Fetch first step from server-driven modal wizard.
+        // When the caller needs to scope the flow to a specific deployment (e.g. backup),
+        // they pass that via `params` — no URL-hash sniffing, no global lookups.
+        let url = '/projects/{{ project.name }}/modal-wizard/' + flowId;
+        if (params && Object.keys(params).length > 0) {
+            url += '?' + new URLSearchParams(params).toString();
+        }
+        fetch(url, {
             credentials: 'same-origin',
         })
         .then(function(response) {
@@ -1956,37 +1800,20 @@
         });
     }
 
-    function closeEditModal() {
-        isEditSubmitting = false;
-        document.getElementById('edit-section-backdrop').classList.remove('is-open');
-        document.getElementById('edit-section-modal').classList.remove('is-open');
-        document.body.style.overflow = '';
-    }
-
-    function closeEditModalAndReload() {
-        isEditSubmitting = false;
-        document.getElementById('edit-section-backdrop').classList.remove('is-open');
-        document.getElementById('edit-section-modal').classList.remove('is-open');
-        document.body.style.overflow = '';
-        window.location.reload();
-    }
-
-    function handleEditBackdropClick() {
-        if (!isEditSubmitting) {
-            closeEditModal();
-        }
-    }
+    /* closeEditModal / closeEditModalAndReload / handleEditBackdropClick and
+       the global ``isEditSubmitting`` flag live in /static/js/edit_modal.js so
+       they are in scope on every page that mounts the wizard. */
 
     /* -- HTMX integration: detect progress view and track submit state -- */
 
     document.addEventListener('htmx:afterSwap', function(evt) {
         var progressView = evt.detail.target.querySelector('.edit-progress-view');
         if (progressView) {
-            isEditSubmitting = true;
+            window.isEditSubmitting = true;
         }
         var progressActions = evt.detail.target.querySelector('.edit-progress-actions');
         if (progressActions) {
-            isEditSubmitting = false;
+            window.isEditSubmitting = false;
         }
     });
 
@@ -1997,7 +1824,7 @@
 
     // Escape key closes edit modal
     document.addEventListener('keydown', function(event) {
-        if (event.key === 'Escape' && !isEditSubmitting) {
+        if (event.key === 'Escape' && !window.isEditSubmitting) {
             var modal = document.getElementById('edit-section-modal');
             if (modal.classList.contains('is-open')) {
                 closeEditModal();
@@ -2019,7 +1846,7 @@
         dangerActionType = actionType;
         dangerActionTarget = target;
 
-        var titles = { project: 'Project verwijderen', deployment: 'Deployment verwijderen', component: 'Component verwijderen', refresh: 'Project herverwerken' };
+        var titles = { project: 'Project verwijderen', deployment: 'Deployment verwijderen', component: 'Component verwijderen', refresh: 'Project herverwerken', 'deployment-refresh': 'Deployment herverwerken' };
         var title = titles[actionType] || 'Verwijderen';
         document.getElementById('danger-confirm-title').textContent = title;
         document.getElementById('danger-confirm-message').textContent = message;
@@ -2027,10 +1854,20 @@
         document.getElementById('danger-confirm-progress').style.display = 'none';
         document.getElementById('danger-confirm-actions').style.display = '';
 
-        var isRefresh = actionType === 'refresh';
+        var isRefresh = actionType === 'refresh' || actionType === 'deployment-refresh';
         document.getElementById('danger-confirm-btn-delete').style.display = isRefresh ? 'none' : '';
         document.getElementById('danger-confirm-btn-refresh').style.display = isRefresh ? '' : 'none';
         document.getElementById('danger-confirm-progress-text').textContent = isRefresh ? 'Bezig met herverwerken...' : 'Bezig met verwijderen...';
+
+        // Set the correct refresh URL based on action type
+        var refreshBtn = document.getElementById('danger-refresh-btn');
+        if (refreshBtn) {
+            var refreshUrl = actionType === 'deployment-refresh'
+                ? '/projects/{{ project.name }}/refresh/' + encodeURIComponent(target)
+                : '/projects/{{ project.name }}/refresh';
+            refreshBtn.setAttribute('hx-post', refreshUrl);
+            htmx.process(refreshBtn);
+        }
 
         document.getElementById('danger-confirm-backdrop').classList.add('is-open');
         document.getElementById('danger-confirm-modal').classList.add('is-open');

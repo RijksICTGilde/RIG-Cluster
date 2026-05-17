@@ -5,10 +5,14 @@ Tests that the detail page renders correctly with AGE-encrypted project data,
 showing components, team members, services, and deployments.
 """
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
-from playwright.sync_api import Page
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from playwright.sync_api import Page
 
 pytestmark = pytest.mark.e2e
 

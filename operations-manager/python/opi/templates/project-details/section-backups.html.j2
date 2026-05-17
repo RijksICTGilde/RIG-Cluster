@@ -1,35 +1,50 @@
-{# Backups Section - Show backups per deployment for current cluster #}
+{# Backups Section - Per-deployment card for the current cluster.
+   Every action (aanmaken, herstellen, schema instellen/wijzigen) lives inside
+   the deployment's own section so the button intrinsically targets the correct
+   deployment — no JS lookup, no URL-hash sniffing. switchDeployment() in
+   project-details.html.j2 shows the matching `backups-{name}` section. #}
 {% if backups_available and project.deployments %}
-{% set ns = namespace(has_backups=false) %}
-{% for deployment in project.deployments %}
-    {% if deployment.cluster == current_cluster and deployment_backups.get(deployment.name) %}
-        {% set ns.has_backups = true %}
-    {% endif %}
-{% endfor %}
 <c-card outline="true" padding="xl" backgroundColor="wit">
     <c-layout-flow gap="lg">
-        <c-layout-flow row="true" justifyContent="space-between" alignItems="start">
-            <div>
-                <c-heading type="h2"><c-icon icon="database" size="xl" color="groen" />Backups</c-heading>
-                <p class="rvo-text--subtle">Beschikbare backups per deployment (alleen voor cluster: {{ current_cluster }})</p>
-            </div>
-            <c-layout-flow row="true" gap="sm">
-                <c-button kind="secondary" size="sm" label="Backup aanmaken" showIcon="before" icon="iconen-toevoegen"
-                          @click="openEditModal('modal-backup', 'Backup aanmaken')" />
-                {% if ns.has_backups %}
-                <c-button kind="secondary" size="sm" label="Herstellen" showIcon="before" icon="terug"
-                          @click="openEditModal('modal-restore', 'Backup herstellen')" />
-                {% endif %}
-            </c-layout-flow>
-        </c-layout-flow>
-
-        {% if ns.has_backups %}
         <div>
-            {% for deployment in project.deployments %}
+            <c-heading type="h2"><c-icon icon="database" size="xl" color="groen" />Backups</c-heading>
+            <p class="rvo-text--subtle">Backup beheer voor cluster: {{ current_cluster }}</p>
+        </div>
+
+        {% set cluster_loop = namespace(first_shown=true) %}
+        {% for deployment in project.deployments | sort(attribute='name') %}
             {% if deployment.cluster == current_cluster %}
-            <div class="deployment-section" id="backups-{{ deployment.name }}"
-                 {% if not loop.first and project.deployments|length > 1 %}style="display: none;"{% endif %}>
+            {% set dep_idx = project.deployments.index(deployment) %}
+            {% set dep_backup = deployment.get('backup', {}) if deployment.get('backup') is mapping else {} %}
+            {% set dep_schedule = dep_backup.get('schedule', '') %}
             {% set backups = deployment_backups.get(deployment.name, []) %}
+            <div class="deployment-section" id="backups-{{ deployment.name }}"
+                 {% if not cluster_loop.first_shown %}style="display: none;"{% endif %}>
+            <c-layout-flow gap="md">
+                {# Schedule status + actions for this deployment #}
+                <c-layout-flow row="true" justifyContent="space-between" alignItems="center" gap="md">
+                    <c-layout-row gap="sm" verticalSpacing="center">
+                        {% if dep_schedule %}
+                        <c-icon icon="vinkje" size="md" color="groen" />
+                        <span>Backups ingeschakeld: <strong>{{ dep_schedule | rrule_schedule }}</strong></span>
+                        <c-button kind="secondary" size="xs" label="Schema wijzigen" showIcon="before" icon="instellingen"
+                                  @click="openEditModal('modal-edit-backup-schedule-{{ dep_idx }}', 'Backup schema instellen')" />
+                        {% else %}
+                        <c-icon icon="info" size="md" color="grijs-500" />
+                        <span class="rvo-text--subtle">Geen backup schema ingesteld</span>
+                        <c-button kind="secondary" size="xs" label="Schema instellen" showIcon="before" icon="instellingen"
+                                  @click="openEditModal('modal-edit-backup-schedule-{{ dep_idx }}', 'Backup schema instellen')" />
+                        {% endif %}
+                    </c-layout-row>
+                    <c-layout-row gap="sm">
+                        <c-button kind="secondary" size="sm" label="Backup aanmaken" showIcon="before" icon="iconen-toevoegen"
+                                  @click="openEditModal('modal-backup', 'Backup aanmaken', {deployment: '{{ deployment.name }}'})" />
+                        {% if backups %}
+                        <c-button kind="secondary" size="sm" label="Herstellen" showIcon="before" icon="terug"
+                                  @click="openEditModal('modal-restore', 'Backup herstellen', {deployment: '{{ deployment.name }}'})" />
+                        {% endif %}
+                    </c-layout-row>
+                </c-layout-flow>
 
             <c-card padding="lg" outline="true" backgroundColor="grijs-050" style="border-left: 4px solid var(--rvo-color-groen);">
                 <c-layout-flow gap="md">
@@ -158,18 +173,11 @@
                     {% endif %}
                 </c-layout-flow>
             </c-card>
+            </c-layout-flow>
             </div>
+            {% set cluster_loop.first_shown = false %}
             {% endif %}
             {% endfor %}
-        </div>
-        {% else %}
-        <c-card padding="md" outline="true" backgroundColor="grijs-050">
-            <c-layout-row gap="md" verticalSpacing="center">
-                <c-icon icon="info" size="md" color="grijs-500" />
-                <p class="rvo-text--md">Geen backups beschikbaar voor deployments op cluster {{ current_cluster }}</p>
-            </c-layout-row>
-        </c-card>
-        {% endif %}
     </c-layout-flow>
 </c-card>
 {% elif not backups_available and project.deployments %}

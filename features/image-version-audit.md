@@ -159,12 +159,12 @@ Audit of all container images used across the repository, performed February 202
 - **Files**: `infrastructure/bootstrap/infrastructure/forgejo/controller/base/statefulset.yaml`, `infrastructure/bootstrap/infrastructure/forgejo/config/base/bootstrap-job.yaml`, sandbox overlays
 - Already current - floating `:14` tag resolves to latest 14.0.x.
 
-### Python - 3.13-slim
+### Python - 3.14-slim
 
-- **Current**: `python:3.13-slim`
+- **Current**: `python:3.14-slim`
 - **Latest**: 3.14.3 (released 2026-02-03)
 - **Files**: `operations-manager/Dockerfile`, `operations-manager/backup-image/Dockerfile`
-- 3.13 is still fully supported until ~October 2029. Consider `3.14-slim` when tested.
+- 3.13 still supported until ~October 2029; project moved to 3.14 for PEP 649 deferred annotation evaluation.
 
 ### CloudNativePG PostgreSQL - :17
 

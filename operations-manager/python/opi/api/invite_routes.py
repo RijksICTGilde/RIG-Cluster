@@ -10,7 +10,7 @@ import hashlib
 import logging
 import re
 import secrets
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
 import httpx
@@ -29,7 +29,9 @@ from opi.manager.invite_manager import (
 )
 from opi.services.project_service import get_project_service
 from opi.utils.naming import generate_project_realm_name
-from starlette.responses import Response
+
+if TYPE_CHECKING:
+    from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
 

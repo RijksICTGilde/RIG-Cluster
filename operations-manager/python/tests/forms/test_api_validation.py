@@ -128,7 +128,7 @@ class TestAddComponentProfile:
         assert "cpu_limit" in exc_info.value.detail["field_errors"]
 
     async def test_invalid_memory_limit(self):
-        payload = {"name": "myapp", "image": "nginx:latest", "memory_limit": "2Gi"}
+        payload = {"name": "myapp", "image": "nginx:latest", "memory_limit": "8Gi"}
         with pytest.raises(HTTPException) as exc_info:
             await validate_api_payload(payload, ADD_COMPONENT_VALIDATORS)
         assert exc_info.value.status_code == 422

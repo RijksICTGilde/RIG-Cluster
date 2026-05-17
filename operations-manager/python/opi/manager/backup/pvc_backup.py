@@ -962,6 +962,7 @@ spec:
         access_modes: list[str] | None = None,
         snapshot_id: str | None = None,
         backup_enabled: bool = True,
+        project_name: str | None = None,
     ) -> RestoreResult:
         """
         Restore a backup to a specific PVC name (for project-based restore).
@@ -981,6 +982,7 @@ spec:
             access_modes: Access modes for the PVC (default: ["ReadWriteOnce"])
             snapshot_id: Optional specific snapshot ID (defaults to latest)
             backup_enabled: Whether to enable backup label on restored PVC
+            project_name: Project name for per-project bucket mode
 
         Returns:
             RestoreResult with operation details
@@ -997,6 +999,7 @@ spec:
                 access_modes=access_modes or ["ReadWriteOnce"],
                 snapshot_id=snapshot_id,
                 backup_enabled=backup_enabled,
+                project_name=project_name,
             )
 
     async def _restore_to_project_pvc(
@@ -1010,6 +1013,7 @@ spec:
         access_modes: list[str],
         snapshot_id: str | None,
         backup_enabled: bool,
+        project_name: str | None = None,
     ) -> RestoreResult:
         """
         Internal: restore to a project-managed PVC (lock must be held).
@@ -1062,6 +1066,8 @@ spec:
                 kopia_password=kopia_password,
                 backup_prefix=backup_prefix,
                 snapshot_id=snapshot_id,
+                project_name=project_name,
+                cluster=cluster,
             )
 
             # 5. Wait for pod completion
@@ -1193,6 +1199,7 @@ spec:
                 "kopia_password": kopia_password,
                 "snapshot_id": snapshot_id or "",
                 "timeout_seconds": self.config.timeout_seconds,
+                "cluster": cluster or "",
             },
         )
 

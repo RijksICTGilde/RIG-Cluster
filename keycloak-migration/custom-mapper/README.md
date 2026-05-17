@@ -6,6 +6,8 @@ This JAR contains custom Keycloak extensions for the RIG Cluster platform.
 
 1. **Unrestricted XPath Attribute Mapper** - Extract ANY value from SAML assertions
 2. **Require Client Role Authenticator** - Restrict access based on client roles in authentication flows
+3. **Always-Clear-Session Logout Endpoint** - Broker-logout shim that terminates the Keycloak session before redirecting to an IdP logout page that does not call back. See `features/keycloak-always-clear-session-logout.md`.
+4. **RIG Metrics Endpoint** - Prometheus metrics endpoint exposing realm/user/session counts.
 
 ---
 
@@ -32,7 +34,7 @@ cd keycloak-migration/custom-mapper
 mvn clean package
 ```
 
-Output: `target/keycloak-saml-nameid-mapper-1.0.0.jar`
+Output: `target/keycloak-saml-nameid-mapper-1.1.0.jar`
 
 ## Publishing to GitHub
 
@@ -50,12 +52,12 @@ task publish-keycloak-custom-mapper
 
 This will:
 1. Build the JAR (if not already built)
-2. Create or update the GitHub release v1.0.0
+2. Create or update the GitHub release (currently v1.1.0 — see Taskfile `VERSION=`)
 3. Upload the JAR as a release asset
 4. Verify the download URL
 
 The JAR will be available at:
-`https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.0.0/keycloak-saml-nameid-mapper-1.0.0.jar`
+`https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.1.0/keycloak-saml-nameid-mapper-1.1.0.jar`
 
 ### Manual Publishing Steps
 
@@ -69,16 +71,16 @@ If you prefer to publish manually:
 2. **Create GitHub Release**:
    ```bash
    cd keycloak-migration/custom-mapper
-   gh release create v1.0.0 \
+   gh release create v1.1.0 \
      --repo "RijksICTGilde/RIG-Cluster" \
-     --title "Keycloak SAML NameID Mapper v1.0.0" \
-     --notes "Custom mapper for extracting SAML NameID to user attributes" \
-     target/keycloak-saml-nameid-mapper-1.0.0.jar
+     --title "Keycloak SAML NameID Mapper v1.1.0" \
+     --notes "Adds always-clear-session logout endpoint (broker logout shim)" \
+     target/keycloak-saml-nameid-mapper-1.1.0.jar
    ```
 
 3. **Verify Release**:
    ```bash
-   curl -sI https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.0.0/keycloak-saml-nameid-mapper-1.0.0.jar
+   curl -sI https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.1.0/keycloak-saml-nameid-mapper-1.1.0.jar
    # Should return HTTP 200 or 302
    ```
 
@@ -103,8 +105,8 @@ initContainers:
         cp keycloak-nl-design-system.jar /opt/keycloak/providers/
 
         # Download custom mapper
-        wget https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.0.0/keycloak-saml-nameid-mapper-1.0.0.jar
-        cp keycloak-saml-nameid-mapper-1.0.0.jar /opt/keycloak/providers/
+        wget https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.1.0/keycloak-saml-nameid-mapper-1.1.0.jar
+        cp keycloak-saml-nameid-mapper-1.1.0.jar /opt/keycloak/providers/
     image: busybox:1.37.0
     securityContext:
       runAsUser: 0
@@ -150,7 +152,7 @@ Example with ConfigMap:
 ```bash
 # Create ConfigMap from JAR
 kubectl create configmap keycloak-custom-mapper \
-  --from-file=keycloak-saml-nameid-mapper.jar=target/keycloak-saml-nameid-mapper-1.0.0.jar \
+  --from-file=keycloak-saml-nameid-mapper.jar=target/keycloak-saml-nameid-mapper-1.1.0.jar \
   -n keycloak
 
 # Mount in deployment
@@ -172,7 +174,7 @@ volumes:
 mvn clean package
 
 # Copy to running Keycloak pod
-kubectl cp target/keycloak-saml-nameid-mapper-1.0.0.jar \
+kubectl cp target/keycloak-saml-nameid-mapper-1.1.0.jar \
   keycloak-dpl-xxx:/opt/keycloak/providers/ -n keycloak
 
 # Restart Keycloak

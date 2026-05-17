@@ -5,6 +5,7 @@ This module provides the OptionsProvider protocol and concrete implementations
 for populating select/radio fields with dynamic data from OPI's domain.
 """
 
+import re
 from typing import Any, ClassVar, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG
@@ -233,20 +234,37 @@ class CpuLimitOptionsProvider:
         ]
 
 
-MEMORY_STEPS: list[tuple[str, str]] = [
-    ("32Mi", "32 MB"),
-    ("64Mi", "64 MB"),
-    ("96Mi", "96 MB"),
-    ("128Mi", "128 MB"),
-    ("256Mi", "256 MB"),
-    ("512Mi", "512 MB"),
-    ("768Mi", "768 MB"),
-    ("1Gi", "1 GB"),
+ALL_MEMORY_STEPS: list[tuple[str, str, int]] = [
+    ("25Mi", "25 Mi", 25),
+    ("32Mi", "32 Mi", 32),
+    ("64Mi", "64 Mi", 64),
+    ("96Mi", "96 Mi", 96),
+    ("128Mi", "128 Mi", 128),
+    ("256Mi", "256 Mi", 256),
+    ("512Mi", "512 Mi", 512),
+    ("768Mi", "768 Mi", 768),
+    ("1Gi", "1 Gi", 1024),
+    ("1536Mi", "1.5 Gi", 1536),
+    ("2Gi", "2 Gi", 2048),
+    ("2560Mi", "2.5 Gi", 2560),
+    ("3Gi", "3 Gi", 3072),
+    ("3584Mi", "3.5 Gi", 3584),
+    ("4Gi", "4 Gi", 4096),
 ]
 
 
+def get_memory_steps(max_mi: int | None = None) -> list[tuple[str, str]]:
+    """Return memory steps up to the cluster's max_memory_limit_mi."""
+    if max_mi is None:
+        from opi.core.cluster_config import get_max_memory_limit_mi
+        from opi.core.config import settings
+
+        max_mi = get_max_memory_limit_mi(settings.CLUSTER_MANAGER)
+    return [(v, lbl) for v, lbl, mi in ALL_MEMORY_STEPS if mi <= max_mi]
+
+
 class MemoryOptionsProvider:
-    """Provides memory options for components (shared for request and limit).
+    """Provides memory options for components (used for limit fields).
 
     If *current_value* is set and not in the standard steps, it is inserted
     at the correct sorted position so the dropdown always contains the
@@ -256,8 +274,15 @@ class MemoryOptionsProvider:
     def __init__(self, current_value: str | None = None) -> None:
         self.current_value = current_value
 
+    def _get_max_mi(self) -> int:
+        from opi.core.cluster_config import get_max_memory_limit_mi
+        from opi.core.config import settings
+
+        return get_max_memory_limit_mi(settings.CLUSTER_MANAGER)
+
     def get_options(self) -> list[dict[str, Any]]:
-        options = [{"value": v, "label": lbl} for v, lbl in MEMORY_STEPS]
+        steps = get_memory_steps(max_mi=self._get_max_mi())
+        options = [{"value": v, "label": lbl} for v, lbl in steps]
 
         if self.current_value and not any(o["value"] == self.current_value for o in options):
             from opi.services.resource_analyzer import parse_k8s_memory_to_mi
@@ -267,11 +292,11 @@ class MemoryOptionsProvider:
             except ValueError:
                 return options
 
-            label = f"{int(current_mi)} MB" if current_mi == int(current_mi) else f"{current_mi:.1f} MB"
+            label = f"{int(current_mi)} Mi" if current_mi == int(current_mi) else f"{current_mi:.1f} Mi"
             new_option = {"value": self.current_value, "label": label}
 
             # Insert at sorted position
-            step_mis = [parse_k8s_memory_to_mi(v) for v, _ in MEMORY_STEPS]
+            step_mis = [parse_k8s_memory_to_mi(v) for v, _ in steps]
             insert_idx = len(options)
             for i, step_mi in enumerate(step_mis):
                 if current_mi < step_mi:
@@ -280,6 +305,16 @@ class MemoryOptionsProvider:
             options.insert(insert_idx, new_option)
 
         return options
+
+
+class MemoryRequestOptionsProvider(MemoryOptionsProvider):
+    """Provides memory options for request fields (capped lower than limits)."""
+
+    def _get_max_mi(self) -> int:
+        from opi.core.cluster_config import get_max_memory_request_mi
+        from opi.core.config import settings
+
+        return get_max_memory_request_mi(settings.CLUSTER_MANAGER)
 
 
 class DomainModeOptionsProvider:
@@ -408,14 +443,18 @@ class ClusterBaseDomainOptionsProvider:
 
         cluster = self.cluster or settings.CLUSTER_MANAGER
         if cluster and cluster in CLUSTER_CONFIG:
+            postfix = CLUSTER_CONFIG[cluster].get("ingress_postfix", "")
+            default_label = f"Cluster standaard ({postfix.lstrip('.')})" if postfix else "Cluster standaard"
+            options: list[dict[str, Any]] = [{"value": "", "label": default_label}]
+
             raw = CLUSTER_CONFIG[cluster].get("nice_url", {}).get("supported_domains", [])
             domains = [_extract_domain(d) for d in raw]
-            options = [{"value": d, "label": d} for d in domains]
+            options.extend({"value": d, "label": d} for d in domains)
             options.append({"value": "__custom__", "label": "Eigen domein..."})
             return options
 
         # Fallback: no matching cluster config - return empty with custom option
-        return [{"value": "__custom__", "label": "Eigen domein..."}]
+        return [{"value": "", "label": "Cluster standaard"}, {"value": "__custom__", "label": "Eigen domein..."}]
 
 
 class FilteredServiceOptionsProvider:
@@ -483,6 +522,139 @@ class RootComponentOptionsProvider(ComponentReferenceOptionsProvider):
 
     def __init__(self, component_names: list[str] | None = None) -> None:
         super().__init__(component_names=component_names, include_empty=True)
+
+
+class BareDomainComponentOptionsProvider(ComponentReferenceOptionsProvider):
+    """ComponentReferenceOptionsProvider for bare domain component selection.
+
+    Shows component names with an empty 'not on bare domain' option.
+    """
+
+    def __init__(self, component_names: list[str] | None = None) -> None:
+        super().__init__(
+            component_names=component_names,
+            include_empty=True,
+            empty_label="Niet bereikbaar op kaal domein",
+        )
+
+
+class BackupScheduleFrequencyOptionsProvider:
+    """Provides RRULE frequency options for the backup schedule select."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": "", "label": "Geen"},
+            {"value": "DAILY", "label": "Dagelijks"},
+            {"value": "WEEKLY", "label": "Wekelijks"},
+            {"value": "MONTHLY", "label": "Maandelijks"},
+        ]
+
+
+class BackupScheduleTimeOptionsProvider:
+    """Provides half-hour time slots for the backup time indication."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        options: list[dict[str, Any]] = []
+        for hour in range(24):
+            for minute in (0, 30):
+                time_str = f"{hour:02d}:{minute:02d}"
+                options.append({"value": time_str, "label": time_str})
+        return options
+
+
+class BackupScheduleDayOptionsProvider:
+    """Provides day-of-week options for weekly schedules."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": "MO", "label": "Maandag"},
+            {"value": "TU", "label": "Dinsdag"},
+            {"value": "WE", "label": "Woensdag"},
+            {"value": "TH", "label": "Donderdag"},
+            {"value": "FR", "label": "Vrijdag"},
+            {"value": "SA", "label": "Zaterdag"},
+            {"value": "SU", "label": "Zondag"},
+        ]
+
+
+class BackupScheduleMonthDayOptionsProvider:
+    """Provides day-of-month options for monthly schedules."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [{"value": str(day), "label": str(day)} for day in range(1, 29)]
+
+
+class BackupResourceTypesOptionsProvider:
+    """Provides resource type options filtered by what the deployment actually uses.
+
+    Uses ``yaml_data`` and ``yaml_path`` (passed generically by the bridge) to
+    determine which deployment is being edited, then checks which backup-capable
+    services that deployment uses via ``deployment_uses_service``.
+
+    Works for both:
+    - Schedule modal: path ``deployments[N]/backup/resource_types`` → deployment at index N
+    - Manual backup: path ``resource_types`` → uses ``_cluster_deployments`` context
+    """
+
+    def __init__(
+        self,
+        yaml_data: dict[str, Any] | None = None,
+        yaml_path: str | None = None,
+    ) -> None:
+        self._yaml_data = yaml_data or {}
+        self._yaml_path = yaml_path or ""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        from opi.handlers.project_file_handler import create_project_file_handler
+        from opi.services import ServiceAdapter
+
+        all_labels = ServiceAdapter.get_backupable_labels()
+        deployment_name = self._resolve_deployment_name()
+        if not deployment_name:
+            return [{"value": bl["label"], "label": bl["name"]} for bl in all_labels]
+
+        pfh = create_project_file_handler()
+        filtered = pfh.get_deployment_backup_labels(self._yaml_data, deployment_name)
+        return [{"value": bl["label"], "label": bl["name"]} for bl in filtered]
+
+    def _resolve_deployment_name(self) -> str:
+        """Determine the deployment name from the path or form data."""
+        # Schedule modal: deployments[N]/backup/resource_types
+        match = re.match(r"deployments\[(\d+)]", self._yaml_path)
+        if match:
+            idx = int(match.group(1))
+            deployments = self._yaml_data.get("deployments", [])
+            if isinstance(deployments, list) and idx < len(deployments):
+                dep = deployments[idx]
+                if isinstance(dep, dict):
+                    return dep.get("name", "")
+            return ""
+
+        # Manual backup: selected deployment_name in form data
+        selected = self._yaml_data.get("deployment_name", "")
+        if selected:
+            return str(selected)
+
+        return ""
+
+
+class BackupDeploymentOptionsProvider:
+    """Provides deployment options for the manual backup modal.
+
+    Reads ``_cluster_deployments`` from ``yaml_data`` (set by
+    ``_build_backup_restore_context_async`` via template_data merge).
+    """
+
+    def __init__(self, yaml_data: dict[str, Any] | None = None) -> None:
+        data = yaml_data or {}
+        self._deployments: list[dict[str, Any]] = data.get("_cluster_deployments", [])
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": dep["name"], "label": f"{dep['name']} ({dep.get('namespace', '')})"}
+            for dep in self._deployments
+            if dep.get("name")
+        ]
 
 
 class DeploymentCloneFromOptionsProvider:
@@ -589,6 +761,17 @@ class DeploymentSelectOptionsProvider:
         return [{"value": name, "label": name} for name in self.deployment_names]
 
 
+class ApprovalStatusOptionsProvider:
+    """Provides status options for the admin domain/subdomain approval flow."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": "skip", "label": "Overslaan"},
+            {"value": "approved", "label": "Goedkeuren"},
+            {"value": "denied", "label": "Afwijzen"},
+        ]
+
+
 # Registry of all available providers
 PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterOptionsProvider": ClusterOptionsProvider,
@@ -598,6 +781,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "CpuRequestOptionsProvider": CpuRequestOptionsProvider,
     "CpuLimitOptionsProvider": CpuLimitOptionsProvider,
     "MemoryOptionsProvider": MemoryOptionsProvider,
+    "MemoryRequestOptionsProvider": MemoryRequestOptionsProvider,
     "DomainModeOptionsProvider": DomainModeOptionsProvider,
     "StorageTypeOptionsProvider": StorageTypeOptionsProvider,
     "StorageSizeOptionsProvider": StorageSizeOptionsProvider,
@@ -607,11 +791,19 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterBaseDomainOptionsProvider": ClusterBaseDomainOptionsProvider,
     "FilteredServiceOptionsProvider": FilteredServiceOptionsProvider,
     "ComponentReferenceOptionsProvider": ComponentReferenceOptionsProvider,
+    "BackupScheduleFrequencyOptionsProvider": BackupScheduleFrequencyOptionsProvider,
+    "BackupScheduleTimeOptionsProvider": BackupScheduleTimeOptionsProvider,
+    "BackupScheduleDayOptionsProvider": BackupScheduleDayOptionsProvider,
+    "BackupScheduleMonthDayOptionsProvider": BackupScheduleMonthDayOptionsProvider,
+    "BackupResourceTypesOptionsProvider": BackupResourceTypesOptionsProvider,
+    "BackupDeploymentOptionsProvider": BackupDeploymentOptionsProvider,
     "DeploymentCloneFromOptionsProvider": DeploymentCloneFromOptionsProvider,
     "RootComponentOptionsProvider": RootComponentOptionsProvider,
+    "BareDomainComponentOptionsProvider": BareDomainComponentOptionsProvider,
     "RepositoryOptionsProvider": RepositoryOptionsProvider,
     "DomainFormatOptionsProvider": DomainFormatOptionsProvider,
     "DeploymentSelectOptionsProvider": DeploymentSelectOptionsProvider,
+    "ApprovalStatusOptionsProvider": ApprovalStatusOptionsProvider,
 }
 
 

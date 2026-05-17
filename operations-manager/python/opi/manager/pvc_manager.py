@@ -17,7 +17,7 @@ MARKED_FOR_DELETION_SUFFIX = ".marked-for-deletion.yaml"
 class PVCManager:
     """Manager for PVC-related operations and resources."""
 
-    def __init__(self, project_manager: "ProjectManager") -> None:
+    def __init__(self, project_manager: ProjectManager) -> None:
         """
         Initialize the PVCManager with reference to ProjectManager.
 
@@ -141,7 +141,7 @@ class PVCManager:
         namespace: str,
         cluster: str,
         full_output_dir: str,
-        manifest_generator: "ManifestGenerator",
+        manifest_generator: ManifestGenerator,
         force_clone_override: bool = False,
     ) -> list[str]:
         """
@@ -336,7 +336,7 @@ class PVCManager:
         deployment_name: str,
         deployment_data: dict[str, Any],
         project_data: dict[str, Any],
-        marked_for_deletion_service: "MarkedForDeletionService | None" = None,
+        marked_for_deletion_service: MarkedForDeletionService | None = None,
     ) -> dict[str, Any]:
         """Handle cleanup when persistent-storage service is removed from a deployment.
 

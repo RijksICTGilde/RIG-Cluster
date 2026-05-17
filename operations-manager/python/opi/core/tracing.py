@@ -6,10 +6,12 @@ to a Jaeger instance.
 """
 
 import logging
-
-from fastapi import FastAPI
+from typing import TYPE_CHECKING
 
 from opi.core.config import VERSION, settings
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
 

@@ -22,7 +22,12 @@ identityProviders:
     config:
       idpEntityId: "https://engine.spbroker-prd.bzk.sson.overheid-i.nl/authentication/idp/metadata"
       singleSignOnServiceUrl: "https://engine.spbroker-prd.bzk.sson.overheid-i.nl/authentication/idp/single-sign-on"
-      singleLogoutServiceUrl: "https://engine.spbroker-prd.bzk.sson.overheid-i.nl/logout"
+      # Eager-logout shim: Keycloak redirects SAML LogoutRequest to our custom
+      # endpoint, which terminates the local Keycloak session and then redirects
+      # the user to the downstream BZK logout page. BZK does not call back.
+      # See features/keycloak-sso-rijk-eager-logout.md
+      singleLogoutServiceUrl: "{{ keycloak_url }}/realms/{{ realm_name }}/always-clear-session-logout/sso-rijk"
+      downstreamLogoutUrl: "https://engine.spbroker-prd.bzk.sson.overheid-i.nl/logout"
       nameIDPolicyFormat: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
       principalType: "SUBJECT"
       syncMode: "FORCE"

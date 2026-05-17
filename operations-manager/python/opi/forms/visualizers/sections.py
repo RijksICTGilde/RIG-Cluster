@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Coroutine
 
     from opi.forms.editables.editable import EditableEnforcer
     from opi.forms.layout import LayoutElement
@@ -31,10 +31,25 @@ class FormSection:
     summary_fn: Callable[[dict[str, Any]], str] | None = None
     enforcer: EditableEnforcer | None = None
     post_save_action: str = "save_only"  # "save_only" or "process_project"
+    guard: Callable[[dict[str, Any]], bool] | None = None
+    """Optional precondition check evaluated before rendering.
+
+    Receives the current data dict.  Returns ``True`` if the section can
+    proceed normally, ``False`` if the section should show ``guard_message``
+    instead of its editables.
+    """
+    guard_message: str = ""
+    """Message shown when ``guard`` returns ``False``."""
     post_merge: Callable[[dict[str, Any], dict[str, Any]], None] | None = None
     """Optional hook called after the section data is merged into the project.
 
     Receives ``(project_data, wizard_data)`` and mutates ``project_data``
     in place.  Used for cross-list side effects like distributing a new
     component reference to selected deployments.
+    """
+    after_save: Callable[[Any], Coroutine[Any, Any, None]] | None = None
+    """Optional async hook called after the project file is saved.
+
+    Receives the FastAPI ``Request`` so it can access ``app.state``.
+    Errors are logged, not raised.
     """

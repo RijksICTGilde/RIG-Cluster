@@ -14,6 +14,17 @@ from ruamel.yaml import YAML
 logger = logging.getLogger(__name__)
 
 
+def _create_yaml_writer() -> YAML:
+    """Create a consistently configured YAML writer for project files."""
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    yaml.width = 4096
+    yaml.default_flow_style = False
+    yaml.indent(mapping=2, sequence=4, offset=2)
+    yaml.representer.ignore_aliases = lambda *_: True
+    return yaml
+
+
 def load_yaml_from_path(file_path: str) -> dict[str, Any] | None:
     """
     Load YAML content from a file path.
@@ -55,10 +66,7 @@ def save_yaml_to_path(file_path: str, data: dict[str, Any]) -> bool:
         True if save was successful, False otherwise
     """
     try:
-        yaml = YAML()
-        yaml.preserve_quotes = True
-        yaml.width = 4096
-        yaml.default_flow_style = False
+        yaml = _create_yaml_writer()
 
         # Ensure directory exists
         dir_name = os.path.dirname(file_path)
@@ -139,10 +147,7 @@ def dump_yaml_to_string(data: dict[str, Any]) -> str:
         YAML content as string
     """
     try:
-        yaml = YAML()
-        yaml.preserve_quotes = True
-        yaml.width = 4096
-        yaml.default_flow_style = False
+        yaml = _create_yaml_writer()
 
         from io import StringIO
 

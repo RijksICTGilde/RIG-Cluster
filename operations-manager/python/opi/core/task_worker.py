@@ -38,6 +38,18 @@ class TaskWorker:
         # Handler registry - maps TaskType to handler function
         self._handlers: dict[str, Callable] = {}
 
+        # Per-task-type concurrency limits (task_type -> max concurrent)
+        self._type_concurrency_limits: dict[str, int] = {}
+
+    def set_type_concurrency_limit(self, task_type: str, max_concurrent: int) -> None:
+        """Set a concurrency limit for a specific task type.
+
+        When the limit is reached, the worker will skip claiming tasks of this
+        type until a slot opens up. Other task types are unaffected.
+        """
+        self._type_concurrency_limits[task_type] = max_concurrent
+        logger.info("Set concurrency limit for %s: %d", task_type, max_concurrent)
+
     def register_handler(self, task_type: str, handler: Callable) -> None:
         """Register a handler function for a task type."""
         self._handlers[task_type] = handler
@@ -60,9 +72,20 @@ class TaskWorker:
         )
 
     async def stop(self) -> None:
-        """Signal the worker to stop after completing any current task."""
+        """Signal the worker to stop and wait for active tasks to complete.
+
+        Sets _running to False so the main loop stops claiming new tasks,
+        then waits for any in-flight tasks to finish. The caller should
+        cancel the asyncio task returned by run() afterwards to clean up
+        the helper loops (stale recovery, cleanup).
+        """
         logger.info("Task worker stopping...")
         self._running = False
+
+        if self._active_tasks:
+            logger.info("Waiting for %d active task(s) to complete before shutdown...", len(self._active_tasks))
+            await asyncio.gather(*self._active_tasks, return_exceptions=True)
+            logger.info("All active tasks completed")
 
     async def _main_loop(self) -> None:
         """Poll for and execute tasks concurrently up to TASK_WORKER_CONCURRENCY."""
@@ -71,7 +94,10 @@ class TaskWorker:
                 # Wait for a concurrency slot before claiming
                 await self._semaphore.acquire()
 
-                task = await self._task_service.claim_next_task(self._cluster)
+                task = await self._task_service.claim_next_task(
+                    self._cluster,
+                    type_concurrency_limits=self._type_concurrency_limits or None,
+                )
                 if task is None:
                     self._semaphore.release()
                     await asyncio.sleep(settings.TASK_WORKER_POLL_INTERVAL)
@@ -152,18 +178,38 @@ class TaskWorker:
             )
 
             try:
-                # Call the handler
-                result = await handler(
-                    payload=task.get("payload", {}),
-                    progress=progress,
+                # Call the handler with a global timeout to prevent zombie tasks
+                result = await asyncio.wait_for(
+                    handler(
+                        payload=task.get("payload", {}),
+                        progress=progress,
+                    ),
+                    timeout=settings.TASK_WORKER_MAX_DURATION,
                 )
 
                 # Close progress manager (final flush)
                 await progress.close()
 
-                # Mark task as completed
-                await self._task_service.complete_task(task_id, result)
-                logger.info("Task %s completed successfully", task_id)
+                # Check if the handler reported failure via its return value
+                if isinstance(result, dict) and result.get("success") is False:
+                    error_msg = result.get("error", "Task reported failure")
+                    # Handler already decided this is a permanent failure — no retries
+                    await self._task_service.fail_task(
+                        task_id=task_id,
+                        error_message=error_msg,
+                        attempt_count=1,
+                        max_attempts=0,
+                    )
+                    logger.warning("Task %s reported failure: %s", task_id, error_msg)
+                else:
+                    await self._task_service.complete_task(task_id, result)
+                    logger.info("Task %s completed successfully", task_id)
+
+            except TimeoutError:
+                error_msg = f"Task exceeded maximum duration of {settings.TASK_WORKER_MAX_DURATION}s"
+                logger.error("Task %s timed out: %s", task_id, error_msg)
+                await progress.close()
+                raise TimeoutError(error_msg)
 
             except Exception:
                 # Close progress manager even on failure

@@ -95,7 +95,7 @@ class KopiaSnapshot:
         if value:
             try:
                 return int(value)
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 return None
         return None
 
@@ -146,7 +146,7 @@ class KopiaConnector:
     _lock = threading.Lock()
     is_kopia_available = False
 
-    def __new__(cls) -> "KopiaConnector":
+    def __new__(cls) -> KopiaConnector:
         """Implement singleton pattern."""
         if cls._instance is None:
             with cls._lock:

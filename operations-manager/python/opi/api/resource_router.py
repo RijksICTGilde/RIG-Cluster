@@ -118,7 +118,7 @@ async def sanitize_deployment(
     file_handler = ProjectFileHandler()
 
     try:
-        connector = get_metrics_connector()
+        connector = await get_metrics_connector()
     except Exception:
         connector = None
         logger.warning("Metrics backend unavailable, sanitize will use kubectl only")
@@ -179,7 +179,7 @@ async def sanitize_deployment(
             restart_count = 0
             if connector:
                 try:
-                    pod_restarts = connector.get_pod_restarts(namespace)
+                    pod_restarts = await connector.get_pod_restarts(namespace)
                     for pod_data in pod_restarts:
                         pod_name = pod_data.get("metric", {}).get("pod", "")
                         if pod_name.startswith(unique_name):
@@ -200,11 +200,22 @@ async def sanitize_deployment(
                         f'namespace="{namespace}", '
                         f'pod=~"{unique_name}.*"}}'
                     )
-                    oom_results = connector.custom_query(oom_query)
+                    oom_results = await connector.custom_query(oom_query)
                     if oom_results:
                         reasons.append("OOMKilled detected")
                 except Exception as e:
                     logger.warning(f"Failed to query OOM kills for {unique_name}: {e}")
+
+            # Check for image pull errors
+            try:
+                events = await kubectl.get_namespace_events(namespace, limit=50, max_age_hours=1)
+                image_pull_reasons = {"ErrImagePull", "ImagePullBackOff", "InvalidImageName"}
+                for event in events:
+                    if event.get("reason") in image_pull_reasons and event.get("object", "").startswith(unique_name):
+                        reasons.append(f"ImagePullBackOff: {event.get('message', 'image pull failed')}")
+                        break
+            except Exception as e:
+                logger.warning(f"Failed to check image pull events for {unique_name}: {e}")
 
             if reasons:
                 reason_str = "; ".join(reasons)
