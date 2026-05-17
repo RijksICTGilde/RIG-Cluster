@@ -21,9 +21,20 @@ spec:
             matchLabels:
               app.kubernetes.io/part-of: argocd
     # ArgoCD server UI/API reachable from within the cluster.
+    # NOTE on ports: the argocd-operator Service maps service port 80 ->
+    # container targetPort 8080 and 443 -> 8443. NetworkPolicy matches the
+    # CONTAINER port, not the Service port. OPI talks to argocd-server on
+    # service port 80 (ARGOCD_PORT), arriving at the pod on 8080. With
+    # `insecure: true` (argocd-deployment.yaml) the server serves plain HTTP
+    # on 8080 and does not redirect to HTTPS. 8443 is allowed too as
+    # defense-in-depth so flipping `insecure` or an operator default change
+    # cannot silently sever OPI -> argocd-server with no policy escape.
+    # 8083 is the server metrics port.
     - ports:
         - protocol: TCP
           port: 8080
+        - protocol: TCP
+          port: 8443
         - protocol: TCP
           port: 8083
   egress:
