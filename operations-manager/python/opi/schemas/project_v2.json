@@ -7,7 +7,7 @@
   "required": ["name"],
   "additionalProperties": false,
   "properties": {
-    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 30 },
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*\\Z", "maxLength": 30 },
     "display-name": { "type": "string" },
     "description": { "type": "string" },
     "schema-version": { "type": "number" },
@@ -232,8 +232,8 @@
       "required": ["match"],
       "additionalProperties": false,
       "properties": {
-        "match": { "type": "string", "pattern": "^[A-Za-z0-9/_.\\-]*$" },
-        "rewrite": { "type": "string", "pattern": "^[A-Za-z0-9/_.\\-]*$" }
+        "match": { "type": "string", "pattern": "^[A-Za-z0-9/_.\\-]*\\Z" },
+        "rewrite": { "type": "string", "pattern": "^[A-Za-z0-9/_.\\-]*\\Z" }
       }
     },
 
@@ -303,7 +303,7 @@
       "properties": {
         "type": { "type": "string" },
         "size": { "type": "string" },
-        "mount-path": { "type": "string", "pattern": "^/[\\w./-]+$" }
+        "mount-path": { "type": "string", "pattern": "^(?!.*\\.\\.)/[\\w./-]+\\Z" }
       }
     },
 
@@ -312,7 +312,7 @@
       "required": ["name"],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63 },
+        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
         "type": { "type": "string" },
         "image": { "type": "string" },
         "ports": {
@@ -368,9 +368,9 @@
       "required": ["name", "cluster", "namespace"],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63 },
-        "cluster": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63 },
-        "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63 },
+        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
+        "cluster": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
+        "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
         "repository": { "type": "string" },
         "base-domain": { "type": ["string", "null"] },
         "subdomain": { "type": ["string", "null"] },
@@ -439,8 +439,8 @@
         },
         "env-vars": {
           "type": "object",
-          "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
-          "additionalProperties": { "type": "string" }
+          "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\Z" },
+          "additionalProperties": { "type": "string", "pattern": "^[^\\r\\n\\u0000]*\\Z" }
         },
         "disabled": { "type": "boolean" },
         "disabled-reason": { "type": "string" }
