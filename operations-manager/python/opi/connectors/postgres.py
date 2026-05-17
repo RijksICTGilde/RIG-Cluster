@@ -15,6 +15,29 @@ import asyncpg
 
 logger = logging.getLogger(__name__)
 
+_CREATE_SCHEMA = b"CREATE SCHEMA "
+_CREATE_SCHEMA_IF_NOT_EXISTS = b"CREATE SCHEMA IF NOT EXISTS "
+
+
+def _rewrite_create_schema(buf: bytes) -> bytes:
+    """Line-anchored CREATE SCHEMA -> CREATE SCHEMA IF NOT EXISTS rewrite.
+
+    Replaces the old `sed 's/^CREATE SCHEMA /.../'` pipeline stage. Extensions
+    are pre-created in the target schema before pg_dump runs, so the duplicate
+    CREATE SCHEMA must be tolerated under psql ON_ERROR_STOP=1. Anchored at the
+    start of a physical line, matching sed's behaviour exactly; callers feed
+    only complete lines (the streaming pump carries any partial trailing line
+    to the next chunk) so the rewrite is correct across chunk boundaries.
+    """
+    if _CREATE_SCHEMA not in buf:
+        return buf
+    out = []
+    for line in buf.split(b"\n"):
+        if line.startswith(_CREATE_SCHEMA):
+            line = _CREATE_SCHEMA_IF_NOT_EXISTS + line[len(_CREATE_SCHEMA) :]
+        out.append(line)
+    return b"\n".join(out)
+
 
 class PostgresConnectionError(Exception):
     """Exception raised when PostgreSQL connection is not available."""
@@ -1641,24 +1664,39 @@ class PostgresConnector:
                     raise Exception("Failed to open pg_dump/psql pipes for streaming clone")
 
                 async def _pump_dump_to_restore() -> None:
-                    # Stream pg_dump -> psql line by line so the full dump is
-                    # never held in memory. The line-anchored rewrite replaces
-                    # the sed stage; extensions are pre-created in the target
-                    # schema so CREATE SCHEMA must become CREATE SCHEMA IF NOT
-                    # EXISTS to survive ON_ERROR_STOP=1. pg_dump emits each
-                    # statement on its own line so readline is bounded.
-                    create_schema = b"CREATE SCHEMA "
+                    # Stream pg_dump -> psql with fixed-size chunked reads so
+                    # the full dump is never held in memory AND a single huge
+                    # COPY data line cannot blow the asyncio StreamReader
+                    # line-length limit (readline would raise on rows wider
+                    # than ~64 KiB). The CREATE SCHEMA rewrite is applied per
+                    # chunk, carrying the partial trailing line across chunks
+                    # so the line-anchored rewrite stays correct on boundaries.
+                    chunk_size = 1 << 20  # 1 MiB
+                    carry = b""
                     try:
                         while True:
-                            line = await dump_stdout.readline()
-                            if not line:
+                            chunk = await dump_stdout.read(chunk_size)
+                            if not chunk:
                                 break
-                            if line.startswith(create_schema):
-                                line = b"CREATE SCHEMA IF NOT EXISTS " + line[len(create_schema) :]
-                            restore_stdin.write(line)
+                            data = carry + chunk
+                            nl = data.rfind(b"\n")
+                            if nl == -1:
+                                carry = data
+                                continue
+                            complete, carry = data[: nl + 1], data[nl + 1 :]
+                            restore_stdin.write(_rewrite_create_schema(complete))
                             await restore_stdin.drain()
+                        if carry:
+                            restore_stdin.write(_rewrite_create_schema(carry))
+                            await restore_stdin.drain()
+                    except (BrokenPipeError, ConnectionResetError):
+                        # psql exited early (e.g. ON_ERROR_STOP=1 on a bad
+                        # dump). Swallow the broken-pipe so the real psql error
+                        # from communicate()/returncode is what surfaces.
+                        pass
                     finally:
-                        restore_stdin.close()
+                        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                            restore_stdin.close()
 
                 # Read pg_dump stdout (via the pump) and stderr concurrently;
                 # do not use communicate() on the dump process because the
