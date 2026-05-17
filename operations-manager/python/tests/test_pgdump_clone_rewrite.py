@@ -66,3 +66,40 @@ def test_chunk_boundary_carry_preserves_correctness() -> None:
     assert bytes(out) == expected
     assert out.startswith(b"CREATE SCHEMA IF NOT EXISTS a;\n")
     assert b"CREATE SCHEMA IF NOT EXISTS b;\n" in bytes(out)
+
+
+def test_bounded_carry_flushes_wide_line_without_corruption() -> None:
+    # Mirrors the pump's bounded-carry branch: an unterminated line longer
+    # than carry_bound is flushed verbatim mid-line, then the rest of the
+    # dump continues normally. The reassembled stream must be byte-identical
+    # to a single-pass rewrite -- proving the memory bound does not corrupt
+    # the CREATE SCHEMA rewrite (a mid-line fragment is never a line-anchored
+    # match, so emitting it unmodified is correct).
+    chunk = 4096
+    carry_bound = 8192
+    # A wide single COPY-style data row (no newline for a long stretch),
+    # bracketed by real CREATE SCHEMA lines that must still be rewritten.
+    dump = b"CREATE SCHEMA a;\n" + (b"v" * 50000) + b"\nCREATE SCHEMA b;\nx" * 2
+    expected = _rewrite_create_schema(dump)
+
+    out = bytearray()
+    carry = b""
+    for i in range(0, len(dump), chunk):
+        data = carry + dump[i : i + chunk]
+        nl = data.rfind(b"\n")
+        if nl == -1:
+            if len(data) >= carry_bound:
+                out += data  # flush verbatim, no rewrite (mid-line)
+                carry = b""
+            else:
+                carry = data
+            continue
+        complete, carry = data[: nl + 1], data[nl + 1 :]
+        out += _rewrite_create_schema(complete)
+    if carry:
+        out += _rewrite_create_schema(carry)
+
+    assert bytes(out) == expected
+    assert out.startswith(b"CREATE SCHEMA IF NOT EXISTS a;\n")
+    assert bytes(out).count(b"CREATE SCHEMA IF NOT EXISTS b;\n") == 2
+    assert b"v" * 50000 in bytes(out)

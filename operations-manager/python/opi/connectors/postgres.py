@@ -1664,14 +1664,20 @@ class PostgresConnector:
                     raise Exception("Failed to open pg_dump/psql pipes for streaming clone")
 
                 async def _pump_dump_to_restore() -> None:
-                    # Stream pg_dump -> psql with fixed-size chunked reads so
-                    # the full dump is never held in memory AND a single huge
-                    # COPY data line cannot blow the asyncio StreamReader
-                    # line-length limit (readline would raise on rows wider
-                    # than ~64 KiB). The CREATE SCHEMA rewrite is applied per
-                    # chunk, carrying the partial trailing line across chunks
-                    # so the line-anchored rewrite stays correct on boundaries.
+                    # Stream pg_dump -> psql with fixed-size chunked reads.
+                    # Memory stays bounded regardless of dump or row size:
+                    # readline would raise on COPY rows wider than asyncio's
+                    # ~64 KiB limit, and buffering a whole line would let one
+                    # huge bytea/JSON row balloon the OPI pod. The CREATE
+                    # SCHEMA rewrite is line-anchored, so it only needs the
+                    # bytes up to the first newline of a line. We keep at most
+                    # `carry_bound` bytes pending: complete lines are rewritten
+                    # and flushed; a still-open line longer than the bound is
+                    # flushed verbatim (it cannot start with "CREATE SCHEMA "
+                    # at a line boundary -- that test already failed for this
+                    # line -- so emitting its tail unmodified is correct).
                     chunk_size = 1 << 20  # 1 MiB
+                    carry_bound = 1 << 20  # flush an unterminated line past 1 MiB
                     carry = b""
                     try:
                         while True:
@@ -1681,7 +1687,16 @@ class PostgresConnector:
                             data = carry + chunk
                             nl = data.rfind(b"\n")
                             if nl == -1:
-                                carry = data
+                                # No line end yet. Bound memory: once the open
+                                # line exceeds the threshold, flush all of it
+                                # verbatim (a mid-line fragment can never be a
+                                # line-anchored CREATE SCHEMA match).
+                                if len(data) >= carry_bound:
+                                    restore_stdin.write(data)
+                                    await restore_stdin.drain()
+                                    carry = b""
+                                else:
+                                    carry = data
                                 continue
                             complete, carry = data[: nl + 1], data[nl + 1 :]
                             restore_stdin.write(_rewrite_create_schema(complete))
@@ -1700,18 +1715,33 @@ class PostgresConnector:
 
                 # Read pg_dump stdout (via the pump) and stderr concurrently;
                 # do not use communicate() on the dump process because the
-                # pump owns its stdout.
+                # pump owns its stdout. The try/finally guarantees that on any
+                # failure path (e.g. restore_process.communicate() raising) the
+                # background tasks are cancelled/awaited and both child
+                # processes are reaped, so we never leak orphan subprocesses or
+                # "Task exception never retrieved" warnings.
                 pump_task = asyncio.create_task(_pump_dump_to_restore())
                 dump_err_task = asyncio.create_task(dump_stderr.read())
-                clone_out, clone_err = await restore_process.communicate()
-                await pump_task
-                dump_err = await dump_err_task
-                await dump_process.wait()
+                try:
+                    clone_out, clone_err = await restore_process.communicate()
+                    await pump_task
+                    dump_err = await dump_err_task
+                    await dump_process.wait()
+                finally:
+                    for task in (pump_task, dump_err_task):
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(pump_task, dump_err_task, return_exceptions=True)
+                    for proc in (dump_process, restore_process):
+                        if proc.returncode is None:
+                            with contextlib.suppress(ProcessLookupError):
+                                proc.kill()
+                            await proc.wait()
 
             # Log only errors or important warnings
             combined_err = (dump_err or b"") + (clone_err or b"")
             if combined_err:
-                stderr_text = combined_err.decode().strip()
+                stderr_text = combined_err.decode(errors="replace").strip()
                 # Only log if it contains actual errors, not just version info
                 if "error:" in stderr_text.lower() and "version mismatch" not in stderr_text.lower():
                     logger.error(f"pg_dump stderr: {stderr_text}")
@@ -1719,11 +1749,11 @@ class PostgresConnector:
                     logger.debug(f"pg_dump stderr: {stderr_text}")
 
             if dump_process.returncode != 0:
-                raise Exception(f"pg_dump failed: {dump_err.decode()}")
+                raise Exception(f"pg_dump failed: {dump_err.decode(errors='replace')}")
 
             # Check for errors
             if restore_process.returncode != 0:
-                raise Exception(f"Schema clone pipeline failed: {clone_err.decode()}")
+                raise Exception(f"Schema clone pipeline failed: {clone_err.decode(errors='replace')}")
 
             # Check if pg_dump actually produced any output
             if not clone_out and not clone_err:
