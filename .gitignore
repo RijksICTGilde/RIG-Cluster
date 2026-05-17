@@ -25,6 +25,11 @@ __pycache__/
 # Generated secret overview files (contains plain text passwords)
 secrets-overview-*.txt
 secrets-overview-*.yaml
+
+# Pre-encryption SOPS files: hold secrets in plain text until encrypted to
+# *.sops.yaml. Final backstop so a failed/aborted SOPS run can never leak
+# plaintext secrets into a GitOps repo.
+*.to-sops.yaml
 /bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/operations-manager-env-secrets.yaml
 /output.yaml
 /operations-manager/python/.env.my-machine

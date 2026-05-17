@@ -1064,6 +1064,40 @@ class GitConnector:
             logger.error(error_msg)
             raise
 
+    def _abort_if_plaintext_secrets_present(self) -> None:
+        """
+        Refuse to stage/commit if any *.to-sops.yaml file remains in the tree.
+
+        A .to-sops.yaml file holds a secret in plain text; it must have been
+        replaced by its encrypted .sops.yaml counterpart before any git
+        operation. This is defense in depth: even if an upstream caller forgets
+        to fail closed on a SOPS error, no code path can leak plaintext secrets
+        into the GitOps repository through this connector.
+
+        Raises:
+            RuntimeError: If one or more *.to-sops.yaml files are found.
+        """
+        working_dir = self.__working_dir
+        leftover: list[str] = []
+        for root, _dirs, files in os.walk(working_dir):
+            if ".git" in root.split(os.sep):
+                continue
+            leftover.extend(
+                os.path.relpath(os.path.join(root, name), working_dir)
+                for name in files
+                if name.endswith(".to-sops.yaml")
+            )
+
+        if leftover:
+            leftover.sort()
+            server_info = self._get_server_context()
+            raise RuntimeError(
+                f"Geweigerd om te committen naar {server_info}: "
+                f"{len(leftover)} onversleuteld(e) .to-sops.yaml bestand(en) aangetroffen "
+                f"in de werkboom: {', '.join(leftover)}. "
+                "Dit zou secrets in platte tekst naar git committen; operatie afgebroken."
+            )
+
     async def commit_and_push(self, message: str) -> None:
         """
         Commit all changes in the working directory and push to remote repository.
@@ -1077,6 +1111,9 @@ class GitConnector:
 
         # Ensure the repository is cloned
         await self.ensure_repo_cloned()
+
+        # Defense in depth: never commit plaintext secrets.
+        self._abort_if_plaintext_secrets_present()
 
         # Stage all changes in the working directory (new, modified, and deleted files)
         add_cmd = ["add", "-A"]
@@ -1269,6 +1306,9 @@ class GitConnector:
             RuntimeError: If staging or commit fails
         """
         await self.ensure_repo_cloned()
+
+        # Defense in depth: never commit plaintext secrets.
+        self._abort_if_plaintext_secrets_present()
 
         # Stage all changes in the working directory (new, modified, and deleted files)
         add_cmd = ["add", "-A"]
