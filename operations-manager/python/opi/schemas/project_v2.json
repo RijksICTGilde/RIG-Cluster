@@ -395,8 +395,19 @@
           "items": { "$ref": "#/$defs/deployment-helmfile" }
         },
         "root-component": { "type": "string" },
-        "clone-from": { "$ref": "#/$defs/clone-from" }
+        "clone-from": { "$ref": "#/$defs/clone-from" },
+        "backup": { "$ref": "#/$defs/deployment-backup" }
       }
+    },
+
+    "deployment-backup": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "schedule": { "type": "string" },
+        "resource_types": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": { "type": ["string", "number", "boolean"] }
     },
 
     "deployment-component": {

@@ -57,6 +57,27 @@ def test_valid_project_passes() -> None:
     validate_project_schema(_valid_project())
 
 
+def test_deployment_with_scheduled_backup_passes() -> None:
+    """Per-deployment backup config is a real production feature.
+
+    The backup scheduler reads deployments[].backup.schedule (an RRULE) and
+    the detail-edit form writes schedule:time/day/monthday keys into the same
+    map. A fail-closed schema that omits this rejects every project using
+    scheduled backups, which would stop legitimate deployments.
+    """
+    project = _valid_project()
+    project["deployments"][0]["backup"] = {
+        "enabled": True,
+        "schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0",
+        "resource_types": ["pvc", "database"],
+        "schedule:time": "02:00",
+        "schedule:day": "MO",
+        "schedule:monthday": "1",
+    }
+
+    validate_project_schema(project)
+
+
 def test_namespace_with_newline_is_rejected() -> None:
     """A namespace containing a newline (injection vector) must be rejected."""
     project = _valid_project()
