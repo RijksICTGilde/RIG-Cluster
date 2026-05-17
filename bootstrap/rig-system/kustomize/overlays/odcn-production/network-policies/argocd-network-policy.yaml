@@ -3,11 +3,45 @@ apiVersion: networking.k8s.io/v1
 metadata:
   name: allow-argo
 spec:
-  podSelector: {}
-  ingress:
-    - {}
-  egress:
-    - {}
+  # Scope to ArgoCD component pods only. Previously this used podSelector: {}
+  # with empty allow-all ingress/egress, which (NetworkPolicies being additive)
+  # nullified the restrictive operations-manager-policy for the OPI pod and
+  # every other pod in rig-prd-operations.
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: argocd
   policyTypes:
     - Ingress
     - Egress
+  ingress:
+    # Intra-namespace traffic between ArgoCD components
+    # (server, repo-server, redis, application-controller, applicationset).
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: argocd
+    # ArgoCD server UI/API reachable from within the cluster.
+    - ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8083
+  egress:
+    # DNS resolution.
+    - ports:
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 53
+    # Intra-namespace traffic between ArgoCD components.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: argocd
+    # Outbound HTTPS for Git, Helm repositories, container registries and the
+    # Kubernetes API server (manifest generation and cluster reconciliation).
+    - ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
