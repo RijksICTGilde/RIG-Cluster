@@ -276,3 +276,121 @@ class TestGitMonitorNamespacePinning:
         assert result is True
         applied_namespace = self.kubectl.apply_manifest.await_args.args[1]["namespace"]
         assert applied_namespace == "my-project"
+
+
+# ---------------------------------------------------------------------------
+# GAT 3 (review augmentation): extract_deployment_namespace enforces the pin
+#
+# Eight callsites (3 in backup_router, 2 in restore_router, 3 in backup_tasks,
+# 1 in router_detail_edit) read the namespace via this helper without going
+# through enforce_namespace_pin. The helper itself now enforces the same
+# invariant: declared namespace must equal project name; default when absent.
+# ---------------------------------------------------------------------------
+
+
+class TestExtractDeploymentNamespacePinned:
+    """The helper must pin the namespace, not return the raw declared value."""
+
+    def _handler(self):
+        from opi.handlers.project_file_handler import ProjectFileHandler
+
+        return ProjectFileHandler.__new__(ProjectFileHandler)
+
+    def test_declared_matching_namespace_returns_project_name(self) -> None:
+        project_data = {
+            "name": "my-project",
+            "deployments": [{"name": "prod", "namespace": "my-project"}],
+        }
+        assert self._handler().extract_deployment_namespace(project_data, "prod") == "my-project"
+
+    def test_missing_namespace_defaults_to_project_name(self) -> None:
+        project_data = {
+            "name": "my-project",
+            "deployments": [{"name": "prod"}],
+        }
+        assert self._handler().extract_deployment_namespace(project_data, "prod") == "my-project"
+
+    def test_mismatched_namespace_raises_value_error(self) -> None:
+        """Cross-tenant: attacker sets namespace=victim-project on his own YAML."""
+        project_data = {
+            "name": "attacker-project",
+            "deployments": [{"name": "prod", "namespace": "victim-project"}],
+        }
+        with pytest.raises(ValueError, match="namespace") as exc:
+            self._handler().extract_deployment_namespace(project_data, "prod")
+        assert "attacker-project" in str(exc.value)
+        assert "victim-project" in str(exc.value)
+
+    def test_missing_deployment_returns_none(self) -> None:
+        project_data = {
+            "name": "my-project",
+            "deployments": [{"name": "prod"}],
+        }
+        assert self._handler().extract_deployment_namespace(project_data, "nonexistent") is None
+
+    def test_multiple_deployments_only_the_named_one_is_inspected(self) -> None:
+        """A later deployment with a mismatched namespace must not raise when
+        the caller asks for a different (well-formed) deployment."""
+        project_data = {
+            "name": "my-project",
+            "deployments": [
+                {"name": "prod", "namespace": "my-project"},
+                {"name": "staging", "namespace": "victim-project"},
+            ],
+        }
+        assert self._handler().extract_deployment_namespace(project_data, "prod") == "my-project"
+        with pytest.raises(ValueError, match="namespace"):
+            self._handler().extract_deployment_namespace(project_data, "staging")
+
+
+# ---------------------------------------------------------------------------
+# GAT 1 (review augmentation): handle_create_project existence check
+#
+# Mirrors simple_background.process_project_background's existence check.
+# Without it, a TaskType.CREATE_PROJECT submission with another tenant's
+# project name silently overwrites that tenant's project file.
+# ---------------------------------------------------------------------------
+
+
+class TestHandleCreateProjectExistenceCheck:
+    """A create_project task for an existing project name must fail fast."""
+
+    @pytest.mark.asyncio
+    async def test_create_project_blocked_when_file_already_exists(self, monkeypatch) -> None:
+        from opi.core import task_handlers_project
+
+        # GitConnector instance whose file_exists returns True for any path.
+        fake_connector = AsyncMock()
+        fake_connector.file_exists = AsyncMock(return_value=True)
+        fake_connector.create_or_update_file = AsyncMock()
+
+        class _FakeGitConnector:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __new__(cls, *args, **kwargs):
+                return fake_connector
+
+        monkeypatch.setattr("opi.connectors.git.GitConnector", _FakeGitConnector)
+
+        # Stub the small helpers used before the file_exists check.
+        monkeypatch.setattr("opi.utils.project_utils.validate_project_name", lambda name: True)
+
+        # Progress object the handler calls into.
+        progress = AsyncMock()
+        progress.add_task = lambda *_: object()
+        progress.update_current_step = lambda *_: None
+        progress.complete_task = lambda *_: None
+        progress.fail_task = lambda *_: None
+        progress.fail_project = lambda *_: None
+
+        payload = {
+            "project_name": "victim-project",
+            "yaml_content": "name: victim-project\n",
+        }
+        result = await task_handlers_project.handle_create_project(payload, progress)
+
+        assert result["status"] == "failed"
+        assert "bestaat al" in result["error"]
+        # The destructive call must not have been made.
+        fake_connector.create_or_update_file.assert_not_called()
