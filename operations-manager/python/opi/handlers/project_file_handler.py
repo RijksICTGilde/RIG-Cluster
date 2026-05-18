@@ -2139,10 +2139,21 @@ class ProjectFileHandler:
 
     def extract_deployment_namespace(self, project_data: dict[str, Any], deployment_name: str) -> str | None:
         """
-        Extract the raw namespace for a deployment.
+        Extract the namespace for a deployment, pinned to the project name.
 
-        Note: This returns the raw namespace from the project file. To get the actual
-        Kubernetes namespace, use get_prefixed_namespace(cluster, namespace) from
+        The project file is attacker-controlled. A deployment declaring a
+        namespace that doesn't match the project name would direct OPI to
+        operate on a victim namespace (cross-tenant isolation breach). This
+        function enforces the same invariant as
+        ``project_manager.enforce_namespace_pin`` -- declared namespace must
+        equal project name, missing namespace defaults to the project name --
+        but locally and without mutating ``project_data``. It is called from
+        backup/restore endpoints and tasks that read project YAML directly
+        rather than via ``ProjectManager.get_deployments`` (which is the
+        canonical pinned reader).
+
+        Note: To get the actual Kubernetes namespace, use
+        get_prefixed_namespace(cluster, namespace) from
         opi.core.cluster_config.
 
         Args:
@@ -2150,16 +2161,34 @@ class ProjectFileHandler:
             deployment_name: Name of the deployment
 
         Returns:
-            Raw namespace string if found, None otherwise
+            The project-name-pinned namespace if the deployment exists,
+            None if no deployment with that name is found.
+
+        Raises:
+            ValueError: If the deployment exists and declares a namespace
+                that does not match the project name. Same message shape as
+                ``enforce_namespace_pin``.
         """
-        path = f"$.deployments[?(@.name=='{deployment_name}')].namespace"
-        namespace = self.extract_value_by_path(project_data, path, None)
+        project_name = project_data.get("name")
+        for deployment in project_data.get("deployments", []):
+            if deployment.get("name") != deployment_name:
+                continue
+            declared = deployment.get("namespace")
+            if declared is not None and project_name is not None and declared != project_name:
+                raise ValueError(
+                    f"Deployment '{deployment_name}' in project '{project_name}' "
+                    f"gebruikt namespace '{declared}', maar de namespace "
+                    f"moet gelijk zijn aan de projectnaam '{project_name}'. "
+                    f"Een afwijkende namespace is niet toegestaan omdat dit toegang "
+                    f"tot de resources van een ander project zou geven."
+                )
+            if project_name is None:
+                logger.warning(f"No project name found while resolving namespace for deployment '{deployment_name}'")
+                return declared
+            logger.debug(f"Pinned namespace '{project_name}' for deployment '{deployment_name}'")
+            return project_name
 
-        if namespace:
-            logger.debug(f"Found namespace '{namespace}' for deployment '{deployment_name}'")
-            return namespace
-
-        logger.warning(f"No namespace found for deployment '{deployment_name}'")
+        logger.warning(f"No deployment '{deployment_name}' found while resolving namespace")
         return None
 
     def extract_deployment_cluster(self, project_data: dict[str, Any], deployment_name: str) -> str | None:
