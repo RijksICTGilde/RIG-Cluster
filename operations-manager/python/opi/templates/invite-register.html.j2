@@ -8,7 +8,7 @@
 {% set title_en = "Create Account - " ~ display_name %}
 {% set page_title = title_nl if language == 'nl' else title_en %}
 
-<c-page title="{{ page_title }}" lang="{{ language }}" bodyClass="rvo-theme rvo-responsive">
+<c-page title="{{ page_title }}" lang="{{ language }}" bodyClass="rvo-theme rvo-responsive" additionalJs='<script src="/static/js/csrf.js"></script>'>
     {# Header #}
     <c-header
         text="RIG Cluster"
