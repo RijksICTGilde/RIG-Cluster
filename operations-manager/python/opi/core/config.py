@@ -153,12 +153,13 @@ class Settings(BaseSettings):
     )
     SKIP_STARTUP_CHECKS: bool = False  # Skip namespace/Keycloak/MinIO checks on startup (for fast local dev)
 
-    # Legacy Git server settings (for backward compatibility)
-    # TODO: This is only used for testing creating local GIT repositories and should be removed or fixed in the future
-    GIT_SERVER_HOST: str = "localhost"
-    GIT_SERVER_PORT: int = 2222
+    # SSH deploy key path for git operations. Read by git_monitor when the
+    # monitored project URL is ssh:// or git:// (only the local cluster's
+    # docker-compose git-daemon flow today). The other GIT_SERVER_* keys
+    # (HOST, PORT, USER) used to live here too but were orphaned after the
+    # remote-repo-creation code path was removed; this file is now the
+    # single source of truth for the only remaining setting.
     GIT_SERVER_KEY_PATH: str = "/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/keys/git-server-key"
-    GIT_SERVER_USER: str = "git"
 
     # OIDC settings
     OIDC_CLIENT_ID: str | None = None
