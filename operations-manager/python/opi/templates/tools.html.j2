@@ -1,4 +1,4 @@
-<c-page title="ZAD Tools" lang="nl" additionalJs='<script src="/static/js/csrf.js"></script>'>
+<c-page title="ZAD Tools" lang="nl">
     <c-header
         text="AGE Encryption Tools"
         subtitle="Encrypt and decrypt text using AGE public and private keys"
@@ -151,7 +151,11 @@
 
                 try {
                     const endpoint = operation === 'encrypt' ? '/tools/encrypt' : '/tools/decrypt';
-                    const response = await fetch(endpoint, { method: 'POST', body: formData });
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        body: formData,
+                        headers: { 'X-CSRF-Token': "{{ request.state.csrf_token }}" },
+                    });
                     const data = await response.json();
                     if (data.success) { showSuccess(data.result); }
                     else { showError(data.error || 'Operation failed'); }

@@ -290,6 +290,83 @@ class TestJsonPostWithHeaderToken:
         assert response.status_code == 403
 
 
+# ---------------------------------------------------------------------------
+# Server-rendered token: middleware exposes request.state.csrf_token so
+# templates render it directly into hx-headers / hidden fields, and the
+# cookie can stay httponly=True (JavaScript never reads it).
+# ---------------------------------------------------------------------------
+
+
+class TestServerRenderedToken:
+    def test_state_csrf_token_is_set_on_get(self) -> None:
+        """Middleware must expose the token on request.state for templates."""
+        captured: dict[str, Any] = {}
+
+        async def endpoint(request: Any) -> PlainTextResponse:
+            captured["state_token"] = request.state.csrf_token
+            return PlainTextResponse("ok")
+
+        app = Starlette(routes=[Route("/", endpoint, methods=["GET"])])
+        app.add_middleware(CSRFMiddleware)
+
+        with (
+            patch("opi.core.config.settings") as mock_settings,
+            TestClient(app, base_url="http://opi.example.nl") as client,
+        ):
+            mock_settings.DEBUG = False
+            client.get("/")
+
+        assert captured["state_token"]
+        assert len(captured["state_token"]) > 20
+
+    def test_state_csrf_token_matches_cookie_on_subsequent_requests(self) -> None:
+        """A second request reuses the cookie value -- one token per session,
+        consistent across all tabs/forms that render at different moments."""
+        seen: list[str] = []
+
+        async def endpoint(request: Any) -> PlainTextResponse:
+            seen.append(request.state.csrf_token)
+            return PlainTextResponse("ok")
+
+        app = Starlette(routes=[Route("/", endpoint, methods=["GET"])])
+        app.add_middleware(CSRFMiddleware)
+
+        with (
+            patch("opi.core.config.settings") as mock_settings,
+            TestClient(app, base_url="http://opi.example.nl") as client,
+        ):
+            mock_settings.DEBUG = False
+            client.get("/")
+            client.get("/")
+            client.get("/")
+
+        assert len(seen) == 3
+        # Same token across requests in the same session (cookie reuse).
+        assert seen[0] == seen[1] == seen[2]
+
+    def test_cookie_is_httponly(self) -> None:
+        """The CSRF cookie is httponly=True; templates render the token
+        server-side, so JavaScript never needs to read document.cookie."""
+
+        async def endpoint(request: Any) -> PlainTextResponse:
+            return PlainTextResponse("ok")
+
+        app = Starlette(routes=[Route("/", endpoint, methods=["GET"])])
+        app.add_middleware(CSRFMiddleware)
+
+        with (
+            patch("opi.core.config.settings") as mock_settings,
+            TestClient(app, base_url="http://opi.example.nl") as client,
+        ):
+            mock_settings.DEBUG = False
+            response = client.get("/")
+
+        set_cookie = response.headers.get("set-cookie", "")
+        assert CSRF_COOKIE_NAME in set_cookie
+        assert "HttpOnly" in set_cookie
+        assert "SameSite=strict" in set_cookie.lower() or "samesite=strict" in set_cookie.lower()
+
+
 def test_csrf_module_has_no_unresolved_runtime_annotations() -> None:
     """Regression: dispatch() is annotated with Callable/Awaitable/Response.
 

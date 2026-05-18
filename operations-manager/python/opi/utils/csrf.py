@@ -74,6 +74,19 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+        # Resolve the request's CSRF token before the handler runs so templates
+        # can render it server-side (into hx-headers / hidden form field /
+        # meta-tag) without reading the cookie from JavaScript. Single value
+        # per session: an existing cookie is reused; a missing cookie causes
+        # one to be minted now and persisted on the response.
+        cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
+        if cookie_token:
+            request.state.csrf_token = cookie_token
+        else:
+            new_token = secrets.token_urlsafe(32)
+            request.state.csrf_token = new_token
+            request.state.csrf_token_new = new_token
+
         if request.method not in SAFE_METHODS and not _is_exempt_path(request.url.path):
             try:
                 await _enforce_csrf(request)
@@ -84,21 +97,17 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
 
-        # Ensure a CSRF token cookie exists. Either a handler minted a fresh
-        # one via ensure_csrf_token(), or the request had no cookie at all and
-        # we seed one now so the next state-changing request can succeed.
         new_token = getattr(request.state, "csrf_token_new", None)
-        if new_token is None and not request.cookies.get(CSRF_COOKIE_NAME):
-            new_token = secrets.token_urlsafe(32)
-
         if new_token is not None:
             response.set_cookie(
                 key=CSRF_COOKIE_NAME,
                 value=new_token,
-                # Readable by JS so the double-submit token can be attached to
-                # htmx/fetch requests as a header. The token cookie is not a
-                # session credential; its only job is to be echoed back.
-                httponly=False,
+                # httponly=True is safe here because the token never needs to
+                # be read by client-side JavaScript: templates render it
+                # server-side into hx-headers, hidden form fields, or a
+                # <meta> tag. The cookie's only job is to be echoed back
+                # automatically by the browser for the double-submit check.
+                httponly=True,
                 samesite="strict",
                 secure=request.url.scheme == "https",
             )
@@ -164,20 +173,15 @@ def _validate_double_submit(request: Request, submitted_token: str | None) -> No
 
 
 def ensure_csrf_token(request: Request) -> str:
-    """Get existing CSRF token from cookie or generate a new one.
+    """Return the CSRF token for this request.
 
-    Args:
-        request: The FastAPI request object
-
-    Returns:
-        The CSRF token string
+    CSRFMiddleware sets ``request.state.csrf_token`` on every request
+    (existing cookie value or a freshly minted one). This helper is kept
+    for backward compatibility with handlers that read the token
+    explicitly; new code should reference ``request.state.csrf_token``
+    directly, or in templates ``{{ request.state.csrf_token }}``.
     """
-    token = request.cookies.get(CSRF_COOKIE_NAME)
-    if not token:
-        token = secrets.token_urlsafe(32)
-        # Store new token in request state for the response middleware to set the cookie.
-        request.state.csrf_token_new = token
-    return token
+    return request.state.csrf_token
 
 
 def validate_csrf_token(request: Request, form_data: dict | None) -> None:

@@ -8,7 +8,7 @@
 {% set title_en = "Create Account - " ~ display_name %}
 {% set page_title = title_nl if language == 'nl' else title_en %}
 
-<c-page title="{{ page_title }}" lang="{{ language }}" bodyClass="rvo-theme rvo-responsive" additionalJs='<script src="/static/js/csrf.js"></script>'>
+<c-page title="{{ page_title }}" lang="{{ language }}" bodyClass="rvo-theme rvo-responsive">
     {# Header #}
     <c-header
         text="RIG Cluster"
@@ -21,6 +21,7 @@
                     {# Registration Form Card #}
                     <c-card outline="true" padding="lg">
                         <form method="POST" action="/invite/{{ invite_key }}/register" autocomplete="off">
+                            <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
                             <c-layout-flow gap="lg">
                                 <c-heading type="h1" textContent="{{ display_name }}" />
                                 <c-heading type="h2" textContent="{% if language == 'nl' %}Nieuw Account{% else %}New Account{% endif %}" />
