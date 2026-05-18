@@ -180,6 +180,116 @@ class TestCsrfEnforcement:
         assert post_response.json() == {"changed": True}
 
 
+# ---------------------------------------------------------------------------
+# Exempt-list scope: exact match for probe routes, slash-suffixed prefixes
+# for directory-style subtrees. Bare-prefix matching is NOT supported.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def probe_client() -> TestClient:
+    """A client whose app exposes both probe routes and lookalike user pages
+    so we can prove the exempt list does not over-match."""
+
+    async def probe(request: Any) -> JSONResponse:
+        return JSONResponse({"probe": True})
+
+    async def lookalike(request: Any) -> JSONResponse:
+        return JSONResponse({"lookalike": True})
+
+    app = Starlette(
+        routes=[
+            # Real probe routes (these MUST be exempt).
+            Route("/health", probe, methods=["GET", "POST"]),
+            Route("/healthz", probe, methods=["GET", "POST"]),
+            Route("/readyz", probe, methods=["GET", "POST"]),
+            Route("/metrics", probe, methods=["GET", "POST"]),
+            # Lookalike user pages (these MUST NOT be exempt).
+            Route("/metrics-explorer", lookalike, methods=["POST"]),
+            Route("/healthcheck-admin", lookalike, methods=["POST"]),
+            Route("/readyness-report", lookalike, methods=["POST"]),
+            # Invite registration (NOT under /api/ -- must be enforced).
+            Route("/invite/abc123/register", lookalike, methods=["POST"]),
+        ]
+    )
+    app.add_middleware(CSRFMiddleware)
+
+    with patch("opi.core.config.settings") as mock_settings:
+        mock_settings.DEBUG = False
+        with TestClient(app, base_url="http://opi.example.nl") as test_client:
+            yield test_client
+
+
+class TestExemptListScope:
+    @pytest.mark.parametrize("path", ["/health", "/healthz", "/readyz", "/metrics"])
+    def test_probe_routes_are_exempt(self, probe_client: TestClient, path: str) -> None:
+        """The named probe paths must be exempt (POST without token succeeds)."""
+        response = probe_client.post(path, headers={"Origin": "http://attacker.example.nl"})
+        assert response.status_code == 200
+        assert response.json() == {"probe": True}
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/metrics-explorer",
+            "/healthcheck-admin",
+            "/readyness-report",
+        ],
+    )
+    def test_lookalike_paths_are_not_exempt(self, probe_client: TestClient, path: str) -> None:
+        """A user-facing page that shares a prefix with a probe MUST still be
+        CSRF-protected. Previously bare-prefix matching exempted these."""
+        probe_client.get("/health")  # seed cookie via the exempt probe
+        response = probe_client.post(path, headers={"Origin": "http://opi.example.nl"})
+        assert response.status_code == 403
+        assert response.json()["detail"] == "CSRF token missing"
+
+    def test_invite_register_is_not_exempt(self, probe_client: TestClient) -> None:
+        """The invite-registration POST goes through CSRF; the template must
+        therefore include csrf.js so the form has a token.
+
+        This pins the policy. The corresponding template fix (adding
+        additionalJs='<script src=/static/js/csrf.js></script>' on the
+        invite-register c-page) is in the same commit.
+        """
+        probe_client.get("/health")
+        response = probe_client.post(
+            "/invite/abc123/register",
+            headers={"Origin": "http://opi.example.nl"},
+            data={"email": "x@y.nl"},
+        )
+        assert response.status_code == 403
+
+
+class TestJsonPostWithHeaderToken:
+    """The wizard uses htmx + json-enc.js, which POSTs Content-Type:
+    application/json. The middleware must accept the token via X-CSRF-Token
+    header on JSON requests just like on form requests."""
+
+    def test_json_post_with_header_token_passes(self, client: TestClient) -> None:
+        client.get("/")
+        token = client.cookies[CSRF_COOKIE_NAME]
+        response = client.post(
+            "/projects/delete/foo",
+            json={"action": "delete"},
+            headers={
+                "X-CSRF-Token": token,
+                "Origin": "http://opi.example.nl",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json() == {"changed": True}
+
+    def test_json_post_without_token_is_rejected(self, client: TestClient) -> None:
+        client.get("/")
+        response = client.post(
+            "/projects/delete/foo",
+            json={"action": "delete"},
+            headers={"Origin": "http://opi.example.nl"},
+        )
+        assert response.status_code == 403
+
+
 def test_csrf_module_has_no_unresolved_runtime_annotations() -> None:
     """Regression: dispatch() is annotated with Callable/Awaitable/Response.
 

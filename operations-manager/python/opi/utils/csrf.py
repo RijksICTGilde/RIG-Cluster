@@ -40,18 +40,27 @@ CSRF_HEADER_NAME = "x-csrf-token"
 # HTTP methods that do not change state and therefore do not need CSRF checks.
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 
-# Path prefixes that are exempt from CSRF enforcement.
-# - /api/   : API-key authenticated, not cookie/session based.
-# - /static/: static assets, no state change.
-# - /auth/  : OAuth login/callback/logout, GET-only redirect flow.
-# - infra   : health/metrics/ready probes.
+# CSRF exemption is split into two kinds so a probe path (e.g. /health) does
+# not accidentally exempt a user-facing page that starts with the same prefix
+# (/healthz is intentional; /metrics-explorer would NOT have been).
+#
+# - prefix exemptions (`/api/`, `/static/`, `/auth/`): always end in a slash
+#   so they only match directory-style subtrees, never bare-prefix matches.
+# - exact exemptions: the probe routes registered in `server.py` and
+#   `prometheus_router.py`. Any new probe route must be added here
+#   explicitly; bare-prefix matching is intentionally not used.
 CSRF_EXEMPT_PREFIXES = (
     "/api/",
     "/static/",
     "/auth/",
-    "/health",
-    "/metrics",
-    "/ready",
+)
+CSRF_EXEMPT_EXACT = frozenset(
+    {
+        "/health",
+        "/healthz",
+        "/readyz",
+        "/metrics",
+    }
 )
 
 
@@ -98,8 +107,14 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
 
 def _is_exempt_path(path: str) -> bool:
-    """Return True if the path is exempt from CSRF enforcement."""
-    return path.startswith(CSRF_EXEMPT_PREFIXES)
+    """Return True if the path is exempt from CSRF enforcement.
+
+    Two kinds of exemption: exact match for the named probe paths, and
+    slash-suffixed prefix match for directory-style subtrees. A bare-prefix
+    match (e.g. `/health` matching `/healthxyz`) is intentionally NOT
+    supported; any new probe path must be added to ``CSRF_EXEMPT_EXACT``.
+    """
+    return path in CSRF_EXEMPT_EXACT or path.startswith(CSRF_EXEMPT_PREFIXES)
 
 
 async def _enforce_csrf(request: Request) -> None:
