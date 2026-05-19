@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 import pytest
 import uvicorn
 from itsdangerous import TimestampSigner
+from opi.core.secret_key import DEV_DEFAULT_SECRET_KEY
 from tests.e2e.testserver import SECRET_KEY, create_test_app
 
 if TYPE_CHECKING:
@@ -31,7 +32,9 @@ if TYPE_CHECKING:
 
 # Sandbox config - override via environment variables
 E2E_BASE_URL = os.environ.get("E2E_BASE_URL", "")
-E2E_SECRET_KEY = os.environ.get("E2E_SECRET_KEY", "default-secret-key-for-development-change-in-production")
+# Fallback to the central DEV_DEFAULT_SECRET_KEY so this stays in sync if
+# the dev-default ever rotates -- avoids two copies of the literal drifting.
+E2E_SECRET_KEY = os.environ.get("E2E_SECRET_KEY", DEV_DEFAULT_SECRET_KEY)
 
 TEST_USER = {
     "sub": "e2e-user",
