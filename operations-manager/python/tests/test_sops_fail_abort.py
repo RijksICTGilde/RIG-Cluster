@@ -26,9 +26,12 @@ import asyncio
 import inspect
 import os
 import subprocess
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 from opi.connectors.git import GitConnector
 from opi.utils.sops import (
     SOPSEncryptionError,
