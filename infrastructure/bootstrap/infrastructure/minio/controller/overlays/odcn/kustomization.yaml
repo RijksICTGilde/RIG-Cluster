@@ -12,3 +12,6 @@ patches:
       - op: replace
         path: /spec/storageClassName
         value: ocs-storagecluster-ceph-rbd
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 10Gi
