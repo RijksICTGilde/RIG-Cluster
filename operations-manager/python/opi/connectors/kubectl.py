@@ -74,9 +74,16 @@ class KubectlConnector:
             logger.error(f"Error testing kubectl connection: {e}")
             KubectlConnector.isConnected = False
 
-        # Start async retry task if connection failed
+        # Start async retry task if connection failed. If no event loop is
+        # running yet (e.g. instantiated from a synchronous test fixture or
+        # at import time) skip the retry-task scheduling; first async call
+        # will keep working without it and tests no longer crash on init.
         if not KubectlConnector.isConnected:
-            self._retry_task = asyncio.create_task(self._connection_retry())
+            try:
+                self._retry_task = asyncio.create_task(self._connection_retry())
+            except RuntimeError:
+                logger.debug("No running event loop; skipping kubectl connection-retry task")
+                self._retry_task = None
 
         self._initialized = True
         logger.debug("KubectlConnector initialized successfully")
