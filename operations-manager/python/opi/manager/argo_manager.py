@@ -18,7 +18,7 @@ from opi.utils.naming import (
     get_output_filename_from_template,
     make_argocd_repository_url_unique,
 )
-from opi.utils.sops import encrypt_to_sops_files
+from opi.utils.sops import encrypt_to_sops_files_or_fail
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -163,7 +163,11 @@ class ArgoManager:
             created_files.append(manifest_path)
             logger.info(f"Successfully created repository manifest: {os.path.basename(manifest_path)}")
 
-        encrypt_to_sops_files(project_dir, cast("str", settings.SOPS_AGE_PUBLIC_KEY))
+        encrypt_to_sops_files_or_fail(
+            project_dir,
+            cast("str", settings.SOPS_AGE_PUBLIC_KEY),
+            f"ArgoCD repository-secret (git SSH key/HTTPS-wachtwoord) voor project '{project_name}'",
+        )
 
     async def prepare_repository_variables(
         self, name: str, namespace: str, repository: dict[str, Any], repo_type: str, project_name: str
@@ -672,7 +676,11 @@ class ArgoManager:
             logger.info(f"Created repository secret: {os.path.basename(repo_secret_path)}")
 
             # SOPS encrypt the repository secret
-            encrypt_to_sops_files(infra_argo_dir, cast("str", settings.SOPS_AGE_PUBLIC_KEY))
+            encrypt_to_sops_files_or_fail(
+                infra_argo_dir,
+                cast("str", settings.SOPS_AGE_PUBLIC_KEY),
+                f"ArgoCD infrastructuur repository-secret (git SSH key/HTTPS-wachtwoord) voor project '{project_name}'",
+            )
 
             # Create infrastructure Application (with sync-wave: 0)
             argocd_app_content = self.generate_application_manifest(

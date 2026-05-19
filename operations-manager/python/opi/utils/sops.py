@@ -29,6 +29,16 @@ class SOPSKeyNotAvailableError(Exception):
     """Raised when SOPS AGE key is not available for encryption."""
 
 
+class SOPSEncryptionError(Exception):
+    """
+    Raised when encrypting one or more .to-sops.yaml files fails.
+
+    This is a security-critical failure: any remaining .to-sops.yaml file in
+    the working tree holds the secret in plain text. Callers MUST treat this
+    as fatal and abort before committing/pushing to git.
+    """
+
+
 def get_sops_private_key() -> str | None:
     """
     Get the SOPS private key from settings.
@@ -92,59 +102,123 @@ def encrypt_to_sops_files(directory: str, public_key: str) -> bool:
     """
     Encrypt all .to-sops.yaml files in a directory using SOPS, renaming them to .sops.yaml.
 
+    Every file is attempted even if an earlier one fails: we never early-return
+    leaving not-yet-processed files in plain text. A .to-sops.yaml file is only
+    removed once its encrypted .sops.yaml counterpart has been written
+    successfully. Any remaining .to-sops.yaml after this call still holds the
+    secret in plain text.
+
     Args:
         directory: Directory containing .to-sops.yaml files
         public_key: The AGE public key for encryption
 
     Returns:
-        True if all files were encrypted successfully, False otherwise
+        True if all files were encrypted successfully
+
+    Raises:
+        SOPSEncryptionError: If one or more files could not be encrypted. This
+            is security-critical and callers MUST abort before any git
+            commit/push, because the failed files remain in plain text.
     """
 
-    try:
-        # Find all .to-sops.yaml files in the directory
-        pattern = os.path.join(directory, "*.to-sops.yaml")
-        to_sops_files = glob.glob(pattern)
+    pattern = os.path.join(directory, "*.to-sops.yaml")
+    to_sops_files = sorted(glob.glob(pattern))
 
-        if not to_sops_files:
-            logger.debug(f"No .to-sops.yaml files found in {directory}")
-            return True
-
-        logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files to encrypt")
-
-        for file_path in to_sops_files:
-            # Generate the output filename (.sops.yaml)
-            base_name = os.path.basename(file_path)
-            if base_name.endswith(".to-sops.yaml"):
-                output_name = base_name[:-13] + ".sops.yaml"  # Remove .to-sops.yaml and add .sops.yaml
-                output_path = os.path.join(directory, output_name)
-
-                # Encrypt the file using SOPS
-                cmd = ["sops", "--encrypt", "--age", public_key, file_path]
-                logger.debug(f"Running SOPS encryption command: {' '.join(cmd)}")
-
-                process = subprocess.run(cmd, capture_output=True, text=True, check=False)
-
-                if process.returncode != 0:
-                    error_msg = process.stderr.strip()
-                    logger.error(f"SOPS encryption failed for {file_path}: {error_msg}")
-                    return False
-
-                # Write the encrypted content to the output file
-                with open(output_path, "w") as f:
-                    f.write(process.stdout)
-
-                # Remove the original .to-sops.yaml file
-                os.remove(file_path)
-                logger.info(f"Successfully encrypted {file_path} -> {output_path}")
-
+    if not to_sops_files:
+        logger.debug(f"No .to-sops.yaml files found in {directory}")
         return True
 
-    except FileNotFoundError:
-        logger.exception("sops command not found. Please install SOPS (https://github.com/mozilla/sops)")
-        return False
-    except Exception:
-        logger.exception("Error during SOPS encryption of .to-sops.yaml files")
-        return False
+    logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files to encrypt")
+
+    failed_files: list[str] = []
+
+    for file_path in to_sops_files:
+        base_name = os.path.basename(file_path)
+        if not base_name.endswith(".to-sops.yaml"):
+            continue
+
+        output_name = base_name[: -len(".to-sops.yaml")] + ".sops.yaml"
+        output_path = os.path.join(directory, output_name)
+
+        try:
+            cmd = ["sops", "--encrypt", "--age", public_key, file_path]
+            logger.debug(f"Running SOPS encryption command: {' '.join(cmd)}")
+
+            process = subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+            if process.returncode != 0:
+                error_msg = process.stderr.strip()
+                logger.error(f"SOPS encryption failed for {file_path}: {error_msg}")
+                failed_files.append(base_name)
+                # Keep going: encrypt the remaining files instead of leaving
+                # them in plain text. The plaintext file is left for the caller
+                # and the pre-commit guard to detect and refuse.
+                continue
+
+            # Write the encrypted content, then remove the plaintext source.
+            with open(output_path, "w") as f:
+                f.write(process.stdout)
+            os.remove(file_path)
+            logger.info(f"Successfully encrypted {file_path} -> {output_path}")
+        except FileNotFoundError:
+            logger.exception("sops command not found. Please install SOPS (https://github.com/mozilla/sops)")
+            # sops is missing entirely; no point retrying the other files.
+            remaining = [os.path.basename(p) for p in glob.glob(pattern)]
+            raise SOPSEncryptionError(
+                f"SOPS-binary niet gevonden; kon {len(remaining)} bestand(en) niet versleutelen "
+                f"in {directory}: {', '.join(remaining)}. "
+                "Doorgaan zou secrets in platte tekst naar git committen."
+            ) from None
+        except OSError:
+            logger.exception(f"I/O error while encrypting {file_path}")
+            failed_files.append(base_name)
+            continue
+
+    if failed_files:
+        raise SOPSEncryptionError(
+            f"SOPS-versleuteling mislukt voor {len(failed_files)} bestand(en) in {directory}: "
+            f"{', '.join(sorted(failed_files))}. "
+            "Doorgaan zou secrets in platte tekst naar git committen."
+        )
+
+    return True
+
+
+def encrypt_to_sops_files_or_fail(directory: str, public_key: str, context: str) -> None:
+    """
+    Encrypt all .to-sops.yaml files in a directory and fail closed.
+
+    This is the only entry point that secret-bearing call sites should use. It
+    encrypts every .to-sops.yaml file and then verifies that none remain. On
+    any failure it raises RuntimeError, so the caller aborts before committing
+    plain-text secrets to git.
+
+    Args:
+        directory: Directory containing .to-sops.yaml files
+        public_key: The AGE public key for encryption
+        context: Human-readable description for error messages (Dutch),
+            e.g. "infrastructuur-secrets voor project 'foo'"
+
+    Raises:
+        RuntimeError: If encryption fails or any .to-sops.yaml file remains.
+    """
+    pattern = os.path.join(directory, "*.to-sops.yaml")
+
+    try:
+        encrypt_to_sops_files(directory, public_key)
+    except SOPSEncryptionError as e:
+        raise RuntimeError(
+            f"SOPS-versleuteling mislukt voor {context}: {e}. "
+            "Dit zou secrets in platte tekst naar git committen; deployment afgebroken."
+        ) from e
+
+    remaining = sorted(os.path.basename(p) for p in glob.glob(pattern))
+    if remaining:
+        raise RuntimeError(
+            f"Na SOPS-versleuteling van {context} bleven {len(remaining)} onversleutelde "
+            f".to-sops.yaml bestand(en) over: {', '.join(remaining)}. "
+            "Dit zou secrets in platte tekst naar git committen; deployment afgebroken."
+        )
 
 
 def generate_sops_key_pair() -> tuple[str, str]:
