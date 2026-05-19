@@ -19,6 +19,8 @@ CLUSTER_CONFIG = {
         "minio_host": "minio.rig-system.svc.cluster.local",
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
+        "backup_namespace": "rig-backup-destination",
+        "ingress_controller_namespace": "ingress-nginx",
         "ingress": {
             "enable_tls": True,
             "cluster_issuer": "kind-ca-issuer",
@@ -66,6 +68,8 @@ CLUSTER_CONFIG = {
         "minio_host": "minio.rig-system.svc.cluster.local",
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
+        "backup_namespace": "rig-backup-destination",
+        "ingress_controller_namespace": "ingress-nginx",
         "ingress": {
             "enable_tls": True,
             "ip_whitelist": "0.0.0.0/0,::/0",
@@ -107,6 +111,8 @@ CLUSTER_CONFIG = {
         "minio_host": "minio.rig-prd-operations.svc.cluster.local",
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-prd-operations.svc.cluster.local",
+        "backup_namespace": "rig-prd-backup",
+        "ingress_controller_namespace": "openshift-ingress",
         "ingress": {
             "enable_tls": True,
             # "cluster_issuer": "letsencrypt-production",  # TODO: verify correct issuer name
@@ -517,6 +523,42 @@ def get_minio_server(cluster_name: str) -> str:
 def get_namespace(cluster_name: str) -> str:
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["namespace"]
+
+
+def get_backup_namespace(cluster_name: str) -> str:
+    """
+    Get the namespace that hosts the backup destination for a cluster.
+
+    This is where the cluster's backup MinIO (or comparable) lives, so
+    workloads can reach it for restores/snapshots. NetworkPolicies use this
+    as an allowed peer namespace.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Backup destination namespace name
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["backup_namespace"]
+
+
+def get_ingress_controller_namespace(cluster_name: str) -> str:
+    """
+    Get the namespace where the cluster's ingress controller pods run.
+
+    On local/sandbox this is ``ingress-nginx``; on odcn-production it is
+    ``openshift-ingress``. NetworkPolicies use this to allow ingress from
+    the controller so published web apps stay reachable.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Ingress controller namespace name
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["ingress_controller_namespace"]
 
 
 def get_redis_server(cluster_name: str) -> str:

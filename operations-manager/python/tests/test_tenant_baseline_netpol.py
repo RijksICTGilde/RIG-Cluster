@@ -5,11 +5,14 @@ allow-all NetworkPolicy (podSelector {}, ingress [{}], egress [{}]) into every
 tenant namespace, which defeated egress containment platform-wide and nullified
 any later default-deny.
 
-These tests assert the replacement is least-privilege: it must NOT contain an
-empty allow-all ingress or egress rule, and it MUST contain DNS egress plus
-scoped intra-namespace / ingress-nginx / datastore rules. They also assert that
-project_manager emits the baseline template (not the allow-all template) at both
-call sites.
+The replacement is a permissive-by-default baseline that nonetheless blocks
+cross-tenant traffic: it allows the deployment's own pods to talk to each
+other, the platform/operations namespace, the backup destination, and the
+ingress controller, plus internet egress (without restriction beyond blocking
+the cloud-metadata IP). It is emitted ONCE per deployment, selecting pods via
+the `deployment: <name>` label so multiple components share one policy and
+helm/helmfile workloads (which do not carry that label) fall through to
+Kubernetes' default-allow until a separate baseline is added.
 
 The wider test suite fails at collection on this interpreter (pre-existing
 Python 3.14 beta + pydantic + fastapi import break). This module deliberately
@@ -29,8 +32,13 @@ PROJECT_MANAGER = os.path.join(os.path.dirname(__file__), "..", "opi", "manager"
 
 def _render_baseline(**overrides):
     values = {
-        "name": "tenant-baseline",
+        "name": "myapp-tenant-baseline-network-policy",
         "namespace": "rig-myproject",
+        "deployment_selector": "myapp",
+        "ops_namespace": "rig-system",
+        "backup_namespace": "rig-backup-destination",
+        "ingress_controller_namespace": "ingress-nginx",
+        "project_infra_namespace": "rig-myproject-infrastructure",
     }
     values.update(overrides)
     result = render_template("tenant-baseline-network-policy.yaml.jinja", values)
@@ -69,39 +77,46 @@ class TestAllowAllTemplateRemoved:
         # the term historically, so match the template filename specifically.
         assert "allow-all-network-policy.yaml.jinja" not in source
         assert source.count("tenant-baseline-network-policy.yaml.jinja") >= 2, (
-            "both call sites (infrastructure namespace + per-component) must emit the baseline template"
+            "both call sites (infrastructure namespace + per-deployment) must emit the baseline template"
         )
 
-    def test_component_call_site_scopes_all_stateful_services(self):
-        """The per-component baseline must open egress for every stateful
-        service a component can request, not just Postgres/MinIO.
-
-        Redis (shared and namespace) resolves to a cross-namespace service and
-        SSO components run an OIDC back-channel to Keycloak. Under the
-        default-deny baseline, omitting these breaks Redis-using and
-        SSO-using tenant apps. This guards against the egress scoping
-        regressing back to Postgres/MinIO only.
+    def test_per_component_emission_is_removed(self):
+        """The per-component emission caused file collisions (last write wins).
+        The baseline must now be emitted ONCE per deployment, not per component.
         """
         with open(PROJECT_MANAGER) as f:
             source = f.read()
-        # Locate the per-component baseline branch.
-        marker = 'if manifest_name == "tenant-baseline-network-policy":'
-        assert marker in source
-        branch = source[source.index(marker) : source.index(marker) + 2500]
-        assert "component_uses_postgresql" in branch
-        assert "component_uses_minio" in branch
-        assert "component_uses_redis" in branch, "Redis-using components must get egress to the Redis namespace"
-        assert "component_uses_sso" in branch, "SSO-using components must get egress for the Keycloak back-channel"
-        assert '"ingress-nginx"' in branch, "SSO public-hostname traffic hairpins through ingress-nginx"
+        # The old branch-on-manifest-name is gone.
+        assert 'if manifest_name == "tenant-baseline-network-policy":' not in source
+
+    def test_deployment_baseline_uses_per_deployment_name(self):
+        """The emitted resource/file name must be prefixed with the deployment
+        so two deployments in the same namespace don't collide on disk or in
+        the cluster.
+        """
+        with open(PROJECT_MANAGER) as f:
+            source = f.read()
+        assert 'f"{deployment_name}-tenant-baseline"' in source, (
+            "per-deployment baseline emission must namespace its resource name with the deployment"
+        )
 
 
-class TestBaselineIsLeastPrivilege:
+class TestPerDeploymentBaseline:
     def test_renders_valid_yaml_networkpolicy(self):
         _, doc = _render_baseline()
         assert doc["kind"] == "NetworkPolicy"
-        assert doc["metadata"]["name"] == "tenant-baseline"
+        assert doc["metadata"]["name"] == "myapp-tenant-baseline-network-policy"
         assert doc["metadata"]["namespace"] == "rig-myproject"
         assert set(doc["spec"]["policyTypes"]) == {"Ingress", "Egress"}
+
+    def test_selector_targets_only_this_deployment(self):
+        """Per-deployment scope: select pods carrying `deployment: <name>`.
+        Other deployments in the same namespace and helm/helmfile pods (no
+        such label) are intentionally not selected.
+        """
+        _, doc = _render_baseline(deployment_selector="myapp")
+        sel = doc["spec"]["podSelector"]
+        assert sel == {"matchLabels": {"deployment": "myapp"}}
 
     def test_no_empty_allow_all_egress(self):
         raw, doc = _render_baseline()
@@ -124,49 +139,124 @@ class TestBaselineIsLeastPrivilege:
         protocols = {p["protocol"] for rule in dns_rules for p in rule["ports"]}
         assert {"UDP", "TCP"} <= protocols
 
-    def test_intra_namespace_and_ingress_nginx_allowed(self):
-        _, doc = _render_baseline()
+    def test_intra_deployment_ingress_uses_label_selector(self):
+        """Pods of the same deployment talk to each other via the deployment
+        label, not via a namespace-wide podSelector {} that would also expose
+        unrelated deployments sharing the namespace.
+        """
+        _, doc = _render_baseline(deployment_selector="myapp")
         ingress = doc["spec"]["ingress"]
-        # intra-namespace ingress (podSelector {} as a peer is scoped to the
-        # namespace, not allow-all across the cluster).
-        assert any(any(peer == {"podSelector": {}} for peer in rule.get("from", [])) for rule in ingress)
-        # ingress-nginx controller must still reach published apps.
-        nginx = any(
-            any(
-                peer.get("namespaceSelector", {}).get("matchLabels", {}).get("kubernetes.io/metadata.name")
-                == "ingress-nginx"
-                for peer in rule.get("from", [])
-            )
+        assert any(
+            any(peer == {"podSelector": {"matchLabels": {"deployment": "myapp"}}} for peer in rule.get("from", []))
             for rule in ingress
         )
-        assert nginx, "published web apps must keep receiving ingress-nginx traffic"
 
-    def test_datastore_egress_is_scoped_when_requested(self):
+    def test_platform_namespaces_are_allow_listed(self):
+        """Operations (OPI / shared datastores / Keycloak), backup, and the
+        ingress controller must always be reachable from a deployment pod.
+        Cluster-specific names flow in via cluster_config.
+        """
         _, doc = _render_baseline(
-            datastore_namespaces=["rig-myproject-infrastructure"],
-            minio_namespace="rig-system",
+            ops_namespace="rig-prd-operations",
+            backup_namespace="rig-prd-backup",
+            ingress_controller_namespace="openshift-ingress",
         )
-        egress = doc["spec"]["egress"]
-        targets = {
+        ingress_targets = {
             peer["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"]
-            for rule in egress
-            for peer in rule.get("to", [])
-            if peer.get("namespaceSelector")
+            for rule in doc["spec"]["ingress"]
+            for peer in rule.get("from", [])
+            if peer.get("namespaceSelector", {}).get("matchLabels")
         }
-        assert "rig-myproject-infrastructure" in targets
-        assert "rig-system" in targets
-        # Still no allow-all leaked in.
-        assert not _has_empty_allow_all_rule(egress)
-
-    def test_no_datastore_egress_when_not_requested(self):
-        """A component without DB/MinIO must not get cross-namespace egress."""
-        _, doc = _render_baseline()
-        cross_ns = {
+        egress_targets = {
             peer["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"]
             for rule in doc["spec"]["egress"]
             for peer in rule.get("to", [])
             if peer.get("namespaceSelector", {}).get("matchLabels")
         }
-        # Only the kube-dns rule uses an (empty) namespaceSelector; it carries
-        # no matchLabels, so the scoped set must be empty here.
-        assert cross_ns == set()
+        assert {"rig-prd-operations", "openshift-ingress", "rig-prd-backup"} <= ingress_targets
+        assert {"rig-prd-operations", "rig-prd-backup"} <= egress_targets
+
+    def test_internet_egress_is_permissive_except_metadata(self):
+        """The baseline does not constrain internet egress (HTTP/HTTPS) on
+        purpose — tightening that is a separate, later step. The cloud-metadata
+        IP (169.254.169.254) is excluded to block SSRF-style probes.
+        """
+        _, doc = _render_baseline()
+        ip_rules = [
+            rule for rule in doc["spec"]["egress"] if any(peer.get("ipBlock") for peer in rule.get("to", []) or [])
+        ]
+        assert ip_rules, "must allow generic internet egress for HTTP/HTTPS"
+        flat_ports = {p["port"] for rule in ip_rules for p in rule.get("ports", [])}
+        assert 443 in flat_ports
+        assert 80 in flat_ports
+        excepts = {x for rule in ip_rules for peer in rule["to"] for x in peer.get("ipBlock", {}).get("except", [])}
+        assert "169.254.169.254/32" in excepts, "cloud-metadata IP must be excluded from the internet egress rule"
+
+    def test_project_infra_namespace_included_when_distinct(self):
+        """When the project has its own infrastructure namespace (dedicated
+        CNPG), it gets an explicit egress allow-list entry."""
+        _, doc = _render_baseline(project_infra_namespace="rig-myproject-infrastructure")
+        egress_targets = {
+            peer["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"]
+            for rule in doc["spec"]["egress"]
+            for peer in rule.get("to", [])
+            if peer.get("namespaceSelector", {}).get("matchLabels")
+        }
+        assert "rig-myproject-infrastructure" in egress_targets
+
+    def test_project_infra_namespace_skipped_when_equals_ops(self):
+        """Avoid emitting a redundant duplicate rule when the project's infra
+        namespace would equal the ops namespace (e.g. shared-only projects).
+        """
+        _, doc = _render_baseline(
+            ops_namespace="rig-prd-operations",
+            project_infra_namespace="rig-prd-operations",
+        )
+        egress_targets = [
+            peer["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"]
+            for rule in doc["spec"]["egress"]
+            for peer in rule.get("to", [])
+            if peer.get("namespaceSelector", {}).get("matchLabels")
+        ]
+        # Each platform namespace appears exactly once.
+        assert egress_targets.count("rig-prd-operations") == 1
+
+
+class TestInfrastructureNamespaceVariant:
+    """The infrastructure-namespace call site renders the same template but
+    without a deployment selector (it covers the CNPG operator + cluster pods).
+    """
+
+    def test_renders_with_namespace_wide_selector(self):
+        _, doc = _render_baseline(
+            deployment_selector=None,
+            allowed_ingress_namespaces=["rig-myproject"],
+        )
+        # No matchLabels: applies to the whole namespace.
+        assert doc["spec"]["podSelector"] == {}
+
+    def test_allowed_ingress_namespaces_are_emitted(self):
+        _, doc = _render_baseline(
+            deployment_selector=None,
+            allowed_ingress_namespaces=["rig-myproject", "rig-myproject-staging"],
+        )
+        ingress_targets = {
+            peer["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"]
+            for rule in doc["spec"]["ingress"]
+            for peer in rule.get("from", [])
+            if peer.get("namespaceSelector", {}).get("matchLabels")
+        }
+        assert {"rig-myproject", "rig-myproject-staging"} <= ingress_targets
+
+
+class TestDeploymentLabelOnPods:
+    """Pods need the `deployment: <name>` label or the per-deployment selector
+    selects nothing.
+    """
+
+    def test_deployment_template_carries_deployment_label(self):
+        with open(os.path.join(MANIFESTS_DIR, "deployment.yaml.jinja")) as f:
+            source = f.read()
+        assert 'deployment: "{{ deployment_name }}"' in source, (
+            "pod template metadata must include a `deployment` label so the NetworkPolicy selector matches"
+        )

@@ -33,9 +33,12 @@ from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.subdomain import SubdomainConnector, ensure_domain_requests
 from opi.core.cluster_config import (
     get_argo_namespace,
+    get_backup_namespace,
     get_ca_certificate_config,
     get_external_dns_target_for_hostname,
+    get_infrastructure_namespace,
     get_ingress_cluster_issuer,
+    get_ingress_controller_selector,
     get_ingress_ip_whitelist,
     get_ingress_postfix,
     get_ingress_tls_enabled,
@@ -43,6 +46,7 @@ from opi.core.cluster_config import (
     get_letsencrypt_contact_email,
     get_minio_host,
     get_minio_port,
+    get_namespace,
     get_prefixed_namespace,
     uses_capsule,
 )
@@ -1824,14 +1828,19 @@ class ProjectManager:
                 {
                     "name": "tenant-baseline",
                     "namespace": infrastructure_namespace,
+                    # No deployment_selector: this policy covers the whole
+                    # infrastructure namespace (CNPG operator + cluster pods,
+                    # none of which carry our `deployment:` label).
+                    "deployment_selector": None,
+                    "ops_namespace": get_namespace(cluster_name),
+                    "backup_namespace": get_backup_namespace(cluster_name),
+                    "ingress_controller_selector": get_ingress_controller_selector(cluster_name),
                     # The project's app namespaces must reach the PostgreSQL
                     # cluster that lives in this infrastructure namespace.
                     "allowed_ingress_namespaces": tenant_namespaces,
-                    # The infrastructure namespace itself does not initiate
-                    # traffic to project datastores or MinIO; intra-namespace
-                    # and DNS egress (from the template) is sufficient for CNPG.
-                    "datastore_namespaces": [],
-                    "minio_namespace": None,
+                    # Skip the "project infra" egress rule: this IS the infra
+                    # namespace, so an explicit self-rule would be redundant.
+                    "project_infra_namespace": None,
                 },
             )
             network_policy_path = os.path.join(infra_resources_dir, "tenant-baseline-network-policy.yaml")
@@ -4497,6 +4506,7 @@ class ProjectManager:
                 "deployment_name": deployment_name,
                 "component_name": component_name,
                 "namespace": namespace,
+                "deployment_name": deployment_name,
                 "hostname": hostname,
                 "project": {"name": project_name},
                 "cluster": cluster,  # Add cluster information for template conditionals
@@ -4668,14 +4678,14 @@ class ProjectManager:
                     logger.info(f"Created sidecar configmap for '{sidecar_name}': {configmap_manifest_name}")
 
             # Create each manifest type in the git repository.
-            # The tenant baseline network policy replaces the former
-            # allow-all policy: it is default-deny with explicit, scoped
-            # exceptions (DNS, intra-namespace, ingress-nginx, and the
-            # datastores this component actually requested).
+            # NOTE: tenant-baseline-network-policy.yaml.jinja is intentionally
+            # NOT emitted here. It is rendered ONCE per deployment after the
+            # component loop completes (see _emit_tenant_baseline_policy
+            # call below). Emitting per-component caused file collisions and
+            # last-write-wins behaviour for multi-component deployments.
             manifests = [
                 "deployment.yaml.jinja",
                 "service.yaml.jinja",
-                "tenant-baseline-network-policy.yaml.jinja",
             ]
 
             # Add ingress manifest only if publish-on-web is enabled for this component
@@ -4703,70 +4713,6 @@ class ProjectManager:
                 # Use enhanced manifest generator for proper directory structure
                 # Extract just the manifest name (without .yaml.jinja extension)
                 manifest_name = manifest_file.replace(".yaml.jinja", "")
-
-                # Handle the tenant baseline network policy: render it with
-                # scoped egress derived from the services this component
-                # actually requested, instead of the generic deployment
-                # variables. This keeps the policy default-deny while still
-                # allowing the app to reach its own database / object storage.
-                if manifest_name == "tenant-baseline-network-policy":
-                    from opi.core.cluster_config import get_infrastructure_namespace
-                    from opi.core.cluster_config import get_namespace as get_cluster_namespace
-
-                    datastore_namespaces: list[str] = []
-                    if component_uses_postgresql:
-                        # The project's PostgreSQL cluster lives in the
-                        # project's infrastructure namespace.
-                        datastore_namespaces.append(get_infrastructure_namespace(cluster, project_name))
-
-                    if component_uses_redis:
-                        # Both shared and namespace Redis are reached via
-                        # get_redis_server(), which resolves to
-                        # rig-redis.<cluster namespace>.svc.cluster.local
-                        # (see cluster_config). Without this egress rule a
-                        # Redis-using component cannot reach its cache and the
-                        # app breaks under the default-deny baseline.
-                        datastore_namespaces.append(get_cluster_namespace(cluster))
-
-                    if component_uses_sso:
-                        # SSO components run the OIDC back-channel against
-                        # Keycloak. The Keycloak service lives in the cluster
-                        # namespace, but tenant apps dial its public ingress
-                        # hostname, so traffic also hairpins through the
-                        # ingress controller. Allow both so login works under
-                        # the default-deny baseline.
-                        datastore_namespaces.append(get_cluster_namespace(cluster))
-                        datastore_namespaces.append("ingress-nginx")
-
-                    # Deduplicate while keeping deterministic output so the
-                    # generated manifest does not churn between runs.
-                    datastore_namespaces = sorted(set(datastore_namespaces))
-
-                    minio_namespace = get_cluster_namespace(cluster) if component_uses_minio else None
-
-                    baseline_variables = {
-                        "name": generate_network_policy_name("tenant-baseline"),
-                        "namespace": namespace,
-                        "datastore_namespaces": datastore_namespaces,
-                        "minio_namespace": minio_namespace,
-                    }
-                    baseline_manifest_name = generate_network_policy_manifest_name("tenant-baseline").replace(
-                        ".yaml", ""
-                    )
-                    baseline_manifest_path = self._manifest_generator.create_manifest_file(
-                        template_path=manifest_path,
-                        values=baseline_variables,
-                        output_dir=full_output_dir,
-                        output_filename=baseline_manifest_name,
-                        use_sops=False,
-                    )
-                    created_files.append(f"{baseline_manifest_name}.yaml")
-                    logger.info(
-                        f"Created tenant baseline network policy for component '{component_name}': "
-                        f"{baseline_manifest_path} (egress_namespaces={datastore_namespaces}, "
-                        f"minio={minio_namespace})"
-                    )
-                    continue
 
                 # Handle ingress manifests - iterate through paths and ingress_map
                 if manifest_name == "ingress":
@@ -5460,6 +5406,46 @@ class ProjectManager:
                     logger.warning(
                         f"Component {component_name} uses metrics-scraper but PROMETHEUS_METRICS_AUTH_TOKEN is not configured"
                     )
+
+        # Emit one tenant-baseline NetworkPolicy per deployment after all
+        # components have been processed. The policy selects pods by the
+        # `deployment: <name>` label (added in deployment.yaml.jinja), so
+        # multiple components of the same deployment share one policy and
+        # helm/helmfile pods are left unselected (default-allow remains the
+        # status quo for those until a separate baseline is added).
+        if target_dir:
+            deployment_output_dir = os.path.join(working_dir, target_dir)
+        else:
+            deployment_output_dir = os.path.join(working_dir, project_name, deployment_name)
+        baseline_template_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "manifests", "tenant-baseline-network-policy.yaml.jinja"
+        )
+        baseline_manifest_name = generate_network_policy_manifest_name(f"{deployment_name}-tenant-baseline").replace(
+            ".yaml", ""
+        )
+        baseline_variables = {
+            "name": generate_network_policy_name(f"{deployment_name}-tenant-baseline"),
+            "namespace": namespace,
+            "deployment_selector": deployment_name,
+            "ops_namespace": get_namespace(cluster),
+            "backup_namespace": get_backup_namespace(cluster),
+            "ingress_controller_selector": get_ingress_controller_selector(cluster),
+            "project_infra_namespace": get_infrastructure_namespace(cluster, project_name),
+        }
+        self._manifest_generator.create_manifest_file(
+            template_path=baseline_template_path,
+            values=baseline_variables,
+            output_dir=deployment_output_dir,
+            output_filename=baseline_manifest_name,
+            use_sops=False,
+        )
+        created_files.append(f"{baseline_manifest_name}.yaml")
+        logger.info(
+            f"Created tenant-baseline NetworkPolicy for deployment '{deployment_name}' "
+            f"(selector deployment={deployment_name}, ops={baseline_variables['ops_namespace']}, "
+            f"backup={baseline_variables['backup_namespace']}, "
+            f"ingress={baseline_variables['ingress_controller_selector']['namespace']})"
+        )
 
         # Clear rollback info on success
         self._pending_subdomain_rollback = None

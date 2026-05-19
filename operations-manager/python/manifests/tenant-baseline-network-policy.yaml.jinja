@@ -4,33 +4,66 @@ metadata:
   name: "{{ name }}"
   namespace: "{{ namespace }}"
 spec:
-  # Applies to every pod in the tenant namespace.
+  # Per-deployment policy: selects only pods of this deployment so that
+  # multiple deployments in the same project namespace stay isolated from
+  # each other and from helm/helmfile workloads (which do not carry this
+  # label and therefore fall through to Kubernetes' default-allow).
+  #
+  # This is a permissive baseline: it blocks cross-tenant traffic via the
+  # explicit allow-list (only own deployment + platform namespaces) but
+  # leaves internet egress open. Tightening internet egress is intentionally
+  # deferred (see features/restrictive-network-policies.md).
+{% if deployment_selector %}
+  podSelector:
+    matchLabels:
+      deployment: "{{ deployment_selector }}"
+{% else %}
+  # No deployment selector: apply to every pod in the namespace. Used for
+  # the project infrastructure namespace (CNPG cluster) where there is no
+  # OPI-managed deployment whose pods we could label.
   podSelector: {}
+{% endif %}
   policyTypes:
     - Ingress
     - Egress
   ingress:
-    # Pods in this namespace may talk to each other.
+    # Pods of this deployment may talk to each other.
+{% if deployment_selector %}
+    - from:
+        - podSelector:
+            matchLabels:
+              deployment: "{{ deployment_selector }}"
+{% else %}
     - from:
         - podSelector: {}
-    # Traffic from the ingress controller so published web apps stay reachable.
+{% endif %}
+    # Ingress controller: published web apps stay reachable from outside.
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ ingress_namespace | default("ingress-nginx") }}
+              kubernetes.io/metadata.name: "{{ ingress_controller_namespace }}"
+    # Operations / platform namespace (OPI, shared datastores, Keycloak).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ ops_namespace }}"
+    # Backup destination namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ backup_namespace }}"
 {% if allowed_ingress_namespaces %}
-    # Explicit cross-namespace ingress (e.g. the tenant's own app namespaces
-    # reaching this project's datastore namespace).
+    # Explicit cross-namespace ingress (e.g. the project's app namespaces
+    # reaching the project's own infrastructure namespace).
     - from:
 {% for ns in allowed_ingress_namespaces %}
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ ns }}
+              kubernetes.io/metadata.name: "{{ ns }}"
 {% endfor %}
 {% endif %}
   egress:
-    # DNS resolution against the cluster DNS service. Without this nothing
-    # else works, so it is always allowed.
+    # DNS resolution against the cluster DNS service.
     - to:
         - namespaceSelector: {}
           podSelector:
@@ -41,31 +74,43 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # Pods in this namespace may talk to each other.
+    # Pods of this deployment may talk to each other.
+{% if deployment_selector %}
+    - to:
+        - podSelector:
+            matchLabels:
+              deployment: "{{ deployment_selector }}"
+{% else %}
     - to:
         - podSelector: {}
-{% if datastore_namespaces %}
-    # Egress to the specific datastore namespaces this project provisioned
-    # (PostgreSQL cluster in the project's infrastructure namespace).
-    - to:
-{% for ns in datastore_namespaces %}
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ ns }}
-{% endfor %}
 {% endif %}
-{% if minio_namespace %}
-    # Egress to the shared object storage (MinIO) when the project requested it.
+    # Operations / platform namespace (shared Postgres, Redis, MinIO, Keycloak).
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ minio_namespace }}
-{% endif %}
-{% if extra_egress_cidrs %}
-    # Project-declared explicit egress destinations (opt-in via project file).
+              kubernetes.io/metadata.name: "{{ ops_namespace }}"
+    # Backup destination namespace.
     - to:
-{% for cidr in extra_egress_cidrs %}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ backup_namespace }}"
+{% if project_infra_namespace and project_infra_namespace != ops_namespace %}
+    # Project's own infrastructure namespace (dedicated CNPG cluster, etc.).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ project_infra_namespace }}"
+{% endif %}
+    # Permissive internet egress. Cloud metadata endpoint is excluded to
+    # block SSRF-style probes; otherwise the baseline does not restrict
+    # outbound HTTP/HTTPS so general API calls keep working.
+    - to:
         - ipBlock:
-            cidr: {{ cidr }}
-{% endfor %}
-{% endif %}
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.169.254/32
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
