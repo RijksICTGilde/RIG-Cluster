@@ -33,6 +33,21 @@ spec:
         - protocol: TCP
           port: 5432
 
+    # Allow PostgreSQL access from the operations-manager namespace.
+    # In odcn-production OPI runs in `rig-prd-operations` (see
+    # bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/
+    # kustomization.yaml). That namespace is bootstrap-created and does not
+    # carry the `created-by: operations-manager` label (OPI doesn't generate
+    # its own namespace), so it needs an explicit name match. Without this
+    # rule OPI cannot reach `rig-db-rw:5432` and refuses to start.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-prd-operations
+      ports:
+        - protocol: TCP
+          port: 5432
+
   egress:
     # Allow DNS resolution (kube-dns / CoreDNS).
     - to:
