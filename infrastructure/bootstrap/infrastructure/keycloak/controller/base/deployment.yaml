@@ -99,7 +99,7 @@ spec:
             - name: KC_SPI_ADMIN_REALM_RESTAPI_EXTENSION_ENABLED
               value: "true"
             - name: KC_FEATURES
-              value: "admin-api,scripts"
+              value: "admin-api"
             - name: KEYCLOAK_ADMIN_IMPORT_ENABLED
               value: "true"
             - name: KEYCLOAK_ADMIN_EXPORT_ENABLED
