@@ -68,6 +68,9 @@ spec:
     - group: "*"
       kind: "*"
 
-  # Geen orphaned-resource-acties; alleen waarschuwen.
+  # Orphaned-resources: niet automatisch verwijderen, alleen waarschuwen. Een
+  # manueel toegepaste ClusterRoleBinding of namespace-resource die niet in
+  # git staat valt zo op in de Argo UI - nuttig als detectiemechanisme bovenop
+  # de project-scoping, zonder een destructieve auto-prune toe te voegen.
   orphanedResources:
-    warn: false
+    warn: true
