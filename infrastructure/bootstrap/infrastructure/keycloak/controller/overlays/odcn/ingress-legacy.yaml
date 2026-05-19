@@ -7,7 +7,7 @@ metadata:
   name: keycloak-legacy
   namespace: rig-system
   annotations:
-    haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0,::/0"
+    haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0,::/0" # publiek: OIDC-flow voor end-users
 spec:
   rules:
     - host: keycloak.rig.prd1.gn2.quattro.rijksapps.nl

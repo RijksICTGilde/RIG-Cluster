@@ -18,7 +18,7 @@ patches:
         value: keycloak.rijksapp.nl
       - op: add
         path: /metadata/annotations/haproxy.router.openshift.io~1ip_whitelist
-        value: "0.0.0.0/0,::/0"
+        value: "0.0.0.0/0,::/0" # publiek: OIDC-flow voor end-users
       - op: add
         path: /metadata/annotations/external-dns.alpha.kubernetes.io~1target
         value: router.rijksapp.nl
