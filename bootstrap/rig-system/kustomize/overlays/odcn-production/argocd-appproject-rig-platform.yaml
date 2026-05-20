@@ -47,18 +47,14 @@ spec:
     - server: https://kubernetes.default.svc
       namespace: rig-system
 
-  # Cluster-brede kinds: de infrastructuur-sync maakt aantoonbaar een
-  # ClusterRole + ClusterRoleBinding aan (external-dns) en kan Namespaces
-  # aanmaken. Bewust géén '*'. Als de SOPS-versleutelde overlays meer
-  # cluster-brede kinds blijken te bevatten faalt de sync zichtbaar op
-  # staging - dat is het pre-merge validatiemoment, niet productie.
-  clusterResourceWhitelist:
-    - group: ""
-      kind: Namespace
-    - group: rbac.authorization.k8s.io
-      kind: ClusterRole
-    - group: rbac.authorization.k8s.io
-      kind: ClusterRoleBinding
+  # Geen cluster-scoped resources via Argo: onze Argo ServiceAccount heeft op
+  # productie geen rechten om ClusterRole, ClusterRoleBinding, Namespace of
+  # andere cluster-scoped kinds aan te maken — die worden out-of-band door het
+  # ODCN-platformteam beheerd. Lege whitelist blokkeert elke poging vanuit
+  # deze AppProject; als een sync ooit een cluster-scoped kind nodig heeft
+  # wordt dat in Argo direct zichtbaar als OutOfSync (niet stilletjes
+  # toegepast met permissions-die-we-niet-hebben).
+  clusterResourceWhitelist: []
 
   # Namespaced resources blijven breed toegestaan: de blast radius is al
   # ingeperkt door de destination-namespace-pinning hierboven. Een te
