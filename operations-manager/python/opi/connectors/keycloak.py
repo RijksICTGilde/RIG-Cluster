@@ -178,17 +178,17 @@ class KeycloakConnector:
         """
         Check if a realm exists.
 
-        Args:
-            realm_name: Name of the realm
-
-        Returns:
-            True if realm exists, False otherwise
+        Only 404 is treated as "not found". Any other Keycloak error
+        (auth failure, 5xx, network) is re-raised so callers do not
+        mistake a transient outage for a missing realm.
         """
         try:
             self.admin.get_realm(realm_name=realm_name)
             return True
-        except KeycloakGetError:
-            return False
+        except KeycloakGetError as e:
+            if e.response_code == 404:
+                return False
+            raise
 
     async def get_realm(self, realm_name: str) -> dict[str, Any] | None:
         """

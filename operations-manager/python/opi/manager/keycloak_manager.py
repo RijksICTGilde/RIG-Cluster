@@ -1576,6 +1576,27 @@ class KeycloakManager:
         realm_name = generate_project_realm_name(project_name, cluster)
         platform_client_id = generate_project_platform_client_id(project_name, cluster)
 
+        # Create Keycloak connector first so we can verify the admin user does
+        # not already exist before generating a new password.
+        keycloak = await create_keycloak_connector(
+            keycloak_url=keycloak_url,
+            admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
+            admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
+        )
+
+        # Guard against silent drift: if the admin user already exists in master,
+        # the create_user call later would 409 and silently keep the existing
+        # credential, while we would still write a freshly generated password to
+        # the project YAML. Refuse to proceed so YAML and Keycloak cannot diverge.
+        existing_admin = await keycloak.get_user_by_username("master", admin_username)
+        if existing_admin is not None:
+            raise RuntimeError(
+                f"Refusing to re-create project Keycloak realm for {project_name}/{cluster}: "
+                f"admin user '{admin_username}' already exists in master realm. "
+                f"This usually indicates a transient Keycloak error caused realm_exists() "
+                f"to return False even though the realm is fine. Retry once Keycloak is healthy."
+            )
+
         # Generate and encrypt password
         admin_password = generate_secure_password()
         project_data = await self.project_manager.get_contents()
@@ -1586,13 +1607,6 @@ class KeycloakManager:
 
         encrypted_password = await encrypt_age_content(admin_password, project_public_key)
         encrypted_password_str = LiteralScalarString(encrypted_password)
-
-        # Create Keycloak connector
-        keycloak = await create_keycloak_connector(
-            keycloak_url=keycloak_url,
-            admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
-            admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
-        )
 
         # Extract template from config (already validated in _get_keycloak_service_config)
         template_name = config["template"]  # Will KeyError if config malformed
