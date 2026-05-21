@@ -229,6 +229,9 @@ class TestKeycloakRealmSetup:
             # Mock Keycloak operations
             mock_keycloak.create_user = AsyncMock(return_value={"id": "user-123"})
             mock_keycloak.assign_realm_management_role = AsyncMock()
+            # New drift-guard checks if admin user already exists in master.
+            # Default None = clean state, no existing user to conflict with.
+            mock_keycloak.get_user_by_username = AsyncMock(return_value=None)
 
             # Call the method
             result = await self.keycloak_manager._setup_project_keycloak_realm(
@@ -282,6 +285,7 @@ class TestKeycloakRealmSetup:
             # Mock Keycloak operations
             mock_keycloak.create_user = AsyncMock(return_value={"id": "user-123"})
             mock_keycloak.assign_realm_management_role = AsyncMock()
+            mock_keycloak.get_user_by_username = AsyncMock(return_value=None)
 
             # Call the method
             result = await self.keycloak_manager._setup_project_keycloak_realm(
@@ -318,6 +322,7 @@ class TestKeycloakRealmSetup:
             mock_keycloak = AsyncMock()
             mock_connector.return_value = mock_keycloak
             mock_encrypt.return_value = "encrypted-password"
+            mock_keycloak.get_user_by_username = AsyncMock(return_value=None)
 
             # Call should raise FileNotFoundError
             with pytest.raises(FileNotFoundError) as exc_info:
