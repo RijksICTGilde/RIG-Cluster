@@ -2,30 +2,21 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: default-deny-ingress-postgres
-  namespace: rig-system
+  namespace: rig-prd-operations
 spec:
-  # Deny-by-default backstop for the PostgreSQL datastore pods only.
+  # Explicit deny-by-default backstop for the CNPG postgres pods. K8s
+  # NetworkPolicy semantics already make pods deny-by-default once any
+  # policy with policyTypes: [Ingress] selects them (the allow-postgres-*
+  # policies above do that), so this is redundant for current state. Kept
+  # as a self-documenting baseline: if a future change removes the allow
+  # policies, the postgres pods stay closed instead of falling back to
+  # cluster-default open.
   #
-  # IMPORTANT: rig-system is NOT a datastore-only namespace. In the odcn
-  # production bundle (infrastructure/bootstrap/clusters/odcn) the following
-  # also deploy into rig-system WITHOUT any NetworkPolicy:
-  #   - Keycloak (keycloak/controller + keycloak/config overlays)
-  #   - Redis    (redis/controller overlay)
-  # A cluster-wide `podSelector: {}` deny here would select those pods and,
-  # since no allow policy exists for them, black-hole all their ingress:
-  # OPI -> Keycloak / Redis, ingress-nginx -> Keycloak, tenant apps -> OIDC.
-  # That is a platform-wide outage worse than the cross-tenant exposure this
-  # PR closes. The selector is therefore scoped to the CNPG postgres pods.
+  # Scoped to the CNPG postgres pods only via cnpg.io/cluster, so it cannot
+  # accidentally black-hole co-located workloads in rig-prd-operations
+  # (Keycloak, MinIO, Redis, OPI).
   #
-  # For those pods this is redundant with allow-postgres-access /
-  # allow-postgres-monitoring (which already select the same pods and make
-  # them deny-by-default under Kubernetes NetworkPolicy semantics), but it
-  # is kept as an explicit, self-documenting baseline: if a future change
-  # removes the allow policies, the postgres pods stay closed instead of
-  # falling back to open.
-  #
-  # Egress is intentionally left unmanaged so this policy cannot break
-  # outbound traffic.
+  # Egress intentionally left unmanaged.
   podSelector:
     matchLabels:
       cnpg.io/cluster: rig-db

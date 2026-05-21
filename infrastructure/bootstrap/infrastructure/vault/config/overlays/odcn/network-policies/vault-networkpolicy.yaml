@@ -2,42 +2,37 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-vault-access
-  namespace: rig-system
+  namespace: rig-prd-operations
 spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: vault
 
   ingress:
-    # Allow API access from within the rig-system namespace
+    # Platform namespace itself: Vault is consumed by OPI which co-locates in
+    # rig-prd-operations. No tenant workload needs Vault — the previous
+    # all-namespaces rule (`namespaceSelector: {}`) is intentionally removed.
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: rig-system
+              kubernetes.io/metadata.name: rig-prd-operations
       ports:
         - protocol: TCP
-          port: 8200  # Vault API port
+          port: 8200
         - protocol: TCP
-          port: 8201  # Vault cluster port
+          port: 8201  # cluster port for HA
 
-    # NOTE: the previous rule allowed Vault API access from ALL namespaces
-    # (`namespaceSelector: {}`). Vault is only consumed by OPI in the
-    # rig-system namespace; no tenant workload needs Vault. The
-    # all-namespaces rule has been removed entirely so tenant pods can no
-    # longer reach the Vault API. Access is now limited to rig-system
-    # (rule above) and the ingress controller (rule below).
-
-    # Allow ingress controller access
+    # OpenShift Router (ingress controller on odcn-production) for admin UI.
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
+              kubernetes.io/metadata.name: openshift-ingress
       ports:
         - protocol: TCP
           port: 8200
 
   egress:
-    # Allow intra-cluster communication for Vault HA
+    # Intra-cluster Vault HA.
     - to:
         - podSelector:
             matchLabels:
@@ -46,7 +41,7 @@ spec:
         - protocol: TCP
           port: 8201
 
-    # Allow DNS resolution
+    # DNS resolution.
     - to:
         - namespaceSelector: {}
           podSelector:
@@ -58,7 +53,7 @@ spec:
         - protocol: TCP
           port: 53
 
-    # Allow outbound access for auto-unseal, if using cloud KMS
+    # Outbound for cloud KMS auto-unseal.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

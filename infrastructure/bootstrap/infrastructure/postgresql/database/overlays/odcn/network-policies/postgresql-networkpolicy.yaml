@@ -2,44 +2,17 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-postgres-access
-  namespace: rig-system
+  namespace: rig-prd-operations
 spec:
   podSelector:
     matchLabels:
-      # Match PostgreSQL cluster pods
       cnpg.io/cluster: rig-db
 
   ingress:
-    # Allow PostgreSQL access from within the rig-system namespace
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: rig-system
-      ports:
-        - protocol: TCP
-          port: 5432
-
-    # Allow PostgreSQL access from tenant namespaces only.
-    # Tenant namespaces are stamped with `created-by: operations-manager`
-    # by OPI (see operations-manager/python/manifests/namespace.yaml.jinja).
-    # Infra namespaces (rig-system, monitoring, ingress-nginx) do NOT carry
-    # this label, so ingress is scoped to tenant workloads instead of the
-    # previous empty selector that allowed every namespace in the cluster.
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              created-by: operations-manager
-      ports:
-        - protocol: TCP
-          port: 5432
-
-    # Allow PostgreSQL access from the operations-manager namespace.
-    # In odcn-production OPI runs in `rig-prd-operations` (see
-    # bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/
-    # kustomization.yaml). That namespace is bootstrap-created and does not
-    # carry the `created-by: operations-manager` label (OPI doesn't generate
-    # its own namespace), so it needs an explicit name match. Without this
-    # rule OPI cannot reach `rig-db-rw:5432` and refuses to start.
+    # Platform namespace itself (OPI + Keycloak + co-located workloads in
+    # rig-prd-operations all reach Postgres intra-namespace). This namespace
+    # is bootstrap-created and intentionally does NOT carry the
+    # `created-by: operations-manager` label; matched by name instead.
     - from:
         - namespaceSelector:
             matchLabels:
@@ -48,8 +21,20 @@ spec:
         - protocol: TCP
           port: 5432
 
+    # Tenant namespaces (OPI-generated, stamped with `created-by:
+    # operations-manager` in operations-manager/python/manifests/
+    # namespace.yaml.jinja). Pre-label-era namespaces have been backfilled
+    # with this label so they continue to have access.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              created-by: operations-manager
+      ports:
+        - protocol: TCP
+          port: 5432
+
   egress:
-    # Allow DNS resolution (kube-dns / CoreDNS).
+    # DNS resolution (kube-dns / CoreDNS).
     - to:
         - namespaceSelector: {}
           podSelector:
@@ -61,16 +46,17 @@ spec:
         - protocol: TCP
           port: 53
 
-    # Allow intra-cluster traffic within rig-system: CNPG instance-to-instance
-    # replication / WAL streaming and the in-cluster MinIO S3 backup target.
+    # Intra-namespace traffic: CNPG instance-to-instance replication / WAL
+    # streaming, plus reach the co-located MinIO backup-destination pod for
+    # in-cluster backup targets.
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: rig-system
+              kubernetes.io/metadata.name: rig-prd-operations
 
-    # Allow HTTPS egress for off-cluster backup / WAL archive targets
-    # (object storage over TLS). Assumption: backups use an HTTPS S3
-    # endpoint; narrow this further if an in-cluster-only target is used.
+    # HTTPS egress for off-cluster backup / WAL archive targets if the
+    # barmanObjectStore in cluster.yaml ever points off-cluster. Narrow to a
+    # specific CIDR when a concrete target is known (see follow-up #82).
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -83,18 +69,18 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-postgres-monitoring
-  namespace: rig-system
+  namespace: rig-prd-operations
 spec:
   podSelector:
     matchLabels:
       cnpg.io/cluster: rig-db
 
   ingress:
-    # Allow metrics scraping from monitoring namespace
+    # Prometheus exporter scrape from the monitoring namespace.
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: monitoring
       ports:
         - protocol: TCP
-          port: 9187  # PostgreSQL exporter port
+          port: 9187  # postgres-exporter

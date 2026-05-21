@@ -2,42 +2,40 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-minio-access
-  namespace: rig-system
+  namespace: rig-prd-operations
 spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: minio
 
   ingress:
-    # Allow S3 API access from within the rig-system namespace
+    # Platform namespace itself (OPI co-located in rig-prd-operations).
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: rig-system
+              kubernetes.io/metadata.name: rig-prd-operations
       ports:
         - protocol: TCP
-          port: 9000  # MinIO S3 API
+          port: 9000  # S3 API
         - protocol: TCP
           port: 9001  # MinIO Console
 
-    # Allow S3 API access from tenant namespaces only.
-    # Tenant namespaces are stamped with `created-by: operations-manager`
-    # by OPI (see operations-manager/python/manifests/namespace.yaml.jinja);
-    # infra namespaces do not carry this label. This replaces the previous
-    # empty selector that exposed the S3 API to every namespace.
+    # Tenant namespaces (OPI-generated, stamped with `created-by:
+    # operations-manager`). Replaces the previous empty `namespaceSelector: {}`
+    # that exposed the S3 API to every namespace on the cluster.
     - from:
         - namespaceSelector:
             matchLabels:
               created-by: operations-manager
       ports:
         - protocol: TCP
-          port: 9000  # MinIO S3 API
+          port: 9000
 
-    # Allow ingress controller access
+    # OpenShift Router (ingress controller on odcn-production).
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
+              kubernetes.io/metadata.name: openshift-ingress
       ports:
         - protocol: TCP
           port: 9000
@@ -45,7 +43,7 @@ spec:
           port: 9001
 
   egress:
-    # Allow DNS resolution
+    # DNS resolution.
     - to:
         - namespaceSelector: {}
           podSelector:
@@ -57,11 +55,11 @@ spec:
         - protocol: TCP
           port: 53
 
-    # Allow metrics export
+    # Prometheus metrics scraping.
     - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: monitoring
       ports:
         - protocol: TCP
-          port: 9091  # Prometheus metrics
+          port: 9091
