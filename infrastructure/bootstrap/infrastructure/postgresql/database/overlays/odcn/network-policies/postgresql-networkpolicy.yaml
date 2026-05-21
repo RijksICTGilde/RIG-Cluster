@@ -7,12 +7,8 @@ spec:
   podSelector:
     matchLabels:
       cnpg.io/cluster: rig-db
-
   ingress:
-    # Platform namespace itself (OPI + Keycloak + co-located workloads in
-    # rig-prd-operations all reach Postgres intra-namespace). This namespace
-    # is bootstrap-created and intentionally does NOT carry the
-    # `created-by: operations-manager` label; matched by name instead.
+    # Platform namespace (OPI, Keycloak, co-located workloads).
     - from:
         - namespaceSelector:
             matchLabels:
@@ -20,11 +16,7 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-
-    # Tenant namespaces (OPI-generated, stamped with `created-by:
-    # operations-manager` in operations-manager/python/manifests/
-    # namespace.yaml.jinja). Pre-label-era namespaces have been backfilled
-    # with this label so they continue to have access.
+    # Tenant namespaces (OPI-generated, carry created-by label).
     - from:
         - namespaceSelector:
             matchLabels:
@@ -32,9 +24,7 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-
   egress:
-    # DNS resolution (kube-dns / CoreDNS).
     - to:
         - namespaceSelector: {}
           podSelector:
@@ -45,18 +35,12 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-
-    # Intra-namespace traffic: CNPG instance-to-instance replication / WAL
-    # streaming, plus reach the co-located MinIO backup-destination pod for
-    # in-cluster backup targets.
+    # Intra-namespace replication / WAL streaming.
     - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: rig-prd-operations
-
-    # HTTPS egress for off-cluster backup / WAL archive targets if the
-    # barmanObjectStore in cluster.yaml ever points off-cluster. Narrow to a
-    # specific CIDR when a concrete target is known (see follow-up #82).
+    # Off-cluster backup target (HTTPS S3). Narrow when target is known.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -74,13 +58,11 @@ spec:
   podSelector:
     matchLabels:
       cnpg.io/cluster: rig-db
-
   ingress:
-    # Prometheus exporter scrape from the monitoring namespace.
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: monitoring
       ports:
         - protocol: TCP
-          port: 9187  # postgres-exporter
+          port: 9187

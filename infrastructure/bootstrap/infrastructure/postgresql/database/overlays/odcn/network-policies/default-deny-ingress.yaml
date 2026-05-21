@@ -4,19 +4,9 @@ metadata:
   name: default-deny-ingress-postgres
   namespace: rig-prd-operations
 spec:
-  # Explicit deny-by-default backstop for the CNPG postgres pods. K8s
-  # NetworkPolicy semantics already make pods deny-by-default once any
-  # policy with policyTypes: [Ingress] selects them (the allow-postgres-*
-  # policies above do that), so this is redundant for current state. Kept
-  # as a self-documenting baseline: if a future change removes the allow
-  # policies, the postgres pods stay closed instead of falling back to
-  # cluster-default open.
-  #
-  # Scoped to the CNPG postgres pods only via cnpg.io/cluster, so it cannot
-  # accidentally black-hole co-located workloads in rig-prd-operations
-  # (Keycloak, MinIO, Redis, OPI).
-  #
-  # Egress intentionally left unmanaged.
+  # Self-documenting backstop. Redundant with allow-postgres-access in
+  # current state, but keeps postgres pods closed if the allow-policy
+  # is ever removed.
   podSelector:
     matchLabels:
       cnpg.io/cluster: rig-db

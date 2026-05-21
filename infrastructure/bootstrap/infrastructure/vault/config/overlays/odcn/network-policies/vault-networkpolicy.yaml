@@ -7,11 +7,8 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: vault
-
   ingress:
-    # Platform namespace itself: Vault is consumed by OPI which co-locates in
-    # rig-prd-operations. No tenant workload needs Vault — the previous
-    # all-namespaces rule (`namespaceSelector: {}`) is intentionally removed.
+    # OPI in rig-prd-operations is the only consumer; no tenant rule.
     - from:
         - namespaceSelector:
             matchLabels:
@@ -20,9 +17,8 @@ spec:
         - protocol: TCP
           port: 8200
         - protocol: TCP
-          port: 8201  # cluster port for HA
-
-    # OpenShift Router (ingress controller on odcn-production) for admin UI.
+          port: 8201
+    # OpenShift Router for admin UI.
     - from:
         - namespaceSelector:
             matchLabels:
@@ -30,9 +26,7 @@ spec:
       ports:
         - protocol: TCP
           port: 8200
-
   egress:
-    # Intra-cluster Vault HA.
     - to:
         - podSelector:
             matchLabels:
@@ -40,8 +34,6 @@ spec:
       ports:
         - protocol: TCP
           port: 8201
-
-    # DNS resolution.
     - to:
         - namespaceSelector: {}
           podSelector:
@@ -52,8 +44,7 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-
-    # Outbound for cloud KMS auto-unseal.
+    # Cloud KMS auto-unseal.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

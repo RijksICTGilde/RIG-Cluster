@@ -7,22 +7,18 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: minio
-
   ingress:
-    # Platform namespace itself (OPI co-located in rig-prd-operations).
+    # Platform namespace (OPI, co-located workloads).
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: rig-prd-operations
       ports:
         - protocol: TCP
-          port: 9000  # S3 API
+          port: 9000
         - protocol: TCP
-          port: 9001  # MinIO Console
-
-    # Tenant namespaces (OPI-generated, stamped with `created-by:
-    # operations-manager`). Replaces the previous empty `namespaceSelector: {}`
-    # that exposed the S3 API to every namespace on the cluster.
+          port: 9001
+    # Tenant namespaces (created-by label).
     - from:
         - namespaceSelector:
             matchLabels:
@@ -30,8 +26,7 @@ spec:
       ports:
         - protocol: TCP
           port: 9000
-
-    # OpenShift Router (ingress controller on odcn-production).
+    # OpenShift Router.
     - from:
         - namespaceSelector:
             matchLabels:
@@ -41,9 +36,7 @@ spec:
           port: 9000
         - protocol: TCP
           port: 9001
-
   egress:
-    # DNS resolution.
     - to:
         - namespaceSelector: {}
           podSelector:
@@ -54,8 +47,6 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-
-    # Prometheus metrics scraping.
     - to:
         - namespaceSelector:
             matchLabels:
