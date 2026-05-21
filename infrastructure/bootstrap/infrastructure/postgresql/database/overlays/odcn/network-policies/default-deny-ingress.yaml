@@ -4,9 +4,8 @@ metadata:
   name: default-deny-ingress-postgres
   namespace: rig-prd-operations
 spec:
-  # Self-documenting backstop. Redundant with allow-postgres-access in
-  # current state, but keeps postgres pods closed if the allow-policy
-  # is ever removed.
+  # Deny all ingress to postgres pods. Acts as a backstop: keeps them
+  # closed if allow-postgres-access is ever deleted.
   podSelector:
     matchLabels:
       cnpg.io/cluster: rig-db
