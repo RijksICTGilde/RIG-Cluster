@@ -1,5 +1,5 @@
-# podSelector + policyTypes: [Ingress, Egress] maakt postgres-pods automatisch
-# deny-by-default; alleen verkeer dat hieronder expliciet allowed wordt komt door.
+# podSelector + policyTypes maakt postgres-pods automatisch deny-by-default;
+# alleen verkeer dat hieronder expliciet allowed wordt komt door.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -19,7 +19,7 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # Tenant namespaces (OPI-generated, carry created-by label).
+    # Tenant namespaces (OPI-generated, created-by label).
     - from:
         - namespaceSelector:
             matchLabels:
@@ -28,6 +28,7 @@ spec:
         - protocol: TCP
           port: 5432
   egress:
+    # DNS.
     - to:
         - namespaceSelector: {}
           podSelector:
@@ -38,7 +39,7 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # Intra-namespace replication / WAL streaming.
+    # CNPG intra-namespace replication / WAL streaming.
     - to:
         - namespaceSelector:
             matchLabels:
