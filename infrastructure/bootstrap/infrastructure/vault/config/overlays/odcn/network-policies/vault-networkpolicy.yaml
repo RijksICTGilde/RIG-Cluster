@@ -1,17 +1,5 @@
-# Deny all ingress to vault pods. Backstop voor allow-policy hieronder.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: vault-default-deny
-  namespace: rig-prd-operations
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: vault
-  policyTypes:
-    - Ingress
-
----
+# podSelector + policyTypes: [Ingress, Egress] maakt vault-pods automatisch
+# deny-by-default; alleen verkeer dat hieronder expliciet allowed wordt komt door.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -21,6 +9,7 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: vault
+  policyTypes: [Ingress, Egress]
   ingress:
     # OPI in rig-prd-operations is the only consumer; no tenant rule.
     - from:

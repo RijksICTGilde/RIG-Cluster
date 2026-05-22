@@ -1,18 +1,5 @@
-# Deny all ingress to postgres pods. Backstop: blijft van kracht als de
-# allow-policies hieronder ooit verdwijnen.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: postgres-default-deny
-  namespace: rig-prd-operations
-spec:
-  podSelector:
-    matchLabels:
-      cnpg.io/cluster: rig-db
-  policyTypes:
-    - Ingress
-
----
+# podSelector + policyTypes: [Ingress, Egress] maakt postgres-pods automatisch
+# deny-by-default; alleen verkeer dat hieronder expliciet allowed wordt komt door.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -22,6 +9,7 @@ spec:
   podSelector:
     matchLabels:
       cnpg.io/cluster: rig-db
+  policyTypes: [Ingress, Egress]
   ingress:
     # Platform namespace (OPI, Keycloak, co-located workloads).
     - from:
@@ -73,6 +61,7 @@ spec:
   podSelector:
     matchLabels:
       cnpg.io/cluster: rig-db
+  policyTypes: [Ingress]
   ingress:
     - from:
         - namespaceSelector:
