@@ -3,116 +3,32 @@ kind: ClusterRole
 metadata:
   name: namespace-manager
 rules:
-  - apiGroups:
-      - ""
-    resources:
-      - namespaces
-    verbs:
-      - create
-      - get
-      - list
-      - patch
-  # SECURITY: secrets are intentionally scoped DOWN here.
-  #
-  # Cluster-wide `secrets list` was removed: it let OPI read every tenant's
-  # secrets across the whole cluster (full tenant-secret disclosure) and is
-  # not used by the application (kubectl connector only does a namespaced
-  # `get_secret`; tenant secrets are delivered via GitOps/ArgoCD, not written
-  # directly by OPI). `update` cluster-wide was also removed.
-  #
-  # REQUIRED FOLLOW-UP (needs app-code change, tracked in the PR): the
-  # remaining create/get/patch on secrets should move to per-namespace
-  # Role+RoleBinding objects that OPI generates alongside each tenant
-  # namespace in _create_namespace_with_argocd_label
-  # (operations-manager/python/opi/manager/project_manager.py). Until that
-  # lands, create/get/patch are kept cluster-wide as the tightest set that
-  # does not break provisioning.
-  - apiGroups:
-      - ""
-    resources:
-      - secrets
-    verbs:
-      - create
-      - get
-      - patch
-  # Non-resource Prometheus / kubelet metrics endpoints. Kept because the
-  # in-cluster Prometheus stack may scrape these under the same ServiceAccount.
-  # Not directly called by the OPI Python code path (no calls in opi/).
-  - nonResourceURLs:
-      - /metrics
-      - /metrics/cadvisor
-    verbs:
-      - get
-  # ==========================================================================
-  # Deployment Monitoring Permissions
-  # Used by: OOM watcher, deploy status checks, resource monitoring
-  # ==========================================================================
-  - apiGroups:
-      - apps
-    resources:
-      - deployments
-    verbs:
-      - get
-      - list
-  # Events listing for deployment monitoring and progress reporting
-  - apiGroups:
-      - ""
-    resources:
-      - events
-    verbs:
-      - get
-      - list
-      - watch
-  # ==========================================================================
-  # PVC Backup System Permissions
-  # See: features/pvc-backup-system.md for documentation
-  # ==========================================================================
-  # Backup lock management (ConfigMap in rig-system namespace)
-  - apiGroups:
-      - ""
-    resources:
-      - configmaps
-    verbs:
-      - create
-      - get
-      - delete
-      - patch
-      - update
-  # PVC operations for backup clones and restores
-  - apiGroups:
-      - ""
-    resources:
-      - persistentvolumeclaims
-    verbs:
-      - create
-      - get
-      - list
-      - delete
-  # Backup/restore pod management
-  - apiGroups:
-      - ""
-    resources:
-      - pods
-    verbs:
-      - create
-      - get
-      - list
-      - delete
-      - watch
-  # Read backup pod logs for status and debugging
-  - apiGroups:
-      - ""
-    resources:
-      - pods/log
-    verbs:
-      - get
-  # VolumeSnapshot operations (CSI snapshots for point-in-time backups)
-  - apiGroups:
-      - snapshot.storage.k8s.io
-    resources:
-      - volumesnapshots
-    verbs:
-      - create
-      - get
-      - list
-      - delete
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [create, get, list, patch]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, get, patch]
+  - nonResourceURLs: [/metrics, /metrics/cadvisor]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create, get, delete, patch, update]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [create, get, list, delete]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, get, list, delete, watch]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [snapshot.storage.k8s.io]
+    resources: [volumesnapshots]
+    verbs: [create, get, list, delete]

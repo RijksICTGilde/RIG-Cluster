@@ -1,140 +1,39 @@
 # BLUEPRINT — not deployed via ArgoCD. ODC platform-team beheert de werkelijke
-# ClusterRole op productie; deze file documenteert de gewenste rechten-inrichting
-# voor de OPI ServiceAccount zodat repo en cluster-side parity hebben.
+# ClusterRole; deze file documenteert de gewenste rechten-inrichting voor parity.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: namespace-manager
 rules:
-  - apiGroups:
-      - ""
-    resources:
-      - namespaces
-    verbs:
-      - create
-      - get
-      - list
-      - patch
-  # SECURITY: secrets are intentionally scoped DOWN here.
-  #
-  # Cluster-wide `secrets list` was removed: it let OPI read every tenant's
-  # secrets across the whole cluster (full tenant-secret disclosure) and is
-  # not used by the application (kubectl connector only does a namespaced
-  # `get_secret`; tenant secrets are delivered via GitOps/ArgoCD, not written
-  # directly by OPI). `update` cluster-wide was also removed.
-  #
-  # `delete` is required: project_manager._ensure_sops_secret deletes the
-  # stale "sops-age-key" Secret in a tenant namespace when the project's
-  # SOPS keypair rotates (project_manager.py, delete_resource("secret",
-  # "sops-age-key", namespace)) before recreating it. This is the exact
-  # prod RBAC the code exercises; declaring it here keeps the in-repo
-  # ClusterRole authoritative instead of silently narrower than reality.
-  #
-  # REQUIRED FOLLOW-UP (needs app-code change, tracked in the PR): the
-  # remaining create/get/patch/delete on secrets should move to
-  # per-namespace Role+RoleBinding objects that OPI generates alongside
-  # each tenant namespace in _create_namespace_with_argocd_label
-  # (operations-manager/python/opi/manager/project_manager.py). Until that
-  # lands, create/get/patch/delete are kept cluster-wide as the tightest
-  # set that does not break provisioning.
-  - apiGroups:
-      - ""
-    resources:
-      - secrets
-    verbs:
-      - create
-      - get
-      - patch
-      - delete
-  # Prometheus service discovery — read-only access to pods/services/endpoints/nodes
-  - apiGroups:
-      - ""
-    resources:
-      - nodes
-      - nodes/proxy
-      - nodes/metrics
-      - services
-      - endpoints
-    verbs:
-      - get
-      - list
-      - watch
-  # Prometheus metrics endpoints
-  - nonResourceURLs:
-      - /metrics
-      - /metrics/cadvisor
-    verbs:
-      - get
-  # ==========================================================================
-  # Deployment Monitoring Permissions
-  # Used by: OOM watcher, deploy status checks, resource monitoring
-  # ==========================================================================
-  - apiGroups:
-      - apps
-    resources:
-      - deployments
-    verbs:
-      - get
-      - list
-  # Events listing for deployment monitoring and progress reporting
-  - apiGroups:
-      - ""
-    resources:
-      - events
-    verbs:
-      - get
-      - list
-      - watch
-  # ==========================================================================
-  # PVC Backup System Permissions
-  # See: features/pvc-backup-system.md for documentation
-  # ==========================================================================
-  # Backup lock management (ConfigMap in rig-system namespace)
-  - apiGroups:
-      - ""
-    resources:
-      - configmaps
-    verbs:
-      - create
-      - get
-      - delete
-      - patch
-      - update
-  # PVC operations for backup clones and restores
-  - apiGroups:
-      - ""
-    resources:
-      - persistentvolumeclaims
-    verbs:
-      - create
-      - get
-      - list
-      - delete
-  # Backup/restore pod management
-  - apiGroups:
-      - ""
-    resources:
-      - pods
-    verbs:
-      - create
-      - get
-      - list
-      - delete
-      - watch
-  # Read backup pod logs for status and debugging
-  - apiGroups:
-      - ""
-    resources:
-      - pods/log
-    verbs:
-      - get
-  # VolumeSnapshot operations (CSI snapshots for point-in-time backups)
-  - apiGroups:
-      - snapshot.storage.k8s.io
-    resources:
-      - volumesnapshots
-    verbs:
-      - create
-      - get
-      - list
-      - delete
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [create, get, list, patch]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, get, patch, delete]
+  - apiGroups: [""]
+    resources: [nodes, nodes/proxy, nodes/metrics, services, endpoints]
+    verbs: [get, list, watch]
+  - nonResourceURLs: [/metrics, /metrics/cadvisor]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create, get, delete, patch, update]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [create, get, list, delete]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, get, list, delete, watch]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [snapshot.storage.k8s.io]
+    resources: [volumesnapshots]
+    verbs: [create, get, list, delete]
