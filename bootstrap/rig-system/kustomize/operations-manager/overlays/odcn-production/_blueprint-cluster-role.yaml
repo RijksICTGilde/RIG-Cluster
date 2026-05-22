@@ -1,3 +1,9 @@
+# Blueprint van OPI's minimum-rechten (matcht local/sandbox cluster-role).
+# Op odcn-production NIET gedeployd: Capsule maakt per tenant-namespace
+# automatisch een RoleBinding naar de built-in admin ClusterRole — dat geeft
+# bredere rechten dan deze blueprint (o.a. secrets list/update/watch en full
+# CRUD op de meeste resources). Namespace-creatie loopt via Capsule
+# tenant-ownership, niet via een cluster-brede regel.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -8,11 +14,15 @@ rules:
     resources: [namespaces]
     verbs: [create, get, list, patch]
   # Secrets cluster-breed: OPI plaatst SOPS-age-keys en Keycloak-secrets per
-  # tenant-ns; per-namespace Role+RoleBinding is follow-up #90.
+  # tenant-ns; delete voor key-rotation (zie project_manager._ensure_sops_secret).
   - apiGroups: [""]
     resources: [secrets]
-    verbs: [create, get, patch]
-  # Prometheus/kubelet scrape endpoints onder dezelfde SA.
+    verbs: [create, get, patch, delete]
+  # Prometheus service-discovery onder dezelfde SA.
+  - apiGroups: [""]
+    resources: [nodes, nodes/proxy, nodes/metrics, services, endpoints]
+    verbs: [get, list, watch]
+  # Prometheus/kubelet scrape endpoints.
   - nonResourceURLs: [/metrics, /metrics/cadvisor]
     verbs: [get]
   # Deploy-status + OOM watcher leest deployments.
@@ -23,7 +33,7 @@ rules:
   - apiGroups: [""]
     resources: [events]
     verbs: [get, list, watch]
-  # Backup-lock (ConfigMap in rig-system) coordineert concurrent backups.
+  # Backup-lock (ConfigMap) coordineert concurrent backups.
   - apiGroups: [""]
     resources: [configmaps]
     verbs: [create, get, delete, patch, update]

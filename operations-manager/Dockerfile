@@ -96,16 +96,6 @@ FROM dependencies AS application
 RUN groupadd -g 1001 appuser && \
     useradd -r -u 1001 -g appuser appuser
 
-# Create directory for SSH keys
-RUN mkdir -p /app/keys
-
-# Copy SSH keys (rarely change)
-COPY keys/git-server-key keys/git-server-key.pub /app/keys/
-
-# Copy specific environment files (rarely change)
-COPY operations-manager/python/.env /app/
-COPY operations-manager/python/.env.production /app/
-
 # Copy Alembic configuration (for database migrations)
 COPY operations-manager/python/alembic.ini /app/
 
@@ -120,11 +110,8 @@ COPY operations-manager/python/extensions ./extensions
 COPY operations-manager/python/sources ./sources
 COPY operations-manager/python/static ./static
 
-# Set proper permissions for SSH keys and application files
 RUN chown -R appuser:appuser /app && \
-    chmod -R 755 /app && \
-    chmod 644 /app/keys/git-server-key.pub && \
-    chmod 600 /app/keys/git-server-key
+    chmod -R 755 /app
 
 # Switch to non-root user
 USER appuser
