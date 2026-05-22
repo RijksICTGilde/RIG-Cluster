@@ -47,10 +47,3 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # Cloud KMS auto-unseal.
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-      ports:
-        - protocol: TCP
-          port: 443
