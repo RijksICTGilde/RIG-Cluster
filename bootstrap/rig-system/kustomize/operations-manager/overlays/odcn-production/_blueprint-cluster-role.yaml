@@ -1,3 +1,6 @@
+# BLUEPRINT — not deployed via ArgoCD. ODC platform-team beheert de werkelijke
+# ClusterRole op productie; deze file documenteert de gewenste rechten-inrichting
+# voor de OPI ServiceAccount zodat repo en cluster-side parity hebben.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -43,9 +46,20 @@ rules:
       - get
       - patch
       - delete
-  # Non-resource Prometheus / kubelet metrics endpoints. Kept because the
-  # in-cluster Prometheus stack may scrape these under the same ServiceAccount.
-  # Not directly called by the OPI Python code path (no calls in opi/).
+  # Prometheus service discovery — read-only access to pods/services/endpoints/nodes
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+      - nodes/proxy
+      - nodes/metrics
+      - services
+      - endpoints
+    verbs:
+      - get
+      - list
+      - watch
+  # Prometheus metrics endpoints
   - nonResourceURLs:
       - /metrics
       - /metrics/cadvisor
