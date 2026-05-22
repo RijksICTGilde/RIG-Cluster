@@ -96,14 +96,6 @@ FROM dependencies AS application
 RUN groupadd -g 1001 appuser && \
     useradd -r -u 1001 -g appuser appuser
 
-# Create directory for SSH keys. The git SSH private key is NOT baked into
-# the image. It is mounted at runtime from a Kubernetes Secret (see
-# bootstrap/rig-system/kustomize/operations-manager/base/deployment.yaml,
-# volume "git-server-key" at GIT_SERVER_KEY_PATH=/app/keys/git-server-key).
-# Baking the key (or .env/.env.production) into image layers leaks the
-# GitOps write credential to anyone who can pull the image.
-RUN mkdir -p /app/keys
-
 # Copy Alembic configuration (for database migrations)
 COPY operations-manager/python/alembic.ini /app/
 
@@ -118,8 +110,6 @@ COPY operations-manager/python/extensions ./extensions
 COPY operations-manager/python/sources ./sources
 COPY operations-manager/python/static ./static
 
-# Set proper permissions for application files. The git SSH key is provided
-# at runtime via a read-only Secret volume mount, not written here.
 RUN chown -R appuser:appuser /app && \
     chmod -R 755 /app
 
