@@ -16,31 +16,10 @@ spec:
   destinations:
     - namespace: {{ destination.namespace }}
       server: "https://kubernetes.default.svc"
-  # Defense in depth: restrict what synced Applications may create to the
-  # explicit set of resource kinds OPI actually generates (see manifests/*.jinja).
-  # This closes the amplifier where a template-injected podSpec could otherwise
-  # be applied as any cluster/namespace resource. Cluster-scoped: only Namespace.
-  clusterResourceWhitelist:
-    - group: ''
-      kind: Namespace
+  # Cluster-scoped blocked (ODC Argo has no permissions; ZAD creates
+  # namespaces out-of-band). Namespaced wide open so helm-chart deployments
+  # are not blocked; destinations.namespace pinning above is the boundary.
+  clusterResourceWhitelist: []
   namespaceResourceWhitelist:
-    - group: ''
-      kind: ConfigMap
-    - group: ''
-      kind: Secret
-    - group: ''
-      kind: Service
-    - group: ''
-      kind: PersistentVolumeClaim
-    - group: apps
-      kind: Deployment
-    - group: networking.k8s.io
-      kind: Ingress
-    - group: networking.k8s.io
-      kind: NetworkPolicy
-    - group: cert-manager.io
-      kind: Issuer
-    - group: postgresql.cnpg.io
-      kind: Cluster
-    - group: snapshot.storage.k8s.io
-      kind: VolumeSnapshot
+    - group: '*'
+      kind: '*'
