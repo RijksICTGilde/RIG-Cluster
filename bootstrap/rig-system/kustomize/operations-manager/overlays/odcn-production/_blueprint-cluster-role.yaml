@@ -1,3 +1,7 @@
+# Blueprint van OPI-rechten op odcn-production. Op productie levert ODCN
+# equivalent via Capsule per-tenant RoleBindings naar de built-in admin
+# ClusterRole — deze file documenteert de gewenste set zonder zelf gesynced
+# te worden (niet in kustomization.yaml).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
