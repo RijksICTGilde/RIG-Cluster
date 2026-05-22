@@ -7,35 +7,47 @@ kind: ClusterRole
 metadata:
   name: namespace-manager
 rules:
+  # Tenant-namespace lifecycle: OPI creëert en label't tenant-namespaces.
   - apiGroups: [""]
     resources: [namespaces]
     verbs: [create, get, list, patch]
+  # Secrets cluster-breed: OPI plaatst SOPS-age-keys en Keycloak-secrets per
+  # tenant-ns; delete voor key-rotation (zie project_manager._ensure_sops_secret).
   - apiGroups: [""]
     resources: [secrets]
     verbs: [create, get, patch, delete]
+  # Prometheus service-discovery onder dezelfde SA.
   - apiGroups: [""]
     resources: [nodes, nodes/proxy, nodes/metrics, services, endpoints]
     verbs: [get, list, watch]
+  # Prometheus/kubelet scrape endpoints.
   - nonResourceURLs: [/metrics, /metrics/cadvisor]
     verbs: [get]
+  # Deploy-status + OOM watcher leest deployments.
   - apiGroups: [apps]
     resources: [deployments]
     verbs: [get, list]
+  # Events voor deploy-progress en diagnostics.
   - apiGroups: [""]
     resources: [events]
     verbs: [get, list, watch]
+  # Backup-lock (ConfigMap) coordineert concurrent backups.
   - apiGroups: [""]
     resources: [configmaps]
     verbs: [create, get, delete, patch, update]
+  # PVC backups + restores: clones aanmaken/opruimen.
   - apiGroups: [""]
     resources: [persistentvolumeclaims]
     verbs: [create, get, list, delete]
+  # Backup/restore pods: launchen, wachten, opruimen.
   - apiGroups: [""]
     resources: [pods]
     verbs: [create, get, list, delete, watch]
+  # Pod-logs voor backup-status en diagnostics.
   - apiGroups: [""]
     resources: [pods/log]
     verbs: [get]
+  # CSI VolumeSnapshots voor point-in-time PVC backups.
   - apiGroups: [snapshot.storage.k8s.io]
     resources: [volumesnapshots]
     verbs: [create, get, list, delete]
