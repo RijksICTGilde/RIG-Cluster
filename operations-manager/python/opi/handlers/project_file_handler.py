@@ -63,11 +63,8 @@ def _parse_resources_block(raw: dict | None, defaults: dict[str, str] | None = N
     }
 
 
-# Safe charset for tenant-controlled URL paths (component `match` / `rewrite`).
-# These values are interpolated into an nginx `configuration-snippet` in
-# ingress.yaml.jinja, so they must not be able to carry nginx directives,
-# newlines, quotes or other metacharacters. RFC 3986 unreserved characters
-# plus '/' cover every legitimate path rewrite (e.g. "/", "/api", "/v1/users").
+# URL-path charset voor tenant-bestuurde component match/rewrite waarden;
+# voorkomt nginx-snippet-injection in ingress.yaml.jinja.
 _SAFE_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9/_.~-]*$")
 
 
@@ -81,7 +78,6 @@ def _sanitize_path_value(value: Any, field: str) -> str:
             configuration-snippet injection).
     """
     if not isinstance(value, str):
-        # Invalid tenant input, not a programming type error -> ValueError on purpose.
         raise ValueError(  # noqa: TRY004
             f"Component path '{field}' must be a string, got {type(value).__name__}"
         )
@@ -691,9 +687,7 @@ class ProjectFileHandler:
         json_path = f"$.components[?(@.name='{component_name}')].path"
         path_config = self.extract_value_by_path(project_data, json_path, "/")
 
-        # Normalize to list format. Every match/rewrite is validated against
-        # the safe URL-path charset to prevent nginx configuration-snippet
-        # injection (see _sanitize_path_value).
+        # Normaliseer naar list-format; sanitizer valideert per item.
         if isinstance(path_config, str):
             logger.debug(f"Found single path '{path_config}' for component '{component_name}'")
             return [_normalize_path_config(path_config)]
@@ -729,9 +723,7 @@ class ProjectFileHandler:
         components = deployment_data.get("components", [])
         for comp in components:
             if comp.get("reference") == component_reference:
-                # Schema uses singular `path` (str | list). Normalize via the
-                # sanitizing helper so deployment-level overrides go through
-                # the same charset validation as component-level ones.
+                # Schema: singular `path` (str | list); normaliseer via sanitizer.
                 path_config = comp.get("path")
                 if path_config is not None:
                     if isinstance(path_config, str):

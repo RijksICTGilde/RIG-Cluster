@@ -47,9 +47,7 @@ metadata:
     nginx.ingress.kubernetes.io/configuration-snippet: |
 {% if rewrite %}
 {% set rewrite_base = '' if rewrite == '/' else rewrite %}
-      # path / rewrite_base are validated against a strict URL-path charset
-      # (_SAFE_PATH_PATTERN in project_file_handler.py) before reaching this
-      # template, so they cannot inject nginx directives, quotes or newlines.
+      # path/rewrite_base zijn aan de bron charset-gevalideerd (_SAFE_PATH_PATTERN).
       rewrite "^{{ path }}/?(.*)$" "{{ rewrite_base }}/$1" break;
 {% endif %}
       more_set_headers "X-Content-Type-Options: nosniff";

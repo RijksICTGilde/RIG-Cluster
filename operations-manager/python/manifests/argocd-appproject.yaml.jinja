@@ -16,9 +16,7 @@ spec:
   destinations:
     - namespace: {{ destination.namespace }}
       server: "https://kubernetes.default.svc"
-  # Cluster-scoped blocked (ODC Argo has no permissions; ZAD creates
-  # namespaces out-of-band). Namespaced wide open so helm-chart deployments
-  # are not blocked; destinations.namespace pinning above is the boundary.
+  # Cluster-scoped dicht; namespaced open want destinations.namespace pint al de scope.
   clusterResourceWhitelist: []
   namespaceResourceWhitelist:
     - group: '*'
