@@ -1,0 +1,15 @@
+# Blueprint van de Binding die hoort bij de _blueprint-cluster-role.
+# Op odcn-production NIET gedeployd — Capsule maakt per tenant-namespace
+# een eigen RoleBinding naar de built-in admin ClusterRole.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: namespace-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: namespace-manager
+subjects:
+  - kind: ServiceAccount
+    name: namespace-manager
+    namespace: rig-prd-operations

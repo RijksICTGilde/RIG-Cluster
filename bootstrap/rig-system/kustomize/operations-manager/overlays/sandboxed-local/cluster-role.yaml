@@ -3,114 +3,43 @@ kind: ClusterRole
 metadata:
   name: namespace-manager
 rules:
-  - apiGroups:
-      - ""
-    resources:
-      - namespaces
-    verbs:
-      - create
-      - get
-      - list
-      - patch
-  - apiGroups:
-      - ""
-    resources:
-      - secrets
-    verbs:
-      - create
-      - get
-      - list
-      - patch
-      - update
-  # Prometheus service discovery - read-only access to pods/services/endpoints/nodes
-  - apiGroups:
-      - ""
-    resources:
-      - nodes
-      - nodes/proxy
-      - nodes/metrics
-      - services
-      - endpoints
-    verbs:
-      - get
-      - list
-      - watch
-  # Prometheus metrics endpoints
-  - nonResourceURLs:
-      - /metrics
-      - /metrics/cadvisor
-    verbs:
-      - get
-  # ==========================================================================
-  # Deployment Monitoring Permissions
-  # Used by: OOM watcher, deploy status checks, resource monitoring
-  # ==========================================================================
-  - apiGroups:
-      - apps
-    resources:
-      - deployments
-    verbs:
-      - get
-      - list
-  # Events listing for deployment monitoring and progress reporting
-  - apiGroups:
-      - ""
-    resources:
-      - events
-    verbs:
-      - get
-      - list
-      - watch
-  # ==========================================================================
-  # PVC Backup System Permissions
-  # See: features/pvc-backup-system.md for documentation
-  # ==========================================================================
-  # Backup lock management (ConfigMap in rig-system namespace)
-  - apiGroups:
-      - ""
-    resources:
-      - configmaps
-    verbs:
-      - create
-      - get
-      - delete
-      - patch
-      - update
-  # PVC operations for backup clones and restores
-  - apiGroups:
-      - ""
-    resources:
-      - persistentvolumeclaims
-    verbs:
-      - create
-      - get
-      - list
-      - delete
-  # Backup/restore pod management
-  - apiGroups:
-      - ""
-    resources:
-      - pods
-    verbs:
-      - create
-      - get
-      - list
-      - delete
-      - watch
-  # Read backup pod logs for status and debugging
-  - apiGroups:
-      - ""
-    resources:
-      - pods/log
-    verbs:
-      - get
-  # VolumeSnapshot operations (CSI snapshots for point-in-time backups)
-  - apiGroups:
-      - snapshot.storage.k8s.io
-    resources:
-      - volumesnapshots
-    verbs:
-      - create
-      - get
-      - list
-      - delete
+  # Tenant-namespace lifecycle: OPI creëert en label't tenant-namespaces.
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [create, get, list, patch]
+  # Secrets cluster-breed: OPI plaatst SOPS-age-keys en Keycloak-secrets per
+  # tenant-ns; per-namespace Role+RoleBinding is follow-up #90.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, get, patch]
+  # Prometheus/kubelet scrape endpoints onder dezelfde SA.
+  - nonResourceURLs: [/metrics, /metrics/cadvisor]
+    verbs: [get]
+  # Deploy-status + OOM watcher leest deployments.
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list]
+  # Events voor deploy-progress en diagnostics.
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [get, list, watch]
+  # Backup-lock (ConfigMap in rig-system) coordineert concurrent backups.
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create, get, delete, patch, update]
+  # PVC backups + restores: clones aanmaken/opruimen.
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [create, get, list, delete]
+  # Backup/restore pods: launchen, wachten, opruimen.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, get, list, delete, watch]
+  # Pod-logs voor backup-status en diagnostics.
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  # CSI VolumeSnapshots voor point-in-time PVC backups.
+  - apiGroups: [snapshot.storage.k8s.io]
+    resources: [volumesnapshots]
+    verbs: [create, get, list, delete]
