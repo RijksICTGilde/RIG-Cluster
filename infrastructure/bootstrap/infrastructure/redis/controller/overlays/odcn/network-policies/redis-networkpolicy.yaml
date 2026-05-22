@@ -1,34 +1,32 @@
-# podSelector + policyTypes maakt minio-pods automatisch deny-by-default;
+# podSelector + policyTypes maakt redis-pods automatisch deny-by-default;
 # alleen verkeer dat hieronder expliciet allowed wordt komt door.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-minio-access
+  name: allow-redis-access
   namespace: rig-prd-operations
 spec:
   podSelector:
     matchLabels:
-      app: minio
+      app: rig-redis
   policyTypes: [Ingress, Egress]
   ingress:
-    # Platform namespace (OPI gebruikt S3 API + Console).
+    # Platform namespace (OPI gebruikt Redis voor cache/sessions).
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: rig-prd-operations
       ports:
         - protocol: TCP
-          port: 9000
-        - protocol: TCP
-          port: 9001
-    # Tenant namespaces gebruiken alleen S3 API.
+          port: 6379
+    # Tenant namespaces met apps die de gedeelde Redis gebruiken.
     - from:
         - namespaceSelector:
             matchLabels:
               created-by: operations-manager
       ports:
         - protocol: TCP
-          port: 9000
+          port: 6379
   egress:
     # DNS.
     - to:

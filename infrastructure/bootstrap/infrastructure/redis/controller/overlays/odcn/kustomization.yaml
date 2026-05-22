@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: rig-system
 resources:
 - ../../base
+- network-policies/redis-networkpolicy.yaml
 
 patches:
   - target:

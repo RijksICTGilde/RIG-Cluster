@@ -1,43 +1,35 @@
+# podSelector + policyTypes: [Ingress, Egress] maakt vault-pods automatisch
+# deny-by-default; alleen verkeer dat hieronder expliciet allowed wordt komt door.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-vault-access
-  namespace: rig-system
+  namespace: rig-prd-operations
 spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: vault
-
+  policyTypes: [Ingress, Egress]
   ingress:
-    # Allow API access from within the rig-system namespace
+    # OPI in rig-prd-operations is the only consumer; no tenant rule.
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: rig-system
-      ports:
-        - protocol: TCP
-          port: 8200  # Vault API port
-        - protocol: TCP
-          port: 8201  # Vault cluster port
-
-    # Allow API access from all other namespaces
-    - from:
-        - namespaceSelector: {}
-      ports:
-        - protocol: TCP
-          port: 8200  # Vault API port
-
-    # Allow ingress controller access
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
+              kubernetes.io/metadata.name: rig-prd-operations
       ports:
         - protocol: TCP
           port: 8200
-
+        - protocol: TCP
+          port: 8201
+    # OpenShift Router for admin UI.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-ingress
+      ports:
+        - protocol: TCP
+          port: 8200
   egress:
-    # Allow intra-cluster communication for Vault HA
     - to:
         - podSelector:
             matchLabels:
@@ -45,8 +37,6 @@ spec:
       ports:
         - protocol: TCP
           port: 8201
-
-    # Allow DNS resolution
     - to:
         - namespaceSelector: {}
           podSelector:
@@ -57,11 +47,3 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-
-    # Allow outbound access for auto-unseal, if using cloud KMS
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-      ports:
-        - protocol: TCP
-          port: 443
