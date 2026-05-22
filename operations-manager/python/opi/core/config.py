@@ -139,7 +139,7 @@ class Settings(BaseSettings):
 
     SECRET_KEY: str = "default-secret-key-for-development-change-in-production"
     ENVIRONMENT: str = "local"
-    DEBUG: bool = True
+    DEBUG: bool = False
     CLUSTER_MANAGER: str = "local"
 
     # Development mode: "reload" (hot-reload) | "debug" (debugger) | "production"
