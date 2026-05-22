@@ -1,52 +1,66 @@
+# podSelector + policyTypes maakt postgres-pods automatisch deny-by-default;
+# alleen verkeer dat hieronder expliciet allowed wordt komt door.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-postgres-access
-  namespace: rig-system
+  namespace: rig-prd-operations
 spec:
   podSelector:
     matchLabels:
-      # Match PostgreSQL cluster pods
       cnpg.io/cluster: rig-db
-
+  policyTypes: [Ingress, Egress]
   ingress:
-    # Allow PostgreSQL access from within the rig-system namespace
+    # Platform namespace (OPI, Keycloak, co-located workloads).
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: rig-system
+              kubernetes.io/metadata.name: rig-prd-operations
       ports:
         - protocol: TCP
           port: 5432
-
-    # Allow PostgreSQL access from all other namespaces
+    # Tenant namespaces (OPI-generated, created-by label).
     - from:
-        - namespaceSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              created-by: operations-manager
       ports:
         - protocol: TCP
           port: 5432
-
   egress:
-    # Allow all outbound traffic (needed for backups, WAL shipping, etc.)
-    - {}
+    # DNS.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # CNPG intra-namespace replication / WAL streaming.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-prd-operations
 
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-postgres-monitoring
-  namespace: rig-system
+  namespace: rig-prd-operations
 spec:
   podSelector:
     matchLabels:
       cnpg.io/cluster: rig-db
-
+  policyTypes: [Ingress]
   ingress:
-    # Allow metrics scraping from monitoring namespace
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: monitoring
       ports:
         - protocol: TCP
-          port: 9187  # PostgreSQL exporter port
+          port: 9187
