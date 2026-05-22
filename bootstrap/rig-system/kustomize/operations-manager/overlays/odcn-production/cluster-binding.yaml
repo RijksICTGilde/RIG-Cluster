@@ -1,6 +1,3 @@
-# BLUEPRINT — not deployed via ArgoCD. ODC platform-team beheert de werkelijke
-# Binding op productie; deze file documenteert welke ServiceAccount welke
-# ClusterRole zou moeten krijgen, voor parity tussen repo en cluster.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:

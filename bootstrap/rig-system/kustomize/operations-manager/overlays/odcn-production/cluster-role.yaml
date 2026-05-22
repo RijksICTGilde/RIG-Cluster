@@ -1,5 +1,3 @@
-# BLUEPRINT — not deployed via ArgoCD. ODC platform-team beheert de werkelijke
-# ClusterRole; deze file documenteert de gewenste rechten-inrichting voor parity.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
