@@ -16,9 +16,8 @@ spec:
   destinations:
     - namespace: {{ destination.namespace }}
       server: "https://kubernetes.default.svc"
-  clusterResourceWhitelist:
-    - group: '*'
-      kind: '*'
+  # Cluster-scoped dicht; namespaced open want destinations.namespace pint al de scope.
+  clusterResourceWhitelist: []
   namespaceResourceWhitelist:
     - group: '*'
       kind: '*'
