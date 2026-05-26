@@ -5,7 +5,7 @@ metadata:
   name: sandbox-infrastructure
   namespace: rig-system
 spec:
-  project: default
+  project: rig-platform
   source:
     repoURL: http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-infrastructure.git
     path: bootstrap/clusters/sandboxed-local

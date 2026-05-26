@@ -14,6 +14,7 @@ resources:
 - argocd-deployment.yaml
 - argocd-admin-secret.yaml
 - argocd-repo-forgejo-secret.yaml
+- argocd-appproject-rig-platform.yaml
 - argocd-application-infrastructure.yaml
 - argocd-application-user-applications.yaml
 - ../../operations-manager/overlays/sandboxed-local
