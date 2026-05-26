@@ -37,15 +37,10 @@ spec:
     - https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
     - https://user-applications@github.com/RijksICTGilde/argo-applications.git
 
-  # Alleen de in-cluster API server en de namespaces waar deze apps
-  # legitiem naartoe deployen. Beide Applications zetten destination.namespace
-  # op rig-prd-operations; de infrastructuur-overlay plaatst daarnaast
-  # resources in rig-system. Geen '*'.
+  # Beide Applications syncen alleen naar rig-prd-operations (live geverifieerd).
   destinations:
     - server: https://kubernetes.default.svc
       namespace: rig-prd-operations
-    - server: https://kubernetes.default.svc
-      namespace: rig-system
 
   # Geen cluster-scoped resources via Argo: onze Argo ServiceAccount heeft op
   # productie geen rechten om ClusterRole, ClusterRoleBinding, Namespace of
