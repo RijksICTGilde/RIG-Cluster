@@ -1,24 +1,6 @@
-# AppProject - beperkt wat de productie-Applications mogen synchroniseren.
-#
-# Zonder dit project draaien de Applications in het ingebouwde 'default'
-# project, dat sourceRepos '*', destinations '*' en
-# clusterResourceWhitelist '*' toestaat. Iedereen die naar 'main' van een
-# van de bronrepo's kan pushen krijgt daarmee willekeurige cluster-brede
-# objecten (incl. ClusterRoleBindings) automatisch toegepast en self-healed.
-#
-# Dit project pint:
-#  - sourceRepos op exact de twee legitieme repo-URL's (geen wildcard)
-#  - destinations op de in-cluster API server en uitsluitend de namespaces
-#    waar deze apps daadwerkelijk naartoe deployen
-#  - clusterResourceWhitelist op de minimale set cluster-brede kinds die de
-#    infrastructuur-sync aantoonbaar nodig heeft
-#
-# LET OP: delen van de infrastructuur-overlay zijn SOPS-versleuteld, waardoor
-# niet elke namespace/kind statisch te enumereren is. De whitelist hieronder
-# is bewust conservatief. Een te strakke whitelist breekt de productie-GitOps.
-# Een 'kustomize build' van de odcn-production overlay EN een ArgoCD dry-run
-# (beide Applications moeten onder dit project blijven syncen) zijn VERPLICHTE
-# pre-merge checks op staging. Zie de PR-omschrijving.
+# AppProject — vervangt het ingebouwde 'default' project voor de twee
+# productie-Applications. Pint sourceRepos + destinations zodat een
+# willekeurige push naar een andere repo niet automatisch in productie landt.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
@@ -27,12 +9,8 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: >-
-    Beperkt project voor de productie-Applications (infrastructuur en
-    user-applications). Vervangt het ongebonden 'default' project.
+  description: Beperkt project voor de productie-Applications.
 
-  # Exact de twee bronrepo's. Geen wildcard - dit sluit de supply-chain
-  # takeover via een willekeurige andere repo uit.
   sourceRepos:
     - https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
     - https://user-applications@github.com/RijksICTGilde/argo-applications.git
@@ -42,26 +20,12 @@ spec:
     - server: https://kubernetes.default.svc
       namespace: rig-prd-operations
 
-  # Geen cluster-scoped resources via Argo: onze Argo ServiceAccount heeft op
-  # productie geen rechten om ClusterRole, ClusterRoleBinding, Namespace of
-  # andere cluster-scoped kinds aan te maken — die worden out-of-band door het
-  # ODCN-platformteam beheerd. Lege whitelist blokkeert elke poging vanuit
-  # deze AppProject; als een sync ooit een cluster-scoped kind nodig heeft
-  # wordt dat in Argo direct zichtbaar als OutOfSync (niet stilletjes
-  # toegepast met permissions-die-we-niet-hebben).
+  # Cluster-scoped beheert ODCN; namespaced open want destinations pint de scope.
   clusterResourceWhitelist: []
-
-  # Namespaced resources blijven breed toegestaan: de blast radius is al
-  # ingeperkt door de destination-namespace-pinning hierboven. Een te
-  # strakke namespaced-whitelist zou de platform-sync stilletjes breken
-  # zonder extra beveiligingswinst bovenop de namespace-pinning.
   namespaceResourceWhitelist:
     - group: "*"
       kind: "*"
 
-  # Orphaned-resources: niet automatisch verwijderen, alleen waarschuwen. Een
-  # manueel toegepaste ClusterRoleBinding of namespace-resource die niet in
-  # git staat valt zo op in de Argo UI - nuttig als detectiemechanisme bovenop
-  # de project-scoping, zonder een destructieve auto-prune toe te voegen.
+  # Detectie van orphaned resources (niet auto-prunen, alleen Argo UI warning).
   orphanedResources:
     warn: true
