@@ -26,32 +26,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _normalize_path_config(path_config: Any, label: str = "unknown") -> list[dict[str, str | None]]:
-    """Normalize a path value (string or list-of-dicts) to canonical list format.
-
-    Handles:
-    - ``str``: pre-migration plain string path (backward compat)
-    - ``list[dict]``: canonical v2.2+ format with ``match`` and optional ``rewrite``
-    """
-    if isinstance(path_config, str):
-        logger.debug("Found single path '%s' for '%s'", path_config, label)
-        return [{"match": path_config, "rewrite": None}]
-
-    if isinstance(path_config, list):
-        result = []
-        for p in path_config:
-            if isinstance(p, dict):
-                result.append({"match": p.get("match", "/"), "rewrite": p.get("rewrite")})
-            else:
-                result.append({"match": str(p), "rewrite": None})
-        if result:
-            logger.debug("Found %d path(s) for '%s'", len(result), label)
-            return result
-
-    logger.debug("No path found for '%s', using default '/'", label)
-    return [{"match": "/", "rewrite": None}]
-
-
 # Default resource values for deployment containers
 DEFAULT_RESOURCES: dict[str, str] = {
     "requests_memory": "128Mi",
@@ -87,6 +61,53 @@ def _parse_resources_block(raw: dict | None, defaults: dict[str, str] | None = N
         "limits_memory": str(limits.get("memory", defaults["limits_memory"])),
         "limits_cpu": str(limits.get("cpu", defaults["limits_cpu"])),
     }
+
+
+# URL-path charset voor tenant-bestuurde component match/rewrite waarden;
+# voorkomt nginx-snippet-injection in ingress.yaml.jinja.
+_SAFE_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9/_.~-]*$")
+
+
+def _sanitize_path_value(value: Any, field: str) -> str:
+    """
+    Validate a tenant-supplied URL path used for ingress routing/rewriting.
+
+    Raises:
+        ValueError: If the value is not a string or contains characters
+            outside the safe URL-path charset (defense against nginx
+            configuration-snippet injection).
+    """
+    if not isinstance(value, str):
+        raise ValueError(  # noqa: TRY004
+            f"Component path '{field}' must be a string, got {type(value).__name__}"
+        )
+    if not value:
+        raise ValueError(f"Component path '{field}' must not be empty")
+    if not _SAFE_PATH_PATTERN.match(value):
+        raise ValueError(
+            f"Component path '{field}' contains illegal characters: {value!r}. "
+            f"Only '/', letters, digits and '-._~' are allowed (no whitespace, "
+            f"quotes or newlines)."
+        )
+    return value
+
+
+def _normalize_path_config(raw: Any, default_match: str = "/") -> dict[str, str | None]:
+    """
+    Build a validated {"match": ..., "rewrite": ...} entry from a raw path item.
+
+    Both `match` and `rewrite` are sanitized against the safe URL-path charset.
+    """
+    if isinstance(raw, dict):
+        match_value = raw.get("match", default_match)
+        rewrite_value = raw.get("rewrite")
+    else:
+        match_value = raw
+        rewrite_value = None
+
+    sanitized_match = _sanitize_path_value(match_value, "match")
+    sanitized_rewrite = None if rewrite_value is None else _sanitize_path_value(rewrite_value, "rewrite")
+    return {"match": sanitized_match, "rewrite": sanitized_rewrite}
 
 
 def _parse_resources_block_partial(raw: dict | None) -> dict[str, str]:
@@ -665,7 +686,18 @@ class ProjectFileHandler:
         """
         json_path = f"$.components[?(@.name='{component_name}')].path"
         path_config = self.extract_value_by_path(project_data, json_path, "/")
-        return _normalize_path_config(path_config, component_name)
+
+        # Normaliseer naar list-format; sanitizer valideert per item.
+        if isinstance(path_config, str):
+            logger.debug(f"Found single path '{path_config}' for component '{component_name}'")
+            return [_normalize_path_config(path_config)]
+        if isinstance(path_config, list):
+            result = [_normalize_path_config(p) for p in path_config]
+            logger.info(f"Found {len(result)} path(s) for component '{component_name}'")
+            return result
+
+        logger.debug(f"No path found for component '{component_name}', using default '/'")
+        return [{"match": "/", "rewrite": None}]
 
     def extract_deployment_component_paths(
         self,
@@ -691,10 +723,16 @@ class ProjectFileHandler:
         components = deployment_data.get("components", [])
         for comp in components:
             if comp.get("reference") == component_reference:
+                # Schema: singular `path` (str | list); normaliseer via sanitizer.
                 path_config = comp.get("path")
                 if path_config is not None:
-                    result = _normalize_path_config(path_config, component_reference)
-                    if result != [{"match": "/", "rewrite": None}]:
+                    if isinstance(path_config, str):
+                        result = [_normalize_path_config(path_config)]
+                    elif isinstance(path_config, list):
+                        result = [_normalize_path_config(p) for p in path_config]
+                    else:
+                        result = [{"match": "/", "rewrite": None}]
+                    if result and result != [{"match": "/", "rewrite": None}]:
                         logger.info(
                             f"Found {len(result)} deployment-level path(s) for component '{component_reference}'"
                         )
