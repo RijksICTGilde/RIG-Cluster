@@ -26,6 +26,8 @@ spec:
     - group: "*"
       kind: "*"
 
-  # Detectie van orphaned resources (niet auto-prunen, alleen Argo UI warning).
+  # Warn uit: rig-prd-operations bevat ook bootstrap-resources (Argo, OPI,
+  # Keycloak, Postgres, etc.) die niet door Argo gemanaged zijn — namespace-
+  # opsplitsing is follow-up #106.
   orphanedResources:
-    warn: true
+    warn: false

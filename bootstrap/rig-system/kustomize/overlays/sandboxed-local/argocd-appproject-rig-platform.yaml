@@ -23,5 +23,7 @@ spec:
     - group: "*"
       kind: "*"
 
+  # Warn uit: rig-system bevat ook bootstrap-resources (Argo, OPI, Keycloak,
+  # Forgejo) die niet door Argo gemanaged zijn — namespace-opsplitsing is #106.
   orphanedResources:
-    warn: true
+    warn: false
