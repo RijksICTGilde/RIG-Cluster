@@ -38,10 +38,19 @@ spec:
         - podSelector: {}
 {% endif %}
     # Ingress controller: published web apps stay reachable from outside.
+    # Op odcn matchen we pod-specifiek (alleen 'rig' router pods, niet
+    # eventuele andere customer-routers in dezelfde namespace).
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: "{{ ingress_controller_namespace }}"
+              kubernetes.io/metadata.name: "{{ ingress_controller_selector.namespace }}"
+{% if ingress_controller_selector.pod_labels %}
+          podSelector:
+            matchLabels:
+{% for k, v in ingress_controller_selector.pod_labels.items() %}
+              {{ k }}: "{{ v }}"
+{% endfor %}
+{% endif %}
     # Operations / platform namespace (OPI, shared datastores, Keycloak).
     - from:
         - namespaceSelector:

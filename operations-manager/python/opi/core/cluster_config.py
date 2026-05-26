@@ -20,7 +20,10 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
-        "ingress_controller_namespace": "ingress-nginx",
+        "ingress_controller_selector": {
+            "namespace": "ingress-nginx",
+            "pod_labels": {},
+        },
         "ingress": {
             "enable_tls": True,
             "cluster_issuer": "kind-ca-issuer",
@@ -69,7 +72,10 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
-        "ingress_controller_namespace": "ingress-nginx",
+        "ingress_controller_selector": {
+            "namespace": "ingress-nginx",
+            "pod_labels": {},
+        },
         "ingress": {
             "enable_tls": True,
             "ip_whitelist": "0.0.0.0/0,::/0",
@@ -112,7 +118,12 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-prd-operations.svc.cluster.local",
         "backup_namespace": "rig-prd-backup",
-        "ingress_controller_namespace": "openshift-ingress",
+        "ingress_controller_selector": {
+            "namespace": "openshift-ingress",
+            "pod_labels": {
+                "ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "rig",
+            },
+        },
         "ingress": {
             "enable_tls": True,
             # "cluster_issuer": "letsencrypt-production",  # TODO: verify correct issuer name
@@ -543,22 +554,21 @@ def get_backup_namespace(cluster_name: str) -> str:
     return cluster_config["backup_namespace"]
 
 
-def get_ingress_controller_namespace(cluster_name: str) -> str:
+def get_ingress_controller_selector(cluster_name: str) -> dict:
     """
-    Get the namespace where the cluster's ingress controller pods run.
+    Return de selector voor de ingress-controller pods van een cluster.
 
-    On local/sandbox this is ``ingress-nginx``; on odcn-production it is
-    ``openshift-ingress``. NetworkPolicies use this to allow ingress from
-    the controller so published web apps stay reachable.
+    Format::
 
-    Args:
-        cluster_name: Name of the cluster
+        {"namespace": "<ns>", "pod_labels": {<key>: <val>, ...}}
 
-    Returns:
-        Ingress controller namespace name
+    pod_labels is leeg voor nginx-clusters; voor odcn (OpenShift Router) bevat
+    het de ``ingresscontroller.operator.openshift.io/deployment-ingresscontroller``
+    label zodat NetworkPolicy alleen de juiste customer-router toelaat.
+    Zie docs/knowledge/odcn-ingress-controller.md.
     """
     cluster_config = get_cluster_config(cluster_name)
-    return cluster_config["ingress_controller_namespace"]
+    return cluster_config["ingress_controller_selector"]
 
 
 def get_redis_server(cluster_name: str) -> str:

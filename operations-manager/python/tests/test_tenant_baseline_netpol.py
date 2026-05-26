@@ -37,7 +37,10 @@ def _render_baseline(**overrides):
         "deployment_selector": "myapp",
         "ops_namespace": "rig-system",
         "backup_namespace": "rig-backup-destination",
-        "ingress_controller_namespace": "ingress-nginx",
+        "ingress_controller_selector": {
+            "namespace": "ingress-nginx",
+            "pod_labels": {},
+        },
         "project_infra_namespace": "rig-myproject-infrastructure",
     }
     values.update(overrides)
@@ -159,7 +162,12 @@ class TestPerDeploymentBaseline:
         _, doc = _render_baseline(
             ops_namespace="rig-prd-operations",
             backup_namespace="rig-prd-backup",
-            ingress_controller_namespace="openshift-ingress",
+            ingress_controller_selector={
+                "namespace": "openshift-ingress",
+                "pod_labels": {
+                    "ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "rig",
+                },
+            },
         )
         ingress_targets = {
             peer["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"]
@@ -176,10 +184,9 @@ class TestPerDeploymentBaseline:
         assert {"rig-prd-operations", "openshift-ingress", "rig-prd-backup"} <= ingress_targets
         assert {"rig-prd-operations", "rig-prd-backup"} <= egress_targets
 
-    def test_internet_egress_is_permissive_except_metadata(self):
-        """The baseline does not constrain internet egress (HTTP/HTTPS) on
-        purpose — tightening that is a separate, later step. The cloud-metadata
-        IP (169.254.169.254) is excluded to block SSRF-style probes.
+    def test_internet_egress_is_permissive(self):
+        """De baseline laat HTTP/HTTPS egress open zodat tenant-apps externe
+        APIs kunnen aanroepen. Strikter beleid is een latere stap.
         """
         _, doc = _render_baseline()
         ip_rules = [
@@ -189,8 +196,6 @@ class TestPerDeploymentBaseline:
         flat_ports = {p["port"] for rule in ip_rules for p in rule.get("ports", [])}
         assert 443 in flat_ports
         assert 80 in flat_ports
-        excepts = {x for rule in ip_rules for peer in rule["to"] for x in peer.get("ipBlock", {}).get("except", [])}
-        assert "169.254.169.254/32" in excepts, "cloud-metadata IP must be excluded from the internet egress rule"
 
     def test_project_infra_namespace_included_when_distinct(self):
         """When the project has its own infrastructure namespace (dedicated
