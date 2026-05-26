@@ -101,14 +101,10 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: "{{ project_infra_namespace }}"
 {% endif %}
-    # Permissive internet egress. Cloud metadata endpoint is excluded to
-    # block SSRF-style probes; otherwise the baseline does not restrict
-    # outbound HTTP/HTTPS so general API calls keep working.
+    # Internet egress (HTTP/HTTPS) zodat tenant-apps externe APIs kunnen aanroepen.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
-            except:
-              - 169.254.169.254/32
       ports:
         - protocol: TCP
           port: 443
