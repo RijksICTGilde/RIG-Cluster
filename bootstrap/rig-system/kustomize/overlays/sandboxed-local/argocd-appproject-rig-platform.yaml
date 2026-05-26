@@ -1,0 +1,27 @@
+# AppProject — sandbox-variant van rig-platform; spiegelt odcn-production
+# overlay maar pint op de sandbox repos (Forgejo in-cluster) en rig-system.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: rig-platform
+  namespace: rig-system
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Beperkt project voor de sandbox-Applications.
+
+  sourceRepos:
+    - http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-infrastructure.git
+    - http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-user-applications.git
+
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: rig-system
+
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  orphanedResources:
+    warn: true
