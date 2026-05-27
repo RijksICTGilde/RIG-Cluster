@@ -1882,10 +1882,7 @@ async def _save_existing_project(
     from opi.services.project_service import get_project_service
     from opi.web.project_edit_security import apply_form_data_to_project, require_project_edit_access
 
-    # Re-check the role on the mutating request, keyed on the project name
-    # from the server-side wizard state. The GET-time check is not enough:
-    # the session could have been seeded by an authorized user and the POST
-    # replayed by another (TOCTOU), or the role could have been revoked.
+    # TOCTOU recheck on the mutating request.
     project, _user_email = require_project_edit_access(request, project_name)
 
     project_service = get_project_service()
