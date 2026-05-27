@@ -1,11 +1,15 @@
+from __future__ import annotations
+
 import logging
 import os
 import pathlib
 
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 # Initialize logging early to ensure it's available during config loading
 from opi.core.early_logging import initialize_logging  # noqa: F401 (side-effect import)
+from opi.core.secret_key import generate_secret_key, validate_secret_key
 from opi.utils.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -137,7 +141,7 @@ class Settings(BaseSettings):
     OWN_DOMAIN: str = "operations-manager.kind"
     ADDITIONAL_DOMAINS: str = ""  # Comma-separated list of additional domains for redirect URIs
 
-    SECRET_KEY: str = "default-secret-key-for-development-change-in-production"
+    SECRET_KEY: str = Field(default_factory=generate_secret_key)
     ENVIRONMENT: str = "local"
     DEBUG: bool = False
     CLUSTER_MANAGER: str = "local"
@@ -371,6 +375,12 @@ class Settings(BaseSettings):
     # without a wait, the second one fails immediately. 30 min is enough for
     # a typical PVC+DB+bucket run to finish.
     BACKUP_LOCK_WAIT_SECONDS: int = 1800
+
+    @model_validator(mode="after")
+    def _enforce_secure_secret_key(self) -> Settings:
+        """Fail closed when an explicitly-set SECRET_KEY is too short."""
+        validate_secret_key(self.SECRET_KEY)
+        return self
 
 
 def parse_sops_age_key_content(content: str) -> tuple[str | None, str | None]:

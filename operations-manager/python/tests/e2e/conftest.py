@@ -31,7 +31,10 @@ if TYPE_CHECKING:
 
 # Sandbox config - override via environment variables
 E2E_BASE_URL = os.environ.get("E2E_BASE_URL", "")
-E2E_SECRET_KEY = os.environ.get("E2E_SECRET_KEY", "default-secret-key-for-development-change-in-production")
+# Sandbox tests sign cookies for an already-running cluster, so the secret
+# must match what that cluster uses. The default is only useful when no
+# sandbox tests are actually run.
+E2E_SECRET_KEY = os.environ.get("E2E_SECRET_KEY", "sandbox-e2e-test-secret-key-min32chars")
 
 TEST_USER = {
     "sub": "e2e-user",
