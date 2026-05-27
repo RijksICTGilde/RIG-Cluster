@@ -357,12 +357,8 @@ class ProjectManager:
             List of deployment configurations matching the filters
 
         Raises:
-            ValueError: If a deployment specifies a namespace that does not
-                match the project name. The namespace is always derived from
-                the project name; allowing an arbitrary value would let a
-                tenant target another tenant's namespace (cross-tenant
-                isolation breach). We fail closed instead of silently
-                rewriting, so a mismatch surfaces the actual intent.
+            ValueError: If a deployment declares a namespace that does not
+                match the project name. See ``enforce_namespace_pin``.
         """
         project_data = await self.get_contents()
 
