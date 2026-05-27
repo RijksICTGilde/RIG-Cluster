@@ -39,7 +39,8 @@ async def check_and_create_namespaces(project_data: dict[str, Any]) -> bool:
     """
     kubectl = create_kubectl_connector()
 
-    # Bypasses ProjectManager.get_deployments, so pin here too.
+    # Pin the namespace ourselves: this path reads project_data straight
+    # from git, not via ProjectManager.get_deployments where the pin lives.
     enforce_namespace_pin(project_data)
 
     project_name = project_data.get("name")
