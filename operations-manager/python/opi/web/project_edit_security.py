@@ -45,12 +45,8 @@ def require_project_edit_access(request: Request, project_name: str):
     return project, user_email
 
 
-# Top-level project fields whose values may never come from form data
-# because the system has invariants that depend on them being managed
-# elsewhere. name=on-disk filename; clusters=not yet editable post-creation
-# (see features/futures/cluster-editing.md). users/config are NOT here:
-# legitimate admin/owner edits go through MODAL_EDIT_TEAM_FLOW and the
-# *_CONFIG_SECTION flows; the role gate is the right boundary for those.
+# Top-level fields no form should ever submit. name=on-disk filename;
+# clusters=not yet editable (see features/futures/cluster-editing.md).
 IMMUTABLE_PROJECT_FIELDS: tuple[str, ...] = ("name", "clusters")
 
 
