@@ -25,6 +25,9 @@ class ServiceType(Enum):
     REDIS = "redis"
     NAMESPACE_REDIS = "namespace-redis"
 
+    # Tracing (for now.. logging and metrics maybe later)
+    ELASTIC = "elastic"
+
     # Platform services (always-on, not user-selectable)
     PLATFORM = "platform"
 

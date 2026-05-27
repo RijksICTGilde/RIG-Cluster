@@ -1,0 +1,14 @@
+apiVersion: kibana.k8s.elastic.co/v1
+kind: Kibana
+metadata:
+  name: kibana
+  namespace: rig-system
+spec:
+  version: 9.3.2
+  count: 1
+  elasticsearchRef:
+    name: elasticsearch
+  config:
+    xpack.fleet.packages:
+      - name: apm
+        version: latest

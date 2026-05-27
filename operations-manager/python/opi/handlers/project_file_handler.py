@@ -871,6 +871,10 @@ class ProjectFileHandler:
         logger.debug(f"Found {len(ephemeral_storage)} ephemeral storage configurations")
         return ephemeral_storage
 
+    def get_elastic_enabled(self) -> bool:
+        # todo this actually check if the component is selected
+        return False
+
     def extract_component_publish_on_web(self, project_data: dict[str, Any], component_name: str) -> bool:
         """
         Check if a component has the publish-on-web service enabled.
