@@ -5,8 +5,8 @@
 - ``merge_preserving_protected_keys`` + ``PROTECTED_PROJECT_KEYS``: drop
   privileged top-level keys from submitted form data.
 
-Until ``Editable`` gets field-level RBAC, every save handler must apply both.
-See ``features/futures/cluster-editing.md`` (Form-RBAC section).
+Until ``Editable`` gets field-level RBAC every save handler must apply both;
+see ``features/futures/form-field-rbac.md``.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def require_project_edit_access(request: Request, project_name: str):
 
 # Always re-derived from the stored project; submit cannot overwrite or
 # introduce these. users=role escalation, config=secret exfiltration,
-# name=on-disk filename, clusters=no migration logic yet (see
+# name=on-disk filename, clusters=not yet editable post-creation (see
 # features/futures/cluster-editing.md).
 PROTECTED_PROJECT_KEYS: tuple[str, ...] = ("users", "config", "name", "clusters")
 
