@@ -1880,7 +1880,7 @@ async def _save_existing_project(
     """Save updated data to an existing project."""
     from opi.handlers.project_file_handler import save_project_file
     from opi.services.project_service import get_project_service
-    from opi.web.project_edit_security import merge_preserving_protected_keys, require_project_edit_access
+    from opi.web.project_edit_security import apply_form_data_to_project, require_project_edit_access
 
     # Re-check the role on the mutating request, keyed on the project name
     # from the server-side wizard state. The GET-time check is not enough:
@@ -1890,10 +1890,7 @@ async def _save_existing_project(
 
     project_service = get_project_service()
 
-    # Privilege-aware merge: see PROTECTED_PROJECT_KEYS in
-    # opi/web/project_edit_security.py for the per-key reasoning. Same
-    # protection as the modal save path.
-    existing_data = merge_preserving_protected_keys(project.data or {}, data)
+    existing_data = apply_form_data_to_project(project.data or {}, data)
 
     save_project_file(project.filename, existing_data)
     project_service.load_project_from_data(existing_data, project.filename)

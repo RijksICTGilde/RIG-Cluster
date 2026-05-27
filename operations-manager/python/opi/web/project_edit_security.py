@@ -2,11 +2,13 @@
 
 - ``require_project_edit_access``: admin/owner role gate, re-check on every
   mutating request (TOCTOU).
-- ``merge_preserving_protected_keys`` + ``PROTECTED_PROJECT_KEYS``: drop
-  privileged top-level keys from submitted form data.
+- ``apply_form_data_to_project``: merge submitted form data into the stored
+  project; reject submissions that include immutable top-level fields.
 
-Until ``Editable`` gets field-level RBAC every save handler must apply both;
-see ``features/futures/form-field-rbac.md``.
+Role-based protection (e.g. only admin/owner may edit ``users``) lives in
+the role gate; this module does not duplicate that. See
+``features/futures/form-field-rbac.md`` for the proper field-level RBAC
+that would replace today's per-handler glue.
 """
 
 from __future__ import annotations
@@ -43,29 +45,31 @@ def require_project_edit_access(request: Request, project_name: str):
     return project, user_email
 
 
-# Always re-derived from the stored project; submit cannot overwrite or
-# introduce these. users=role escalation, config=secret exfiltration,
-# name=on-disk filename, clusters=not yet editable post-creation (see
-# features/futures/cluster-editing.md).
-PROTECTED_PROJECT_KEYS: tuple[str, ...] = ("users", "config", "name", "clusters")
+# Top-level project fields whose values may never come from form data
+# because the system has invariants that depend on them being managed
+# elsewhere. name=on-disk filename; clusters=not yet editable post-creation
+# (see features/futures/cluster-editing.md). users/config are NOT here:
+# legitimate admin/owner edits go through MODAL_EDIT_TEAM_FLOW and the
+# *_CONFIG_SECTION flows; the role gate is the right boundary for those.
+IMMUTABLE_PROJECT_FIELDS: tuple[str, ...] = ("name", "clusters")
 
 
-def merge_preserving_protected_keys(
+def apply_form_data_to_project(
     existing_data: dict[str, Any],
     submitted_data: dict[str, Any],
 ) -> dict[str, Any]:
-    """Merge submitted form data into existing project data, preserving the
-    privileged top-level keys. Returns a new dict.
+    """Merge submitted form data into the stored project data. Returns a new dict.
 
-    Protected keys are always re-derived from ``existing_data`` regardless
-    of what ``submitted_data`` contains. If a protected key is absent from
-    ``existing_data``, it stays absent (a submitted value cannot introduce
-    it).
+    Raises HTTPException 400 if the submission tries to set any
+    ``IMMUTABLE_PROJECT_FIELDS``. That is a structural-integrity violation:
+    no form should expose these fields, so receiving one means either a
+    form bug or a tampered submission. Fail loud rather than silently
+    dropping the value.
     """
-    merged = {**existing_data, **submitted_data}
-    for key in PROTECTED_PROJECT_KEYS:
-        if key in existing_data:
-            merged[key] = existing_data[key]
-        else:
-            merged.pop(key, None)
-    return merged
+    offending = [field for field in IMMUTABLE_PROJECT_FIELDS if field in submitted_data]
+    if offending:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Submitted form data contains immutable project fields: {', '.join(offending)}",
+        )
+    return {**existing_data, **submitted_data}

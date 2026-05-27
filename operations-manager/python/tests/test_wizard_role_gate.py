@@ -3,18 +3,18 @@
 The full-page wizard edit flow used to only check
 ``is_user_authorized_for_project`` (true for any role, including a plain
 member) and then mass-merged the form output over the stored project with
-``existing_data.update(data)``. A member could therefore enter the wizard,
-rewrite the ``users`` list to make themselves owner (or drop the owners),
-and overwrite the ``config`` block (api-key, AGE keys). This is a project
-takeover / secret-exfiltration path.
+``existing_data.update(data)``. A member could therefore enter the wizard
+and rewrite the ``users`` list to make themselves owner.
 
-These tests pin the fix:
+These tests pin:
 
 - a plain ``member`` is rejected from the wizard edit GET entry and from
-  the mutating save path;
-- an ``owner`` (and a global ``admin``) passes;
-- a member-style payload that tries to rewrite ``users``/``config`` does
-  not mutate those protected keys, even if the role check were bypassed.
+  the mutating save path (role gate);
+- an ``owner`` (and global ``admin``) passes the gate and can update the
+  legitimately-editable fields including ``users`` and ``config``;
+- a payload that tries to set the immutable fields ``name`` / ``clusters``
+  is rejected with 400 -- no form should expose those, so seeing them in
+  submitted data is a structural-integrity violation.
 """
 
 from __future__ import annotations
@@ -27,8 +27,8 @@ import pytest
 from fastapi import HTTPException
 from opi.services.project_service import ProjectService, ProjectUser
 from opi.web.project_edit_security import (
-    PROTECTED_PROJECT_KEYS,
-    merge_preserving_protected_keys,
+    IMMUTABLE_PROJECT_FIELDS,
+    apply_form_data_to_project,
     require_project_edit_access,
 )
 from opi.web.router_wizard import _save_existing_project
@@ -145,70 +145,66 @@ async def test_member_rejected_on_save(project_service: ProjectService) -> None:
 
 
 @pytest.mark.asyncio
-async def test_owner_save_cannot_overwrite_protected_keys(project_service: ProjectService) -> None:
-    """Even an authorized owner cannot rewrite users/config/name/clusters.
-
-    The wizard exposes those as editable fields; the merge must always
-    re-derive them from the stored project. Non-protected fields still
-    update normally.
+async def test_owner_save_rejects_immutable_field_in_payload(project_service: ProjectService) -> None:
+    """A payload that tries to set an immutable field (name/clusters) must
+    be rejected with 400. No form exposes these fields, so any submission
+    containing them is a form bug or a tampered request.
     """
-    captured: dict[str, Any] = {}
-
-    def fake_save(file_path: str, project_data: dict[str, Any]) -> None:
-        captured["file_path"] = file_path
-        captured["data"] = project_data
-
     payload = {
         "display-name": "Renamed By Owner",
         "name": "evil-rename",
-        "clusters": ["attacker-cluster"],
-        "users": [{"email": MEMBER_EMAIL, "role": "owner"}],
-        "config": {"api-key": "attacker-key", "age-private-key": "AGE-SECRET-KEY-STOLEN"},
-        "components": [{"name": "frontend", "image": "nginx:1.27"}],
     }
-
     with (
-        patch("opi.web.router_detail_edit.get_current_user", return_value={"email": OWNER_EMAIL}),
-        patch("opi.handlers.project_file_handler.save_project_file", side_effect=fake_save),
-        patch.object(project_service, "load_project_from_data", return_value=True),
-        patch("opi.web.router_wizard.clear_wizard_state"),
+        patch("opi.web.project_edit_security.get_current_user", return_value={"email": OWNER_EMAIL}),
+        pytest.raises(HTTPException) as exc,
     ):
-        response = await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload)
-
-    assert response.status_code == 200
-    assert "data" in captured, "save_project_file was not called; the save path did not complete"
-    saved = captured["data"]
-
-    # Protected keys re-derived from the stored project, NOT the payload.
-    assert saved["users"] == STORED_DATA["users"]
-    assert saved["config"] == STORED_DATA["config"]
-    assert saved["name"] == PROJECT_NAME
-    assert saved["clusters"] == STORED_DATA["clusters"]
-
-    # Non-protected fields still applied.
-    assert saved["display-name"] == "Renamed By Owner"
-    assert saved["components"] == [{"name": "frontend", "image": "nginx:1.27"}]
+        await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload)
+    assert exc.value.status_code == 400
+    assert "name" in exc.value.detail
 
 
 @pytest.mark.asyncio
-async def test_owner_save_protected_keys_survive_deletion_attack(project_service: ProjectService) -> None:
-    """Omitting a protected key from the payload must not drop it.
+async def test_owner_save_rejects_clusters_in_payload(project_service: ProjectService) -> None:
+    """Same as above for ``clusters``; cluster editing post-creation is not
+    yet a supported feature.
+    """
+    payload = {
+        "display-name": "Same Name",
+        "clusters": ["attacker-cluster"],
+    }
+    with (
+        patch("opi.web.project_edit_security.get_current_user", return_value={"email": OWNER_EMAIL}),
+        pytest.raises(HTTPException) as exc,
+    ):
+        await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload)
+    assert exc.value.status_code == 400
+    assert "clusters" in exc.value.detail
 
-    The deletion attack: submit a payload that does not contain ``users``
-    (or ``config``) at all, hoping the merge silently leaves them out so
-    an owner/admin disappears. The merge must re-derive the stored value
-    even when the key is absent from the form output.
+
+@pytest.mark.asyncio
+async def test_owner_save_can_update_users_and_config(project_service: ProjectService) -> None:
+    """Admin/owner CAN edit users and config via the legitimate flows.
+
+    Role-based access is enforced by ``require_project_edit_access``;
+    once you are admin/owner there is no separate field-level lock on
+    these. Field-level RBAC for finer-grained restrictions is tracked
+    in ``features/futures/form-field-rbac.md``.
     """
     captured: dict[str, Any] = {}
 
     def fake_save(file_path: str, project_data: dict[str, Any]) -> None:
         captured["data"] = project_data
 
-    # No users/config/name/clusters in the payload at all.
-    payload = {"display-name": "Slimmed Down"}
-
+    payload = {
+        "display-name": "Same Name",
+        "users": [
+            {"email": OWNER_EMAIL, "role": "owner"},
+            {"email": "new-mate@example.com", "role": "member"},
+        ],
+        "config": {"api-key": "rotated-key", "age-public-key": "age1publicpublicpublic"},
+    }
     with (
-        patch("opi.web.router_detail_edit.get_current_user", return_value={"email": OWNER_EMAIL}),
+        patch("opi.web.project_edit_security.get_current_user", return_value={"email": OWNER_EMAIL}),
         patch("opi.handlers.project_file_handler.save_project_file", side_effect=fake_save),
         patch.object(project_service, "load_project_from_data", return_value=True),
         patch("opi.web.router_wizard.clear_wizard_state"),
@@ -217,14 +213,11 @@ async def test_owner_save_protected_keys_survive_deletion_attack(project_service
 
     assert response.status_code == 200
     saved = captured["data"]
-
-    # Protected keys are still present and unchanged despite being absent
-    # from the submitted payload.
-    assert saved["users"] == STORED_DATA["users"]
-    assert saved["config"] == STORED_DATA["config"]
+    assert saved["users"] == payload["users"]
+    assert saved["config"] == payload["config"]
+    # Immutable fields stay untouched (re-derived from existing project).
     assert saved["name"] == PROJECT_NAME
     assert saved["clusters"] == STORED_DATA["clusters"]
-    assert saved["display-name"] == "Slimmed Down"
 
 
 # ---------------------------------------------------------------------------
@@ -269,84 +262,52 @@ async def test_wizard_edit_page_invokes_role_gate(project_service: ProjectServic
     gate.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_owner_save_blocks_nested_config_secret_exfiltration(project_service: ProjectService) -> None:
-    """A payload rewriting only a nested ``config`` secret must not stick.
-
-    The whole ``config`` block is re-derived from storage, so neither the
-    api-key nor the AGE private key can be replaced via form output even
-    when the rest of ``config`` is left intact in the payload.
-    """
-    captured: dict[str, Any] = {}
-
-    def fake_save(file_path: str, project_data: dict[str, Any]) -> None:
-        captured["data"] = project_data
-
-    payload = {
-        "display-name": "Same Name",
-        "config": {
-            "api-key": "attacker-key",
-            "age-public-key": "age1publicpublicpublic",
-            "age-private-key": "AGE-SECRET-KEY-STOLEN",
-        },
-    }
-
-    with (
-        patch("opi.web.router_detail_edit.get_current_user", return_value={"email": OWNER_EMAIL}),
-        patch("opi.handlers.project_file_handler.save_project_file", side_effect=fake_save),
-        patch.object(project_service, "load_project_from_data", return_value=True),
-        patch("opi.web.router_wizard.clear_wizard_state"),
-    ):
-        await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload)
-
-    saved = captured["data"]
-    assert saved["config"]["api-key"] == "super-secret-api-key"
-    assert saved["config"]["age-private-key"] == "AGE-SECRET-KEY-PRIVATEPRIVATE"
-
-
 # ---------------------------------------------------------------------------
-# Central helpers: merge_preserving_protected_keys
+# Central helper: apply_form_data_to_project
 # ---------------------------------------------------------------------------
 
 
-def test_merge_preserves_all_protected_keys() -> None:
-    """The merge helper re-derives every protected key from existing_data."""
+def test_apply_form_data_raises_on_immutable_field() -> None:
+    """Submitted data containing an immutable field is rejected loudly."""
+    existing = {"name": "real-name", "clusters": ["odcn"], "display-name": "Real"}
+    for field in IMMUTABLE_PROJECT_FIELDS:
+        with pytest.raises(HTTPException) as exc:
+            apply_form_data_to_project(existing, {field: "anything", "display-name": "X"})
+        assert exc.value.status_code == 400
+        assert field in exc.value.detail
+
+
+def test_apply_form_data_passes_non_immutable_fields_through() -> None:
+    """Users/config/components/display-name go through; immutable fields stay."""
     existing = {
-        "users": [{"email": "a@x", "role": "owner"}],
-        "config": {"api-key": "real"},
         "name": "real-name",
         "clusters": ["odcn"],
-        "display-name": "Real",
+        "users": [{"email": "a@x", "role": "owner"}],
+        "config": {"api-key": "real"},
+        "display-name": "Old",
     }
     submitted = {
-        "users": [{"email": "attacker@x", "role": "owner"}],
-        "config": {"api-key": "stolen"},
-        "name": "attacker-name",
-        "clusters": ["attacker"],
-        "display-name": "Updated",
+        "users": [{"email": "a@x", "role": "owner"}, {"email": "b@x", "role": "member"}],
+        "config": {"api-key": "rotated"},
+        "display-name": "New",
+        "components": [{"name": "frontend"}],
     }
-    merged = merge_preserving_protected_keys(existing, submitted)
+    merged = apply_form_data_to_project(existing, submitted)
 
-    assert merged["users"] == existing["users"]
-    assert merged["config"] == existing["config"]
-    assert merged["name"] == existing["name"]
-    assert merged["clusters"] == existing["clusters"]
-    assert merged["display-name"] == "Updated"
-
-
-def test_merge_drops_protected_keys_absent_from_existing() -> None:
-    """A submitted protected key cannot introduce itself when it was absent."""
-    existing = {"display-name": "Just a name"}
-    submitted = {"users": [{"email": "attacker@x", "role": "owner"}]}
-    merged = merge_preserving_protected_keys(existing, submitted)
-    assert "users" not in merged
+    assert merged["users"] == submitted["users"]
+    assert merged["config"] == submitted["config"]
+    assert merged["display-name"] == "New"
+    assert merged["components"] == submitted["components"]
+    # Immutable fields are re-derived from the stored project.
+    assert merged["name"] == "real-name"
+    assert merged["clusters"] == ["odcn"]
 
 
-def test_merge_returns_new_dict() -> None:
+def test_apply_form_data_returns_new_dict() -> None:
     """The helper must not mutate either input dict."""
     existing = {"users": [{"email": "owner@x"}]}
     submitted = {"users": [{"email": "attacker@x"}], "display-name": "X"}
-    merged = merge_preserving_protected_keys(existing, submitted)
+    merged = apply_form_data_to_project(existing, submitted)
 
     assert merged is not existing
     assert merged is not submitted
@@ -354,9 +315,9 @@ def test_merge_returns_new_dict() -> None:
     assert submitted == {"users": [{"email": "attacker@x"}], "display-name": "X"}
 
 
-def test_protected_keys_constant_covers_the_documented_set() -> None:
-    """Lock the protected key set so a silent removal here surfaces in review."""
-    assert set(PROTECTED_PROJECT_KEYS) == {"users", "config", "name", "clusters"}
+def test_immutable_fields_constant_covers_the_documented_set() -> None:
+    """Lock the immutable field set so a silent change here surfaces in review."""
+    assert set(IMMUTABLE_PROJECT_FIELDS) == {"name", "clusters"}
 
 
 # ---------------------------------------------------------------------------

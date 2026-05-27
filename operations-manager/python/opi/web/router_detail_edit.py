@@ -40,7 +40,7 @@ from opi.forms.wizard.session import (
     save_modal_state_by_token,
 )
 from opi.web.project_edit_security import (
-    merge_preserving_protected_keys,
+    apply_form_data_to_project,
     require_project_edit_access,
 )
 from opi.web.router_wizard import (
@@ -1166,10 +1166,7 @@ async def _modal_do_submit(
                         if field in existing_dep and field not in new_dep:
                             new_dep[field] = existing_dep[field]
 
-    # Privilege-aware merge: see PROTECTED_PROJECT_KEYS in
-    # opi/web/project_edit_security.py for the per-key reasoning. Same
-    # protection as the wizard-final save path.
-    existing_data = merge_preserving_protected_keys(existing_data, merged_data)
+    existing_data = apply_form_data_to_project(existing_data, merged_data)
 
     # Run post_merge hooks (e.g. distribute component refs to deployments)
     for section in active_sections:
