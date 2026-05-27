@@ -2138,28 +2138,33 @@ class ProjectFileHandler:
         return {}
 
     def extract_deployment_namespace(self, project_data: dict[str, Any], deployment_name: str) -> str | None:
+        """Return the deployment namespace pinned to the project name.
+
+        Same invariant as ``project_manager.enforce_namespace_pin`` but
+        local and non-mutating. Used by callers that don't go through
+        ``ProjectManager.get_deployments`` (backup/restore endpoints, tasks).
+        Raises ValueError on mismatch.
         """
-        Extract the raw namespace for a deployment.
+        project_name = project_data.get("name")
+        for deployment in project_data.get("deployments", []):
+            if deployment.get("name") != deployment_name:
+                continue
+            declared = deployment.get("namespace")
+            if declared is not None and project_name is not None and declared != project_name:
+                raise ValueError(
+                    f"Deployment '{deployment_name}' in project '{project_name}' "
+                    f"gebruikt namespace '{declared}', maar de namespace "
+                    f"moet gelijk zijn aan de projectnaam '{project_name}'. "
+                    f"Een afwijkende namespace is niet toegestaan omdat dit toegang "
+                    f"tot de resources van een ander project zou geven."
+                )
+            if project_name is None:
+                logger.warning(f"No project name found while resolving namespace for deployment '{deployment_name}'")
+                return declared
+            logger.debug(f"Pinned namespace '{project_name}' for deployment '{deployment_name}'")
+            return project_name
 
-        Note: This returns the raw namespace from the project file. To get the actual
-        Kubernetes namespace, use get_prefixed_namespace(cluster, namespace) from
-        opi.core.cluster_config.
-
-        Args:
-            project_data: The parsed project data
-            deployment_name: Name of the deployment
-
-        Returns:
-            Raw namespace string if found, None otherwise
-        """
-        path = f"$.deployments[?(@.name=='{deployment_name}')].namespace"
-        namespace = self.extract_value_by_path(project_data, path, None)
-
-        if namespace:
-            logger.debug(f"Found namespace '{namespace}' for deployment '{deployment_name}'")
-            return namespace
-
-        logger.warning(f"No namespace found for deployment '{deployment_name}'")
+        logger.warning(f"No deployment '{deployment_name}' found while resolving namespace")
         return None
 
     def extract_deployment_cluster(self, project_data: dict[str, Any], deployment_name: str) -> str | None:

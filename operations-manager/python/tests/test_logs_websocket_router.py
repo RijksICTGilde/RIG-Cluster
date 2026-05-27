@@ -458,6 +458,14 @@ class TestStreamDeploymentLogs(unittest.IsolatedAsyncioTestCase):
         from opi.connectors.kubectl import KubectlConnector
 
         connector = KubectlConnector()
+        # Cancel the background retry task started by __init__ when kubectl
+        # is unavailable in the test environment. Mirrors what the sibling
+        # `test_stream_deployment_logs_success` already does. Without this
+        # the unittest IsolatedAsyncioTestCase teardown hangs forever in
+        # `_cancel_all_tasks` waiting for the retry coroutine to exit.
+        if connector._retry_task:
+            connector._retry_task.cancel()
+            connector._retry_task = None
 
         with patch.object(KubectlConnector, "isConnected", False):
             result = await connector.stream_deployment_logs(

@@ -128,6 +128,32 @@ T = TypeVar("T", bound=BaseSecret)
 logger = logging.getLogger(__name__)
 
 
+def enforce_namespace_pin(project_data: dict[str, Any]) -> None:
+    """Pin every deployment namespace to the project name (mutates in place).
+
+    Defaults a missing namespace to the project name; raises ValueError on
+    mismatch. Must be called by every entry that turns a project file into
+    namespace/ArgoCD actions, otherwise a tenant can label another
+    project's namespace.
+    """
+    project_name = project_data.get("name")
+    if not project_name:
+        return
+    for deployment in project_data.get("deployments", []):
+        declared_namespace = deployment.get("namespace")
+        if declared_namespace is None:
+            deployment["namespace"] = project_name
+        elif declared_namespace != project_name:
+            deployment_label = deployment.get("name", "<naamloos>")
+            raise ValueError(
+                f"Deployment '{deployment_label}' in project '{project_name}' "
+                f"gebruikt namespace '{declared_namespace}', maar de namespace "
+                f"moet gelijk zijn aan de projectnaam '{project_name}'. "
+                f"Een afwijkende namespace is niet toegestaan omdat dit toegang "
+                f"tot de resources van een ander project zou geven."
+            )
+
+
 @dataclass
 class DeploymentResult:
     """Result information for a processed deployment."""
@@ -329,8 +355,18 @@ class ProjectManager:
 
         Returns:
             List of deployment configurations matching the filters
+
+        Raises:
+            ValueError: If a deployment declares a namespace that does not
+                match the project name. See ``enforce_namespace_pin``.
         """
         project_data = await self.get_contents()
+
+        # Tenant-isolation guard: pin every deployment namespace to the
+        # project name before anything reads it. Shared with the git-monitor
+        # path so a project committed directly to git cannot bypass the pin.
+        enforce_namespace_pin(project_data)
+
         deployments = project_data.get("deployments", [])
 
         # Filter by CLUSTER_MANAGER if requested
