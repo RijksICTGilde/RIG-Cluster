@@ -11,7 +11,7 @@ from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import RedirectResponse, Response
+from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Match
 
 from opi.services.user_service import get_user_service
@@ -21,10 +21,14 @@ if typing.TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# URL prefixes that skip authorization checks and logging (health checks, metrics, etc.)
+# Exact paths that skip authorization checks. These MUST be exact matches and not
+# prefixes, otherwise they would also match longer authenticated routes (e.g. the
+# "/metrics" Prometheus scrape endpoint must not match the "/metrics-explorer" page).
+SKIP_AUTH_EXACT = ("/metrics",)
+
+# URL prefixes that skip authorization checks and logging (health checks, static assets).
 SKIP_AUTH_PREFIXES = (
     "/health",
-    "/metrics",
     "/ready",
     "/static/",
 )
@@ -79,13 +83,23 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         path = request.url.path
 
         # Skip auth checks and logging for infrastructure endpoints
-        if path.startswith(SKIP_AUTH_PREFIXES):
+        if path in SKIP_AUTH_EXACT or path.startswith(SKIP_AUTH_PREFIXES):
             return await call_next(request)
 
-        # API routes should use API key authentication, not SSO by default
+        # API routes use API key authentication by default, but honor an explicit
+        # @requires_sso marking (e.g. browser-called endpoints like metrics-explorer).
+        # These get the same session gate as web pages, but with JSON responses.
         if path.startswith("/api/"):
-            # For API routes, only require SSO if explicitly marked with @requires_sso
-            request.state.user = None  # API routes don't use session-based user
+            user = get_user(request)
+            request.state.user = user
+            if self._route_requires_sso(request):
+                if not user:
+                    logger.info(f"Rejecting unauthenticated SSO-required API request: {path}")
+                    return JSONResponse(status_code=401, content={"error": "Authentication required"})
+                user_email = user.get("email")
+                if user_email and not get_user_service().is_email_allowed(user_email):
+                    logger.warning(f"Access denied for user {user_email} on {path} - not in allowlist")
+                    return JSONResponse(status_code=403, content={"error": "Access denied"})
             return await call_next(request)
 
         # Get user from session
