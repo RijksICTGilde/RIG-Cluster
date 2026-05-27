@@ -413,20 +413,16 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
 @requires_sso
 async def wizard_edit_page(request: Request, flow_id: str, project_name: str) -> HTMLResponse:
     """Render the wizard page pre-filled from an existing project."""
-    from opi.services.project_service import get_project_service
+    from opi.web.project_edit_security import require_project_edit_access
 
     flow = get_flow(flow_id)
     user = get_current_user(request)
     templates = get_templates()
 
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
-    if not project:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
-
-    user_email = user.get("email", "").lower()
-    if not project_service.is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+    # Enforce admin/owner role: the wizard edit flow exposes users/role and
+    # config fields as editable, so a plain member must not be able to enter
+    # it (project takeover).
+    project, _user_email = require_project_edit_access(request, project_name)
 
     project_data = project.data
     if not project_data:
@@ -739,6 +735,13 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     state = get_wizard_state(request)
     if not state or state.flow_id != flow_id:
         return RedirectResponse(url=f"/forms/wizard/{flow_id}", status_code=303)
+
+    # Edit-mode only: fail fast per step instead of stripping data at final
+    # save. Also covers any future step-driven side-effects (e.g. auto-save).
+    if state.project_name:
+        from opi.web.project_edit_security import require_project_edit_access
+
+        require_project_edit_access(request, state.project_name)
 
     section = _get_section_from_flow(flow_id, section_id)
     flow = get_flow(flow_id)
@@ -1877,15 +1880,14 @@ async def _save_existing_project(
     """Save updated data to an existing project."""
     from opi.handlers.project_file_handler import save_project_file
     from opi.services.project_service import get_project_service
+    from opi.web.project_edit_security import apply_form_data_to_project, require_project_edit_access
+
+    # TOCTOU recheck on the mutating request.
+    project, _user_email = require_project_edit_access(request, project_name)
 
     project_service = get_project_service()
-    project = project_service.get_project(project_name)
-    if not project:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
 
-    # Merge with existing data (preserve system-managed fields)
-    existing_data = project.data or {}
-    existing_data.update(data)
+    existing_data = apply_form_data_to_project(project.data or {}, data)
 
     save_project_file(project.filename, existing_data)
     project_service.load_project_from_data(existing_data, project.filename)

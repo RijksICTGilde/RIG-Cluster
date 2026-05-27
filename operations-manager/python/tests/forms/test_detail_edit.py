@@ -288,61 +288,61 @@ def _mock_project_service(project: MockProjectInfo | None = None, user_role: str
 class TestRequireProjectEditAccess:
     @pytest.mark.asyncio
     async def test_returns_404_for_unknown_project(self):
-        from opi.web.router_detail_edit import _require_project_edit_access
+        from opi.web.project_edit_security import require_project_edit_access
 
         svc = _mock_project_service(project=None)
         with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
+            patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
+            patch("opi.web.project_edit_security.get_project_service", return_value=svc),
         ):
             request = MagicMock()
             with pytest.raises(HTTPException) as exc_info:
-                _require_project_edit_access(request, "nonexistent")
+                require_project_edit_access(request, "nonexistent")
             assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
     async def test_returns_403_for_unauthorized_user(self):
-        from opi.web.router_detail_edit import _require_project_edit_access
+        from opi.web.project_edit_security import require_project_edit_access
 
         project = MockProjectInfo("test-project")
         svc = _mock_project_service(project=project)
         svc.is_user_authorized_for_project.return_value = False
         with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
+            patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
+            patch("opi.web.project_edit_security.get_project_service", return_value=svc),
         ):
             request = MagicMock()
             with pytest.raises(HTTPException) as exc_info:
-                _require_project_edit_access(request, "test-project")
+                require_project_edit_access(request, "test-project")
             assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
     async def test_returns_403_for_viewer_role(self):
-        from opi.web.router_detail_edit import _require_project_edit_access
+        from opi.web.project_edit_security import require_project_edit_access
 
         project = MockProjectInfo("test-project")
         svc = _mock_project_service(project=project, user_role="viewer")
         with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
+            patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
+            patch("opi.web.project_edit_security.get_project_service", return_value=svc),
         ):
             request = MagicMock()
             with pytest.raises(HTTPException) as exc_info:
-                _require_project_edit_access(request, "test-project")
+                require_project_edit_access(request, "test-project")
             assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
     async def test_returns_project_for_owner(self):
-        from opi.web.router_detail_edit import _require_project_edit_access
+        from opi.web.project_edit_security import require_project_edit_access
 
         project = MockProjectInfo("test-project")
         svc = _mock_project_service(project=project, user_role="owner")
         with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
+            patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
+            patch("opi.web.project_edit_security.get_project_service", return_value=svc),
         ):
             request = MagicMock()
-            result_project, result_email = _require_project_edit_access(request, "test-project")
+            result_project, result_email = require_project_edit_access(request, "test-project")
             assert result_project is project
             assert result_email == "a@b.nl"
 
@@ -388,8 +388,8 @@ class TestSequenceActionEndpoint:
         )
 
         with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
+            patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
+            patch("opi.web.project_edit_security.get_project_service", return_value=svc),
         ):
             from opi.web.router_detail_edit import sequence_action
 
@@ -415,8 +415,8 @@ class TestSequenceActionEndpoint:
         )
 
         with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
+            patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
+            patch("opi.web.project_edit_security.get_project_service", return_value=svc),
         ):
             from opi.web.router_detail_edit import sequence_action
 
@@ -442,8 +442,8 @@ class TestSequenceActionEndpoint:
         )
 
         with (
-            patch("opi.web.router_detail_edit.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.services.project_service.get_project_service", return_value=svc),
+            patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
+            patch("opi.web.project_edit_security.get_project_service", return_value=svc),
         ):
             from opi.web.router_detail_edit import sequence_action
 
