@@ -150,7 +150,9 @@ async def file_change_handler(file_path: str, content: dict) -> None:
             try:
                 namespace_success = await check_and_create_namespaces(content)
             except ValueError as exc:
-                # Mismatched namespace; skip this project, keep polling loop alive.
+                # Project declared a namespace that doesn't match its name
+                # (the pin rejected it). Skip this project but keep the
+                # polling loop alive so other projects still get processed.
                 logger.error(f"Rejected project '{project_name}' from git monitor: {exc}")
                 return
 

@@ -333,7 +333,9 @@ async def process_project_yaml_background(
             project_file_path = f"projects/{project_name}.yaml"
             commit_message = f"Create project {project_name}"
 
-            # Create flow only: existing file would let one tenant overwrite another.
+            # Project-create flow: refuse if a project file with this name
+            # already exists. Without this a tenant could reuse another
+            # tenant's name and take over their project on the next reload.
             if is_new_project and await git_connector_for_project_files.file_exists(project_file_path):
                 error_msg = (
                     f"Project '{project_name}' bestaat al. "
