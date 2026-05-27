@@ -22,7 +22,6 @@ from urllib.parse import urlparse
 import pytest
 import uvicorn
 from itsdangerous import TimestampSigner
-from opi.core.secret_key import DEV_DEFAULT_SECRET_KEY
 from tests.e2e.testserver import SECRET_KEY, create_test_app
 
 if TYPE_CHECKING:
@@ -32,9 +31,10 @@ if TYPE_CHECKING:
 
 # Sandbox config - override via environment variables
 E2E_BASE_URL = os.environ.get("E2E_BASE_URL", "")
-# Fallback to the central DEV_DEFAULT_SECRET_KEY so this stays in sync if
-# the dev-default ever rotates -- avoids two copies of the literal drifting.
-E2E_SECRET_KEY = os.environ.get("E2E_SECRET_KEY", DEV_DEFAULT_SECRET_KEY)
+# Sandbox tests sign cookies for an already-running cluster, so the secret
+# must match what that cluster uses. The default is only useful when no
+# sandbox tests are actually run.
+E2E_SECRET_KEY = os.environ.get("E2E_SECRET_KEY", "sandbox-e2e-test-secret-key-min32chars")
 
 TEST_USER = {
     "sub": "e2e-user",

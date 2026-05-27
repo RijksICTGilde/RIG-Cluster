@@ -24,7 +24,7 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-SECRET_KEY = "e2e-test-secret-key"
+SECRET_KEY = "e2e-test-secret-key-padded-to-32-chars-minimum"
 
 # Fixed test AGE keypair for E2E testing (DO NOT use in production)
 TEST_AGE_PUBLIC_KEY = "age10uegg2n4sxnsmpd00xjqh8e80hhrs9983yhy673gp8k0aevn4dtsn9d8xj"

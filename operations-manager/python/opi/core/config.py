@@ -4,12 +4,12 @@ import logging
 import os
 import pathlib
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 # Initialize logging early to ensure it's available during config loading
 from opi.core.early_logging import initialize_logging  # noqa: F401 (side-effect import)
-from opi.core.secret_key import DEV_DEFAULT_SECRET_KEY, validate_secret_key
+from opi.core.secret_key import generate_secret_key, validate_secret_key
 from opi.utils.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -141,7 +141,7 @@ class Settings(BaseSettings):
     OWN_DOMAIN: str = "operations-manager.kind"
     ADDITIONAL_DOMAINS: str = ""  # Comma-separated list of additional domains for redirect URIs
 
-    SECRET_KEY: str = DEV_DEFAULT_SECRET_KEY
+    SECRET_KEY: str = Field(default_factory=generate_secret_key)
     ENVIRONMENT: str = "local"
     DEBUG: bool = False
     CLUSTER_MANAGER: str = "local"
@@ -378,8 +378,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _enforce_secure_secret_key(self) -> Settings:
-        """Fail closed at settings load when SECRET_KEY is unsafe for production."""
-        validate_secret_key(self.SECRET_KEY, self.CLUSTER_MANAGER)
+        """Fail closed when an explicitly-set SECRET_KEY is too short."""
+        validate_secret_key(self.SECRET_KEY)
         return self
 
 
