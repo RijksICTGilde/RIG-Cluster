@@ -14,7 +14,7 @@ from opi.connectors.git import start_monitoring_task
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
-from opi.manager.project_manager import ProjectManager
+from opi.manager.project_manager import ProjectManager, enforce_namespace_pin
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -38,6 +38,10 @@ async def check_and_create_namespaces(project_data: dict[str, Any]) -> bool:
         True if all namespaces were checked/created successfully, False otherwise
     """
     kubectl = create_kubectl_connector()
+
+    # Pin the namespace ourselves: this path reads project_data straight
+    # from git, not via ProjectManager.get_deployments where the pin lives.
+    enforce_namespace_pin(project_data)
 
     project_name = project_data.get("name")
     logger.info(f"Checking namespaces for project: {project_name}")
@@ -143,7 +147,14 @@ async def file_change_handler(file_path: str, content: dict) -> None:
 
             # Task 1: Check and create namespaces for deployments
             logger.info("Task 1: Checking and creating namespaces for deployments...")
-            namespace_success = await check_and_create_namespaces(content)
+            try:
+                namespace_success = await check_and_create_namespaces(content)
+            except ValueError as exc:
+                # Project declared a namespace that doesn't match its name
+                # (the pin rejected it). Skip this project but keep the
+                # polling loop alive so other projects still get processed.
+                logger.error(f"Rejected project '{project_name}' from git monitor: {exc}")
+                return
 
             if namespace_success:
                 logger.info("Namespace check/creation completed successfully")

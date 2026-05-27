@@ -151,6 +151,21 @@ async def process_project_background(task_id: str, project_data: Any) -> None:
             # This ensures the project configuration is preserved even if deployment fails
             project_file_path = f"projects/{project_data.project_name}.yaml"
             commit_message = f"Create project {project_data.project_name}"
+
+            # Tenant-isolation guard: this is the create path, so a project
+            # file with this name must not already exist. Without this check
+            # a tenant could pick another tenant's project name and silently
+            # overwrite their project file, taking over ownership on reload.
+            if await git_connector_for_project_files.file_exists(project_file_path):
+                error_msg = (
+                    f"Project '{project_data.project_name}' bestaat al. "
+                    f"Kies een andere projectnaam; een bestaand project kan niet "
+                    f"via aanmaken worden overschreven."
+                )
+                task_progress_manager.fail_task(git_task, error_msg)
+                task_progress_manager.fail_project(error_msg)
+                return
+
             await git_connector_for_project_files.create_or_update_file(
                 project_file_path, yaml_content, do_commit_and_push=True, commit_message=commit_message
             )
@@ -269,17 +284,20 @@ async def process_project_background(task_id: str, project_data: Any) -> None:
 
 
 async def process_project_yaml_background(
-    task_id: str, project_name: str, yaml_content: str, deployment_name: str | None = None
+    task_id: str,
+    project_name: str,
+    yaml_content: str,
+    deployment_name: str | None = None,
+    is_new_project: bool = False,
 ) -> None:
-    """Background task that creates a project from pre-built YAML content.
+    """Background task that creates a project from pre-built wizard YAML.
 
-    Unlike ``process_project_background`` which takes a
-    ``SelfServiceProjectRequest`` and generates YAML, this function
-    receives the final YAML string directly (produced by the wizard
-    with editables and generators).
+    Same pipeline as ``process_project_background``.
 
-    The remaining pipeline is identical: git commit, ProjectManager
-    deployment, ArgoCD monitoring, and progress tracking.
+    Args:
+        is_new_project: True for the create flow only. When True the file
+            must not already exist (or one tenant overwrites another).
+            Update/edit flows pass False.
     """
     try:
         logger.info(f"Background task {task_id} starting for project: {project_name} (from wizard YAML)")
@@ -314,6 +332,20 @@ async def process_project_yaml_background(
 
             project_file_path = f"projects/{project_name}.yaml"
             commit_message = f"Create project {project_name}"
+
+            # Project-create flow: refuse if a project file with this name
+            # already exists. Without this a tenant could reuse another
+            # tenant's name and take over their project on the next reload.
+            if is_new_project and await git_connector_for_project_files.file_exists(project_file_path):
+                error_msg = (
+                    f"Project '{project_name}' bestaat al. "
+                    f"Kies een andere projectnaam; een bestaand project kan niet "
+                    f"via aanmaken worden overschreven."
+                )
+                task_progress_manager.fail_task(git_task, error_msg)
+                task_progress_manager.fail_project(error_msg)
+                return
+
             await git_connector_for_project_files.create_or_update_file(
                 project_file_path, yaml_content, do_commit_and_push=True, commit_message=commit_message
             )
