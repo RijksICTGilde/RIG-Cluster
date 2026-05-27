@@ -4506,7 +4506,6 @@ class ProjectManager:
                 "deployment_name": deployment_name,
                 "component_name": component_name,
                 "namespace": namespace,
-                "deployment_name": deployment_name,
                 "hostname": hostname,
                 "project": {"name": project_name},
                 "cluster": cluster,  # Add cluster information for template conditionals
