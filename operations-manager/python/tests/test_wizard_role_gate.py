@@ -26,7 +26,11 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 from opi.services.project_service import ProjectService, ProjectUser
-from opi.web.router_detail_edit import _require_project_edit_access
+from opi.web.project_edit_security import (
+    PROTECTED_PROJECT_KEYS,
+    merge_preserving_protected_keys,
+    require_project_edit_access,
+)
 from opi.web.router_wizard import _save_existing_project
 
 PROJECT_NAME = "takeover-target"
@@ -91,14 +95,14 @@ def test_member_rejected_from_wizard_edit_gate(project_service: ProjectService) 
         patch("opi.web.router_detail_edit.get_current_user", return_value={"email": MEMBER_EMAIL}),
         pytest.raises(HTTPException) as exc,
     ):
-        _require_project_edit_access(_request_for(MEMBER_EMAIL), PROJECT_NAME)
+        require_project_edit_access(_request_for(MEMBER_EMAIL), PROJECT_NAME)
     assert exc.value.status_code == 403
 
 
 def test_owner_passes_wizard_edit_gate(project_service: ProjectService) -> None:
     """An owner is allowed into the wizard edit flow."""
     with patch("opi.web.router_detail_edit.get_current_user", return_value={"email": OWNER_EMAIL}):
-        project, user_email = _require_project_edit_access(_request_for(OWNER_EMAIL), PROJECT_NAME)
+        project, user_email = require_project_edit_access(_request_for(OWNER_EMAIL), PROJECT_NAME)
     assert project.name == PROJECT_NAME
     assert user_email == OWNER_EMAIL
 
@@ -106,7 +110,7 @@ def test_owner_passes_wizard_edit_gate(project_service: ProjectService) -> None:
 def test_global_admin_passes_wizard_edit_gate(project_service: ProjectService) -> None:
     """A global admin is allowed into the wizard edit flow."""
     with patch("opi.web.router_detail_edit.get_current_user", return_value={"email": ADMIN_EMAIL}):
-        project, _ = _require_project_edit_access(_request_for(ADMIN_EMAIL), PROJECT_NAME)
+        project, _ = require_project_edit_access(_request_for(ADMIN_EMAIL), PROJECT_NAME)
     assert project.name == PROJECT_NAME
 
 
@@ -224,7 +228,7 @@ async def test_owner_save_protected_keys_survive_deletion_attack(project_service
 
 
 # ---------------------------------------------------------------------------
-# Route-level gate: the GET handler wires through _require_project_edit_access
+# Route-level gate: the GET handler wires through require_project_edit_access
 #
 # The helper-level tests above prove the gate function itself rejects a
 # member. This test pins the route -> gate wiring so a future refactor
@@ -236,7 +240,7 @@ async def test_owner_save_protected_keys_survive_deletion_attack(project_service
 
 @pytest.mark.asyncio
 async def test_wizard_edit_page_invokes_role_gate(project_service: ProjectService) -> None:
-    """`wizard_edit_page` must invoke `_require_project_edit_access`; if the
+    """`wizard_edit_page` must invoke ``require_project_edit_access``; if the
     gate raises, the route propagates it.
     """
     from unittest.mock import MagicMock
@@ -247,10 +251,9 @@ async def test_wizard_edit_page_invokes_role_gate(project_service: ProjectServic
 
     with (
         patch(
-            "opi.web.router_detail_edit._require_project_edit_access",
+            "opi.web.project_edit_security.require_project_edit_access",
             side_effect=sentinel,
         ) as gate,
-        patch("opi.web.router_detail_edit.get_current_user", return_value={"email": MEMBER_EMAIL}),
         patch("opi.web.router_wizard.get_current_user", return_value={"email": MEMBER_EMAIL}),
         patch("opi.web.router_wizard.get_flow", return_value=MagicMock()),
         patch("opi.web.router_wizard.get_templates", return_value=MagicMock()),
@@ -299,3 +302,191 @@ async def test_owner_save_blocks_nested_config_secret_exfiltration(project_servi
     saved = captured["data"]
     assert saved["config"]["api-key"] == "super-secret-api-key"
     assert saved["config"]["age-private-key"] == "AGE-SECRET-KEY-PRIVATEPRIVATE"
+
+
+# ---------------------------------------------------------------------------
+# Central helpers: merge_preserving_protected_keys
+# ---------------------------------------------------------------------------
+
+
+def test_merge_preserves_all_protected_keys() -> None:
+    """The merge helper re-derives every protected key from existing_data."""
+    existing = {
+        "users": [{"email": "a@x", "role": "owner"}],
+        "config": {"api-key": "real"},
+        "name": "real-name",
+        "clusters": ["odcn"],
+        "display-name": "Real",
+    }
+    submitted = {
+        "users": [{"email": "attacker@x", "role": "owner"}],
+        "config": {"api-key": "stolen"},
+        "name": "attacker-name",
+        "clusters": ["attacker"],
+        "display-name": "Updated",
+    }
+    merged = merge_preserving_protected_keys(existing, submitted)
+
+    assert merged["users"] == existing["users"]
+    assert merged["config"] == existing["config"]
+    assert merged["name"] == existing["name"]
+    assert merged["clusters"] == existing["clusters"]
+    assert merged["display-name"] == "Updated"
+
+
+def test_merge_drops_protected_keys_absent_from_existing() -> None:
+    """A submitted protected key cannot introduce itself when it was absent."""
+    existing = {"display-name": "Just a name"}
+    submitted = {"users": [{"email": "attacker@x", "role": "owner"}]}
+    merged = merge_preserving_protected_keys(existing, submitted)
+    assert "users" not in merged
+
+
+def test_merge_returns_new_dict() -> None:
+    """The helper must not mutate either input dict."""
+    existing = {"users": [{"email": "owner@x"}]}
+    submitted = {"users": [{"email": "attacker@x"}], "display-name": "X"}
+    merged = merge_preserving_protected_keys(existing, submitted)
+
+    assert merged is not existing
+    assert merged is not submitted
+    assert existing == {"users": [{"email": "owner@x"}]}
+    assert submitted == {"users": [{"email": "attacker@x"}], "display-name": "X"}
+
+
+def test_protected_keys_constant_covers_the_documented_set() -> None:
+    """Lock the protected key set so a silent removal here surfaces in review."""
+    assert set(PROTECTED_PROJECT_KEYS) == {"users", "config", "name", "clusters"}
+
+
+# ---------------------------------------------------------------------------
+# Modal save (router_detail_edit._modal_do_submit): TOCTOU re-check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_modal_do_submit_invokes_role_gate_for_project_edit(project_service: ProjectService) -> None:
+    """`_modal_do_submit` must re-check admin/owner on project-edit flows.
+
+    The route handlers above already gate, but a session-replay between
+    GET-time gate and final mutation must still fail. Pinning the call here
+    guards against accidental removal of the in-handler re-check.
+    """
+    from opi.web.router_detail_edit import _modal_do_submit
+
+    sentinel = HTTPException(status_code=403, detail="gate-fired-from-test")
+
+    # Patch the binding inside router_detail_edit (top-level import in that
+    # module created a local name); patching the source module would miss it.
+    with (
+        patch(
+            "opi.web.router_detail_edit.require_project_edit_access",
+            side_effect=sentinel,
+        ) as gate,
+        pytest.raises(HTTPException) as exc,
+    ):
+        await _modal_do_submit(
+            request=_request_for(MEMBER_EMAIL),
+            wizard_token="any-token",
+            project_name=PROJECT_NAME,
+            flow_id="modal-edit-identity",  # not a backup-restore flow
+        )
+
+    assert exc.value.status_code == 403
+    gate.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_modal_do_submit_skips_edit_gate_on_backup_restore_flow(project_service: ProjectService) -> None:
+    """Backup/restore flows use a separate member-level gate, not edit-gate."""
+    from opi.web.router_detail_edit import _modal_do_submit
+
+    with (
+        patch(
+            "opi.web.router_detail_edit.require_project_edit_access",
+            side_effect=AssertionError("edit-gate must not run on backup flows"),
+        ),
+        # State lookup returns None -> raises 400 before any data mutation.
+        # We only care that the edit-gate was NOT called.
+        patch("opi.web.router_detail_edit.get_modal_state_by_token", return_value=None),
+        pytest.raises(HTTPException) as exc,
+    ):
+        await _modal_do_submit(
+            request=_request_for(MEMBER_EMAIL),
+            wizard_token="any-token",
+            project_name=PROJECT_NAME,
+            flow_id="modal-backup",
+        )
+    # Confirm the expected pass-through error rather than an AssertionError leaking.
+    assert exc.value.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Wizard step submit (router_wizard.submit_step): edit-mode role gate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_submit_step_gates_in_edit_mode(project_service: ProjectService) -> None:
+    """In edit-mode (state.project_name set), each step submit must re-gate.
+
+    A member who somehow seeded an edit-mode wizard state must be rejected
+    before any step data is processed. The final-save handler already gates,
+    but step submits accumulate validated data and a member should fail fast.
+    """
+    from unittest.mock import MagicMock
+
+    from opi.web.router_wizard import submit_step
+
+    state = MagicMock()
+    state.flow_id = "edit-project"
+    state.project_name = PROJECT_NAME
+
+    sentinel = HTTPException(status_code=403, detail="gate-fired-from-test")
+
+    with (
+        patch("opi.web.router_wizard.get_wizard_state", return_value=state),
+        patch(
+            "opi.web.project_edit_security.require_project_edit_access",
+            side_effect=sentinel,
+        ) as gate,
+        pytest.raises(HTTPException) as exc,
+    ):
+        await submit_step(
+            request=_request_for(MEMBER_EMAIL),
+            flow_id="edit-project",
+            section_id="identity-edit",
+        )
+
+    assert exc.value.status_code == 403
+    gate.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_submit_step_skips_gate_in_create_mode(project_service: ProjectService) -> None:
+    """Create-mode (state.project_name is None) has no project to gate against."""
+    from unittest.mock import MagicMock
+
+    from opi.web.router_wizard import submit_step
+
+    state = MagicMock()
+    state.flow_id = "create-project"
+    state.project_name = None
+
+    with (
+        patch("opi.web.router_wizard.get_wizard_state", return_value=state),
+        patch(
+            "opi.web.project_edit_security.require_project_edit_access",
+            side_effect=AssertionError("gate must not run in create-mode"),
+        ),
+    ):
+        # Body parse fails downstream (no real request body). What matters
+        # is which exception we get: anything except AssertionError means the
+        # gate was correctly skipped in create-mode.
+        with pytest.raises(Exception, match=r"^(?!.*gate must not run).*") as exc:
+            await submit_step(
+                request=_request_for(MEMBER_EMAIL),
+                flow_id="create-project",
+                section_id="identity",
+            )
+        assert not isinstance(exc.value, AssertionError)

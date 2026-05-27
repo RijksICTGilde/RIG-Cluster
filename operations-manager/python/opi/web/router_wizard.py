@@ -413,16 +413,16 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
 @requires_sso
 async def wizard_edit_page(request: Request, flow_id: str, project_name: str) -> HTMLResponse:
     """Render the wizard page pre-filled from an existing project."""
-    from opi.web.router_detail_edit import _require_project_edit_access
+    from opi.web.project_edit_security import require_project_edit_access
 
     flow = get_flow(flow_id)
     user = get_current_user(request)
     templates = get_templates()
 
-    # Enforce admin/owner role, mirroring the detail-edit flow. The wizard
-    # edit flow exposes the users/role and config fields as editable, so a
-    # plain member must not be able to enter it (project takeover).
-    project, _user_email = _require_project_edit_access(request, project_name)
+    # Enforce admin/owner role: the wizard edit flow exposes users/role and
+    # config fields as editable, so a plain member must not be able to enter
+    # it (project takeover).
+    project, _user_email = require_project_edit_access(request, project_name)
 
     project_data = project.data
     if not project_data:
@@ -735,6 +735,17 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     state = get_wizard_state(request)
     if not state or state.flow_id != flow_id:
         return RedirectResponse(url=f"/forms/wizard/{flow_id}", status_code=303)
+
+    # In edit-mode (state has a project_name), re-check admin/owner on every
+    # step submit. The final-save handler already gates, but step submits
+    # accumulate validated data in server-side state and a member should not
+    # be able to spend time in the wizard authoring data that will only be
+    # stripped at the end. This also defends against any future step-driven
+    # side-effects (e.g. auto-save) where the final-save gate would not run.
+    if state.project_name:
+        from opi.web.project_edit_security import require_project_edit_access
+
+        require_project_edit_access(request, state.project_name)
 
     section = _get_section_from_flow(flow_id, section_id)
     flow = get_flow(flow_id)
@@ -1873,50 +1884,20 @@ async def _save_existing_project(
     """Save updated data to an existing project."""
     from opi.handlers.project_file_handler import save_project_file
     from opi.services.project_service import get_project_service
-    from opi.web.router_detail_edit import _require_project_edit_access
+    from opi.web.project_edit_security import merge_preserving_protected_keys, require_project_edit_access
 
     # Re-check the role on the mutating request, keyed on the project name
     # from the server-side wizard state. The GET-time check is not enough:
     # the session could have been seeded by an authorized user and the POST
     # replayed by another (TOCTOU), or the role could have been revoked.
-    project, _user_email = _require_project_edit_access(request, project_name)
+    project, _user_email = require_project_edit_access(request, project_name)
 
     project_service = get_project_service()
 
-    # Merge with existing data while protecting privileged top-level keys.
-    # Two different reasons per key:
-    #
-    # - `users`, `config`, `name`: the wizard exposes users/role and the
-    #   config block (api-key, AGE public/private keys) as editable fields.
-    #   Allowing form output to overwrite them would let an authorized editor
-    #   escalate (add an admin role) or exfiltrate (rotate the API key to a
-    #   known value, read the AGE private key out of the response). These
-    #   keys are re-derived from the stored project and never taken from the
-    #   submitted form data. `name` is locked because the file path on disk
-    #   is keyed on it; renaming would orphan the file.
-    #
-    # - `clusters`: not actually exposed in the edit-mode wizard at all
-    #   (`IDENTITY_EDIT_SECTION` in `forms/visualizers/wizard_sections.py`
-    #   only renders `display-name` and `description`; the create-mode
-    #   `IDENTITY_SECTION` is the one with the cluster picker). Cluster
-    #   editing is *not yet a supported feature*: no migration logic exists
-    #   for adding a cluster (new-cluster OPI must pick up + reconcile), for
-    #   removing one (leaving-cluster OPI must tear down, deployments still
-    #   targeting that cluster must be blocked or cascaded), or for the
-    #   distributed-model race when two OPIs see the same file at once.
-    #   See `features/futures/cluster-editing.md` for the open design.
-    #   Until that design lands, `clusters` is defense-in-depth-locked here
-    #   so a hypothetical future form that accidentally includes the field
-    #   cannot silently change it.
-    protected_keys = ("users", "config", "name", "clusters")
-    existing_data = project.data or {}
-    merged_data = {**existing_data, **data}
-    for key in protected_keys:
-        if key in existing_data:
-            merged_data[key] = existing_data[key]
-        else:
-            merged_data.pop(key, None)
-    existing_data = merged_data
+    # Privilege-aware merge: see PROTECTED_PROJECT_KEYS in
+    # opi/web/project_edit_security.py for the per-key reasoning. Same
+    # protection as the modal save path.
+    existing_data = merge_preserving_protected_keys(project.data or {}, data)
 
     save_project_file(project.filename, existing_data)
     project_service.load_project_from_data(existing_data, project.filename)

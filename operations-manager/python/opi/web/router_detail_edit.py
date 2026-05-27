@@ -39,6 +39,10 @@ from opi.forms.wizard.session import (
     init_modal_state_tokenized,
     save_modal_state_by_token,
 )
+from opi.web.project_edit_security import (
+    merge_preserving_protected_keys,
+    require_project_edit_access,
+)
 from opi.web.router_wizard import (
     _empty_sequence_item,
     _extract_section_data,
@@ -167,28 +171,6 @@ def _render_section_html(
     if process_components_filter is not None:
         html = str(process_components_filter(html))
     return html
-
-
-def _require_project_edit_access(request: Request, project_name: str):
-    """Check auth and return (project, user_email). Raises on failure."""
-    from opi.services.project_service import get_project_service
-
-    user = get_current_user(request)
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
-
-    if not project:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
-
-    user_email = user.get("email", "").lower()
-    if not project_service.is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-
-    user_role = project_service.get_user_role_for_project(project_name, user_email)
-    if user_role not in ("admin", "owner"):
-        raise HTTPException(status_code=403, detail="Onvoldoende rechten om dit project te bewerken")
-
-    return project, user_email
 
 
 def _require_project_member_access(request: Request, project_name: str):
@@ -523,7 +505,7 @@ async def _start_deployment(
 @requires_sso
 async def sequence_action(request: Request, project_name: str, section_id: str) -> HTMLResponse:
     """Handle add/remove sequence item and re-render the section form."""
-    project, _user_email = _require_project_edit_access(request, project_name)
+    project, _user_email = require_project_edit_access(request, project_name)
 
     section = _get_edit_section(section_id)
     project_data = project.data or {}
@@ -580,7 +562,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     if _is_backup_restore_flow(flow_id):
         project, _user_email = _require_project_member_access(request, project_name)
     else:
-        project, _user_email = _require_project_edit_access(request, project_name)
+        project, _user_email = require_project_edit_access(request, project_name)
 
     project_data = project.data or {}
 
@@ -709,7 +691,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 @requires_sso
 async def modal_wizard_load_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
     """Load a step (for back-navigation)."""
-    _require_project_edit_access(request, project_name)
+    require_project_edit_access(request, project_name)
 
     wizard_token = _get_wizard_token(request)
     state = get_modal_state_by_token(wizard_token)
@@ -737,7 +719,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     if _is_backup_restore_flow(flow_id):
         _require_project_member_access(request, project_name)
     else:
-        _require_project_edit_access(request, project_name)
+        require_project_edit_access(request, project_name)
 
     wizard_token = _get_wizard_token(request)
     state = get_modal_state_by_token(wizard_token)
@@ -939,7 +921,7 @@ async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -
     if _is_backup_restore_flow(flow_id):
         _require_project_member_access(request, project_name)
     else:
-        _require_project_edit_access(request, project_name)
+        require_project_edit_access(request, project_name)
 
     wizard_token = await _get_wizard_token_with_body(request)
     state = get_modal_state_by_token(wizard_token)
@@ -957,7 +939,7 @@ async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str
     if _is_backup_restore_flow(flow_id):
         _require_project_member_access(request, project_name)
     else:
-        _require_project_edit_access(request, project_name)
+        require_project_edit_access(request, project_name)
 
     wizard_token = await _get_wizard_token_with_body(request)
     state = get_modal_state_by_token(wizard_token)
@@ -1105,6 +1087,15 @@ async def _modal_do_submit(
     from opi.handlers.project_file_handler import save_project_file
     from opi.services.project_service import get_project_service
 
+    # Backup/restore flows have their own member-level gate further down.
+    # For project-edit flows, re-check the admin/owner role on this mutating
+    # request, keyed on the URL project name. The route handlers above
+    # (modal_wizard_submit_step / skip / confirm) already gate, but this
+    # re-check protects against session replay between the GET-gated entry
+    # and the actual mutation, and against role revocation in between.
+    if not _is_backup_restore_flow(flow_id):
+        require_project_edit_access(request, project_name)
+
     state = get_modal_state_by_token(wizard_token)
     if not state:
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
@@ -1179,7 +1170,10 @@ async def _modal_do_submit(
                         if field in existing_dep and field not in new_dep:
                             new_dep[field] = existing_dep[field]
 
-    existing_data.update(merged_data)
+    # Privilege-aware merge: see PROTECTED_PROJECT_KEYS in
+    # opi/web/project_edit_security.py for the per-key reasoning. Same
+    # protection as the wizard-final save path.
+    existing_data = merge_preserving_protected_keys(existing_data, merged_data)
 
     # Run post_merge hooks (e.g. distribute component refs to deployments)
     for section in active_sections:
