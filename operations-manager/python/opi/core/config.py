@@ -153,13 +153,6 @@ class Settings(BaseSettings):
     )
     SKIP_STARTUP_CHECKS: bool = False  # Skip namespace/Keycloak/MinIO checks on startup (for fast local dev)
 
-    # Legacy Git server settings (for backward compatibility)
-    # TODO: This is only used for testing creating local GIT repositories and should be removed or fixed in the future
-    GIT_SERVER_HOST: str = "localhost"
-    GIT_SERVER_PORT: int = 2222
-    GIT_SERVER_KEY_PATH: str = "/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/keys/git-server-key"
-    GIT_SERVER_USER: str = "git"
-
     # OIDC settings
     OIDC_CLIENT_ID: str | None = None
     OIDC_CLIENT_SECRET: str | None = None
@@ -191,7 +184,6 @@ class Settings(BaseSettings):
 
     # ArgoCD Applications Git repository - simplified to just URL and credentials
     GIT_ARGO_APPLICATIONS_URL: str = "ssh://git@localhost:2222/srv/git/argo-applications.git"
-    GIT_ARGO_APPLICATIONS_KEY: str = "/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/keys/git-server-key"
     GIT_ARGO_APPLICATIONS_PASSWORD: str | None = None
     GIT_ARGO_APPLICATIONS_BRANCH: str = "main"
     GIT_ARGO_APPLICATIONS_USERNAME: str | None = None

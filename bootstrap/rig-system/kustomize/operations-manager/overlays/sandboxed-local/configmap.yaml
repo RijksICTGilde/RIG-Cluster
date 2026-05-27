@@ -18,7 +18,6 @@ data:
     GIT_PROJECTS_SERVER_POLL_INTERVAL=120
 
     GIT_ARGO_APPLICATIONS_URL=http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-user-applications.git
-    GIT_ARGO_APPLICATIONS_KEY=""
     GIT_ARGO_APPLICATIONS_USERNAME=rig-admin
     GIT_ARGO_APPLICATIONS_PASSWORD=plain:admin1234
     GIT_ARGO_APPLICATIONS_BRANCH=main

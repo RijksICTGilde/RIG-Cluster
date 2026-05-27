@@ -185,12 +185,6 @@ async def start_git_monitoring(app: FastAPI) -> None:
     logger.info(f"  Branch: {branch}")
     logger.info(f"  Poll interval: {interval} seconds")
 
-    # Get SSH key information
-    ssh_key_path = None
-    if git_url.startswith(("git://", "ssh://")):
-        ssh_key_path = settings.GIT_SERVER_KEY_PATH
-        logger.debug(f"Using SSH key: {ssh_key_path}")
-
     # Add HTTP authentication if needed
     if settings.GIT_PROJECTS_SERVER_USERNAME and git_url.startswith(("http://", "https://")):
         # URL will be modified in the connector to include authentication
@@ -206,7 +200,7 @@ async def start_git_monitoring(app: FastAPI) -> None:
             interval=interval,
             repo_path=repo_path,
             callback=file_change_handler,
-            ssh_key_path=ssh_key_path,
+            ssh_key_path=None,
             username=settings.GIT_PROJECTS_SERVER_USERNAME,
             password=settings.GIT_PROJECTS_SERVER_PASSWORD,
         )

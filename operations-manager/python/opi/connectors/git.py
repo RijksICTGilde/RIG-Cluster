@@ -1493,106 +1493,6 @@ class GitConnector:
             )
             shutil.rmtree(self.__working_dir, ignore_errors=True)
 
-    @staticmethod
-    async def create_repository(
-        server_host: str, repo_name: str, ssh_key_path: str | None = None, ssh_port: int = 22, ssh_user: str = "git"
-    ) -> bool:
-        """
-        Creates a new bare Git repository on the remote server via SSH.
-        This is a static method that can be called without creating a GitConnector instance.
-
-        Args:
-            server_host: Hostname or IP of the Git server
-            repo_name: Name of the repository to create (without .git extension)
-            ssh_key_path: Path to the SSH private key file for authentication
-            ssh_port: SSH port number for the server (default: 22)
-            ssh_user: SSH username for authentication (default: git)
-
-        Returns:
-            True if repository was created successfully, False otherwise
-        """
-        logger.info(f"Creating new Git repository '{repo_name}' on server {server_host}")
-
-        # Ensure repo_name doesn't have .git extension already
-        repo_name = repo_name.removesuffix(".git")
-
-        repo_path = f"/srv/git/{repo_name}.git"
-        logger.debug(f"Repository path on server: {repo_path}")
-
-        # Build SSH command with appropriate options
-        ssh_cmd_base = ["ssh"]
-
-        # Add port if not default
-        if ssh_port != 22:
-            ssh_cmd_base.extend(["-p", str(ssh_port)])
-
-        # Add SSH key if provided
-        if ssh_key_path:
-            ssh_cmd_base.extend(["-i", ssh_key_path])
-
-        # Add options to disable host checking
-        ssh_cmd_base.extend(["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"])
-
-        # Add user@host
-        ssh_target = f"{ssh_user}@{server_host}"
-
-        # First check if repository already exists
-        check_cmd = [*ssh_cmd_base, ssh_target, f"test -d {repo_path}"]
-        logger.debug(f"Checking if repository exists: {' '.join(check_cmd)}")
-
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *check_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-
-            stdout, stderr = await process.communicate()
-
-            if process.returncode == 0:
-                logger.info(f"Repository {repo_name}.git already exists, skipping creation")
-                return True
-            else:
-                logger.debug("Repository does not exist, proceeding with creation")
-
-        except Exception as e:
-            logger.warning(f"Error checking repository existence: {e}, proceeding with creation")
-
-        # Commands to execute on the remote server (only if repo doesn't exist)
-        commands = [f"mkdir -p {repo_path}", f"git init -b main --bare {repo_path}"]
-
-        # Execute each command
-        for cmd in commands:
-            ssh_cmd = [*ssh_cmd_base, ssh_target, cmd]
-            logger.debug(f"Executing SSH command: {' '.join(ssh_cmd)}")
-
-            try:
-                # Run the SSH command
-                process = await asyncio.create_subprocess_exec(
-                    *ssh_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-                )
-
-                stdout, stderr = await process.communicate()
-                stdout_str = stdout.decode("utf-8").strip()
-                stderr_str = stderr.decode("utf-8").strip()
-
-                if process.returncode != 0:
-                    # Special handling for "already exists" errors
-                    if "already exists" in stderr_str.lower():
-                        logger.info(f"Repository {repo_name}.git already exists (detected during creation)")
-                        return True
-                    else:
-                        logger.error(f"Command '{cmd}' failed with exit code {process.returncode}: {stderr_str}")
-                        return False
-
-                if stdout_str:
-                    logger.debug(f"Command output: {stdout_str}")
-
-            except Exception as e:
-                logger.error(f"Error executing SSH command: {e}")
-                return False
-
-        logger.info(f"Successfully created Git repository: {repo_name}.git")
-        return True
-
 
 async def poll_for_changes(
     connector: GitConnector,
@@ -1805,33 +1705,6 @@ async def start_monitoring_task(
     return task
 
 
-async def create_git_repository(
-    server_host: str, repo_name: str, ssh_key_path: str | None = None, ssh_port: int = 22, ssh_user: str = "git"
-) -> bool:
-    """
-    Creates a new bare Git repository on the remote server via SSH.
-
-    This is a standalone function that creates a Git repository without requiring a GitConnector instance.
-    It uses the static method GitConnector.create_repository internally.
-
-    Args:
-        server_host: Hostname or IP of the Git server
-        repo_name: Name of the repository to create (without .git extension)
-        ssh_key_path: Path to the SSH private key file for authentication
-        ssh_port: SSH port number for the server (default: 22)
-        ssh_user: SSH username for authentication (default: git)
-
-    Returns:
-        True if repository was created successfully, False otherwise
-    """
-    logger.info(f"Creating new Git repository '{repo_name}' via standalone function")
-
-    # Use the static method directly
-    return await GitConnector.create_repository(
-        server_host=server_host, repo_name=repo_name, ssh_key_path=ssh_key_path, ssh_port=ssh_port, ssh_user=ssh_user
-    )
-
-
 # TODO: replace factory method with direct calls to the GitConnector?
 async def create_git_connector_from_repo_config(repo_config: dict[str, Any]) -> GitConnector:
     connector = GitConnector(
@@ -1862,11 +1735,6 @@ async def create_git_connector_for_argocd(project_name: str) -> GitConnector:
         "project_name": project_name,
         "name": "argo",
     }
-
-    # Only add SSH key if it's not empty (for SSH URLs)
-    # TODO: this is probably obsolete?
-    if settings.GIT_ARGO_APPLICATIONS_KEY and settings.GIT_ARGO_APPLICATIONS_KEY.strip():
-        gitops_repo_config["ssh_key_path"] = settings.GIT_ARGO_APPLICATIONS_KEY
 
     return await create_git_connector_from_repo_config(gitops_repo_config)
 
