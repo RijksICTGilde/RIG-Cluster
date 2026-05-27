@@ -28,7 +28,6 @@ from opi.connectors.git import (
     create_git_connector_for_argocd,
     create_git_connector_for_project_files,
     create_git_connector_from_repo_config,
-    create_git_repository,
 )
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.subdomain import SubdomainConnector, ensure_domain_requests
@@ -1212,57 +1211,6 @@ class ProjectManager:
         """Check if project has any deployments for the current cluster."""
         current_cluster_deployments = await self.get_deployments(cluster_filter=True)
         return bool(current_cluster_deployments)
-
-    async def create_project_repository(self, project_data: dict[str, Any]) -> bool:
-        """
-        Create a Git repository for the project.
-
-        Args:
-            project_data: The parsed project data
-
-        Returns:
-            True if the repository was created successfully, False otherwise
-        """
-        project_name = await self.get_name()
-        logger.debug(f"Creating repository for project: {project_name}")
-
-        try:
-            # Get the repository URL from the project data
-            repositories = await self.get_repositories()
-            if not repositories:
-                logger.error("No repositories defined in project data")
-                return False
-
-            main_repo = repositories[0]  # Use the first repository as the main repo
-            repo_url = main_repo.get("url")
-
-            # Extract repository name from the URL path instead of using the 'name' field
-            if repo_url:
-                # Extract repo name from URL (e.g., "/srv/git/example-project-infra.git" -> "example-project-infra")
-                repo_name = os.path.basename(repo_url)
-                repo_name = repo_name.removesuffix(".git")  # Remove .git extension
-            else:
-                logger.error(f"No URL defined for repository: {main_repo.get('name', 'unknown')}")
-                return False
-
-            # Create the repository
-            result = await create_git_repository(
-                server_host=settings.GIT_SERVER_HOST,
-                repo_name=repo_name,
-                ssh_key_path=settings.GIT_SERVER_KEY_PATH,
-                ssh_port=settings.GIT_SERVER_PORT,
-                ssh_user=settings.GIT_SERVER_USER,
-            )
-
-            if result:
-                logger.info(f"Successfully created repository: {repo_name}")
-            else:
-                logger.error(f"Failed to create repository: {repo_name}")
-
-            return result
-        except Exception:
-            logger.exception("Error creating project repository")
-            return False
 
     async def get_project_full_file_path(self):
         if self._project_file_relative_path is None:

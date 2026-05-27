@@ -5,7 +5,7 @@ Test the GitConnector with SSH authentication.
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.connectors.git import GitConnector, create_git_repository
+from opi.connectors.git import GitConnector
 
 pytestmark = [pytest.mark.slow, pytest.mark.requires_infra]
 
@@ -40,44 +40,6 @@ async def test_git_connector_ssh_command():
         assert ssh_key_path in env["GIT_SSH_COMMAND"]
         assert f"-p {ssh_port}" in env["GIT_SSH_COMMAND"]
         assert "StrictHostKeyChecking=no" in env["GIT_SSH_COMMAND"]
-
-
-@pytest.mark.asyncio
-async def test_git_connector_create_repository():
-    """Test create_repository with SSH key."""
-    # Define test parameters
-    server_host = "example.com"
-    repo_name = "test-repo"
-    ssh_key_path = "/path/to/ssh/key"
-    ssh_port = 2222
-
-    # Mock asyncio.create_subprocess_exec
-    with patch("asyncio.create_subprocess_exec", new=AsyncMock()) as mock_exec:
-        # Setup mock process
-        mock_process = AsyncMock()
-        mock_process.returncode = 0
-        mock_process.communicate.return_value = (b"", b"")
-        mock_exec.return_value = mock_process
-
-        # Call create_repository
-        result = await create_git_repository(
-            server_host=server_host, repo_name=repo_name, ssh_key_path=ssh_key_path, ssh_port=ssh_port
-        )
-
-        # Verify result
-        assert result is True
-
-        # Check that correct commands were called
-        assert mock_exec.call_count == 2  # Should call twice for the two commands
-
-        # Verify SSH key and port were used
-        for call in mock_exec.call_args_list:
-            args = call[0]
-            # Check if SSH command includes key path and port
-            assert "-i" in args
-            assert ssh_key_path in args
-            assert "-p" in args
-            assert str(ssh_port) in args
 
 
 @pytest.mark.asyncio

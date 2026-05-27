@@ -5,8 +5,8 @@ argo-repository.yaml.jinja used to hard-code a real OpenSSH private key as the
 propagated that one (now compromised, since it is in git history) key, and the
 key sat in cleartext in version control.
 
-The fix renders `sshPrivateKey` from a template variable that argo_manager
-reads from settings.GIT_SERVER_KEY_PATH at runtime.
+The fix renders `sshPrivateKey` from a template variable that the caller
+supplies. The template itself carries no key material.
 
 Red (vulnerable template): the template source contains a BEGIN OPENSSH
 PRIVATE KEY block, so the assertion fails.
