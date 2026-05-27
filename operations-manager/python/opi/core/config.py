@@ -153,14 +153,6 @@ class Settings(BaseSettings):
     )
     SKIP_STARTUP_CHECKS: bool = False  # Skip namespace/Keycloak/MinIO checks on startup (for fast local dev)
 
-    # SSH deploy key path for git operations. Read by git_monitor when the
-    # monitored project URL is ssh:// or git:// (only the local cluster's
-    # docker-compose git-daemon flow today). The other GIT_SERVER_* keys
-    # (HOST, PORT, USER) used to live here too but were orphaned after the
-    # remote-repo-creation code path was removed; this file is now the
-    # single source of truth for the only remaining setting.
-    GIT_SERVER_KEY_PATH: str = "/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/keys/git-server-key"
-
     # OIDC settings
     OIDC_CLIENT_ID: str | None = None
     OIDC_CLIENT_SECRET: str | None = None
@@ -192,7 +184,6 @@ class Settings(BaseSettings):
 
     # ArgoCD Applications Git repository - simplified to just URL and credentials
     GIT_ARGO_APPLICATIONS_URL: str = "ssh://git@localhost:2222/srv/git/argo-applications.git"
-    GIT_ARGO_APPLICATIONS_KEY: str = "/Users/robbertuittenbroek/IdeaProjects/RIG-Cluster/keys/git-server-key"
     GIT_ARGO_APPLICATIONS_PASSWORD: str | None = None
     GIT_ARGO_APPLICATIONS_BRANCH: str = "main"
     GIT_ARGO_APPLICATIONS_USERNAME: str | None = None

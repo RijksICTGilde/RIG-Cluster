@@ -174,7 +174,6 @@ Always specify the correct namespace when debugging. Do not assume `rig-system` 
 uv run pytest tests/ -q                    # All unit tests
 uv run pytest tests/forms/ -q              # Form tests only
 uv run pytest tests/ -k "test_name" -q     # Specific test
-uv run python functional_tests/run_all.py  # Integration tests
 ```
 
 Note: Some test collection errors are pre-existing due to jinja-roos-components import chain issues in non-form tests.

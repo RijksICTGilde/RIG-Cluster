@@ -1736,11 +1736,6 @@ async def create_git_connector_for_argocd(project_name: str) -> GitConnector:
         "name": "argo",
     }
 
-    # Only add SSH key if it's not empty (for SSH URLs)
-    # TODO: this is probably obsolete?
-    if settings.GIT_ARGO_APPLICATIONS_KEY and settings.GIT_ARGO_APPLICATIONS_KEY.strip():
-        gitops_repo_config["ssh_key_path"] = settings.GIT_ARGO_APPLICATIONS_KEY
-
     return await create_git_connector_from_repo_config(gitops_repo_config)
 
 
