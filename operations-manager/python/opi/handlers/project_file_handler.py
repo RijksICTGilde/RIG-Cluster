@@ -2138,36 +2138,12 @@ class ProjectFileHandler:
         return {}
 
     def extract_deployment_namespace(self, project_data: dict[str, Any], deployment_name: str) -> str | None:
-        """
-        Extract the namespace for a deployment, pinned to the project name.
+        """Return the deployment namespace pinned to the project name.
 
-        The project file is attacker-controlled. A deployment declaring a
-        namespace that doesn't match the project name would direct OPI to
-        operate on a victim namespace (cross-tenant isolation breach). This
-        function enforces the same invariant as
-        ``project_manager.enforce_namespace_pin`` -- declared namespace must
-        equal project name, missing namespace defaults to the project name --
-        but locally and without mutating ``project_data``. It is called from
-        backup/restore endpoints and tasks that read project YAML directly
-        rather than via ``ProjectManager.get_deployments`` (which is the
-        canonical pinned reader).
-
-        Note: To get the actual Kubernetes namespace, use
-        get_prefixed_namespace(cluster, namespace) from
-        opi.core.cluster_config.
-
-        Args:
-            project_data: The parsed project data
-            deployment_name: Name of the deployment
-
-        Returns:
-            The project-name-pinned namespace if the deployment exists,
-            None if no deployment with that name is found.
-
-        Raises:
-            ValueError: If the deployment exists and declares a namespace
-                that does not match the project name. Same message shape as
-                ``enforce_namespace_pin``.
+        Same invariant as ``project_manager.enforce_namespace_pin`` but
+        local and non-mutating. Used by callers that don't go through
+        ``ProjectManager.get_deployments`` (backup/restore endpoints, tasks).
+        Raises ValueError on mismatch.
         """
         project_name = project_data.get("name")
         for deployment in project_data.get("deployments", []):

@@ -104,11 +104,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
         project_file_path = f"projects/{project_name}.yaml"
         commit_message = f"Create project {project_name}"
 
-        # Tenant-isolation guard: this is the create path, so a project file
-        # with this name must not already exist. Without this check a tenant
-        # could pick another tenant's project name and silently overwrite
-        # their project file, taking over ownership on reload. Mirrors the
-        # guard in simple_background.process_project_background.
+        # Create flow: bail if file exists (would overwrite another tenant's project).
         if await git_connector_for_project_files.file_exists(project_file_path):
             error_msg = (
                 f"Project '{project_name}' bestaat al. "

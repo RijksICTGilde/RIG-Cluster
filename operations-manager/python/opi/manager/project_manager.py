@@ -129,28 +129,12 @@ logger = logging.getLogger(__name__)
 
 
 def enforce_namespace_pin(project_data: dict[str, Any]) -> None:
-    """Pin every deployment namespace to the project name.
+    """Pin every deployment namespace to the project name (mutates in place).
 
-    The project file is attacker-controlled. An explicit ``namespace``
-    pointing at another project would make OPI label and operate on a
-    victim namespace and generate ArgoCD resources targeting it
-    (cross-tenant isolation breach). Default the namespace when absent
-    (the legitimate common case) and reject any explicit value that
-    differs. We fail closed instead of silently rewriting, so a mismatch
-    surfaces the actual intent.
-
-    This mutates ``project_data`` in place so every code path that reads
-    ``deployment["namespace"]`` afterwards sees the pinned value. It must
-    be called by every entry point that turns a project file into
-    namespace or ArgoCD actions - not only ``ProjectManager.get_deployments``
-    but also the git-monitor path, which reads the project file directly.
-
-    Args:
-        project_data: The parsed project file contents.
-
-    Raises:
-        ValueError: If a deployment specifies a namespace that does not
-            match the project name.
+    Defaults a missing namespace to the project name; raises ValueError on
+    mismatch. Must be called by every entry that turns a project file into
+    namespace/ArgoCD actions, otherwise a tenant can label another
+    project's namespace.
     """
     project_name = project_data.get("name")
     if not project_name:

@@ -39,11 +39,7 @@ async def check_and_create_namespaces(project_data: dict[str, Any]) -> bool:
     """
     kubectl = create_kubectl_connector()
 
-    # Tenant-isolation guard: this path reads the project file directly from
-    # git, bypassing ProjectManager.get_deployments. Without the same pin a
-    # tenant who commits a project file with another tenant's namespace would
-    # make OPI create and label that victim namespace. Pin (and fail closed)
-    # here too, using the shared helper so both paths stay in lockstep.
+    # Bypasses ProjectManager.get_deployments, so pin here too.
     enforce_namespace_pin(project_data)
 
     project_name = project_data.get("name")
@@ -153,10 +149,7 @@ async def file_change_handler(file_path: str, content: dict) -> None:
             try:
                 namespace_success = await check_and_create_namespaces(content)
             except ValueError as exc:
-                # Tenant-isolation guard rejected a project file that declared
-                # a namespace not equal to its project name. Fail closed: do
-                # not create or label anything, and do not crash the polling
-                # loop - just log the rejected cross-tenant attempt.
+                # Mismatched namespace; skip this project, keep polling loop alive.
                 logger.error(f"Rejected project '{project_name}' from git monitor: {exc}")
                 return
 
