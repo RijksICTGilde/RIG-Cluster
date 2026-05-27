@@ -1087,12 +1087,8 @@ async def _modal_do_submit(
     from opi.handlers.project_file_handler import save_project_file
     from opi.services.project_service import get_project_service
 
-    # Backup/restore flows have their own member-level gate further down.
-    # For project-edit flows, re-check the admin/owner role on this mutating
-    # request, keyed on the URL project name. The route handlers above
-    # (modal_wizard_submit_step / skip / confirm) already gate, but this
-    # re-check protects against session replay between the GET-gated entry
-    # and the actual mutation, and against role revocation in between.
+    # TOCTOU recheck on the mutating request. Backup/restore has its own
+    # member-level gate further down.
     if not _is_backup_restore_flow(flow_id):
         require_project_edit_access(request, project_name)
 

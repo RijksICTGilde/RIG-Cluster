@@ -736,12 +736,8 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     if not state or state.flow_id != flow_id:
         return RedirectResponse(url=f"/forms/wizard/{flow_id}", status_code=303)
 
-    # In edit-mode (state has a project_name), re-check admin/owner on every
-    # step submit. The final-save handler already gates, but step submits
-    # accumulate validated data in server-side state and a member should not
-    # be able to spend time in the wizard authoring data that will only be
-    # stripped at the end. This also defends against any future step-driven
-    # side-effects (e.g. auto-save) where the final-save gate would not run.
+    # Edit-mode only: fail fast per step instead of stripping data at final
+    # save. Also covers any future step-driven side-effects (e.g. auto-save).
     if state.project_name:
         from opi.web.project_edit_security import require_project_edit_access
 
