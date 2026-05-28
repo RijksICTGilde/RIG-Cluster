@@ -7,7 +7,7 @@
   "required": ["name"],
   "additionalProperties": false,
   "properties": {
-    "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*\\Z", "maxLength": 30 },
     "display-name": { "type": "string" },
     "description": { "type": "string" },
     "schema-version": { "type": "number" },
@@ -149,7 +149,7 @@
       "additionalProperties": false,
       "properties": {
         "email": { "type": "string", "format": "email" },
-        "role": { "type": "string", "enum": ["admin", "owner", "member"] }
+        "role": { "type": "string", "enum": ["admin", "owner", "member", "developer"] }
       }
     },
 
@@ -184,7 +184,7 @@
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string" },
-        "url": { "type": "string" },
+        "url": { "type": "string", "pattern": "^(?:https?|ssh|git)://[^\\s\\u0000\"]+\\Z" },
         "username": { "type": "string" },
         "password": { "$ref": "#/$defs/age-encrypted-or-plain" },
         "branch": { "type": "string" },
@@ -199,7 +199,7 @@
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string" },
-        "url": { "type": "string" },
+        "url": { "type": "string", "pattern": "^(?:https?|ssh|git)://[^\\s\\u0000\"]+\\Z" },
         "username": { "type": "string" },
         "password": { "$ref": "#/$defs/age-encrypted-or-plain" }
       }
@@ -232,8 +232,8 @@
       "required": ["match"],
       "additionalProperties": false,
       "properties": {
-        "match": { "type": "string" },
-        "rewrite": { "type": "string" }
+        "match": { "type": "string", "pattern": "^[A-Za-z0-9/_.\\-]*\\Z" },
+        "rewrite": { "type": "string", "pattern": "^[A-Za-z0-9/_.\\-]*\\Z" }
       }
     },
 
@@ -297,14 +297,24 @@
       }
     },
 
+    "storage-entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string" },
+        "size": { "type": "string" },
+        "mount-path": { "type": "string", "pattern": "^(?!.*\\.\\.)/[\\w./-]+\\Z" }
+      }
+    },
+
     "component": {
       "type": "object",
       "required": ["name"],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string" },
+        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
         "type": { "type": "string" },
-        "image": { "type": "string" },
+        "image": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]*\\Z" },
         "ports": {
           "type": "object",
           "additionalProperties": false,
@@ -348,7 +358,7 @@
         "storage": {
           "description": "Legacy v1 field — should be migrated to services.",
           "type": "array",
-          "items": { "type": "object" }
+          "items": { "$ref": "#/$defs/storage-entry" }
         }
       }
     },
@@ -358,9 +368,9 @@
       "required": ["name", "cluster", "namespace"],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string" },
-        "cluster": { "type": "string" },
-        "namespace": { "type": "string" },
+        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
+        "cluster": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
+        "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
         "repository": { "type": "string" },
         "base-domain": { "type": ["string", "null"] },
         "subdomain": { "type": ["string", "null"] },
@@ -385,8 +395,19 @@
           "items": { "$ref": "#/$defs/deployment-helmfile" }
         },
         "root-component": { "type": "string" },
-        "clone-from": { "$ref": "#/$defs/clone-from" }
+        "clone-from": { "$ref": "#/$defs/clone-from" },
+        "backup": { "$ref": "#/$defs/deployment-backup" }
       }
+    },
+
+    "deployment-backup": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "schedule": { "type": "string" },
+        "resource_types": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": { "type": ["string", "number", "boolean"] }
     },
 
     "deployment-component": {
@@ -395,7 +416,7 @@
       "additionalProperties": false,
       "properties": {
         "reference": { "type": "string" },
-        "image": { "type": "string" },
+        "image": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]*\\Z" },
         "imagePullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
         "registry": { "type": "string" },
         "resources": { "$ref": "#/$defs/resources" },
@@ -418,7 +439,8 @@
         },
         "env-vars": {
           "type": "object",
-          "additionalProperties": { "type": "string" }
+          "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\Z" },
+          "additionalProperties": { "type": "string", "pattern": "^[^\\r\\n\\u0000]*\\Z" }
         },
         "disabled": { "type": "boolean" },
         "disabled-reason": { "type": "string" }
@@ -542,7 +564,7 @@
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string" },
-        "url": { "type": "string" },
+        "url": { "type": "string", "pattern": "^(?:https?|ssh|git)://[^\\s\\u0000\"]+\\Z" },
         "ref": { "type": "string" },
         "path": { "type": "string" },
         "files": {

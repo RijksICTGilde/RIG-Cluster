@@ -47,6 +47,7 @@ from opi.core.cluster_config import (
     uses_capsule,
 )
 from opi.core.config import settings
+from opi.core.project_schema import validate_project_schema
 from opi.extensions import load_extensions
 from opi.generation.manifests import ManifestGenerator
 from opi.handlers.project_file_handler import (
@@ -2128,6 +2129,13 @@ class ProjectManager:
             )
 
             current_yaml = analysis["current_yaml"]
+
+            # Security gate FIRST: validate against the project schema before
+            # any side-effect (including the auto-migration save+commit+push
+            # below). Without this ordering, a hostile project that happens to
+            # migrate cleanly would be written to zad-projects with our ops-
+            # manager identity *before* validation rejected it. Fails closed.
+            validate_project_schema(current_yaml)
 
             # read_project_file auto-migrates in memory; persist to disk if needed
             if self._project_file_handler.was_migrated:
