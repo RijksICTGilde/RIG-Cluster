@@ -14,6 +14,7 @@ from opi.connectors.git import start_monitoring_task
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
+from opi.core.project_schema import ProjectSchemaError, validate_project_schema
 from opi.manager.project_manager import ProjectManager, enforce_namespace_pin
 
 if TYPE_CHECKING:
@@ -129,6 +130,15 @@ async def file_change_handler(file_path: str, content: dict) -> None:
         content: Parsed YAML content
     """
     logger.info(f"Detected changes in {file_path}")
+
+    # Security gate: validate against the project schema before any
+    # processing. Fails closed - a schema violation aborts handling so a
+    # hostile project committed directly to git never reaches the connectors.
+    try:
+        validate_project_schema(content)
+    except ProjectSchemaError as e:
+        logger.error(f"Projectbestand {file_path} afgekeurd door schemavalidatie: {e}")
+        return
 
     # Check if this is a project file with deployments
     if "deployments" in content:
