@@ -32,6 +32,7 @@
                hx-include="#wizard-step-form"
                hx-vals='{"_goto": "{{ section_id }}"}'
                hx-ext="json-enc"
+               hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
                class="wizard-steps__link">
                 <span class="wizard-steps__number">{{ step_num }}</span>
                 <span class="wizard-steps__label">{{ steps.titles[section_id] }}</span>

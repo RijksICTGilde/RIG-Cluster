@@ -1915,13 +1915,13 @@ async def get_deployment_domain_settings(request: Request, project_name: str, de
 
 async def _validate_csrf(request: Request, form_data: dict | None = None) -> None:
     """
-    Validate CSRF protection using both token validation and Origin/Referer headers.
+    Validate CSRF protection (double-submit token + Origin/Referer).
 
-    This implements defense in depth:
-    1. CSRF token validation (primary defense)
-    2. Origin/Referer header validation (secondary defense)
-
-    For SSO-protected endpoints that modify data, we require both checks to pass.
+    CSRF enforcement is now central in CSRFMiddleware, so by the time a
+    handler runs the request has already been validated. This helper is kept
+    for the explicit call site and is idempotent: it re-runs the same checks
+    against the same token, which always passes for a legitimately validated
+    request.
 
     Args:
         request: The FastAPI request object
@@ -1930,99 +1930,11 @@ async def _validate_csrf(request: Request, form_data: dict | None = None) -> Non
     Raises:
         HTTPException: If CSRF validation fails
     """
-    from opi.utils.csrf import validate_csrf_token
+    from opi.utils.csrf import validate_csrf_origin, validate_csrf_token
 
-    # First, validate CSRF token (primary defense)
-    # Convert form_data to dict if needed for csrf validation
     csrf_form_data = dict(form_data) if form_data else None
     validate_csrf_token(request, csrf_form_data)
-
-    # Then, validate Origin/Referer headers (secondary defense)
-    _validate_csrf_origin(request)
-
-
-def _validate_csrf_origin(request: Request) -> None:
-    """
-    Validate Origin/Referer header for CSRF protection.
-
-    This is a secondary defense layer alongside CSRF token validation.
-    For SSO-protected endpoints that modify data, we validate that the request
-    originates from our own domain to prevent cross-site request forgery.
-
-    Args:
-        request: The FastAPI request object
-
-    Raises:
-        HTTPException: If Origin/Referer validation fails
-    """
-    from urllib.parse import urlparse
-
-    from opi.core.config import settings
-
-    # Get the host from the request and strip whitespace
-    host = (request.headers.get("host") or "").strip()
-    origin = (request.headers.get("origin") or "").strip()
-    referer = (request.headers.get("referer") or "").strip()
-
-    # At least one of Origin or Referer must be present for POST requests
-    if not origin and not referer:
-        logger.warning("CSRF check failed: No Origin or Referer header present")
-        raise HTTPException(status_code=403, detail="Request rejected: missing origin information")
-
-    # Extract and validate request host (must be non-empty)
-    request_host = (host.split(":")[0] or "").strip()
-    if not request_host:
-        logger.warning("CSRF check failed: Request has empty or missing Host header")
-        raise HTTPException(status_code=403, detail="Request rejected: invalid request")
-
-    # Only allow localhost bypass in DEBUG mode AND when the request is actually to localhost
-    # This prevents DEBUG mode from weakening security when running on production hosts
-    is_localhost_request = request_host in ("localhost", "127.0.0.1", "::1")
-    allow_localhost = settings.DEBUG and is_localhost_request
-
-    # Security warning: log if DEBUG mode is enabled on a non-localhost host
-    if settings.DEBUG and not is_localhost_request:
-        logger.warning(
-            f"SECURITY: DEBUG mode is enabled but request is to non-localhost host '{request_host}'. "
-            f"Localhost CSRF bypass is DISABLED for this request. Consider disabling DEBUG in production."
-        )
-
-    # Validate Origin header if present
-    if origin:
-        # Origin should match our host (with or without port)
-        parsed_origin = urlparse(origin)
-        origin_host = (parsed_origin.netloc.split(":")[0] or "").strip()
-
-        # Origin host must be non-empty and match request host
-        if not origin_host:
-            logger.warning(f"CSRF check failed: Origin '{origin}' has empty host")
-            raise HTTPException(status_code=403, detail="Request rejected: invalid origin")
-
-        # Check if origin matches request host (or localhost in debug mode when request is also localhost)
-        origin_matches = origin_host == request_host
-        localhost_allowed = allow_localhost and origin_host in ("localhost", "127.0.0.1", "::1")
-
-        if not origin_matches and not localhost_allowed:
-            logger.warning(f"CSRF check failed: Origin '{origin}' does not match host '{host}'")
-            raise HTTPException(status_code=403, detail="Request rejected: invalid origin")
-
-    # Validate Referer header if Origin not present
-    elif referer:
-        parsed_referer = urlparse(referer)
-        referer_host = (parsed_referer.netloc.split(":")[0] or "").strip()
-
-        # Referer host must be non-empty and match request host
-        if not referer_host:
-            logger.warning(f"CSRF check failed: Referer '{referer}' has empty host")
-            raise HTTPException(status_code=403, detail="Request rejected: invalid referer")
-
-        # Check if referer matches request host (or localhost in debug mode when request is also localhost)
-        referer_matches = referer_host == request_host
-        localhost_allowed = allow_localhost and referer_host in ("localhost", "127.0.0.1", "::1")
-
-        if not referer_matches and not localhost_allowed:
-            logger.warning(f"CSRF check failed: Referer '{referer}' does not match host '{host}'")
-            raise HTTPException(status_code=403, detail="Request rejected: invalid referer")
+    validate_csrf_origin(request)
 
 
 def _validate_path_safe(filename: str) -> None:

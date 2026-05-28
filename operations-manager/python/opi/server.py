@@ -337,7 +337,19 @@ def create_app() -> FastAPI:
     app.add_middleware(CSRFMiddleware)
     app.add_middleware(AuthorizationMiddleware)
     app.add_middleware(MaintenanceMiddleware)
-    app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
+    # Harden the session cookie. same_site stays "lax" (not "strict") on
+    # purpose: the OIDC login flow returns to /auth/callback via a top-level
+    # cross-site GET redirect from Keycloak, and authlib needs its state cookie
+    # to survive that navigation. "strict" would drop the cookie on the
+    # callback and break login. "lax" still blocks cross-site POST/AJAX, and
+    # CSRFMiddleware (double-submit token + Origin/Referer check) is the real
+    # defense against the same-site sibling-subdomain tenant attacker.
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.SECRET_KEY,
+        same_site="lax",
+        https_only=not settings.DEBUG,
+    )
     app.add_middleware(
         SecurityHeadersMiddleware,
         keycloak_url=settings.KEYCLOAK_URL,

@@ -39,6 +39,7 @@ from opi.forms.wizard.session import (
     init_modal_state_tokenized,
     save_modal_state_by_token,
 )
+from opi.utils.csrf import reject_misfired_form_get
 from opi.web.project_edit_security import (
     apply_form_data_to_project,
     require_project_edit_access,
@@ -414,6 +415,7 @@ def _determine_flow_action(flow: FormFlow, active_sections: list[FormSection]) -
 
 
 def _render_modal_step(
+    request: Request,
     wizard_token: str | None,
     state: WizardState,
     flow_id: str,
@@ -431,6 +433,7 @@ def _render_modal_step(
 
     templates = get_templates()
     context = {
+        "request": request,
         "steps": steps,
         "flow_id": flow_id,
         "section": section,
@@ -683,7 +686,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 
     step_html = _render_section_html(section, yaml_data, locked_services=None)
 
-    rendered = _render_modal_step(wizard_token, state, flow_id, section, step_html, project_name)
+    rendered = _render_modal_step(request, wizard_token, state, flow_id, section, step_html, project_name)
     return HTMLResponse(content=rendered)
 
 
@@ -691,6 +694,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 @requires_sso
 async def modal_wizard_load_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
     """Load a step (for back-navigation)."""
+    reject_misfired_form_get(request)
     require_project_edit_access(request, project_name)
 
     wizard_token = _get_wizard_token(request)
@@ -708,7 +712,7 @@ async def modal_wizard_load_step(request: Request, project_name: str, flow_id: s
 
     step_html = _render_section_html(section, yaml_data, locked_services=None)
 
-    rendered = _render_modal_step(wizard_token, state, flow_id, section, step_html, project_name)
+    rendered = _render_modal_step(request, wizard_token, state, flow_id, section, step_html, project_name)
     return HTMLResponse(content=rendered)
 
 
@@ -771,7 +775,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
 
         smart_set_value(merged, str(seq_path), items)
         step_html = _render_section_html(section, merged, locked_services=None)
-        rendered = _render_modal_step(wizard_token, state, flow_id, section, step_html, project_name)
+        rendered = _render_modal_step(request, wizard_token, state, flow_id, section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
     submitted_data = _pad_sparse_submission(body, flow_id, section_id)
@@ -797,7 +801,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         processor.clear_hidden_depends_on(section.editables, submitted_yaml)
         save_modal_state_by_token(wizard_token, state)
         step_html = _render_section_html(section, submitted_yaml, locked_services=None)
-        rendered = _render_modal_step(wizard_token, state, flow_id, section, step_html, project_name)
+        rendered = _render_modal_step(request, wizard_token, state, flow_id, section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
     # Backup/restore sections have no editables - store raw form data directly
@@ -849,6 +853,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         if errors or section_global_errors:
             step_html = _render_section_html(section, submitted_yaml, errors=errors, locked_services=None)
             rendered = _render_modal_step(
+                request,
                 wizard_token,
                 state,
                 flow_id,
@@ -901,13 +906,13 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         yaml_data = state.get_merged_data()
 
         step_html = _render_section_html(next_section, yaml_data, locked_services=None)
-        rendered = _render_modal_step(wizard_token, state, flow_id, next_section, step_html, project_name)
+        rendered = _render_modal_step(request, wizard_token, state, flow_id, next_section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
     # All steps completed - show review if flow requires it
     if flow.show_review:
         save_modal_state_by_token(wizard_token, state)
-        return _render_modal_review(wizard_token, project_name, flow_id, active_sections, state)
+        return _render_modal_review(request, wizard_token, project_name, flow_id, active_sections, state)
 
     # No review needed - do the final submit
     save_modal_state_by_token(wizard_token, state)
@@ -974,7 +979,7 @@ async def backup_select_deployment(request: Request, project_name: str) -> HTMLR
     yaml_data = state.get_merged_data()
     step_html = _render_section_html(section, yaml_data, locked_services=None)
 
-    rendered = _render_modal_step(wizard_token, state, "modal-backup", section, step_html, project_name)
+    rendered = _render_modal_step(request, wizard_token, state, "modal-backup", section, step_html, project_name)
     return HTMLResponse(content=rendered)
 
 
@@ -1004,11 +1009,12 @@ async def restore_select_mode(request: Request, project_name: str) -> HTMLRespon
     yaml_data = state.get_merged_data()
     step_html = _render_section_html(section, yaml_data, locked_services=None)
 
-    rendered = _render_modal_step(wizard_token, state, "modal-restore", section, step_html, project_name)
+    rendered = _render_modal_step(request, wizard_token, state, "modal-restore", section, step_html, project_name)
     return HTMLResponse(content=rendered)
 
 
 def _render_modal_review(
+    request: Request,
     wizard_token: str | None,
     project_name: str,
     flow_id: str,
@@ -1062,6 +1068,7 @@ def _render_modal_review(
     templates = get_templates()
     rendered = templates.get_template("wizard/modal_wizard_review.html.j2").render(
         {
+            "request": request,
             "steps": steps,
             "flow_id": flow_id,
             "project_name": project_name,
