@@ -39,6 +39,7 @@ from opi.forms.wizard.session import (
     init_modal_state_tokenized,
     save_modal_state_by_token,
 )
+from opi.utils.csrf import reject_misfired_form_get
 from opi.web.project_edit_security import (
     apply_form_data_to_project,
     require_project_edit_access,
@@ -691,6 +692,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 @requires_sso
 async def modal_wizard_load_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
     """Load a step (for back-navigation)."""
+    reject_misfired_form_get(request)
     require_project_edit_access(request, project_name)
 
     wizard_token = _get_wizard_token(request)

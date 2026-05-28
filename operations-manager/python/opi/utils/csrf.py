@@ -137,6 +137,38 @@ async def _enforce_csrf(request: Request) -> None:
     validate_csrf_origin(request)
 
 
+def reject_misfired_form_get(request: Request) -> None:
+    """Refuse a GET that looks like a misfired wizard form submission.
+
+    If htmx fails to attach to a wizard form (e.g. an external tool
+    rewrites the DOM, or the form tag lacks a ``method`` attribute and
+    htmx isn't ready yet), the browser falls back to a native submit.
+    The wizard form has no ``method`` attribute, so the native submit
+    ends up as a GET with the form fields URL-encoded as query
+    parameters in JSONPath syntax (``users[0]/email=...``,
+    ``components[0]/name=...``).
+
+    No legitimate caller of the wizard step GET handlers sends such
+    query parameters. Receiving them means a form fell back to GET, so
+    we refuse rather than silently render a step from stale state
+    (which would also bypass this middleware because GET is safe).
+    """
+    for key in request.query_params:
+        if "[" in key or "/" in key:
+            logger.warning(
+                "Refused wizard step GET with form-data-style query params on %s (key=%r)",
+                request.url.path,
+                key,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Het wizard-formulier kon niet via htmx worden ingediend en is "
+                    "teruggevallen op een GET. Herlaad de pagina en probeer opnieuw."
+                ),
+            )
+
+
 async def _extract_submitted_token(request: Request) -> str | None:
     """Read the CSRF token from the request header or, for form posts, the body.
 
