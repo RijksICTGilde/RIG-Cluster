@@ -1943,7 +1943,7 @@ async def _start_project_creation(
         request=request,
         task_type="create_project",
         project_name=project_name,
-        payload={"project_name": project_name, "yaml_content": yaml_content},
+        payload={"project_name": project_name, "yaml_content": yaml_content, "is_new_project": True},
         max_attempts=1,
     )
     task_id = str(task["task_id"])
