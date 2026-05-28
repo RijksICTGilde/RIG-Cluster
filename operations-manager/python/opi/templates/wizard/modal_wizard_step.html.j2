@@ -49,6 +49,7 @@
     <form id="modal-wizard-form"
           autocomplete="off"
           hx-ext="json-enc"
+          hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
           hx-post="{{ _step_url_prefix }}{{ section.section_id }}{{ _token_qs }}"
           hx-target="#edit-section-inner"
           hx-swap="innerHTML">

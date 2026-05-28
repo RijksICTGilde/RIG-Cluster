@@ -40,7 +40,7 @@
             </c-layout-flow>
         </c-alert>
         {% elif health_counts.Healthy > 0 %}
-        <c-alert kind="success" heading="Alle {{ health_counts.Healthy }} project{{ 'en' if health_counts.Healthy != 1 }} {{ 'zijn' if health_counts.Healthy != 1 else 'is' }} gezond" maxWidth="lg" />
+        <c-alert kind="success" heading="{% if health_counts.Healthy == 1 %}Het project is gezond{% else %}Alle {{ health_counts.Healthy }} projecten zijn gezond{% endif %}" maxWidth="lg" />
         {% elif not argocd_available %}
         <c-alert kind="info" heading="Status informatie niet beschikbaar" content="ArgoCD is niet verbonden." maxWidth="lg" />
         {% endif %}
