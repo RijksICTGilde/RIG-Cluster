@@ -362,9 +362,9 @@ class ContainerImageConverter:
             return ""
         return str(value)
 
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:
         if not value:
-            return ""
+            return None
         return str(value).strip().lower()
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
