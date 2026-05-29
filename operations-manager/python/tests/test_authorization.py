@@ -94,60 +94,6 @@ class TestAuthorizationMiddlewareDispatch:
         assert request.state.user is None
 
     @pytest.mark.asyncio
-    async def test_api_route_requires_sso_rejects_unauthenticated(self):
-        """API route marked @requires_sso must return 401 when there is no session user."""
-        middleware = self._make_middleware()
-        request = self._make_request("/api/metrics-explorer/metrics/minio", session={})
-        call_next = AsyncMock()
-
-        with patch.object(middleware, "_route_requires_sso", return_value=True):
-            result = await middleware.dispatch(request, call_next)
-
-        assert result.status_code == 401
-        call_next.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_api_route_requires_sso_allows_authenticated(self):
-        """API route marked @requires_sso should pass through for an allowlisted session user."""
-        middleware = self._make_middleware()
-        user = {"email": "test@example.com"}
-        request = self._make_request("/api/metrics-explorer/metrics/minio", session={"user": user})
-        expected_response = Response(content="ok")
-        call_next = AsyncMock(return_value=expected_response)
-
-        mock_user_service = MagicMock()
-        mock_user_service.is_email_allowed.return_value = True
-
-        with (
-            patch.object(middleware, "_route_requires_sso", return_value=True),
-            patch("opi.middleware.authorization.get_user_service", return_value=mock_user_service),
-        ):
-            result = await middleware.dispatch(request, call_next)
-
-        assert result is expected_response
-        assert request.state.user == user
-
-    @pytest.mark.asyncio
-    async def test_api_route_requires_sso_blocks_non_allowlisted(self):
-        """API route marked @requires_sso must return 403 for a non-allowlisted user."""
-        middleware = self._make_middleware()
-        user = {"email": "blocked@example.com"}
-        request = self._make_request("/api/metrics-explorer/metrics/minio", session={"user": user})
-        call_next = AsyncMock()
-
-        mock_user_service = MagicMock()
-        mock_user_service.is_email_allowed.return_value = False
-
-        with (
-            patch.object(middleware, "_route_requires_sso", return_value=True),
-            patch("opi.middleware.authorization.get_user_service", return_value=mock_user_service),
-        ):
-            result = await middleware.dispatch(request, call_next)
-
-        assert result.status_code == 403
-        call_next.assert_not_awaited()
-
-    @pytest.mark.asyncio
     async def test_metrics_scrape_endpoint_skips_auth(self):
         """The exact /metrics Prometheus scrape endpoint must remain public."""
         middleware = self._make_middleware()

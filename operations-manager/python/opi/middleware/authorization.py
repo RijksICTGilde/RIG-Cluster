@@ -11,7 +11,7 @@ from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, RedirectResponse, Response
+from starlette.responses import RedirectResponse, Response
 from starlette.routing import Match
 
 from opi.services.user_service import get_user_service
@@ -86,20 +86,12 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         if path in SKIP_AUTH_EXACT or path.startswith(SKIP_AUTH_PREFIXES):
             return await call_next(request)
 
-        # API routes use API key authentication by default, but honor an explicit
-        # @requires_sso marking (e.g. browser-called endpoints like metrics-explorer).
-        # These get the same session gate as web pages, but with JSON responses.
+        # API routes use X-API-Key authentication enforced inside the
+        # handlers; the middleware does not enforce SSO/session auth here.
+        # Browser-context JSON endpoints (polled from JavaScript) live under
+        # /ui/, not /api/.
         if path.startswith("/api/"):
-            user = get_user(request)
-            request.state.user = user
-            if self._route_requires_sso(request):
-                if not user:
-                    logger.info(f"Rejecting unauthenticated SSO-required API request: {path}")
-                    return JSONResponse(status_code=401, content={"error": "Authentication required"})
-                user_email = user.get("email")
-                if user_email and not get_user_service().is_email_allowed(user_email):
-                    logger.warning(f"Access denied for user {user_email} on {path} - not in allowlist")
-                    return JSONResponse(status_code=403, content={"error": "Access denied"})
+            request.state.user = None
             return await call_next(request)
 
         # Get user from session

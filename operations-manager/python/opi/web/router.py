@@ -5,7 +5,7 @@ Web routes for serving HTML pages (non-API endpoints).
 import asyncio
 import copy
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -161,14 +161,16 @@ async def project_progress_page(request: Request, task_id: str):
         raise HTTPException(status_code=500, detail=f"Error loading progress page: {e!s}")
 
 
-@web_router.get("/api/tasks/{task_id}/status")
+@web_router.get("/ui/tasks/{task_id}/status")
 @requires_sso
 async def get_task_status(request: Request, task_id: str):
     """
     Get current task status and progress.
 
-    This endpoint is used for polling by the progress page JavaScript.
-    Reads task state from the V2 async task service (database-backed).
+    Browser-only JSON endpoint polled from the progress page JavaScript.
+    Lives under /ui/ (not /api/) because it relies on the session cookie,
+    not on an X-API-Key header. Reads task state from the V2 async task
+    service (database-backed).
     """
     from fastapi.responses import JSONResponse
 
@@ -193,43 +195,6 @@ async def get_task_status(request: Request, task_id: str):
         response_data["error"] = context["error"]
 
     return JSONResponse(content=response_data)
-
-
-@web_router.get("/api/tasks/{task_id}/debug")
-@requires_sso
-async def debug_task(request: Request, task_id: str):
-    """
-    Debug endpoint to get detailed task information including errors.
-
-    This is useful for troubleshooting failed tasks.
-    """
-    try:
-        from opi.core.task_manager import _project_managers, _projects, get_task
-
-        project = get_task(task_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-
-        debug_info = {
-            "task_id": task_id,
-            "status": project.status.value,
-            "current_step": project.current_step,
-            "project_name": project.project_name,
-            "created_at": project.created_at.isoformat(),
-            "namespace": project.namespace,
-            "all_projects_count": len(_projects),
-            "project_tasks_count": len(_project_managers.get(task_id).tasks) if task_id in _project_managers else 0,
-        }
-
-        from fastapi.responses import JSONResponse
-
-        return JSONResponse(content=debug_info)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error debugging task: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error debugging task: {e!s}")
 
 
 @web_router.get("/projects/roos", response_class=HTMLResponse)
@@ -1342,7 +1307,6 @@ async def project_details(request: Request, project_name: str):
 
         # Fetch ArgoCD status for each deployment (in parallel)
         from datetime import datetime
-        from typing import Any
 
         from opi.services.deployment_diagnostics import gather_deployment_errors
         from opi.services.event_interpreter import interpret_argocd_errors
@@ -1691,7 +1655,6 @@ async def deployment_metrics_fragment(
     request: Request, project_name: str, deployment_name: str, duration: int = 60
 ) -> HTMLResponse:
     """Return metrics HTML fragment for a single deployment (HTMX lazy-load)."""
-    from typing import Any
 
     from opi.core.startup import ensure_projects_fresh
     from opi.services.project_service import get_project_service
