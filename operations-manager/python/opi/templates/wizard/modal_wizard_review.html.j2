@@ -96,6 +96,7 @@
             <c-button kind="primary" label="{{ action_label }}"
                       showIcon="before" icon="publicatie"
                       hx-post="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/confirm{{ _token_qs }}"
+                      hx-headers="{&quot;X-CSRF-Token&quot;: &quot;{{ request.state.csrf_token }}&quot;}"
                       {% if wizard_token %}hx-include="#modal-wizard-confirm-token"{% endif %}
                       hx-target="#edit-section-inner" hx-swap="innerHTML" />
         </div>

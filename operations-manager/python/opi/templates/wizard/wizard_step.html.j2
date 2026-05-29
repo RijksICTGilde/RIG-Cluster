@@ -49,6 +49,7 @@
     <form id="wizard-step-form"
           autocomplete="off"
           hx-ext="json-enc"
+          hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
           hx-post="/forms/wizard/{{ flow_id }}/step/{{ section.section_id }}"
           hx-target="#wizard-step-content"
           hx-swap="innerHTML">

@@ -147,7 +147,7 @@ class DatabaseManager:
         progress_manager = self.project_manager.get_progress_manager()
         database_task = None
         if progress_manager:
-            database_task = progress_manager.add_task("Creating database resources")
+            database_task = progress_manager.add_task("Database klaarmaken")
 
         try:
             # Determine if using namespace-specific or shared database

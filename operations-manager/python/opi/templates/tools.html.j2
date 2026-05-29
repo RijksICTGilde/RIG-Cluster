@@ -151,7 +151,11 @@
 
                 try {
                     const endpoint = operation === 'encrypt' ? '/tools/encrypt' : '/tools/decrypt';
-                    const response = await fetch(endpoint, { method: 'POST', body: formData });
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        body: formData,
+                        headers: { 'X-CSRF-Token': "{{ request.state.csrf_token }}" },
+                    });
                     const data = await response.json();
                     if (data.success) { showSuccess(data.result); }
                     else { showError(data.error || 'Operation failed'); }
