@@ -526,7 +526,7 @@
 
     async function pollTaskStatus() {
         try {
-            const response = await fetch(`/api/tasks/${TASK_ID}/status`);
+            const response = await fetch(`/ui/tasks/${TASK_ID}/status`);
 
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
