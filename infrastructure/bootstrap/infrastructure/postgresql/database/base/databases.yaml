@@ -23,6 +23,22 @@ spec:
   owner: keycloak
 
 ---
+# OPI connects as the postgres admin user (DATABASE_ADMIN_NAME=postgres),
+# so the application database is owned by postgres. Pre-created here so the
+# operations-manager entrypoint's `alembic upgrade head` doesn't crash on a
+# fresh cluster (it would otherwise fail before OPI's own ensure-DB code runs).
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: operations-manager-db
+  namespace: rig-system
+spec:
+  cluster:
+    name: rig-db
+  name: operations_manager
+  owner: postgres
+
+---
 #apiVersion: postgresql.cnpg.io/v1
 #kind: Database
 #metadata:
