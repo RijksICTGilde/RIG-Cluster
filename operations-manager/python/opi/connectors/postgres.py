@@ -15,29 +15,6 @@ import asyncpg
 
 logger = logging.getLogger(__name__)
 
-_CREATE_SCHEMA = b"CREATE SCHEMA "
-_CREATE_SCHEMA_IF_NOT_EXISTS = b"CREATE SCHEMA IF NOT EXISTS "
-
-
-def _rewrite_create_schema(buf: bytes) -> bytes:
-    """Line-anchored CREATE SCHEMA -> CREATE SCHEMA IF NOT EXISTS rewrite.
-
-    Replaces the old `sed 's/^CREATE SCHEMA /.../'` pipeline stage. Extensions
-    are pre-created in the target schema before pg_dump runs, so the duplicate
-    CREATE SCHEMA must be tolerated under psql ON_ERROR_STOP=1. Anchored at the
-    start of a physical line, matching sed's behaviour exactly; callers feed
-    only complete lines (the streaming pump carries any partial trailing line
-    to the next chunk) so the rewrite is correct across chunk boundaries.
-    """
-    if _CREATE_SCHEMA not in buf:
-        return buf
-    out = []
-    for line in buf.split(b"\n"):
-        if line.startswith(_CREATE_SCHEMA):
-            line = _CREATE_SCHEMA_IF_NOT_EXISTS + line[len(_CREATE_SCHEMA) :]
-        out.append(line)
-    return b"\n".join(out)
-
 
 class PostgresConnectionError(Exception):
     """Exception raised when PostgreSQL connection is not available."""
@@ -370,6 +347,92 @@ class PostgresConnector:
             raise PostgresValidationError("Password must contain at least one digit")
 
         return password
+
+    # In-cluster PostgreSQL host validation. Used at the subprocess boundary
+    # in _execute_pgdump_clone to guarantee that even if a future refactor
+    # leaks attacker-controlled values, the clone pipeline can only ever
+    # reach our own in-cluster PostgreSQL services -- not an external host
+    # that could exfiltrate data when used as the source of a streaming clone.
+    #
+    # Accepted forms:
+    #   * single DNS label (e.g. ``rig-db-rw``) -- bare K8s service name
+    #     resolved by cluster DNS, K8s DNS-1123 label rules
+    #   * FQDN ending in ``.svc.cluster.local`` (e.g.
+    #     ``rig-db-rw.rig-system.svc.cluster.local``)
+    #
+    # Rejected: external domains (``db.example.com``), IPv4 / IPv6 literals,
+    # anything with shell-special characters, NUL bytes, or control chars.
+
+    # K8s DNS-1123 label: lowercase letter/digit, optionally hyphen+chars,
+    # max 63 chars total.
+    _K8S_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    _IN_CLUSTER_HOST_RE = re.compile(
+        rf"^{_K8S_LABEL}"  # service name
+        rf"(?:\.{_K8S_LABEL}\.svc\.cluster\.local)?$"  # optional ns + cluster-DNS suffix
+    )
+
+    @staticmethod
+    def _validate_in_cluster_host(host: str, field_name: str = "host") -> str:
+        """Validate that a host points at an in-cluster K8s service.
+
+        Accepts only a bare K8s service name (``rig-db-rw``) or a full
+        cluster-DNS FQDN (``svc.namespace.svc.cluster.local``). Anything
+        else -- external domains, IP literals, anything with shell-special
+        or control characters -- is rejected.
+        """
+        if not host:
+            raise PostgresValidationError(f"{field_name} cannot be empty")
+        if len(host) > 253:
+            raise PostgresValidationError(f"{field_name} '{host}' exceeds 253 characters")
+        # ipaddress.ip_address() is the canonical way to detect a literal
+        # IPv4 / IPv6 address; rejecting them blocks routing-by-IP entirely.
+        try:
+            import ipaddress
+
+            ipaddress.ip_address(host.strip("[]"))
+        except ValueError:
+            pass
+        else:
+            raise PostgresValidationError(
+                f"{field_name} '{host}' is an IP address; only in-cluster service names allowed"
+            )
+        if not PostgresConnector._IN_CLUSTER_HOST_RE.match(host):
+            raise PostgresValidationError(
+                f"{field_name} '{host}' is not an in-cluster K8s service "
+                f"(expected bare service name or '<svc>.<ns>.svc.cluster.local')"
+            )
+        return host
+
+    @staticmethod
+    def _validate_pg_password_safe(password: str, field_name: str = "password") -> str:
+        """Reject NUL bytes and CR/LF in passwords so they cannot smuggle
+        anything past env-var or libpq parsing. Laxer than ``_validate_password``
+        (which also requires complexity); used for passwords we receive
+        ready-made from upstream and only need to keep safe at the env
+        boundary.
+        """
+        if not password:
+            raise PostgresValidationError(f"{field_name} cannot be empty")
+        if "\x00" in password or "\r" in password or "\n" in password:
+            raise PostgresValidationError(f"{field_name} contains NUL or newline characters")
+        return password
+
+    # Explicit allow-list of TCP ports the clone pipeline may connect to.
+    # PostgreSQL's default is 5432; if a legitimate use case ever needs a
+    # different one (port-forward, NodePort, etc.) it is added here as a
+    # deliberate review-able change instead of hidden behind an unbounded
+    # int parameter.
+    _ALLOWED_PG_PORTS: frozenset[int] = frozenset({5432})
+
+    @classmethod
+    def _validate_pg_port(cls, port: int, field_name: str = "port") -> int:
+        """Validate a TCP port against the allow-list."""
+        if not isinstance(port, int) or isinstance(port, bool):
+            raise PostgresValidationError(f"{field_name} must be an int, got {type(port).__name__}")
+        if port not in cls._ALLOWED_PG_PORTS:
+            allowed = ", ".join(str(p) for p in sorted(cls._ALLOWED_PG_PORTS))
+            raise PostgresValidationError(f"{field_name} {port} not in allow-list ({allowed})")
+        return port
 
     async def test_connection(self, database: str = "postgres") -> bool:
         """Test database connection with the bound credentials.
@@ -1252,7 +1315,6 @@ class PostgresConnector:
             # Clone within same server - use bound credentials for both source and target
             await self._execute_pgdump_clone(
                 source_host=self._host,
-                source_port=5432,
                 source_username=self._admin_username,
                 source_password=self._admin_password,
                 source_database=validated_source_db,
@@ -1265,6 +1327,7 @@ class PostgresConnector:
                 target_schema=validated_target_schema,
                 target_owner=validated_target_owner,
                 target_owner_password=target_owner_password,
+                source_port=5432,
                 schema_precreated=len(precreated_extensions) > 0,
             )
 
@@ -1395,7 +1458,8 @@ class PostgresConnector:
             )
 
             # Execute cross-cluster clone using shared implementation
-            # Source = external server, Target = bound server (self._host)
+            # Source = external server, Target = bound server (self._host).
+            # Both ports go through the allow-list validator in the executor.
             await self._execute_pgdump_clone(
                 source_host=source_host,
                 source_port=source_port,
@@ -1445,19 +1509,19 @@ class PostgresConnector:
     async def _execute_pgdump_clone(
         self,
         source_host: str,
-        source_port: int,
         source_username: str,
         source_password: str,
         source_database: str,
         source_schema: str,
         target_host: str,
-        target_port: int,
         target_username: str,
         target_password: str,
         target_database: str,
         target_schema: str,
         target_owner: str,
         target_owner_password: str,
+        source_port: int = 5432,
+        target_port: int = 5432,
         force_clone: bool = False,
         schema_precreated: bool = False,
     ) -> None:
@@ -1466,15 +1530,19 @@ class PostgresConnector:
         This is the shared implementation used by both same-cluster and cross-cluster cloning.
         It uses pg_dump | psql streaming to copy schema data without requiring exclusive access.
 
+        Port is fixed at the PostgreSQL default (5432); we never accept an
+        upstream port. Host must point at an in-cluster K8s service; external
+        hosts are rejected by ``_validate_in_cluster_host`` so a tenant
+        cannot redirect the streaming pipeline at an attacker-controlled
+        endpoint.
+
         Args:
-            source_host: Source database host
-            source_port: Source database port
+            source_host: Source database host (in-cluster K8s service only)
             source_username: Username for source database connection
             source_password: Password for source database connection
             source_database: Source database name
             source_schema: Source schema name
-            target_host: Target database host
-            target_port: Target database port
+            target_host: Target database host (in-cluster K8s service only)
             target_username: Username for target database admin connection
             target_password: Password for target database admin connection
             target_database: Target database name
@@ -1632,111 +1700,96 @@ class PostgresConnector:
 
             from opi.core.metrics import track_subprocess_memory
 
+            # Stacked defense at the subprocess boundary. The public
+            # clone_schema entry point already validates, but this is the
+            # last line where attacker-controlled input could leak through
+            # a future refactor. Cheap re-validation here means a malicious
+            # value gets a PostgresValidationError before any process spawns:
+            #   * identifiers: PG identifier rules (letter/_ start, no special
+            #     chars, <=63 chars) -- _validate_identifier
+            #   * hosts: in-cluster K8s service only (bare service name or
+            #     '<svc>.<ns>.svc.cluster.local'); IPs and external domains
+            #     rejected so a tenant cannot stream data out of the cluster
+            #     -- _validate_in_cluster_host
+            #   * passwords: no NUL / CR / LF so they cannot smuggle anything
+            #     past env-var or libpq parsing -- _validate_pg_password_safe
+            for ident_value, ident_name in (
+                (source_database, "source_database"),
+                (source_schema, "source_schema"),
+                (target_database, "target_database"),
+                (target_schema, "target_schema"),
+                (source_username, "source_username"),
+                (target_username, "target_username"),
+                (target_owner, "target_owner"),
+            ):
+                self._validate_identifier(ident_value, ident_name)
+            self._validate_in_cluster_host(source_host, "source_host")
+            self._validate_in_cluster_host(target_host, "target_host")
+            self._validate_pg_port(source_port, "source_port")
+            self._validate_pg_port(target_port, "target_port")
+            self._validate_pg_password_safe(source_password, "source_password")
+            self._validate_pg_password_safe(target_password, "target_password")
+            self._validate_pg_password_safe(target_owner_password, "target_owner_password")
+
             async with track_subprocess_memory("postgres-clone"):
-                dump_process = await asyncio.create_subprocess_exec(
-                    "pg_dump",
-                    "-d",
-                    source_database,
-                    "-n",
-                    source_schema,
-                    "--no-owner",
-                    "--no-privileges",
-                    env=source_env,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                restore_process = await asyncio.create_subprocess_exec(
-                    "psql",
-                    "-d",
-                    target_database,
-                    "-v",
-                    "ON_ERROR_STOP=1",
-                    env=target_env,
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
+                # OS-pipe streaming pipeline: pg_dump -> sed -> psql.
+                # Equivalent flow + buffering to a shell pipe, without any
+                # shell involvement: subprocess.Popen takes argv lists (no
+                # shell parsing of arguments) and env dicts (no shell parsing
+                # of values). The sed regex is a fixed literal string.
+                # Streamed via OS pipes so memory stays bounded by the kernel
+                # pipe buffer (~64 KiB per stage) regardless of dump size.
+                #
+                # Wrapped in asyncio.to_thread because subprocess.Popen and
+                # its .wait()/.communicate() block the running thread; the
+                # event loop keeps running on the main thread.
+                import subprocess
 
-                dump_stdout = dump_process.stdout
-                dump_stderr = dump_process.stderr
-                restore_stdin = restore_process.stdin
-                if dump_stdout is None or dump_stderr is None or restore_stdin is None:
-                    raise Exception("Failed to open pg_dump/psql pipes for streaming clone")
+                def _run_clone_pipeline() -> tuple[int, bytes, int, bytes, bytes]:
+                    dump = subprocess.Popen(
+                        ["pg_dump", "-d", source_database, "-n", source_schema, "--no-owner", "--no-privileges"],
+                        env=source_env,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                    rewrite = subprocess.Popen(
+                        ["sed", "s/^CREATE SCHEMA /CREATE SCHEMA IF NOT EXISTS /g"],
+                        stdin=dump.stdout,
+                        stdout=subprocess.PIPE,
+                    )
+                    # Close our handle so sed sees EOF when pg_dump exits.
+                    if dump.stdout is None:
+                        raise RuntimeError("pg_dump did not open a stdout pipe")
+                    dump.stdout.close()
+                    restore = subprocess.Popen(
+                        ["psql", "-v", "ON_ERROR_STOP=1", "-d", target_database],
+                        env=target_env,
+                        stdin=rewrite.stdout,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                    # Close our handle so psql sees EOF when sed exits.
+                    if rewrite.stdout is None:
+                        raise RuntimeError("sed did not open a stdout pipe")
+                    rewrite.stdout.close()
 
-                async def _pump_dump_to_restore() -> None:
-                    # Stream pg_dump -> psql with fixed-size chunked reads.
-                    # Memory stays bounded regardless of dump or row size:
-                    # readline would raise on COPY rows wider than asyncio's
-                    # ~64 KiB limit, and buffering a whole line would let one
-                    # huge bytea/JSON row balloon the OPI pod. The CREATE
-                    # SCHEMA rewrite is line-anchored, so it only needs the
-                    # bytes up to the first newline of a line. We keep at most
-                    # `carry_bound` bytes pending: complete lines are rewritten
-                    # and flushed; a still-open line longer than the bound is
-                    # flushed verbatim (it cannot start with "CREATE SCHEMA "
-                    # at a line boundary -- that test already failed for this
-                    # line -- so emitting its tail unmodified is correct).
-                    chunk_size = 1 << 20  # 1 MiB
-                    carry_bound = 1 << 20  # flush an unterminated line past 1 MiB
-                    carry = b""
-                    try:
-                        while True:
-                            chunk = await dump_stdout.read(chunk_size)
-                            if not chunk:
-                                break
-                            data = carry + chunk
-                            nl = data.rfind(b"\n")
-                            if nl == -1:
-                                # No line end yet. Bound memory: once the open
-                                # line exceeds the threshold, flush all of it
-                                # verbatim (a mid-line fragment can never be a
-                                # line-anchored CREATE SCHEMA match).
-                                if len(data) >= carry_bound:
-                                    restore_stdin.write(data)
-                                    await restore_stdin.drain()
-                                    carry = b""
-                                else:
-                                    carry = data
-                                continue
-                            complete, carry = data[: nl + 1], data[nl + 1 :]
-                            restore_stdin.write(_rewrite_create_schema(complete))
-                            await restore_stdin.drain()
-                        if carry:
-                            restore_stdin.write(_rewrite_create_schema(carry))
-                            await restore_stdin.drain()
-                    except (BrokenPipeError, ConnectionResetError):
-                        # psql exited early (e.g. ON_ERROR_STOP=1 on a bad
-                        # dump). Swallow the broken-pipe so the real psql error
-                        # from communicate()/returncode is what surfaces.
-                        pass
-                    finally:
-                        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
-                            restore_stdin.close()
+                    co, ce = restore.communicate()
+                    de = dump.stderr.read() if dump.stderr else b""
+                    dump.wait()
+                    rewrite.wait()
+                    return dump.returncode or 0, de, restore.returncode or 0, co, ce
 
-                # Read pg_dump stdout (via the pump) and stderr concurrently;
-                # do not use communicate() on the dump process because the
-                # pump owns its stdout. The try/finally guarantees that on any
-                # failure path (e.g. restore_process.communicate() raising) the
-                # background tasks are cancelled/awaited and both child
-                # processes are reaped, so we never leak orphan subprocesses or
-                # "Task exception never retrieved" warnings.
-                pump_task = asyncio.create_task(_pump_dump_to_restore())
-                dump_err_task = asyncio.create_task(dump_stderr.read())
-                try:
-                    clone_out, clone_err = await restore_process.communicate()
-                    await pump_task
-                    dump_err = await dump_err_task
-                    await dump_process.wait()
-                finally:
-                    for task in (pump_task, dump_err_task):
-                        if not task.done():
-                            task.cancel()
-                    await asyncio.gather(pump_task, dump_err_task, return_exceptions=True)
-                    for proc in (dump_process, restore_process):
-                        if proc.returncode is None:
-                            with contextlib.suppress(ProcessLookupError):
-                                proc.kill()
-                            await proc.wait()
+                dump_rc, dump_err, restore_rc, clone_out, clone_err = await asyncio.to_thread(_run_clone_pipeline)
+
+            # Adapter shims so the existing post-pipeline checks (returncode
+            # branches, schema-existence rename) keep working without a
+            # second refactor pass.
+            class _ReturncodeShim:
+                def __init__(self, rc: int) -> None:
+                    self.returncode = rc
+
+            dump_process = _ReturncodeShim(dump_rc)
+            restore_process = _ReturncodeShim(restore_rc)
 
             # Log only errors or important warnings
             combined_err = (dump_err or b"") + (clone_err or b"")

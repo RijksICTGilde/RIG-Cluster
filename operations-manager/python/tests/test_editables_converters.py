@@ -160,9 +160,9 @@ class TestContainerImageConverter:
         result = ContainerImageConverter().write("  nginx:latest  ")
         assert result == "nginx:latest"
 
-    def test_write_empty_returns_empty(self):
-        assert ContainerImageConverter().write("") == ""
-        assert ContainerImageConverter().write(None) == ""
+    def test_write_empty_returns_none(self):
+        assert ContainerImageConverter().write("") is None
+        assert ContainerImageConverter().write(None) is None
 
     def test_read_returns_string(self):
         assert ContainerImageConverter().read("nginx:latest") == "nginx:latest"

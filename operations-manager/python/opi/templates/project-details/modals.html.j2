@@ -30,6 +30,7 @@
                     <span id="danger-confirm-btn-refresh" style="display: none;">
                         <c-button id="danger-refresh-btn" kind="primary" label="Herverwerken" showIcon="before" icon="refresh"
                                   hx-post="/projects/{{ project.name }}/refresh"
+                                  hx-headers="{&quot;X-CSRF-Token&quot;: &quot;{{ request.state.csrf_token }}&quot;}"
                                   hx-target="#danger-confirm-body"
                                   hx-swap="innerHTML" />
                     </span>
