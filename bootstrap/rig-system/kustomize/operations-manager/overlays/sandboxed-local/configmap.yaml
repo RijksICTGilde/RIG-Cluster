@@ -8,6 +8,11 @@ data:
     CLUSTER_MANAGER=sandboxed-local
     KEYCLOAK_BOOTSTRAP_CONFIG=sandbox
 
+    # Stable SECRET_KEY zodat dev-sessies overleven na pod-restarts (zonder
+    # zou de Field(default_factory=generate_secret_key) per process een nieuwe
+    # random key minten). Niet-internet-facing dev cluster, plaintext is OK.
+    SECRET_KEY=sandbox-dev-secret-key-fixed-for-stable-sessions-32min
+
     ENABLE_GIT_MONITOR=false
     GIT_PROJECTS_SERVER_URL=http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-projects.git
     GIT_PROJECTS_SERVER_USERNAME=rig-admin

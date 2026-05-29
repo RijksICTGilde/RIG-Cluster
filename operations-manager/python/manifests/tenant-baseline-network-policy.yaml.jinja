@@ -1,0 +1,121 @@
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: "{{ name }}"
+  namespace: "{{ namespace }}"
+spec:
+  # Per-deployment policy: selects only pods of this deployment so that
+  # multiple deployments in the same project namespace stay isolated from
+  # each other and from helm/helmfile workloads (which do not carry this
+  # label and therefore fall through to Kubernetes' default-allow).
+  #
+  # This is a permissive baseline: it blocks cross-tenant traffic via the
+  # explicit allow-list (only own deployment + platform namespaces) but
+  # leaves internet egress open. Tightening internet egress is intentionally
+  # deferred (see features/restrictive-network-policies.md).
+{% if deployment_selector %}
+  podSelector:
+    matchLabels:
+      deployment: "{{ deployment_selector }}"
+{% else %}
+  # No deployment selector: apply to every pod in the namespace. Used for
+  # the project infrastructure namespace (CNPG cluster) where there is no
+  # OPI-managed deployment whose pods we could label.
+  podSelector: {}
+{% endif %}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Pods of this deployment may talk to each other.
+{% if deployment_selector %}
+    - from:
+        - podSelector:
+            matchLabels:
+              deployment: "{{ deployment_selector }}"
+{% else %}
+    - from:
+        - podSelector: {}
+{% endif %}
+    # Ingress controller: published web apps stay reachable from outside.
+    # Op odcn matchen we pod-specifiek (alleen 'rig' router pods, niet
+    # eventuele andere customer-routers in dezelfde namespace).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ ingress_controller_selector.namespace }}"
+{% if ingress_controller_selector.pod_labels %}
+          podSelector:
+            matchLabels:
+{% for k, v in ingress_controller_selector.pod_labels.items() %}
+              {{ k }}: "{{ v }}"
+{% endfor %}
+{% endif %}
+    # Operations / platform namespace (OPI, shared datastores, Keycloak).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ ops_namespace }}"
+    # Backup destination namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ backup_namespace }}"
+{% if allowed_ingress_namespaces %}
+    # Explicit cross-namespace ingress (e.g. the project's app namespaces
+    # reaching the project's own infrastructure namespace).
+    - from:
+{% for ns in allowed_ingress_namespaces %}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ ns }}"
+{% endfor %}
+{% endif %}
+  egress:
+    # DNS resolution against the cluster DNS service.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Pods of this deployment may talk to each other.
+{% if deployment_selector %}
+    - to:
+        - podSelector:
+            matchLabels:
+              deployment: "{{ deployment_selector }}"
+{% else %}
+    - to:
+        - podSelector: {}
+{% endif %}
+    # Operations / platform namespace (shared Postgres, Redis, MinIO, Keycloak).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ ops_namespace }}"
+    # Backup destination namespace.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ backup_namespace }}"
+{% if project_infra_namespace and project_infra_namespace != ops_namespace %}
+    # Project's own infrastructure namespace (dedicated CNPG cluster, etc.).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ project_infra_namespace }}"
+{% endif %}
+    # Internet egress (HTTP/HTTPS) zodat tenant-apps externe APIs kunnen aanroepen.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
