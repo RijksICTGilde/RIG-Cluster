@@ -387,6 +387,7 @@ class TestHandleCreateProjectExistenceCheck:
         payload = {
             "project_name": "victim-project",
             "yaml_content": "name: victim-project\n",
+            "is_new_project": True,
         }
         result = await task_handlers_project.handle_create_project(payload, progress)
 
@@ -394,3 +395,52 @@ class TestHandleCreateProjectExistenceCheck:
         assert "bestaat al" in result["error"]
         # The destructive call must not have been made.
         fake_connector.create_or_update_file.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_edit_flow_overwrites_existing_file(self, monkeypatch) -> None:
+        """Edit flows (no is_new_project flag) must NOT trip the existence
+        check -- they legitimately overwrite an existing project file."""
+        from opi.core import task_handlers_project
+
+        fake_connector = AsyncMock()
+        fake_connector.file_exists = AsyncMock(return_value=True)
+        fake_connector.create_or_update_file = AsyncMock()
+
+        class _FakeGitConnector:
+            def __new__(cls, *args, **kwargs):
+                return fake_connector
+
+        monkeypatch.setattr("opi.connectors.git.GitConnector", _FakeGitConnector)
+        monkeypatch.setattr("opi.utils.project_utils.validate_project_name", lambda name: True)
+
+        # Stub ProjectManager so the handler doesn't try to process the project.
+        # We only care that the write happened (and the existence check did not block).
+        class _FakeProjectManager:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def process_project_from_git(self, *_args, **_kwargs):
+                return None  # short-circuit; tested logic is already past
+
+            async def close(self):
+                pass
+
+        monkeypatch.setattr("opi.manager.project_manager.ProjectManager", _FakeProjectManager)
+
+        progress = AsyncMock()
+        progress.add_task = lambda *_: object()
+        progress.update_current_step = lambda *_: None
+        progress.complete_task = lambda *_: None
+        progress.fail_task = lambda *_: None
+        progress.fail_project = lambda *_: None
+        progress.add_subtask = lambda *_args, **_kwargs: object()
+
+        # No is_new_project flag = edit flow.
+        payload = {
+            "project_name": "existing-project",
+            "yaml_content": "name: existing-project\n",
+        }
+        await task_handlers_project.handle_create_project(payload, progress)
+
+        # The write MUST have happened despite the file existing.
+        fake_connector.create_or_update_file.assert_called_once()

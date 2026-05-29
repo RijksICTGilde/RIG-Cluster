@@ -19,6 +19,11 @@ CLUSTER_CONFIG = {
         "minio_host": "minio.rig-system.svc.cluster.local",
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
+        "backup_namespace": "rig-backup-destination",
+        "ingress_controller_selector": {
+            "namespace": "ingress-nginx",
+            "pod_labels": {},
+        },
         "ingress": {
             "enable_tls": True,
             "cluster_issuer": "kind-ca-issuer",
@@ -66,6 +71,11 @@ CLUSTER_CONFIG = {
         "minio_host": "minio.rig-system.svc.cluster.local",
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
+        "backup_namespace": "rig-backup-destination",
+        "ingress_controller_selector": {
+            "namespace": "ingress-nginx",
+            "pod_labels": {},
+        },
         "ingress": {
             "enable_tls": True,
             "ip_whitelist": "0.0.0.0/0,::/0",
@@ -107,6 +117,13 @@ CLUSTER_CONFIG = {
         "minio_host": "minio.rig-prd-operations.svc.cluster.local",
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-prd-operations.svc.cluster.local",
+        "backup_namespace": "rig-prd-backup",
+        "ingress_controller_selector": {
+            "namespace": "openshift-ingress",
+            "pod_labels": {
+                "ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "rig",
+            },
+        },
         "ingress": {
             "enable_tls": True,
             # "cluster_issuer": "letsencrypt-production",  # TODO: verify correct issuer name
@@ -517,6 +534,41 @@ def get_minio_server(cluster_name: str) -> str:
 def get_namespace(cluster_name: str) -> str:
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["namespace"]
+
+
+def get_backup_namespace(cluster_name: str) -> str:
+    """
+    Get the namespace that hosts the backup destination for a cluster.
+
+    This is where the cluster's backup MinIO (or comparable) lives, so
+    workloads can reach it for restores/snapshots. NetworkPolicies use this
+    as an allowed peer namespace.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Backup destination namespace name
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["backup_namespace"]
+
+
+def get_ingress_controller_selector(cluster_name: str) -> dict:
+    """
+    Return de selector voor de ingress-controller pods van een cluster.
+
+    Format::
+
+        {"namespace": "<ns>", "pod_labels": {<key>: <val>, ...}}
+
+    pod_labels is leeg voor nginx-clusters; voor odcn (OpenShift Router) bevat
+    het de ``ingresscontroller.operator.openshift.io/deployment-ingresscontroller``
+    label zodat NetworkPolicy alleen de juiste customer-router toelaat.
+    Zie docs/knowledge/odcn-ingress-controller.md.
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config["ingress_controller_selector"]
 
 
 def get_redis_server(cluster_name: str) -> str:

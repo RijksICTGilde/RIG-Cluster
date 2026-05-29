@@ -34,6 +34,7 @@ COMPONENT_IMAGE_EDITABLE = Editable(
     yaml_path="components[*]/image",
     validator=ContainerImageValidator(),
     converter=ContainerImageConverter(),
+    remove_when_none=True,
 )
 
 INBOUND_PORT_EDITABLE = Editable(
