@@ -124,10 +124,43 @@ class TestKeyValueConverter:
         result = KeyValueConverter().write("KEY=value\nOTHER=val2")
         assert result == {"KEY": "value", "OTHER": "val2"}
 
-    def test_write_yaml_text_returns_empty(self):
-        """write() with default dict mode only parses KEY=value, not YAML."""
+    def test_write_yaml_text_parses_as_dict(self):
+        """write() accepts YAML mapping input and parses it into a dict.
+
+        Aliases are conceptually key->template, and users frequently enter
+        them in YAML form. The converter delegates to the shared parser
+        which auto-detects YAML vs KEY=VALUE, so both formats work.
+        """
         result = KeyValueConverter().write("KEY: value\nOTHER: val2")
-        assert result == {}  # no KEY=value lines found, returns empty dict
+        assert result == {"KEY": "value", "OTHER": "val2"}
+
+    def test_write_yaml_text_with_equals_in_value(self):
+        """YAML values containing '=' (URL query strings, etc.) must be preserved."""
+        text = 'DATABASE_URL: "postgresql://host/db?schema=public"'
+        result = KeyValueConverter().write(text)
+        assert result == {"DATABASE_URL": "postgresql://host/db?schema=public"}
+
+    def test_write_yaml_text_with_special_chars(self):
+        """YAML values containing ':' '@' '/' '?' inside quotes must be preserved."""
+        text = 'CONN: "user:pass@host:5432/db?opt=1"\nURL: "https://api.example.nl/v1"'
+        result = KeyValueConverter().write(text)
+        assert result == {
+            "CONN": "user:pass@host:5432/db?opt=1",
+            "URL": "https://api.example.nl/v1",
+        }
+
+    def test_round_trip_yaml_aliases(self):
+        """read -> write -> read must produce the same dict (alias round-trip)."""
+        original = {
+            "DATABASE_URL": "postgresql://$U:$P@$H:5432/$D?schema=$S",
+            "NEXTAUTH_URL": "https://$PUBLIC_HOST",
+        }
+        conv = KeyValueConverter(fmt="env")
+        text = conv.read(original)
+        parsed = conv.write(text)
+        text2 = conv.read(parsed)
+        assert parsed == original
+        assert text2 == text
 
     def test_write_skips_comments(self):
         result = KeyValueConverter().write("# comment\nKEY=value")
