@@ -778,27 +778,22 @@ class ProjectFileHandler:
         return None
 
     def _decrypt_and_clean_env_vars(self, env_vars: dict[str, Any], private_key: str | None) -> dict[str, str]:
-        """Decrypt and clean up individual env var values.
+        """Decrypt individual env var values.
 
         Each value is run through the smart decrypt (handling plain, age-encrypted,
-        or empty values) and then stripped of surrounding quotes.
+        or empty values). Quote handling is intentionally NOT done here: the values
+        have already passed through ``validate_and_parse_env_vars``, which is the
+        single source of truth for quote semantics (it honours YAML quoting and
+        strips ``KEY=VALUE`` quotes exactly once). Stripping again here would remove
+        quotes that the user deliberately made part of the value -- e.g. an app that
+        needs ``ALLOWED_HOSTNAMES`` to literally contain ``"host"`` so it can be
+        wrapped into a JSON array downstream.
         """
         cleaned: dict[str, str] = {}
         for key, value in env_vars.items():
             value_str = str(value) if value is not None else ""
             normalized_value = self._normalize_age_content(value_str)
-            value_str = decrypt_password_smart_sync(normalized_value, private_key)
-
-            # Strip surrounding quotes (single or double) if they wrap the whole value
-            if value_str == '""' or value_str == "''":
-                cleaned[key] = ""
-            elif len(value_str) >= 2 and (
-                (value_str.startswith('"') and value_str.endswith('"') and value_str.count('"') == 2)
-                or (value_str.startswith("'") and value_str.endswith("'") and value_str.count("'") == 2)
-            ):
-                cleaned[key] = value_str[1:-1]
-            else:
-                cleaned[key] = value_str
+            cleaned[key] = decrypt_password_smart_sync(normalized_value, private_key)
         return cleaned
 
     async def _extract_user_env_vars(self, project_data: dict[str, Any], jsonpath: str, label: str) -> dict[str, str]:

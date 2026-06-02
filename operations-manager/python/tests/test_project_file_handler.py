@@ -122,3 +122,31 @@ class TestSetDeploymentServiceGeneration:
         services = project_data["deployments"][0]["services"]
         assert isinstance(services, list)
         assert len(services) == 1
+
+
+class TestDecryptAndCleanEnvVars:
+    """Tests for _decrypt_and_clean_env_vars.
+
+    Regression: this step used to strip surrounding quotes from every value,
+    which silently corrupted env vars whose value must literally contain
+    quotes (e.g. cal.com's ALLOWED_HOSTNAMES, which needs '"host"' so the app
+    can wrap it into a JSON array). Quote semantics belong to the parser
+    (validate_and_parse_env_vars), not to this decrypt step.
+    """
+
+    def test_preserves_intentional_surrounding_double_quotes(self):
+        handler = ProjectFileHandler()
+        result = handler._decrypt_and_clean_env_vars(
+            {"ALLOWED_HOSTNAMES": '"productie-cp-byw.sandbox.rijksapp.dev"'}, None
+        )
+        assert result["ALLOWED_HOSTNAMES"] == '"productie-cp-byw.sandbox.rijksapp.dev"'
+
+    def test_leaves_bare_values_untouched(self):
+        handler = ProjectFileHandler()
+        result = handler._decrypt_and_clean_env_vars({"PLAIN": "bare-value", "EMPTY": ""}, None)
+        assert result == {"PLAIN": "bare-value", "EMPTY": ""}
+
+    def test_preserves_literal_double_quote_pair(self):
+        handler = ProjectFileHandler()
+        result = handler._decrypt_and_clean_env_vars({"JSON_ARRAY": '"[]"'}, None)
+        assert result["JSON_ARRAY"] == '"[]"'
