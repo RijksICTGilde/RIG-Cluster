@@ -3156,8 +3156,10 @@ class ProjectManager:
                 regular_files.append(f"{issuer_manifest_filename}.yaml")
                 logger.info(f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}")
 
-                # Create network policy for ACME HTTP-01 challenge
-                # This allows ingress on port 80 to all pods, required for the ACME solver
+                # Create network policy for ACME HTTP-01 challenge.
+                # cert-manager's HTTP-01 solver pod listens on 8089 (the router
+                # forwards the challenge to the pod on 8089, not 80), so the
+                # solver port must be allowed or the self-check times out.
                 network_policy_template_path = os.path.join(
                     os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja"
                 )
@@ -3166,7 +3168,7 @@ class ProjectManager:
                     "name": generate_network_policy_name("acme-http", deployment_name),
                     "namespace": prefixed_namespace,
                     "pod_selector": None,  # Match all pods
-                    "ports": [80],
+                    "ports": [80, 8089],  # 80 for ingress, 8089 for ACME solver pod
                 }
                 network_policy_path = self._manifest_generator.create_manifest_file(
                     template_path=network_policy_template_path,
@@ -5171,8 +5173,10 @@ class ProjectManager:
                             f"Successfully created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}"
                         )
 
-                        # Create network policy for ACME HTTP-01 challenge
-                        # This allows ingress on port 80 to all pods, required for the ACME solver
+                        # Create network policy for ACME HTTP-01 challenge.
+                        # cert-manager's HTTP-01 solver pod listens on 8089 (the router
+                        # forwards the challenge to the pod on 8089, not 80), so the
+                        # solver port must be allowed or the self-check times out.
                         network_policy_template_path = os.path.join(
                             os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja"
                         )
@@ -5181,7 +5185,7 @@ class ProjectManager:
                             "name": generate_network_policy_name("acme-http", deployment_name),
                             "namespace": namespace,
                             "pod_selector": None,  # Match all pods
-                            "ports": [80],
+                            "ports": [80, 8089],  # 80 for ingress, 8089 for ACME solver pod
                         }
                         network_policy_path = self._manifest_generator.create_manifest_file(
                             template_path=network_policy_template_path,
