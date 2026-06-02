@@ -609,7 +609,7 @@ class TestHandleCreateProject:
             result = await handle_create_project(payload, progress)
 
         mock_pm.process_project_from_git.assert_called_once_with(
-            "projects/test-project.yaml", progress, deployment_name="dev"
+            "projects/test-project.yaml", progress, deployment_name="dev", deployment_names=None
         )
         assert result["status"] == "success"
 
@@ -635,7 +635,63 @@ class TestHandleCreateProject:
             await handle_create_project(payload, progress)
 
         mock_pm.process_project_from_git.assert_called_once_with(
-            "projects/test-project.yaml", progress, deployment_name=None
+            "projects/test-project.yaml", progress, deployment_name=None, deployment_names=None
+        )
+
+    @pytest.mark.asyncio
+    async def test_forwards_deployment_names_list(self):
+        """Domain approval supplies an explicit list of affected deployments."""
+        from opi.core.task_handlers_project import handle_create_project
+
+        progress = _make_progress()
+        mock_git, mock_pm = self._mocks()
+
+        payload = {
+            "project_name": "test-project",
+            "yaml_content": "name: test-project\n",
+            "deployment_names": ["dev", "staging"],
+        }
+
+        with (
+            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.connectors.git.GitConnector", return_value=mock_git),
+            patch(PM_PATH, return_value=mock_pm),
+            patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+            patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
+        ):
+            await handle_create_project(payload, progress)
+
+        mock_pm.process_project_from_git.assert_called_once_with(
+            "projects/test-project.yaml", progress, deployment_name=None, deployment_names=["dev", "staging"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_deployment_names_forwarded_as_empty(self):
+        """An empty list (approval affecting zero deployments) must NOT collapse
+        to None - it means 'deploy nothing', not 'deploy everything'.
+        """
+        from opi.core.task_handlers_project import handle_create_project
+
+        progress = _make_progress()
+        mock_git, mock_pm = self._mocks()
+
+        payload = {
+            "project_name": "test-project",
+            "yaml_content": "name: test-project\n",
+            "deployment_names": [],
+        }
+
+        with (
+            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.connectors.git.GitConnector", return_value=mock_git),
+            patch(PM_PATH, return_value=mock_pm),
+            patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+            patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
+        ):
+            await handle_create_project(payload, progress)
+
+        mock_pm.process_project_from_git.assert_called_once_with(
+            "projects/test-project.yaml", progress, deployment_name=None, deployment_names=[]
         )
 
 
