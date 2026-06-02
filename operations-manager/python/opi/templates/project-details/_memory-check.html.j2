@@ -58,7 +58,7 @@
         </c-ul>
         <c-button kind="primary" size="sm" label="Tune resources"
                   hx-post="/projects/{{ project_name }}/tune/{{ deployment_name }}"
-                  hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
+                  hx-headers="{&quot;X-CSRF-Token&quot;: &quot;{{ request.state.csrf_token }}&quot;}"
                   hx-target="#{{ container_id }}"
                   hx-swap="innerHTML" />
     </c-layout-flow>
@@ -83,7 +83,7 @@
         </c-ul>
         <c-button kind="secondary" size="sm" label="Tune resources"
                   hx-post="/projects/{{ project_name }}/tune/{{ deployment_name }}"
-                  hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
+                  hx-headers="{&quot;X-CSRF-Token&quot;: &quot;{{ request.state.csrf_token }}&quot;}"
                   hx-target="#{{ container_id }}"
                   hx-swap="innerHTML" />
     </c-layout-flow>
