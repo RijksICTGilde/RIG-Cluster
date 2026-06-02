@@ -89,6 +89,7 @@ def _render_section_html(
 
 
 def _render_modal_step(
+    request: Request,
     wizard_token: str | None,
     state: Any,
     section: Any,
@@ -105,6 +106,7 @@ def _render_modal_step(
 
     templates = get_templates()
     context = {
+        "request": request,
         "steps": steps,
         "flow_id": FLOW_ID,
         "section": section,
@@ -258,7 +260,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     yaml_data = state.get_merged_data()
     step_html = _render_section_html(first_section, yaml_data)
 
-    rendered = _render_modal_step(wizard_token, state, first_section, step_html, project_name)
+    rendered = _render_modal_step(request, wizard_token, state, first_section, step_html, project_name)
     return HTMLResponse(content=rendered)
 
 
