@@ -35,6 +35,11 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     start_time = time.time()
     project_name: str = payload["project_name"]
     pre_built_yaml: str | None = payload.get("yaml_content")
+    # Scope processing to a single deployment when the caller specified one
+    # (e.g. a modal edit that only changes one deployment's webadres). When
+    # absent (full project create/update) this stays None and all deployments
+    # are processed as before.
+    deployment_name: str | None = payload.get("deployment_name")
 
     # ------------------------------------------------------------------
     # Step 1: Validation
@@ -149,7 +154,9 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             git_connector_for_project_files=git_connector_for_project_files,
         )
         try:
-            processing_result = await project_manager.process_project_from_git(project_file_path, progress)
+            processing_result = await project_manager.process_project_from_git(
+                project_file_path, progress, deployment_name=deployment_name
+            )
             logger.info("Project processing completed, result: %s", processing_result)
         finally:
             await project_manager.close()

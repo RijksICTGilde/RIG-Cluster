@@ -563,6 +563,83 @@ class TestHandleUpsertDeployment:
 
 
 # ---------------------------------------------------------------------------
+# handle_create_project
+# ---------------------------------------------------------------------------
+
+
+class TestHandleCreateProject:
+    """The create_project task is reused for single-deployment edits (e.g. a
+    webadres change via the modal). It must forward the payload's
+    deployment_name to process_project_from_git so only that deployment is
+    redeployed/refreshed - not every deployment in the project.
+    """
+
+    def _mocks(self, process_result: bool = True):
+        mock_git = AsyncMock()
+        mock_git.create_or_update_file = AsyncMock()
+        mock_git.file_exists = AsyncMock(return_value=False)
+
+        mock_pm = AsyncMock()
+        mock_pm.process_project_from_git = AsyncMock(return_value=process_result)
+        mock_pm.close = AsyncMock()
+        mock_pm.get_processing_error = MagicMock(return_value=None)
+        mock_pm.get_component_failures = MagicMock(return_value=None)
+        return mock_git, mock_pm
+
+    @pytest.mark.asyncio
+    async def test_forwards_deployment_name_when_present(self):
+        from opi.core.task_handlers_project import handle_create_project
+
+        progress = _make_progress()
+        mock_git, mock_pm = self._mocks()
+
+        payload = {
+            "project_name": "test-project",
+            "yaml_content": "name: test-project\n",
+            "deployment_name": "dev",
+        }
+
+        with (
+            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.connectors.git.GitConnector", return_value=mock_git),
+            patch(PM_PATH, return_value=mock_pm),
+            patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+            patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
+        ):
+            result = await handle_create_project(payload, progress)
+
+        mock_pm.process_project_from_git.assert_called_once_with(
+            "projects/test-project.yaml", progress, deployment_name="dev"
+        )
+        assert result["status"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_deployment_name_none_when_absent(self):
+        from opi.core.task_handlers_project import handle_create_project
+
+        progress = _make_progress()
+        mock_git, mock_pm = self._mocks()
+
+        payload = {
+            "project_name": "test-project",
+            "yaml_content": "name: test-project\n",
+        }
+
+        with (
+            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.connectors.git.GitConnector", return_value=mock_git),
+            patch(PM_PATH, return_value=mock_pm),
+            patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+            patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
+        ):
+            await handle_create_project(payload, progress)
+
+        mock_pm.process_project_from_git.assert_called_once_with(
+            "projects/test-project.yaml", progress, deployment_name=None
+        )
+
+
+# ---------------------------------------------------------------------------
 # PersistentTaskProgressManager.update_task
 # ---------------------------------------------------------------------------
 
