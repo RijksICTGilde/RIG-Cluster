@@ -37,7 +37,8 @@ MEMORY_USAGE_QUERY = """round(
           sum by(namespace,pod) (container_memory_working_set_bytes{{
             job="kubelet",
             metrics_path="/metrics/cadvisor",
-            namespace=~"{namespace_filter}"
+            namespace=~"{namespace_filter}",
+            container=""
           }})
           -
           sum by(namespace,pod) (kube_pod_resource_request{{
