@@ -52,7 +52,7 @@ def test_component_with_partial_security_only_sets_provided_fields() -> None:
 
 def test_security_config_round_trips_to_yaml_dict_with_aliases() -> None:
     """Dumping with ``by_alias=True`` must emit kebab-case keys (YAML convention)."""
-    cfg = SecurityConfig(run_as_user=1, run_as_group=2, fs_group=3)
+    cfg = SecurityConfig.model_validate({"run-as-user": 1, "run-as-group": 2, "fs-group": 3})
     dumped = cfg.model_dump(by_alias=True, exclude_none=True)
     assert dumped == {"run-as-user": 1, "run-as-group": 2, "fs-group": 3}
 
@@ -63,4 +63,4 @@ def test_security_config_rejects_negative_uid() -> None:
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        SecurityConfig(run_as_user=-1)
+        SecurityConfig.model_validate({"run-as-user": -1})
