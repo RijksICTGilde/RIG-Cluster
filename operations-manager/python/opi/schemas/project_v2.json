@@ -346,6 +346,15 @@
         "sso-rijk": { "type": "boolean" },
         "disabled": { "type": "boolean" },
         "disabled-reason": { "type": "string" },
+        "security": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "run-as-user": { "type": "integer", "minimum": 0 },
+            "run-as-group": { "type": "integer", "minimum": 0 },
+            "fs-group": { "type": "integer", "minimum": 0 }
+          }
+        },
         "aliases": {
           "type": "object",
           "additionalProperties": { "type": "string" }

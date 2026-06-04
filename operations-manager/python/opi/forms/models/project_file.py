@@ -145,6 +145,26 @@ class ResourcesModel(BaseModel):
     ] = Field(default="256Mi")
 
 
+class SecurityConfig(BaseModel):
+    """Pod-level security context overrides for a component.
+
+    Hidden YAML-only feature: not exposed in the OPI wizard or detail-edit
+    UI. Users opt in by editing the project YAML directly. All three fields
+    are optional; each defaults to 1001 inside the deployment template
+    (preserving the previous hardcoded sandbox behaviour).
+
+    Production (OpenShift) deployments IGNORE these overrides because SCC
+    admission injects a random UID per namespace. The template only emits
+    the override when ``cluster`` is ``local`` or ``sandboxed-local``.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    run_as_user: int | None = Field(default=None, alias="run-as-user", ge=0)
+    run_as_group: int | None = Field(default=None, alias="run-as-group", ge=0)
+    fs_group: int | None = Field(default=None, alias="fs-group", ge=0)
+
+
 class ComponentModel(BaseModel):
     """Component definition in a project file."""
 
@@ -236,6 +256,10 @@ class ComponentModel(BaseModel):
             placeholder="KEY=value",
         ),
     ] = Field(default=None, alias="user-env-vars")
+
+    # Hidden YAML-only feature — intentionally has no FormMeta so it does not
+    # appear in the wizard / detail-edit UI. Users add it by editing YAML.
+    security: SecurityConfig | None = Field(default=None)
 
 
 class DeploymentComponentModel(BaseModel):

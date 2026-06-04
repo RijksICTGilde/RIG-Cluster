@@ -101,6 +101,107 @@ class TestRenderRealTemplates:
         assert "runAsUser" not in pod_sec
         assert pod_sec["runAsNonRoot"] is True
 
+    def test_deployment_template_sandbox_respects_security_override(self):
+        """Per-component ``security`` block overrides 1001 defaults on sandbox/local."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 3000,
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "sandboxed-local",
+                "security": {"runAsUser": 999, "runAsGroup": 999, "fsGroup": 999},
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        pod_sec = doc["spec"]["template"]["spec"]["securityContext"]
+        assert pod_sec["runAsUser"] == 999
+        assert pod_sec["runAsGroup"] == 999
+        assert pod_sec["fsGroup"] == 999
+        assert pod_sec["runAsNonRoot"] is True
+
+    def test_deployment_template_sandbox_partial_security_override(self):
+        """Only ``runAsUser`` overridden; other two fall back to 1001."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 3000,
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "sandboxed-local",
+                "security": {"runAsUser": 999, "runAsGroup": None, "fsGroup": None},
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        pod_sec = doc["spec"]["template"]["spec"]["securityContext"]
+        assert pod_sec["runAsUser"] == 999
+        assert pod_sec["runAsGroup"] == 1001
+        assert pod_sec["fsGroup"] == 1001
+
+    def test_deployment_template_sandbox_without_security_keeps_1001_defaults(self):
+        """Sandbox renders unchanged (1001/1001/1001) when no override is supplied."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 3000,
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "sandboxed-local",
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        pod_sec = doc["spec"]["template"]["spec"]["securityContext"]
+        assert pod_sec["runAsUser"] == 1001
+        assert pod_sec["runAsGroup"] == 1001
+        assert pod_sec["fsGroup"] == 1001
+
+    def test_deployment_template_production_ignores_security_override(self):
+        """odcn-production must NOT emit runAsUser even when an override is passed.
+
+        On OpenShift the SCC admission controller assigns the UID; emitting a
+        fixed runAsUser would conflict and break production deployments.
+        """
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-prd-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 3000,
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "IfNotPresent",
+                "cluster": "odcn-production",
+                "security": {"runAsUser": 999, "runAsGroup": 999, "fsGroup": 999},
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        pod_sec = doc["spec"]["template"]["spec"]["securityContext"]
+        assert "runAsUser" not in pod_sec
+        assert "runAsGroup" not in pod_sec
+        assert "fsGroup" not in pod_sec
+        assert pod_sec["runAsNonRoot"] is True
+
     def test_deployment_template_with_env_vars(self):
         result = render_template(
             "deployment.yaml.jinja",

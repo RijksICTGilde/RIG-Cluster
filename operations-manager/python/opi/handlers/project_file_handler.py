@@ -889,6 +889,33 @@ class ProjectFileHandler:
         logger.debug(f"Component '{component_name}' has publish-on-web service: {has_publish_service}")
         return has_publish_service
 
+    def extract_component_security(self, project_data: dict[str, Any], component_name: str) -> dict[str, int] | None:
+        """Extract the optional ``security`` block from a component definition.
+
+        Returns a dict with any of ``run-as-user`` / ``run-as-group`` / ``fs-group``
+        that were set by the user, or ``None`` if no ``security`` block exists.
+        Only integer values are returned; bogus types are silently dropped so a
+        malformed YAML cannot crash manifest rendering (the JSON schema catches
+        wrong types earlier; this is defence in depth).
+
+        Hidden YAML-only feature — not exposed in the wizard / detail-edit UI.
+        """
+        component = self._find_component(project_data, component_name)
+        if not component:
+            return None
+
+        raw = component.get("security")
+        if not isinstance(raw, dict):
+            return None
+
+        result: dict[str, int] = {}
+        for key in ("run-as-user", "run-as-group", "fs-group"):
+            value = raw.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                result[key] = value
+
+        return result or None
+
     # ========================================================================
     # Resource Configuration Methods
     # ========================================================================

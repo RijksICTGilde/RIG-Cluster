@@ -4244,6 +4244,12 @@ class ProjectManager:
                 project_data, component_reference
             )
 
+            # Extract optional per-component security context override (sandbox-only).
+            # Hidden YAML-only feature — defaults to None (template falls back to 1001/1001/1001).
+            component_security = self._project_file_handler.extract_component_security(
+                project_data, component_reference
+            )
+
             # Extract resource configuration (component-level, then deployment-level overrides)
             component_resources = self._project_file_handler.extract_component_resources(
                 project_data, component_reference
@@ -4538,6 +4544,17 @@ class ProjectManager:
                 "resources_limits_cpu": component_resources["limits_cpu"],
                 # Replicas (0 when component is disabled)
                 "replicas": replicas,
+                # Optional per-component pod securityContext override (sandbox-only).
+                # Template reads K8s-native field names (runAsUser/runAsGroup/fsGroup).
+                "security": (
+                    {
+                        "runAsUser": component_security.get("run-as-user"),
+                        "runAsGroup": component_security.get("run-as-group"),
+                        "fsGroup": component_security.get("fs-group"),
+                    }
+                    if component_security
+                    else None
+                ),
             }
 
             logger.info(f"Creating manifests for component: {component_name} with image: {image_url}")

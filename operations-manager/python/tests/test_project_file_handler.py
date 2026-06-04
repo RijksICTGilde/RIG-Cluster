@@ -150,3 +150,60 @@ class TestDecryptAndCleanEnvVars:
         handler = ProjectFileHandler()
         result = handler._decrypt_and_clean_env_vars({"JSON_ARRAY": '"[]"'}, None)
         assert result["JSON_ARRAY"] == '"[]"'
+
+
+class TestExtractComponentSecurity:
+    """Tests for the hidden per-component ``security`` block extractor."""
+
+    def test_returns_none_when_component_missing(self) -> None:
+        handler = ProjectFileHandler()
+        assert handler.extract_component_security({"components": []}, "missing") is None
+
+    def test_returns_none_when_no_security_block(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web"}]}
+        assert handler.extract_component_security(project_data, "web") is None
+
+    def test_returns_full_block(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {
+            "components": [
+                {
+                    "name": "web",
+                    "security": {"run-as-user": 999, "run-as-group": 999, "fs-group": 999},
+                }
+            ]
+        }
+        result = handler.extract_component_security(project_data, "web")
+        assert result == {"run-as-user": 999, "run-as-group": 999, "fs-group": 999}
+
+    def test_returns_partial_block(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web", "security": {"run-as-user": 1002}}]}
+        result = handler.extract_component_security(project_data, "web")
+        assert result == {"run-as-user": 1002}
+
+    def test_silently_drops_non_int_values(self) -> None:
+        """Schema layer catches wrong types; extractor is defence in depth."""
+        handler = ProjectFileHandler()
+        project_data = {
+            "components": [
+                {
+                    "name": "web",
+                    "security": {"run-as-user": "bogus", "fs-group": 999},
+                }
+            ]
+        }
+        result = handler.extract_component_security(project_data, "web")
+        assert result == {"fs-group": 999}
+
+    def test_returns_none_when_security_is_not_a_dict(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web", "security": "nonsense"}]}
+        assert handler.extract_component_security(project_data, "web") is None
+
+    def test_booleans_are_not_treated_as_int(self) -> None:
+        """In Python ``True == 1`` and ``isinstance(True, int)`` is True; explicitly excluded."""
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web", "security": {"run-as-user": True}}]}
+        assert handler.extract_component_security(project_data, "web") is None
