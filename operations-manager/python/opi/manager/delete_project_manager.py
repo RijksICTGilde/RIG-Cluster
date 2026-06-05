@@ -186,6 +186,65 @@ class DeleteProjectManager:
             logger.exception("Error during orphaned ArgoCD resource cleanup")
             deletion_results["errors"].append(f"Orphaned ArgoCD cleanup error: {e}")
 
+    async def _delete_project_argocd_folder(
+        self, project_name: str, cluster: str, deletion_results: dict[str, Any]
+    ) -> None:
+        """
+        Delete the project's ArgoCD folder from the GitOps repository.
+
+        The folder {cluster}/{project_name}/ contains the AppProject manifest,
+        repository secret and kustomization.yaml. Deployment-level Application
+        files are deleted per deployment, but without removing this folder the
+        root application keeps re-applying the AppProject and repository secret
+        (selfHeal), leaving orphaned resources behind after project deletion.
+
+        Args:
+            project_name: Name of the project
+            cluster: Cluster name (e.g., "local", "odcn-production")
+            deletion_results: Results dictionary to append operations/errors to
+        """
+        project_argocd_folder_rel = os.path.join(cluster, project_name)
+        logger.info(f"Deleting project ArgoCD folder: {project_argocd_folder_rel}")
+
+        try:
+            gitops_connector = await self.project_manager.get_git_connector_for_argocd()
+            await gitops_connector.ensure_repo_cloned()
+            working_dir = await gitops_connector.get_working_dir()
+            project_argocd_folder = os.path.join(working_dir, project_argocd_folder_rel)
+
+            if os.path.exists(project_argocd_folder):
+                shutil.rmtree(project_argocd_folder)
+                deletion_results["operations"].append(
+                    {
+                        "type": "project_argocd_folder_deletion",
+                        "target": project_argocd_folder_rel,
+                        "status": "success",
+                    }
+                )
+                logger.info(f"Deleted project ArgoCD folder: {project_argocd_folder_rel}")
+
+                commit_message = f"Delete ArgoCD resources for project '{project_name}'"
+                await gitops_connector.commit_and_push(commit_message)
+                deletion_results["operations"].append(
+                    {"type": "project_argocd_gitops_commit", "status": "success", "message": commit_message}
+                )
+
+                # Refresh the root application so the orphaned AppProject and
+                # repository secret are pruned promptly
+                argo_connector = create_argo_connector()
+                await argo_connector.refresh_application("user-applications")
+            else:
+                deletion_results["operations"].append(
+                    {
+                        "type": "project_argocd_folder_deletion",
+                        "target": project_argocd_folder_rel,
+                        "status": "not_found",
+                    }
+                )
+        except Exception as e:
+            logger.exception(f"Error deleting project ArgoCD folder for {project_name}")
+            deletion_results["errors"].append(f"Failed to delete project ArgoCD folder: {e}")
+
     async def _cleanup_project_keycloak_realm(
         self, project_name: str, cluster: str, kc_config: dict[str, Any], deletion_results: dict[str, Any]
     ) -> None:
@@ -724,6 +783,11 @@ class DeleteProjectManager:
                         kc_config=kc_config,
                         deletion_results=deletion_results,
                     )
+
+            # Step 4.7: Delete the project's ArgoCD folder (AppProject, repository secret, kustomization)
+            # from the GitOps repo, so the root application prunes these resources
+            if deletion_results["success"] or force:
+                await self._delete_project_argocd_folder(project_name, current_cluster, deletion_results)
 
             # Step 5: Delete the project file if all deployment deletions succeeded (or in force mode)
             should_delete_project_file = deletion_results["success"] or force
