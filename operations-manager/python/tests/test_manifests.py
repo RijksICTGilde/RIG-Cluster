@@ -464,6 +464,17 @@ class TestRenderRealTemplates:
         assert doc["stringData"]["username"] == "admin"
         assert doc["stringData"]["password"] == "s3cret"
 
+    def test_generic_secret_has_replace_sync_option(self):
+        """Secrets must be Replace-synced so stale keys (e.g. from a renamed
+        alias) drop out instead of accumulating across renders."""
+        result = render_template(
+            "generic-secret.yaml.to-sops.jinja",
+            {"name": "s", "namespace": "ns", "secret_pairs": {"k": "v"}},
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["metadata"]["annotations"]["argocd.argoproj.io/sync-options"] == "Replace=true"
+
     def test_generic_secret_empty_value(self):
         """Empty string values need special quoting to avoid YAML null."""
         result = render_template(
