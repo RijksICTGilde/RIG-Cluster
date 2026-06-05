@@ -334,6 +334,11 @@ class WebVariables(Enum):
         description="De publieke hostname/URL waar een component bereikbaar zal zijn",
         source="direct",
     )
+    PUBLIC_HOSTNAME = VariableDefinition(
+        name="PUBLIC_HOSTNAME",
+        description="De publieke hostname (zonder scheme) waar een component bereikbaar zal zijn",
+        source="direct",
+    )
 
 
 class ServiceAdapter:

@@ -1095,6 +1095,10 @@ class ProjectManager:
                 public_url = generate_public_url(hostname, use_https)
                 env_vars[var_def.name] = public_url
                 logger.debug(f"Generated web env var: {var_def.name}={public_url}")
+            elif var_def.source == "direct" and var_def.name == "PUBLIC_HOSTNAME":
+                # Hostname only (no scheme) for apps that reject full URLs in host-name fields
+                env_vars[var_def.name] = hostname
+                logger.debug(f"Generated web env var: {var_def.name}={hostname}")
 
         return env_vars
 
@@ -2809,6 +2813,7 @@ class ProjectManager:
         # Add hostname-related variables
         public_url = generate_public_url(hostname, use_https)
         context["PUBLIC_HOST"] = public_url
+        context["PUBLIC_HOSTNAME"] = hostname
         context["HOSTNAME"] = hostname
         if subdomain:
             context["SUBDOMAIN"] = subdomain
@@ -4421,22 +4426,33 @@ class ProjectManager:
             # Register user environment variables
             # NOTE: User env vars go into a secret and are referenced via envFrom, not as direct env vars
             if user_env_vars:
-                # Substitute PUBLIC_HOST in user-env-vars if referenced
-                # NOTE: This is a simple substitution for PUBLIC_HOST only. If we need to support
-                # more direct variables in user-env-vars in the future, consider extending
-                # the alias system to support "direct" source variables.
+                # Substitute PUBLIC_HOST / PUBLIC_HOSTNAME in user-env-vars if referenced
+                # NOTE: This is a simple substitution for these two direct vars only. If we need
+                # to support more direct variables in user-env-vars in the future, consider
+                # extending the alias system to support "direct" source variables.
+                # IMPORTANT: substitute PUBLIC_HOSTNAME before PUBLIC_HOST so the longer name
+                # is matched first and isn't partially consumed by the PUBLIC_HOST replacement.
                 public_host: str | None = env_vars.get("PUBLIC_HOST")
-                if public_host:
+                public_hostname: str | None = env_vars.get("PUBLIC_HOSTNAME")
+                if public_host or public_hostname:
                     substituted_user_env_vars: dict[str, Any] = {}
                     for key, value in user_env_vars.items():
-                        if isinstance(value, str) and ("$PUBLIC_HOST" in value or "${PUBLIC_HOST}" in value):
-                            # Substitute both $PUBLIC_HOST and ${PUBLIC_HOST} syntax
-                            substituted_value = value.replace("${PUBLIC_HOST}", public_host)
-                            substituted_value = substituted_value.replace("$PUBLIC_HOST", public_host)
+                        if isinstance(value, str) and (
+                            "$PUBLIC_HOST" in value or "${PUBLIC_HOST}" in value or "${PUBLIC_HOSTNAME}" in value
+                        ):
+                            substituted_value = value
+                            if public_hostname:
+                                substituted_value = substituted_value.replace("${PUBLIC_HOSTNAME}", public_hostname)
+                                substituted_value = substituted_value.replace("$PUBLIC_HOSTNAME", public_hostname)
+                            if public_host:
+                                substituted_value = substituted_value.replace("${PUBLIC_HOST}", public_host)
+                                substituted_value = substituted_value.replace("$PUBLIC_HOST", public_host)
                             substituted_user_env_vars[key] = substituted_value
-                            logger.debug(
-                                f"Substituted PUBLIC_HOST in user-env-var {key}: {value} -> {substituted_value}"
-                            )
+                            if substituted_value != value:
+                                logger.debug(
+                                    f"Substituted PUBLIC_HOST/HOSTNAME in user-env-var {key}: "
+                                    f"{value} -> {substituted_value}"
+                                )
                         else:
                             substituted_user_env_vars[key] = value
                     user_env_vars = substituted_user_env_vars
