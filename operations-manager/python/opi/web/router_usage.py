@@ -23,6 +23,20 @@ usage_router = APIRouter(prefix="/admin/usage", tags=["usage"])
 
 DEFAULT_PRICE_PER_GIB = 27.0
 
+# Cheap query over the hourly recording rule (PrometheusRule
+# operations-manager-billing in de odcn-production bootstrap-overlay).
+# sum_over_time over de ruwe samples gedeeld door het verwachte aantal
+# samples (24 per dag) geeft het tijdgewogen maandgemiddelde; namespaces
+# die maar een deel van de maand bestonden tellen naar rato mee.
+RECORDED_USAGE_QUERY = """round(
+  sum(
+    sum_over_time(rig:namespace_memory_billed_bytes{{namespace=~"{namespace_filter}"}}[{days}d])
+  ) / ({days} * 24) / 1024^3
+, 0.01) or on() vector(0)"""
+
+# Zware fallback die hetzelfde berekent uit de ruwe metrics. Alleen nodig
+# voor maanden van voor de recording rule (uitgerold juni 2026); kan weg
+# zodra er een vol jaar aan recorded data bestaat.
 MEMORY_USAGE_QUERY = """round(
   sum((
     sum_over_time(
@@ -38,7 +52,9 @@ MEMORY_USAGE_QUERY = """round(
             job="kubelet",
             metrics_path="/metrics/cadvisor",
             namespace=~"{namespace_filter}",
-            container=""
+            container!="",
+            image!="",
+            prometheus!="openshift-monitoring/k8s"
           }})
           -
           sum by(namespace,pod) (kube_pod_resource_request{{
@@ -125,14 +141,20 @@ async def _query_month_usage(
 
     eval_time = _get_month_end(month_info["year"], month_info["month"], month_info["days"])
 
-    query = MEMORY_USAGE_QUERY.format(
-        namespace_filter=namespace_filter,
-        days=month_info["days"],
-    )
+    async def run(query_template: str) -> float:
+        query = query_template.format(
+            namespace_filter=namespace_filter,
+            days=month_info["days"],
+        )
+        results = await connector.custom_query(query, datasource_uid=datasource_uid, eval_time=eval_time)
+        return float(results[0].get("value", [None, "0"])[1]) if results else 0.0
 
     try:
-        results = await connector.custom_query(query, datasource_uid=datasource_uid, eval_time=eval_time)
-        value = float(results[0].get("value", [None, "0"])[1]) if results else 0.0
+        value = await run(RECORDED_USAGE_QUERY)
+        if value == 0.0:
+            # Maanden van voor de recording rule hebben geen recorded data;
+            # val terug op de zware raw query
+            value = await run(MEMORY_USAGE_QUERY)
     except Exception:
         logger.exception("Failed to query billing data for %s %d", month_info["name"], month_info["year"])
         value = 0.0
