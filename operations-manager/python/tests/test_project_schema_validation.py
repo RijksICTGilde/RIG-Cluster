@@ -356,3 +356,52 @@ def test_component_security_block_rejects_negative_uid() -> None:
     project["components"][0]["security"] = {"run-as-user": -1}
     with pytest.raises(ProjectSchemaError):
         validate_project_schema(project)
+
+
+# ---------------------------------------------------------------------------
+# Per-component / per-deployment `command` override (hidden YAML-only feature)
+# ---------------------------------------------------------------------------
+
+
+def test_component_with_command_is_accepted() -> None:
+    """Component-level ``command`` (list[str], non-empty) passes validation."""
+    project = _valid_project()
+    project["components"][0]["command"] = ["sh", "-c", "exec /app/bin/web"]
+    validate_project_schema(project)
+
+
+def test_deployment_component_with_command_is_accepted() -> None:
+    """Per-deployment ``command`` override passes validation."""
+    project = _valid_project()
+    project["deployments"][0]["components"][0]["command"] = [
+        "sh",
+        "-c",
+        "echo prd && exec /app/bin/web",
+    ]
+    validate_project_schema(project)
+
+
+def test_component_command_rejects_empty_list() -> None:
+    """``minItems: 1`` must reject ``command: []``."""
+    project = _valid_project()
+    project["components"][0]["command"] = []
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_component_command_rejects_non_string_items() -> None:
+    """``items.type: string`` must reject mixed-type lists."""
+    project = _valid_project()
+    project["components"][0]["command"] = ["sh", 42]
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_component_command_rejects_non_list_value() -> None:
+    """A plain string for ``command`` (shell-style) must be rejected — users
+    must write the K8s-native list[str] form so we don't ship surprise
+    shell-parsing semantics."""
+    project = _valid_project()
+    project["components"][0]["command"] = "sh -c 'exec /app/bin/web'"
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)

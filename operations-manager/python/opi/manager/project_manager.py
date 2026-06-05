@@ -4250,6 +4250,18 @@ class ProjectManager:
                 project_data, component_reference
             )
 
+            # Extract optional container `command` override (K8s containers[].command).
+            # Hidden YAML-only feature: deployment-level override wins over the
+            # component-level default; both default to None so the image's own
+            # ENTRYPOINT/CMD remains in effect when neither is set.
+            command_override = self._project_file_handler.extract_deployment_component_command(
+                project_data, deployment_name, component_reference
+            )
+            if command_override is None:
+                command_override = self._project_file_handler.extract_component_command(
+                    project_data, component_reference
+                )
+
             # Extract resource configuration (component-level, then deployment-level overrides)
             component_resources = self._project_file_handler.extract_component_resources(
                 project_data, component_reference
@@ -4555,6 +4567,9 @@ class ProjectManager:
                     if component_security
                     else None
                 ),
+                # Optional container command override (K8s containers[].command).
+                # None => template omits the field => image's ENTRYPOINT/CMD stays.
+                "command": command_override,
             }
 
             logger.info(f"Creating manifests for component: {component_name} with image: {image_url}")

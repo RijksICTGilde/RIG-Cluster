@@ -889,6 +889,53 @@ class ProjectFileHandler:
         logger.debug(f"Component '{component_name}' has publish-on-web service: {has_publish_service}")
         return has_publish_service
 
+    def extract_component_command(self, project_data: dict[str, Any], component_name: str) -> list[str] | None:
+        """Extract the optional component-level ``command`` override.
+
+        Returns the user-supplied list[str] when present and well-formed, or
+        ``None`` when no override exists. Non-list / empty-list / non-string
+        items are silently dropped so a malformed YAML cannot crash manifest
+        rendering (the JSON schema catches wrong shapes earlier; this is
+        defence in depth).
+
+        Hidden YAML-only feature — not exposed in the wizard / detail-edit UI.
+        """
+        component = self._find_component(project_data, component_name)
+        if not component:
+            return None
+
+        raw = component.get("command")
+        if not isinstance(raw, list) or not raw:
+            return None
+        if not all(isinstance(item, str) for item in raw):
+            return None
+        return list(raw)
+
+    def extract_deployment_component_command(
+        self, project_data: dict[str, Any], deployment_name: str, component_reference: str
+    ) -> list[str] | None:
+        """Extract the optional per-deployment ``command`` override.
+
+        Walks ``deployments[?(name==deployment_name)].components[?(reference==component_reference)].command``.
+        Returns ``None`` when no deployment-level override is present, so the
+        caller can fall back to the component-level command (or the image
+        default). Same defensive type checks as the component-level extractor.
+        """
+        deployments = project_data.get("deployments", [])
+        for deployment in deployments:
+            if deployment.get("name") != deployment_name:
+                continue
+            for comp in deployment.get("components", []):
+                if comp.get("reference") != component_reference:
+                    continue
+                raw = comp.get("command")
+                if not isinstance(raw, list) or not raw:
+                    return None
+                if not all(isinstance(item, str) for item in raw):
+                    return None
+                return list(raw)
+        return None
+
     def extract_component_security(self, project_data: dict[str, Any], component_name: str) -> dict[str, int] | None:
         """Extract the optional ``security`` block from a component definition.
 

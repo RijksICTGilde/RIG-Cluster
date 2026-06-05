@@ -59,6 +59,14 @@ spec:
         - name: app
           image: {{ (imageURL | default('', true)) | tojson }}
           imagePullPolicy: {{ imagePullPolicy }}
+          {% if command %}
+          # Override of the image's ENTRYPOINT — set via project YAML
+          # `components[].command` or `deployments[].components[].command`.
+          command:
+          {% for c in command %}
+            - {{ c | tojson }}
+          {% endfor %}
+          {% endif %}
           ports:
             - containerPort: {{ application_port }}
               name: http

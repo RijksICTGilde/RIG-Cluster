@@ -207,3 +207,62 @@ class TestExtractComponentSecurity:
         handler = ProjectFileHandler()
         project_data = {"components": [{"name": "web", "security": {"run-as-user": True}}]}
         assert handler.extract_component_security(project_data, "web") is None
+
+
+class TestExtractComponentCommand:
+    """Tests for the hidden per-component ``command`` extractors (component + deployment levels)."""
+
+    def test_component_returns_none_when_component_missing(self) -> None:
+        handler = ProjectFileHandler()
+        assert handler.extract_component_command({"components": []}, "missing") is None
+
+    def test_component_returns_none_when_no_command(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web"}]}
+        assert handler.extract_component_command(project_data, "web") is None
+
+    def test_component_returns_command_list(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web", "command": ["sh", "-c", "exec /app/bin/web"]}]}
+        result = handler.extract_component_command(project_data, "web")
+        assert result == ["sh", "-c", "exec /app/bin/web"]
+
+    def test_component_returns_none_for_empty_list(self) -> None:
+        """Defence in depth: schema rejects empty list earlier, but if it slips
+        through we treat ``[]`` as "no override" rather than erasing ENTRYPOINT."""
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web", "command": []}]}
+        assert handler.extract_component_command(project_data, "web") is None
+
+    def test_component_returns_none_for_non_list(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web", "command": "sh -c exec"}]}
+        assert handler.extract_component_command(project_data, "web") is None
+
+    def test_component_returns_none_for_mixed_item_types(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web", "command": ["sh", 42]}]}
+        assert handler.extract_component_command(project_data, "web") is None
+
+    def test_deployment_returns_none_when_no_override(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"deployments": [{"name": "prd", "components": [{"reference": "web"}]}]}
+        assert handler.extract_deployment_component_command(project_data, "prd", "web") is None
+
+    def test_deployment_returns_override(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {
+            "deployments": [
+                {
+                    "name": "prd",
+                    "components": [{"reference": "web", "command": ["sh", "-c", "echo prd && exec /app"]}],
+                }
+            ]
+        }
+        result = handler.extract_deployment_component_command(project_data, "prd", "web")
+        assert result == ["sh", "-c", "echo prd && exec /app"]
+
+    def test_deployment_returns_none_when_deployment_missing(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"deployments": []}
+        assert handler.extract_deployment_component_command(project_data, "prd", "web") is None

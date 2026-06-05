@@ -202,6 +202,99 @@ class TestRenderRealTemplates:
         assert "fsGroup" not in pod_sec
         assert pod_sec["runAsNonRoot"] is True
 
+    def test_deployment_template_without_command_omits_field(self):
+        """No ``command`` variable supplied => no ``command:`` key in container spec."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 3000,
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        container = doc["spec"]["template"]["spec"]["containers"][0]
+        assert "command" not in container
+
+    def test_deployment_template_with_command_emits_list(self):
+        """A non-empty ``command`` list renders as a YAML list under containers[0]."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 3000,
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+                "command": ["sh", "-c", "exec /app/bin/web"],
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        container = doc["spec"]["template"]["spec"]["containers"][0]
+        assert container["command"] == ["sh", "-c", "exec /app/bin/web"]
+
+    def test_deployment_template_command_empty_list_omits_field(self):
+        """Defensive: even if ``command: []`` slips through, no empty list is emitted.
+
+        The Jinja2 truthiness check (`{% if command %}`) treats `[]` as false.
+        Pydantic/JSON-schema reject the empty list earlier, but template should
+        not crash or emit ``command: []`` if a caller passes it directly.
+        """
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 3000,
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+                "command": [],
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        container = doc["spec"]["template"]["spec"]["containers"][0]
+        assert "command" not in container
+
+    def test_deployment_template_command_with_special_chars_is_quoted(self):
+        """``tojson`` filter must safely quote items containing YAML metachars."""
+        tricky = ['echo "hello: world"', "exec /app"]
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 3000,
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+                "command": tricky,
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        container = doc["spec"]["template"]["spec"]["containers"][0]
+        assert container["command"] == tricky
+
     def test_deployment_template_with_env_vars(self):
         result = render_template(
             "deployment.yaml.jinja",

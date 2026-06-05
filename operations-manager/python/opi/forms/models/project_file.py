@@ -261,6 +261,12 @@ class ComponentModel(BaseModel):
     # appear in the wizard / detail-edit UI. Users add it by editing YAML.
     security: SecurityConfig | None = Field(default=None)
 
+    # Hidden YAML-only feature: override the container's entrypoint without
+    # needing a wrap image. Maps directly to K8s `containers[].command`
+    # (a list — no shell parsing). Deployment-level override (see
+    # DeploymentComponentModel.command) wins over this default when both set.
+    command: list[str] | None = Field(default=None, min_length=1)
+
 
 class DeploymentComponentModel(BaseModel):
     """Component reference in a deployment."""
@@ -292,6 +298,12 @@ class DeploymentComponentModel(BaseModel):
             widget="select",
         ),
     ] = Field(default="Always")
+
+    # Hidden YAML-only feature: per-deployment override of the container's
+    # entrypoint. When set, wins over ComponentModel.command. When omitted,
+    # falls back to the component-level command (if any) and finally to the
+    # image's default ENTRYPOINT/CMD.
+    command: list[str] | None = Field(default=None, min_length=1)
 
 
 class DeploymentModel(BaseModel):
