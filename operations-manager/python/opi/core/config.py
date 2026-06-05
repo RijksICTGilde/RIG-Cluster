@@ -323,6 +323,8 @@ class Settings(BaseSettings):
     RESOURCE_TUNING_WINDOW_HOURS: int = 24  # How far back to look for max usage
     RESOURCE_TUNING_MEMORY_BUFFER_PERCENT: int = 25  # Add 25% above max observed
     RESOURCE_TUNING_THRESHOLD_PERCENT: int = 20  # Only recommend if diff > 20%
+    RESOURCE_TUNING_OOM_FLOOR_MIN_AGE_DAYS: int = 10  # OOM floor may expire after this many days...
+    RESOURCE_TUNING_OOM_FLOOR_STABLE_PERCENT: int = 50  # ...if observed max stays below this % of the floor
     # max_memory_limit_mi is now in cluster_config (per-cluster setting)
 
     # Deployment sanitization configuration

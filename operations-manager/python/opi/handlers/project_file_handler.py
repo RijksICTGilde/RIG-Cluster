@@ -7,6 +7,7 @@ including git-based diff generation and structured change extraction.
 
 import logging
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from deepdiff import DeepDiff
@@ -33,6 +34,14 @@ DEFAULT_RESOURCES: dict[str, str] = {
     "limits_memory": "512Mi",
     "limits_cpu": "500m",
 }
+
+
+@dataclass
+class ResourceFloor:
+    """OOM-watcher memory floor with the timestamp of the entry that set it."""
+
+    floor_mb: float
+    set_at: str | None
 
 
 def _parse_resources_block(raw: dict | None, defaults: dict[str, str] | None = None) -> dict[str, str]:
@@ -1203,11 +1212,14 @@ class ProjectFileHandler:
         project_data: dict[str, Any],
         deployment_name: str,
         component_reference: str,
-    ) -> float | None:
+    ) -> ResourceFloor | None:
         """
         Get the OOM watcher memory floor from resource history.
 
         Checks both deployment-component and component-definition history.
+        Only entries belonging to this deployment count: the component-definition
+        history is filtered on the entry's "deployment" field, so an OOM in one
+        (PR) deployment does not pin the resources of every other deployment.
         Returns the highest OOM watcher limit found in the most recent
         oom-watcher entry at either level.
 
@@ -1217,9 +1229,19 @@ class ProjectFileHandler:
             component_reference: Reference name of the component
 
         Returns:
-            Floor value in MB, or None if no OOM watcher entries exist
+            ResourceFloor with value in MB and entry timestamp, or None if no
+            OOM watcher entries exist for this deployment
         """
-        floor_mb: float | None = None
+        floor: ResourceFloor | None = None
+
+        def consider(entry: dict[str, Any]) -> ResourceFloor | None:
+            value = entry.get("limits", {}).get("memory")
+            if not value:
+                return floor
+            mb = _k8s_memory_to_mb(value)
+            if floor is None or mb > floor.floor_mb:
+                return ResourceFloor(floor_mb=mb, set_at=entry.get("timestamp"))
+            return floor
 
         # Check deployment-component history
         for dep in project_data.get("deployments", []):
@@ -1230,25 +1252,19 @@ class ProjectFileHandler:
                     continue
                 for entry in comp.get("resources", {}).get("history", []):
                     if entry.get("source") == "oom-watcher":
-                        value = entry.get("limits", {}).get("memory")
-                        if value:
-                            mb = _k8s_memory_to_mb(value)
-                            floor_mb = max(floor_mb or 0, mb)
+                        floor = consider(entry)
                         break  # only check most recent oom-watcher entry
 
-        # Check component-definition history
+        # Check component-definition history (scoped to this deployment)
         for comp in project_data.get("components", []):
             if comp.get("name") != component_reference:
                 continue
             for entry in comp.get("resources", {}).get("history", []):
-                if entry.get("source") == "oom-watcher":
-                    value = entry.get("limits", {}).get("memory")
-                    if value:
-                        mb = _k8s_memory_to_mb(value)
-                        floor_mb = max(floor_mb or 0, mb)
+                if entry.get("source") == "oom-watcher" and entry.get("deployment") == deployment_name:
+                    floor = consider(entry)
                     break
 
-        return floor_mb
+        return floor
 
     def extract_deployment_component_disabled(
         self, project_data: dict[str, Any], deployment_name: str, component_reference: str

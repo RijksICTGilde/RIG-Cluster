@@ -21,7 +21,7 @@ from opi.core.cluster_config import (
     get_prefixed_namespace,
 )
 from opi.core.config import settings
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.handlers.project_file_handler import ProjectFileHandler, ResourceFloor
 from opi.manager.project_manager import create_project_manager
 from opi.services.project_service import get_project_service
 from opi.services.resource_analyzer import _k8s_memory_to_mb, _mb_to_k8s_memory, compute_memory_recommendation
@@ -49,6 +49,11 @@ class MemoryCheckResult:
     recommended_limit: str
     saving_mb: float
     oom_detected: bool = False
+    # Set when an OOM floor holds the limit while the request can still drop
+    floor_blocked: bool = False
+    floor_set_at: str | None = None
+    current_request: str = ""
+    recommended_request: str = ""
 
 
 def get_project_data(project_name: str) -> tuple[dict[str, Any], str]:
@@ -191,6 +196,33 @@ class _ComponentAnalysis:
     max_observed_mb: float
     avg_observed_mb: float
     has_oom_kills: bool
+    floor_blocked: bool = False
+    floor_set_at: str | None = None
+
+
+def _floor_is_expired(floor: ResourceFloor, max_observed_mb: float, has_oom_kills: bool) -> bool:
+    """
+    Determine whether an OOM floor is stale and can be ignored.
+
+    A floor expires when the OOM entry that set it is old enough AND the
+    component has since been observed running well below the floor. Missing
+    or unparseable timestamps never expire (fail safe: keep protecting).
+    """
+    if has_oom_kills:
+        return False
+    if not floor.set_at:
+        return False
+    try:
+        set_at = datetime.fromisoformat(floor.set_at)
+    except ValueError:
+        return False
+    if set_at.tzinfo is None:
+        set_at = set_at.replace(tzinfo=UTC)
+    age_days = (datetime.now(UTC) - set_at).days
+    if age_days < settings.RESOURCE_TUNING_OOM_FLOOR_MIN_AGE_DAYS:
+        return False
+    stable_threshold_mb = floor.floor_mb * settings.RESOURCE_TUNING_OOM_FLOOR_STABLE_PERCENT / 100
+    return 0 < max_observed_mb < stable_threshold_mb
 
 
 async def _analyze_component_resources(
@@ -297,8 +329,16 @@ async def _analyze_component_resources(
         max_observed_mb = current_limit_mb
         avg_observed_mb = current_request_mb
 
-    # Check OOM floor from resource history
-    oom_floor_mb = file_handler.get_resource_history_floor(project_data, dep_name, component_ref)
+    # Check OOM floor from resource history; a stale floor (old OOM, since
+    # then observed running well below it) no longer counts
+    oom_floor = file_handler.get_resource_history_floor(project_data, dep_name, component_ref)
+    if oom_floor is not None and _floor_is_expired(oom_floor, max_observed_mb, has_oom_kills):
+        logger.info(
+            f"OOM floor {oom_floor.floor_mb:.0f}Mi for {component_ref} in {dep_name} expired "
+            f"(set {oom_floor.set_at}, observed max {max_observed_mb:.0f}Mi) — ignoring"
+        )
+        oom_floor = None
+    oom_floor_mb = oom_floor.floor_mb if oom_floor is not None else None
 
     recommendation = compute_memory_recommendation(
         max_observed_mb=max_observed_mb,
@@ -317,8 +357,10 @@ async def _analyze_component_resources(
         return None
 
     new_limit, new_request, reason = recommendation
+    floor_blocked = False
 
-    # Enforce OOM floor: don't recommend below what the OOM watcher set
+    # Enforce OOM floor on the limit only: the request may drop to usage+buffer,
+    # the limit keeps its burst headroom
     if oom_floor_mb is not None:
         new_limit_mb = _k8s_memory_to_mb(new_limit)
         if new_limit_mb < oom_floor_mb:
@@ -350,18 +392,21 @@ async def _analyze_component_resources(
                 )
             else:
                 logger.info(
-                    f"OOM floor {oom_floor_mb:.0f}Mi prevents reducing limit for {component_ref} "
-                    f"in deployment {dep_name} (recommendation was {new_limit})"
+                    f"OOM floor {oom_floor_mb:.0f}Mi holds the limit for {component_ref} "
+                    f"in deployment {dep_name} (recommendation was {new_limit}); "
+                    f"only the request may be reduced"
                 )
-                # If the current limit already matches the floor, no change needed
+                floor_blocked = True
                 if current_limit_mb <= oom_floor_mb:
-                    return None
-                new_limit = _mb_to_k8s_memory(oom_floor_mb)
-                max_request = float(get_max_memory_request_mi(cluster))
-                new_request_mb = _k8s_memory_to_mb(new_request)
-                if new_request_mb > min(oom_floor_mb, max_request):
-                    new_request = _mb_to_k8s_memory(min(oom_floor_mb, max_request))
-                reason += f" (clamped to OOM floor {new_limit})"
+                    # Limit already at/below the floor: keep it as-is
+                    new_limit = current_resources["limits_memory"]
+                else:
+                    new_limit = _mb_to_k8s_memory(oom_floor_mb)
+                # The request may drop below the floor, but never above the limit
+                limit_mb = _k8s_memory_to_mb(new_limit)
+                if _k8s_memory_to_mb(new_request) > limit_mb:
+                    new_request = _mb_to_k8s_memory(limit_mb)
+                reason += f" (limit held at OOM floor {_mb_to_k8s_memory(oom_floor_mb)})"
 
     return _ComponentAnalysis(
         current_resources=current_resources,
@@ -371,6 +416,8 @@ async def _analyze_component_resources(
         max_observed_mb=max_observed_mb,
         avg_observed_mb=avg_observed_mb,
         has_oom_kills=has_oom_kills,
+        floor_blocked=floor_blocked,
+        floor_set_at=oom_floor.set_at if floor_blocked and oom_floor is not None else None,
     )
 
 
@@ -436,6 +483,8 @@ async def check_deployment_resources(
             current_limit_mb = _k8s_memory_to_mb(analysis.current_resources["limits_memory"])
             new_limit_mb = _k8s_memory_to_mb(analysis.new_limit)
             saving_mb = current_limit_mb - new_limit_mb
+            current_request_mb = _k8s_memory_to_mb(analysis.current_resources["requests_memory"])
+            request_saving_mb = current_request_mb - _k8s_memory_to_mb(analysis.new_request)
 
             if analysis.has_oom_kills:
                 results.append(
@@ -447,6 +496,20 @@ async def check_deployment_resources(
                         oom_detected=True,
                     )
                 )
+            elif analysis.floor_blocked:
+                if saving_mb > 0 or request_saving_mb > 0:
+                    results.append(
+                        MemoryCheckResult(
+                            component=component_ref,
+                            current_limit=analysis.current_resources["limits_memory"],
+                            recommended_limit=analysis.new_limit,
+                            saving_mb=max(saving_mb, 0) + max(request_saving_mb, 0),
+                            floor_blocked=True,
+                            floor_set_at=analysis.floor_set_at,
+                            current_request=analysis.current_resources["requests_memory"],
+                            recommended_request=analysis.new_request,
+                        )
+                    )
             elif saving_mb > 0:
                 results.append(
                     MemoryCheckResult(

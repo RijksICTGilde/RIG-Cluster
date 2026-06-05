@@ -216,7 +216,9 @@ class TestHistoryYamlRoundTrip:
         reparsed = _parse_yaml(output)
 
         floor = handler.get_resource_history_floor(reparsed, "productie", "backend")
-        assert floor == 768.0
+        assert floor is not None
+        assert floor.floor_mb == 768.0
+        assert floor.set_at == "2026-03-16T12:00:00+00:00"
 
     def test_multiple_history_entries_maintain_order(self):
         """Newest entry should stay first after round-trip."""
