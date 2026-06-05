@@ -694,10 +694,19 @@ class ProjectManager:
         Returns:
             Category name string (e.g., "database", "minio", "keycloak", "web", "storage")
         """
-        # Map service types to their category names
+        # Map service types to their category names. Both the shared and
+        # namespace-dedicated variants of postgresql/redis collapse to the
+        # same category so an alias referencing e.g. $REDIS_URL routes to the
+        # same secret bucket regardless of which variant the project picked.
+        # Without this, the var_to_service lookup map ends up keyed by the
+        # namespace variant (later overwrites earlier in dict iteration), and
+        # aliases categorise as "namespace-redis" -- a bucket no project
+        # consumes, silently dropping the alias.
         category_map = {
             ServiceType.POSTGRESQL_DATABASE: "database",
             ServiceType.NAMESPACE_POSTGRESQL_DATABASE: "database",
+            ServiceType.REDIS: "redis",
+            ServiceType.NAMESPACE_REDIS: "redis",
             ServiceType.MINIO_STORAGE: "minio",
             ServiceType.KEYCLOAK: "keycloak",
             ServiceType.PUBLISH_ON_WEB: "web",
