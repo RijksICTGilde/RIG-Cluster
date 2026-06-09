@@ -22,3 +22,21 @@ patches:
       - op: add
         path: /spec/enablePDB
         value: false
+      # Production is a shared multi-tenant instance (Keycloak, Forgejo, OPI +
+      # all project/PR databases). The 512Mi/500m base default is a dev value;
+      # under load (many concurrent project/PR connections + high log volume)
+      # the CNPG instance-manager health endpoint starves and the primary gets
+      # liveness-killed, taking the whole platform DB down on every restart.
+      # Give production real headroom.
+      - op: replace
+        path: /spec/resources/limits/memory
+        value: 2Gi
+      - op: replace
+        path: /spec/resources/limits/cpu
+        value: "2"
+      - op: replace
+        path: /spec/resources/requests/memory
+        value: 512Mi
+      - op: replace
+        path: /spec/resources/requests/cpu
+        value: 250m
