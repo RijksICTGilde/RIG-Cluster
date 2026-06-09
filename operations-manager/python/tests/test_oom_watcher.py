@@ -121,6 +121,21 @@ class TestCheckPodHealth:
 
     @patch("opi.services.oom_watcher.KubectlConnector")
     @pytest.mark.asyncio
+    async def test_err_image_never_pull_detected(self, mock_kubectl_cls):
+        # imagePullPolicy: Never + image not on node (kind/sandbox). Same user-facing
+        # outcome as ImagePullBackOff and terminal, so it must be detected too.
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        mock_kubectl_cls.isConnected = True
+        mock_kubectl.run_command = AsyncMock(return_value=(_make_pods_json(image_pull="ErrImageNeverPull"), "", 0))
+
+        result = await check_pod_health("rig-prd-ns", "prod-api")
+        assert result.oom_detected is False
+        assert result.image_pull_error is not None
+        assert "ErrImageNeverPull" in result.image_pull_error
+
+    @patch("opi.services.oom_watcher.KubectlConnector")
+    @pytest.mark.asyncio
     async def test_crash_loop_detected(self, mock_kubectl_cls):
         mock_kubectl = MagicMock()
         mock_kubectl_cls.return_value = mock_kubectl
