@@ -161,7 +161,7 @@
         errorMsg.style.display = "none";
 
         try {
-            const response = await fetch(`/api/metrics-explorer/metrics/${serviceId}`);
+            const response = await fetch(`/ui/metrics-explorer/metrics/${serviceId}`);
             const data = await response.json();
 
             if (!response.ok) {
