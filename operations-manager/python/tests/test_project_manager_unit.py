@@ -33,6 +33,74 @@ class TestAsyncCorrectness:
                 )
 
 
+class TestResolveDeploymentFilter:
+    """The single/plural deployment-filter normalizer underpins scoped redeploys."""
+
+    def test_none_when_both_absent(self):
+        from opi.manager.project_manager import _resolve_deployment_filter
+
+        assert _resolve_deployment_filter(None, None) is None
+
+    def test_single_name_wraps_to_list(self):
+        from opi.manager.project_manager import _resolve_deployment_filter
+
+        assert _resolve_deployment_filter("dev", None) == ["dev"]
+
+    def test_list_takes_precedence_over_single(self):
+        from opi.manager.project_manager import _resolve_deployment_filter
+
+        assert _resolve_deployment_filter("dev", ["a", "b"]) == ["a", "b"]
+
+    def test_empty_list_preserved_not_collapsed_to_none(self):
+        """Empty list means 'zero deployments', must not become None ('all')."""
+        from opi.manager.project_manager import _resolve_deployment_filter
+
+        assert _resolve_deployment_filter("dev", []) == []
+
+
+class TestGetDeploymentsListFilter:
+    """get_deployments honors an explicit list, with empty = zero (not all)."""
+
+    @staticmethod
+    def _deps():
+        from opi.core.config import settings
+
+        return [{"name": n, "namespace": "p", "cluster": settings.CLUSTER_MANAGER} for n in ("a", "b", "c")]
+
+    @pytest.mark.asyncio
+    async def test_list_filters_to_subset(self):
+        from unittest.mock import AsyncMock, patch
+
+        pm = ProjectManager.__new__(ProjectManager)
+        with patch.object(
+            ProjectManager, "get_contents", new=AsyncMock(return_value={"name": "p", "deployments": self._deps()})
+        ):
+            result = await pm.get_deployments(deployment_names=["a", "c"])
+        assert [d["name"] for d in result] == ["a", "c"]
+
+    @pytest.mark.asyncio
+    async def test_empty_list_yields_zero(self):
+        from unittest.mock import AsyncMock, patch
+
+        pm = ProjectManager.__new__(ProjectManager)
+        with patch.object(
+            ProjectManager, "get_contents", new=AsyncMock(return_value={"name": "p", "deployments": self._deps()})
+        ):
+            result = await pm.get_deployments(deployment_names=[])
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_none_yields_all(self):
+        from unittest.mock import AsyncMock, patch
+
+        pm = ProjectManager.__new__(ProjectManager)
+        with patch.object(
+            ProjectManager, "get_contents", new=AsyncMock(return_value={"name": "p", "deployments": self._deps()})
+        ):
+            result = await pm.get_deployments()
+        assert [d["name"] for d in result] == ["a", "b", "c"]
+
+
 class TestMissingFStrings:
     """Strings with {var} placeholders must be f-strings, otherwise the variable is not interpolated."""
 

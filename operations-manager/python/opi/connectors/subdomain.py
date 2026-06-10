@@ -197,6 +197,43 @@ def is_deployment_domain_approved(
     return True
 
 
+def find_deployments_for_domain_item(project_data: dict[str, Any], item: dict[str, Any]) -> list[str]:
+    """Return names of deployments that use the domain/subdomain in an approval item.
+
+    Used to scope a redeploy on domain/subdomain approval to only the affected
+    deployment(s) instead of reprocessing the whole project.
+
+    A deployment uses an item when its ``base-domain`` equals the item's domain.
+    For ``subdomain`` items the deployment's ``subdomain`` must also match the
+    item's ``name``; ``domain`` items match every deployment on that base domain.
+
+    Args:
+        project_data: Parsed project YAML data
+        item: An approval item: ``{type, domain, name, ...}`` (see _approval_items)
+
+    Returns:
+        Deployment names referencing the item (may be empty).
+    """
+    domain = item.get("domain", "")
+    if not domain:
+        return []
+
+    sub_name = item.get("name", "") if item.get("type") == "subdomain" else None
+
+    result: list[str] = []
+    for dep in project_data.get("deployments", []):
+        if not isinstance(dep, dict):
+            continue
+        if dep.get("base-domain") != domain:
+            continue
+        if sub_name is not None and dep.get("subdomain") != sub_name:
+            continue
+        name = dep.get("name")
+        if name:
+            result.append(name)
+    return result
+
+
 def is_domain_format_dot_based(domain_format: str) -> bool:
     """Check if a domain format uses dot notation between parts.
 

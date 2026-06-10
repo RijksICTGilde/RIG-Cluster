@@ -159,6 +159,21 @@ def enforce_namespace_pin(project_data: dict[str, Any]) -> None:
             )
 
 
+def _resolve_deployment_filter(deployment_name: str | None, deployment_names: list[str] | None) -> list[str] | None:
+    """Normalize the single/plural deployment-filter arguments into one list.
+
+    Returns None when no filter is requested (process all deployments). When a
+    list is returned it is the exhaustive set of deployment names to target -
+    an empty list therefore means *zero* deployments, not "all". ``deployment_names``
+    takes precedence over the singular ``deployment_name`` convenience argument.
+    """
+    if deployment_names is not None:
+        return deployment_names
+    if deployment_name is not None:
+        return [deployment_name]
+    return None
+
+
 @dataclass
 class DeploymentResult:
     """Result information for a processed deployment."""
@@ -346,7 +361,10 @@ class ProjectManager:
         return contents["name"]
 
     async def get_deployments(
-        self, cluster_filter: bool = True, deployment_name: str | None = None
+        self,
+        cluster_filter: bool = True,
+        deployment_name: str | None = None,
+        deployment_names: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Get deployments with optional cluster and name filtering.
@@ -356,7 +374,10 @@ class ProjectManager:
 
         Args:
             cluster_filter: If True, filter by CLUSTER_MANAGER setting (default: True)
-            deployment_name: If provided, filter to specific deployment
+            deployment_name: If provided, filter to this single deployment
+            deployment_names: If provided, filter to exactly these deployments.
+                Takes precedence over ``deployment_name``. An empty list yields
+                zero deployments (not "all").
 
         Returns:
             List of deployment configurations matching the filters
@@ -378,9 +399,12 @@ class ProjectManager:
         if cluster_filter:
             deployments = [d for d in deployments if d.get("cluster") == settings.CLUSTER_MANAGER]
 
-        # Filter by deployment name if provided
-        if deployment_name:
-            deployments = [d for d in deployments if d.get("name") == deployment_name]
+        # Filter by deployment name(s) if requested. ``is not None`` (not truthiness)
+        # so an empty target list correctly resolves to zero deployments.
+        targets = _resolve_deployment_filter(deployment_name, deployment_names)
+        if targets is not None:
+            target_set = set(targets)
+            deployments = [d for d in deployments if d.get("name") in target_set]
 
         return deployments
 
@@ -1264,12 +1288,16 @@ class ProjectManager:
         project_full_file_path = await self.get_project_full_file_path()
         save_yaml_to_path(project_full_file_path, await self.get_contents())
 
-    async def check_and_create_namespaces(self, deployment_name: str | None = None) -> bool:
+    async def check_and_create_namespaces(
+        self, deployment_name: str | None = None, deployment_names: list[str] | None = None
+    ) -> bool:
         """
         Check and create namespaces for all deployments in the project for this cluster.
 
         Args:
-            deployment_name: Optional deployment name to process only specific deployment
+            deployment_name: Optional single deployment to process
+            deployment_names: Optional explicit set of deployments to process
+                (takes precedence over ``deployment_name``)
 
         Returns:
             True if all namespaces were checked/created successfully
@@ -1287,10 +1315,13 @@ class ProjectManager:
             namespace_subtask = progress_manager.add_task("Kubernetes namespace(s) aanmaken")
 
         # Get deployments for THIS cluster using helper method
-        deployments = await self.get_deployments(cluster_filter=True, deployment_name=deployment_name)
+        deployments = await self.get_deployments(
+            cluster_filter=True, deployment_name=deployment_name, deployment_names=deployment_names
+        )
 
-        if deployment_name:
-            logger.info(f"Checking namespaces only for deployment: {deployment_name}")
+        targets = _resolve_deployment_filter(deployment_name, deployment_names)
+        if targets is not None:
+            logger.info(f"Checking namespaces only for deployment(s): {targets}")
 
         if not deployments:
             logger.info(f"No deployments found in project {project_data['name']}")
@@ -2006,22 +2037,29 @@ class ProjectManager:
                 progress_manager.fail_task(infra_task, f"Unexpected error: {e}")
             raise RuntimeError(f"Cannot create infrastructure resources for project '{project_name}': {e}") from e
 
-    async def check_and_create_sops_secrets_in_namespaces(self, deployment_name: str | None = None) -> None:
+    async def check_and_create_sops_secrets_in_namespaces(
+        self, deployment_name: str | None = None, deployment_names: list[str] | None = None
+    ) -> None:
         """
         Creates SOPS secrets in the specified namespaces. If no SOPS information is in the project file,
         a new sops pair is created.
 
         Args:
-            deployment_name: Optional deployment name to process only specific deployment
+            deployment_name: Optional single deployment to process
+            deployment_names: Optional explicit set of deployments to process
+                (takes precedence over ``deployment_name``)
         """
         contents = await self.get_contents()
         project_name = contents.get("name")
 
         # Get deployments for THIS cluster using helper method
-        deployments = await self.get_deployments(cluster_filter=True, deployment_name=deployment_name)
+        deployments = await self.get_deployments(
+            cluster_filter=True, deployment_name=deployment_name, deployment_names=deployment_names
+        )
 
-        if deployment_name:
-            logger.info(f"Creating SOPS secrets only for deployment: {deployment_name}")
+        targets = _resolve_deployment_filter(deployment_name, deployment_names)
+        if targets is not None:
+            logger.info(f"Creating SOPS secrets only for deployment(s): {targets}")
 
         if not deployments:
             logger.warning(f"No deployments found in project: {project_name}")
@@ -2099,6 +2137,7 @@ class ProjectManager:
         deployment_name: str | None = None,
         force_clone: bool = False,
         argocd_resources_changed: bool = True,
+        deployment_names: list[str] | None = None,
     ) -> bool:
         """
         Process a project file from the Git repository.
@@ -2114,8 +2153,12 @@ class ProjectManager:
         Args:
             relative_project_file_path: Path to the project file within the Git repository
             task_progress_manager: Optional progress manager for tracking operation status
-            deployment_name: Optional deployment name to process only specific deployment
+            deployment_name: Optional single deployment to process
             force_clone: Force clone even if target resources exist (runtime parameter)
+            deployment_names: Optional explicit set of deployments to process (takes
+                precedence over ``deployment_name``). Use this to scope a redeploy to
+                the deployment(s) actually affected by a change (e.g. domain approval),
+                instead of reprocessing the whole project. Empty list = no deployments.
             argocd_resources_changed: Whether ArgoCD Application/AppProject manifests
                 may have changed (new/removed deployment, repo URL change).  When False,
                 skips refreshing the user-applications ArgoCD app and waiting for app
@@ -2146,6 +2189,11 @@ class ProjectManager:
         critical_failures = []
 
         self._project_file_relative_path = relative_project_file_path
+
+        # Resolve the single/plural deployment filter once; threaded into both
+        # process_project() and the ArgoCD sync loop below so a scoped redeploy
+        # only touches the affected deployment(s).
+        targets = _resolve_deployment_filter(deployment_name, deployment_names)
 
         logger.info(f"Processing project from Git: {relative_project_file_path}")
 
@@ -2268,7 +2316,7 @@ class ProjectManager:
             # Step 2: Process the project with change context
             logger.info("Step 2: Processing project with change detection")
 
-            process_success = await self.process_project(deployment_name, force_clone)
+            process_success = await self.process_project(force_clone=force_clone, deployment_names=targets)
             if not process_success:
                 critical_failures.append("Project processing failed - check logs for details")
 
@@ -2300,7 +2348,7 @@ class ProjectManager:
                 logger.info("Skipping user-applications refresh (no ArgoCD resource changes)")
 
             project_name = await self.get_name()
-            deployments = await self.get_deployments(cluster_filter=True, deployment_name=deployment_name)
+            deployments = await self.get_deployments(cluster_filter=True, deployment_names=targets)
             sync_failures: list[str] = []
 
             if deployments and project_name:
@@ -3763,13 +3811,20 @@ class ProjectManager:
         if self._database_manager:
             await self._database_manager.close()
 
-    async def process_project(self, deployment_name: str | None = None, force_clone: bool = False) -> bool:
+    async def process_project(
+        self,
+        deployment_name: str | None = None,
+        force_clone: bool = False,
+        deployment_names: list[str] | None = None,
+    ) -> bool:
         """
         Process the project file and create all required resources.
 
         Args:
-            deployment_name: Optional deployment name to process only specific deployment
+            deployment_name: Optional single deployment to process
             force_clone: Force clone even if target resources exist (runtime parameter)
+            deployment_names: Optional explicit set of deployments to process
+                (takes precedence over ``deployment_name``; empty list = none)
 
         Returns:
             True if all operations succeeded, False if any operation failed
@@ -3779,10 +3834,14 @@ class ProjectManager:
         # Store force_clone override for nested calls (e.g., PVC manager)
         self._force_clone_override = force_clone
 
+        targets = _resolve_deployment_filter(deployment_name, deployment_names)
+
         try:
             project_data = await self.get_contents()
             project_name = await self.get_name()
-            logger.info(f"Processing project: {project_name} and deployment {deployment_name or 'all'}")
+            logger.info(
+                f"Processing project: {project_name} and deployment {targets if targets is not None else 'all'}"
+            )
 
             if not await self.has_deployments_for_current_cluster():
                 logger.info(
@@ -3814,8 +3873,8 @@ class ProjectManager:
 
             # Create namespaces first (always first task)
             # TODO: move methods to a kubernetes manager?
-            await self.check_and_create_namespaces(deployment_name)
-            await self.check_and_create_sops_secrets_in_namespaces(deployment_name)
+            await self.check_and_create_namespaces(deployment_names=targets)
+            await self.check_and_create_sops_secrets_in_namespaces(deployment_names=targets)
 
             # Check if project requires infrastructure namespace (namespace-specific PostgreSQL)
             # This check is infrastructure-level, independent of any manager initialization
@@ -3849,10 +3908,12 @@ class ProjectManager:
             # Create service resources using service managers
             deployments = project_data.get("deployments", [])
 
-            # Filter deployments if specific deployment_name is provided
-            if deployment_name:
-                deployments = [d for d in deployments if d.get("name") == deployment_name]
-                logger.info(f"Processing only deployment: {deployment_name}")
+            # Filter deployments to the requested target set if provided.
+            # ``is not None`` so an empty target list yields zero deployments.
+            if targets is not None:
+                target_set = set(targets)
+                deployments = [d for d in deployments if d.get("name") in target_set]
+                logger.info(f"Processing only deployment(s): {targets}")
 
             for deployment in deployments:
                 if deployment.get("cluster") == settings.CLUSTER_MANAGER:
