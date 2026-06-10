@@ -20,6 +20,8 @@ components:
 
 patches:
   # Set ARGOCD_EXEC_TIMEOUT on repo-server to allow longer manifest generation
+  # NB: this patch REPLACES spec.repo.env wholesale — repo-server env vars
+  # must be added HERE, not in argocd-deployment.yaml (the patch wins).
   - target:
       kind: ArgoCD
       name: argocd
@@ -32,6 +34,12 @@ patches:
         - name: ARGOCD_GIT_ATTEMPTS_COUNT
           value: "3"
         - name: ARGOCD_HELM_ALLOW_CONCURRENCY
+          value: "true"
+        # Stream only the app's manifest-generate-paths dir to the CMP
+        # instead of tarring the entire zad-deployments monorepo per render
+        # (measured 2026-06-11: ~27s of a 28.5s GenerateManifest was repo
+        # streaming; the kustomize+sops render itself is ~1s).
+        - name: ARGOCD_REPO_SERVER_PLUGIN_USE_MANIFEST_GENERATE_PATHS
           value: "true"
   - target:
       kind: ArgoCD
