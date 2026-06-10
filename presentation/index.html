@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RIG-Cluster · ZAD — Engineering Talk</title>
+
+    <link rel="stylesheet" href="reveal/dist/reset.css" />
+    <link rel="stylesheet" href="reveal/dist/reveal.css" />
+    <link rel="stylesheet" href="reveal/dist/theme/white.css" id="theme" />
+    <link rel="stylesheet" href="theme/rig.css" />
+  </head>
+  <body>
+    <div class="reveal">
+      <div class="slides">
+        <!-- Slides are authored as Markdown below. `---` = new slide, `--` = vertical
+             (appendix/deep-dive) stack, `Note:` = speaker notes (press `s`). -->
+        <section
+          data-markdown
+          data-separator="^\r?\n---\r?\n$"
+          data-separator-vertical="^\r?\n--\r?\n$"
+          data-separator-notes="^Note:"
+        >
+          <script type="text/template">
+
+<div class="title">
+
+# RIG-Cluster · ZAD
+
+<p class="subtitle">Zelfservice Applicatie Deployment —<br/>a tiny, green, portable self-service deployment platform</p>
+
+<p class="meta">Robbert Uittenbroek · RIG · 2026-06-09</p>
+
+</div>
+
+Note:
+This is the engineer-to-engineer version. The story I want to tell: what we built, *why*
+it looks the way it does, how it grew, what it can do, and where it's heading.
+The punchline up front — almost every design choice traces back to two constraints. Keep
+coming back to that.
+
+---
+
+## Two constraints shaped everything
+
+<div class="cols">
+<div>
+
+### 1 · A tiny cluster
+A few **GB of RAM**, a handful of **CPUs**.
+Footprint was never a "nice to have" — it was the budget.
+
+</div>
+<div>
+
+### 2 · A tenant cluster
+We have **no cluster-admin**. We **cannot install operators / CRDs**.
+That one fact rules out a whole category of tooling.
+
+</div>
+</div>
+
+<p class="lead">These constraints don't just limit us — they make us deliberate.</p>
+
+<p class="muted"><strong>Less is more:</strong> not a wide universe of space to sprawl into —
+do as much as possible in a <em>tiny</em> space, without sacrificing anything. And one
+question runs through every choice: take a <strong>stock</strong> app and bend it to fit, or
+<strong>build our own</strong>? Rarely an obvious call.</p>
+
+Note:
+Set the spine here — many decisions stem from these two constraints, but they also force us
+to be considerate. The framing: don't sprawl across a wide universe of space; do a lot in a
+small footprint without giving anything up. And plant the recurring question early, because
+the next few slides are answers to it — for any stock tool, how much customization does it
+take to fit our needs, versus just writing our own? That trade-off is genuinely hard, every
+time. We didn't pick the hard path for fun; the environment and that question pushed us.
+
+---
+
+## Philosophy: less is more <span class="tag green-tag">🌱 green</span>
+
+<div class="green">
+
+**Reuse over isolation.** Where two projects can safely share, they share.
+
+</div>
+
+Think back to classic **shared web hosting**: one database server served many customers.
+
+- **DB-per-project** is tempting — trivial to create, trivial to clean up.
+- But it's *expensive*: every project drags a full database's idle footprint.
+- On a few-GB cluster that math breaks fast.
+
+So we lean the other way: **shared, pooled, reused** — and treat resource footprint as a
+first-class feature, not an afterthought.
+
+<p class="lead">And it runs deeper than infra: a simpler UI (do less to reach your goal) and a leaner backend.</p>
+
+<p class="muted">We rarely need as much as we think. Give people <strong>what they need, not what
+they think they need</strong> — and low cost scales.</p>
+
+Note:
+This is the green thread — it'll come back on the secrets slide and again on auto-tuning.
+Stress that "less is more" isn't only an infra trick: it shapes the UI (the user does less to
+reach a goal) and the backend nobody sees (we keep questioning what we *actually* use vs what
+we assumed we'd need). The payoff line: provide what's needed, not what's imagined — that's
+what lets very low-cost apps run at very large scale.
+The shared-hosting analogy lands well with anyone who ran LAMP stacks. The honest tension:
+isolation is easier to reason about; we trade some of that convenience for a footprint we
+can actually afford. We'll show later how we claw the convenience back.
+
+---
+
+## The problem we're solving
+
+Every app on Kubernetes needs the same scaffolding:
+
+- a **database**, **object storage**, **authentication / SSO**
+- **ingress**, **TLS certificates**, **network policies**, **secrets**
+
+Doing that by hand is **complex** and **platform-specific** — and easy to get subtly wrong.
+
+<div class="lead">We wanted: declare intent once, in one file, and get a running, secured app.</div>
+
+Note:
+Frame the pain before the product. The audience has all hand-wired an ingress + cert +
+secret + db before. The promise is: you describe *what* you need, not *how* to wire it.
+
+---
+
+## What we built — ZAD
+
+**Z**elfservice **A**pplicatie **D**eployment: one portal, one project file.
+
+```yaml
+# the developer writes intent, not Kubernetes
+project: my-app
+deployments:
+  - component: web
+    image: registry/my-app:1.4.0
+    cluster: odcn-production
+services:
+  - postgres        # provisioned, wired, secret-injected
+  - keycloak        # SSO realm + client created for you
+```
+
+Declare it → the platform provisions DB / storage / auth, **generates the manifests**, and
+**deploys via GitOps**. One place to deploy *and* watch health.
+
+Note:
+This is the "what" in 30 seconds. Don't read the YAML aloud — point at it. The key idea:
+the user never writes a Deployment, Ingress, or Secret. They write intent. Everything below
+is *how* we honour that promise.
+
+---
+
+## You get a project — not a cluster
+
+ZAD gives your app a **home on an existing cluster** (here: the **ODC tenant cluster**) and
+wires everything around it. It runs on **any vanilla Kubernetes** — all it needs is rights to
+**create namespaces and resources**. No operators, no special CRDs.
+
+<p class="lead">One UI, many clusters: a single interface that delegates to per-cluster instances.</p>
+
+Inside a project, it's **ClickOps**:
+
+- Tick a service — **PostgreSQL · MinIO · Redis · SSO**.
+- ZAD grants access to a **shared instance**, provisions it, injects the **credentials**.
+- A service is something you **use**, never something you **operate**.
+
+Note:
+Three points to plant early. (1) You don't request a cluster, you get a *project* — a base on
+an existing, shared tenant cluster (ODC). (2) ZAD itself is designed for *vanilla* Kubernetes:
+give it rights to create namespaces and resources and it runs anywhere — no operators (that's
+constraint #2 again) and no special CRDs. That portability is deliberate. (3) The model is one
+UI in front of many clusters: a single interface that delegates actions to per-cluster
+instances — we go deeper on that federation later. And from the user's seat it's ClickOps:
+tick "I want a database", we create the access, provision against a shared instance where we
+can, and inject the credentials into your deployment. You never operate a Postgres, MinIO or
+Redis — you use them. The wizard produces the declarative project file behind the scenes;
+clicking and declarative aren't opposites here.
+
+---
+
+## Decision: our own app, not Crossplane
+
+<p class="lead">Constraint → tenant cluster forbids operators. Crossplane <em>is</em> an operator.</p>
+
+But it wasn't only that — we also wanted:
+
+- **Ordered orchestration** — do A, *then* B, *then* C. A clear, debuggable sequence...
+- ...rather than Kubernetes' **eventual-consistency** reconciliation, where many controllers
+  converge independently and "it'll be fine eventually."
+- **Portability** — keep the door open to non-Kubernetes targets.
+
+So we built our own orchestrating application instead.
+
+<p class="future">revisit Crossplane if/when we gain operator rights.</p>
+
+Note:
+Two-part answer. The hard blocker is operators. But even with admin rights, eventual
+consistency is hard to *explain to a user waiting on a deploy* — "is it broken or just not
+done yet?" An ordered orchestrator gives us a definitive "step 4 of 7 failed, here's why."
+That's a UX decision as much as a technical one.
+
+---
+
+## ...and stay portable
+
+We deliberately did **not** marry the pure-Kubernetes landscape.
+
+- Today: Kubernetes.
+- Tomorrow, maybe: **HashiCorp Nomad**, **Docker Swarm**, something else.
+
+By keeping the orchestration logic in **our** application — not in K8s controllers/CRDs —
+the deployment target becomes a **pluggable backend**, not a foundational assumption.
+
+<p class="muted">This is also <em>why</em> we don't lean on operators even where we could: they'd tie us to one runtime.</p>
+
+Note:
+This is a strategic hedge, not something we've built out yet — be honest about that. The
+point is the architecture doesn't *forbid* it. The connector/manager split (a few slides on)
+is what makes a second backend conceivable rather than a rewrite.
+
+---
+
+## Decision: our own portal, not Backstage
+
+Backstage is a **service catalog** — its model is "browse the catalogue of things."
+
+We're not a catalogue. We're a **single entry point**:
+
+- **One pane of glass** — deploy, *and* see your app's health, *and* read its graphs —
+  without bouncing between tools.
+- **Government look & feel** — built on the **ROOS** design system.
+- Project-and-deployment shaped API, not a generic plugin framework.
+
+<div class="lead">In effect we wrote our own Backstage + Crossplane — fused into one portal.</div>
+
+<p class="future">revisit Backstage if the catalogue model ever fits better than a single front door.</p>
+
+Note:
+The distinction that matters: Backstage organises *around services you discover*; we
+organise *around a project you own and operate*. The single-pane-of-glass goal is the real
+driver — we explicitly did not want users tabbing into Grafana, then Argo, then a wiki.
+"Our own Backstage+Crossplane" is the line that usually makes engineers nod.
+
+---
+
+## Decision: our own templates, not Helm
+
+We generate manifests from **Jinja2 templates**, not Helm charts.
+
+- The **logic is easier in Python** than in Go — and we didn't yet know exactly what we'd
+  need. Helm would have been **another gear** in the machine.
+- The resource set is **small**: Deployment · Service · Ingress · (NetworkPolicy) · ConfigMap.
+  Not sophisticated enough to *earn* Helm's weight (releases, hooks, chart versioning).
+- Even ConfigMaps are **SOPS-encrypted** — the same one mechanism, everywhere.
+
+```
+manifests/*.yaml.jinja  →  ManifestGenerator (Python)  →  rendered K8s YAML
+```
+
+<p class="future">a richer packaging story if our catalogue of resource types grows.</p>
+
+Note:
+The classic YAGNI call, with a twist: the decision logic lives in Python, where it's far
+nicer to write and test than Go templates. Helm is great when you *distribute* charts to
+strangers; we render our own manifests for our own platform, and the landscape is genuinely
+small — five resource types cover almost everything. Adding Helm would be a gear that earns
+nothing yet. `generation/manifests.py` + the `manifests/` templates if asked.
+
+---
+
+## Config as code — playbooks, not hardcode
+
+We lean on **config-as-code / infra-as-code** thinking (the Terraform philosophy): describe
+the *desired state* declaratively, let the system converge to it.
+
+**Example — Keycloak.** A realm is a **YAML template**, applied **idempotently** — run it
+again, get the same result. Not a hand-clicked, hardcoded setup.
+
+- Configuration becomes a **playbook** you can read, diff, and replay.
+- It lives in **Git** like everything else.
+
+<p class="future">extend the playbook approach to the corners still configured imperatively.</p>
+
+Note:
+The principle: prefer declarative playbooks over hardcoded procedures. Keycloak is the
+cleanest example — realms, clients, identity providers and roles all defined in YAML and
+applied idempotently (`opi/configs/keycloak/`), so re-running never double-creates. Be precise
+if asked: we don't run Terraform *itself*, we borrowed its philosophy. And be honest — not
+everything is playbook-based yet; some setup is still imperative in code, and converting those
+corners is a real future candidate.
+
+---
+
+## Architecture at a glance
+
+```
+   Project File (YAML)
+         │
+   Operations Manager (OPI) — FastAPI, one per cluster
+         │
+         ├─ Connectors: Git · Keycloak · PostgreSQL · MinIO · ArgoCD · kubectl
+         │
+         └─ Generates: Manifests · Secrets · ConfigMaps · RBAC · NetworkPolicies
+         │
+         ▼
+   Three Git repositories (managed by OPI)
+         │
+         ▼
+   ArgoCD (GitOps)  ──▶  Kubernetes cluster
+```
+
+Everything below this line is just **how the box marked "OPI" keeps its promise.**
+
+Note:
+This is the map for the next five slides. Trace the arrow with your finger. The user touches
+only the top (the YAML / the portal). Git and Argo are the well-trodden machinery underneath —
+we didn't reinvent those, we wrapped them. We *are* Git-based and Argo-based; we just put a
+friendly, ordered orchestrator in front.
+
+---
+
+## Deep dive — the three-repo model
+
+| Repo | Role | Who writes it |
+|---|---|---|
+| `zad-projects` | project definitions (**input**) | user / portal |
+| `zad-argo-user-applications` | ArgoCD `Application` manifests | **generated** |
+| `zad-deployments` | K8s manifests + SOPS secrets | **generated** |
+
+Why split three ways?
+
+- **Separation of concerns** — intent, app-of-apps wiring, and rendered output never mix.
+- **Granular ArgoCD RBAC** — users touch projects; the system owns the rest.
+- **Multi-cluster** — each cluster's OPI renders into its own deployment stream.
+
+Note:
+The split is what lets us give users write-access to *intent* without giving them write
+access to *cluster state*. The generated repos are effectively read-only to humans. This is
+also our audit trail — every change to live state is a git commit with an author and a diff.
+
+---
+
+## Deep dive — inside OPI
+
+The orchestration-over-reconciliation decision, made concrete:
+
+- **Connector pattern** (`opi/connectors/`) — every external system (Git, kubectl,
+  Keycloak, Postgres, MinIO, Argo, Kopia, Prometheus) sits behind one adapter. No stray
+  subprocess calls; one place for auth, retries, errors.
+- **`project_manager.py`** — the central orchestrator. It calls the per-service managers
+  **in a defined sequence**: provision DB → buckets → SSO → render manifests → commit →
+  create Argo apps.
+
+<p class="muted">A failure stops the sequence at a known step — not "eventually, somewhere."</p>
+
+Note:
+The connector pattern is the seam that makes the "portability" slide credible — swap the
+kubectl connector for a Nomad connector and the orchestrator above it barely changes. And
+`project_manager` is where "step 4 of 7 failed" comes from. This is the antidote to the
+debuggability problem with eventual consistency.
+
+---
+
+## Deep dive — components / deployments / services
+
+Three layers, deliberately decoupled:
+
+<div class="cols">
+<div>
+
+**Components** = *slots*
+ports, paths, resources.
+The **shape**. No image.
+
+</div>
+<div>
+
+**Deployments** = *bindings*
+which image, which cluster.
+The **fill**.
+
+</div>
+<div>
+
+**Services** = *platform features*
+Postgres, MinIO, Keycloak…
+provisioned on demand.
+
+</div>
+</div>
+
+One component (shape) → many deployments (prod, staging, **PR-preview**) — each a different
+image, same slot.
+
+Note:
+This separation is what makes per-PR preview environments cheap to express: the shape is
+defined once, you just bind another image to it. It also keeps the project file readable —
+"what is it" vs "what's running" are different questions with different answers.
+
+---
+
+## Deep dive — secrets: SOPS + AGE <span class="tag green-tag">🌱 reuse</span>
+
+Goal: **keep everything in Git — but encrypted.** So we chose **SOPS + AGE**.
+
+- A **secret per project** — its own derived key encrypts everything that project owns.
+- We even encrypt sensitive values **inside the project file itself**, so the *input* repo
+  is safe to keep in Git too.
+- ArgoCD has **no native SOPS support** — so we **wrote our own**: a custom CMP sidecar +
+  Argo connector (`rig-cmp-argo-kustomize-sops`) that decrypts at sync time.
+
+<div class="green">
+
+**No external secret store — today.** Secrets ride the Git + Argo machinery we already have:
+one fewer always-on system to run and feed.
+
+</div>
+
+<p class="future">a managed secret store (Vault) if our needs outgrow file-based SOPS.</p>
+
+Note:
+The thread to pull: "everything in Git, but encrypted." That forced the SOPS choice, which in
+turn forced us to write our own Argo integration — out-of-the-box Argo just doesn't decrypt
+SOPS. Stress that we encrypt the *project file's* secrets too, not only the generated
+manifests, so even the human-facing input repo leaks nothing. Footprint angle today: skipping
+a separate secret manager means one fewer HA service eating the RAM we don't have. Be honest
+though — we're actively weighing **Vault** (we already have a foothold in the infra), for
+dynamic secrets, rotation and finer access control; the trade is footprint and operational
+weight vs. those features. Per-project keys are the isolation story — no project can read
+another's secrets.
+
+---
+
+## Deep dive — distributed model + async tasks
+
+- **One OPI per cluster.** No shared database between clusters — each instance is autonomous
+  and only manages *its* cluster's resources.
+- **Federation = a thin HTTP proxy.** A master OPI forwards task creation to slave OPIs and
+  proxies status. No "proxy tasks", no cross-cluster DB.
+- **DB-backed async task queue** — long operations (5–30 min) don't block an HTTP request.
+  No 504s; tasks survive a pod restart.
+
+Note:
+Why async tasks: provisioning a DB + SSO + waiting for Argo to sync can take many minutes.
+A synchronous request would time out at the ingress. Persisting tasks in Postgres also means
+a redeploy of OPI mid-operation doesn't lose the work. Federation staying "dumb" (just HTTP)
+is deliberate — it keeps each cluster independent, matching the no-shared-state model.
+
+---
+
+## How it grew
+
+```
+tiny cluster
+   └─ foundation .......... Postgres · Keycloak · MinIO · Redis · TLS · Prometheus
+        └─ hardening ...... security audit: CSRF, injection, tenant isolation, NetworkPolicies
+             └─ resilience . backup system (Kopia dedup), async tasks + federation
+                  └─ correctness ... ADR-0002: wait for ArgoCD sync before reporting success
+```
+
+It wasn't designed top-down — it **accreted**, constraint by constraint, audit by audit.
+
+Note:
+Be honest that this is evolution, not a master plan. The security audit in particular was a
+turning point — it found classes of bug (YAML/template injection, cross-tenant access) that
+unit tests missed, and reshaped how we validate project files. ADR-0002 is a good "we learned
+the hard way" anecdote: fire-and-forget deploys reported success before pods were actually up.
+
+---
+
+## What it can do today
+
+<div class="cols">
+<div>
+
+- Self-service **wizard** (HTMX, ROOS)
+- Automatic **DNS** (external-dns) + **Let's Encrypt** TLS
+- **Keycloak SSO** per project
+- **Service catalog** — documented connection env vars per service
+
+</div>
+<div>
+
+- **Authorization wall** for headerless apps
+- Container **image upload**
+- Single-pane **health + graphs**
+- **Backups & cloning** · **auto resource tuning** <span class="leaf">🌱</span>
+
+</div>
+</div>
+
+Note:
+Breadth slide — don't dwell. Two to highlight: the **service catalog** (every service we
+offer documents exactly which env vars it injects, so wiring an app is copy-the-contract, not
+guesswork) and **auto resource tuning** (next, the cleanest embodiment of the philosophy).
+Automatic hosts: external-dns requests the DNS record, Let's Encrypt mints the cert — the
+user just names a subdomain. Authorization wall = an auth proxy putting SSO in front of apps
+that have none.
+
+---
+
+## A feature, end to end — auto resource tuning <span class="tag green-tag">🌱</span>
+
+```
+Prometheus (peak + avg usage)
+   → recommendation  (add buffer, handle past OOM-kills)
+      → commit new requests/limits to the project YAML
+         → ArgoCD redeploys with the tighter footprint
+```
+
+The platform **measures real usage and shrinks itself** — through the *same* Git → Argo path
+every other change takes. Fully auditable, fully reversible.
+
+<div class="green">
+
+This closes the green loop: less is more, **automatically**, with a diff you can revert.
+
+</div>
+
+Note:
+This is the slide that ties the whole talk together. Footprint was constraint #1; here the
+platform actively reclaims over-requested resources. Crucially it doesn't reach into the
+cluster directly — it commits to Git, so a bad recommendation is just a revertible commit.
+That's the orchestration philosophy and the green philosophy in one feature.
+
+---
+
+## The auto-grow model <span class="tag">vision</span> <span class="tag green-tag">🌱</span>
+
+Most projects **don't know their needs** up front — so stop making them guess.
+
+1. **Start minimal** — shared resources, just enough memory to run.
+2. **Watch real usage** — our *own* monitoring (not K8s HPA/VPA). Hit OOM? Memory is bumped,
+   and the new value is **written back to the project file** — the next deployment inherits it.
+3. **Outgrow the shared tier?** Noisy neighbour, either direction → **migrate to dedicated**:
+   your own database, move the data, rewire — *same env vars*.
+
+<div class="green">
+
+Like buying clothes — **a bigger size only when you actually need one.** One click to grow,
+never stuck in the shape you started with.
+
+</div>
+
+Note:
+Be honest up front: this is mostly *vision*, not shipped — auto resource tuning (previous
+slide) is the first concrete piece of it. The thesis: nobody knows their requirements at the
+start, so we stop asking them to. Start tiny on shared infra; monitor with our *own* system,
+deliberately not Kubernetes autoscaling — because we want the decision recorded in the project
+file, carried to the next deployment, and balanced between heavy production and light feature
+deployments. When you genuinely outgrow shared infra — or become / suffer a noisy neighbour —
+we migrate you to dedicated resources (e.g. your own DB) and move the data, and the app never
+notices because its env vars don't change. Key: it's human-initiated or advised, not silently
+automatic — a button, not a surprise. The clothes analogy lands it: grow when you need to,
+only when you need to.
+
+---
+
+## Tiny by default — tuned base images <span class="tag green-tag">🌱</span>
+
+A static website doesn't need a gigabyte.
+
+We built a base image that serves **many thousands of connections on ~25 MB of RAM** —
+through a heavily tuned setup.
+
+- When you **pay per GB**, a 25 MB static site is *almost free*.
+- The tuning is a **one-time cost**; every project on the image inherits it.
+
+<p class="muted">A trade-off we're still weighing: a curated base image is also a
+<em>responsibility</em> we take on (updates, support).</p>
+
+Note:
+Concrete proof the philosophy is real, not a slogan. Static sites are the easy win — a tuned
+image serves a lot of traffic on ~25 MB. At per-GB memory pricing that's the difference
+between "free" and "noticeable." Honest caveat: maintaining curated base images is a
+responsibility — security updates, support burden — so whether we keep expanding the catalogue
+is under review. But it shows just how low the floor goes when footprint is a first-class goal,
+and it pairs with the auto-grow model: a very low floor you only rise above when you must.
+
+---
+
+## Backups & cloning — pragmatic, not pretty
+
+**Offsite backups** — PVCs, databases, buckets → external S3 via **Kopia** (incremental,
+deduplicated, per-project encrypted).
+
+**Database cloning** — plain **`pg_dump` / restore**, *not* Barman or Velero.
+
+- Not textbook "best practice" — but we **control it**, and the **restore actually works**.
+  (Barman's restore was painful; Velero we never needed.)
+- A clone gets its **own schema + user**; the app keeps the **same env vars**.
+
+**Across clusters** — over **Chisel** HTTP tunnels (`remote-sources` + `clone-from`).
+
+<div class="lead">→ a feature deployment, seeded from real production data, in minutes.</div>
+
+Note:
+This was a heavy focus, so give it room. The honest framing: we chose the boring, debuggable
+path — dumps and imports — over the "correct" tools, because when you need a restore under
+pressure, predictability beats elegance. Barman could back up fine but restoring was fiddly;
+Velero we simply haven't needed. Chisel is the cross-cluster HTTP tunnel I couldn't remember
+the name of — it's how we reach a database in another cluster. clone-from `mode: once` means
+"only seed if it doesn't exist yet." The payoff is data-realistic preview environments with
+zero hand-copying — and it's the same provisioning path, so the app's env vars never change.
+
+---
+
+## Where it's heading
+
+- **Revisit Crossplane** — if/when we gain operator rights.
+- **Revisit Backstage** — if the catalogue model earns its place.
+- **More targets** — Nomad / Docker Swarm as pluggable backends.
+- **VPA-style recommender**, **CI/CD for OPI itself**, **Playwright UI tests**,
+  **gitleaks + branch protection**.
+
+<p class="muted">Each is a door we deliberately left open — not a promise of a date.</p>
+
+Note:
+Frame these as options the architecture preserves, not a roadmap with deadlines. The honest
+message: we made choices for *now* (own app, own templates, own portal) precisely so these
+remain cheap to reconsider later. The security/CI items came straight out of the audit.
+
+---
+
+## Recap
+
+It's a **tiny, green, portable, single-portal, government-native** deployment platform —
+
+and every one of those adjectives is **downstream of two constraints**:
+
+<div class="cols">
+<div>
+
+🌱 **a few GB of RAM**
+→ less is more, reuse, auto-tuning
+
+</div>
+<div>
+
+🔒 **no operator rights**
+→ our own ordered orchestrator
+
+</div>
+</div>
+
+<div class="lead">The payoff: a new app — DB, storage, SSO, DNS, TLS, secrets — running in <strong>minutes</strong>, at <strong>low cost</strong>, at scale.</div>
+
+## Questions?
+
+Note:
+Land the plane on the spine. If there's one thing they remember: the constraints weren't
+obstacles we worked around — they're the design. Open for questions; likely ones: why not
+Helm, why not Backstage, how does multi-cluster auth work, what happens when Argo sync fails.
+          </script>
+        </section>
+      </div>
+    </div>
+
+    <script src="reveal/dist/reveal.js"></script>
+    <script src="reveal/plugin/markdown/markdown.js"></script>
+    <script src="reveal/plugin/notes/notes.js"></script>
+    <script>
+      Reveal.initialize({
+        hash: true,
+        slideNumber: "c/t",
+        controls: true,
+        progress: true,
+        history: true,
+        transition: "slide",
+        plugins: [RevealMarkdown, RevealNotes],
+      });
+    </script>
+  </body>
+</html>
