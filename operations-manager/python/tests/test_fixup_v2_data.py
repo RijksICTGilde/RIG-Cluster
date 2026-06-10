@@ -302,3 +302,82 @@ class TestRegelK4cPattern:
         assert comp["resources"]["limits"]["cpu"] == "1"
         assert comp["resources"]["limits"]["memory"] == "256Mi"
         assert comp["resources"]["requests"]["memory"] == "256Mi"
+
+
+# ---------------------------------------------------------------------------
+# _fixup_catalog_root: stale root flag on the top-level component catalog
+# ---------------------------------------------------------------------------
+
+
+class TestFixupCatalogRoot:
+    def test_strips_catalog_root_and_lifts_to_deployment(self):
+        """A catalog component marked root: true lifts to root-component on the
+        referencing deployment, and the stale catalog key is removed."""
+        data = {
+            "schema-version": 2.2,
+            "components": [{"name": "component-1", "root": True}],
+            "deployments": [
+                {"name": "main", "components": [{"reference": "component-1"}]},
+            ],
+        }
+        assert _fixup_v2_data(data) is True
+        assert "root" not in data["components"][0]
+        assert data["deployments"][0]["root-component"] == "component-1"
+
+    def test_strips_catalog_root_when_deployment_already_has_root_component(self):
+        """If the deployment already has root-component, it takes precedence and
+        the stale catalog flag is simply removed."""
+        data = {
+            "schema-version": 2.2,
+            "components": [{"name": "component-1", "root": True}],
+            "deployments": [
+                {
+                    "name": "main",
+                    "components": [{"reference": "component-1"}],
+                    "root-component": "component-1",
+                },
+            ],
+        }
+        assert _fixup_v2_data(data) is True
+        assert "root" not in data["components"][0]
+        assert data["deployments"][0]["root-component"] == "component-1"
+
+    def test_drops_root_false_without_lifting(self):
+        data = {
+            "schema-version": 2.2,
+            "components": [{"name": "component-1", "root": False}],
+            "deployments": [
+                {"name": "main", "components": [{"reference": "component-1"}]},
+            ],
+        }
+        assert _fixup_v2_data(data) is True
+        assert "root" not in data["components"][0]
+        assert "root-component" not in data["deployments"][0]
+
+    def test_runs_on_already_latest_version_via_migrate_to_latest(self):
+        """The bouwm-6gn case: a file already stamped 2.2 with a catalog root key
+        is still repaired (the version-gated _migrate_v2_to_v2_1 would skip it)."""
+        data = {
+            "schema-version": 2.2,
+            "components": [{"name": "component-1", "root": True}],
+            "deployments": [
+                {
+                    "name": "main",
+                    "components": [{"reference": "component-1"}],
+                    "root-component": "component-1",
+                },
+            ],
+        }
+        result, migrated = migrate_to_latest(data)
+        assert migrated is True
+        assert "root" not in result["components"][0]
+
+    def test_no_change_when_catalog_has_no_root(self):
+        data = {
+            "schema-version": 2.2,
+            "components": [{"name": "component-1"}],
+            "deployments": [
+                {"name": "main", "components": [{"reference": "component-1"}]},
+            ],
+        }
+        assert _fixup_v2_data(data) is False
