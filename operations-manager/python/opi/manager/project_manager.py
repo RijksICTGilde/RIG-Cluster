@@ -118,7 +118,6 @@ from opi.utils.secrets import (
 )
 from opi.utils.sops import encrypt_to_sops_files_or_fail
 from opi.utils.yaml_util import (
-    dump_yaml_to_string,
     find_value_by_jsonpath,
     save_yaml_to_path,
 )
@@ -215,11 +214,6 @@ class ProjectManager:
         # Structure: {deployment_name: {secret_type: secret_instance}}
         # Example: {"dev": {"database": DatabaseSecret(...), "keycloak": KeycloakSecret(...)}}
         self._secrets_to_create: dict[str, dict[str, BaseSecret]] = {}
-
-        # Private map for storing environment variables that need to be tracked
-        # Structure: {deployment_name: {env_key: env_vars}}
-        # Example: {"dev": {"env_vars_web_storage": {"DATA_PATH": "/data"}, "env_vars_api_user": {"API_KEY": "value"}}}
-        self._env_vars: dict[str, dict[str, dict[str, Any]]] = {}
 
         # Private map for storing aliases collected from all components in a deployment
         # Structure: {deployment_name: {source_type: {service_category: {alias_name: alias_template}}}}
@@ -669,43 +663,6 @@ class ProjectManager:
 
         return expected_secrets
 
-    def _register_env_var(
-        self, deployment_name: str, component_name: str, service_type: str, env_vars: dict[str, Any]
-    ) -> None:
-        """
-        Add environment variables to the private env vars map for later configuration tracking.
-
-        Args:
-            deployment_name: Name of the deployment
-            component_name: Name of the component
-            service_type: Type of service generating the env vars (e.g., "storage", "publish_on_web", "user")
-            env_vars: Environment variables to store
-        """
-        if deployment_name not in self._env_vars:
-            self._env_vars[deployment_name] = {}
-
-        # Store env vars in dedicated env vars tracking map
-        env_key = f"env_vars_{component_name}_{service_type}"
-        self._env_vars[deployment_name][env_key] = env_vars
-        logger.debug(
-            f"Added {len(env_vars)} {service_type} env vars for {component_name} in deployment {deployment_name}"
-        )
-
-    def _get_env_vars_for_deployment(self, deployment_name: str) -> dict[str, Any]:
-        """
-        Get all environment variables for a deployment.
-
-        Args:
-            deployment_name: Name of the deployment
-
-        Returns:
-            Combined dictionary of environment variables excluding user env vars
-        """
-        all_env_vars = self._env_vars.get(deployment_name, {})
-        # Filter out user environment variables
-        filtered_env_vars = {key: value for key, value in all_env_vars.items() if not key.endswith("_user")}
-        return filtered_env_vars
-
     def _get_service_category_name(self, service_type: ServiceType) -> str:
         """
         Get a consistent category name for a service type.
@@ -1125,100 +1082,6 @@ class ProjectManager:
                 logger.debug(f"Generated web env var: {var_def.name}={hostname}")
 
         return env_vars
-
-    def _normalize_secret_keys(self, secret_pairs: dict[str, str]) -> dict[str, str]:
-        """
-        Normalize secret keys to use main keys from VariableDefinition instead of aliases.
-        """
-
-        normalized = {}
-
-        # Build reverse mapping from all possible keys (main + aliases) to main key
-        key_mapping = {}
-        for service_type in ServiceAdapter.get_all_services():
-            for var_def in ServiceAdapter.get_service_definition(service_type).variables:
-                main_key = var_def.name
-                # Map main key to itself
-                key_mapping[main_key] = main_key
-                # Map all aliases to main key
-                for alias in var_def.aliases:
-                    key_mapping[alias] = main_key
-
-        # Normalize the secret pairs
-        for key, value in secret_pairs.items():
-            main_key = key_mapping.get(key, key)  # Use original key if no mapping found
-            normalized[main_key] = value
-
-        return normalized
-
-    async def _save_encrypted_configs_to_project_file(self) -> None:
-        """
-        Save encrypted deployment configurations to deployment blocks in the project file.
-        Includes all secrets and environment variables for each deployment.
-        """
-        try:
-            # Read current project data
-            project_data = await self.get_contents()
-            deployments = project_data.get("deployments", [])
-
-            # Get project public key using existing utility function
-            public_key = get_project_public_key(project_data)
-
-            if not public_key:
-                logger.warning("No project public key found - cannot encrypt deployment configs")
-                return
-
-            # Track if we made any changes to save
-            changes_made = False
-
-            # Update each deployment with all available secrets and env vars
-            for deployment in deployments:
-                deployment_name = deployment.get("name")
-
-                # Build config dict for this deployment
-                config = {"variables": {}}
-
-                # Include secrets from _secrets_to_create if available
-                if deployment_name in self._secrets_to_create:
-                    for secret_data in self._secrets_to_create[deployment_name].values():
-                        # Skip registry secrets - they are imagePullSecrets, not service config
-                        if isinstance(secret_data, RegistrySecret):
-                            continue
-                        if hasattr(secret_data, "to_config_data"):
-                            # Handle typed secret objects using config method (main keys only, no aliases)
-                            config_vars = secret_data.to_config_data()
-                            config["variables"].update(config_vars)
-                        elif isinstance(secret_data, dict):
-                            # Handle plain dictionary secrets (same pattern as config hash generation)
-                            normalized_vars = self._normalize_secret_keys(secret_data)
-                            config["variables"].update(normalized_vars)
-
-                # Include environment variables from tracking map (excluding user env vars)
-                deployment_env_vars = self._get_env_vars_for_deployment(deployment_name)
-                if deployment_env_vars:
-                    normalized_env_vars = self._normalize_secret_keys(deployment_env_vars)
-                    config["variables"].update(normalized_env_vars)
-
-                if config["variables"]:
-                    # Convert to YAML string using yaml_util
-
-                    yaml_content = dump_yaml_to_string(config)
-
-                    # Encrypt the config YAML
-                    encrypted_content = await encrypt_age_content(yaml_content, public_key)
-                    deployment["configuration"] = LiteralScalarString(encrypted_content)
-                    changes_made = True
-                    logger.debug(f"Added encrypted configuration to deployment: {deployment_name}")
-
-            # Save back to project file using existing method
-            if changes_made:
-                await self.save_project_data()
-                logger.info("Saved encrypted deployment configurations to project file")
-            else:
-                logger.debug("No configuration variables to save")
-
-        except Exception as e:
-            logger.error(f"Failed to save encrypted configs: {e}")
 
     async def get_git_connector_for_argocd(self) -> GitConnector:
         if self.__git_connector_for_argocd is None:
@@ -2386,21 +2249,26 @@ class ProjectManager:
 
                 # Wait for all applications to be created (ArgoCD needs to sync user-applications first).
                 # Skip when user-applications refresh was skipped — apps already exist.
+                # All waits run concurrently: they are read-only polls.
                 if argocd_resources_changed:
-                    for app_name in app_names:
+
+                    async def _wait_created(app_name: str) -> str | None:
                         try:
                             await self._argo_manager.wait_for_application_created(
                                 app_name=app_name, timeout=120, poll_interval=5
                             )
+                            return None
                         except TimeoutError:
-                            sync_failures.append(f"{app_name}: timed out waiting for application to be created")
                             logger.error(f"Timed out waiting for ArgoCD application '{app_name}' to be created")
+                            return f"{app_name}: timed out waiting for application to be created"
 
-                # Refresh each application that was created, then wait for sync+healthy
-                for app_name, deployment in app_deployments:
-                    if any(app_name in f for f in sync_failures):
-                        continue  # Skip apps that failed to be created
+                    created_results = await asyncio.gather(*(_wait_created(name) for name in app_names))
+                    sync_failures.extend(result for result in created_results if result)
 
+                # Refresh each application that was created, then wait for sync+healthy.
+                # Refresh + wait run concurrently per application (read-only polls);
+                # remediation below stays serial because it mutates the project file.
+                async def _refresh_and_wait(app_name: str, deployment: dict) -> dict[str, Any]:
                     dep_name = deployment.get("name", "")
                     base_namespace = deployment.get("namespace", "")
                     cluster = deployment.get("cluster", "")
@@ -2431,8 +2299,6 @@ class ProjectManager:
 
                     try:
                         reconciled_at = await argo_connector.refresh_application(app_name)
-                        if progress_manager and argo_task:
-                            progress_manager.update_task(argo_task, f"Waiting for {app_name} to sync")
                         await self._argo_manager.wait_for_application_synced(
                             app_name=app_name,
                             timeout=300,
@@ -2441,112 +2307,132 @@ class ProjectManager:
                             on_progressing=oom_callback,
                         )
                         logger.info(f"Application '{app_name}' is synced and healthy")
+                        return {"app_name": app_name, "dep_name": dep_name, "status": "ok"}
                     except DeploymentHealthError as e:
-                        logger.warning(
-                            "Pod health issues during sync of '%s': %s",
-                            app_name,
-                            e,
+                        logger.warning("Pod health issues during sync of '%s': %s", app_name, e)
+                        return {"app_name": app_name, "dep_name": dep_name, "status": "health_error", "error": e}
+                    except TimeoutError:
+                        logger.error(f"Timed out waiting for '{app_name}' to sync")
+                        return {"app_name": app_name, "dep_name": dep_name, "status": "timeout"}
+                    except RuntimeError as e:
+                        logger.error(f"Application '{app_name}' failed to sync: {e}")
+                        return {"app_name": app_name, "dep_name": dep_name, "status": "error", "error": e}
+
+                pending_apps = [(a, d) for a, d in app_deployments if not any(a in f for f in sync_failures)]
+                if progress_manager and argo_task and pending_apps:
+                    progress_manager.update_task(argo_task, f"Waiting for {len(pending_apps)} application(s) to sync")
+                outcomes = await asyncio.gather(*(_refresh_and_wait(a, d) for a, d in pending_apps))
+
+                # Serial remediation pass over the outcomes. OOM tuning and
+                # image-pull disabling write to the project file in git, so
+                # they must not run concurrently.
+                from opi.services.event_interpreter import _interpret_by_reason
+
+                _TYPE_TO_REASON = {
+                    "crash_loop": "CrashLoopBackOff",
+                    "image_pull": "ImagePullBackOff",
+                    "oom": "OOMKilled",
+                }
+                self._component_failures = []
+                for outcome in outcomes:
+                    app_name = outcome["app_name"]
+                    dep_name = outcome["dep_name"]
+                    if outcome["status"] == "ok":
+                        continue
+                    if outcome["status"] == "timeout":
+                        sync_failures.append(f"{app_name}: timed out waiting for sync")
+                        continue
+                    if outcome["status"] == "error":
+                        sync_failures.append(f"{app_name}: {outcome['error']}")
+                        continue
+
+                    # health_error: store per-component failure details for the
+                    # task result, enriched with user-friendly title/suggestion
+                    # from the event interpreter.
+                    e = outcome["error"]
+                    for f in e.failures:
+                        reason = _TYPE_TO_REASON.get(f.failure_type, "")
+                        translation = _interpret_by_reason(reason, f.message)
+                        title = (
+                            translation[0]
+                            if translation
+                            else f"Component '{f.component_reference or f.component_name}'"
+                        )
+                        suggestion = translation[1] if translation else f.message
+
+                        self._component_failures.append(
+                            {
+                                "component": f.component_reference or f.component_name,
+                                "deployment": f.deployment_name or dep_name,
+                                "failure_type": f.failure_type,
+                                "message": f.message,
+                                "title": title,
+                                "suggestion": suggestion,
+                                **({"logs": f.logs} if f.logs else {}),
+                            }
                         )
 
-                        # Store per-component failure details for the task result,
-                        # enriched with user-friendly title/suggestion from the event interpreter.
-                        from opi.services.event_interpreter import _interpret_by_reason
+                    # Categorize failures by type
+                    oom_failures = [f for f in e.failures if f.failure_type == "oom"]
+                    image_pull_failures = [f for f in e.failures if f.failure_type == "image_pull"]
+                    crash_loop_failures = [f for f in e.failures if f.failure_type == "crash_loop"]
 
-                        _TYPE_TO_REASON = {
-                            "crash_loop": "CrashLoopBackOff",
-                            "image_pull": "ImagePullBackOff",
-                            "oom": "OOMKilled",
-                        }
-                        self._component_failures = []
-                        for f in e.failures:
-                            reason = _TYPE_TO_REASON.get(f.failure_type, "")
-                            translation = _interpret_by_reason(reason, f.message)
-                            title = (
-                                translation[0]
-                                if translation
-                                else f"Component '{f.component_reference or f.component_name}'"
+                    task_service = (
+                        progress_manager._task_service
+                        if progress_manager and hasattr(progress_manager, "_task_service")
+                        else None
+                    )
+
+                    # Handle OOM: tune resources, queue refresh (existing behavior)
+                    if oom_failures:
+                        if progress_manager and argo_task:
+                            progress_manager.update_task(
+                                argo_task,
+                                f"OOM detected for {app_name}, tuning resources...",
                             )
-                            suggestion = translation[1] if translation else f.message
-
-                            self._component_failures.append(
-                                {
-                                    "component": f.component_reference or f.component_name,
-                                    "deployment": f.deployment_name or dep_name,
-                                    "failure_type": f.failure_type,
-                                    "message": f.message,
-                                    "title": title,
-                                    "suggestion": suggestion,
-                                    **({"logs": f.logs} if f.logs else {}),
-                                }
-                            )
-
-                        # Categorize failures by type
-                        oom_failures = [f for f in e.failures if f.failure_type == "oom"]
-                        image_pull_failures = [f for f in e.failures if f.failure_type == "image_pull"]
-                        crash_loop_failures = [f for f in e.failures if f.failure_type == "crash_loop"]
-
-                        task_service = (
-                            progress_manager._task_service
-                            if progress_manager and hasattr(progress_manager, "_task_service")
-                            else None
-                        )
-
-                        # Handle OOM: tune resources, queue refresh (existing behavior)
-                        if oom_failures:
-                            if progress_manager and argo_task:
-                                progress_manager.update_task(
-                                    argo_task,
-                                    f"OOM detected for {app_name}, tuning resources...",
-                                )
-                            try:
-                                result = await tune_deployment_resources(project_name, dep_name, skip_reprocessing=True)
-                                if result.changes:
-                                    logger.info(
-                                        "OOM auto-tune applied %d change(s) for %s/%s, queuing refresh task",
-                                        len(result.changes),
-                                        project_name,
-                                        dep_name,
-                                    )
-                                    await self._queue_refresh_task(task_service, project_name, dep_name)
-                                else:
-                                    logger.warning(
-                                        "OOM auto-tune found no actionable changes for %s/%s",
-                                        project_name,
-                                        dep_name,
-                                    )
-                                    sync_failures.append(
-                                        f"{app_name}: OOM detected but auto-tune could not determine new limits"
-                                    )
-                            except Exception as tune_err:
-                                logger.error("OOM auto-tune failed for %s/%s: %s", project_name, dep_name, tune_err)
-                                sync_failures.append(f"{app_name}: OOM detected, auto-tune failed: {tune_err}")
-
-                        # Handle ImagePullBackOff: disable component, queue refresh
-                        if image_pull_failures:
-                            disabled_components = [(f.component_name, f.message) for f in image_pull_failures]
-                            try:
-                                await disable_components_for_image_pull(project_name, dep_name, disabled_components)
-                                await self._queue_refresh_task(task_service, project_name, dep_name)
-                            except Exception as img_err:
-                                logger.error(
-                                    "ImagePull remediation failed for %s/%s: %s",
+                        try:
+                            result = await tune_deployment_resources(project_name, dep_name, skip_reprocessing=True)
+                            if result.changes:
+                                logger.info(
+                                    "OOM auto-tune applied %d change(s) for %s/%s, queuing refresh task",
+                                    len(result.changes),
                                     project_name,
                                     dep_name,
-                                    img_err,
                                 )
-                            names = ", ".join(f.component_name for f in image_pull_failures)
-                            sync_failures.append(f"{app_name}: ImagePullBackOff for {names}")
+                                await self._queue_refresh_task(task_service, project_name, dep_name)
+                            else:
+                                logger.warning(
+                                    "OOM auto-tune found no actionable changes for %s/%s",
+                                    project_name,
+                                    dep_name,
+                                )
+                                sync_failures.append(
+                                    f"{app_name}: OOM detected but auto-tune could not determine new limits"
+                                )
+                        except Exception as tune_err:
+                            logger.error("OOM auto-tune failed for %s/%s: %s", project_name, dep_name, tune_err)
+                            sync_failures.append(f"{app_name}: OOM detected, auto-tune failed: {tune_err}")
 
-                        # Handle CrashLoopBackOff: report only, no remediation
-                        if crash_loop_failures:
-                            names = ", ".join(f.component_name for f in crash_loop_failures)
-                            sync_failures.append(f"{app_name}: CrashLoopBackOff for {names}")
-                    except TimeoutError:
-                        sync_failures.append(f"{app_name}: timed out waiting for sync")
-                        logger.error(f"Timed out waiting for '{app_name}' to sync")
-                    except RuntimeError as e:
-                        sync_failures.append(f"{app_name}: {e}")
-                        logger.error(f"Application '{app_name}' failed to sync: {e}")
+                    # Handle ImagePullBackOff: disable component, queue refresh
+                    if image_pull_failures:
+                        disabled_components = [(f.component_name, f.message) for f in image_pull_failures]
+                        try:
+                            await disable_components_for_image_pull(project_name, dep_name, disabled_components)
+                            await self._queue_refresh_task(task_service, project_name, dep_name)
+                        except Exception as img_err:
+                            logger.error(
+                                "ImagePull remediation failed for %s/%s: %s",
+                                project_name,
+                                dep_name,
+                                img_err,
+                            )
+                        names = ", ".join(f.component_name for f in image_pull_failures)
+                        sync_failures.append(f"{app_name}: ImagePullBackOff for {names}")
+
+                    # Handle CrashLoopBackOff: report only, no remediation
+                    if crash_loop_failures:
+                        names = ", ".join(f.component_name for f in crash_loop_failures)
+                        sync_failures.append(f"{app_name}: CrashLoopBackOff for {names}")
 
             if sync_failures:
                 failure_summary = "; ".join(sync_failures)
@@ -3966,12 +3852,6 @@ class ProjectManager:
             # Clear clones tracking after all deployments processed
             self.clear_clones_performed()
 
-            # Save encrypted deployment configurations to project file
-            try:
-                await self._save_encrypted_configs_to_project_file()
-            except Exception as e:
-                logger.warning(f"Failed to save encrypted configs, continuing: {e}")
-
             scope = f" (deployment: {deployment_name})" if deployment_name else ""
             await (await self.get_git_connector_for_project_files()).commit_and_push(
                 f"Process project {project_name}{scope}"
@@ -4459,14 +4339,12 @@ class ProjectManager:
                 storage_env_vars = self._generate_storage_env_vars_from_services(processed_storage_configs)
                 if storage_env_vars:
                     env_vars.update(storage_env_vars)
-                    self._register_env_var(deployment_name, component_name, "storage", storage_env_vars)
 
             # Register publish-on-web environment variables using service definitions
             if publish_on_web and hostname:
                 web_env_vars = self._generate_web_env_vars_from_services(hostname, use_https)
                 if web_env_vars:
                     env_vars.update(web_env_vars)
-                    self._register_env_var(deployment_name, component_name, "web", web_env_vars)
 
             # Resolve and add direct aliases (aliases that reference direct env vars)
             # These are resolved per-component using the env_vars available to this component
@@ -4517,7 +4395,6 @@ class ProjectManager:
                         else:
                             substituted_user_env_vars[key] = value
                     user_env_vars = substituted_user_env_vars
-                self._register_env_var(deployment_name, component_name, "user", user_env_vars)
 
             # # IMPORTANT: Add component FIRST to prevent fallback creation with namespace=None
             # if config_handler:

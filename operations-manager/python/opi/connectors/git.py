@@ -1333,7 +1333,7 @@ class GitConnector:
         logger.debug(f"Successfully committed changes: {message}")
 
     # TODO: update push changes to handle rebase, and if rebase fails, commit and push to temporary branch
-    async def push_changes(self, branch: str | None = None, max_retries: int = 3) -> None:
+    async def push_changes(self, branch: str | None = None, max_retries: int = 5) -> None:
         """
         Push committed changes to remote repository.
 
@@ -1342,7 +1342,7 @@ class GitConnector:
 
         Args:
             branch: Branch to push to (defaults to configured branch)
-            max_retries: Maximum number of push attempts after rebase (default: 3)
+            max_retries: Maximum number of push attempts after rebase (default: 5)
 
         Raises:
             RuntimeError: If push fails after all retries or if rebase has conflicts

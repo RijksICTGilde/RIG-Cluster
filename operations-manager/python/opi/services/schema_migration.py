@@ -401,6 +401,9 @@ def _fixup_v2_data(project_data: dict[str, Any]) -> bool:
     - Literal ``services{...}`` keys on components (wizard bug wrote path syntax as dict keys)
     - Old flat resource format (``cpu: {request, limit}``, ``memory: "256Mi"``)
     - Stale root-level ``publish-on-web: true`` keys on components
+    - Dropped ``configuration`` / ``decrypted_configuration`` blocks on deployments
+      (write-only credential copies; nothing consumes them and re-encrypting the
+      AGE block on every process run caused ciphertext churn and push conflicts)
 
     Returns True if any cleanup was performed.
     """
@@ -410,6 +413,10 @@ def _fixup_v2_data(project_data: dict[str, Any]) -> bool:
     for dep in project_data.get("deployments", []):
         if isinstance(dep, dict):
             all_entities.extend(c for c in dep.get("components", []) if isinstance(c, dict))
+            for stale_config_key in ("configuration", "decrypted_configuration"):
+                if stale_config_key in dep:
+                    del dep[stale_config_key]
+                    cleaned = True
 
     for entity in all_entities:
         # Remove literal services{...} keys (dead data from wizard bug)

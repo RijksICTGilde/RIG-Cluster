@@ -381,3 +381,51 @@ class TestFixupCatalogRoot:
             ],
         }
         assert _fixup_v2_data(data) is False
+
+
+# ---------------------------------------------------------------------------
+# _fixup_v2_data: stale deployment configuration blocks
+# ---------------------------------------------------------------------------
+
+
+class TestFixupDeploymentConfiguration:
+    def test_strips_configuration_from_deployment(self):
+        data = {
+            "schema-version": 2.2,
+            "components": [],
+            "deployments": [
+                {
+                    "name": "prod",
+                    "configuration": "-----BEGIN AGE ENCRYPTED FILE-----\nabc\n-----END AGE ENCRYPTED FILE-----",
+                    "components": [{"reference": "web"}],
+                }
+            ],
+        }
+        assert _fixup_v2_data(data) is True
+        dep = data["deployments"][0]
+        assert "configuration" not in dep
+        # Other deployment keys untouched
+        assert dep["name"] == "prod"
+        assert dep["components"] == [{"reference": "web"}]
+
+    def test_strips_legacy_decrypted_configuration(self):
+        data = {
+            "schema-version": 2.2,
+            "components": [],
+            "deployments": [
+                {
+                    "name": "prod",
+                    "decrypted_configuration": {"variables": {"FOO": "bar"}},
+                }
+            ],
+        }
+        assert _fixup_v2_data(data) is True
+        assert "decrypted_configuration" not in data["deployments"][0]
+
+    def test_no_change_without_configuration(self):
+        data = {
+            "schema-version": 2.2,
+            "components": [],
+            "deployments": [{"name": "prod", "components": [{"reference": "web"}]}],
+        }
+        assert _fixup_v2_data(data) is False

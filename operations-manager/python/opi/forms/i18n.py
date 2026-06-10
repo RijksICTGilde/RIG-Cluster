@@ -296,8 +296,6 @@ DEFAULT_NL_TRANSLATIONS = {
     "deployment.subdomain.description": "Subdomein voor ingress URLs",
     "deployment.components": "Componenten",
     "deployment.components.description": "Componenten in deze deployment",
-    "deployment.configuration": "Configuratie",
-    "deployment.configuration.description": "Extra deployment configuratie",
     "deployment.component.reference": "Component Referentie",
     "deployment.component.reference.description": "Naam van het component",
     "deployment.component.image": "Container Image",

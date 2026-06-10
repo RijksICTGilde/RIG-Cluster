@@ -365,15 +365,6 @@ class DeploymentModel(BaseModel):
         ),
     ] = Field(default_factory=list)
 
-    configuration: Annotated[
-        str | None,
-        FormMeta(
-            label="deployment.configuration",
-            description="deployment.configuration.description",
-            widget="textarea",
-        ),
-    ] = Field(default=None)
-
     data_retention_period: Annotated[
         str | None,
         FormMeta(

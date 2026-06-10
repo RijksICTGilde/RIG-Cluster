@@ -25,6 +25,7 @@ from opi.forms.wizard.session import (
     init_wizard_state,
     save_wizard_state,
 )
+from opi.forms.wizard.state import CLEARED_FIELD
 from opi.utils.csrf import reject_misfired_form_get
 from opi.web.menu import get_menu_items
 
@@ -1397,12 +1398,19 @@ def _extract_section_data(
         store_key = virt_mapping.get(key, key)
 
         if key in indexed_fields and isinstance(value, list):
-            # Prune list items to only owned fields
+            # Prune list items to only owned fields. Owned fields that are
+            # absent (cleared via remove_when_none) get a tombstone so the
+            # additive merge in get_merged_data() deletes the old value
+            # instead of resurrecting it from the template snapshot.
             owned = indexed_fields[key]
             pruned = []
             for item in value:
                 if isinstance(item, dict):
-                    pruned.append({k: copy.deepcopy(v) for k, v in item.items() if k in owned})
+                    pruned_item = {k: copy.deepcopy(v) for k, v in item.items() if k in owned}
+                    for owned_field in owned:
+                        if owned_field not in pruned_item:
+                            pruned_item[owned_field] = CLEARED_FIELD
+                    pruned.append(pruned_item)
                 else:
                     pruned.append(copy.deepcopy(item))
             result[store_key] = pruned
@@ -1491,10 +1499,7 @@ def _resolve_service_labels(editable: Any, value: Any, yaml_data: dict[str, Any]
         return []
 
     if editable.editable.converter:
-        try:
-            value = editable.editable.converter.view(value, yaml_data=yaml_data)
-        except TypeError:
-            value = editable.editable.converter.view(value)
+        value = editable.editable.converter.view(value, context_data=yaml_data)
 
     try:
         options = resolve_options_for_editable(editable)
@@ -1644,10 +1649,7 @@ def _format_value(editable: Any, value: Any, yaml_data: dict[str, Any] | None = 
     # Apply converter.view() for display if available (e.g. ServiceListConverter
     # extracts service names from mixed str/dict lists)
     if editable.editable.converter:
-        try:
-            value = editable.editable.converter.view(value, yaml_data=yaml_data)
-        except TypeError:
-            value = editable.editable.converter.view(value)
+        value = editable.editable.converter.view(value, context_data=yaml_data)
 
     # Resolve option labels for select/radio/checkbox_group/service_cards fields
     if editable.editable.values_provider and str(editable.widget) in (
@@ -1988,10 +1990,9 @@ def _apply_literal_scalars(data: dict[str, Any]) -> None:
         if isinstance(comp, dict):
             _literalize(comp, "user-env-vars")
 
-    # Deployment-level configuration and component-level user-env-vars (edit/add flows)
+    # Deployment-component-level user-env-vars (edit/add flows)
     for dep in data.get("deployments", []):
         if isinstance(dep, dict):
-            _literalize(dep, "configuration")
             for comp in dep.get("components", []):
                 if isinstance(comp, dict):
                     _literalize(comp, "user-env-vars")

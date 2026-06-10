@@ -9,6 +9,28 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+CLEARED_FIELD = "__wizard-field-cleared__"
+"""Tombstone marker for fields the user cleared in a wizard step.
+
+Step fragments are merged additively over the template snapshot in
+``get_merged_data``, so a key that is simply absent cannot delete the
+snapshot's old value. ``_extract_section_data`` stores this marker for
+owned-but-absent fields; ``get_merged_data`` strips marked keys after
+merging.
+"""
+
+
+def _strip_cleared_fields(value: Any) -> None:
+    """Recursively remove dict entries whose value is the CLEARED_FIELD marker."""
+    if isinstance(value, dict):
+        for key in [k for k, v in value.items() if v == CLEARED_FIELD]:
+            del value[key]
+        for child in value.values():
+            _strip_cleared_fields(child)
+    elif isinstance(value, list):
+        for item in value:
+            _strip_cleared_fields(item)
+
 
 @dataclass
 class WizardSteps:
@@ -211,6 +233,7 @@ class WizardState:
                 else:
                     merged[real_key] = virt_data
 
+        _strip_cleared_fields(merged)
         return merged
 
     def populate_virt_mappings(self, sections: list[Any]) -> None:
