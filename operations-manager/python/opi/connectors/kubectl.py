@@ -514,6 +514,36 @@ class KubectlConnector:
             logger.error(f"Failed to delete ArgoCD Application '{app_name}': {stderr}")
             return False
 
+    async def argocd_application_exists(self, app_name: str, namespace: str = "rig-prd-operations") -> bool | None:
+        """
+        Ground-truth existence check for an ArgoCD Application CR via the Kubernetes API.
+
+        This is the honest fallback for the ArgoCD API, which returns an ambiguous
+        'permission denied' when its cache is stalled (see
+        ArgoConnector.wait_for_application_deletion). The Kubernetes API instead answers
+        cleanly: the object exists, a definitive NotFound, or a transport error we can
+        tell apart.
+
+        Args:
+            app_name: The name of the ArgoCD Application
+            namespace: The namespace where the Application exists (default: rig-prd-operations)
+
+        Returns:
+            True  - the Application CR exists
+            False - the Application CR is confirmed absent (NotFound)
+            None  - the check itself failed; existence is unknown, so the caller must
+                    not conclude the application is gone
+        """
+        stdout, stderr, code = await self._run_kubectl_command(
+            ["get", "application", app_name, "-n", namespace, "-o", "name"]
+        )
+        if code == 0:
+            return True
+        if "notfound" in stderr.lower().replace(" ", ""):
+            return False
+        logger.warning(f"Could not determine existence of ArgoCD Application '{app_name}': {stderr}")
+        return None
+
     async def wait_for_capsule_tenant_label(self, namespace: str, timeout: int = 30) -> bool:
         """
         Wait for Capsule to assign the tenant label to a namespace.

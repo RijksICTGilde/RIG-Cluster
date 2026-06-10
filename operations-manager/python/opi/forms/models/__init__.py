@@ -20,6 +20,7 @@ from opi.forms.models.project_file import (
     ProjectUserModel,
     RepositoryModel,
     ResourcesModel,
+    SecurityConfig,
     get_project_file_form_layout,
 )
 
@@ -36,6 +37,7 @@ __all__ = [
     "ProjectUserModel",
     "RepositoryModel",
     "ResourcesModel",
+    "SecurityConfig",
     "UserFormModel",
     "get_project_file_form_layout",
     "get_project_form_layout",

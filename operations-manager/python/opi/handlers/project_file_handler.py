@@ -7,6 +7,7 @@ including git-based diff generation and structured change extraction.
 
 import logging
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from deepdiff import DeepDiff
@@ -33,6 +34,14 @@ DEFAULT_RESOURCES: dict[str, str] = {
     "limits_memory": "512Mi",
     "limits_cpu": "500m",
 }
+
+
+@dataclass
+class ResourceFloor:
+    """OOM-watcher memory floor with the timestamp of the entry that set it."""
+
+    floor_mb: float
+    set_at: str | None
 
 
 def _parse_resources_block(raw: dict | None, defaults: dict[str, str] | None = None) -> dict[str, str]:
@@ -778,27 +787,22 @@ class ProjectFileHandler:
         return None
 
     def _decrypt_and_clean_env_vars(self, env_vars: dict[str, Any], private_key: str | None) -> dict[str, str]:
-        """Decrypt and clean up individual env var values.
+        """Decrypt individual env var values.
 
         Each value is run through the smart decrypt (handling plain, age-encrypted,
-        or empty values) and then stripped of surrounding quotes.
+        or empty values). Quote handling is intentionally NOT done here: the values
+        have already passed through ``validate_and_parse_env_vars``, which is the
+        single source of truth for quote semantics (it honours YAML quoting and
+        strips ``KEY=VALUE`` quotes exactly once). Stripping again here would remove
+        quotes that the user deliberately made part of the value -- e.g. an app that
+        needs ``ALLOWED_HOSTNAMES`` to literally contain ``"host"`` so it can be
+        wrapped into a JSON array downstream.
         """
         cleaned: dict[str, str] = {}
         for key, value in env_vars.items():
             value_str = str(value) if value is not None else ""
             normalized_value = self._normalize_age_content(value_str)
-            value_str = decrypt_password_smart_sync(normalized_value, private_key)
-
-            # Strip surrounding quotes (single or double) if they wrap the whole value
-            if value_str == '""' or value_str == "''":
-                cleaned[key] = ""
-            elif len(value_str) >= 2 and (
-                (value_str.startswith('"') and value_str.endswith('"') and value_str.count('"') == 2)
-                or (value_str.startswith("'") and value_str.endswith("'") and value_str.count("'") == 2)
-            ):
-                cleaned[key] = value_str[1:-1]
-            else:
-                cleaned[key] = value_str
+            cleaned[key] = decrypt_password_smart_sync(normalized_value, private_key)
         return cleaned
 
     async def _extract_user_env_vars(self, project_data: dict[str, Any], jsonpath: str, label: str) -> dict[str, str]:
@@ -893,6 +897,80 @@ class ProjectFileHandler:
 
         logger.debug(f"Component '{component_name}' has publish-on-web service: {has_publish_service}")
         return has_publish_service
+
+    def extract_component_command(self, project_data: dict[str, Any], component_name: str) -> list[str] | None:
+        """Extract the optional component-level ``command`` override.
+
+        Returns the user-supplied list[str] when present and well-formed, or
+        ``None`` when no override exists. Non-list / empty-list / non-string
+        items are silently dropped so a malformed YAML cannot crash manifest
+        rendering (the JSON schema catches wrong shapes earlier; this is
+        defence in depth).
+
+        Hidden YAML-only feature — not exposed in the wizard / detail-edit UI.
+        """
+        component = self._find_component(project_data, component_name)
+        if not component:
+            return None
+
+        raw = component.get("command")
+        if not isinstance(raw, list) or not raw:
+            return None
+        if not all(isinstance(item, str) for item in raw):
+            return None
+        return list(raw)
+
+    def extract_deployment_component_command(
+        self, project_data: dict[str, Any], deployment_name: str, component_reference: str
+    ) -> list[str] | None:
+        """Extract the optional per-deployment ``command`` override.
+
+        Walks ``deployments[?(name==deployment_name)].components[?(reference==component_reference)].command``.
+        Returns ``None`` when no deployment-level override is present, so the
+        caller can fall back to the component-level command (or the image
+        default). Same defensive type checks as the component-level extractor.
+        """
+        deployments = project_data.get("deployments", [])
+        for deployment in deployments:
+            if deployment.get("name") != deployment_name:
+                continue
+            for comp in deployment.get("components", []):
+                if comp.get("reference") != component_reference:
+                    continue
+                raw = comp.get("command")
+                if not isinstance(raw, list) or not raw:
+                    return None
+                if not all(isinstance(item, str) for item in raw):
+                    return None
+                return list(raw)
+        return None
+
+    def extract_component_security(self, project_data: dict[str, Any], component_name: str) -> dict[str, int] | None:
+        """Extract the optional ``security`` block from a component definition.
+
+        Returns a dict with any of ``run-as-user`` / ``run-as-group`` / ``fs-group``
+        that were set by the user, or ``None`` if no ``security`` block exists.
+        Only integer values are returned; bogus types are silently dropped so a
+        malformed YAML cannot crash manifest rendering (the JSON schema catches
+        wrong types earlier; this is defence in depth).
+
+        Hidden YAML-only feature — not exposed in the wizard / detail-edit UI.
+        """
+        component = self._find_component(project_data, component_name)
+        if not component:
+            return None
+
+        raw = component.get("security")
+        if not isinstance(raw, dict):
+            return None
+
+        result: dict[str, int] = {}
+        for key in ("run-as-user", "run-as-group", "fs-group"):
+            value = raw.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                result[key] = value
+
+        return result or None
 
     # ========================================================================
     # Resource Configuration Methods
@@ -1134,11 +1212,14 @@ class ProjectFileHandler:
         project_data: dict[str, Any],
         deployment_name: str,
         component_reference: str,
-    ) -> float | None:
+    ) -> ResourceFloor | None:
         """
         Get the OOM watcher memory floor from resource history.
 
         Checks both deployment-component and component-definition history.
+        Only entries belonging to this deployment count: the component-definition
+        history is filtered on the entry's "deployment" field, so an OOM in one
+        (PR) deployment does not pin the resources of every other deployment.
         Returns the highest OOM watcher limit found in the most recent
         oom-watcher entry at either level.
 
@@ -1148,9 +1229,19 @@ class ProjectFileHandler:
             component_reference: Reference name of the component
 
         Returns:
-            Floor value in MB, or None if no OOM watcher entries exist
+            ResourceFloor with value in MB and entry timestamp, or None if no
+            OOM watcher entries exist for this deployment
         """
-        floor_mb: float | None = None
+        floor: ResourceFloor | None = None
+
+        def consider(entry: dict[str, Any]) -> ResourceFloor | None:
+            value = entry.get("limits", {}).get("memory")
+            if not value:
+                return floor
+            mb = _k8s_memory_to_mb(value)
+            if floor is None or mb > floor.floor_mb:
+                return ResourceFloor(floor_mb=mb, set_at=entry.get("timestamp"))
+            return floor
 
         # Check deployment-component history
         for dep in project_data.get("deployments", []):
@@ -1161,25 +1252,19 @@ class ProjectFileHandler:
                     continue
                 for entry in comp.get("resources", {}).get("history", []):
                     if entry.get("source") == "oom-watcher":
-                        value = entry.get("limits", {}).get("memory")
-                        if value:
-                            mb = _k8s_memory_to_mb(value)
-                            floor_mb = max(floor_mb or 0, mb)
+                        floor = consider(entry)
                         break  # only check most recent oom-watcher entry
 
-        # Check component-definition history
+        # Check component-definition history (scoped to this deployment)
         for comp in project_data.get("components", []):
             if comp.get("name") != component_reference:
                 continue
             for entry in comp.get("resources", {}).get("history", []):
-                if entry.get("source") == "oom-watcher":
-                    value = entry.get("limits", {}).get("memory")
-                    if value:
-                        mb = _k8s_memory_to_mb(value)
-                        floor_mb = max(floor_mb or 0, mb)
+                if entry.get("source") == "oom-watcher" and entry.get("deployment") == deployment_name:
+                    floor = consider(entry)
                     break
 
-        return floor_mb
+        return floor
 
     def extract_deployment_component_disabled(
         self, project_data: dict[str, Any], deployment_name: str, component_reference: str

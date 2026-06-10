@@ -121,6 +121,21 @@ class TestAuthorizationMiddlewareDispatch:
         call_next.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_metrics_explorer_json_endpoint_requires_sso(self):
+        """Regression: the metrics-explorer JSON endpoint lives under /ui/ so the
+        session gate enforces SSO (was anonymously reachable when registered under /api/)."""
+        middleware = self._make_middleware()
+        request = self._make_request("/ui/metrics-explorer/metrics/minio", session={})
+        call_next = AsyncMock()
+
+        with patch.object(middleware, "_route_requires_sso", return_value=True):
+            result = await middleware.dispatch(request, call_next)
+
+        assert result.status_code == 302
+        assert result.headers.get("location") == "/auth/login"
+        call_next.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_unauthenticated_user_redirected(self):
         """Should redirect to /auth/login when SSO required and no user."""
         middleware = self._make_middleware()

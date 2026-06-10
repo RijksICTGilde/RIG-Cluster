@@ -182,6 +182,15 @@ async def _extract_submitted_token(request: Request) -> str | None:
 
     content_type = request.headers.get("content-type", "")
     if content_type.startswith(("application/x-www-form-urlencoded", "multipart/form-data")):
+        # Cache the raw body before parsing the form. Under Starlette's
+        # BaseHTTPMiddleware the request is a ``_CachedRequest`` that only
+        # replays the body to the downstream handler when ``_body`` is set
+        # (i.e. ``request.body()`` was called). ``request.form()`` consumes
+        # ``request.stream()`` WITHOUT caching ``_body``, so the handler would
+        # then receive an empty body and every form field would read as
+        # missing ("Dit veld is verplicht"). Reading the body first makes the
+        # form re-parse from the cache and lets the handler read it too.
+        await request.body()
         form = await request.form()
         value = form.get(CSRF_FORM_FIELD)
         if isinstance(value, str):

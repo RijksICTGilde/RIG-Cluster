@@ -319,9 +319,45 @@ class TestKeycloakSecretPublicClient:
 
         assert data["OIDC_PUBLIC_CLIENT_ID"] == ""
 
-    def test_round_trip(self):
-        """KeycloakSecret round-trips through to_k8s_secret_data and from_k8s_secret_data."""
-        original = self._make_secret()
+
+class TestKeycloakSecretHostname:
+    """Tests for the derived OIDC_HOSTNAME key (apps that need bare hostname)."""
+
+    def _make(self, base_url: str) -> KeycloakSecret:
+        return KeycloakSecret(
+            client_id="x",
+            client_secret="x",
+            public_client_id="x",
+            discovery_url=f"{base_url}/realms/r/.well-known/openid-configuration",
+            base_url=base_url,
+            realm="r",
+        )
+
+    def test_hostname_strips_https_scheme(self):
+        data = self._make("https://keycloak.example.com").to_k8s_secret_data()
+        assert data["OIDC_HOSTNAME"] == "keycloak.example.com"
+
+    def test_hostname_strips_http_scheme(self):
+        data = self._make("http://keycloak.internal").to_k8s_secret_data()
+        assert data["OIDC_HOSTNAME"] == "keycloak.internal"
+
+    def test_hostname_preserves_port(self):
+        data = self._make("https://keycloak.example.com:8443").to_k8s_secret_data()
+        assert data["OIDC_HOSTNAME"] == "keycloak.example.com:8443"
+
+    def test_hostname_falls_back_to_bare_host(self):
+        """Defensive: base_url without scheme should still yield a non-empty hostname."""
+        data = self._make("keycloak.example.com").to_k8s_secret_data()
+        assert data["OIDC_HOSTNAME"] == "keycloak.example.com"
+
+    def test_round_trip_skips_computed_hostname(self):
+        """KeycloakSecret round-trips through to_k8s_secret_data and from_k8s_secret_data.
+
+        The computed hostname property must be skipped on the from_ side (it's
+        derived from base_url, not a dataclass field), otherwise from_k8s_secret_data
+        would try to pass it as a constructor kwarg.
+        """
+        original = self._make("https://keycloak.example.com:8443")
         restored = KeycloakSecret.from_k8s_secret_data(original.to_k8s_secret_data())
 
         assert restored.client_id == original.client_id
@@ -330,6 +366,8 @@ class TestKeycloakSecretPublicClient:
         assert restored.discovery_url == original.discovery_url
         assert restored.base_url == original.base_url
         assert restored.realm == original.realm
+        # Hostname is re-derived from restored base_url
+        assert restored.hostname == "keycloak.example.com:8443"
 
 
 class TestGetSecretName:

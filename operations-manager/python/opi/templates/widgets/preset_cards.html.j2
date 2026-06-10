@@ -8,6 +8,7 @@
     <div class="service-card{% if applied %} service-card--selected{% endif %}{% if locked %} service-card--locked-checked{% endif %}"
          {% if not locked %}
          hx-post="/forms/wizard/{{ flow_id|e }}/preset/{{ section_id|e }}/{{ preset.id|e }}"
+         hx-headers='{"X-CSRF-Token": "{{ csrf_token|e }}"}'
          hx-target="#wizard-step-content"
          hx-swap="innerHTML"
          {% endif %}>

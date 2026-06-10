@@ -93,7 +93,7 @@ async def metrics_explorer_page(request: Request):
     )
 
 
-@metrics_explorer_router.get("/api/metrics-explorer/metrics/{service_id}", response_class=JSONResponse)
+@metrics_explorer_router.get("/ui/metrics-explorer/metrics/{service_id}", response_class=JSONResponse)
 @requires_sso
 async def get_service_metrics(request: Request, service_id: str):
     """

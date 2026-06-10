@@ -40,13 +40,17 @@ spec:
       # Pod-level security context (OpenShift compatible)
       securityContext:
         {% if cluster in ['local', 'sandboxed-local'] %}
-        # For Kind clusters, specify numeric UID since no SCC assignment
+        # For Kind clusters, specify numeric UID since no SCC assignment.
+        # Per-component overrides via project YAML `components[].security.{run-as-user,run-as-group,fs-group}`;
+        # each defaults to 1001 when omitted to preserve historical behaviour.
         runAsNonRoot: true
-        runAsUser: 1001
-        runAsGroup: 1001
-        fsGroup: 1001  # Required for PVC write access
+        runAsUser: {{ security.runAsUser if security and security.runAsUser is not none else 1001 }}
+        runAsGroup: {{ security.runAsGroup if security and security.runAsGroup is not none else 1001 }}
+        fsGroup: {{ security.fsGroup if security and security.fsGroup is not none else 1001 }}  # Required for PVC write access
         {% else %}
-        # For OpenShift, let SCCs assign user/group IDs automatically
+        # For OpenShift, let SCCs assign user/group IDs automatically.
+        # Per-component security overrides are intentionally ignored here:
+        # SCC admission injects a UID per namespace and would conflict.
         runAsNonRoot: true
         {% endif %}
         seccompProfile:
@@ -55,6 +59,14 @@ spec:
         - name: app
           image: {{ (imageURL | default('', true)) | tojson }}
           imagePullPolicy: {{ imagePullPolicy }}
+          {% if command %}
+          # Override of the image's ENTRYPOINT — set via project YAML
+          # `components[].command` or `deployments[].components[].command`.
+          command:
+          {% for c in command %}
+            - {{ c | tojson }}
+          {% endfor %}
+          {% endif %}
           ports:
             - containerPort: {{ application_port }}
               name: http

@@ -7,7 +7,7 @@ Covers:
   check_deployment_resources, deepcopy safety in get_project_data
 """
 
-from datetime import UTC
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -189,24 +189,68 @@ class TestGetResourceHistoryFloor:
         data = _make_project_data(deployment_history=history)
 
         floor = handler.get_resource_history_floor(data, "production", "api")
-        assert floor == 768.0
+        assert floor is not None
+        assert floor.floor_mb == 768.0
+        assert floor.set_at == "2026-01-01"
 
     def test_returns_floor_from_component_history(self):
+        handler = ProjectFileHandler()
+        history = [
+            {
+                "timestamp": "2026-01-01",
+                "limits": {"memory": "1024Mi"},
+                "source": "oom-watcher",
+                "deployment": "production",
+            }
+        ]
+        data = _make_project_data(component_history=history)
+
+        floor = handler.get_resource_history_floor(data, "production", "api")
+        assert floor is not None
+        assert floor.floor_mb == 1024.0
+
+    def test_component_history_from_other_deployment_does_not_count(self):
+        """An OOM in another (PR) deployment must not pin this deployment's floor."""
+        handler = ProjectFileHandler()
+        history = [
+            {
+                "timestamp": "2026-01-01",
+                "limits": {"memory": "1024Mi"},
+                "source": "oom-watcher",
+                "deployment": "pr746",
+            }
+        ]
+        data = _make_project_data(component_history=history)
+
+        floor = handler.get_resource_history_floor(data, "production", "api")
+        assert floor is None
+
+    def test_component_history_without_deployment_field_does_not_count(self):
+        """Legacy def-level entries without deployment attribution are not deployment-scoped."""
         handler = ProjectFileHandler()
         history = [{"timestamp": "2026-01-01", "limits": {"memory": "1024Mi"}, "source": "oom-watcher"}]
         data = _make_project_data(component_history=history)
 
         floor = handler.get_resource_history_floor(data, "production", "api")
-        assert floor == 1024.0
+        assert floor is None
 
     def test_returns_max_of_both_levels(self):
         handler = ProjectFileHandler()
-        comp_history = [{"timestamp": "2026-01-01", "limits": {"memory": "512Mi"}, "source": "oom-watcher"}]
+        comp_history = [
+            {
+                "timestamp": "2026-01-01",
+                "limits": {"memory": "512Mi"},
+                "source": "oom-watcher",
+                "deployment": "production",
+            }
+        ]
         dep_history = [{"timestamp": "2026-01-02", "limits": {"memory": "768Mi"}, "source": "oom-watcher"}]
         data = _make_project_data(component_history=comp_history, deployment_history=dep_history)
 
         floor = handler.get_resource_history_floor(data, "production", "api")
-        assert floor == 768.0
+        assert floor is not None
+        assert floor.floor_mb == 768.0
+        assert floor.set_at == "2026-01-02"
 
     def test_only_checks_most_recent_oom_entry(self):
         handler = ProjectFileHandler()
@@ -219,7 +263,8 @@ class TestGetResourceHistoryFloor:
 
         # Should find the oom-watcher entry even though it's not the most recent
         floor = handler.get_resource_history_floor(data, "production", "api")
-        assert floor == 768.0
+        assert floor is not None
+        assert floor.floor_mb == 768.0
 
 
 # ---------------------------------------------------------------------------
@@ -354,11 +399,17 @@ class TestTuneBaseComponentUpdate:
     @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
     @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
     @pytest.mark.asyncio
-    async def test_oom_floor_prevents_downward_tune(
+    async def test_fresh_oom_floor_holds_limit_but_lowers_request(
         self, mock_connector, mock_git_data, mock_commit, mock_reprocess, mock_prefix, mock_min
     ):
-        """If OOM history set a floor, the tuner should not recommend below it."""
-        oom_history = [{"timestamp": "2026-01-01", "limits": {"memory": "512Mi"}, "source": "oom-watcher"}]
+        """A recent OOM floor holds the limit, but the request may still drop."""
+        oom_history = [
+            {
+                "timestamp": datetime.now(UTC).isoformat(),
+                "limits": {"memory": "512Mi"},
+                "source": "oom-watcher",
+            }
+        ]
         data = _make_project_data(
             component_limits="512Mi",
             component_requests="256Mi",
@@ -374,9 +425,50 @@ class TestTuneBaseComponentUpdate:
 
         result = await tune_deployment_resources("test-project", "production")
 
-        # Floor is 512Mi, current is 512Mi, so no change should be made
-        assert len(result.changes) == 0
-        assert "api" in result.unchanged
+        # Limit is held at the 512Mi floor, but the request drops to usage+buffer
+        assert len(result.changes) == 1
+        committed_data = mock_commit.call_args[0][2]
+        dep_resources = committed_data["deployments"][0]["components"][0]["resources"]
+        assert dep_resources["limits"]["memory"] == "512Mi"
+        assert int(dep_resources["requests"]["memory"].removesuffix("Mi")) < 256
+
+    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
+    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
+    @patch("opi.services.resource_tuning_service.trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.commit_project_yaml", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_stale_oom_floor_expires_and_allows_downward_tune(
+        self, mock_connector, mock_git_data, mock_commit, mock_reprocess, mock_prefix, mock_min
+    ):
+        """An old OOM floor with usage far below it no longer blocks tuning down."""
+        oom_history = [
+            {
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "limits": {"memory": "512Mi"},
+                "source": "oom-watcher",
+            }
+        ]
+        data = _make_project_data(
+            component_limits="512Mi",
+            component_requests="256Mi",
+            deployment_limits="512Mi",
+            deployment_requests="256Mi",
+            deployment_history=oom_history,
+        )
+        mock_git_connector = AsyncMock()
+        mock_git_data.return_value = (data, "test.yaml", mock_git_connector)
+        # Stable low usage, far below the floor (100 < 50% of 512)
+        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=100, avg_mb=80)
+        mock_reprocess.return_value = True
+
+        result = await tune_deployment_resources("test-project", "production")
+
+        assert len(result.changes) == 1
+        committed_data = mock_commit.call_args[0][2]
+        dep_resources = committed_data["deployments"][0]["components"][0]["resources"]
+        assert int(dep_resources["limits"]["memory"].removesuffix("Mi")) < 512
 
 
 # ---------------------------------------------------------------------------
@@ -466,9 +558,51 @@ class TestCheckDeploymentResources:
     @patch("opi.services.resource_tuning_service.get_project_service")
     @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
     @pytest.mark.asyncio
-    async def test_respects_oom_floor(self, mock_connector, mock_service, mock_prefix, mock_min):
-        """check_deployment_resources should respect OOM floor just like the tuner."""
-        oom_history = [{"timestamp": "2026-01-01", "limits": {"memory": "512Mi"}, "source": "oom-watcher"}]
+    async def test_fresh_oom_floor_reports_request_only_saving(
+        self, mock_connector, mock_service, mock_prefix, mock_min
+    ):
+        """A recent OOM floor holds the limit but still reports the request reduction."""
+        oom_history = [
+            {
+                "timestamp": datetime.now(UTC).isoformat(),
+                "limits": {"memory": "512Mi"},
+                "source": "oom-watcher",
+            }
+        ]
+        data = _make_project_data(
+            component_limits="512Mi",
+            deployment_limits="512Mi",
+            deployment_requests="256Mi",
+            deployment_history=oom_history,
+        )
+        mock_project = MagicMock()
+        mock_project.data = data
+        mock_project.filename = "test.yaml"
+        mock_service.return_value.get_project.return_value = mock_project
+        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=100, avg_mb=80)
+
+        results = await check_deployment_resources("test-project", "production")
+
+        assert len(results) == 1
+        assert results[0].floor_blocked is True
+        assert results[0].recommended_limit == "512Mi"
+        assert int(results[0].recommended_request.removesuffix("Mi")) < 256
+        assert results[0].saving_mb > 0
+
+    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
+    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
+    @patch("opi.services.resource_tuning_service.get_project_service")
+    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_stale_oom_floor_reports_normal_saving(self, mock_connector, mock_service, mock_prefix, mock_min):
+        """An expired OOM floor no longer suppresses the overprovision warning."""
+        oom_history = [
+            {
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "limits": {"memory": "512Mi"},
+                "source": "oom-watcher",
+            }
+        ]
         data = _make_project_data(
             component_limits="512Mi",
             deployment_limits="512Mi",
@@ -482,8 +616,10 @@ class TestCheckDeploymentResources:
 
         results = await check_deployment_resources("test-project", "production")
 
-        # Floor prevents reporting savings
-        assert len(results) == 0
+        assert len(results) == 1
+        assert results[0].floor_blocked is False
+        assert int(results[0].recommended_limit.removesuffix("Mi")) < 512
+        assert results[0].saving_mb > 0
 
 
 # ---------------------------------------------------------------------------

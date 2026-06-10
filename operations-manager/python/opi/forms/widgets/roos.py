@@ -333,6 +333,7 @@ def render_preset_cards(
     section_id: str,
     yaml_data: dict | None = None,
     locked_presets: dict[str, str] | None = None,
+    csrf_token: str = "",
 ) -> str:
     """Render preset cards using the same visual style as service cards.
 
@@ -343,6 +344,8 @@ def render_preset_cards(
         yaml_data: Current YAML data for detecting applied state.
         locked_presets: Map of preset_id -> hint text for presets that
             cannot be toggled (e.g. forced by a service dependency).
+        csrf_token: CSRF token rendered into the cards' hx-post header so
+            the preset POST passes central CSRF enforcement.
     """
     if not presets:
         return ""
@@ -368,6 +371,7 @@ def render_preset_cards(
         preset_states=preset_states,
         flow_id=flow_id,
         section_id=section_id,
+        csrf_token=csrf_token,
     )
 
 

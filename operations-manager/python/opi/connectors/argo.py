@@ -472,45 +472,84 @@ class ArgoConnector:
         logger.debug(f"Application {app_name} exists: {exists}")
         return exists
 
-    async def wait_for_application_deletion(self, app_name: str, max_retries: int = 5, retry_delay: int = 3) -> bool:
+    async def wait_for_application_deletion(
+        self,
+        app_name: str,
+        max_retries: int = 5,
+        retry_delay: int = 3,
+        kubectl_connector: Any = None,
+        namespace: str = "rig-prd-operations",
+    ) -> bool:
         """
         Wait for an ArgoCD application to be fully deleted.
+
+        ArgoCD is queried first - it is, and ought to remain, our primary source of
+        truth. But its API has proven untrustworthy under control-plane stress: it
+        returns 'permission denied' to an admin caller for applications that still
+        exist, conflating "gone", "can't see it", and "I'm stalled". So we never treat
+        that response as "deleted". When ArgoCD's answer is anything but a confident
+        "still exists", we double-check against the Kubernetes API, which fails
+        honestly (the object, a clean NotFound, or a distinguishable error).
 
         Args:
             app_name: Name of the application to wait for
             max_retries: Maximum number of retries
             retry_delay: Delay between retries in seconds
+            kubectl_connector: Connector used to confirm absence against the Kubernetes
+                API when ArgoCD is ambiguous. Without it, an ambiguous ArgoCD answer
+                cannot be confirmed and deletion is reported as unconfirmed (False).
+            namespace: Namespace holding the ArgoCD Application CR
 
         Returns:
-            True if application was deleted (or permission denied, indicating AppProject is gone),
-            False if it still exists after max retries
+            True only if the application is confirmed deleted, False otherwise.
         """
         import asyncio
 
         logger.info(f"Waiting for application deletion: {app_name} (max {max_retries} retries)")
 
+        async def _confirmed_gone_via_k8s() -> bool:
+            # Ground-truth fallback. Only a clean NotFound (False) counts as gone;
+            # still-present (True) or unknown (None) must not be read as deleted.
+            if kubectl_connector is None:
+                return False
+            return (await kubectl_connector.argocd_application_exists(app_name, namespace)) is False
+
         for attempt in range(max_retries):
             try:
                 exists = await self.application_exists(app_name)
-                if not exists:
-                    logger.info(f"Application {app_name} successfully deleted after {attempt + 1} checks")
+                # ArgoCD reports the app gone. A clean 404 is fairly reliable, but since
+                # the same API lies under stress we still confirm via the Kubernetes API
+                # when we can before declaring success.
+                if not exists and (kubectl_connector is None or await _confirmed_gone_via_k8s()):
+                    logger.info(f"Application {app_name} confirmed deleted after {attempt + 1} checks")
                     return True
 
                 logger.debug(f"Application {app_name} still exists, retry {attempt + 1}/{max_retries}")
-                if attempt < max_retries - 1:  # Don't sleep on the last attempt
-                    await asyncio.sleep(retry_delay)
 
             except PermissionError:
-                # Permission denied means the AppProject was deleted before the Application.
-                # This indicates the Application is deleted or will be garbage collected.
-                logger.info(f"Application {app_name} - permission denied (AppProject deleted), treating as deleted")
-                return True
+                # FALLBACK: 'permission denied' is NOT proof the app is gone. The ArgoCD
+                # API has proven it cannot be trusted here - it returns this to an admin
+                # while merely stalled, for apps that still exist. Until ArgoCD can be
+                # trusted again (and it really ought to be our single source of truth,
+                # and may be in the future), we double-check the Kubernetes API directly.
+                if await _confirmed_gone_via_k8s():
+                    logger.info(
+                        f"Application {app_name} confirmed deleted via Kubernetes API "
+                        f"(ArgoCD returned permission denied; not trusting it as 'deleted')"
+                    )
+                    return True
+                logger.warning(
+                    f"Application {app_name}: ArgoCD returned permission denied but the Kubernetes API "
+                    f"shows it still present (or could not confirm) - treating as NOT deleted"
+                )
+
             except Exception as e:
                 logger.error(f"Error checking application deletion status: {e}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(retry_delay)
 
-        logger.warning(f"Application {app_name} still exists after {max_retries} retries")
+            if attempt < max_retries - 1:  # Don't sleep on the last attempt
+                await asyncio.sleep(retry_delay)
+
+        logger.warning(f"Application {app_name} NOT confirmed deleted after {max_retries} retries")
         return False
 
 

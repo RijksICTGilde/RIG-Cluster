@@ -317,3 +317,91 @@ def test_repository_url_normal_values_are_accepted() -> None:
         project = _valid_project()
         project["repositories"][0]["url"] = url
         validate_project_schema(project)
+
+
+# ---------------------------------------------------------------------------
+# Per-component security override (hidden YAML-only feature)
+# ---------------------------------------------------------------------------
+
+
+def test_component_with_security_block_is_accepted() -> None:
+    """The optional ``security`` block on a component must pass schema validation."""
+    project = _valid_project()
+    project["components"][0]["security"] = {
+        "run-as-user": 999,
+        "run-as-group": 999,
+        "fs-group": 999,
+    }
+    validate_project_schema(project)
+
+
+def test_component_with_partial_security_block_is_accepted() -> None:
+    """Only some fields set is valid (other defaults handled by template)."""
+    project = _valid_project()
+    project["components"][0]["security"] = {"run-as-user": 1002}
+    validate_project_schema(project)
+
+
+def test_component_security_block_rejects_unknown_field() -> None:
+    """additionalProperties:false on the security block must reject typos."""
+    project = _valid_project()
+    project["components"][0]["security"] = {"runAsUser": 999}  # camelCase, wrong key
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_component_security_block_rejects_negative_uid() -> None:
+    """minimum:0 on UID/GID must reject negative integers."""
+    project = _valid_project()
+    project["components"][0]["security"] = {"run-as-user": -1}
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+# ---------------------------------------------------------------------------
+# Per-component / per-deployment `command` override (hidden YAML-only feature)
+# ---------------------------------------------------------------------------
+
+
+def test_component_with_command_is_accepted() -> None:
+    """Component-level ``command`` (list[str], non-empty) passes validation."""
+    project = _valid_project()
+    project["components"][0]["command"] = ["sh", "-c", "exec /app/bin/web"]
+    validate_project_schema(project)
+
+
+def test_deployment_component_with_command_is_accepted() -> None:
+    """Per-deployment ``command`` override passes validation."""
+    project = _valid_project()
+    project["deployments"][0]["components"][0]["command"] = [
+        "sh",
+        "-c",
+        "echo prd && exec /app/bin/web",
+    ]
+    validate_project_schema(project)
+
+
+def test_component_command_rejects_empty_list() -> None:
+    """``minItems: 1`` must reject ``command: []``."""
+    project = _valid_project()
+    project["components"][0]["command"] = []
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_component_command_rejects_non_string_items() -> None:
+    """``items.type: string`` must reject mixed-type lists."""
+    project = _valid_project()
+    project["components"][0]["command"] = ["sh", 42]
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_component_command_rejects_non_list_value() -> None:
+    """A plain string for ``command`` (shell-style) must be rejected — users
+    must write the K8s-native list[str] form so we don't ship surprise
+    shell-parsing semantics."""
+    project = _valid_project()
+    project["components"][0]["command"] = "sh -c 'exec /app/bin/web'"
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)

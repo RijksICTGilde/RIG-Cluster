@@ -262,6 +262,74 @@ class TestCleanupProjectInfrastructure:
 
 
 # ---------------------------------------------------------------------------
+# _delete_project_argocd_folder tests
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteProjectArgocdFolder:
+    """Test _delete_project_argocd_folder method."""
+
+    @pytest.mark.asyncio
+    async def test_deletes_folder_and_refreshes_root_app(self):
+        """Should delete the project ArgoCD folder, commit, and refresh user-applications."""
+        mock_pm = _make_project_manager_mock()
+        manager = DeleteProjectManager(mock_pm)
+        deletion_results: dict = {"operations": [], "errors": []}
+
+        mock_argo = AsyncMock()
+        mock_argo.refresh_application = AsyncMock(return_value=True)
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("os.path.exists", return_value=True),
+            patch("shutil.rmtree") as mock_rmtree,
+        ):
+            await manager._delete_project_argocd_folder("test-project", "local", deletion_results)
+
+        mock_rmtree.assert_called_once_with("/tmp/gitops/local/test-project")
+
+        gitops_connector = await mock_pm.get_git_connector_for_argocd()
+        gitops_connector.commit_and_push.assert_called()
+        mock_argo.refresh_application.assert_called_once_with("user-applications")
+
+        folder_ops = [op for op in deletion_results["operations"] if op["type"] == "project_argocd_folder_deletion"]
+        assert len(folder_ops) == 1
+        assert folder_ops[0]["status"] == "success"
+        assert folder_ops[0]["target"] == "local/test-project"
+
+    @pytest.mark.asyncio
+    async def test_not_found_when_folder_missing(self):
+        """Should record not_found and not commit when the folder does not exist."""
+        mock_pm = _make_project_manager_mock()
+        manager = DeleteProjectManager(mock_pm)
+        deletion_results: dict = {"operations": [], "errors": []}
+
+        with patch("os.path.exists", return_value=False):
+            await manager._delete_project_argocd_folder("test-project", "local", deletion_results)
+
+        gitops_connector = await mock_pm.get_git_connector_for_argocd()
+        gitops_connector.commit_and_push.assert_not_called()
+
+        folder_ops = [op for op in deletion_results["operations"] if op["type"] == "project_argocd_folder_deletion"]
+        assert len(folder_ops) == 1
+        assert folder_ops[0]["status"] == "not_found"
+        assert deletion_results["errors"] == []
+
+    @pytest.mark.asyncio
+    async def test_errors_are_captured_not_raised(self):
+        """Errors should be captured in results, not raised."""
+        mock_pm = _make_project_manager_mock()
+        mock_pm.get_git_connector_for_argocd = AsyncMock(side_effect=RuntimeError("git error"))
+        manager = DeleteProjectManager(mock_pm)
+        deletion_results: dict = {"operations": [], "errors": []}
+
+        await manager._delete_project_argocd_folder("test-project", "local", deletion_results)
+
+        assert len(deletion_results["errors"]) > 0
+        assert "git error" in deletion_results["errors"][0]
+
+
+# ---------------------------------------------------------------------------
 # delete_deployment tests (separation of concerns)
 # ---------------------------------------------------------------------------
 

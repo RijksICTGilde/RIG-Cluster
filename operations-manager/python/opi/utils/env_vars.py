@@ -36,10 +36,14 @@ def _detect_env_var_format(text: str) -> str:
         if not line or line.startswith("#"):
             continue
 
-        # YAML indicators: colon-based key, no equals sign
-        # Matches both "KEY: value" and "KEY:" (block value on next lines)
-        if ":" in line and "=" not in line and re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*:\s*", line):
+        # YAML indicators: colon-based key.
+        # The value side may legitimately contain '=' (e.g. URLs with
+        # query strings, base64, env-style templates), so do NOT exclude
+        # lines just because they have an '='. The presence of "KEY:<space>"
+        # at the start of a line is the YAML signal.
+        if re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*:(\s|$)", line):
             yaml_indicators += 1
+            continue
 
         # KEY=VALUE indicators
         if "=" in line and not line.startswith("-") and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=.*", line):
@@ -48,6 +52,9 @@ def _detect_env_var_format(text: str) -> str:
     # If we have more YAML indicators or the text starts with certain patterns
     if yaml_indicators > keyvalue_indicators or text.strip().startswith(("---", "{\n", "[\n")):
         return "yaml"
+
+    if yaml_indicators == 0 and keyvalue_indicators == 0:
+        logger.warning("Could not detect env-var format (no YAML or KEY=VALUE indicators); falling back to keyvalue")
 
     return "keyvalue"
 

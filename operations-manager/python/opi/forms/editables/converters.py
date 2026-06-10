@@ -284,16 +284,29 @@ class KeyValueConverter:
 
     @staticmethod
     def _parse_env_text(text: str) -> dict[str, str]:
-        """Parse ``KEY=value`` lines into a dict."""
-        result: dict[str, str] = {}
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            if "=" in stripped:
-                key, _, val = stripped.partition("=")
-                result[key.strip()] = val.strip()
-        return result
+        """Parse KEY=value or YAML key-value text into a dict.
+
+        Delegates to ``validate_and_parse_env_vars`` so that aliases entered
+        in YAML form (``KEY: "value with = inside"``) are not corrupted by
+        a naive split on ``=``. Falls back to a permissive KEY=VALUE split
+        if parsing fails, matching the previous behavior for malformed input.
+        """
+        from opi.utils.env_vars import validate_and_parse_env_vars
+
+        try:
+            return validate_and_parse_env_vars(text)
+        except ValueError, TypeError:
+            # Validation should have caught this upstream; preserve the old
+            # permissive behavior so we never silently raise from the converter.
+            result: dict[str, str] = {}
+            for line in text.splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                if "=" in stripped:
+                    key, _, val = stripped.partition("=")
+                    result[key.strip()] = val.strip()
+            return result
 
     @staticmethod
     def _maybe_decrypt(value: Any, context_data: dict[str, Any] | None) -> Any:

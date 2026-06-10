@@ -189,6 +189,12 @@ class KeycloakVariables(Enum):
         source="secret",
         secret_key="realm",
     )
+    HOSTNAME = VariableDefinition(
+        name="OIDC_HOSTNAME",
+        description="Keycloak hostname zonder scheme (afgeleid van base_url)",
+        source="secret",
+        secret_key="hostname",
+    )
 
 
 class MinIOVariables(Enum):
@@ -332,6 +338,11 @@ class WebVariables(Enum):
     PUBLIC_HOST = VariableDefinition(
         name="PUBLIC_HOST",
         description="De publieke hostname/URL waar een component bereikbaar zal zijn",
+        source="direct",
+    )
+    PUBLIC_HOSTNAME = VariableDefinition(
+        name="PUBLIC_HOSTNAME",
+        description="De publieke hostname (zonder scheme) waar een component bereikbaar zal zijn",
         source="direct",
     )
 
