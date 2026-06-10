@@ -17,7 +17,7 @@ from opi.forms.wizard.session import (
     init_wizard_state,
     save_wizard_state,
 )
-from opi.forms.wizard.state import WizardState, WizardSteps
+from opi.forms.wizard.state import CLEARED_FIELD, WizardState, WizardSteps
 
 # ---------------------------------------------------------------------------
 # WizardSteps tests
@@ -157,6 +157,36 @@ class TestWizardState:
             },
         )
         assert state.get_merged_data()["key"] == "from_b"
+
+    def test_get_merged_data_cleared_field_removes_template_value(self):
+        """A CLEARED_FIELD tombstone deletes the snapshot value instead of resurrecting it."""
+        state = WizardState(
+            flow_id="test",
+            current_step="a",
+            active_sections=["a"],
+            template_data={
+                "components": [{"name": "web", "aliases": {"DATABASE_URL": "old"}, "image": "x:1"}],
+            },
+            step_data={
+                "a": {"components": [{"name": "web", "aliases": CLEARED_FIELD}]},
+            },
+        )
+        merged = state.get_merged_data()
+        assert "aliases" not in merged["components"][0]
+        assert merged["components"][0]["image"] == "x:1"
+
+    def test_get_merged_data_cleared_field_swept_on_wholesale_replace(self):
+        """Tombstones never leak into merged output, even without a template value."""
+        state = WizardState(
+            flow_id="test",
+            current_step="a",
+            active_sections=["a"],
+            step_data={
+                "a": {"components": [{"name": "web", "aliases": CLEARED_FIELD}]},
+            },
+        )
+        merged = state.get_merged_data()
+        assert merged["components"] == [{"name": "web"}]
 
     def test_get_merged_data_skips_inactive(self):
         """Only data from active_sections is included."""
