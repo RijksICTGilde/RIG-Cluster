@@ -1157,7 +1157,9 @@ def _assemble_deployment(final_data: dict[str, Any]) -> None:
 
     - Sets ``name``, ``cluster``, ``namespace``, ``repository``
     - Builds ``components`` array from component names
-    - Converts ``root-component`` to ``root: true`` on the matching component
+
+    The root component is carried as deployment-level ``root-component`` and is
+    left untouched here (it is set during the domain step).
     """
     deployments = final_data.get("deployments", [{}])
     deployment = deployments[0] if deployments else {}
