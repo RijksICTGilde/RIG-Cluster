@@ -427,9 +427,55 @@ def _fixup_v2_data(project_data: dict[str, Any]) -> bool:
         if _fixup_flat_resources(entity):
             cleaned = True
 
+    # Strip stale root flags left on the project-level component catalog
+    if _fixup_catalog_root(project_data):
+        cleaned = True
+
     if cleaned:
         project_name = project_data.get("name", "unknown")
         logger.info(f"Cleaned up stale data in project '{project_name}'")
+
+    return cleaned
+
+
+def _fixup_catalog_root(project_data: dict[str, Any]) -> bool:
+    """Strip stale component-level ``root`` flags from the top-level component catalog.
+
+    The original nice-url feature stored the root marker as ``root: true`` on
+    catalog components. The schema later moved this to deployment-level
+    ``root-component`` (see ``_migrate_v2_to_v2_1``), but that migration only
+    scans deployment component refs, not the project-level catalog, and it is
+    version-gated -- so files already stamped at the latest version keep the
+    stale catalog key and fail schema validation. This fixup runs
+    unconditionally to repair them.
+
+    For any catalog component still marked ``root: true``, the marker is lifted
+    to ``root-component`` on every deployment that references it and does not
+    already have one, then the ``root`` key is removed. ``root: false`` is
+    dropped outright.
+
+    Returns True if any cleanup was performed.
+    """
+    catalog = [c for c in project_data.get("components", []) if isinstance(c, dict)]
+    deployments = [d for d in project_data.get("deployments", []) if isinstance(d, dict)]
+    cleaned = False
+
+    for comp in catalog:
+        if "root" not in comp:
+            continue
+
+        is_root = comp.get("root") is True
+        comp_name = comp.get("name")
+        del comp["root"]
+        cleaned = True
+
+        if is_root and comp_name:
+            for dep in deployments:
+                if dep.get("root-component"):
+                    continue
+                refs = {r.get("reference") for r in dep.get("components", []) if isinstance(r, dict)}
+                if comp_name in refs:
+                    dep["root-component"] = comp_name
 
     return cleaned
 
