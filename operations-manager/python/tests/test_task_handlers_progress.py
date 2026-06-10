@@ -110,19 +110,22 @@ class TestHandleDeleteDeployment:
         assert result["deletion_results"]["namespace"]["success"] is True
 
     @pytest.mark.asyncio
-    async def test_deletion_not_success_calls_fail_task(self, payload):
+    async def test_deletion_not_success_raises_and_fails_task(self, payload):
+        # A partially-failed delete must FAIL the task (not return a "partial" success),
+        # so the caller / nightly cleaner retries instead of treating it as done.
         from opi.core.task_handlers_deployment import handle_delete_deployment
 
         progress = _make_progress()
 
         mock_pm = AsyncMock()
-        mock_pm.delete_deployment = AsyncMock(return_value={"success": False})
+        mock_pm.delete_deployment = AsyncMock(return_value={"success": False, "errors": ["boom"]})
         mock_pm.close = AsyncMock()
 
-        with patch(CREATE_PM_PATH, return_value=mock_pm):
+        with patch(CREATE_PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError):
             await handle_delete_deployment(payload, progress)
 
         progress.fail_task.assert_called_once()
+        progress.fail_project.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_error_calls_fail_project(self, payload):

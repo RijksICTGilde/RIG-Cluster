@@ -109,18 +109,24 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
         deletion_results = await project_manager.delete_deployment(project_name, deployment_name, force=True)
 
         success = deletion_results.get("success", False) if isinstance(deletion_results, dict) else False
-        if success:
-            progress.complete_task(delete_task)
-            message = f"Deployment '{deployment_name}' in project '{project_name}' deleted successfully"
-        else:
-            progress.fail_task(delete_task, "Deletion completed with some errors")
-            message = f"Deployment '{deployment_name}' deletion completed with some errors"
+        if not success:
+            # Fail the TASK (not just the sub-task) when the delete left errors behind.
+            # Previously this returned a "partial" result and the top-level task reported
+            # success, so partially-failed deletes were treated as done and stale
+            # deployments accumulated (orphaned previews). delete_deployment is idempotent,
+            # so the caller / nightly cleaner safely retries until it converges.
+            errors = deletion_results.get("errors", []) if isinstance(deletion_results, dict) else []
+            error_detail = "; ".join(str(e) for e in errors) or "unknown error"
+            raise RuntimeError(
+                f"Deployment '{deployment_name}' in project '{project_name}' not fully deleted: {error_detail}"
+            )
 
-        status_msg = "completed successfully" if success else "completed with some errors"
-        logger.info(f"Task: deployment deletion {status_msg} for {project_name}/{deployment_name}")
+        progress.complete_task(delete_task)
+        message = f"Deployment '{deployment_name}' in project '{project_name}' deleted successfully"
+        logger.info(f"Task: deployment deletion completed successfully for {project_name}/{deployment_name}")
 
         return {
-            "status": "completed" if success else "partial",
+            "status": "completed",
             "message": message,
             "project": project_name,
             "deployment": deployment_name,
