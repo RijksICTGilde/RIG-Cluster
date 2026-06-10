@@ -1,0 +1,32 @@
+# TEMPORARY — DO NOT REMOVE WITHOUT READING THIS
+#
+# Allow-all policy over every pod in rig-prd-operations. This recreates the
+# effective network state production ran under from day one until 2026-06-10:
+# the original `allow-argo` was podSelector:{} allow-all and masked every
+# restrictive policy in the namespace (NetworkPolicies are additive).
+#
+# PR #64 scoped allow-argo down (correct security fix), but the first apply
+# of it (2026-06-10 bootstrap run) revealed that no other workload had a
+# complete policy — Keycloak had none at all — and took production down
+# (incident 2026-06-10: OPI/Keycloak/external-dns lost database and egress).
+#
+# Removal plan (in this order, nothing skipped):
+#   1. Write per-component NetworkPolicies for EVERY workload in this
+#      namespace (keycloak, external-dns, minio, redis, rig-db, OPI, argocd).
+#   2. Test them on a cluster that actually ENFORCES policies — the kind
+#      sandbox runs kindnet, which ignores NetworkPolicies entirely.
+#   3. Apply the per-component policies to production.
+#   4. Only then delete this file and the live object.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: emergency-restore-allow-all
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - {}
+  egress:
+    - {}

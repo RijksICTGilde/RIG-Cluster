@@ -10,6 +10,7 @@ resources:
 - namespace.yaml
 - argocd-deployment.yaml
 - network-policies/argocd-network-policy.yaml
+- network-policies/emergency-restore-allow-all.yaml
 - ../../operations-manager/overlays/odcn-production
 - argocd-application-production-infrastructure.yaml
 - argocd-application-user-applications.yaml
