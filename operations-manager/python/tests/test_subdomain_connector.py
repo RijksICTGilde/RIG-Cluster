@@ -17,6 +17,7 @@ from opi.connectors.subdomain import (
     SubdomainNotAvailableError,
     SubdomainValidationError,
     create_subdomain_connector,
+    find_deployments_for_domain_item,
     validate_subdomain,
 )
 
@@ -1053,3 +1054,46 @@ class TestRegisterBareDomain:
             )
 
         assert result["project_name"] == "myproject"
+
+
+class TestFindDeploymentsForDomainItem:
+    """find_deployments_for_domain_item maps an approval item to deployment names."""
+
+    PROJECT: ClassVar[dict] = {
+        "deployments": [
+            {"name": "prod", "base-domain": "voorbeeld.nl", "subdomain": "app"},
+            {"name": "staging", "base-domain": "voorbeeld.nl", "subdomain": "test"},
+            {"name": "shared", "base-domain": "voorbeeld.nl", "subdomain": "app"},
+            {"name": "other", "base-domain": "andere.nl", "subdomain": "app"},
+            {"name": "default", "base-domain": "rijks.app", "subdomain": "x"},
+        ]
+    }
+
+    def test_domain_item_matches_all_on_base_domain(self):
+        """A domain-level item matches every deployment on that base domain, any subdomain."""
+        item = {"type": "domain", "domain": "voorbeeld.nl"}
+        assert find_deployments_for_domain_item(self.PROJECT, item) == ["prod", "staging", "shared"]
+
+    def test_subdomain_item_matches_base_domain_and_subdomain(self):
+        """A subdomain item additionally requires the subdomain to match."""
+        item = {"type": "subdomain", "domain": "voorbeeld.nl", "name": "app"}
+        assert find_deployments_for_domain_item(self.PROJECT, item) == ["prod", "shared"]
+
+    def test_no_match_returns_empty(self):
+        """Domain that no deployment uses yields an empty list (deploy nothing)."""
+        item = {"type": "domain", "domain": "ongebruikt.nl"}
+        assert find_deployments_for_domain_item(self.PROJECT, item) == []
+
+    def test_subdomain_no_match_returns_empty(self):
+        item = {"type": "subdomain", "domain": "voorbeeld.nl", "name": "nope"}
+        assert find_deployments_for_domain_item(self.PROJECT, item) == []
+
+    def test_missing_domain_returns_empty(self):
+        assert find_deployments_for_domain_item(self.PROJECT, {"type": "domain"}) == []
+
+    def test_handles_non_dict_and_unnamed_deployments(self):
+        project = {
+            "deployments": ["junk", {"base-domain": "voorbeeld.nl"}, {"name": "ok", "base-domain": "voorbeeld.nl"}]
+        }
+        item = {"type": "domain", "domain": "voorbeeld.nl"}
+        assert find_deployments_for_domain_item(project, item) == ["ok"]
