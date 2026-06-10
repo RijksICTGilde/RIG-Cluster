@@ -122,3 +122,147 @@ class TestSetDeploymentServiceGeneration:
         services = project_data["deployments"][0]["services"]
         assert isinstance(services, list)
         assert len(services) == 1
+
+
+class TestDecryptAndCleanEnvVars:
+    """Tests for _decrypt_and_clean_env_vars.
+
+    Regression: this step used to strip surrounding quotes from every value,
+    which silently corrupted env vars whose value must literally contain
+    quotes (e.g. cal.com's ALLOWED_HOSTNAMES, which needs '"host"' so the app
+    can wrap it into a JSON array). Quote semantics belong to the parser
+    (validate_and_parse_env_vars), not to this decrypt step.
+    """
+
+    def test_preserves_intentional_surrounding_double_quotes(self):
+        handler = ProjectFileHandler()
+        result = handler._decrypt_and_clean_env_vars(
+            {"ALLOWED_HOSTNAMES": '"productie-cp-byw.sandbox.rijksapp.dev"'}, None
+        )
+        assert result["ALLOWED_HOSTNAMES"] == '"productie-cp-byw.sandbox.rijksapp.dev"'
+
+    def test_leaves_bare_values_untouched(self):
+        handler = ProjectFileHandler()
+        result = handler._decrypt_and_clean_env_vars({"PLAIN": "bare-value", "EMPTY": ""}, None)
+        assert result == {"PLAIN": "bare-value", "EMPTY": ""}
+
+    def test_preserves_literal_double_quote_pair(self):
+        handler = ProjectFileHandler()
+        result = handler._decrypt_and_clean_env_vars({"JSON_ARRAY": '"[]"'}, None)
+        assert result["JSON_ARRAY"] == '"[]"'
+
+
+class TestExtractComponentSecurity:
+    """Tests for the hidden per-component ``security`` block extractor."""
+
+    def test_returns_none_when_component_missing(self) -> None:
+        handler = ProjectFileHandler()
+        assert handler.extract_component_security({"components": []}, "missing") is None
+
+    def test_returns_none_when_no_security_block(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web"}]}
+        assert handler.extract_component_security(project_data, "web") is None
+
+    def test_returns_full_block(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {
+            "components": [
+                {
+                    "name": "web",
+                    "security": {"run-as-user": 999, "run-as-group": 999, "fs-group": 999},
+                }
+            ]
+        }
+        result = handler.extract_component_security(project_data, "web")
+        assert result == {"run-as-user": 999, "run-as-group": 999, "fs-group": 999}
+
+    def test_returns_partial_block(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web", "security": {"run-as-user": 1002}}]}
+        result = handler.extract_component_security(project_data, "web")
+        assert result == {"run-as-user": 1002}
+
+    def test_silently_drops_non_int_values(self) -> None:
+        """Schema layer catches wrong types; extractor is defence in depth."""
+        handler = ProjectFileHandler()
+        project_data = {
+            "components": [
+                {
+                    "name": "web",
+                    "security": {"run-as-user": "bogus", "fs-group": 999},
+                }
+            ]
+        }
+        result = handler.extract_component_security(project_data, "web")
+        assert result == {"fs-group": 999}
+
+    def test_returns_none_when_security_is_not_a_dict(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web", "security": "nonsense"}]}
+        assert handler.extract_component_security(project_data, "web") is None
+
+    def test_booleans_are_not_treated_as_int(self) -> None:
+        """In Python ``True == 1`` and ``isinstance(True, int)`` is True; explicitly excluded."""
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web", "security": {"run-as-user": True}}]}
+        assert handler.extract_component_security(project_data, "web") is None
+
+
+class TestExtractComponentCommand:
+    """Tests for the hidden per-component ``command`` extractors (component + deployment levels)."""
+
+    def test_component_returns_none_when_component_missing(self) -> None:
+        handler = ProjectFileHandler()
+        assert handler.extract_component_command({"components": []}, "missing") is None
+
+    def test_component_returns_none_when_no_command(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web"}]}
+        assert handler.extract_component_command(project_data, "web") is None
+
+    def test_component_returns_command_list(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web", "command": ["sh", "-c", "exec /app/bin/web"]}]}
+        result = handler.extract_component_command(project_data, "web")
+        assert result == ["sh", "-c", "exec /app/bin/web"]
+
+    def test_component_returns_none_for_empty_list(self) -> None:
+        """Defence in depth: schema rejects empty list earlier, but if it slips
+        through we treat ``[]`` as "no override" rather than erasing ENTRYPOINT."""
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web", "command": []}]}
+        assert handler.extract_component_command(project_data, "web") is None
+
+    def test_component_returns_none_for_non_list(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web", "command": "sh -c exec"}]}
+        assert handler.extract_component_command(project_data, "web") is None
+
+    def test_component_returns_none_for_mixed_item_types(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web", "command": ["sh", 42]}]}
+        assert handler.extract_component_command(project_data, "web") is None
+
+    def test_deployment_returns_none_when_no_override(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"deployments": [{"name": "prd", "components": [{"reference": "web"}]}]}
+        assert handler.extract_deployment_component_command(project_data, "prd", "web") is None
+
+    def test_deployment_returns_override(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {
+            "deployments": [
+                {
+                    "name": "prd",
+                    "components": [{"reference": "web", "command": ["sh", "-c", "echo prd && exec /app"]}],
+                }
+            ]
+        }
+        result = handler.extract_deployment_component_command(project_data, "prd", "web")
+        assert result == ["sh", "-c", "echo prd && exec /app"]
+
+    def test_deployment_returns_none_when_deployment_missing(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"deployments": []}
+        assert handler.extract_deployment_component_command(project_data, "prd", "web") is None

@@ -59,6 +59,21 @@ class TestDetectEnvVarFormat:
         text = "[\nvalue1\n]"
         assert _detect_env_var_format(text) == "yaml"
 
+    def test_yaml_with_equals_in_quoted_value(self):
+        """YAML lines whose value contains '=' (e.g. URL query strings) are still YAML."""
+        text = 'DATABASE_URL: "postgresql://host/db?schema=public"'
+        assert _detect_env_var_format(text) == "yaml"
+
+    def test_yaml_multiple_lines_with_equals_in_values(self):
+        """Multiple YAML lines with '=' in their quoted values must be detected as YAML."""
+        text = 'DATABASE_URL: "postgresql://$U:$P@$H/$D?schema=$S"\nNEXTAUTH_URL: "https://$PUBLIC_HOST"\n'
+        assert _detect_env_var_format(text) == "yaml"
+
+    def test_keyvalue_not_confused_by_colon_in_value(self):
+        """KEY=VALUE lines with ':' in the value remain keyvalue."""
+        text = "DATABASE_URL=postgresql://host:5432/db"
+        assert _detect_env_var_format(text) == "keyvalue"
+
 
 class TestValidateAndParseEnvVars:
     """Tests for validate_and_parse_env_vars."""
@@ -158,6 +173,22 @@ class TestValidateAndParseEnvVars:
     def test_invalid_key_with_spaces(self):
         with pytest.raises(ValueError, match="Invalid key format"):
             validate_and_parse_env_vars("BAD KEY=value")
+
+    # Regression: alias-editor reproducer
+    def test_yaml_aliases_with_equals_in_quoted_values(self):
+        """Regression for alias-editor bug: YAML lines whose quoted value
+        contains '=' must be parsed as YAML, not split as KEY=VALUE."""
+        text = (
+            'DATABASE_URL: "postgresql://$U:$P@$H:$PORT/$D?schema=$S"\n'
+            'DATABASE_DIRECT_URL: "postgresql://$U:$P@$H:$PORT/$D?schema=$S"\n'
+            'NEXTAUTH_URL: "https://$PUBLIC_HOST"\n'
+        )
+        result = validate_and_parse_env_vars(text)
+        assert result == {
+            "DATABASE_URL": "postgresql://$U:$P@$H:$PORT/$D?schema=$S",
+            "DATABASE_DIRECT_URL": "postgresql://$U:$P@$H:$PORT/$D?schema=$S",
+            "NEXTAUTH_URL": "https://$PUBLIC_HOST",
+        }
 
     # CommentedMap input
     def test_commented_map_input(self):

@@ -718,10 +718,19 @@ class ProjectManager:
         Returns:
             Category name string (e.g., "database", "minio", "keycloak", "web", "storage")
         """
-        # Map service types to their category names
+        # Map service types to their category names. Both the shared and
+        # namespace-dedicated variants of postgresql/redis collapse to the
+        # same category so an alias referencing e.g. $REDIS_URL routes to the
+        # same secret bucket regardless of which variant the project picked.
+        # Without this, the var_to_service lookup map ends up keyed by the
+        # namespace variant (later overwrites earlier in dict iteration), and
+        # aliases categorise as "namespace-redis" -- a bucket no project
+        # consumes, silently dropping the alias.
         category_map = {
             ServiceType.POSTGRESQL_DATABASE: "database",
             ServiceType.NAMESPACE_POSTGRESQL_DATABASE: "database",
+            ServiceType.REDIS: "redis",
+            ServiceType.NAMESPACE_REDIS: "redis",
             ServiceType.MINIO_STORAGE: "minio",
             ServiceType.KEYCLOAK: "keycloak",
             ServiceType.PUBLISH_ON_WEB: "web",
@@ -1110,6 +1119,10 @@ class ProjectManager:
                 public_url = generate_public_url(hostname, use_https)
                 env_vars[var_def.name] = public_url
                 logger.debug(f"Generated web env var: {var_def.name}={public_url}")
+            elif var_def.source == "direct" and var_def.name == "PUBLIC_HOSTNAME":
+                # Hostname only (no scheme) for apps that reject full URLs in host-name fields
+                env_vars[var_def.name] = hostname
+                logger.debug(f"Generated web env var: {var_def.name}={hostname}")
 
         return env_vars
 
@@ -2848,6 +2861,7 @@ class ProjectManager:
         # Add hostname-related variables
         public_url = generate_public_url(hostname, use_https)
         context["PUBLIC_HOST"] = public_url
+        context["PUBLIC_HOSTNAME"] = hostname
         context["HOSTNAME"] = hostname
         if subdomain:
             context["SUBDOMAIN"] = subdomain
@@ -3204,8 +3218,10 @@ class ProjectManager:
                 regular_files.append(f"{issuer_manifest_filename}.yaml")
                 logger.info(f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}")
 
-                # Create network policy for ACME HTTP-01 challenge
-                # This allows ingress on port 80 to all pods, required for the ACME solver
+                # Create network policy for ACME HTTP-01 challenge.
+                # cert-manager's HTTP-01 solver pod listens on 8089 (the router
+                # forwards the challenge to the pod on 8089, not 80), so the
+                # solver port must be allowed or the self-check times out.
                 network_policy_template_path = os.path.join(
                     os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja"
                 )
@@ -3214,7 +3230,7 @@ class ProjectManager:
                     "name": generate_network_policy_name("acme-http", deployment_name),
                     "namespace": prefixed_namespace,
                     "pod_selector": None,  # Match all pods
-                    "ports": [80],
+                    "ports": [80, 8089],  # 80 for ingress, 8089 for ACME solver pod
                 }
                 network_policy_path = self._manifest_generator.create_manifest_file(
                     template_path=network_policy_template_path,
@@ -4303,6 +4319,24 @@ class ProjectManager:
                 project_data, component_reference
             )
 
+            # Extract optional per-component security context override (sandbox-only).
+            # Hidden YAML-only feature — defaults to None (template falls back to 1001/1001/1001).
+            component_security = self._project_file_handler.extract_component_security(
+                project_data, component_reference
+            )
+
+            # Extract optional container `command` override (K8s containers[].command).
+            # Hidden YAML-only feature: deployment-level override wins over the
+            # component-level default; both default to None so the image's own
+            # ENTRYPOINT/CMD remains in effect when neither is set.
+            command_override = self._project_file_handler.extract_deployment_component_command(
+                project_data, deployment_name, component_reference
+            )
+            if command_override is None:
+                command_override = self._project_file_handler.extract_component_command(
+                    project_data, component_reference
+                )
+
             # Extract resource configuration (component-level, then deployment-level overrides)
             component_resources = self._project_file_handler.extract_component_resources(
                 project_data, component_reference
@@ -4453,22 +4487,33 @@ class ProjectManager:
             # Register user environment variables
             # NOTE: User env vars go into a secret and are referenced via envFrom, not as direct env vars
             if user_env_vars:
-                # Substitute PUBLIC_HOST in user-env-vars if referenced
-                # NOTE: This is a simple substitution for PUBLIC_HOST only. If we need to support
-                # more direct variables in user-env-vars in the future, consider extending
-                # the alias system to support "direct" source variables.
+                # Substitute PUBLIC_HOST / PUBLIC_HOSTNAME in user-env-vars if referenced
+                # NOTE: This is a simple substitution for these two direct vars only. If we need
+                # to support more direct variables in user-env-vars in the future, consider
+                # extending the alias system to support "direct" source variables.
+                # IMPORTANT: substitute PUBLIC_HOSTNAME before PUBLIC_HOST so the longer name
+                # is matched first and isn't partially consumed by the PUBLIC_HOST replacement.
                 public_host: str | None = env_vars.get("PUBLIC_HOST")
-                if public_host:
+                public_hostname: str | None = env_vars.get("PUBLIC_HOSTNAME")
+                if public_host or public_hostname:
                     substituted_user_env_vars: dict[str, Any] = {}
                     for key, value in user_env_vars.items():
-                        if isinstance(value, str) and ("$PUBLIC_HOST" in value or "${PUBLIC_HOST}" in value):
-                            # Substitute both $PUBLIC_HOST and ${PUBLIC_HOST} syntax
-                            substituted_value = value.replace("${PUBLIC_HOST}", public_host)
-                            substituted_value = substituted_value.replace("$PUBLIC_HOST", public_host)
+                        if isinstance(value, str) and (
+                            "$PUBLIC_HOST" in value or "${PUBLIC_HOST}" in value or "${PUBLIC_HOSTNAME}" in value
+                        ):
+                            substituted_value = value
+                            if public_hostname:
+                                substituted_value = substituted_value.replace("${PUBLIC_HOSTNAME}", public_hostname)
+                                substituted_value = substituted_value.replace("$PUBLIC_HOSTNAME", public_hostname)
+                            if public_host:
+                                substituted_value = substituted_value.replace("${PUBLIC_HOST}", public_host)
+                                substituted_value = substituted_value.replace("$PUBLIC_HOST", public_host)
                             substituted_user_env_vars[key] = substituted_value
-                            logger.debug(
-                                f"Substituted PUBLIC_HOST in user-env-var {key}: {value} -> {substituted_value}"
-                            )
+                            if substituted_value != value:
+                                logger.debug(
+                                    f"Substituted PUBLIC_HOST/HOSTNAME in user-env-var {key}: "
+                                    f"{value} -> {substituted_value}"
+                                )
                         else:
                             substituted_user_env_vars[key] = value
                     user_env_vars = substituted_user_env_vars
@@ -4597,6 +4642,20 @@ class ProjectManager:
                 "resources_limits_cpu": component_resources["limits_cpu"],
                 # Replicas (0 when component is disabled)
                 "replicas": replicas,
+                # Optional per-component pod securityContext override (sandbox-only).
+                # Template reads K8s-native field names (runAsUser/runAsGroup/fsGroup).
+                "security": (
+                    {
+                        "runAsUser": component_security.get("run-as-user"),
+                        "runAsGroup": component_security.get("run-as-group"),
+                        "fsGroup": component_security.get("fs-group"),
+                    }
+                    if component_security
+                    else None
+                ),
+                # Optional container command override (K8s containers[].command).
+                # None => template omits the field => image's ENTRYPOINT/CMD stays.
+                "command": command_override,
             }
 
             logger.info(f"Creating manifests for component: {component_name} with image: {image_url}")
@@ -5232,8 +5291,10 @@ class ProjectManager:
                             f"Successfully created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}"
                         )
 
-                        # Create network policy for ACME HTTP-01 challenge
-                        # This allows ingress on port 80 to all pods, required for the ACME solver
+                        # Create network policy for ACME HTTP-01 challenge.
+                        # cert-manager's HTTP-01 solver pod listens on 8089 (the router
+                        # forwards the challenge to the pod on 8089, not 80), so the
+                        # solver port must be allowed or the self-check times out.
                         network_policy_template_path = os.path.join(
                             os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja"
                         )
@@ -5242,7 +5303,7 @@ class ProjectManager:
                             "name": generate_network_policy_name("acme-http", deployment_name),
                             "namespace": namespace,
                             "pod_selector": None,  # Match all pods
-                            "ports": [80],
+                            "ports": [80, 8089],  # 80 for ingress, 8089 for ACME solver pod
                         }
                         network_policy_path = self._manifest_generator.create_manifest_file(
                             template_path=network_policy_template_path,

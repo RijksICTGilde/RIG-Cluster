@@ -35,10 +35,18 @@ def client() -> TestClient:
     async def api_change(request: Any) -> JSONResponse:
         return JSONResponse({"api": True})
 
+    async def echo_form(request: Any) -> JSONResponse:
+        # Reads the form body the same way real handlers do. Under
+        # BaseHTTPMiddleware the body must survive the middleware's own
+        # form parse, otherwise these fields come back empty.
+        form = await request.form()
+        return JSONResponse({"keys": sorted(form.keys()), "email": form.get("email")})
+
     app = Starlette(
         routes=[
             Route("/", home, methods=["GET"]),
             Route("/projects/delete/foo", change, methods=["POST"]),
+            Route("/admin/users/create", echo_form, methods=["POST"]),
             Route("/api/v2/projects", api_change, methods=["POST"]),
         ]
     )
@@ -118,6 +126,25 @@ class TestCsrfEnforcement:
             headers={"Origin": "http://opi.example.nl"},
         )
         assert response.status_code == 200
+
+    def test_form_body_reaches_handler_after_token_parse(self, client: TestClient) -> None:
+        # Regression: a plain <form> POST carries its CSRF token in a form
+        # field, so the middleware parses the body to validate it. Under
+        # BaseHTTPMiddleware that parse must not consume the body away from
+        # the downstream handler, otherwise every field reads as empty and
+        # required-field validation fails ("Dit veld is verplicht") even
+        # though the user filled them in.
+        client.get("/")
+        token = client.cookies[CSRF_COOKIE_NAME]
+        response = client.post(
+            "/admin/users/create",
+            data={"csrf_token": token, "email": "a@b.nl", "full_name": "A B"},
+            headers={"Origin": "http://opi.example.nl"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["email"] == "a@b.nl"
+        assert body["keys"] == ["csrf_token", "email", "full_name"]
 
     def test_post_without_origin_or_referer_is_rejected(self, client: TestClient) -> None:
         client.get("/")

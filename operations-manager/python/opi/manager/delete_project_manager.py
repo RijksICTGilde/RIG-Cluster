@@ -186,6 +186,65 @@ class DeleteProjectManager:
             logger.exception("Error during orphaned ArgoCD resource cleanup")
             deletion_results["errors"].append(f"Orphaned ArgoCD cleanup error: {e}")
 
+    async def _delete_project_argocd_folder(
+        self, project_name: str, cluster: str, deletion_results: dict[str, Any]
+    ) -> None:
+        """
+        Delete the project's ArgoCD folder from the GitOps repository.
+
+        The folder {cluster}/{project_name}/ contains the AppProject manifest,
+        repository secret and kustomization.yaml. Deployment-level Application
+        files are deleted per deployment, but without removing this folder the
+        root application keeps re-applying the AppProject and repository secret
+        (selfHeal), leaving orphaned resources behind after project deletion.
+
+        Args:
+            project_name: Name of the project
+            cluster: Cluster name (e.g., "local", "odcn-production")
+            deletion_results: Results dictionary to append operations/errors to
+        """
+        project_argocd_folder_rel = os.path.join(cluster, project_name)
+        logger.info(f"Deleting project ArgoCD folder: {project_argocd_folder_rel}")
+
+        try:
+            gitops_connector = await self.project_manager.get_git_connector_for_argocd()
+            await gitops_connector.ensure_repo_cloned()
+            working_dir = await gitops_connector.get_working_dir()
+            project_argocd_folder = os.path.join(working_dir, project_argocd_folder_rel)
+
+            if os.path.exists(project_argocd_folder):
+                shutil.rmtree(project_argocd_folder)
+                deletion_results["operations"].append(
+                    {
+                        "type": "project_argocd_folder_deletion",
+                        "target": project_argocd_folder_rel,
+                        "status": "success",
+                    }
+                )
+                logger.info(f"Deleted project ArgoCD folder: {project_argocd_folder_rel}")
+
+                commit_message = f"Delete ArgoCD resources for project '{project_name}'"
+                await gitops_connector.commit_and_push(commit_message)
+                deletion_results["operations"].append(
+                    {"type": "project_argocd_gitops_commit", "status": "success", "message": commit_message}
+                )
+
+                # Refresh the root application so the orphaned AppProject and
+                # repository secret are pruned promptly
+                argo_connector = create_argo_connector()
+                await argo_connector.refresh_application("user-applications")
+            else:
+                deletion_results["operations"].append(
+                    {
+                        "type": "project_argocd_folder_deletion",
+                        "target": project_argocd_folder_rel,
+                        "status": "not_found",
+                    }
+                )
+        except Exception as e:
+            logger.exception(f"Error deleting project ArgoCD folder for {project_name}")
+            deletion_results["errors"].append(f"Failed to delete project ArgoCD folder: {e}")
+
     async def _cleanup_project_keycloak_realm(
         self, project_name: str, cluster: str, kc_config: dict[str, Any], deletion_results: dict[str, Any]
     ) -> None:
@@ -400,7 +459,11 @@ class DeleteProjectManager:
             infra_app_exists = await argo_connector.application_exists(infra_app_name)
             if infra_app_exists:
                 logger.info(f"Waiting for infrastructure Application {infra_app_name} to be deleted")
-                deletion_complete = await argo_connector.wait_for_application_deletion(infra_app_name, max_retries=20)
+                deletion_complete = await argo_connector.wait_for_application_deletion(
+                    infra_app_name,
+                    max_retries=20,
+                    kubectl_connector=self.project_manager._kubectl_connector,
+                )
 
                 if deletion_complete:
                     deletion_results["operations"].append(
@@ -431,7 +494,9 @@ class DeleteProjectManager:
                                 }
                             )
                             infra_app_deleted = await argo_connector.wait_for_application_deletion(
-                                infra_app_name, max_retries=10
+                                infra_app_name,
+                                max_retries=10,
+                                kubectl_connector=self.project_manager._kubectl_connector,
                             )
                         else:
                             deletion_results["operations"].append(
@@ -724,6 +789,11 @@ class DeleteProjectManager:
                         kc_config=kc_config,
                         deletion_results=deletion_results,
                     )
+
+            # Step 4.7: Delete the project's ArgoCD folder (AppProject, repository secret, kustomization)
+            # from the GitOps repo, so the root application prunes these resources
+            if deletion_results["success"] or force:
+                await self._delete_project_argocd_folder(project_name, current_cluster, deletion_results)
 
             # Step 5: Delete the project file if all deployment deletions succeeded (or in force mode)
             should_delete_project_file = deletion_results["success"] or force
@@ -1126,7 +1196,10 @@ class DeleteProjectManager:
                 if app_exists:
                     logger.info(f"Waiting for ArgoCD application {app_name} to be deleted via GitOps")
                     deletion_complete = await argo_connector.wait_for_application_deletion(
-                        app_name, max_retries=40, retry_delay=5
+                        app_name,
+                        max_retries=40,
+                        retry_delay=5,
+                        kubectl_connector=self.project_manager._kubectl_connector,
                     )
 
                     if deletion_complete:
@@ -1163,7 +1236,9 @@ class DeleteProjectManager:
                                 )
                                 # Wait for the app to be garbage collected using proper retry logic
                                 argocd_app_deleted = await argo_connector.wait_for_application_deletion(
-                                    app_name, max_retries=10
+                                    app_name,
+                                    max_retries=10,
+                                    kubectl_connector=self.project_manager._kubectl_connector,
                                 )
                             else:
                                 deletion_results["operations"].append(
@@ -1613,17 +1688,17 @@ class DeleteProjectManager:
                 logger.warning(error_msg)
                 # Don't fail the deletion for subdomain cleanup errors
 
-            # Update success status - in force mode, we may still have errors but continue
-            if force:
-                # In force mode, mark as partial success if there were some errors but we continued
-                deletion_results["success"] = True  # Force mode completes even with errors
-                if deletion_results["errors"]:
-                    logger.info(
-                        f"Force mode completed with {len(deletion_results['errors'])} error(s) for "
-                        f"{project_name}/{deployment_name}"
-                    )
-            else:
-                deletion_results["success"] = len(deletion_results["errors"]) == 0
+            # Honest result regardless of mode: a delete that left errors behind is NOT a
+            # success. Force mode differs only in that it keeps attempting every step instead
+            # of aborting on the first failure - it must NOT relabel a partial deletion as
+            # success. (Doing so is what let orphaned previews accumulate: the caller and the
+            # nightly cleaner were told "done" while resources stayed behind.)
+            deletion_results["success"] = len(deletion_results["errors"]) == 0
+            if force and deletion_results["errors"]:
+                logger.warning(
+                    f"Force mode finished with {len(deletion_results['errors'])} error(s) for "
+                    f"{project_name}/{deployment_name}"
+                )
 
             logger.info(
                 f"Deployment deletion completed for {project_name}/{deployment_name} - "
@@ -1633,7 +1708,18 @@ class DeleteProjectManager:
 
         except HTTPException as http_error:
             if force:
-                # In force mode, convert HTTPException to error in results and continue
+                # A 404 means the deployment is already absent from desired state (e.g. not in
+                # the project file) - that is a successful, idempotent delete, not an error.
+                # Reporting it as a failure made the nightly cleaner retry zombie references
+                # forever. Any other HTTP error is a real failure and must be reported so the
+                # caller / cleaner retries instead of treating the delete as done.
+                if http_error.status_code == 404:
+                    logger.info(
+                        f"Deployment {project_name}/{deployment_name} already absent "
+                        f"({http_error.detail}) - treating as deleted"
+                    )
+                    deletion_results["success"] = True
+                    return deletion_results
                 deletion_results["success"] = False
                 deletion_results["errors"].append(f"HTTP error during deployment deletion (force mode): {http_error}")
                 logger.warning(f"HTTP error during force deletion for {project_name}/{deployment_name}, continuing")
@@ -1802,7 +1888,10 @@ class DeleteProjectManager:
             if app_exists:
                 await argo_connector.refresh_application("user-applications")
                 argocd_app_deleted = await argo_connector.wait_for_application_deletion(
-                    app_name, max_retries=40, retry_delay=5
+                    app_name,
+                    max_retries=40,
+                    retry_delay=5,
+                    kubectl_connector=self.project_manager._kubectl_connector,
                 )
                 deletion_results["operations"].append(
                     {

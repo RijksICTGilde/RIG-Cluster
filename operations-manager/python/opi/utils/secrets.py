@@ -271,6 +271,22 @@ class KeycloakSecret(BaseSecret):
         """Validate Keycloak secret data."""
         super().__post_init__()  # Call parent's default implementation
 
+    @property
+    def hostname(self) -> str:
+        """Bare hostname (and port if present) extracted from base_url.
+
+        Apps that have host-name config fields rejecting full URLs (e.g.
+        OpenProject's openid_connect.<provider>.host) read this directly
+        via the OIDC_HOSTNAME variable, avoiding scheme-stripping in
+        user-env-vars.
+        """
+        from urllib.parse import urlparse
+
+        parsed = urlparse(self.base_url)
+        # netloc includes host[:port]; falls back to path for bare hostnames
+        # passed without a scheme (defensive — base_url should always have one).
+        return parsed.netloc or parsed.path
+
 
 @dataclass
 class RedisSecret(BaseSecret):

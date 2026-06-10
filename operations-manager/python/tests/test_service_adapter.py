@@ -54,6 +54,16 @@ class TestGetServiceDefinition:
         assert defn.scope == "component"
         assert defn.name == "Publiceren op het web"
 
+    def test_publish_on_web_exposes_public_host_and_hostname(self):
+        """PUBLISH_ON_WEB must expose both PUBLIC_HOST (full URL) and PUBLIC_HOSTNAME (bare hostname)."""
+        defn = ServiceAdapter.get_service_definition(ServiceType.PUBLISH_ON_WEB)
+        var_names = {v.name for v in defn.variables}
+        assert "PUBLIC_HOST" in var_names
+        assert "PUBLIC_HOSTNAME" in var_names
+        for v in defn.variables:
+            if v.name in ("PUBLIC_HOST", "PUBLIC_HOSTNAME"):
+                assert v.source == "direct"
+
     def test_postgresql_definition(self):
         defn = ServiceAdapter.get_service_definition(ServiceType.POSTGRESQL_DATABASE)
         assert defn.scope == "deployment"

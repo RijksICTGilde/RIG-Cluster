@@ -8,7 +8,8 @@
     - container_id: unique ID for the parent container
 #}
 {% set oom_warnings = memory_warnings | selectattr('oom_detected') | list %}
-{% set saving_warnings = memory_warnings | rejectattr('oom_detected') | list %}
+{% set floor_warnings = memory_warnings | rejectattr('oom_detected') | selectattr('floor_blocked') | list %}
+{% set saving_warnings = memory_warnings | rejectattr('oom_detected') | rejectattr('floor_blocked') | list %}
 
 {% if oom_warnings %}
 {% set oom_at_max = [] %}
@@ -58,12 +59,39 @@
         </c-ul>
         <c-button kind="primary" size="sm" label="Tune resources"
                   hx-post="/projects/{{ project_name }}/tune/{{ deployment_name }}"
+                  hx-headers="{&quot;X-CSRF-Token&quot;: &quot;{{ request.state.csrf_token }}&quot;}"
                   hx-target="#{{ container_id }}"
                   hx-swap="innerHTML" />
     </c-layout-flow>
 </c-card>
 {% endif %}
 
+{% endif %}
+
+{% if floor_warnings %}
+<c-card padding="md" background="color" backgroundColor="oranje-150" outline="true">
+    <c-layout-flow gap="sm">
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <c-heading type="h5" textContent="Geheugen-request kan omlaag (limiet vastgehouden)" />
+            <c-icon icon="vraagteken" size="xl" color="hemelblauw"
+                    style="cursor: pointer;"
+                    @click="openServiceHelp('resources.html.j2')" />
+        </div>
+        <c-p>Voor deze componenten houdt een eerdere OOM-melding de geheugenlimiet vast, maar de
+            gereserveerde request kan wel omlaag naar het werkelijke gebruik.</c-p>
+        <c-ul>
+            {% for w in floor_warnings %}
+            <c-li>{{ w.component }}: request {{ w.current_request }} &#8594; {{ w.recommended_request }},
+                limiet blijft {{ w.recommended_limit }}{% if w.floor_set_at %} (OOM-floor gezet {{ w.floor_set_at[:10] }}){% endif %}</c-li>
+            {% endfor %}
+        </c-ul>
+        <c-button kind="secondary" size="sm" label="Tune resources"
+                  hx-post="/projects/{{ project_name }}/tune/{{ deployment_name }}"
+                  hx-headers="{&quot;X-CSRF-Token&quot;: &quot;{{ request.state.csrf_token }}&quot;}"
+                  hx-target="#{{ container_id }}"
+                  hx-swap="innerHTML" />
+    </c-layout-flow>
+</c-card>
 {% endif %}
 
 {% if saving_warnings %}
@@ -82,6 +110,7 @@
         </c-ul>
         <c-button kind="secondary" size="sm" label="Tune resources"
                   hx-post="/projects/{{ project_name }}/tune/{{ deployment_name }}"
+                  hx-headers="{&quot;X-CSRF-Token&quot;: &quot;{{ request.state.csrf_token }}&quot;}"
                   hx-target="#{{ container_id }}"
                   hx-swap="innerHTML" />
     </c-layout-flow>

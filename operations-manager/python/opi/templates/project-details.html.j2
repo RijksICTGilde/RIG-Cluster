@@ -1866,6 +1866,7 @@
                 ? '/projects/{{ project.name }}/refresh/' + encodeURIComponent(target)
                 : '/projects/{{ project.name }}/refresh';
             refreshBtn.setAttribute('hx-post', refreshUrl);
+            refreshBtn.setAttribute('hx-headers', JSON.stringify({'X-CSRF-Token': '{{ request.state.csrf_token }}'}));
             htmx.process(refreshBtn);
         }
 

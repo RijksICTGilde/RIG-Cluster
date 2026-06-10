@@ -346,6 +346,20 @@
         "sso-rijk": { "type": "boolean" },
         "disabled": { "type": "boolean" },
         "disabled-reason": { "type": "string" },
+        "security": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "run-as-user": { "type": "integer", "minimum": 0 },
+            "run-as-group": { "type": "integer", "minimum": 0 },
+            "fs-group": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "command": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
         "aliases": {
           "type": "object",
           "additionalProperties": { "type": "string" }
@@ -441,6 +455,11 @@
           "type": "object",
           "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\Z" },
           "additionalProperties": { "type": "string", "pattern": "^[^\\r\\n\\u0000]*\\Z" }
+        },
+        "command": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
         },
         "disabled": { "type": "boolean" },
         "disabled-reason": { "type": "string" }
