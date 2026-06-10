@@ -142,26 +142,6 @@ class BaseSecret(ABC):
 
         return cls.from_k8s_secret_data(secret_data)
 
-    def to_config_data(self) -> dict[str, str]:
-        """
-        Convert to configuration data using only main keys (no aliases).
-        Used for encrypted project configuration storage.
-        """
-        if self.SERVICE_TYPE is None:
-            # For UserSecret and other custom secrets, fall back to current behavior
-            return self.to_k8s_secret_data()
-
-        config_data: dict[str, str] = {}
-        variables = self._get_service_variables()
-
-        # Only include main variable names (not aliases)
-        for var_def in variables:
-            if var_def.source == "secret" and hasattr(self, var_def.secret_key):
-                value = getattr(self, var_def.secret_key)
-                config_data[var_def.name] = str(value)
-
-        return config_data
-
 
 @dataclass
 class DatabaseSecret(BaseSecret):

@@ -1040,10 +1040,6 @@ async def project_details(request: Request, project_name: str):
                         kc_config["password"] = None
 
         for deployment in project_data_decrypted.get("deployments", []):
-            if deployment.get("configuration"):
-                decrypted_yaml = await decrypt_age_content(deployment["configuration"], project_private_key)
-                deployment["configuration"] = load_yaml_from_string(decrypted_yaml)
-
             # Decrypt deployment-component-level user-env-vars
             for dep_component in deployment.get("components", []):
                 if dep_component.get("user-env-vars"):

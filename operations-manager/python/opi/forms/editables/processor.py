@@ -10,6 +10,7 @@ import copy
 import logging
 from typing import TYPE_CHECKING, Any
 
+from opi.forms.editables.converters import keep_existing_ciphertext_if_unchanged
 from opi.forms.editables.editable import WidgetType, apply_virtualize
 from opi.forms.editables.path import get_value, resolve_path
 from opi.forms.editables.service_path import smart_delete_value, smart_get_value, smart_set_value
@@ -236,11 +237,18 @@ class EditableFormProcessor:
         Centralises the convert-then-write logic so ``remove_when_none``,
         converter dispatch, and ``smart_set_value`` / ``smart_delete_value``
         live in exactly one place.
+
+        When a converter produces a fresh AGE-encrypted value whose plaintext
+        matches the stored ciphertext (forms post decrypted values back, so
+        untouched fields re-encrypt to different random ciphertext), the
+        stored ciphertext is kept verbatim to avoid churn in the project file.
         """
         if value is None:
             return
         if editable.converter:
+            existing = smart_get_value(data, path)
             value = _converter_write(editable.converter, value, data)
+            value = keep_existing_ciphertext_if_unchanged(existing, value, data)
         if not value and editable.remove_when_none:
             smart_delete_value(data, path)
         else:

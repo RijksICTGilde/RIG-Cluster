@@ -193,3 +193,94 @@ class TestWizardSubmitFlowTraced:
         assert "_request-subdomain" not in final_data["deployments"][0], (
             "StripTransientsHook did not remove _request-subdomain!"
         )
+
+
+class TestClearedFieldRoundtrip:
+    """Clearing a remove_when_none field must survive extract -> store -> merge.
+
+    Regression for the component-edit modal: clearing the aliases field
+    left the old values visible in the review summary because the additive
+    merge in get_merged_data() resurrected them from the template snapshot.
+    """
+
+    def _component_section_editables(self):
+        from opi.forms.editables.fields.components import (
+            COMPONENT_ALIASES_EDITABLE,
+            COMPONENT_NAME_EDITABLE,
+        )
+
+        return [
+            EditableVisualizer(editable=COMPONENT_NAME_EDITABLE, widget=WidgetType.TEXT, label="Naam"),
+            EditableVisualizer(editable=COMPONENT_ALIASES_EDITABLE, widget=WidgetType.TEXTAREA, label="Aliases"),
+        ]
+
+    def test_cleared_alias_is_tombstoned_and_removed_after_merge(self):
+        from opi.forms.wizard.state import WizardState
+        from opi.web.router_wizard import CLEARED_FIELD, _extract_section_data
+
+        editables = self._component_section_editables()
+        # process_json_submission already deleted 'aliases' (remove_when_none)
+        submitted_yaml = {"components": [{"name": "web", "image": "nginx:1"}]}
+
+        fragment = _extract_section_data(editables, submitted_yaml)
+        assert fragment["components"][0]["aliases"] == CLEARED_FIELD
+
+        state = WizardState(
+            flow_id="modal-component-edit",
+            current_step="components-edit",
+            active_sections=["components-edit"],
+            template_data={"components": [{"name": "web", "aliases": {"DB": "old"}, "image": "nginx:1"}]},
+        )
+        state.store_step_data("components-edit", fragment)
+
+        merged = state.get_merged_data()
+        assert "aliases" not in merged["components"][0]
+        assert merged["components"][0]["name"] == "web"
+        assert merged["components"][0]["image"] == "nginx:1"
+
+    def test_untouched_alias_survives_roundtrip(self):
+        from opi.forms.wizard.state import WizardState
+        from opi.web.router_wizard import _extract_section_data
+
+        editables = self._component_section_editables()
+        submitted_yaml = {"components": [{"name": "web", "aliases": {"DB": "kept"}}]}
+
+        fragment = _extract_section_data(editables, submitted_yaml)
+        state = WizardState(
+            flow_id="modal-component-edit",
+            current_step="components-edit",
+            active_sections=["components-edit"],
+            template_data={"components": [{"name": "web", "aliases": {"DB": "old"}}]},
+        )
+        state.store_step_data("components-edit", fragment)
+
+        merged = state.get_merged_data()
+        assert merged["components"][0]["aliases"] == {"DB": "kept"}
+
+
+class TestSummaryConverterContext:
+    """The review summary must pass yaml_data as context_data to converter.view().
+
+    Regression: the call used ``yaml_data=`` (a kwarg no converter accepts),
+    the TypeError fallback called view() without context, and AGE-encrypted
+    values rendered as raw ciphertext in the summary.
+    """
+
+    def test_format_value_passes_context_data(self):
+        from opi.web.router_wizard import _format_value
+
+        seen: dict = {}
+
+        class RecordingConverter:
+            def view(self, value, context_data=None):
+                seen["context_data"] = context_data
+                return "decrypted"
+
+        editable = Editable(yaml_path="components[*]/user-env-vars", converter=RecordingConverter())
+        vis = EditableVisualizer(editable=editable, widget=WidgetType.TEXTAREA, label="Env vars")
+
+        yaml_data = {"config": {"age-private-key": "key-material"}}
+        result = _format_value(vis, "AGE-ENCRYPTED-BLOB", yaml_data)
+
+        assert result == "decrypted"
+        assert seen["context_data"] is yaml_data

@@ -503,3 +503,133 @@ class TestAGEEncryptConverter:
         assert conv.view(FAKE_AGE_ENCRYPTED) == "********"
         assert conv.view("plain-text") == "********"
         assert conv.view(None) == "Niet geconfigureerd"
+
+
+# ---------------------------------------------------------------------------
+# keep_existing_ciphertext_if_unchanged
+# ---------------------------------------------------------------------------
+
+OLD_CIPHERTEXT = "-----BEGIN AGE ENCRYPTED FILE-----\nb2xk\n-----END AGE ENCRYPTED FILE-----"
+NEW_CIPHERTEXT = "-----BEGIN AGE ENCRYPTED FILE-----\nbmV3\n-----END AGE ENCRYPTED FILE-----"
+ENCODED_PROJECT_KEY = "-----BEGIN AGE ENCRYPTED FILE-----\na2V5\n-----END AGE ENCRYPTED FILE-----"
+PROJECT_PRIVATE_KEY = "AGE-SECRET-KEY-1PROJECT"
+CONTEXT = {"config": {"age-private-key": ENCODED_PROJECT_KEY}}
+
+
+def _fake_decrypt(new_plaintext: str):
+    """Decrypt stub: resolves the project key and both ciphertexts."""
+
+    def decrypt(content: str, key: str) -> str | None:
+        return {
+            ENCODED_PROJECT_KEY: PROJECT_PRIVATE_KEY,
+            OLD_CIPHERTEXT: "FOO=bar",
+            NEW_CIPHERTEXT: new_plaintext,
+        }.get(content)
+
+    return decrypt
+
+
+class TestKeepExistingCiphertextIfUnchanged:
+    def test_keeps_existing_when_plaintext_identical(self):
+        from opi.forms.editables.converters import keep_existing_ciphertext_if_unchanged
+
+        with (
+            patch("opi.utils.age.decrypt_age_content_sync", side_effect=_fake_decrypt("FOO=bar")),
+            patch("opi.core.config.settings") as mock_settings,
+        ):
+            mock_settings.SOPS_AGE_PRIVATE_KEY = "AGE-SECRET-KEY-1SYSTEM"
+            result = keep_existing_ciphertext_if_unchanged(OLD_CIPHERTEXT, NEW_CIPHERTEXT, CONTEXT)
+
+        assert result == OLD_CIPHERTEXT
+
+    def test_returns_new_when_plaintext_differs(self):
+        from opi.forms.editables.converters import keep_existing_ciphertext_if_unchanged
+
+        with (
+            patch("opi.utils.age.decrypt_age_content_sync", side_effect=_fake_decrypt("FOO=changed")),
+            patch("opi.core.config.settings") as mock_settings,
+        ):
+            mock_settings.SOPS_AGE_PRIVATE_KEY = "AGE-SECRET-KEY-1SYSTEM"
+            result = keep_existing_ciphertext_if_unchanged(OLD_CIPHERTEXT, NEW_CIPHERTEXT, CONTEXT)
+
+        assert result == NEW_CIPHERTEXT
+
+    def test_returns_new_when_no_existing_value(self):
+        from opi.forms.editables.converters import keep_existing_ciphertext_if_unchanged
+
+        assert keep_existing_ciphertext_if_unchanged(None, NEW_CIPHERTEXT, CONTEXT) == NEW_CIPHERTEXT
+
+    def test_returns_new_when_existing_not_encrypted(self):
+        from opi.forms.editables.converters import keep_existing_ciphertext_if_unchanged
+
+        assert keep_existing_ciphertext_if_unchanged("FOO=bar", NEW_CIPHERTEXT, CONTEXT) == NEW_CIPHERTEXT
+
+    def test_returns_new_when_key_unresolvable(self):
+        from opi.forms.editables.converters import keep_existing_ciphertext_if_unchanged
+
+        result = keep_existing_ciphertext_if_unchanged(OLD_CIPHERTEXT, NEW_CIPHERTEXT, {})
+        assert result == NEW_CIPHERTEXT
+
+    def test_returns_new_when_decrypt_fails(self):
+        from opi.forms.editables.converters import keep_existing_ciphertext_if_unchanged
+
+        with (
+            patch("opi.utils.age.decrypt_age_content_sync", side_effect=_fake_decrypt("FOO=bar")) as mock_decrypt,
+            patch("opi.core.config.settings") as mock_settings,
+        ):
+            mock_settings.SOPS_AGE_PRIVATE_KEY = "AGE-SECRET-KEY-1SYSTEM"
+            # Unknown ciphertext (e.g. rotated key) decrypts to None
+            unknown = "-----BEGIN AGE ENCRYPTED FILE-----\ncm90YXRlZA==\n-----END AGE ENCRYPTED FILE-----"
+            result = keep_existing_ciphertext_if_unchanged(unknown, NEW_CIPHERTEXT, CONTEXT)
+
+        assert result == NEW_CIPHERTEXT
+        assert mock_decrypt.called
+
+
+class TestWriteFieldCiphertextReuse:
+    """Integration: _write_field keeps stored ciphertext for untouched env vars."""
+
+    def _editable(self):
+        from opi.forms.editables.editable import Editable
+
+        return Editable(
+            yaml_path="components[*]/user-env-vars",
+            converter=KeyValueConverter(write_as="string"),
+        )
+
+    def _data(self):
+        return {
+            "config": {
+                "age-private-key": ENCODED_PROJECT_KEY,
+                "age-public-key": FAKE_PUBLIC_KEY,
+            },
+            "components": [{"name": "web", "user-env-vars": OLD_CIPHERTEXT}],
+        }
+
+    def test_unchanged_plaintext_keeps_stored_ciphertext(self):
+        from opi.forms.editables.processor import EditableFormProcessor
+
+        data = self._data()
+        with (
+            patch("opi.utils.age.encrypt_age_content_sync", return_value=NEW_CIPHERTEXT),
+            patch("opi.utils.age.decrypt_age_content_sync", side_effect=_fake_decrypt("FOO=bar")),
+            patch("opi.core.config.settings") as mock_settings,
+        ):
+            mock_settings.SOPS_AGE_PRIVATE_KEY = "AGE-SECRET-KEY-1SYSTEM"
+            EditableFormProcessor._write_field(self._editable(), "components[0]/user-env-vars", "FOO=bar", data)
+
+        assert data["components"][0]["user-env-vars"] == OLD_CIPHERTEXT
+
+    def test_changed_plaintext_writes_new_ciphertext(self):
+        from opi.forms.editables.processor import EditableFormProcessor
+
+        data = self._data()
+        with (
+            patch("opi.utils.age.encrypt_age_content_sync", return_value=NEW_CIPHERTEXT),
+            patch("opi.utils.age.decrypt_age_content_sync", side_effect=_fake_decrypt("FOO=changed")),
+            patch("opi.core.config.settings") as mock_settings,
+        ):
+            mock_settings.SOPS_AGE_PRIVATE_KEY = "AGE-SECRET-KEY-1SYSTEM"
+            EditableFormProcessor._write_field(self._editable(), "components[0]/user-env-vars", "FOO=changed", data)
+
+        assert data["components"][0]["user-env-vars"] == NEW_CIPHERTEXT

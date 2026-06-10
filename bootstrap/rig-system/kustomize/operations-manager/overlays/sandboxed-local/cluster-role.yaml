@@ -12,6 +12,13 @@ rules:
   - apiGroups: [""]
     resources: [secrets]
     verbs: [create, get, patch]
+  # Prometheus kubelet scrape: role:node service-discovery + de kubelet
+  # autoriseert /metrics en /metrics/cadvisor via een resource-SAR op
+  # nodes/metrics (nonResourceURLs dekt dat NIET). Per ongeluk verwijderd in
+  # de RBAC-inscoping van #80, waardoor cAdvisor/kubelet 403 gaven.
+  - apiGroups: [""]
+    resources: [nodes, nodes/proxy, nodes/metrics]
+    verbs: [get, list, watch]
   # Prometheus/kubelet scrape endpoints onder dezelfde SA.
   - nonResourceURLs: [/metrics, /metrics/cadvisor]
     verbs: [get]

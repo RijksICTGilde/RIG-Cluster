@@ -132,7 +132,7 @@ async def initialize_database_pools() -> None:
         database=settings.DATABASE_NAME,
         port=5432,
         min_size=0,
-        max_size=10,
+        max_size=20,
         max_inactive_connection_lifetime=300.0,
     )
 

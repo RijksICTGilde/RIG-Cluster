@@ -10,6 +10,61 @@ from opi.core.rrule_utils import build_rrule, format_rrule, parse_rrule
 logger = logging.getLogger(__name__)
 
 
+def resolve_project_private_key(context_data: dict[str, Any] | None) -> str | None:
+    """Resolve the project's AGE private key from form context data.
+
+    The project file stores the project private key encrypted with the
+    system key (``config.age-private-key``); decrypt it so field values
+    encrypted with the project key can be read.
+
+    Returns None when the key cannot be resolved.
+    """
+    if not context_data:
+        return None
+    from opi.core.config import settings
+    from opi.utils.age import decrypt_age_content_sync
+
+    system_private_key = settings.SOPS_AGE_PRIVATE_KEY
+    if not system_private_key:
+        logger.warning("[resolve_project_private_key] No system AGE private key available")
+        return None
+    encoded_project_key = context_data.get("config", {}).get("age-private-key")
+    if not encoded_project_key:
+        logger.warning("[resolve_project_private_key] No project age-private-key in context_data")
+        return None
+    return decrypt_age_content_sync(encoded_project_key, system_private_key)
+
+
+def keep_existing_ciphertext_if_unchanged(existing: Any, new: Any, context_data: dict[str, Any] | None) -> Any:
+    """Return *existing* when both values are AGE blocks with identical plaintext.
+
+    AGE encryption is non-deterministic: re-encrypting unchanged plaintext
+    produces entirely different ciphertext, so every form save would rewrite
+    the block in git (pure-churn diffs and push conflicts with concurrent
+    commits). When the freshly encrypted value decrypts to the same plaintext
+    as the stored one, keep the stored ciphertext verbatim. On any doubt
+    (missing key, decrypt failure) return *new*, so changed content or a
+    rotated key still forces re-encryption.
+    """
+    if not (isinstance(existing, str) and isinstance(new, str)) or existing == new:
+        return new
+    if "BEGIN AGE ENCRYPTED FILE" not in existing or "BEGIN AGE ENCRYPTED FILE" not in new:
+        return new
+
+    private_key = resolve_project_private_key(context_data)
+    if not private_key:
+        return new
+
+    from opi.utils.age import decrypt_age_content_sync
+
+    existing_plain = decrypt_age_content_sync(existing, private_key)
+    new_plain = decrypt_age_content_sync(new, private_key)
+    if existing_plain is not None and existing_plain == new_plain:
+        logger.debug("[keep_existing_ciphertext_if_unchanged] Plaintext unchanged, keeping stored ciphertext")
+        return existing
+    return new
+
+
 class EncryptedDisplayConverter:
     """Displays encrypted fields as status indicators, not actual values."""
 
@@ -316,20 +371,11 @@ class KeyValueConverter:
         if not context_data:
             return value
         try:
-            from opi.core.config import settings
             from opi.utils.age import decrypt_age_content_sync
 
-            system_private_key = settings.SOPS_AGE_PRIVATE_KEY
-            if not system_private_key:
-                logger.warning("[KeyValueConverter] No system AGE private key available")
-                return value
-            encoded_project_key = context_data.get("config", {}).get("age-private-key")
-            if not encoded_project_key:
-                logger.warning("[KeyValueConverter] No project age-private-key in context_data")
-                return value
-            project_private_key = decrypt_age_content_sync(encoded_project_key, system_private_key)
+            project_private_key = resolve_project_private_key(context_data)
             if not project_private_key:
-                logger.warning("[KeyValueConverter] Failed to decrypt project private key")
+                logger.warning("[KeyValueConverter] Failed to resolve project private key")
                 return value
             decrypted = decrypt_age_content_sync(value, project_private_key)
             if decrypted is not None:

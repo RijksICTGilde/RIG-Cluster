@@ -9,12 +9,12 @@ spec:
     timeout.hard.reconciliation: "0s"
     server.repo.server.timeout.seconds: "180"
     controller.sync.timeout.seconds: "300"
-    controller.status.processors: "5"
-    controller.operation.processors: "5"
+    controller.status.processors: "20"
+    controller.operation.processors: "10"
     controller.repo.server.timeout.seconds: "180"
-    controller.kubectl.parallelism.limit: "5"
+    controller.kubectl.parallelism.limit: "10"
     controller.sharding.algorithm: "round-robin"
-    reposerver.parallelism.limit: "5"
+    reposerver.parallelism.limit: "10"
   server:
     extraCommandArgs:
       - --repo-server-timeout-seconds=180
@@ -107,11 +107,11 @@ spec:
         value: "true"
     resources:
       limits:
-        cpu: "1"
-        memory: 1Gi
+        cpu: "2"
+        memory: 2Gi
       requests:
         cpu: 250m
-        memory: 128Mi
+        memory: 256Mi
     serviceaccount: argocd-argocd-server
     sidecarContainers:
       - name: cmp-server
@@ -200,11 +200,11 @@ spec:
     processors: {}
     resources:
       limits:
-        cpu: "2"
-        memory: 4Gi
+        cpu: "4"
+        memory: 8Gi
       requests:
         cpu: "1"
-        memory: 2Gi
+        memory: 4Gi
     # Sharding disabled - not needed for current cluster size.
     # Enable when managing 100+ applications for better performance.
     # sharding:
