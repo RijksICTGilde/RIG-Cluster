@@ -1593,8 +1593,12 @@ class KeycloakManager:
             raise RuntimeError(
                 f"Refusing to re-create project Keycloak realm for {project_name}/{cluster}: "
                 f"admin user '{admin_username}' already exists in master realm. "
-                f"This usually indicates a transient Keycloak error caused realm_exists() "
-                f"to return False even though the realm is fine. Retry once Keycloak is healthy."
+                f"Either a previous run failed after creating this user but before its "
+                f"generated password was persisted to the project file (the old password "
+                f"is then unrecoverable: verify no project file references this user, "
+                f"delete it from the master realm, and re-run), or a transient Keycloak "
+                f"error caused realm_exists() to return False for a healthy realm "
+                f"(retry once Keycloak is healthy)."
             )
 
         # Generate and encrypt password
@@ -1740,8 +1744,14 @@ class KeycloakManager:
             project_data["config"]["keycloak"].append(config_entry)
             logger.info(f"Added new Keycloak config for realm {realm_name}")
 
+        # Persist immediately: the generated admin password exists nowhere else.
+        # Waiting for the end-of-run commit means any later failure in the task
+        # orphans the admin user in Keycloak with an unrecoverable password,
+        # wedging every re-run on the duplicate-admin guard above.
         await self.project_manager.save_project_data()
-        logger.info(f"Stored Keycloak config in project file for cluster {cluster}")
+        git_connector = await self.project_manager.get_git_connector_for_project_files()
+        await git_connector.commit_and_push(f"Persist Keycloak realm credentials for {project_name} ({cluster})")
+        logger.info(f"Stored and pushed Keycloak config in project file for cluster {cluster}")
 
         return {
             "host": keycloak_url,

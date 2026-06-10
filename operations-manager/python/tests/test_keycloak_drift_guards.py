@@ -84,3 +84,54 @@ class TestSetupProjectRealmDriftGuard:
             enc.assert_not_called()
 
         project_manager.save_project_data.assert_not_called()
+
+
+class TestSetupProjectRealmImmediatePersist:
+    """The generated admin password exists nowhere outside the project file.
+
+    It must be committed and pushed immediately after the admin user is
+    created, not at the end of the run: a later failure in the same task
+    would otherwise orphan the admin user with an unrecoverable password
+    and wedge every re-run on the duplicate-admin guard.
+    """
+
+    @pytest.mark.asyncio
+    async def test_credentials_pushed_immediately_after_admin_creation(self) -> None:
+        project_manager = MagicMock()
+        project_manager.get_contents = AsyncMock(return_value={"config": {"age-public-key": "age1publickey"}})
+        project_manager.save_project_data = AsyncMock()
+        git_connector = MagicMock()
+        git_connector.commit_and_push = AsyncMock()
+        project_manager.get_git_connector_for_project_files = AsyncMock(return_value=git_connector)
+
+        manager = KeycloakManager(project_manager)
+
+        fake_keycloak = AsyncMock()
+        fake_keycloak.get_user_by_username = AsyncMock(return_value=None)
+        fake_keycloak.create_user = AsyncMock(return_value={"id": "new-user-id"})
+        fake_keycloak.assign_realm_admin_from_master = AsyncMock()
+
+        with (
+            patch(
+                "opi.manager.keycloak_manager.create_keycloak_connector",
+                return_value=fake_keycloak,
+            ),
+            patch("opi.manager.keycloak_manager.encrypt_age_content", AsyncMock(return_value="ENCRYPTED")),
+            patch("opi.manager.keycloak_manager.KeycloakYamlHandler") as yaml_handler_cls,
+            patch("opi.manager.keycloak_manager.get_keycloak_support_http", return_value=False),
+        ):
+            yaml_handler_cls.return_value.execute_config = AsyncMock()
+
+            result = await manager._setup_project_keycloak_realm(
+                project_name="regel-k4c",
+                cluster="odcn-production",
+                keycloak_url="https://keycloak.example",
+                config={"template": "sso-support"},
+            )
+
+        project_manager.save_project_data.assert_awaited_once()
+        git_connector.commit_and_push.assert_awaited_once()
+        commit_message = git_connector.commit_and_push.await_args.args[0]
+        assert "regel-k4c" in commit_message
+        assert result["username"] == "regel_k4c_odcn_production_admin"
+        assert result["password"]
