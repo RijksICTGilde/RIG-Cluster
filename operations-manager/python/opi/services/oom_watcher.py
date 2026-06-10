@@ -109,7 +109,20 @@ class DeploymentHealthError(Exception):
         super().__init__(f"Pod health issues in {namespace}: {summary}")
 
 
-_IMAGE_PULL_REASONS = {"ImagePullBackOff", "ErrImagePull", "InvalidImageName"}
+# Container waiting reasons that mean "the image can't be made available, so the
+# container will never start". ErrImageNeverPull happens with imagePullPolicy: Never
+# (e.g. kind/sandbox local images that were never side-loaded) — same user-facing
+# outcome as ImagePullBackOff, and terminal (it never self-heals), so we treat it as
+# an image-pull failure too. Previously omitted, which let bad images in the sandbox
+# sit in "Progressing" until the deploy timed out instead of failing fast.
+_IMAGE_PULL_REASONS = {
+    "ImagePullBackOff",
+    "ErrImagePull",
+    "InvalidImageName",
+    "ErrImageNeverPull",
+    "ImageInspectError",
+    "RegistryUnavailable",
+}
 _CRASH_LOOP_REASONS = {"CrashLoopBackOff"}
 
 
@@ -120,7 +133,8 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
     Runs ``kubectl get pods -o json`` once and inspects each container's
     state for all three failure types:
     - OOM: ``lastState.terminated.reason == "OOMKilled"`` or ``exitCode == 137``
-    - ImagePull: ``state.waiting.reason`` in {ImagePullBackOff, ErrImagePull, InvalidImageName}
+    - ImagePull: ``state.waiting.reason`` in {ImagePullBackOff, ErrImagePull,
+      InvalidImageName, ErrImageNeverPull, ImageInspectError, RegistryUnavailable}
     - CrashLoop: ``state.waiting.reason == "CrashLoopBackOff"``
 
     Args:
