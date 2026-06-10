@@ -118,7 +118,6 @@ from opi.utils.secrets import (
 )
 from opi.utils.sops import encrypt_to_sops_files_or_fail
 from opi.utils.yaml_util import (
-    dump_yaml_to_string,
     find_value_by_jsonpath,
     save_yaml_to_path,
 )
@@ -200,11 +199,6 @@ class ProjectManager:
         # Structure: {deployment_name: {secret_type: secret_instance}}
         # Example: {"dev": {"database": DatabaseSecret(...), "keycloak": KeycloakSecret(...)}}
         self._secrets_to_create: dict[str, dict[str, BaseSecret]] = {}
-
-        # Private map for storing environment variables that need to be tracked
-        # Structure: {deployment_name: {env_key: env_vars}}
-        # Example: {"dev": {"env_vars_web_storage": {"DATA_PATH": "/data"}, "env_vars_api_user": {"API_KEY": "value"}}}
-        self._env_vars: dict[str, dict[str, dict[str, Any]]] = {}
 
         # Private map for storing aliases collected from all components in a deployment
         # Structure: {deployment_name: {source_type: {service_category: {alias_name: alias_template}}}}
@@ -645,43 +639,6 @@ class ProjectManager:
 
         return expected_secrets
 
-    def _register_env_var(
-        self, deployment_name: str, component_name: str, service_type: str, env_vars: dict[str, Any]
-    ) -> None:
-        """
-        Add environment variables to the private env vars map for later configuration tracking.
-
-        Args:
-            deployment_name: Name of the deployment
-            component_name: Name of the component
-            service_type: Type of service generating the env vars (e.g., "storage", "publish_on_web", "user")
-            env_vars: Environment variables to store
-        """
-        if deployment_name not in self._env_vars:
-            self._env_vars[deployment_name] = {}
-
-        # Store env vars in dedicated env vars tracking map
-        env_key = f"env_vars_{component_name}_{service_type}"
-        self._env_vars[deployment_name][env_key] = env_vars
-        logger.debug(
-            f"Added {len(env_vars)} {service_type} env vars for {component_name} in deployment {deployment_name}"
-        )
-
-    def _get_env_vars_for_deployment(self, deployment_name: str) -> dict[str, Any]:
-        """
-        Get all environment variables for a deployment.
-
-        Args:
-            deployment_name: Name of the deployment
-
-        Returns:
-            Combined dictionary of environment variables excluding user env vars
-        """
-        all_env_vars = self._env_vars.get(deployment_name, {})
-        # Filter out user environment variables
-        filtered_env_vars = {key: value for key, value in all_env_vars.items() if not key.endswith("_user")}
-        return filtered_env_vars
-
     def _get_service_category_name(self, service_type: ServiceType) -> str:
         """
         Get a consistent category name for a service type.
@@ -1101,100 +1058,6 @@ class ProjectManager:
                 logger.debug(f"Generated web env var: {var_def.name}={hostname}")
 
         return env_vars
-
-    def _normalize_secret_keys(self, secret_pairs: dict[str, str]) -> dict[str, str]:
-        """
-        Normalize secret keys to use main keys from VariableDefinition instead of aliases.
-        """
-
-        normalized = {}
-
-        # Build reverse mapping from all possible keys (main + aliases) to main key
-        key_mapping = {}
-        for service_type in ServiceAdapter.get_all_services():
-            for var_def in ServiceAdapter.get_service_definition(service_type).variables:
-                main_key = var_def.name
-                # Map main key to itself
-                key_mapping[main_key] = main_key
-                # Map all aliases to main key
-                for alias in var_def.aliases:
-                    key_mapping[alias] = main_key
-
-        # Normalize the secret pairs
-        for key, value in secret_pairs.items():
-            main_key = key_mapping.get(key, key)  # Use original key if no mapping found
-            normalized[main_key] = value
-
-        return normalized
-
-    async def _save_encrypted_configs_to_project_file(self) -> None:
-        """
-        Save encrypted deployment configurations to deployment blocks in the project file.
-        Includes all secrets and environment variables for each deployment.
-        """
-        try:
-            # Read current project data
-            project_data = await self.get_contents()
-            deployments = project_data.get("deployments", [])
-
-            # Get project public key using existing utility function
-            public_key = get_project_public_key(project_data)
-
-            if not public_key:
-                logger.warning("No project public key found - cannot encrypt deployment configs")
-                return
-
-            # Track if we made any changes to save
-            changes_made = False
-
-            # Update each deployment with all available secrets and env vars
-            for deployment in deployments:
-                deployment_name = deployment.get("name")
-
-                # Build config dict for this deployment
-                config = {"variables": {}}
-
-                # Include secrets from _secrets_to_create if available
-                if deployment_name in self._secrets_to_create:
-                    for secret_data in self._secrets_to_create[deployment_name].values():
-                        # Skip registry secrets - they are imagePullSecrets, not service config
-                        if isinstance(secret_data, RegistrySecret):
-                            continue
-                        if hasattr(secret_data, "to_config_data"):
-                            # Handle typed secret objects using config method (main keys only, no aliases)
-                            config_vars = secret_data.to_config_data()
-                            config["variables"].update(config_vars)
-                        elif isinstance(secret_data, dict):
-                            # Handle plain dictionary secrets (same pattern as config hash generation)
-                            normalized_vars = self._normalize_secret_keys(secret_data)
-                            config["variables"].update(normalized_vars)
-
-                # Include environment variables from tracking map (excluding user env vars)
-                deployment_env_vars = self._get_env_vars_for_deployment(deployment_name)
-                if deployment_env_vars:
-                    normalized_env_vars = self._normalize_secret_keys(deployment_env_vars)
-                    config["variables"].update(normalized_env_vars)
-
-                if config["variables"]:
-                    # Convert to YAML string using yaml_util
-
-                    yaml_content = dump_yaml_to_string(config)
-
-                    # Encrypt the config YAML
-                    encrypted_content = await encrypt_age_content(yaml_content, public_key)
-                    deployment["configuration"] = LiteralScalarString(encrypted_content)
-                    changes_made = True
-                    logger.debug(f"Added encrypted configuration to deployment: {deployment_name}")
-
-            # Save back to project file using existing method
-            if changes_made:
-                await self.save_project_data()
-                logger.info("Saved encrypted deployment configurations to project file")
-            else:
-                logger.debug("No configuration variables to save")
-
-        except Exception as e:
-            logger.error(f"Failed to save encrypted configs: {e}")
 
     async def get_git_connector_for_argocd(self) -> GitConnector:
         if self.__git_connector_for_argocd is None:
@@ -3905,12 +3768,6 @@ class ProjectManager:
             # Clear clones tracking after all deployments processed
             self.clear_clones_performed()
 
-            # Save encrypted deployment configurations to project file
-            try:
-                await self._save_encrypted_configs_to_project_file()
-            except Exception as e:
-                logger.warning(f"Failed to save encrypted configs, continuing: {e}")
-
             scope = f" (deployment: {deployment_name})" if deployment_name else ""
             await (await self.get_git_connector_for_project_files()).commit_and_push(
                 f"Process project {project_name}{scope}"
@@ -4398,14 +4255,12 @@ class ProjectManager:
                 storage_env_vars = self._generate_storage_env_vars_from_services(processed_storage_configs)
                 if storage_env_vars:
                     env_vars.update(storage_env_vars)
-                    self._register_env_var(deployment_name, component_name, "storage", storage_env_vars)
 
             # Register publish-on-web environment variables using service definitions
             if publish_on_web and hostname:
                 web_env_vars = self._generate_web_env_vars_from_services(hostname, use_https)
                 if web_env_vars:
                     env_vars.update(web_env_vars)
-                    self._register_env_var(deployment_name, component_name, "web", web_env_vars)
 
             # Resolve and add direct aliases (aliases that reference direct env vars)
             # These are resolved per-component using the env_vars available to this component
@@ -4456,7 +4311,6 @@ class ProjectManager:
                         else:
                             substituted_user_env_vars[key] = value
                     user_env_vars = substituted_user_env_vars
-                self._register_env_var(deployment_name, component_name, "user", user_env_vars)
 
             # # IMPORTANT: Add component FIRST to prevent fallback creation with namespace=None
             # if config_handler:
