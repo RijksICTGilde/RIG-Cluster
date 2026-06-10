@@ -2201,21 +2201,26 @@ class ProjectManager:
 
                 # Wait for all applications to be created (ArgoCD needs to sync user-applications first).
                 # Skip when user-applications refresh was skipped — apps already exist.
+                # All waits run concurrently: they are read-only polls.
                 if argocd_resources_changed:
-                    for app_name in app_names:
+
+                    async def _wait_created(app_name: str) -> str | None:
                         try:
                             await self._argo_manager.wait_for_application_created(
                                 app_name=app_name, timeout=120, poll_interval=5
                             )
+                            return None
                         except TimeoutError:
-                            sync_failures.append(f"{app_name}: timed out waiting for application to be created")
                             logger.error(f"Timed out waiting for ArgoCD application '{app_name}' to be created")
+                            return f"{app_name}: timed out waiting for application to be created"
 
-                # Refresh each application that was created, then wait for sync+healthy
-                for app_name, deployment in app_deployments:
-                    if any(app_name in f for f in sync_failures):
-                        continue  # Skip apps that failed to be created
+                    created_results = await asyncio.gather(*(_wait_created(name) for name in app_names))
+                    sync_failures.extend(result for result in created_results if result)
 
+                # Refresh each application that was created, then wait for sync+healthy.
+                # Refresh + wait run concurrently per application (read-only polls);
+                # remediation below stays serial because it mutates the project file.
+                async def _refresh_and_wait(app_name: str, deployment: dict) -> dict[str, Any]:
                     dep_name = deployment.get("name", "")
                     base_namespace = deployment.get("namespace", "")
                     cluster = deployment.get("cluster", "")
@@ -2246,8 +2251,6 @@ class ProjectManager:
 
                     try:
                         reconciled_at = await argo_connector.refresh_application(app_name)
-                        if progress_manager and argo_task:
-                            progress_manager.update_task(argo_task, f"Waiting for {app_name} to sync")
                         await self._argo_manager.wait_for_application_synced(
                             app_name=app_name,
                             timeout=300,
@@ -2256,112 +2259,132 @@ class ProjectManager:
                             on_progressing=oom_callback,
                         )
                         logger.info(f"Application '{app_name}' is synced and healthy")
+                        return {"app_name": app_name, "dep_name": dep_name, "status": "ok"}
                     except DeploymentHealthError as e:
-                        logger.warning(
-                            "Pod health issues during sync of '%s': %s",
-                            app_name,
-                            e,
+                        logger.warning("Pod health issues during sync of '%s': %s", app_name, e)
+                        return {"app_name": app_name, "dep_name": dep_name, "status": "health_error", "error": e}
+                    except TimeoutError:
+                        logger.error(f"Timed out waiting for '{app_name}' to sync")
+                        return {"app_name": app_name, "dep_name": dep_name, "status": "timeout"}
+                    except RuntimeError as e:
+                        logger.error(f"Application '{app_name}' failed to sync: {e}")
+                        return {"app_name": app_name, "dep_name": dep_name, "status": "error", "error": e}
+
+                pending_apps = [(a, d) for a, d in app_deployments if not any(a in f for f in sync_failures)]
+                if progress_manager and argo_task and pending_apps:
+                    progress_manager.update_task(argo_task, f"Waiting for {len(pending_apps)} application(s) to sync")
+                outcomes = await asyncio.gather(*(_refresh_and_wait(a, d) for a, d in pending_apps))
+
+                # Serial remediation pass over the outcomes. OOM tuning and
+                # image-pull disabling write to the project file in git, so
+                # they must not run concurrently.
+                from opi.services.event_interpreter import _interpret_by_reason
+
+                _TYPE_TO_REASON = {
+                    "crash_loop": "CrashLoopBackOff",
+                    "image_pull": "ImagePullBackOff",
+                    "oom": "OOMKilled",
+                }
+                self._component_failures = []
+                for outcome in outcomes:
+                    app_name = outcome["app_name"]
+                    dep_name = outcome["dep_name"]
+                    if outcome["status"] == "ok":
+                        continue
+                    if outcome["status"] == "timeout":
+                        sync_failures.append(f"{app_name}: timed out waiting for sync")
+                        continue
+                    if outcome["status"] == "error":
+                        sync_failures.append(f"{app_name}: {outcome['error']}")
+                        continue
+
+                    # health_error: store per-component failure details for the
+                    # task result, enriched with user-friendly title/suggestion
+                    # from the event interpreter.
+                    e = outcome["error"]
+                    for f in e.failures:
+                        reason = _TYPE_TO_REASON.get(f.failure_type, "")
+                        translation = _interpret_by_reason(reason, f.message)
+                        title = (
+                            translation[0]
+                            if translation
+                            else f"Component '{f.component_reference or f.component_name}'"
+                        )
+                        suggestion = translation[1] if translation else f.message
+
+                        self._component_failures.append(
+                            {
+                                "component": f.component_reference or f.component_name,
+                                "deployment": f.deployment_name or dep_name,
+                                "failure_type": f.failure_type,
+                                "message": f.message,
+                                "title": title,
+                                "suggestion": suggestion,
+                                **({"logs": f.logs} if f.logs else {}),
+                            }
                         )
 
-                        # Store per-component failure details for the task result,
-                        # enriched with user-friendly title/suggestion from the event interpreter.
-                        from opi.services.event_interpreter import _interpret_by_reason
+                    # Categorize failures by type
+                    oom_failures = [f for f in e.failures if f.failure_type == "oom"]
+                    image_pull_failures = [f for f in e.failures if f.failure_type == "image_pull"]
+                    crash_loop_failures = [f for f in e.failures if f.failure_type == "crash_loop"]
 
-                        _TYPE_TO_REASON = {
-                            "crash_loop": "CrashLoopBackOff",
-                            "image_pull": "ImagePullBackOff",
-                            "oom": "OOMKilled",
-                        }
-                        self._component_failures = []
-                        for f in e.failures:
-                            reason = _TYPE_TO_REASON.get(f.failure_type, "")
-                            translation = _interpret_by_reason(reason, f.message)
-                            title = (
-                                translation[0]
-                                if translation
-                                else f"Component '{f.component_reference or f.component_name}'"
+                    task_service = (
+                        progress_manager._task_service
+                        if progress_manager and hasattr(progress_manager, "_task_service")
+                        else None
+                    )
+
+                    # Handle OOM: tune resources, queue refresh (existing behavior)
+                    if oom_failures:
+                        if progress_manager and argo_task:
+                            progress_manager.update_task(
+                                argo_task,
+                                f"OOM detected for {app_name}, tuning resources...",
                             )
-                            suggestion = translation[1] if translation else f.message
-
-                            self._component_failures.append(
-                                {
-                                    "component": f.component_reference or f.component_name,
-                                    "deployment": f.deployment_name or dep_name,
-                                    "failure_type": f.failure_type,
-                                    "message": f.message,
-                                    "title": title,
-                                    "suggestion": suggestion,
-                                    **({"logs": f.logs} if f.logs else {}),
-                                }
-                            )
-
-                        # Categorize failures by type
-                        oom_failures = [f for f in e.failures if f.failure_type == "oom"]
-                        image_pull_failures = [f for f in e.failures if f.failure_type == "image_pull"]
-                        crash_loop_failures = [f for f in e.failures if f.failure_type == "crash_loop"]
-
-                        task_service = (
-                            progress_manager._task_service
-                            if progress_manager and hasattr(progress_manager, "_task_service")
-                            else None
-                        )
-
-                        # Handle OOM: tune resources, queue refresh (existing behavior)
-                        if oom_failures:
-                            if progress_manager and argo_task:
-                                progress_manager.update_task(
-                                    argo_task,
-                                    f"OOM detected for {app_name}, tuning resources...",
-                                )
-                            try:
-                                result = await tune_deployment_resources(project_name, dep_name, skip_reprocessing=True)
-                                if result.changes:
-                                    logger.info(
-                                        "OOM auto-tune applied %d change(s) for %s/%s, queuing refresh task",
-                                        len(result.changes),
-                                        project_name,
-                                        dep_name,
-                                    )
-                                    await self._queue_refresh_task(task_service, project_name, dep_name)
-                                else:
-                                    logger.warning(
-                                        "OOM auto-tune found no actionable changes for %s/%s",
-                                        project_name,
-                                        dep_name,
-                                    )
-                                    sync_failures.append(
-                                        f"{app_name}: OOM detected but auto-tune could not determine new limits"
-                                    )
-                            except Exception as tune_err:
-                                logger.error("OOM auto-tune failed for %s/%s: %s", project_name, dep_name, tune_err)
-                                sync_failures.append(f"{app_name}: OOM detected, auto-tune failed: {tune_err}")
-
-                        # Handle ImagePullBackOff: disable component, queue refresh
-                        if image_pull_failures:
-                            disabled_components = [(f.component_name, f.message) for f in image_pull_failures]
-                            try:
-                                await disable_components_for_image_pull(project_name, dep_name, disabled_components)
-                                await self._queue_refresh_task(task_service, project_name, dep_name)
-                            except Exception as img_err:
-                                logger.error(
-                                    "ImagePull remediation failed for %s/%s: %s",
+                        try:
+                            result = await tune_deployment_resources(project_name, dep_name, skip_reprocessing=True)
+                            if result.changes:
+                                logger.info(
+                                    "OOM auto-tune applied %d change(s) for %s/%s, queuing refresh task",
+                                    len(result.changes),
                                     project_name,
                                     dep_name,
-                                    img_err,
                                 )
-                            names = ", ".join(f.component_name for f in image_pull_failures)
-                            sync_failures.append(f"{app_name}: ImagePullBackOff for {names}")
+                                await self._queue_refresh_task(task_service, project_name, dep_name)
+                            else:
+                                logger.warning(
+                                    "OOM auto-tune found no actionable changes for %s/%s",
+                                    project_name,
+                                    dep_name,
+                                )
+                                sync_failures.append(
+                                    f"{app_name}: OOM detected but auto-tune could not determine new limits"
+                                )
+                        except Exception as tune_err:
+                            logger.error("OOM auto-tune failed for %s/%s: %s", project_name, dep_name, tune_err)
+                            sync_failures.append(f"{app_name}: OOM detected, auto-tune failed: {tune_err}")
 
-                        # Handle CrashLoopBackOff: report only, no remediation
-                        if crash_loop_failures:
-                            names = ", ".join(f.component_name for f in crash_loop_failures)
-                            sync_failures.append(f"{app_name}: CrashLoopBackOff for {names}")
-                    except TimeoutError:
-                        sync_failures.append(f"{app_name}: timed out waiting for sync")
-                        logger.error(f"Timed out waiting for '{app_name}' to sync")
-                    except RuntimeError as e:
-                        sync_failures.append(f"{app_name}: {e}")
-                        logger.error(f"Application '{app_name}' failed to sync: {e}")
+                    # Handle ImagePullBackOff: disable component, queue refresh
+                    if image_pull_failures:
+                        disabled_components = [(f.component_name, f.message) for f in image_pull_failures]
+                        try:
+                            await disable_components_for_image_pull(project_name, dep_name, disabled_components)
+                            await self._queue_refresh_task(task_service, project_name, dep_name)
+                        except Exception as img_err:
+                            logger.error(
+                                "ImagePull remediation failed for %s/%s: %s",
+                                project_name,
+                                dep_name,
+                                img_err,
+                            )
+                        names = ", ".join(f.component_name for f in image_pull_failures)
+                        sync_failures.append(f"{app_name}: ImagePullBackOff for {names}")
+
+                    # Handle CrashLoopBackOff: report only, no remediation
+                    if crash_loop_failures:
+                        names = ", ".join(f.component_name for f in crash_loop_failures)
+                        sync_failures.append(f"{app_name}: CrashLoopBackOff for {names}")
 
             if sync_failures:
                 failure_summary = "; ".join(sync_failures)
