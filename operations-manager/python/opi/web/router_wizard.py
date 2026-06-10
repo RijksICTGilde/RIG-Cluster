@@ -156,7 +156,9 @@ def _build_step_context(
 
     # Build preset cards HTML if presets exist for this section
     yaml_data = state.get_merged_data()
-    preset_html = _render_preset_html(flow_id, section.section_id, yaml_data=yaml_data)
+    preset_html = _render_preset_html(
+        flow_id, section.section_id, yaml_data=yaml_data, csrf_token=request.state.csrf_token
+    )
 
     # All steps already completed = user came back from review/submit to fix something
     all_steps_completed = set(steps.all).issubset(set(steps.completed))
@@ -182,6 +184,7 @@ def _render_preset_html(
     flow_id: str,
     section_id: str,
     yaml_data: dict[str, Any] | None = None,
+    csrf_token: str = "",
 ) -> str:
     """Render preset cards for a section, if any presets exist."""
     from opi.forms.presets.loader import load_presets
@@ -206,6 +209,7 @@ def _render_preset_html(
         section_id,
         yaml_data=yaml_data,
         locked_presets=locked_presets,
+        csrf_token=csrf_token,
     )
 
 
@@ -694,7 +698,7 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
     section_meta = get_section_metadata(active_sections)
     steps = state.get_steps(section_meta)
 
-    preset_html = _render_preset_html(flow_id, section_id, yaml_data=yaml_data)
+    preset_html = _render_preset_html(flow_id, section_id, yaml_data=yaml_data, csrf_token=request.state.csrf_token)
 
     return templates.TemplateResponse(
         "wizard/wizard_page.html.j2",

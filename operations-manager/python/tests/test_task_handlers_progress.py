@@ -110,19 +110,22 @@ class TestHandleDeleteDeployment:
         assert result["deletion_results"]["namespace"]["success"] is True
 
     @pytest.mark.asyncio
-    async def test_deletion_not_success_calls_fail_task(self, payload):
+    async def test_deletion_not_success_raises_and_fails_task(self, payload):
+        # A partially-failed delete must FAIL the task (not return a "partial" success),
+        # so the caller / nightly cleaner retries instead of treating it as done.
         from opi.core.task_handlers_deployment import handle_delete_deployment
 
         progress = _make_progress()
 
         mock_pm = AsyncMock()
-        mock_pm.delete_deployment = AsyncMock(return_value={"success": False})
+        mock_pm.delete_deployment = AsyncMock(return_value={"success": False, "errors": ["boom"]})
         mock_pm.close = AsyncMock()
 
-        with patch(CREATE_PM_PATH, return_value=mock_pm):
+        with patch(CREATE_PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError):
             await handle_delete_deployment(payload, progress)
 
         progress.fail_task.assert_called_once()
+        progress.fail_project.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_error_calls_fail_project(self, payload):
@@ -560,6 +563,139 @@ class TestHandleUpsertDeployment:
         progress.fail_task.assert_called_once()
         progress.fail_project.assert_called()
         assert result["status"] == "failed"
+
+
+# ---------------------------------------------------------------------------
+# handle_create_project
+# ---------------------------------------------------------------------------
+
+
+class TestHandleCreateProject:
+    """The create_project task is reused for single-deployment edits (e.g. a
+    webadres change via the modal). It must forward the payload's
+    deployment_name to process_project_from_git so only that deployment is
+    redeployed/refreshed - not every deployment in the project.
+    """
+
+    def _mocks(self, process_result: bool = True):
+        mock_git = AsyncMock()
+        mock_git.create_or_update_file = AsyncMock()
+        mock_git.file_exists = AsyncMock(return_value=False)
+
+        mock_pm = AsyncMock()
+        mock_pm.process_project_from_git = AsyncMock(return_value=process_result)
+        mock_pm.close = AsyncMock()
+        mock_pm.get_processing_error = MagicMock(return_value=None)
+        mock_pm.get_component_failures = MagicMock(return_value=None)
+        return mock_git, mock_pm
+
+    @pytest.mark.asyncio
+    async def test_forwards_deployment_name_when_present(self):
+        from opi.core.task_handlers_project import handle_create_project
+
+        progress = _make_progress()
+        mock_git, mock_pm = self._mocks()
+
+        payload = {
+            "project_name": "test-project",
+            "yaml_content": "name: test-project\n",
+            "deployment_name": "dev",
+        }
+
+        with (
+            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.connectors.git.GitConnector", return_value=mock_git),
+            patch(PM_PATH, return_value=mock_pm),
+            patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+            patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
+        ):
+            result = await handle_create_project(payload, progress)
+
+        mock_pm.process_project_from_git.assert_called_once_with(
+            "projects/test-project.yaml", progress, deployment_name="dev", deployment_names=None
+        )
+        assert result["status"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_deployment_name_none_when_absent(self):
+        from opi.core.task_handlers_project import handle_create_project
+
+        progress = _make_progress()
+        mock_git, mock_pm = self._mocks()
+
+        payload = {
+            "project_name": "test-project",
+            "yaml_content": "name: test-project\n",
+        }
+
+        with (
+            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.connectors.git.GitConnector", return_value=mock_git),
+            patch(PM_PATH, return_value=mock_pm),
+            patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+            patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
+        ):
+            await handle_create_project(payload, progress)
+
+        mock_pm.process_project_from_git.assert_called_once_with(
+            "projects/test-project.yaml", progress, deployment_name=None, deployment_names=None
+        )
+
+    @pytest.mark.asyncio
+    async def test_forwards_deployment_names_list(self):
+        """Domain approval supplies an explicit list of affected deployments."""
+        from opi.core.task_handlers_project import handle_create_project
+
+        progress = _make_progress()
+        mock_git, mock_pm = self._mocks()
+
+        payload = {
+            "project_name": "test-project",
+            "yaml_content": "name: test-project\n",
+            "deployment_names": ["dev", "staging"],
+        }
+
+        with (
+            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.connectors.git.GitConnector", return_value=mock_git),
+            patch(PM_PATH, return_value=mock_pm),
+            patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+            patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
+        ):
+            await handle_create_project(payload, progress)
+
+        mock_pm.process_project_from_git.assert_called_once_with(
+            "projects/test-project.yaml", progress, deployment_name=None, deployment_names=["dev", "staging"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_deployment_names_forwarded_as_empty(self):
+        """An empty list (approval affecting zero deployments) must NOT collapse
+        to None - it means 'deploy nothing', not 'deploy everything'.
+        """
+        from opi.core.task_handlers_project import handle_create_project
+
+        progress = _make_progress()
+        mock_git, mock_pm = self._mocks()
+
+        payload = {
+            "project_name": "test-project",
+            "yaml_content": "name: test-project\n",
+            "deployment_names": [],
+        }
+
+        with (
+            patch("opi.utils.project_utils.validate_project_name", return_value=True),
+            patch("opi.connectors.git.GitConnector", return_value=mock_git),
+            patch(PM_PATH, return_value=mock_pm),
+            patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+            patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
+        ):
+            await handle_create_project(payload, progress)
+
+        mock_pm.process_project_from_git.assert_called_once_with(
+            "projects/test-project.yaml", progress, deployment_name=None, deployment_names=[]
+        )
 
 
 # ---------------------------------------------------------------------------

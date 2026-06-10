@@ -336,6 +336,21 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
         if section.post_merge:
             section.post_merge(existing_data, merged_data)
 
+    # Determine which deployment(s) are actually affected by this approval so
+    # the redeploy can be scoped to just those, instead of reprocessing the
+    # whole project. Any non-skip decision (approved OR denied) on a domain or
+    # subdomain redeploys every deployment referencing it. An empty result
+    # means no current deployment uses the decided domain(s): the status is
+    # still persisted, but nothing is redeployed.
+    from opi.connectors.subdomain import find_deployments_for_domain_item
+
+    affected_deployments: set[str] = set()
+    for item in merged_data.get("_approval_items", []):
+        if not isinstance(item, dict) or item.get("status", "skip") == "skip":
+            continue
+        affected_deployments.update(find_deployments_for_domain_item(existing_data, item))
+    deployment_names = sorted(affected_deployments)
+
     # Strip transient keys that should not persist to YAML
     existing_data.pop("_admin_email", None)
     existing_data.pop("_approval_items", None)
@@ -361,8 +376,17 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
         request=request,
         task_type="create_project",
         project_name=project_name,
-        payload={"project_name": project_name, "yaml_content": yaml_content},
+        payload={
+            "project_name": project_name,
+            "yaml_content": yaml_content,
+            "deployment_names": deployment_names,
+        },
         max_attempts=1,
+    )
+    logger.info(
+        "Domain approval for %s scoped redeploy to deployment(s): %s",
+        project_name,
+        deployment_names or "(none affected)",
     )
     task_id = str(task["task_id"])
 
