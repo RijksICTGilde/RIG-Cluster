@@ -40,6 +40,16 @@ actively scheduled deployment, because per-run retention can never match it.
 Whole-project deletion is out of scope: deleting a project already marks its
 entire backup prefix for deferred deletion.
 
+> [!WARNING]
+> Setting `backup.enabled: false` on a project that still exists makes the
+> sweep treat **all** of that project's scheduled snapshots as orphans. They
+> are protected only by the grace period: every snapshot older than
+> `BACKUP_ORPHAN_RETENTION_DAYS` (default 30) is deleted on the first sweep
+> after the flag is flipped, and the rest age out as they cross the boundary.
+> If you intend to keep historical backups while pausing new ones, do not rely
+> on this flag — the snapshots are not retained indefinitely. Keep the first
+> production sweep in dry-run and review the manifest before arming deletion.
+
 ## Configuration
 
 | Setting | Default | Meaning |

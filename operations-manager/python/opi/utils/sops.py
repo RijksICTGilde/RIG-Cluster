@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import uuid
 
+import yaml
 from opi.core.config import settings
 from opi.utils.age import encrypt_age_content
 
@@ -118,8 +119,6 @@ def _sops_plaintext_unchanged(plaintext_path: str, encrypted_path: str, private_
     decrypted = _decrypt_sops_with_key(encrypted_path, private_key)
     if decrypted is None:
         return False
-
-    import yaml
 
     try:
         with open(plaintext_path) as f:

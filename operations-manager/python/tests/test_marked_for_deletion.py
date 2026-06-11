@@ -163,6 +163,55 @@ class TestBuildExpectedResources:
         assert len(result["postgresql_database"]) == 1
         assert len(result["minio_bucket"]) == 1
 
+    def test_central_postgres_generation_in_expected_db_name(self) -> None:
+        """A cloned central-postgres deployment's _vN database name is expected."""
+        yamls = [
+            {
+                "name": "myproject",
+                "deployments": [
+                    {
+                        "name": "staging",
+                        "cluster": "local",
+                        "namespace": "myproject",
+                        "services": [
+                            {"reference": "postgresql-database", "config": {"generation": 2}},
+                        ],
+                    }
+                ],
+            }
+        ]
+        result = _build_expected_resources(yamls)
+        assert ("myproject_staging_v2", "local") in result["postgresql_database"]
+        # The user never carries the generation suffix.
+        assert ("myproject_staging", "local") in result["postgresql_user"]
+
+    def test_namespace_postgres_generation_in_expected_db_name(self) -> None:
+        """Regression: a cloned namespace-postgres deployment stores its generation
+        under the namespace-postgresql-database service, not the central one.
+
+        The expected-set builder must resolve generation against both DB service
+        types; otherwise the live _vN database falls out of the expected set and
+        the purge-time unmark safety can no longer protect it (waggl-9et class).
+        """
+        yamls = [
+            {
+                "name": "myproject",
+                "deployments": [
+                    {
+                        "name": "staging",
+                        "cluster": "local",
+                        "namespace": "myproject",
+                        "services": [
+                            {"reference": "namespace-postgresql-database", "config": {"generation": 3}},
+                        ],
+                    }
+                ],
+            }
+        ]
+        result = _build_expected_resources(yamls)
+        assert ("myproject_staging_v3", "local") in result["postgresql_database"]
+        assert ("myproject_staging", "local") in result["postgresql_user"]
+
 
 # --- MarkedForDeletionService tests (mocked DB) ---
 

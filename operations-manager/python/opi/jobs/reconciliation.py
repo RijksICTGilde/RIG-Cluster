@@ -106,6 +106,11 @@ def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, 
     db_types = [ServiceType.POSTGRESQL_DATABASE.value, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value]
     minio_types = [ServiceType.MINIO_STORAGE.value]
 
+    # keycloak_client is intentionally absent: it is only ever marked through
+    # the orphan-sweep confirm endpoint, which re-validates against a fresh sweep
+    # before marking, so it relies on that gate rather than the purge-time unmark
+    # re-protection that the resource types below get. Per-realm enumeration of
+    # the clients a project legitimately owns has no cheap source here.
     expected: dict[str, set[tuple[str, str]]] = {
         "postgresql_database": set(),
         "postgresql_user": set(),
@@ -123,10 +128,19 @@ def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, 
 
             if _deployment_uses(handler, project, deployment, db_types, _LEGACY_DB_ALIASES):
                 # The database name carries the clone/restore generation suffix
-                # (_vN); the username never does (see DatabaseManager).
+                # (_vN); the username never does (see DatabaseManager). The
+                # generation is stored under whichever DB service the deployment
+                # uses — central (POSTGRESQL_DATABASE) or in-namespace
+                # (NAMESPACE_POSTGRESQL_DATABASE) — so resolve against both,
+                # otherwise a cloned namespace-postgres DB resolves to its base
+                # name and its live _vN database falls out of the expected set.
                 generation = handler.get_deployment_service_generation(
                     project, deployment_name, ServiceType.POSTGRESQL_DATABASE.value
                 )
+                if generation is None:
+                    generation = handler.get_deployment_service_generation(
+                        project, deployment_name, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+                    )
                 db_name = generate_database_name(project_name, deployment_name, generation)
                 expected["postgresql_database"].add((db_name, cluster))
                 expected["postgresql_user"].add((generate_database_name(project_name, deployment_name), cluster))

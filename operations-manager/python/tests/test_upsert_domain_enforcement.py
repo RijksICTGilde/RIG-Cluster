@@ -55,14 +55,20 @@ class TestEnforceDomainConfig:
     async def test_dash_format_on_dash_only_domain_is_allowed(self):
         pm = _make_manager()
         data = _project("component-deployment-project", "rijksapps.nl")
-        with patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=False):
+        with (
+            patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=False),
+            patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapps.nl"}),
+        ):
             error = await pm._enforce_domain_config(data, "productie")
         assert error is None
 
     async def test_dot_format_on_dots_capable_domain_is_allowed(self):
         pm = _make_manager()
         data = _project("deployment.project", "custom.example.com")
-        with patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=True):
+        with (
+            patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=True),
+            patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"custom.example.com"}),
+        ):
             error = await pm._enforce_domain_config(data, "productie")
         assert error is None
 
@@ -71,6 +77,37 @@ class TestEnforceDomainConfig:
         data = _project("deployment.project", "rijksapps.nl")
         with patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=False):
             error = await pm._enforce_domain_config(data, "does-not-exist")
+        assert error is None
+
+    async def test_unapproved_literal_base_domain_is_rejected(self):
+        """A literal base-domain (not the '__custom__' sentinel) that is neither a
+        cluster-supported domain nor approved for the project must be rejected.
+
+        Regression guard: the approval gate used to fire only for '__custom__',
+        so an API upsert could set an arbitrary out-of-cluster domain that the
+        wizard would never allow. API callers cannot tick a request checkbox, so
+        the enforcer's non-blocking warning becomes a hard rejection here.
+        """
+        pm = _make_manager()
+        data = _project("component-deployment-project", "evil.example.org")
+        with (
+            patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=False),
+            patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapps.nl"}),
+        ):
+            error = await pm._enforce_domain_config(data, "productie")
+        assert error is not None
+        assert "evil.example.org" in error
+
+    async def test_approved_project_domain_is_allowed(self):
+        """A literal base-domain that the project has approved passes the gate."""
+        pm = _make_manager()
+        data = _project("component-deployment-project", "mijn-app.nl")
+        data["domains"] = {"allowed-domains": [{"domain": "mijn-app.nl", "status": "approved"}]}
+        with (
+            patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=False),
+            patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapps.nl"}),
+        ):
+            error = await pm._enforce_domain_config(data, "productie")
         assert error is None
 
     async def test_enforces_against_the_named_deployment_index(self):
@@ -83,7 +120,10 @@ class TestEnforceDomainConfig:
                 {"name": "productie", "base-domain": "rijksapps.nl", "domain-format": "deployment.project"},
             ],
         }
-        with patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=False):
+        with (
+            patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=False),
+            patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapps.nl"}),
+        ):
             # staging (index 0) uses a dash format -> valid
             assert await pm._enforce_domain_config(data, "staging") is None
             # productie (index 1) uses a dot format on a dash-only domain -> rejected
