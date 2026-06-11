@@ -17,6 +17,36 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 logger = logging.getLogger(__name__)
 
+# Flags whose VALUE may carry a secret and must be masked before logging the argv.
+_SENSITIVE_KUBECTL_FLAGS = ("--token", "--password", "--docker-password", "--from-literal", "--from-file")
+
+
+def _redact_kubectl_args(args: list[str]) -> str:
+    """Render kubectl args for logging, masking secret-bearing flag values.
+
+    kubectl authentication normally comes from the environment, so the argv is
+    generally safe to log (get/apply/label/namespace + ``-n <namespace>``, which
+    also identifies the project). Secret-creating commands can carry secrets on
+    the argv, though, so mask the value of known sensitive flags.
+    """
+    redacted: list[str] = []
+    mask_next = False
+    for arg in args:
+        if mask_next:
+            redacted.append("***")
+            mask_next = False
+            continue
+        flag = arg.split("=", 1)[0]
+        if flag in _SENSITIVE_KUBECTL_FLAGS:
+            if "=" in arg:
+                redacted.append(f"{flag}=***")
+            else:
+                redacted.append(arg)
+                mask_next = True
+        else:
+            redacted.append(f'"{arg}"' if " " in arg else arg)
+    return "kubectl " + " ".join(redacted)
+
 
 class KubectlConnectionError(Exception):
     """Exception raised when kubectl connection is not available."""
@@ -177,6 +207,8 @@ class KubectlConnector:
         # Create cmd_str for logging regardless of execution path
         cmd_args_str = " ".join([f'"{arg}"' if " " in arg else arg for arg in args])
         cmd_str = f"kubectl {cmd_args_str}"
+        # Secret-safe rendering of the command for log lines.
+        safe_cmd = _redact_kubectl_args(args)
 
         from opi.core.metrics import track_subprocess_memory
 
@@ -184,7 +216,7 @@ class KubectlConnector:
             # Use shell execution with EOF markers for stdin input to handle spaces/newlines properly
             shell_cmd = f"{cmd_str} <<'EOF'\n{stdin_input}\nEOF"
 
-            logger.debug("Running kubectl shell command with stdin")
+            logger.debug(f"Running (stdin): {safe_cmd}")
 
             # Create shell process
             process = await asyncio.create_subprocess_shell(
@@ -196,7 +228,7 @@ class KubectlConnector:
                 async with track_subprocess_memory("kubectl"):
                     stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
             except TimeoutError:
-                logger.error(f"kubectl command timed out after {timeout}s")
+                logger.error(f"Timed out after {timeout}s: {safe_cmd}")
                 process.kill()
                 await process.wait()
                 return "", f"Command timed out after {timeout}s", 1
@@ -205,7 +237,7 @@ class KubectlConnector:
             cmd = ["kubectl"]
             cmd.extend(args)
 
-            logger.debug("Running kubectl command")
+            logger.debug(f"Running: {safe_cmd}")
 
             # Create process
             process = await asyncio.create_subprocess_exec(
@@ -217,7 +249,7 @@ class KubectlConnector:
                 async with track_subprocess_memory("kubectl"):
                     stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
             except TimeoutError:
-                logger.error(f"kubectl command timed out after {timeout}s")
+                logger.error(f"Timed out after {timeout}s: {safe_cmd}")
                 process.kill()
                 await process.wait()
                 return "", f"Command timed out after {timeout}s", 1
@@ -226,7 +258,7 @@ class KubectlConnector:
         stderr_str = stderr.decode("utf-8").strip()
 
         if process.returncode != 0:
-            logger.warning(f"kubectl command failed with code {process.returncode}: {stderr_str}")
+            logger.warning(f"Failed (code {process.returncode}): {safe_cmd} :: {stderr_str}")
 
             # Check if this is a connection error and handle it
             if "connection refused" in stderr_str.lower():
@@ -235,7 +267,7 @@ class KubectlConnector:
                 logger.error(error_msg)
                 raise KubectlConnectionError(error_msg)
         else:
-            logger.debug("kubectl command succeeded")
+            logger.debug(f"Succeeded: {safe_cmd}")
 
         return stdout_str, stderr_str, process.returncode or 0
 
