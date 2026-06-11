@@ -150,7 +150,7 @@ def test_or_fail_raises_when_plaintext_remains_even_if_encrypt_returns(tmp_path,
     d = str(tmp_path)
     _write_to_sops(d, "leftover", "secret: still-here")
 
-    monkeypatch.setattr("opi.utils.sops.encrypt_to_sops_files", lambda directory, key: True)
+    monkeypatch.setattr("opi.utils.sops.encrypt_to_sops_files", lambda directory, key, private_key=None: True)
 
     with pytest.raises(RuntimeError) as exc:
         encrypt_to_sops_files_or_fail(d, PUBLIC_KEY, "secrets voor deployment 'demo'")

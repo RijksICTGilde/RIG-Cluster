@@ -1804,6 +1804,7 @@ class ProjectManager:
                 infra_resources_dir,
                 project_public_key,
                 f"infrastructuur-secrets voor project '{project_name}' in cluster '{cluster_name}'",
+                private_key=await self._sops_private_key_for(project_data),
             )
 
             # STEP 5: Generate kustomization.yaml and decrypt-sops.yaml for infrastructure resources
@@ -2549,6 +2550,19 @@ class ProjectManager:
                 return repo.get("path", "")
         return ""
 
+    @staticmethod
+    async def _sops_private_key_for(project_data: dict[str, Any]) -> str | None:
+        """Decode the project's AGE private key for SOPS skip-if-unchanged.
+
+        Returns None when the key can't be decoded (e.g. legacy project without
+        ``age-private-key``), so the caller falls back to always re-encrypting.
+        """
+        try:
+            return await get_decoded_project_private_key(project_data)
+        except Exception as e:
+            logger.info(f"No project private key for SOPS unchanged-check, re-encrypting: {e}")
+            return None
+
     async def _process_deployment_manifests(
         self,
         deployment: dict[str, Any],
@@ -2657,6 +2671,7 @@ class ProjectManager:
             target_path,
             public_key,
             f"secrets voor deployment '{deployment_name}' (namespace '{prefixed_namespace}')",
+            private_key=await self._sops_private_key_for(project_data),
         )
         logger.info("All .to-sops.yaml files successfully encrypted")
 
@@ -3163,6 +3178,7 @@ class ProjectManager:
             target_path,
             public_key,
             f"helm values-secrets voor deployment '{deployment_name}' (namespace '{prefixed_namespace}')",
+            private_key=await self._sops_private_key_for(project_data),
         )
 
         logger.info("All helm values files successfully encrypted")
@@ -3549,6 +3565,7 @@ class ProjectManager:
             target_path,
             public_key,
             f"helmfile values-secrets voor deployment '{deployment_name}' (namespace '{prefixed_namespace}')",
+            private_key=await self._sops_private_key_for(project_data),
         )
 
         logger.info("All helmfile values files successfully encrypted")
