@@ -17,35 +17,38 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 logger = logging.getLogger(__name__)
 
-# Flags whose VALUE may carry a secret and must be masked before logging the argv.
-_SENSITIVE_KUBECTL_FLAGS = ("--token", "--password", "--docker-password", "--from-literal", "--from-file")
 
+def _summarize_kubectl_command(args: list[str]) -> str:
+    """Secret-free summary of a kubectl invocation for logging: the operation
+    and the target project.
 
-def _redact_kubectl_args(args: list[str]) -> str:
-    """Render kubectl args for logging, masking secret-bearing flag values.
-
-    kubectl authentication normally comes from the environment, so the argv is
-    generally safe to log (get/apply/label/namespace + ``-n <namespace>``, which
-    also identifies the project). Secret-creating commands can carry secrets on
-    the argv, though, so mask the value of known sensitive flags.
+    Returns only the subcommand, the resource kind (the next token when it is a
+    plain positional, not a flag) and the target namespace (from
+    ``-n``/``--namespace``, which is ``rig-prd-<project>``). It deliberately
+    omits every flag value, resource name and stdin, so no secret can ever reach
+    the log regardless of the command -- e.g. ``kubectl apply (project
+    rig-prd-regel-k4c)`` or ``kubectl get pods (project rig-prd-amt-odc)``.
     """
-    redacted: list[str] = []
-    mask_next = False
-    for arg in args:
-        if mask_next:
-            redacted.append("***")
-            mask_next = False
-            continue
-        flag = arg.split("=", 1)[0]
-        if flag in _SENSITIVE_KUBECTL_FLAGS:
-            if "=" in arg:
-                redacted.append(f"{flag}=***")
-            else:
-                redacted.append(arg)
-                mask_next = True
-        else:
-            redacted.append(f'"{arg}"' if " " in arg else arg)
-    return "kubectl " + " ".join(redacted)
+    if not args:
+        return "kubectl"
+
+    parts = [f"kubectl {args[0]}"]
+
+    # Resource kind = first token after the verb, only when it's a plain
+    # positional (not a flag/flag-value). Resource names and values are skipped.
+    if len(args) > 1 and not args[1].startswith("-"):
+        parts.append(args[1])
+
+    namespace = ""
+    for i, arg in enumerate(args):
+        if arg in ("-n", "--namespace") and i + 1 < len(args):
+            namespace = args[i + 1]
+        elif arg.startswith("--namespace="):
+            namespace = arg.split("=", 1)[1]
+    if namespace:
+        parts.append(f"(project {namespace})")
+
+    return " ".join(parts)
 
 
 class KubectlConnectionError(Exception):
@@ -207,8 +210,8 @@ class KubectlConnector:
         # Create cmd_str for logging regardless of execution path
         cmd_args_str = " ".join([f'"{arg}"' if " " in arg else arg for arg in args])
         cmd_str = f"kubectl {cmd_args_str}"
-        # Secret-safe rendering of the command for log lines.
-        safe_cmd = _redact_kubectl_args(args)
+        # Values-free "operation X on project Y" summary for log lines.
+        safe_cmd = _summarize_kubectl_command(args)
 
         from opi.core.metrics import track_subprocess_memory
 
