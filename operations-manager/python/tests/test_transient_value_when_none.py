@@ -5,6 +5,7 @@ Tests that transient values are resolved on demand via get_effective_value,
 visible to dependent fields during evaluation, and never mutate yaml_data.
 """
 
+import pytest
 from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.editables.resolvers import build_resolver_map, get_effective_value
 from opi.forms.visualizers.visualizer import EditableVisualizer
@@ -86,7 +87,7 @@ class TestGetEffectiveValue:
 
 
 class TestClusterDefaultDomain:
-    def test_returns_first_supported_domain(self, monkeypatch):
+    def test_returns_cluster_default_ingress_domain(self, monkeypatch):
         from opi.forms.editables.resolvers import ClusterDefaultDomain
 
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "sandboxed-local"})())
@@ -94,23 +95,17 @@ class TestClusterDefaultDomain:
         resolver = ClusterDefaultDomain()
         result = resolver.resolve({})
 
-        assert result is not None
-        assert isinstance(result, str)
-        assert len(result) > 0
+        # The cluster default is the ingress domain, not the first nice-URL domain.
+        assert result == "sandbox.rijksapp.dev"
 
-    def test_returns_none_for_no_domains(self, monkeypatch):
+    def test_raises_for_unknown_cluster(self, monkeypatch):
         from opi.forms.editables.resolvers import ClusterDefaultDomain
 
-        monkeypatch.setattr(
-            "opi.connectors.subdomain.get_supported_base_domains",
-            lambda cluster: set(),
-        )
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "test"})())
 
-        resolver = ClusterDefaultDomain()
-        result = resolver.resolve({})
-
-        assert result is None
+        # A misconfigured CLUSTER_MANAGER must surface, not silently resolve to None.
+        with pytest.raises(ValueError, match="test"):
+            ClusterDefaultDomain().resolve({})
 
 
 class TestConditionWithResolvers:
