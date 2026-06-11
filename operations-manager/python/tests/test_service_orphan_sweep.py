@@ -187,12 +187,24 @@ class TestConfirmEndpointSafety:
 
     @pytest.mark.asyncio
     async def test_only_current_orphan_candidates_accepted(self, monkeypatch) -> None:
+        import opi.core.config
         from opi.api import admin_router as admin_module
+        from opi.api import endpoint_util
         from opi.api.admin_router import confirm_orphans
-        from opi.core.config import settings
 
-        monkeypatch.setattr(settings, "ADMIN_API_KEY", "test-admin-key")
-        monkeypatch.setattr(settings, "CLUSTER_MANAGER", "odcn-production")
+        # admin_router and endpoint_util both bind ``settings`` by reference at
+        # import time. In the full suite they may have been first-imported while
+        # another test had opi.core.config.settings patched (mock_settings) or
+        # reloaded (test_secret_key_failclosed), leaving their module-level
+        # reference pointing at a stale mock object -- which then surfaces as a
+        # 501 (ADMIN_API_KEY) or a MagicMock in the JSON response
+        # (DELETION_GRACE_PERIOD_DAYS). Re-point both to the live settings, then
+        # patch the attributes the endpoint reads.
+        real_settings = opi.core.config.settings
+        monkeypatch.setattr(admin_module, "settings", real_settings)
+        monkeypatch.setattr(endpoint_util, "settings", real_settings)
+        monkeypatch.setattr(real_settings, "ADMIN_API_KEY", "test-admin-key")
+        monkeypatch.setattr(real_settings, "CLUSTER_MANAGER", "odcn-production")
 
         mock_request = AsyncMock()
         mock_request.headers = {"X-API-Key": "test-admin-key"}
