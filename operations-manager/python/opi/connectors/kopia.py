@@ -37,6 +37,11 @@ class KopiaSnapshot:
     timestamp: str
     size_bytes: int | None = None
     tags: dict[str, str] | None = None
+    # Kopia source identity (user@host). Snapshots written with the intended
+    # stable identity have user "opi-backup"; anything else is debris from
+    # runs where the identity override was not applied.
+    source_user: str | None = None
+    source_host: str | None = None
 
     def _get_tag(self, key: str) -> str | None:
         """Get a tag value, handling Kopia's 'tag:' prefix."""
@@ -458,6 +463,77 @@ class KopiaConnector:
 
             return True
 
+    async def delete_snapshots(
+        self,
+        config: KopiaRepositoryConfig,
+        snapshot_ids: list[str],
+    ) -> dict[str, bool]:
+        """
+        Delete multiple snapshots using a single repository connection.
+
+        Args:
+            config: Repository connection configuration
+            snapshot_ids: IDs of the snapshots to delete
+
+        Returns:
+            Mapping of snapshot_id -> deletion success
+        """
+        if not snapshot_ids:
+            return {}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_file = os.path.join(temp_dir, "repository.config")
+            cache_dir = os.path.join(temp_dir, "cache")
+            os.makedirs(cache_dir, exist_ok=True)
+
+            tls_flag = [] if config.use_tls else ["--disable-tls"]
+
+            connect_args = [
+                "repository",
+                "connect",
+                "s3",
+                "--bucket",
+                config.s3_bucket,
+                "--prefix",
+                f"{config.s3_prefix}/",
+                "--endpoint",
+                config.s3_endpoint,
+                "--access-key",
+                config.s3_access_key,
+                "--secret-access-key",
+                config.s3_secret_key,
+                "--password",
+                config.password,
+                "--cache-directory",
+                cache_dir,
+                "--no-check-for-updates",
+                *tls_flag,
+            ]
+
+            _, stderr, code = await self._run_kopia_command(
+                connect_args,
+                config_file=config_file,
+                timeout=30,
+            )
+
+            if code != 0:
+                logger.warning(f"Failed to connect to Kopia repository: {stderr}")
+                return dict.fromkeys(snapshot_ids, False)
+
+            results: dict[str, bool] = {}
+            for snapshot_id in snapshot_ids:
+                _, stderr, code = await self._run_kopia_command(
+                    ["snapshot", "delete", snapshot_id, "--delete"],
+                    config_file=config_file,
+                    timeout=30,
+                )
+                results[snapshot_id] = code == 0
+                if code != 0:
+                    logger.warning(f"Failed to delete snapshot {snapshot_id}: {stderr}")
+
+            await self._disconnect_from_repository(config_file)
+            return results
+
     async def get_snapshot(
         self,
         config: KopiaRepositoryConfig,
@@ -599,9 +675,16 @@ class KopiaConnector:
             if not snapshot_id:
                 return None
 
-            # Get source path
+            # Get source path and identity
             source = item.get("source", {})
-            source_path = source.get("path", "") if isinstance(source, dict) else str(source)
+            if isinstance(source, dict):
+                source_path = source.get("path", "")
+                source_user = source.get("userName")
+                source_host = source.get("host")
+            else:
+                source_path = str(source)
+                source_user = None
+                source_host = None
 
             # Get timestamp
             timestamp = item.get("startTime", item.get("time", ""))
@@ -629,6 +712,8 @@ class KopiaConnector:
                 timestamp=timestamp,
                 size_bytes=size_bytes,
                 tags=tags if isinstance(tags, dict) else None,
+                source_user=source_user,
+                source_host=source_host,
             )
 
         except Exception as e:

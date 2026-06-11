@@ -581,6 +581,8 @@ class PVCBackupManager(BaseBackupManager):
                         backup_run_id=ks.backup_run_id,
                         resource_type=ks.resource_type,
                         trigger=ks.trigger,
+                        source_user=ks.source_user,
+                        source_host=ks.source_host,
                         # Raw tags for debugging
                         tags=ks.tags,
                     )
@@ -592,6 +594,55 @@ class PVCBackupManager(BaseBackupManager):
         except Exception as e:
             logger.warning(f"Failed to list snapshots via Kopia CLI: {e}")
             return []
+
+    async def delete_snapshots(
+        self,
+        cluster: str,
+        namespace: str,
+        snapshot_ids: list[str],
+        project_name: str | None = None,
+    ) -> dict[str, bool]:
+        """
+        Delete Kopia snapshots by ID for a namespace.
+
+        Connects to the namespace's repository once and deletes all given
+        snapshots over that connection.
+
+        Args:
+            cluster: Cluster name
+            namespace: Namespace name
+            snapshot_ids: IDs of the snapshots to delete
+            project_name: Optional project name for per-project bucket mode
+
+        Returns:
+            Mapping of snapshot_id -> deletion success
+        """
+        from opi.connectors.kopia import KopiaConnector, KopiaRepositoryConfig
+
+        if not snapshot_ids:
+            return {}
+
+        backup_prefix = generate_backup_prefix(cluster, namespace)
+        kopia_password = await self._derive_backup_key(namespace)
+        bucket_name = self.config.get_bucket_name(project_name, cluster)
+
+        kopia = KopiaConnector()
+
+        if not KopiaConnector.is_kopia_available:
+            logger.warning("Kopia CLI not available, cannot delete snapshots")
+            return dict.fromkeys(snapshot_ids, False)
+
+        repo_config = KopiaRepositoryConfig(
+            s3_endpoint=self.config.s3_endpoint,
+            s3_bucket=bucket_name,
+            s3_access_key=self.config.s3_access_key,
+            s3_secret_key=self.config.s3_secret_key,
+            s3_prefix=backup_prefix,
+            password=kopia_password,
+            use_tls=self.config.s3_use_tls,
+        )
+
+        return await kopia.delete_snapshots(repo_config, snapshot_ids)
 
     def _parse_snapshot_list(self, logs: str, pvc_filter: str | None = None) -> list[SnapshotInfo]:
         """Parse Kopia snapshot list output from pod logs."""
