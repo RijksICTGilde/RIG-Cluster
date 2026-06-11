@@ -104,3 +104,17 @@ grace-periode (`DELETION_GRACE_PERIOD_DAYS`, 7 dagen) en verwijdert
    mag connecties termineren.
 4. `cleanup/trigger` (project-scoped) heeft dezelfde bescherming als de
    volledige reconcile.
+
+### Bekende beperking (geparkeerd)
+
+Resources van **volledig verwijderde projecten** (geen projectbestand meer)
+classificeren als `unknown` en zijn dus niet via confirm op te ruimen — er is
+geen actuele waarheid die de naam claimt. Concreet op productie:
+`bouwm_75c_main`, `bouwm_75c_production`, `bouwm_nr1_main` (+ bijbehorende
+Keycloak-realms) van de verwijderde projecten bouwm-75c/bouwm-nr1
+(pre-#123 deletes; verwijdering aantoonbaar in zad-projects git-history:
+`git log --diff-filter=D --name-only -- projects/`).
+
+Geparkeerd idee: die git-history als extra waarheidsbron voeden aan de sweep,
+zodat resources van aantoonbaar-verwijderde projecten `orphan_candidate`
+worden met de delete-commit als bewijs. Tot die tijd: handmatige opruiming.
