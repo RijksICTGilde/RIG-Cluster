@@ -844,6 +844,23 @@ class PostgresConnector:
             logger.exception(f"Failed to delete database {database_name} on {self._host}")
             raise PostgresExecutionError(f"Database deletion failed: {e}") from e
 
+    async def count_active_connections(self, database_name: str) -> int:
+        """Count active connections to a database, excluding this connection.
+
+        Args:
+            database_name: Name of the database to check
+
+        Returns:
+            Number of active backend connections
+        """
+        validated_database_name = self._validate_identifier(database_name, "database name")
+        conn = await self._get_or_create_connection("postgres")
+        count = await conn.fetchval(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
+            validated_database_name,
+        )
+        return int(count or 0)
+
     async def list_databases(self) -> list[dict[str, Any]]:
         """List all databases using the bound admin credentials.
 
