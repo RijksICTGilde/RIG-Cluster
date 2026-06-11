@@ -11,6 +11,7 @@ from typing import Any
 
 from opi.connectors.subdomain import ensure_domain_requests
 from opi.core import config as opi_config
+from opi.core.cluster_config import get_ingress_postfix
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.resolvers import get_effective_value
 
@@ -24,15 +25,23 @@ def _resolve_missing_base_domains(yaml_data: dict[str, Any], context: dict[str, 
     is None in the wizard state. The resolvers know the cluster default.
     This mutates the deployment dicts in place so ensure_domain_requests
     sees the actual domain.
+
+    The cluster default domain is never materialised: a cluster-default
+    deployment carries no explicit ``base-domain`` (its absence *means*
+    "use the default"), and ensure_domain_requests never requests the
+    default anyway. Writing it would add a spurious key and, before the
+    resolver was fixed, even a wrong nice-URL domain plus a phantom
+    domain request.
     """
     resolvers = context.get("resolvers")
     if not resolvers:
         return
 
+    cluster_default = get_ingress_postfix(opi_config.settings.CLUSTER_MANAGER).lstrip(".")
     for i, dep in enumerate(yaml_data.get("deployments", [])):
         if isinstance(dep, dict) and not dep.get("base-domain"):
             resolved = get_effective_value(yaml_data, f"deployments[{i}]/base-domain", resolvers)
-            if resolved:
+            if resolved and resolved != cluster_default:
                 dep["base-domain"] = resolved
 
 

@@ -128,6 +128,9 @@ class TestWorkerClaimsAndDispatches:
         mock_task_service.claim_next_task.side_effect = [task, None]
 
         mock_progress_instance = AsyncMock()
+        # Sync methods on the real manager; keep them sync on the mock too
+        mock_progress_instance.mark_legacy_completed = MagicMock()
+        mock_progress_instance.mark_legacy_failed = MagicMock()
         mock_progress_cls.return_value = mock_progress_instance
 
         handler = AsyncMock(return_value={"status": "ok"})
@@ -153,6 +156,9 @@ class TestWorkerClaimsAndDispatches:
         mock_task_service.start_task.assert_called_once_with("test-id")
         mock_task_service.complete_task.assert_called_once_with("test-id", {"status": "ok"})
         mock_progress_instance.close.assert_called_once()
+        # The legacy in-memory entry must be marked COMPLETED, otherwise the
+        # periodic cleanup later reports the task as "stuck RUNNING"
+        mock_progress_instance.mark_legacy_completed.assert_called_once()
 
 
 class TestWorkerNoHandler:
@@ -204,6 +210,9 @@ class TestWorkerHandlerException:
         mock_task_service.claim_next_task.side_effect = [task, None]
 
         mock_progress_instance = AsyncMock()
+        # Sync methods on the real manager; keep them sync on the mock too
+        mock_progress_instance.mark_legacy_completed = MagicMock()
+        mock_progress_instance.mark_legacy_failed = MagicMock()
         mock_progress_cls.return_value = mock_progress_instance
 
         handler = AsyncMock(side_effect=RuntimeError("something broke"))
@@ -228,6 +237,10 @@ class TestWorkerHandlerException:
         mock_task_service.complete_task.assert_not_called()
         # Progress manager should still be closed on failure
         mock_progress_instance.close.assert_called_once()
+        # The legacy in-memory entry must be marked FAILED so it is not
+        # reported as "stuck RUNNING" later
+        mock_progress_instance.mark_legacy_failed.assert_called_once()
+        assert "something broke" in mock_progress_instance.mark_legacy_failed.call_args.args[0]
 
 
 class TestWorkerStop:
@@ -272,6 +285,9 @@ class TestWorkerHeartbeat:
         mock_task_service.claim_next_task.side_effect = [task, None]
 
         mock_progress_instance = AsyncMock()
+        # Sync methods on the real manager; keep them sync on the mock too
+        mock_progress_instance.mark_legacy_completed = MagicMock()
+        mock_progress_instance.mark_legacy_failed = MagicMock()
         mock_progress_cls.return_value = mock_progress_instance
 
         # Handler that takes long enough for a heartbeat to fire

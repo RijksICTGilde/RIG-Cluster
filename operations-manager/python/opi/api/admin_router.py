@@ -188,3 +188,117 @@ async def delete_mark(
         content={"message": f"Mark '{mark_id}' removed successfully"},
         status_code=200,
     )
+
+
+@admin_router.get("/orphans/report")
+@validate_admin_api_key
+async def orphan_sweep_report(request: Request) -> JSONResponse:
+    """Run the read-only service-orphan sweep and return the report.
+
+    Inventories PostgreSQL databases, Keycloak realms/clients and MinIO
+    buckets, classified against the live project files. Performs ZERO
+    mutations. Deletion requires POST /orphans/confirm with an explicit
+    item list, followed by the normal grace-period purge.
+
+    Example:
+        curl -X GET "http://localhost:9595/api/v2/admin/orphans/report" \\
+          -H "X-API-Key: your-admin-api-key"
+    """
+    from opi.jobs.service_orphan_sweep import sweep
+    from opi.services.project_service import get_project_service
+
+    pool = get_database_pool("main")
+    all_projects = get_project_service().get_all_projects()
+    project_yamls: list[dict[str, Any]] = [p.data for p in all_projects.values() if p.data]
+
+    report = await sweep(pool, project_yamls, cluster=settings.CLUSTER_MANAGER)
+    return JSONResponse(content=report, status_code=200)
+
+
+@admin_router.post("/orphans/confirm")
+@validate_admin_api_key
+async def confirm_orphans(request: Request) -> JSONResponse:
+    """Mark confirmed orphan candidates for grace-period deletion.
+
+    Body: {"items": [{"type": "...", "name": "...", "realm": "..."}]}
+    with type one of postgresql_database, postgresql_user, minio_bucket,
+    keycloak_client (keycloak_client requires "realm").
+
+    Safety: the sweep is re-run server-side and each submitted item must
+    still be classified ``orphan_candidate`` in the fresh report. Items
+    that are expected, system, in_use_anomaly or unknown are rejected.
+    Accepted items are marked in marked_for_deletion; actual deletion
+    happens via the normal reconciliation purge after the grace period.
+
+    Example:
+        curl -X POST "http://localhost:9595/api/v2/admin/orphans/confirm" \\
+          -H "X-API-Key: your-admin-api-key" -H "Content-Type: application/json" \\
+          -d '{"items": [{"type": "postgresql_database", "name": "regel_k4c_pr104"}]}'
+    """
+    from opi.jobs.service_orphan_sweep import CONFIRMABLE, sweep
+    from opi.services.project_service import get_project_service
+
+    body = await request.json()
+    items = body.get("items")
+    if not isinstance(items, list) or not items:
+        raise HTTPException(status_code=400, detail="Body must contain a non-empty 'items' list")
+
+    pool = get_database_pool("main")
+    all_projects = get_project_service().get_all_projects()
+    project_yamls: list[dict[str, Any]] = [p.data for p in all_projects.values() if p.data]
+    cluster = settings.CLUSTER_MANAGER
+
+    report = await sweep(pool, project_yamls, cluster=cluster)
+
+    # Index the fresh report by (type, name[, realm]) -> classification
+    candidates: dict[tuple, dict[str, Any]] = {}
+    for entry in report["databases"]:
+        candidates[("postgresql_database", entry["name"])] = entry
+        candidates[("postgresql_user", entry["name"])] = entry
+    for entry in report["minio_buckets"]:
+        candidates[("minio_bucket", entry["name"])] = entry
+    for entry in report["keycloak_clients"]:
+        candidates[("keycloak_client", entry["client_id"], entry["realm"])] = entry
+
+    service = _get_marked_for_deletion_service()
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+
+    for item in items:
+        itype = item.get("type", "")
+        name = item.get("name", "")
+        realm = item.get("realm", "")
+        key = ("keycloak_client", name, realm) if itype == "keycloak_client" else (itype, name)
+
+        entry = candidates.get(key)
+        if entry is None:
+            rejected.append({**item, "reason": "not present in the current sweep report"})
+            continue
+        if entry["classification"] != CONFIRMABLE:
+            rejected.append(
+                {**item, "reason": f"classified '{entry['classification']}' - only orphan_candidate is confirmable"}
+            )
+            continue
+
+        metadata: dict[str, Any] = {"confirmed_via": "orphans/confirm", "sweep_reason": entry["reason"]}
+        if itype == "keycloak_client":
+            metadata["realm"] = realm
+        await service.mark_resource(
+            resource_type=itype,
+            resource_name=name,
+            project_name=item.get("project_name", ""),
+            deployment_name=item.get("deployment_name", ""),
+            cluster=cluster,
+            metadata=metadata,
+        )
+        accepted.append(item)
+
+    return JSONResponse(
+        content={
+            "message": f"{len(accepted)} item(s) marked for deletion, {len(rejected)} rejected",
+            "grace_period_days": settings.DELETION_GRACE_PERIOD_DAYS,
+            "accepted": accepted,
+            "rejected": rejected,
+        },
+        status_code=200,
+    )

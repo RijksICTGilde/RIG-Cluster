@@ -91,6 +91,11 @@ class SnapshotInfo:
     # "scheduled" (subject to retention) or "manual" (protected). Legacy
     # snapshots without the tag are treated as scheduled.
     trigger: str = "scheduled"
+    # Kopia source identity (user@host). Snapshots written with the intended
+    # stable identity have user "opi-backup"; anything else is debris from
+    # runs where the identity override was not applied.
+    source_user: str | None = None
+    source_host: str | None = None
     # Raw tags for debugging
     tags: dict[str, str] | None = None
 

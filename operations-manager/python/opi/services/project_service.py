@@ -13,7 +13,9 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from opi.core.config import settings
 from opi.services.schema_migration import migrate_to_latest
+from opi.utils.age import decrypt_age_content_sync, is_age_encrypted
 
 
 class ProjectUser(BaseModel):
@@ -195,6 +197,37 @@ class ProjectService:
         """Check if an email has admin access to all projects."""
         return email.lower() in self._admin_emails
 
+    def _resolve_plaintext_api_key(self, project_name: str, api_key: str, config: dict[str, Any]) -> str:
+        """Return the plaintext API key for in-memory registration.
+
+        ``config.api-key`` is AGE-encrypted with the project key, which is in
+        turn AGE-encrypted with the operations-manager key. A plaintext value
+        (legacy/test data) is returned as-is. When decryption fails, the
+        previously registered plaintext is kept so a bad save cannot break
+        API authentication for the project.
+        """
+        if not is_age_encrypted(api_key):
+            return api_key
+
+        encoded_private_key = config.get("age-private-key")
+        if encoded_private_key and settings.SOPS_AGE_PRIVATE_KEY:
+            private_key = decrypt_age_content_sync(str(encoded_private_key), settings.SOPS_AGE_PRIVATE_KEY)
+            if private_key:
+                plaintext = decrypt_age_content_sync(api_key, private_key)
+                if plaintext:
+                    return plaintext
+
+        existing = self._projects.get(project_name)
+        if existing and not is_age_encrypted(existing.api_key):
+            logger.warning(f"Could not decrypt api-key for project '{project_name}'; keeping previously registered key")
+            return existing.api_key
+
+        logger.warning(
+            f"Could not decrypt api-key for project '{project_name}' and no usable previous key; "
+            "API key authentication for this project will fail until it is re-registered"
+        )
+        return api_key
+
     def load_project_from_data(self, project_data: dict[str, Any], filename: str) -> bool:
         """
         Load project from a project data dictionary.
@@ -221,6 +254,13 @@ class ProjectService:
             if not api_key:
                 logger.warning(f"No API key found in project config for: {project_name}")
                 return False
+
+            # Project files store api-key AGE-encrypted, but every API-layer
+            # comparison runs against the registered value as plaintext.
+            # Registering the ciphertext here poisons the in-memory key and
+            # 401s all API calls for the project until the next process run
+            # re-registers the decrypted key.
+            api_key = self._resolve_plaintext_api_key(project_name, str(api_key), config)
 
             # Extract users from project data
             users_data = project_data.get("users", [])

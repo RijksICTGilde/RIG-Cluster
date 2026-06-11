@@ -167,6 +167,7 @@ class ArgoManager:
             project_dir,
             cast("str", settings.SOPS_AGE_PUBLIC_KEY),
             f"ArgoCD repository-secret (git SSH key/HTTPS-wachtwoord) voor project '{project_name}'",
+            private_key=settings.SOPS_AGE_PRIVATE_KEY,
         )
 
     async def prepare_repository_variables(
@@ -672,6 +673,7 @@ class ArgoManager:
                 infra_argo_dir,
                 cast("str", settings.SOPS_AGE_PUBLIC_KEY),
                 f"ArgoCD infrastructuur repository-secret (git SSH key/HTTPS-wachtwoord) voor project '{project_name}'",
+                private_key=settings.SOPS_AGE_PRIVATE_KEY,
             )
 
             # Create infrastructure Application (with sync-wave: 0)

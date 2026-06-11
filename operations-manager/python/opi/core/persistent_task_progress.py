@@ -250,15 +250,31 @@ class PersistentTaskProgressManager:
             _projects[self._task_id].current_step = step
         self._mark_dirty()
 
+    def mark_legacy_completed(self) -> None:
+        """Mark the legacy in-memory entry COMPLETED, without touching the DB.
+
+        The task worker records DB completion itself (with the handler result);
+        without this call the in-memory entry stays RUNNING forever and gets
+        falsely reported as "stuck" by the periodic cleanup.
+        """
+        if self._task_id in _projects:
+            _projects[self._task_id].status = TaskStatus.COMPLETED
+            _projects[self._task_id].completed_at = datetime.now(tz=UTC)
+
+    def mark_legacy_failed(self, error: str) -> None:
+        """Mark the legacy in-memory entry FAILED, without touching the DB."""
+        if self._task_id in _projects:
+            _projects[self._task_id].status = TaskStatus.FAILED
+            _projects[self._task_id].completed_at = datetime.now(tz=UTC)
+            _projects[self._task_id].error = error
+
     def complete_project(self) -> None:
         """Mark the entire project as completed.
 
         Schedules the DB completion call as a fire-and-forget task and
         updates the legacy in-memory dict.
         """
-        if self._task_id in _projects:
-            _projects[self._task_id].status = TaskStatus.COMPLETED
-            _projects[self._task_id].completed_at = datetime.now(tz=UTC)
+        self.mark_legacy_completed()
 
         self._current_step = "Done"
         self._mark_dirty()
@@ -290,9 +306,7 @@ class PersistentTaskProgressManager:
 
         Schedules the DB failure call as a fire-and-forget task.
         """
-        if self._task_id in _projects:
-            _projects[self._task_id].status = TaskStatus.FAILED
-            _projects[self._task_id].completed_at = datetime.now(tz=UTC)
+        self.mark_legacy_failed(error)
 
         self._current_step = f"Failed: {error}"
         self._mark_dirty()

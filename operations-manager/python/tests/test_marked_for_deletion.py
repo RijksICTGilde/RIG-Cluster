@@ -163,6 +163,55 @@ class TestBuildExpectedResources:
         assert len(result["postgresql_database"]) == 1
         assert len(result["minio_bucket"]) == 1
 
+    def test_central_postgres_generation_in_expected_db_name(self) -> None:
+        """A cloned central-postgres deployment's _vN database name is expected."""
+        yamls = [
+            {
+                "name": "myproject",
+                "deployments": [
+                    {
+                        "name": "staging",
+                        "cluster": "local",
+                        "namespace": "myproject",
+                        "services": [
+                            {"reference": "postgresql-database", "config": {"generation": 2}},
+                        ],
+                    }
+                ],
+            }
+        ]
+        result = _build_expected_resources(yamls)
+        assert ("myproject_staging_v2", "local") in result["postgresql_database"]
+        # The user never carries the generation suffix.
+        assert ("myproject_staging", "local") in result["postgresql_user"]
+
+    def test_namespace_postgres_generation_in_expected_db_name(self) -> None:
+        """Regression: a cloned namespace-postgres deployment stores its generation
+        under the namespace-postgresql-database service, not the central one.
+
+        The expected-set builder must resolve generation against both DB service
+        types; otherwise the live _vN database falls out of the expected set and
+        the purge-time unmark safety can no longer protect it (waggl-9et class).
+        """
+        yamls = [
+            {
+                "name": "myproject",
+                "deployments": [
+                    {
+                        "name": "staging",
+                        "cluster": "local",
+                        "namespace": "myproject",
+                        "services": [
+                            {"reference": "namespace-postgresql-database", "config": {"generation": 3}},
+                        ],
+                    }
+                ],
+            }
+        ]
+        result = _build_expected_resources(yamls)
+        assert ("myproject_staging_v3", "local") in result["postgresql_database"]
+        assert ("myproject_staging", "local") in result["postgresql_user"]
+
 
 # --- MarkedForDeletionService tests (mocked DB) ---
 
@@ -579,3 +628,197 @@ class TestPurgeBackupData:
         # Mark should NOT be deleted (partial success)
         mock_service.delete_mark.assert_not_called()
         assert results["purged"][0]["snapshots_deleted"] == 1
+
+
+class TestBuildExpectedResourcesV2:
+    """Schema-v2 shapes as they exist in production project files.
+
+    Regression: the builder only read deployment-level ``services`` with
+    legacy names (``database``/``minio``), so the expected set was empty for
+    v2 projects and the restored->unmark safety never fired (waggl-9et).
+    """
+
+    def _waggl_shape(self) -> dict:
+        """Mirrors waggl-9et.yaml: service on the catalog component, none on deployment."""
+        return {
+            "name": "waggl-9et",
+            "schema-version": 2.2,
+            "components": [
+                {
+                    "name": "backend",
+                    "services": [
+                        "publish-on-web",
+                        "keycloak",
+                        {"persistent-storage": {"config": [{"name": "data", "size": "100Mi"}]}},
+                        "postgresql-database",
+                    ],
+                },
+                {"name": "frontend", "services": ["publish-on-web"]},
+            ],
+            "deployments": [
+                {
+                    "name": "productie",
+                    "cluster": "odcn-production",
+                    "namespace": "waggl-9et",
+                    "components": [{"reference": "frontend"}, {"reference": "backend"}],
+                }
+            ],
+        }
+
+    def test_component_catalog_service_is_seen(self) -> None:
+        with (
+            patch("opi.core.cluster_config.get_prefixed_namespace", side_effect=lambda c, ns: f"rig-prd-{ns}"),
+            patch("opi.manager.backup.base.get_backup_bucket_name", return_value="backup-bucket"),
+        ):
+            result = _build_expected_resources([self._waggl_shape()])
+        assert ("waggl_9et_productie", "odcn-production") in result["postgresql_database"]
+        assert ("waggl_9et_productie", "odcn-production") in result["postgresql_user"]
+
+    def test_deployment_level_plain_string_is_seen(self) -> None:
+        """regel-k4c style: schema 2.2 with plain-string deployment-level services."""
+        yamls = [
+            {
+                "name": "regel-k4c",
+                "schema-version": 2.2,
+                "components": [],
+                "deployments": [
+                    {
+                        "name": "regelrecht",
+                        "cluster": "odcn-production",
+                        "namespace": "regel-k4c",
+                        "services": ["postgresql-database"],
+                    }
+                ],
+            }
+        ]
+        with (
+            patch("opi.core.cluster_config.get_prefixed_namespace", side_effect=lambda c, ns: f"rig-prd-{ns}"),
+            patch("opi.manager.backup.base.get_backup_bucket_name", return_value="backup-bucket"),
+        ):
+            result = _build_expected_resources(yamls)
+        assert ("regel_k4c_regelrecht", "odcn-production") in result["postgresql_database"]
+
+    def test_generation_suffix_on_database_not_user(self) -> None:
+        """Clone/restore generation versions the database name, never the username."""
+        yamls = [
+            {
+                "name": "regel-k4c",
+                "schema-version": 2.2,
+                "components": [],
+                "deployments": [
+                    {
+                        "name": "pr748",
+                        "cluster": "odcn-production",
+                        "namespace": "regel-k4c",
+                        "services": [{"reference": "postgresql-database", "config": {"generation": 1}}],
+                    }
+                ],
+            }
+        ]
+        with (
+            patch("opi.core.cluster_config.get_prefixed_namespace", side_effect=lambda c, ns: f"rig-prd-{ns}"),
+            patch("opi.manager.backup.base.get_backup_bucket_name", return_value="backup-bucket"),
+        ):
+            result = _build_expected_resources(yamls)
+        assert ("regel_k4c_pr748_v1", "odcn-production") in result["postgresql_database"]
+        assert ("regel_k4c_pr748", "odcn-production") in result["postgresql_user"]
+
+    def test_minio_storage_v2_name(self) -> None:
+        yamls = [
+            {
+                "name": "amt-odc-prd",
+                "schema-version": 2,
+                "components": [],
+                "deployments": [
+                    {
+                        "name": "productie",
+                        "cluster": "odcn-production",
+                        "namespace": "amt-odc-prd",
+                        "services": ["minio-storage"],
+                    }
+                ],
+            }
+        ]
+        with (
+            patch("opi.core.cluster_config.get_prefixed_namespace", side_effect=lambda c, ns: f"rig-prd-{ns}"),
+            patch("opi.manager.backup.base.get_backup_bucket_name", return_value="backup-bucket"),
+        ):
+            result = _build_expected_resources(yamls)
+        assert len(result["minio_bucket"]) == 1
+        assert len(result["minio_user"]) == 1
+
+
+# --- purge safety gate tests ---
+
+
+class TestPurgeSafetyGates:
+    """Nothing that is actively used may ever be purged.
+
+    Two independent gates, both re-checked at purge time:
+    1. Expected-set membership: a mark whose resource is back in the project
+       YAMLs is unmarked, not purged (the waggl-9et scenario).
+    2. Active connections: a marked database with live connections is refused
+       and reported, never dropped.
+    """
+
+    def _db_mark(self, name: str = "waggl_9et_productie") -> dict:
+        return {
+            "id": "mark-1",
+            "resource_type": "postgresql_database",
+            "resource_name": name,
+            "project_name": "waggl-9et",
+            "deployment_name": "productie",
+            "cluster": "odcn-production",
+        }
+
+    @pytest.mark.asyncio
+    async def test_mark_in_expected_set_is_unmarked_not_purged(self) -> None:
+        from opi.jobs.reconciliation import _purge_marks
+
+        pool = _make_mock_pool()
+        mock_service = AsyncMock(spec=MarkedForDeletionService)
+        results: dict = {"purged": [], "errors": []}
+        expected = {"postgresql_database": {("waggl_9et_productie", "odcn-production")}}
+
+        with patch("opi.jobs.reconciliation.create_postgres_connector") as mock_pg:
+            await _purge_marks([self._db_mark()], mock_service, pool, results, dry_run=False, expected=expected)
+
+        mock_pg.assert_not_called()
+        mock_service.delete_mark.assert_awaited_once_with("mark-1")
+        assert results["unmarked"] == [
+            {"type": "postgresql_database", "name": "waggl_9et_productie", "cluster": "odcn-production"}
+        ]
+        assert results["purged"] == []
+
+    @pytest.mark.asyncio
+    async def test_database_with_active_connections_is_refused(self) -> None:
+        from opi.jobs.reconciliation import _purge_postgres_database
+
+        mock_connector = AsyncMock()
+        mock_connector.count_active_connections = AsyncMock(return_value=5)
+        mock_service = AsyncMock(spec=MarkedForDeletionService)
+        results: dict = {"purged": [], "errors": []}
+
+        await _purge_postgres_database(mock_connector, self._db_mark(), mock_service, results, dry_run=False)
+
+        mock_connector.delete_database.assert_not_called()
+        mock_service.delete_mark.assert_not_called()
+        assert results["purged"] == []
+        assert len(results["refused"]) == 1
+        assert "5 active connection(s)" in results["refused"][0]["reason"]
+
+    @pytest.mark.asyncio
+    async def test_database_without_connections_is_purged(self) -> None:
+        from opi.jobs.reconciliation import _purge_postgres_database
+
+        mock_connector = AsyncMock()
+        mock_connector.count_active_connections = AsyncMock(return_value=0)
+        mock_service = AsyncMock(spec=MarkedForDeletionService)
+        results: dict = {"purged": [], "errors": []}
+
+        mark = self._db_mark(name="regel_k4c_pr375")
+        await _purge_postgres_database(mock_connector, mark, mock_service, results, dry_run=False)
+
+        mock_connector.delete_database.assert_awaited_once_with("regel_k4c_pr375")
+        mock_service.delete_mark.assert_awaited_once()
+        assert results["purged"] == [{"type": "postgresql_database", "name": "regel_k4c_pr375"}]

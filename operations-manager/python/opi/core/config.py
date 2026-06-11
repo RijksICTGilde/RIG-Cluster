@@ -377,6 +377,16 @@ class Settings(BaseSettings):
     # without a wait, the second one fails immediately. 30 min is enough for
     # a typical PVC+DB+bucket run to finish.
     BACKUP_LOCK_WAIT_SECONDS: int = 1800
+    # Daily retention sweep for orphaned backups. Kopia retention only runs
+    # at the end of a backup, so snapshots of deployments that no longer get
+    # backed up (deleted deployments, removed schedules, broken legacy source
+    # identities) would otherwise live forever. The sweep deletes orphaned
+    # non-manual snapshots once they are older than the grace period. Manual
+    # backups are never touched. Dry-run mode only logs what would be
+    # deleted; disable it after reviewing a sweep manifest in the logs.
+    BACKUP_SWEEP_ENABLED: bool = True
+    BACKUP_SWEEP_DRY_RUN: bool = True
+    BACKUP_ORPHAN_RETENTION_DAYS: int = 30
 
     @model_validator(mode="after")
     def _enforce_secure_secret_key(self) -> Settings:

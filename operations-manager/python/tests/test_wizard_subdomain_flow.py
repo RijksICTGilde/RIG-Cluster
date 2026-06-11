@@ -71,12 +71,16 @@ class TestWizardSubdomainFlow:
         assert "_request-subdomain" not in yaml_data["deployments"][0]
 
     @pytest.mark.asyncio
-    async def test_flow_with_none_base_domain_resolves_default(self, monkeypatch):
-        """When base-domain is None (user didn't interact with select), the hook
-        resolves it via transient_value_when_none and still creates the domains entry.
+    async def test_none_base_domain_stays_cluster_default_no_request(self, monkeypatch):
+        """When base-domain is left as the cluster default (None), the hook must
+        NOT materialise a domain the user didn't pick and must NOT create a
+        subdomain request: the cluster default is always usable without approval
+        (is_deployment_domain_approved returns True for an empty base-domain).
 
-        This is the actual production scenario — the select shows the default
-        domain but the value is never stored in wizard state.
+        Regression guard for the wizard bug where selecting "cluster default"
+        (the empty option) kept the last-selected nice-URL domain (e.g.
+        rijks.app), wrote it into the project file plus a phantom request, and
+        deployed to a domain the user never chose.
         """
         from opi.connectors.subdomain import SubdomainConnector
 
@@ -88,7 +92,7 @@ class TestWizardSubdomainFlow:
                 {
                     "name": "productie",
                     "domain-format": "subdomain",
-                    "base-domain": None,  # NOT set — user never interacted with select
+                    "base-domain": None,  # cluster default — user never picked a domain
                     "subdomain": "mijn-test",
                     "_request-subdomain": True,
                 }
@@ -99,17 +103,10 @@ class TestWizardSubdomainFlow:
         context = {"resolvers": build_resolver_map(materialized)}
         await run_hooks(FormState.PRE_SAVE, all_editables, yaml_data, context)
 
-        assert "domains" in yaml_data, (
-            "SubdomainRequestHook should resolve the default domain via "
-            "transient_value_when_none and create the domains entry"
-        )
-        allowed = yaml_data["domains"]["allowed-subdomains"]
-        assert len(allowed) == 1
-        # The domain is one of the cluster's supported domains (resolved from cluster config)
-        assert isinstance(allowed[0]["domain"], str)
-        assert len(allowed[0]["domain"]) > 0
-        assert allowed[0]["subdomains"][0]["name"] == "mijn-test"
-        assert allowed[0]["subdomains"][0]["status"] == "requested"
+        # The cluster default is never materialised into the deployment...
+        assert yaml_data["deployments"][0].get("base-domain") is None
+        # ...and no phantom subdomain/domain request is created for it.
+        assert "domains" not in yaml_data
 
     @pytest.mark.asyncio
     async def test_flow_without_checkbox_no_domains(self, monkeypatch):

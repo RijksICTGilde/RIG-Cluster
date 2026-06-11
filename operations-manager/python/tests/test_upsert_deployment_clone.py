@@ -1,0 +1,115 @@
+"""Tests for the config-clone behavior of upsert_deployment (create path).
+
+Cloning a deployment (cloneFrom, used by CI to create PR previews) deep-copies
+the source deployment's config. The backup block must NOT be copied: inheriting
+the source's schedule made every PR preview accumulate nightly snapshots that
+nothing ever cleaned up.
+"""
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+
+def _make_manager():
+    with (
+        patch("opi.manager.project_manager.KubectlConnector"),
+        patch("opi.handlers.sops.SopsHandler"),
+        patch("opi.generation.manifests.ManifestGenerator"),
+        patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
+        patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
+        patch("opi.manager.delete_project_manager.DeleteProjectManager", return_value=MagicMock()),
+        patch("opi.manager.keycloak_manager.KeycloakManager", return_value=MagicMock()),
+        patch("opi.manager.minio_manager.MinioManager", return_value=MagicMock()),
+        patch("opi.manager.redis_manager.RedisManager", return_value=MagicMock()),
+        patch("opi.manager.pvc_manager.PVCManager", return_value=MagicMock()),
+    ):
+        from opi.manager.project_manager import ProjectManager
+
+        pm = ProjectManager()
+        return pm
+
+
+def _wire_create_mocks(pm, project_data: dict) -> AsyncMock:
+    """Mock the collaborators of the create path; returns the git connector mock."""
+    pm.get_contents = AsyncMock(return_value=project_data)
+    pm.get_name = AsyncMock(return_value="demo")
+    pm.get_deployments = AsyncMock(return_value=project_data["deployments"])
+    pm._validate_component_references = MagicMock(return_value={"success": True, "error": None})
+    pm.save_project_data = AsyncMock()
+    git_connector = AsyncMock()
+    pm.get_git_connector_for_project_files = AsyncMock(return_value=git_connector)
+    return git_connector
+
+
+def _project_with_scheduled_source() -> dict:
+    return {
+        "name": "demo",
+        "clusters": ["odcn-production"],
+        "repositories": [{"name": "main-repo"}],
+        "deployments": [
+            {
+                "name": "production",
+                "cluster": "odcn-production",
+                "namespace": "demo",
+                "domain-format": "subdomain-only",
+                "backup": {
+                    "resource_types": ["database"],
+                    "schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0",
+                },
+                "components": [{"reference": "frontend", "image": "ghcr.io/org/app:v1"}],
+            }
+        ],
+    }
+
+
+class TestUpsertDeploymentClone:
+    async def test_clone_does_not_inherit_backup_block(self):
+        pm = _make_manager()
+        project_data = _project_with_scheduled_source()
+        _wire_create_mocks(pm, project_data)
+
+        with patch("opi.manager.project_manager.ensure_domain_requests"):
+            result = await pm.upsert_deployment(
+                deployment_name="pr-123",
+                components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:pr-123")],
+                clone_from="production",
+            )
+
+        assert result["success"] is True
+        assert result["created"] is True
+
+        new_deployment = next(d for d in project_data["deployments"] if d["name"] == "pr-123")
+        assert "backup" not in new_deployment
+
+    async def test_clone_still_inherits_other_config(self):
+        pm = _make_manager()
+        project_data = _project_with_scheduled_source()
+        _wire_create_mocks(pm, project_data)
+
+        with patch("opi.manager.project_manager.ensure_domain_requests"):
+            result = await pm.upsert_deployment(
+                deployment_name="pr-123",
+                components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:pr-123")],
+                clone_from="production",
+            )
+
+        assert result["success"] is True
+        new_deployment = next(d for d in project_data["deployments"] if d["name"] == "pr-123")
+        assert new_deployment["domain-format"] == "subdomain-only"
+        assert new_deployment["cluster"] == "odcn-production"
+        assert new_deployment["clone-from"] == {"type": "deployment", "reference": "production", "mode": "once"}
+
+    async def test_clone_leaves_source_backup_untouched(self):
+        pm = _make_manager()
+        project_data = _project_with_scheduled_source()
+        _wire_create_mocks(pm, project_data)
+
+        with patch("opi.manager.project_manager.ensure_domain_requests"):
+            await pm.upsert_deployment(
+                deployment_name="pr-123",
+                components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:pr-123")],
+                clone_from="production",
+            )
+
+        source = next(d for d in project_data["deployments"] if d["name"] == "production")
+        assert source["backup"]["schedule"] == "FREQ=DAILY;BYHOUR=2;BYMINUTE=0"
