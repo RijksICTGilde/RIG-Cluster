@@ -30,8 +30,56 @@ from opi.utils.naming import (
 
 if TYPE_CHECKING:
     from opi.core.database_pool import DatabasePool
+    from opi.handlers.project_file_handler import ProjectFileHandler
 
 logger = logging.getLogger(__name__)
+
+
+_LEGACY_DB_ALIASES = {"database", "postgresql"}
+_LEGACY_MINIO_ALIASES = {"minio", "object-storage"}
+
+
+def _deployment_level_service_names(deployment: dict[str, Any]) -> set[str]:
+    """Service names from the deployment-level ``services`` block.
+
+    Both v1 projects and migrated v2 files carry these entries (they also
+    hold the database generation metadata). Entries are plain strings,
+    ``{reference: name, ...}`` dicts, or ``{name: {config}}`` dicts.
+    """
+    names: set[str] = set()
+    services = deployment.get("services")
+    if not isinstance(services, list):
+        return names
+    for svc in services:
+        if isinstance(svc, str):
+            names.add(svc)
+        elif isinstance(svc, dict):
+            ref = svc.get("reference")
+            if ref:
+                names.add(ref)
+            elif svc:
+                names.add(next(iter(svc)))
+    return names
+
+
+def _deployment_uses(
+    handler: ProjectFileHandler,
+    project_data: dict[str, Any],
+    deployment: dict[str, Any],
+    service_types: list[str],
+    legacy_aliases: set[str],
+) -> bool:
+    """Check service usage via BOTH the catalog resolution and the deployment-level block.
+
+    The expected set must err on the inclusive side: a service missed here makes
+    a live resource look orphaned. ``deployment_uses_service`` resolves the
+    schema-v2 truth (components/helm-charts/helmfiles); the deployment-level
+    block covers v1 files and migration leftovers that are still authoritative
+    for generation metadata.
+    """
+    if _deployment_level_service_names(deployment) & (set(service_types) | legacy_aliases):
+        return True
+    return handler.deployment_uses_service(project_data, deployment.get("name", ""), service_types)
 
 
 def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, set[tuple[str, str]]]:
@@ -40,12 +88,29 @@ def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, 
     Uses (resource_name, cluster) tuples instead of bare resource names to avoid
     false matches when two clusters have resources with the same generated name.
 
+    Services are resolved the same way the delete flow does it
+    (``ProjectFileHandler.deployment_uses_service``: catalog components,
+    helm-charts, helmfiles) plus the deployment-level services block, so the
+    expected set works for v1, v2 and v2.2 project files alike.
+
     Args:
         project_yamls: List of parsed project YAML dicts.
 
     Returns:
         Dict mapping resource_type to a set of (resource_name, cluster) tuples.
     """
+    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.services.services import ServiceType
+
+    handler = ProjectFileHandler()
+    db_types = [ServiceType.POSTGRESQL_DATABASE.value, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value]
+    minio_types = [ServiceType.MINIO_STORAGE.value]
+
+    # keycloak_client is intentionally absent: it is only ever marked through
+    # the orphan-sweep confirm endpoint, which re-validates against a fresh sweep
+    # before marking, so it relies on that gate rather than the purge-time unmark
+    # re-protection that the resource types below get. Per-realm enumeration of
+    # the clients a project legitimately owns has no cheap source here.
     expected: dict[str, set[tuple[str, str]]] = {
         "postgresql_database": set(),
         "postgresql_user": set(),
@@ -60,27 +125,33 @@ def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, 
         for deployment in project.get("deployments", []):
             deployment_name = deployment.get("name", "")
             cluster = deployment.get("cluster", "")
-            base_namespace = deployment.get("namespace", "")
-            services = deployment.get("services", [])
-            if not isinstance(services, list):
-                continue
 
-            for service in services:
-                if not isinstance(service, dict):
-                    continue
-                ref = service.get("reference", "")
+            if _deployment_uses(handler, project, deployment, db_types, _LEGACY_DB_ALIASES):
+                # The database name carries the clone/restore generation suffix
+                # (_vN); the username never does (see DatabaseManager). The
+                # generation is stored under whichever DB service the deployment
+                # uses — central (POSTGRESQL_DATABASE) or in-namespace
+                # (NAMESPACE_POSTGRESQL_DATABASE) — so resolve against both,
+                # otherwise a cloned namespace-postgres DB resolves to its base
+                # name and its live _vN database falls out of the expected set.
+                generation = handler.get_deployment_service_generation(
+                    project, deployment_name, ServiceType.POSTGRESQL_DATABASE.value
+                )
+                if generation is None:
+                    generation = handler.get_deployment_service_generation(
+                        project, deployment_name, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+                    )
+                db_name = generate_database_name(project_name, deployment_name, generation)
+                expected["postgresql_database"].add((db_name, cluster))
+                expected["postgresql_user"].add((generate_database_name(project_name, deployment_name), cluster))
 
-                if ref in ("database", "postgresql"):
-                    db_name = generate_database_name(project_name, deployment_name)
-                    expected["postgresql_database"].add((db_name, cluster))
-                    expected["postgresql_user"].add((db_name, cluster))
-
-                if ref in ("minio", "minio-storage", "object-storage"):
-                    expected["minio_bucket"].add((generate_bucket_name(project_name, deployment_name), cluster))
-                    expected["minio_user"].add((generate_minio_username(project_name, deployment_name), cluster))
-                    expected["minio_policy"].add((generate_minio_policy_name(project_name, deployment_name), cluster))
+            if _deployment_uses(handler, project, deployment, minio_types, _LEGACY_MINIO_ALIASES):
+                expected["minio_bucket"].add((generate_bucket_name(project_name, deployment_name), cluster))
+                expected["minio_user"].add((generate_minio_username(project_name, deployment_name), cluster))
+                expected["minio_policy"].add((generate_minio_policy_name(project_name, deployment_name), cluster))
 
             # Build expected backup_data resource name (matches marking format)
+            base_namespace = deployment.get("namespace", "")
             if base_namespace and cluster:
                 from opi.core.cluster_config import get_prefixed_namespace
                 from opi.manager.backup.base import get_backup_bucket_name
@@ -131,7 +202,14 @@ async def cleanup_project(
     if not project_expired:
         return results
 
-    await _purge_marks(project_expired, service, pool, results, dry_run)
+    # Same expected-set protection as the full reconcile: a mark whose
+    # resource is back in the project YAMLs must never be purged.
+    from opi.services.project_service import get_project_service
+
+    all_projects = get_project_service().get_all_projects()
+    expected = _build_expected_resources([p.data for p in all_projects.values() if p.data])
+
+    await _purge_marks(project_expired, service, pool, results, dry_run, expected=expected)
 
     logger.info(
         "Cleanup for project '%s': purged=%d, errors=%d, dry_run=%s",
@@ -150,11 +228,35 @@ async def _purge_marks(
     pool: DatabasePool,
     results: dict[str, Any],
     dry_run: bool,
+    expected: dict[str, set[tuple[str, str]]] | None = None,
 ) -> None:
     """Purge a list of marks in the correct dependency order.
 
     Shared by both ``reconcile()`` and ``cleanup_project()``.
+
+    When *expected* is given, marks whose resource is in the current expected
+    set are unmarked instead of purged — re-checked here, at purge time, so a
+    service that was deselected and later re-added can never lose its resource
+    even if the mark survived (the waggl-9et scenario).
     """
+    if expected is not None:
+        protected = [m for m in marks if (m["resource_name"], m["cluster"]) in expected.get(m["resource_type"], set())]
+        if protected:
+            results.setdefault("unmarked", [])
+            for mark in protected:
+                logger.warning(
+                    "Refusing to purge %s '%s' (cluster %s): resource is in the current expected set - unmarking",
+                    mark["resource_type"],
+                    mark["resource_name"],
+                    mark["cluster"],
+                )
+                if not dry_run:
+                    await service.delete_mark(mark["id"])
+                results["unmarked"].append(
+                    {"type": mark["resource_type"], "name": mark["resource_name"], "cluster": mark["cluster"]}
+                )
+            marks = [m for m in marks if m not in protected]
+
     # Group by type for ordered deletion
     db_marks = [m for m in marks if m["resource_type"] == "postgresql_database"]
     db_user_marks = [m for m in marks if m["resource_type"] == "postgresql_user"]
@@ -205,6 +307,11 @@ async def _purge_marks(
             error_msg = f"Failed to initialize MinIO connector for purge: {e}"
             logger.exception(error_msg)
             results["errors"].append(error_msg)
+
+    # Keycloak clients (confirmed orphans from the service-orphan sweep)
+    keycloak_client_marks = [m for m in marks if m["resource_type"] == "keycloak_client"]
+    for mark in keycloak_client_marks:
+        await _purge_keycloak_client(mark, service, results, dry_run)
 
     # Backup data (Kopia snapshots)
     for mark in backup_marks:
@@ -282,16 +389,17 @@ async def reconcile(
                 await service.unmark_resource(rtype, rname, cluster)
             results["unmarked"].append({"type": rtype, "name": rname, "cluster": cluster})
 
-    # --- Step 2: Purge expired marks ---
+    # --- Step 2: Purge expired marks (re-protected against the expected set) ---
     expired_marks = await service.get_expired_marks(grace_period_days)
-    await _purge_marks(expired_marks, service, pool, results, dry_run)
+    await _purge_marks(expired_marks, service, pool, results, dry_run, expected=expected)
 
-    # --- Step 3: Detect newly orphaned resources and mark them ---
-    # This step queries actual resources and marks any that are not in the expected set
-    # and not already marked. This is intentionally conservative - we only mark, never
-    # purge on first detection.
-    # Note: Full actual-resource scanning is deferred to a future iteration since it
-    # requires listing all databases/buckets and filtering by naming convention patterns.
+    # --- Step 3: Orphan detection is deliberately NOT automated here ---
+    # Actual-resource scanning lives in opi.jobs.service_orphan_sweep (report-
+    # first by design): GET /api/v2/admin/orphans/report produces a classified
+    # inventory, POST /api/v2/admin/orphans/confirm marks human-confirmed
+    # candidates, after which this job purges them past the grace period.
+    # Auto-marking from a scan is forbidden: a wrong expected set would
+    # schedule live resources for deletion (see the waggl-9et near-miss).
 
     logger.info(
         "Reconciliation complete: purged=%d, marked=%d, unmarked=%d, errors=%d",
@@ -311,9 +419,25 @@ async def _purge_postgres_database(
     results: dict[str, list],
     dry_run: bool,
 ) -> None:
-    """Purge a PostgreSQL database that has passed the grace period."""
+    """Purge a PostgreSQL database that has passed the grace period.
+
+    Refuses when the database has active connections: a marked-but-in-use
+    database means our administration is out of sync with reality, and
+    ``delete_database`` would terminate those connections before dropping.
+    The mark is kept and reported for investigation instead.
+    """
     db_name = mark["resource_name"]
     try:
+        active = await connector.count_active_connections(db_name)
+        if active > 0:
+            msg = (
+                f"Refusing to purge PostgreSQL database '{db_name}': "
+                f"{active} active connection(s) - marked but in use, investigate before deleting"
+            )
+            logger.warning(msg)
+            results.setdefault("refused", []).append({"type": "postgresql_database", "name": db_name, "reason": msg})
+            return
+
         if dry_run:
             logger.info("[DRY RUN] Would purge PostgreSQL database: %s", db_name)
         else:
@@ -418,6 +542,55 @@ async def _purge_minio_policy(
         results["purged"].append({"type": "minio_policy", "name": policy_name})
     except Exception as e:
         error_msg = f"Failed to purge MinIO policy '{policy_name}': {e}"
+        logger.exception(error_msg)
+        results["errors"].append(error_msg)
+
+
+async def _purge_keycloak_client(
+    mark: dict,
+    service: MarkedForDeletionService,
+    results: dict[str, list],
+    dry_run: bool,
+) -> None:
+    """Purge a Keycloak client that was confirmed via the orphan sweep.
+
+    The realm is stored in the mark metadata at confirm time. A client that
+    is already gone counts as purged (the goal state is reached).
+    """
+    client_id = mark["resource_name"]
+    metadata = mark.get("metadata", {})
+    if isinstance(metadata, str):
+        import json
+
+        metadata = json.loads(metadata)
+    realm = metadata.get("realm", "")
+
+    if not realm:
+        error_msg = f"Keycloak client mark '{client_id}' has no realm in metadata - cannot delete"
+        logger.warning(error_msg)
+        results["errors"].append(error_msg)
+        return
+
+    try:
+        if dry_run:
+            logger.info("[DRY RUN] Would purge Keycloak client: %s (realm %s)", client_id, realm)
+            results["purged"].append({"type": "keycloak_client", "name": client_id, "realm": realm})
+            return
+
+        from opi.connectors.keycloak import create_keycloak_connector
+
+        keycloak = await create_keycloak_connector(
+            keycloak_url=settings.KEYCLOAK_URL,
+            admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
+            admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
+        )
+        deleted = await keycloak.delete_client_by_client_id(realm, client_id)
+        if not deleted:
+            logger.info("Keycloak client '%s' already gone from realm '%s'", client_id, realm)
+        await service.delete_mark(mark["id"])
+        results["purged"].append({"type": "keycloak_client", "name": client_id, "realm": realm})
+    except Exception as e:
+        error_msg = f"Failed to purge Keycloak client '{client_id}' in realm '{realm}': {e}"
         logger.exception(error_msg)
         results["errors"].append(error_msg)
 

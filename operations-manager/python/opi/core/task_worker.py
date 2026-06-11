@@ -200,20 +200,24 @@ class TaskWorker:
                         attempt_count=1,
                         max_attempts=0,
                     )
+                    progress.mark_legacy_failed(error_msg)
                     logger.warning("Task %s reported failure: %s", task_id, error_msg)
                 else:
                     await self._task_service.complete_task(task_id, result)
+                    progress.mark_legacy_completed()
                     logger.info("Task %s completed successfully", task_id)
 
             except TimeoutError:
                 error_msg = f"Task exceeded maximum duration of {settings.TASK_WORKER_MAX_DURATION}s"
                 logger.error("Task %s timed out: %s", task_id, error_msg)
                 await progress.close()
+                progress.mark_legacy_failed(error_msg)
                 raise TimeoutError(error_msg)
 
-            except Exception:
+            except Exception as exc:
                 # Close progress manager even on failure
                 await progress.close()
+                progress.mark_legacy_failed(f"{type(exc).__name__}: {exc}")
                 raise
 
         except Exception as e:

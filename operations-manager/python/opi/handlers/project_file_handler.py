@@ -219,6 +219,9 @@ class ProjectFileHandler:
         self._project_data: dict[str, str | list | dict[str, str]] | None = None
         self._full_file_path: str | None = None
         self._was_migrated: bool = False
+        # Deployments whose component extraction was already logged; the helper
+        # is called many times per deployment in one run and would spam DEBUG.
+        self._component_extraction_logged: set[str] = set()
 
     def _normalize_age_content(self, age_content: str) -> str:
         """
@@ -2287,11 +2290,17 @@ class ProjectFileHandler:
         path = f"$.deployments[?(@.name=='{deployment_name}')].components"
         components = self.extract_value_by_path(project_data, path, [])
 
+        first_extraction = deployment_name not in self._component_extraction_logged
+        if first_extraction:
+            self._component_extraction_logged.add(deployment_name)
+
         if components:
-            logger.debug(f"Found {len(components)} component reference(s) in deployment '{deployment_name}'")
+            if first_extraction:
+                logger.debug(f"Found {len(components)} component reference(s) in deployment '{deployment_name}'")
             return components if isinstance(components, list) else [components]
 
-        logger.debug(f"No components found in deployment '{deployment_name}'")
+        if first_extraction:
+            logger.debug(f"No components found in deployment '{deployment_name}'")
         return []
 
     def extract_deployment_helm_charts(

@@ -34,7 +34,7 @@ import calendar
 import contextlib
 import logging
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
@@ -51,6 +51,12 @@ logger = logging.getLogger(__name__)
 
 # Wall-clock timezone the user-facing schedule is interpreted in.
 _SCHEDULE_TZ = ZoneInfo("Europe/Amsterdam")
+
+# The daily retention sweep runs on the first tick at or after this local
+# hour — after the default 02:00 backups and their catch-up window have had
+# their chance, so the sweep never races a backup that is about to refresh
+# a source.
+_SWEEP_AFTER_HOUR = 6
 
 _SUPPORTED_FREQS: set[str] = {"DAILY", "WEEKLY", "MONTHLY"}
 
@@ -129,6 +135,7 @@ class BackupScheduler:
         self._cluster = cluster
         self._running = False
         self._task: asyncio.Task | None = None
+        self._last_sweep_date: date | None = None
 
     async def start(self) -> None:
         """Start the scheduler loop as a background task."""
@@ -176,6 +183,32 @@ class BackupScheduler:
                 break
             except Exception:
                 logger.exception("Error in backup scheduler check")
+
+            try:
+                await self._maybe_run_retention_sweep()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("Error in backup retention sweep")
+
+    async def _maybe_run_retention_sweep(self) -> None:
+        """Run the orphan retention sweep once per day, after the backup window."""
+        if not settings.BACKUP_SWEEP_ENABLED:
+            return
+
+        now_local = datetime.now(_SCHEDULE_TZ)
+        if now_local.hour < _SWEEP_AFTER_HOUR:
+            return
+        if self._last_sweep_date == now_local.date():
+            return
+
+        # Mark before running so a failing sweep retries tomorrow instead of
+        # hammering the repositories every tick.
+        self._last_sweep_date = now_local.date()
+
+        from opi.core.backup_retention_sweep import BackupRetentionSweep
+
+        await BackupRetentionSweep(self._cluster).run()
 
     async def _check_and_schedule(self) -> None:
         """Check all projects for deployments that need backups."""

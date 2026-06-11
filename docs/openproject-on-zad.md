@@ -189,7 +189,23 @@ components:
 ## Replacing the bypass image with a real Enterprise Token
 
 Once you have a valid OpenProject Enterprise Token, the wrap image is no
-longer needed. Two ways to install the token:
+longer needed.
+
+**Note on requesting the token**: OpenProject EE tokens (v2.0+) are bound
+to a specific hostname. OpenProject's sales/onboarding team will ask for
+the deployment URL — it ends up embedded in the token and validated at
+runtime against `Setting.host_name` (= our `OPENPROJECT_HOST__NAME` env
+var, set to `$PUBLIC_HOSTNAME`). Implication:
+
+- Sandbox needs its own token (e.g. for `productie-openp-7lh.sandbox.rijksapp.dev`)
+- Production needs a separate token for its final hostname
+- Changing the hostname after the fact → request a new token
+- Wildcard / multi-domain tokens exist but must be explicitly requested
+
+Source: `app/models/enterprise_token.rb` — `invalid_domain?` calls
+`token_object.valid_domain?(Setting.host_name)`.
+
+Two ways to install the token:
 
 1. **Via env var** (declarative, survives DB resets):
 

@@ -181,3 +181,71 @@ class TestAdminEmails:
         service.add_admin_emails(["admin@example.com"])
         service.register("proj", "k", "f.yaml")
         assert service.get_user_role_for_project("proj", "admin@example.com") == "admin"
+
+
+AGE_API_KEY = "-----BEGIN AGE ENCRYPTED FILE-----\nciphertext-api-key\n-----END AGE ENCRYPTED FILE-----"
+AGE_PRIVATE_KEY = "-----BEGIN AGE ENCRYPTED FILE-----\nciphertext-private-key\n-----END AGE ENCRYPTED FILE-----"
+
+
+def _encrypted_project_data() -> dict:
+    return {
+        "name": "proj",
+        "config": {"api-key": AGE_API_KEY, "age-private-key": AGE_PRIVATE_KEY},
+    }
+
+
+class TestApiKeyDecryptionOnLoad:
+    """load_project_from_data must register the *plaintext* API key.
+
+    Project files store config.api-key AGE-encrypted. Portal saves re-register
+    via load_project_from_data; registering the raw ciphertext poisons the
+    in-memory key and 401s every API call for the project until the next
+    process run (the wies pr-394 CI failure of 2026-06-11).
+    """
+
+    def _patch_decrypt(self, monkeypatch):
+        """Route the two-step decrypt chain: global key -> project key -> api key."""
+
+        def fake_decrypt(content: str, private_key: str) -> str | None:
+            if content == AGE_PRIVATE_KEY and private_key == "AGE-SECRET-KEY-GLOBAL":
+                return "AGE-SECRET-KEY-PROJECT"
+            if content == AGE_API_KEY and private_key == "AGE-SECRET-KEY-PROJECT":
+                return "plain-api-key"
+            return None
+
+        import opi.services.project_service as ps
+
+        monkeypatch.setattr(ps, "decrypt_age_content_sync", fake_decrypt)
+        monkeypatch.setattr(ps.settings, "SOPS_AGE_PRIVATE_KEY", "AGE-SECRET-KEY-GLOBAL")
+
+    def test_encrypted_api_key_is_decrypted_before_registration(self, service, monkeypatch):
+        self._patch_decrypt(monkeypatch)
+
+        assert service.load_project_from_data(_encrypted_project_data(), "proj.yaml") is True
+        assert service.get_project("proj").api_key == "plain-api-key"
+
+    def test_decrypt_failure_keeps_previously_registered_key(self, service, monkeypatch):
+        import opi.services.project_service as ps
+
+        service.register("proj", "plain-api-key", "proj.yaml")
+        monkeypatch.setattr(ps, "decrypt_age_content_sync", lambda *_: None)
+        monkeypatch.setattr(ps.settings, "SOPS_AGE_PRIVATE_KEY", "AGE-SECRET-KEY-GLOBAL")
+
+        assert service.load_project_from_data(_encrypted_project_data(), "proj.yaml") is True
+        assert service.get_project("proj").api_key == "plain-api-key", (
+            "A failed decrypt must not poison the in-memory key"
+        )
+
+    def test_plaintext_api_key_passes_through(self, service):
+        data = {"name": "proj", "config": {"api-key": "plain-api-key"}}
+        assert service.load_project_from_data(data, "proj.yaml") is True
+        assert service.get_project("proj").api_key == "plain-api-key"
+
+    def test_decrypt_failure_without_previous_registers_raw(self, service, monkeypatch):
+        import opi.services.project_service as ps
+
+        monkeypatch.setattr(ps, "decrypt_age_content_sync", lambda *_: None)
+        monkeypatch.setattr(ps.settings, "SOPS_AGE_PRIVATE_KEY", "AGE-SECRET-KEY-GLOBAL")
+
+        assert service.load_project_from_data(_encrypted_project_data(), "proj.yaml") is True
+        assert service.get_project("proj").api_key == AGE_API_KEY

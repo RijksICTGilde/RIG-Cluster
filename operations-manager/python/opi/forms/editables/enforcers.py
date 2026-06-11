@@ -263,14 +263,20 @@ class DomainConfigEnforcer:
                     f"Kies een ander URL-formaat of een ander domein."
                 )
 
-        # Check custom domain approval for non-platform domains. Mirrors the
-        # subdomain pattern below: a ticked "Domein aanvragen" checkbox lets
+        # Check domain approval for any non-platform domain (a domain not in the
+        # cluster's supported set), whether it arrived via the wizard's custom
+        # input ("__custom__") or as a literal base-domain on an API upsert.
+        # Mirrors the subdomain pattern below: a ticked "Domein aanvragen" checkbox lets
         # the submission through, an existing "requested" status lets it
         # through, "denied" hard-fails, and any other unapproved state
         # surfaces as a non-blocking warning prompting the user to tick the
         # request checkbox.
-        if actual_domain and base_domain == "__custom__" and actual_domain.lower() not in supported:
-            domain_field = f"deployments[{self.deployment_index}]/base-domain:custom"
+        if actual_domain and actual_domain.lower() not in supported:
+            domain_field = (
+                f"deployments[{self.deployment_index}]/base-domain:custom"
+                if base_domain == "__custom__"
+                else f"deployments[{self.deployment_index}]/base-domain"
+            )
             is_allowed, error_msg = is_domain_allowed_for_project(actual_domain, value)
             if not is_allowed:
                 domain_config = get_project_allowed_domain_config(value, actual_domain)
