@@ -1547,6 +1547,63 @@ class KeycloakConnector:
             except KeycloakError as e:
                 logger.warning(f"Failed to add protocol mapper {mapper['name']}: {e}")
 
+    async def delete_client_by_client_id(self, realm_name: str, client_id: str) -> bool:
+        """
+        Delete a single client by its clientId in the given realm.
+
+        Args:
+            realm_name: Name of the realm
+            client_id: The clientId (not the internal UUID)
+
+        Returns:
+            True if the client was deleted, False if it was not found
+        """
+        target_client = await self.find_client_by_client_id(client_id, realm_name)
+        if not target_client:
+            logger.warning(f"Client '{client_id}' not found in realm '{realm_name}' - nothing to delete")
+            return False
+        try:
+            self.admin.change_current_realm(realm_name)
+            self.admin.delete_client(client_id=target_client["id"])
+            logger.info(f"Deleted client '{client_id}' from realm '{realm_name}'")
+            return True
+        finally:
+            self.admin.change_current_realm("master")
+
+    async def list_realms(self) -> list[str]:
+        """
+        List the names of all realms (read-only).
+
+        Returns:
+            List of realm names
+        """
+        realms = self.admin.get_realms()
+        return [realm.get("realm", "") for realm in realms or [] if realm.get("realm")]
+
+    async def list_clients(self, realm_name: str) -> list[dict[str, Any]]:
+        """
+        List all clients in a realm (read-only).
+
+        Args:
+            realm_name: Name of the realm
+
+        Returns:
+            List of dicts with client_id, public flag, and internal id
+        """
+        try:
+            self.admin.change_current_realm(realm_name)
+            clients = self.admin.get_clients()
+            return [
+                {
+                    "client_id": client.get("clientId", ""),
+                    "public": bool(client.get("publicClient", False)),
+                    "internal_id": client.get("id", ""),
+                }
+                for client in clients or []
+            ]
+        finally:
+            self.admin.change_current_realm("master")
+
     async def get_client_scopes(self, realm_name: str) -> list[dict[str, Any]]:
         """
         Get all client scopes in a realm.
