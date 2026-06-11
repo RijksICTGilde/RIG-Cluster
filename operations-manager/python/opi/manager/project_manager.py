@@ -3918,6 +3918,14 @@ class ProjectManager:
             # Clear clones tracking after all deployments processed
             self.clear_clones_performed()
 
+            # Persist the in-memory project data before committing. The loop above
+            # set clone-from.status.completed=True, and the clone itself recorded
+            # the database generation -- both mutate project_data in memory only.
+            # Without this save those mutations never reach the file, so every
+            # reconcile re-reads completed=false / generation=None and re-clones,
+            # creating a fresh full copy each pass. Mirrors every other write flow.
+            await self.save_project_data()
+
             scope = f" (deployment: {deployment_name})" if deployment_name else ""
             await (await self.get_git_connector_for_project_files()).commit_and_push(
                 f"Process project {project_name}{scope}"
