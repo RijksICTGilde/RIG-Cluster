@@ -5772,6 +5772,9 @@ class ProjectManager:
                         # Custom domains (base-domain, domain-mode, issuer) are not copied
                         # because cloned deployments should use the default cluster domain
                         # rather than inheriting the source's DNS config.
+                        # The backup block is not copied either: backups are an explicit
+                        # per-deployment choice, and inheriting the source's schedule made
+                        # every PR preview accumulate nightly snapshots.
                         clone_exclude_keys = [
                             "name",
                             "components",
@@ -5779,6 +5782,7 @@ class ProjectManager:
                             "base-domain",
                             "domain-mode",
                             "issuer",
+                            "backup",
                         ]
                         new_deployment.update(
                             {
