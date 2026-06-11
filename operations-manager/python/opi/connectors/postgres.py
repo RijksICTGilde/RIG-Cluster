@@ -1852,11 +1852,15 @@ class PostgresConnector:
             )
             check_out, _ = await check_process.communicate()
 
-            if not (check_out and check_out.decode().strip()):
-                # Target schema doesn't exist - this is an error
-                logger.error(f"Target schema '{target_schema}' was not created during pg_dump")
-
-                # List what schemas DO exist for debugging
+            if check_out and check_out.decode().strip():
+                logger.debug(f"Target schema '{target_schema}' was created directly")
+            else:
+                # pg_dump restores a schema under its SOURCE name -- it cannot
+                # rename on the fly. So whenever source and target names differ
+                # (the normal generational-clone case), the cloned schema arrives
+                # as `source_schema` and we rename it to `target_schema` here.
+                # This is the expected path, NOT a failure -- only a dump that
+                # produced no schema at all is an error.
                 list_cmd = [
                     "psql",
                     "-d",
@@ -1870,43 +1874,36 @@ class PostgresConnector:
                     *list_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
                 list_out, _ = await list_process.communicate()
-                if list_out:
-                    existing_schemas = list_out.decode().strip()
-                    logger.error(f"Schemas that DO exist in target database: {existing_schemas}")
+                existing_schemas = list_out.decode().strip() if list_out else ""
 
-                    # Check if source schema was created instead
-                    if source_schema in existing_schemas and source_schema != target_schema:
-                        logger.info(
-                            f"Found source schema '{source_schema}' in target database, renaming to '{target_schema}'"
-                        )
-                        rename_cmd = [
-                            "psql",
-                            "-d",
-                            target_database,
-                            "-c",
-                            f"ALTER SCHEMA {source_schema} RENAME TO {target_schema};",
-                        ]
-
-                        rename_process = await asyncio.create_subprocess_exec(
-                            *rename_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-                        )
-
-                        _, rename_err = await rename_process.communicate()
-
-                        if rename_process.returncode != 0:
-                            raise Exception(f"Failed to rename schema: {rename_err.decode()}")
-                        else:
-                            logger.info(f"Successfully renamed schema from '{source_schema}' to '{target_schema}'")
-                    else:
-                        raise Exception(
-                            f"Schema '{target_schema}' was not created during pg_dump - source may be empty"
-                        )
-                else:
-                    raise Exception(
-                        f"Schema '{target_schema}' was not created during pg_dump and could not list existing schemas"
+                if source_schema in existing_schemas and source_schema != target_schema:
+                    # Normal path: rename the freshly-restored schema to the target.
+                    logger.info(f"Renaming cloned schema '{source_schema}' -> '{target_schema}'")
+                    rename_cmd = [
+                        "psql",
+                        "-d",
+                        target_database,
+                        "-c",
+                        f"ALTER SCHEMA {source_schema} RENAME TO {target_schema};",
+                    ]
+                    rename_process = await asyncio.create_subprocess_exec(
+                        *rename_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                     )
-            else:
-                logger.debug(f"Target schema '{target_schema}' was created successfully")
+                    _, rename_err = await rename_process.communicate()
+                    if rename_process.returncode != 0:
+                        raise Exception(f"Failed to rename cloned schema to '{target_schema}': {rename_err.decode()}")
+                    logger.info(f"Cloned schema is now '{target_schema}'")
+                else:
+                    # Neither the target nor the source schema materialised: the
+                    # dump genuinely produced nothing. THIS is the real error.
+                    logger.error(
+                        f"Clone produced no usable schema in target '{target_database}' "
+                        f"(target '{target_schema}' absent; existing schemas: {existing_schemas or 'none'}); "
+                        f"source schema '{source_schema}' may be empty"
+                    )
+                    raise Exception(
+                        f"Schema '{target_schema}' was not created during clone - source '{source_schema}' may be empty"
+                    )
 
             # Step 6: Set proper ownership of the final schema
             logger.info(f"Setting ownership of schema {target_schema} to {target_owner}")

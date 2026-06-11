@@ -1906,7 +1906,11 @@
         try {
             var response = await fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': '{{ request.state.csrf_token }}'
+                },
                 credentials: 'same-origin'
             });
 

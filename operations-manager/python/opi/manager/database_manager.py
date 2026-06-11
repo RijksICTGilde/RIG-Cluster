@@ -691,9 +691,10 @@ class DatabaseManager:
                     if database_result["status"] == "created":
                         break
 
-                    # Versioned database already exists (leftover from previous failed clone)
-                    logger.warning(
-                        f"Database {db_database} already exists (leftover from failed clone), "
+                    # Versioned database already exists. This is usually a prior
+                    # successful generation, not a failure; advance to the next free one.
+                    logger.info(
+                        f"Database {db_database} already exists (prior generation), "
                         f"trying generation {new_generation + 1}"
                     )
                     new_generation += 1
