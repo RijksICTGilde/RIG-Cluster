@@ -98,7 +98,54 @@ def encrypt_sops_file(file_path: str) -> bool:
     return True
 
 
-def encrypt_to_sops_files(directory: str, public_key: str) -> bool:
+def _sops_plaintext_unchanged(plaintext_path: str, encrypted_path: str, private_key: str) -> bool:
+    """Return True when an existing SOPS file decrypts to the same content.
+
+    SOPS encryption is non-deterministic (fresh nonces + MAC + lastmodified per
+    run), so re-encrypting unchanged plaintext rewrites the whole file and churns
+    git on every deployment. When the existing ``encrypted_path`` decrypts to the
+    same parsed YAML as the freshly generated ``plaintext_path``, the new
+    encryption can be skipped and the existing ciphertext kept verbatim.
+
+    Compares parsed YAML (not raw bytes) so key-order or formatting differences
+    never count as a change. Returns False on any doubt — no existing file, a
+    decrypt failure (e.g. after key rotation), or an unparseable side — so the
+    caller re-encrypts.
+    """
+    if not os.path.exists(encrypted_path):
+        return False
+
+    decrypted = _decrypt_sops_with_key(encrypted_path, private_key)
+    if decrypted is None:
+        return False
+
+    import yaml
+
+    try:
+        with open(plaintext_path) as f:
+            new_doc = yaml.safe_load(f)
+        old_doc = yaml.safe_load(decrypted)
+    except yaml.YAMLError:
+        return False
+    return new_doc == old_doc
+
+
+def _decrypt_sops_with_key(file_path: str, private_key: str) -> str | None:
+    """Decrypt a SOPS file with an explicit AGE private key. None on failure."""
+    process = subprocess.run(
+        ["sops", "--decrypt", file_path],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "SOPS_AGE_KEY": private_key},
+    )
+    if process.returncode != 0:
+        logger.info(f"Could not decrypt {os.path.basename(file_path)} for unchanged-check: {process.stderr.strip()}")
+        return None
+    return process.stdout
+
+
+def encrypt_to_sops_files(directory: str, public_key: str, private_key: str | None = None) -> bool:
     """
     Encrypt all .to-sops.yaml files in a directory using SOPS, renaming them to .sops.yaml.
 
@@ -108,9 +155,18 @@ def encrypt_to_sops_files(directory: str, public_key: str) -> bool:
     successfully. Any remaining .to-sops.yaml after this call still holds the
     secret in plain text.
 
+    When ``private_key`` is provided, an existing ``.sops.yaml`` is decrypted and
+    compared first: if the plaintext is unchanged the existing ciphertext is kept
+    verbatim and re-encryption is skipped. This avoids rewriting every secret on
+    every deployment (SOPS is non-deterministic), which keeps the git diff — and
+    the number of committed files — minimal. Without a key the file is always
+    re-encrypted (the previous behaviour).
+
     Args:
         directory: Directory containing .to-sops.yaml files
         public_key: The AGE public key for encryption
+        private_key: Optional AGE private key matching ``public_key``, enabling
+            the skip-if-unchanged comparison against the existing ciphertext.
 
     Returns:
         True if all files were encrypted successfully
@@ -131,6 +187,7 @@ def encrypt_to_sops_files(directory: str, public_key: str) -> bool:
     logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files to encrypt")
 
     failed_files: list[str] = []
+    skipped = 0
 
     for file_path in to_sops_files:
         base_name = os.path.basename(file_path)
@@ -139,6 +196,14 @@ def encrypt_to_sops_files(directory: str, public_key: str) -> bool:
 
         output_name = base_name[: -len(".to-sops.yaml")] + ".sops.yaml"
         output_path = os.path.join(directory, output_name)
+
+        # Skip re-encryption when the secret is unchanged: keep the existing
+        # ciphertext, drop only the plaintext source so nothing leaks.
+        if private_key and _sops_plaintext_unchanged(file_path, output_path, private_key):
+            os.remove(file_path)
+            skipped += 1
+            logger.debug(f"Secret unchanged, kept existing ciphertext: {output_name}")
+            continue
 
         try:
             cmd = ["sops", "--encrypt", "--age", public_key, file_path]
@@ -181,10 +246,15 @@ def encrypt_to_sops_files(directory: str, public_key: str) -> bool:
             "Doorgaan zou secrets in platte tekst naar git committen."
         )
 
+    if skipped:
+        logger.info(f"Kept {skipped} unchanged secret(s) as-is (no re-encryption)")
+
     return True
 
 
-def encrypt_to_sops_files_or_fail(directory: str, public_key: str, context: str) -> None:
+def encrypt_to_sops_files_or_fail(
+    directory: str, public_key: str, context: str, private_key: str | None = None
+) -> None:
     """
     Encrypt all .to-sops.yaml files in a directory and fail closed.
 
@@ -198,6 +268,9 @@ def encrypt_to_sops_files_or_fail(directory: str, public_key: str, context: str)
         public_key: The AGE public key for encryption
         context: Human-readable description for error messages (Dutch),
             e.g. "infrastructuur-secrets voor project 'foo'"
+        private_key: Optional AGE private key matching ``public_key``; when
+            given, unchanged secrets keep their existing ciphertext instead of
+            being re-encrypted (avoids needless git-churn).
 
     Raises:
         RuntimeError: If encryption fails or any .to-sops.yaml file remains.
@@ -205,7 +278,7 @@ def encrypt_to_sops_files_or_fail(directory: str, public_key: str, context: str)
     pattern = os.path.join(directory, "*.to-sops.yaml")
 
     try:
-        encrypt_to_sops_files(directory, public_key)
+        encrypt_to_sops_files(directory, public_key, private_key)
     except SOPSEncryptionError as e:
         raise RuntimeError(
             f"SOPS-versleuteling mislukt voor {context}: {e}. "
