@@ -123,6 +123,8 @@ from opi.utils.yaml_util import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from opi.core.task_manager import TaskProgressManager
     from opi.manager.database_manager import DatabaseManager
 
@@ -156,6 +158,27 @@ def enforce_namespace_pin(project_data: dict[str, Any]) -> None:
                 f"Een afwijkende namespace is niet toegestaan omdat dit toegang "
                 f"tot de resources van een ander project zou geven."
             )
+
+
+def _deployment_name_for_path(path: str, yaml_doc: dict[str, Any] | None) -> str | None:
+    """Resolve a DeepDiff path like ``deployments.7`` to the deployment name in ``yaml_doc``.
+
+    Returns None when the path does not point inside a resolvable deployment entry.
+    """
+    parts = path.split(".")
+    if len(parts) < 2 or parts[0] != "deployments" or not parts[1].isdigit():
+        return None
+    deployments = (yaml_doc or {}).get("deployments", [])
+    index = int(parts[1])
+    if 0 <= index < len(deployments) and isinstance(deployments[index], dict):
+        return deployments[index].get("name")
+    return None
+
+
+def _deployment_names_for_paths(paths: Iterable[str], yaml_doc: dict[str, Any] | None) -> list[str]:
+    """Resolve DeepDiff paths to deployment names (falling back to the raw path), deduplicated."""
+    names = [_deployment_name_for_path(path, yaml_doc) or path for path in paths]
+    return list(dict.fromkeys(names))
 
 
 def _resolve_deployment_filter(deployment_name: str | None, deployment_names: list[str] | None) -> list[str] | None:
@@ -1949,7 +1972,9 @@ class ProjectManager:
             # Use shared function for SOPS secret creation
             await self._ensure_sops_secret_in_namespace(namespace, contents)
 
-    def _analyze_deployment_changes(self, changes: dict[str, Any], current_yaml: dict[str, Any]) -> dict[str, Any]:
+    def _analyze_deployment_changes(
+        self, changes: dict[str, Any], current_yaml: dict[str, Any], previous_yaml: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """
         Analyze changes specifically in the deployments section.
 
@@ -1959,6 +1984,7 @@ class ProjectManager:
         Args:
             changes: The structured changes from DeepDiff analysis
             current_yaml: Current YAML content
+            previous_yaml: Previous YAML content (used to name deleted deployments)
 
         Returns:
             Dictionary with deployment-specific changes: added, changed, deleted
@@ -1968,24 +1994,28 @@ class ProjectManager:
         # Check for deployment-related changes
         has_deployment_changes = False
 
+        def _label(path: str, yaml_doc: dict[str, Any] | None) -> str:
+            name = _deployment_name_for_path(path, yaml_doc)
+            return f"{path} ('{name}')" if name else path
+
         # Look for changes in the deployments section
         for path, value in changes["added"].items():
             if path.startswith("deployments.") or path == "deployments":
                 deployment_changes["added"][path] = value
                 has_deployment_changes = True
-                logger.debug(f"Added deployment change: {path}")
+                logger.debug(f"Added deployment change: {_label(path, current_yaml)}")
 
         for path, value in changes["changed"].items():
             if path.startswith("deployments."):
                 deployment_changes["changed"][path] = value
                 has_deployment_changes = True
-                logger.debug(f"Changed deployment change: {path}")
+                logger.debug(f"Changed deployment change: {_label(path, current_yaml)}")
 
         for path, value in changes["deleted"].items():
             if path.startswith("deployments.") or path == "deployments":
                 deployment_changes["deleted"][path] = value
                 has_deployment_changes = True
-                logger.debug(f"Deleted deployment change: {path}")
+                logger.debug(f"Deleted deployment change: {_label(path, previous_yaml)}")
 
         # If no deployment changes detected, treat all current deployments as newly created
         if not has_deployment_changes:
@@ -2122,11 +2152,29 @@ class ProjectManager:
 
             # Step 1.5: Analyze deployment-specific changes
             logger.info("Step 1.5: Analyzing deployment changes")
-            deployment_changes = self._analyze_deployment_changes(changes, current_yaml)
+            deployment_changes = self._analyze_deployment_changes(changes, current_yaml, previous_yaml)
 
+            def _summarize(label: str, section: dict[str, Any], source_yaml: dict[str, Any] | None) -> str:
+                names = _deployment_names_for_paths(section, source_yaml)
+                suffix = f" ({', '.join(names)})" if names else ""
+                return f"{label}: {len(section)}{suffix}"
+
+            migration_note = (
+                " — schema auto-migration rewrote the project file this run, "
+                "a one-time diff across all deployments is expected"
+                if self._project_file_handler.was_migrated
+                else ""
+            )
             logger.info(
-                f"Deployment changes - Added: {len(deployment_changes['added'])}, "
-                f"Changed: {len(deployment_changes['changed'])}, Deleted: {len(deployment_changes['deleted'])}"
+                "Deployment changes - "
+                + ", ".join(
+                    (
+                        _summarize("Added", deployment_changes["added"], current_yaml),
+                        _summarize("Changed", deployment_changes["changed"], current_yaml),
+                        _summarize("Deleted", deployment_changes["deleted"], previous_yaml),
+                    )
+                )
+                + migration_note
             )
 
             # Note: Clone operations (both local deployment and remote-source) are now handled
@@ -5642,6 +5690,12 @@ class ProjectManager:
                 # UPDATE existing deployment - only update component images
                 logger.info(f"Updating existing deployment '{deployment_name}' in project '{project_name}'")
 
+                # Collect commit-message parts while mutating: after the update the
+                # old image is gone from project_data, so comparing afterwards
+                # always sees "no change" and the commit message degrades to the
+                # generic "configuration".
+                change_parts: list[str] = []
+
                 # Find the deployment in project_data["deployments"] to update
                 for deployment in project_data["deployments"]:
                     if deployment.get("name") == deployment_name:
@@ -5660,7 +5714,10 @@ class ProjectManager:
 
                             if component.reference in existing_components:
                                 # Update existing component's image
+                                old_image = existing_components[component.reference].get("image", "")
                                 existing_components[component.reference]["image"] = normalized_image
+                                if old_image != normalized_image:
+                                    change_parts.append(f"{component.reference} image to {normalized_image}")
                                 logger.info(
                                     f"Updated image for component '{component.reference}' to '{normalized_image}'"
                                 )
@@ -5669,6 +5726,7 @@ class ProjectManager:
                                 deployment["components"].append(
                                     {"reference": component.reference, "image": normalized_image}
                                 )
+                                change_parts.append(f"add component {component.reference}")
                                 logger.info(
                                     f"Added new component '{component.reference}' with image '{normalized_image}'"
                                 )
@@ -5701,16 +5759,8 @@ class ProjectManager:
                 # Commit changes to Git
                 git_connector = await self.get_git_connector_for_project_files()
 
-                # Build descriptive commit message
-                change_parts: list[str] = []
-                for component in components:
-                    normalized_image, _ = normalize_container_image(component.image)
-                    if component.reference in existing_components:
-                        old_image = existing_components[component.reference].get("image", "")
-                        if old_image != normalized_image:
-                            change_parts.append(f"{component.reference} image to {normalized_image}")
-                    else:
-                        change_parts.append(f"add component {component.reference}")
+                # Build descriptive commit message (component parts were collected
+                # during the update loop, before the old values were overwritten)
                 if domain_format is not None:
                     change_parts.append(f"domain-format to {domain_format}")
                 if subdomain is not None:

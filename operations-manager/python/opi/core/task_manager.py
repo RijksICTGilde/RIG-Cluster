@@ -237,7 +237,10 @@ def _cleanup_completed_projects() -> None:
             if project.completed_at < cutoff:
                 to_remove.append(project_id)
         elif project.status == TaskStatus.RUNNING and project.created_at < stuck_cutoff:
-            logger.warning(f"Cleaning up stuck RUNNING project {project_id} (created {project.created_at})")
+            logger.warning(
+                f"Cleaning up stuck RUNNING task {project_id} for project '{project.project_name}' "
+                f"(created {project.created_at}, no completion recorded within 2 hours)"
+            )
             to_remove.append(project_id)
     for project_id in to_remove:
         del _projects[project_id]
