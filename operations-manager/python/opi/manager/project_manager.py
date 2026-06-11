@@ -53,6 +53,7 @@ from opi.core.cluster_config import (
 from opi.core.config import settings
 from opi.core.project_schema import validate_project_schema
 from opi.extensions import load_extensions
+from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.generation.manifests import ManifestGenerator
 from opi.handlers.project_file_handler import (
     ProjectFileHandler,
@@ -5603,6 +5604,35 @@ class ProjectManager:
         logger.debug(f"Successfully decrypted API key for project: {project_name}")
         return decrypted_api_key
 
+    async def _enforce_domain_config(self, project_data: dict[str, Any], deployment_name: str) -> str | None:
+        """Run the shared domain enforcer against an upserted deployment.
+
+        Reuses the wizard's ``DomainConfigEnforcer`` so the API enforces the
+        same cross-field domain rules — notably that a dot-separated URL format
+        requires a domain that supports dots (a dash-only ODCN domain with a
+        dot format produces an unreachable multi-label hostname).
+
+        API callers cannot tick a "request domain" checkbox, so an unapproved
+        custom domain (a non-blocking warning in the wizard) is treated as a
+        hard rejection here.
+
+        Returns an error message on violation, or None when the config is valid.
+        """
+        deployments = project_data.get("deployments", [])
+        index = next(
+            (i for i, d in enumerate(deployments) if isinstance(d, dict) and d.get("name") == deployment_name),
+            None,
+        )
+        if index is None:
+            return None
+        try:
+            await DomainConfigEnforcer(deployment_index=index).enforce(
+                project_data, {"project_name": await self.get_name()}
+            )
+        except (ValueError, FieldWarning) as e:  # FieldError is a ValueError subclass
+            return str(e)
+        return None
+
     async def upsert_deployment(
         self,
         deployment_name: str,
@@ -5708,6 +5738,19 @@ class ProjectManager:
                             logger.info(f"Setting clone-from to deployment '{clone_from}' (force_clone=true)")
 
                         break
+
+                # Validate domain config when this call changes domain settings.
+                # Gated so image-only updates never fail on a deployment whose
+                # domain config predates this check.
+                if domain_format is not None or base_domain is not None or subdomain is not None:
+                    domain_error = await self._enforce_domain_config(project_data, deployment_name)
+                    if domain_error:
+                        return {
+                            "success": False,
+                            "created": False,
+                            "error": domain_error,
+                            "error_type": "domain_validation",
+                        }
 
                 # Ensure unapproved domains/subdomains get request entries
                 ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
@@ -5874,6 +5917,17 @@ class ProjectManager:
 
                 # Add the new deployment to the project data
                 project_data["deployments"].append(new_deployment)
+
+                # Validate domain config when this call sets domain settings.
+                if domain_format is not None or base_domain is not None or subdomain is not None:
+                    domain_error = await self._enforce_domain_config(project_data, deployment_name)
+                    if domain_error:
+                        return {
+                            "success": False,
+                            "created": False,
+                            "error": domain_error,
+                            "error_type": "domain_validation",
+                        }
 
                 # Ensure unapproved domains/subdomains get request entries
                 ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)

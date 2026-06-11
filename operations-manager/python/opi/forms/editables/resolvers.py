@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from opi.connectors import subdomain as subdomain_connector
 from opi.core import config as opi_config
+from opi.core.cluster_config import get_ingress_postfix
 from opi.forms.editables.service_path import smart_get_value
 
 if TYPE_CHECKING:
@@ -53,15 +53,23 @@ def get_effective_value(
 
 
 class ClusterDefaultDomain:
-    """Resolves the first supported base domain for the current cluster.
+    """Resolves the cluster's default (ingress) base domain.
 
-    Used on the base-domain select field: when the user hasn't explicitly
-    selected a domain, this provides the cluster's default domain for
-    dependent field evaluation (show_when conditions, enforcers, etc.).
+    Used on the base-domain select field: when the user picks "Cluster
+    standaard" (the empty option) the value is None, and dependent fields
+    (show_when conditions, enforcers) need to know the effective domain.
+
+    Returns the cluster's default ingress domain — NOT the first nice-URL
+    domain. ``DomainNeedsRequestCondition`` compares the effective base
+    domain against exactly this value to decide the domain is already the
+    default (no request needed); returning a nice-URL domain instead made
+    the request checkbox appear for the cluster default and let the hook
+    materialise that domain into the saved project file.
     """
 
     def resolve(self, yaml_data: dict[str, Any]) -> Any:
-        supported = subdomain_connector.get_supported_base_domains(opi_config.settings.CLUSTER_MANAGER)
-        if supported:
-            return next(iter(supported))
-        return None
+        # Raises ValueError for an unknown cluster — a misconfigured
+        # CLUSTER_MANAGER is a deployment error that must surface, not be
+        # silently swallowed.
+        postfix = get_ingress_postfix(opi_config.settings.CLUSTER_MANAGER)
+        return postfix.lstrip(".") if postfix else None
