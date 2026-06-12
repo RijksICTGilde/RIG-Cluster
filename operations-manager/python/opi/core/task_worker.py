@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from opi.core.config import settings
@@ -135,6 +136,7 @@ class TaskWorker:
         deployment_name = task.get("deployment_name")
 
         fid = set_flow_id(f"task-{task_id[:8]}")
+        started = time.monotonic()
         logger.info("Executing task %s (type=%s, project=%s, flow=%s)", task_id, task_type, project_name, fid)
 
         # Check for conflicting tasks (same project + task_type already running)
@@ -201,15 +203,17 @@ class TaskWorker:
                         max_attempts=0,
                     )
                     progress.mark_legacy_failed(error_msg)
-                    logger.warning("Task %s reported failure: %s", task_id, error_msg)
+                    logger.warning(
+                        "Task %s reported failure after %.1fs: %s", task_id, time.monotonic() - started, error_msg
+                    )
                 else:
                     await self._task_service.complete_task(task_id, result)
                     progress.mark_legacy_completed()
-                    logger.info("Task %s completed successfully", task_id)
+                    logger.info("Task %s completed successfully in %.1fs", task_id, time.monotonic() - started)
 
             except TimeoutError:
                 error_msg = f"Task exceeded maximum duration of {settings.TASK_WORKER_MAX_DURATION}s"
-                logger.error("Task %s timed out: %s", task_id, error_msg)
+                logger.error("Task %s timed out after %.1fs: %s", task_id, time.monotonic() - started, error_msg)
                 await progress.close()
                 progress.mark_legacy_failed(error_msg)
                 raise TimeoutError(error_msg)
@@ -221,7 +225,7 @@ class TaskWorker:
                 raise
 
         except Exception as e:
-            logger.exception("Task %s failed: %s", task_id, e)
+            logger.exception("Task %s failed after %.1fs: %s", task_id, time.monotonic() - started, e)
 
             await self._task_service.fail_task(
                 task_id=task_id,
