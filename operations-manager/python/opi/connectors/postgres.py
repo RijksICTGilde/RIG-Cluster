@@ -539,7 +539,8 @@ class PostgresConnector:
             user_exists = await conn.fetchval("SELECT 1 FROM pg_user WHERE usename = $1", validated_username)
 
             if not user_exists:
-                logger.warning(f"User {validated_username} does not exist on {self._host}")
+                # Idempotent delete: an already-absent user is the desired end state, not an anomaly.
+                logger.debug(f"User {validated_username} does not exist on {self._host}, nothing to delete")
                 return {"status": "not_found", "message": f"User {validated_username} does not exist"}
 
             # Drop owned objects first to avoid dependency issues
@@ -819,7 +820,9 @@ class PostgresConnector:
             )
 
             if not database_exists:
-                logger.warning(f"Database {validated_database_name} does not exist on {self._host}")
+                # Idempotent delete: an already-absent database is the desired end state, not an anomaly
+                # (the delete-cleanup loop deliberately probes generations that may never have existed).
+                logger.debug(f"Database {validated_database_name} does not exist on {self._host}, nothing to delete")
                 return {"status": "not_found", "message": f"Database {validated_database_name} does not exist"}
 
             # Terminate connections to the database before dropping
@@ -1007,7 +1010,8 @@ class PostgresConnector:
             )
 
             if not schema_exists:
-                logger.warning(f"Schema {validated_schema_name} does not exist")
+                # Idempotent delete: an already-absent schema is the desired end state, not an anomaly.
+                logger.debug(f"Schema {validated_schema_name} does not exist, nothing to delete")
                 return {"status": "not_found", "message": f"Schema {validated_schema_name} does not exist"}
 
             # Drop schema with safe identifier quoting
