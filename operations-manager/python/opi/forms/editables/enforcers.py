@@ -233,8 +233,14 @@ class DomainConfigEnforcer:
         elif base_domain:
             actual_domain = base_domain
         else:
-            # Resolve default domain when not explicitly selected
-            actual_domain = next(iter(supported)) if supported else None
+            # No base-domain chosen = the cluster-default URL. That is the platform
+            # default, not a user-requested domain, so there is nothing to validate
+            # or approve here -- leave actual_domain None so the domain/subdomain
+            # checks below all skip. (Previously this picked an arbitrary
+            # next(iter(supported)) domain and ran ITS subdomain restrictions against
+            # the deployment, wrongly rejecting cluster-default PRs with e.g.
+            # "subdomein 'pr797' voor 'rijksapp.dev' is op aanvraag".)
+            actual_domain = None
 
         template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
         if "{subdomain}" in template and not subdomain:
