@@ -128,3 +128,55 @@ class TestEnforceDomainConfig:
             assert await pm._enforce_domain_config(data, "staging") is None
             # productie (index 1) uses a dot format on a dash-only domain -> rejected
             assert await pm._enforce_domain_config(data, "productie") is not None
+
+    async def test_cluster_default_with_subdomain_skips_approval(self):
+        """A cluster-default deployment (no base-domain) must not be validated against
+        an arbitrary restricted platform domain's subdomain rules.
+
+        Regression for the pr797 bug: the enforcer used to resolve a missing
+        base-domain to next(iter(supported)) -- an arbitrary supported domain --
+        and run ITS subdomain restrictions, wrongly rejecting cluster-default PR
+        deployments with "subdomein 'pr797' voor 'rijksapp.dev' is op aanvraag".
+        """
+        pm = _make_manager()
+        data = {
+            "name": "regel-k4c",
+            "deployments": [
+                # No base-domain -> cluster default. Uses a {subdomain} nice-URL format.
+                {"name": "pr797", "domain-format": "subdomain", "subdomain": "pr797"},
+            ],
+        }
+        with (
+            patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapp.dev"}),
+            patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=True),
+            # Even though the arbitrary supported domain is restricted, the cluster
+            # default must skip it entirely -- so this must never be consulted.
+            patch(
+                "opi.forms.editables.enforcers.is_subdomain_allowed_for_project",
+                return_value=(False, "restricted"),
+            ),
+        ):
+            error = await pm._enforce_domain_config(data, "pr797")
+        assert error is None
+
+    async def test_explicit_restricted_domain_subdomain_still_requires_approval(self):
+        """The subdomain-approval gate still fires for an EXPLICITLY chosen restricted domain."""
+        pm = _make_manager()
+        data = {
+            "name": "regel-k4c",
+            "deployments": [
+                {"name": "pr797", "base-domain": "rijksapp.dev", "domain-format": "subdomain", "subdomain": "pr797"},
+            ],
+        }
+        with (
+            patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapp.dev"}),
+            patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=True),
+            patch(
+                "opi.forms.editables.enforcers.is_subdomain_allowed_for_project",
+                return_value=(False, "restricted"),
+            ),
+            patch("opi.forms.editables.enforcers.get_subdomain_status", return_value=None),
+        ):
+            error = await pm._enforce_domain_config(data, "pr797")
+        assert error is not None
+        assert "pr797" in error
