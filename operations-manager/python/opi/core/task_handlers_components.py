@@ -97,9 +97,12 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
         deploy_task = progress.add_task("Project processing")
         progress.update_current_step("Processing project to create K8s resources")
 
+        # Scope the reprocess to the deployments the component was added to, so it
+        # doesn't regenerate (and re-commit) every other deployment's manifests.
         processing_success = await project_manager.process_project_from_git(
             project_file_relative_path,
             task_progress_manager=progress,
+            deployment_names=deployment_names,
         )
 
         # Collect URLs from deployment results
