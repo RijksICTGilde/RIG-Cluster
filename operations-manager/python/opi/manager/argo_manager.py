@@ -38,30 +38,43 @@ class ArgoManager:
         """
         self.project_manager = project_manager
 
-    async def create_argocd_resources(self, deployment_name: str | None = None) -> None:
+    async def create_argocd_resources(
+        self, deployment_name: str | None = None, deployment_names: list[str] | None = None
+    ) -> None:
         """
-        Create all ArgoCD resources for this project.
+        Create ArgoCD resources for the in-scope deployments of this project.
 
         In a Distributed Operations Manager architecture, this creates ArgoCD resources
         only for deployments in the CLUSTER_MANAGER cluster.
 
         Args:
-            deployment_name: Optional deployment name to create resources only for specific deployment
+            deployment_name: Optional single deployment to create resources for.
+            deployment_names: Optional explicit set of deployments (takes precedence
+                over ``deployment_name``). Scoping this prevents a single-deployment
+                op from regenerating every deployment's ArgoCD manifests (which would
+                rewrite unrelated deployments and collide with a concurrent delete).
         """
         project_name = await self.project_manager.get_name()
         logger.info(f"Creating ArgoCD resources for {project_name} on cluster {settings.CLUSTER_MANAGER}")
 
         project_data = await self.project_manager.get_contents()
 
-        await self.create_repository_secrets(project_data, deployment_name)
-        await self.create_app_projects(project_data, deployment_name)
-        await self.create_applications(project_data, deployment_name)
+        await self.create_repository_secrets(project_data, deployment_name, deployment_names)
+        await self.create_app_projects(project_data, deployment_name, deployment_names)
+        await self.create_applications(project_data, deployment_name, deployment_names)
+        # The kustomization is a single shared per-project file that must enumerate
+        # every manifest, so it intentionally stays project-wide.
         await self.create_kustomization_files(project_data, deployment_name)
         await (await self.project_manager.get_git_connector_for_argocd()).commit_and_push(
             f"Added ArgoCD resources for project {project_name} on cluster {settings.CLUSTER_MANAGER}"
         )
 
-    async def create_repository_secrets(self, project_data: dict[str, Any], deployment_name: str | None = None) -> None:
+    async def create_repository_secrets(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str | None = None,
+        deployment_names: list[str] | None = None,
+    ) -> None:
         """
         Create ArgoCD repository secrets with unique URLs for each project.
 
@@ -82,7 +95,9 @@ class ArgoManager:
         project_name = await self.project_manager.get_name()
 
         # Get deployments for THIS cluster only
-        deployments = await self.project_manager.get_deployments(cluster_filter=True, deployment_name=deployment_name)
+        deployments = await self.project_manager.get_deployments(
+            cluster_filter=True, deployment_name=deployment_name, deployment_names=deployment_names
+        )
 
         if not deployments:
             logger.warning(f"No deployments for cluster {settings.CLUSTER_MANAGER}")
@@ -275,7 +290,12 @@ class ArgoManager:
             logger.exception("Error generating ArgoCD repository manifest")
             raise
 
-    async def create_app_projects(self, project_data: dict[str, Any], deployment_name: str | None = None) -> None:
+    async def create_app_projects(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str | None = None,
+        deployment_names: list[str] | None = None,
+    ) -> None:
         """
         Create ArgoCD AppProject resources for the project.
 
@@ -290,7 +310,9 @@ class ArgoManager:
         logger.debug(f"Creating ArgoCD AppProject for project: {project_name} on cluster {settings.CLUSTER_MANAGER}")
 
         # Get deployments for THIS cluster only
-        deployments = await self.project_manager.get_deployments(cluster_filter=True, deployment_name=deployment_name)
+        deployments = await self.project_manager.get_deployments(
+            cluster_filter=True, deployment_name=deployment_name, deployment_names=deployment_names
+        )
 
         if not deployments:
             logger.warning(f"No deployments for cluster {settings.CLUSTER_MANAGER}")
@@ -428,7 +450,12 @@ class ArgoManager:
             logger.exception("Error generating ArgoCD application manifest")
             raise
 
-    async def create_applications(self, project_data: dict[str, Any], deployment_name: str | None = None) -> bool:
+    async def create_applications(
+        self,
+        project_data: dict[str, Any],
+        deployment_name: str | None = None,
+        deployment_names: list[str] | None = None,
+    ) -> bool:
         """
         Create ArgoCD Application resources for the project.
 
@@ -451,7 +478,7 @@ class ArgoManager:
         try:
             # Create an ArgoCD application for each deployment (filtered by cluster and optional name)
             deployments = await self.project_manager.get_deployments(
-                cluster_filter=True, deployment_name=deployment_name
+                cluster_filter=True, deployment_name=deployment_name, deployment_names=deployment_names
             )
             if deployment_name:
                 logger.info(f"Creating ArgoCD application only for deployment: {deployment_name}")
