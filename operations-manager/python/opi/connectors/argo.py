@@ -13,6 +13,8 @@ from typing import Any
 import aiohttp
 import requests
 
+from opi.utils.logging_redact import redact_sensitive_headers
+
 logger = logging.getLogger(__name__)
 
 
@@ -218,7 +220,7 @@ class ArgoConnector:
 
         async with aiohttp.ClientSession(connector=connector, timeout=request_timeout) as session:
             headers = {"Authorization": f"Bearer {self.auth_token}", "Content-Type": "application/json"}
-            logger.debug(f"Request headers: {headers}")
+            logger.debug(f"Request headers: {redact_sensitive_headers(headers)}")
             logger.debug(f"Making {method} request to: {url}")
 
             async with session.request(method, url, json=json_data or {}, headers=headers) as response:
