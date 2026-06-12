@@ -2517,12 +2517,20 @@ class ProjectManager:
         logger.debug("Extracting added changes (all items marked as added)")
         return project_data  # For now, treat everything as "added"
 
-    async def _process_application_manifests(self, deployment_name: str | None = None) -> None:
+    async def _process_application_manifests(
+        self, deployment_name: str | None = None, deployment_names: list[str] | None = None
+    ) -> None:
         """
-        Process application manifests for all project repositories.
+        Process application manifests for the in-scope deployments.
 
         Args:
-            deployment_name: Optional deployment name to process only specific deployment
+            deployment_name: Optional single deployment to process only.
+            deployment_names: Optional explicit set of deployments to process
+                (takes precedence over ``deployment_name``). Use this to keep a
+                scoped op (e.g. an upsert of one deployment) from regenerating
+                every deployment's manifest folder -- which would otherwise
+                rewrite unrelated deployments and collide with a concurrent
+                delete.
 
         Returns: None
         """
@@ -2534,13 +2542,14 @@ class ProjectManager:
             logger.warning("No repositories defined in project data")
             return
 
-        # Group deployments by repository (only for current cluster)
-        deployments = await self.get_deployments(cluster_filter=True)
-
-        # Filter deployments if specific deployment_name is provided
-        if deployment_name:
-            deployments = [d for d in deployments if d.get("name") == deployment_name]
-            logger.info(f"Processing application manifests only for deployment: {deployment_name}")
+        # Group deployments by repository (only for current cluster), already
+        # filtered to the requested scope -- get_deployments honours both
+        # deployment_name and deployment_names.
+        deployments = await self.get_deployments(
+            cluster_filter=True, deployment_name=deployment_name, deployment_names=deployment_names
+        )
+        if deployment_names is not None or deployment_name:
+            logger.info(f"Processing application manifests only for: {deployment_names or [deployment_name]}")
 
         deployments_by_repo = {}
         for deployment in deployments:
@@ -3893,7 +3902,7 @@ class ProjectManager:
 
             # Generate application manifests (including PVC) BEFORE setting clone status.
             # PVC clone relies on clone-from.status.completed being false to include dataSource.
-            await self._process_application_manifests(deployment_name)
+            await self._process_application_manifests(deployment_names=targets)
 
             # Now update clone-from status for all deployments that had clones performed
             # (covers DB, MinIO, and PVC clones reported during manifest generation)
@@ -3931,7 +3940,7 @@ class ProjectManager:
                 f"Process project {project_name}{scope}"
             )
 
-            await self._argo_manager.create_argocd_resources(deployment_name)
+            await self._argo_manager.create_argocd_resources(deployment_names=targets)
 
             # Execute bootstrap actions for deployments
             for deployment in deployments:
