@@ -33,3 +33,11 @@ Master API key not configured - route .+ is disabled
 
 # --- keycloak: existence check during processing ---
 Client '.+' not found in realm
+
+# --- kubectl: log fetch/stream transients while a pod is starting/rolling ---
+kubectl logs.*Error from server \(BadRequest\)
+Failed to get deployment logs.*Error from server \(BadRequest\)
+error: unexpected EOF
+
+# --- uvicorn: malformed / probe inbound HTTP on the listener ---
+Invalid HTTP request received
