@@ -15,4 +15,3 @@ resources:
   - ../../infrastructure/prometheus/controller/overlays/odcn
   - ../../infrastructure/redis/controller/overlays/odcn
   - ../../infrastructure/external-dns/controller/overlays/odcn
-#  - ../../infrastructure/backup-destination/controller/overlays/odcn

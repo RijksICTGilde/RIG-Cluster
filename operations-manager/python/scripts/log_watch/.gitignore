@@ -1,0 +1,6 @@
+# Local config (holds your ntfy topic) - copy config.example.py to config.py.
+config.py
+
+# Local dedup state - per-machine, not shared.
+state.json
+__pycache__/

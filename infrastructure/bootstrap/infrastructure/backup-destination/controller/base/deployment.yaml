@@ -8,6 +8,11 @@ metadata:
     app.kubernetes.io/component: backup-storage
 spec:
   replicas: 1
+  # Single replica on a ReadWriteOnce PVC: terminate the old pod (releasing the
+  # volume) before starting the new one. A RollingUpdate surge pod would deadlock
+  # on a Multi-Attach error because the old pod still holds the RWO volume.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: minio
