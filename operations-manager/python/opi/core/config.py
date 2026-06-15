@@ -101,8 +101,11 @@ def _get_env_files() -> list[str]:
             logger.debug(f"Found environment-specific env file: {env_specific}")
             _check_env_file_for_environment_var(env_specific)
         else:
-            logger.error(f"Required environment file missing: {env_specific} (ENVIRONMENT={environment_var})")
-            logger.error(f"Create {env_specific} or remove '{environment}' from ENVIRONMENT variable")
+            # Environment-specific files are optional. In production, config comes from
+            # the ConfigMap mount + env vars + SOPS secrets, so .env.<environment> is
+            # expected to be absent there - this is not an error (matches the DEBUG
+            # level used above when the file IS found).
+            logger.debug(f"No environment-specific file .env.{environment} (optional)")
 
     # 3. ConfigMap mounted environment file (for Kubernetes deployments)
     # Check multiple possible mount paths

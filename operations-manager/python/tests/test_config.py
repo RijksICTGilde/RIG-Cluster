@@ -117,15 +117,16 @@ class TestGetEnvFiles:
     @patch("os.path.exists")
     @patch.dict("os.environ", {"ENVIRONMENT": "staging"}, clear=False)
     def test_missing_env_specific_file(self, mock_exists, mock_check, caplog):
-        """Should log error when environment-specific file is missing."""
+        """A missing environment-specific file is optional: logged at DEBUG, never ERROR."""
         mock_exists.side_effect = lambda p: p == ".env"
 
-        with caplog.at_level(logging.ERROR):
+        with caplog.at_level(logging.DEBUG):
             result = _get_env_files()
 
         assert ".env" in result
         assert ".env.staging" not in result
-        assert any("Required environment file missing" in r.message for r in caplog.records)
+        assert any("No environment-specific file .env.staging" in r.message for r in caplog.records)
+        assert not any(r.levelno >= logging.ERROR for r in caplog.records)
 
     @patch("opi.core.config._check_env_file_for_environment_var")
     @patch("os.path.exists")
