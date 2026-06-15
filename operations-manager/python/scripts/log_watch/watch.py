@@ -175,6 +175,27 @@ def extract_summary(verdict: str) -> str:
     return "\n".join(lines)[:1800]
 
 
+def extract_suggested_ignores(verdict: str) -> list[str]:
+    """Pull Claude's SUGGESTED IGNORES regexes (compile-checked).
+
+    These are only logged for human review - never auto-applied to the ignore-list.
+    """
+    m = re.search(r"SUGGESTED IGNORES:\s*(.*)\Z", verdict, re.DOTALL | re.IGNORECASE)
+    if not m:
+        return []
+    out: list[str] = []
+    for ln in m.group(1).splitlines():
+        pat = re.sub(r"^\s*(?:[-*]|\d+\.)\s+", "", ln).strip()  # strip list markers, keep the regex
+        if not pat or pat.lower() == "none":
+            continue
+        try:
+            re.compile(pat)
+        except re.error:
+            continue  # skip anything that is not a valid regex
+        out.append(pat)
+    return out
+
+
 def signature(msg: str) -> str:
     """Stable key for an alert: strip ids/timestamps so recurrences collapse."""
     s = re.sub(r"\[(req|task)-[^\]]+\]", "", msg)
@@ -209,7 +230,12 @@ def run_claude(samples: list[str]) -> str:
         "markdown, no task IDs.>\n\n"
         "DETAIL:\n"
         "<for each problem: most likely cause and the single most useful next action. You may "
-        "use read-only kubectl/Loki to verify, but change nothing.>\n\n" + "\n".join(samples[:80])
+        "use read-only kubectl/Loki to verify, but change nothing.>\n\n"
+        "SUGGESTED IGNORES:\n"
+        "<ONLY for problems above that are clearly benign recurring noise (never a real issue): "
+        "one conservative, well-scoped Python regex per line that matches that log message, to "
+        "paste into our ignore-list. Prefer the module name plus a distinctive phrase, and escape "
+        "regex metacharacters. If nothing is safely ignorable, write 'none'.>\n\n" + "\n".join(samples[:80])
     )
     try:
         out = subprocess.run(  # noqa: S603
@@ -327,6 +353,13 @@ def run_cycle() -> int:
         verdict = run_claude(samples)
         log.info("Claude triage:\n%s", verdict)
         summary = extract_summary(verdict)
+        suggested = extract_suggested_ignores(verdict)
+        if suggested:
+            log.info(
+                "Claude suggests ignore-pattern(s) - REVIEW, then paste good ones into ignore_patterns.txt "
+                "(not auto-applied):\n%s",
+                "\n".join("  " + s for s in suggested),
+            )
     else:
         log.info("Claude triage disabled (USE_CLAUDE=False / --no-claude)")
 
