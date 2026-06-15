@@ -30,6 +30,22 @@ class GrafanaQueryError(Exception):
     """Exception raised when a Grafana query fails."""
 
 
+def _parse_query_time(value: str | int | float) -> datetime:
+    """Parse a range-query time bound as Unix-epoch seconds or an ISO-8601 string.
+
+    Mirrors PrometheusConnector.query_range's documented contract ("RFC3339 or
+    Unix timestamp") so the two connectors stay interchangeable behind
+    get_metrics_connector(). Callers (e.g. the metrics UI) pass epoch seconds.
+    """
+    if isinstance(value, int | float):
+        return datetime.fromtimestamp(value, tz=UTC)
+    text = str(value).strip()
+    try:
+        return datetime.fromtimestamp(float(text), tz=UTC)
+    except ValueError:
+        return datetime.fromisoformat(text)
+
+
 class GrafanaPrometheusConnector:
     """
     Connector for querying Prometheus metrics through Grafana's API.
@@ -550,16 +566,21 @@ class GrafanaPrometheusConnector:
 
         return overview
 
-    async def query_range(self, query: str, start_time: str, end_time: str, step: str) -> list[dict[str, Any]]:
-        """Execute a range query to get time-series data."""
+    async def query_range(
+        self, query: str, start_time: str | int | float, end_time: str | int | float, step: str
+    ) -> list[dict[str, Any]]:
+        """Execute a range query to get time-series data.
+
+        ``start_time``/``end_time`` accept Unix-epoch seconds or an ISO-8601
+        string (matching PrometheusConnector, the interchangeable sibling).
+        """
         self._ensure_connected()
 
         logger.debug(f"Executing range query: {query} from {start_time} to {end_time} step {step}")
 
         try:
-            # Parse time strings to datetime
-            start_dt = datetime.fromisoformat(start_time)
-            end_dt = datetime.fromisoformat(end_time)
+            start_dt = _parse_query_time(start_time)
+            end_dt = _parse_query_time(end_time)
 
             return await self._execute_query(
                 query,
