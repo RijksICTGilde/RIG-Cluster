@@ -621,6 +621,42 @@ tasks:
         echo "✅ Bootstrap applied successfully!"
     silent: true
 
+  bootstrap-backup-destination:
+    desc: "Apply the backup-destination MinIO (SOPS-decrypted) to the selected cluster. Managed outside ArgoCD by design (prune-safe for the backup PVC)."
+    vars:
+      CLUSTER: '{{default "odcn" .CLUSTER}}'              # overlay name: odcn | local
+      KEY_FILE: '{{default "security/key.txt" .KEY_FILE}}'
+      DRY_RUN: '{{default "false" .DRY_RUN}}'
+    cmds:
+      - |
+
+        echo "📦 Applying backup-destination overlay '{{.CLUSTER}}' to context: $(kubectl config current-context)"
+
+        # Set flags for kubectl apply
+        KUBECTL_FLAGS=""
+        if [[ "{{.DRY_RUN}}" == "true" ]]; then
+          KUBECTL_FLAGS="--dry-run=client"
+          echo "🔍 Dry run mode enabled"
+        fi
+
+        # Build (SOPS-decrypted) and apply
+        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec infrastructure/bootstrap/infrastructure/backup-destination/controller/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+
+        echo "✅ backup-destination ({{.CLUSTER}}) applied successfully!"
+    silent: true
+
+  log-watch:
+    desc: "One OPI prod-log triage cycle: Loki scan -> ignore-list -> Claude triage -> ntfy. Config in scripts/log_watch/config.py."
+    dir: operations-manager/python
+    cmds:
+      - uv run python scripts/log_watch/watch.py {{.CLI_ARGS}}
+
+  log-watch-loop:
+    desc: "Run the OPI log watcher continuously (one cycle every 30 min, self-scheduling). Ctrl-C to stop. Config in scripts/log_watch/config.py."
+    dir: operations-manager/python
+    cmds:
+      - uv run python scripts/log_watch/watch.py --loop
+
   uninstall-local-kind-cluster:
     desc: "Uninstall local set-up by deleting the Kind cluster."
     cmds:
