@@ -1,0 +1,35 @@
+# log_watch ignore-list - known-benign / known-recurring OPI log noise.
+#
+# One Python regex per line (re.search against the log MESSAGE). Lines starting
+# with '#' and blank lines are ignored. Keep this TIGHT: anything not matched
+# here escalates (Claude triage + ntfy), so only add genuinely-understood noise.
+# When a new benign pattern shows up in an alert, add it here.
+
+# --- postgres: idempotent create on re-processing ---
+Database .+ already exists on
+Schema .+ already exists in database
+
+# --- minio mc: bucket already created (backup flow re-creates blindly) ---
+Unable to make bucket .+ already own it
+
+# --- kopia: status check against not-yet-initialized repos (new/PR deploys) ---
+Failed to connect to Kopia repository:.*repository not initialized
+
+# --- argo: false "permission denied" while an app is mid-creation (auto-retries) ---
+Permission denied accessing application
+Error checking application creation status: Permission denied
+
+# --- git: concurrent-write contention, auto-rebases and retries (recovers) ---
+Push rejected .*attempting rebase and retry \(attempt \d+/\d+\)
+
+# --- kubectl: existence probes during create/delete (NotFound is expected) ---
+kubectl get (configmap|secret|application).*Error from server \(NotFound\)
+
+# --- API auth: rejected reads (missing/invalid key, missing param) ---
+Authentication failed for route .+ - no .*API-Key provided
+Authentication failed for route .+ - invalid API key
+Missing .+ parameter for route
+Master API key not configured - route .+ is disabled
+
+# --- keycloak: existence check during processing ---
+Client '.+' not found in realm
