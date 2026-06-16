@@ -19,3 +19,6 @@ config:
     - from: registry.k8s.io
       to: rcr.rijksapps.nl/k8s-rig
       imagePullSecret: k8s-rig-robot-pull-secret
+    - from: code.overheid.nl
+      to: rcr.rijksapps.nl/code-overheid-rig
+      imagePullSecret: code-overheid-rig-robot-pull-secret
