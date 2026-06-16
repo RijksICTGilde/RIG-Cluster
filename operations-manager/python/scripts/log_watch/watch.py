@@ -169,6 +169,30 @@ def human(msg: str) -> str:
     return f"{name}: {text}" if name else text
 
 
+# Colored dot per severity for the ntfy body (works on every ntfy client; ntfy has
+# no real text colors, and its markdown only renders well in the web app).
+_SEV_EMOJI = {
+    "CRITICAL": "\U0001f534",  # red
+    "CRIT": "\U0001f534",
+    "ERROR": "\U0001f534",
+    "ERR": "\U0001f534",
+    "HIGH": "\U0001f7e0",  # orange
+    "MEDIUM": "\U0001f7e1",  # yellow
+    "MED": "\U0001f7e1",
+    "WARN": "\U0001f7e1",
+    "WARNING": "\U0001f7e1",
+    "LOW": "\U0001f7e2",  # green
+    "INFO": "\U0001f7e2",
+}
+
+
+def sev_emoji(line: str) -> str:
+    """Map a summary line's leading severity word (CRITICAL/HIGH/...) to a colored dot."""
+    parts = line.strip().split(None, 1)
+    word = parts[0].rstrip(":").upper() if parts else ""
+    return _SEV_EMOJI.get(word, "\U0001f539")  # small blue diamond = unclassified
+
+
 def extract_summary(verdict: str) -> str:
     """Pull the SUMMARY block out of Claude's response for the ntfy body."""
     if verdict.startswith("(claude"):  # triage failed/disabled marker
@@ -371,26 +395,30 @@ def run_cycle() -> int:
         log.info("Claude triage disabled (USE_CLAUDE=False / --no-claude)")
 
     errors = [e for e in ordered if severity(e["sample"]) >= 1]
-    # ntfy body: prefer Claude's plain-language SUMMARY; fall back to a raw errors-first
-    # list when triage is off/failed. Kept well under ntfy's 4096-byte attachment limit.
+
+    # Problem lines: Claude's grouped SUMMARY (preferred), or a raw errors-first
+    # fallback when triage is off/failed. Everything un-ignored is grouped into these
+    # problems, so the list IS the full actionable picture - no raw-line-count footer.
     if summary:
-        body = summary
+        body_lines = [ln for ln in summary.splitlines() if ln.strip()]
     else:
         tag = {2: "CRIT", 1: "ERR", 0: "WARN"}
-        lines = [f"{tag[severity(e['sample'])]}: {ascii_short(human(e['sample']))}" for e in (errors or ordered)[:5]]
-        if (extra := len(fresh) - len(lines)) > 0:
-            lines.append(f"(+{extra} more - see logs)")
-        body = "\n".join(lines)
+        body_lines = [
+            f"{tag[severity(e['sample'])]} {ascii_short(human(e['sample']))}" for e in (errors or ordered)[:5]
+        ]
+        if (extra := len(fresh) - len(body_lines)) > 0:
+            body_lines.append(f"LOW (+{extra} more - see logs)")
+
+    # Severity dot per line + a blank line between for readability.
+    # Body is UTF-8 data so emoji are fine (well under ntfy's 4096-byte attachment limit).
+    body = "\n\n".join(f"{sev_emoji(ln)} {ln}" for ln in body_lines)
 
     priority = (
         "urgent" if re.search(r"\bCRITICAL\b", summary) or any(severity(e["sample"]) == 2 for e in ordered) else "high"
     )
-    title = (
-        f"OPI: {len(errors)} error(s), {len(fresh) - len(errors)} warning(s)"
-        if errors
-        else f"OPI: {len(fresh)} warning(s)"
-    )
-    ntfy(title, body, priority, "rotating_light")
+    # Neutral title icon - severity is shown per-line and via priority, not on the header.
+    title = f"OPI log-watch: {len(body_lines)} issue(s)"
+    ntfy(title, body, priority, "mag")
 
     iso = now.isoformat()
     for sig in fresh:
