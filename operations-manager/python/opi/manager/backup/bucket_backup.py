@@ -392,7 +392,7 @@ class BucketBackupManager(BaseBackupManager):
             trigger=trigger,
         )
 
-        manifest = self.kubectl.template_manifest(
+        manifest = self._template_manifest(
             template_content,
             {
                 "pod_name": pod_name,
@@ -469,7 +469,7 @@ class BucketBackupManager(BaseBackupManager):
         effective_cluster = cluster or settings.CLUSTER_MANAGER
         bucket_name = self.config.get_bucket_name(project_name, effective_cluster)
 
-        manifest = self.kubectl.template_manifest(
+        manifest = self._template_manifest(
             template_content,
             {
                 "pod_name": pod_name,
@@ -671,7 +671,7 @@ class BucketBackupManager(BaseBackupManager):
         # Get the bucket name (may be per-project based on config)
         bucket_name = self.config.get_bucket_name(project_name, cluster)
 
-        manifest = self.kubectl.template_manifest(
+        manifest = self._template_manifest(
             template_content,
             {
                 "pod_name": pod_name,
