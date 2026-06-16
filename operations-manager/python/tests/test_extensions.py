@@ -40,6 +40,25 @@ class TestRegistryRewriteExtension:
         assert container["image"] == "rcr.rijksapps.nl/ghcr-rig/org/app:latest"
         assert result["spec"]["template"]["spec"]["imagePullSecrets"] == [{"name": "ghcr-secret"}]
 
+    def test_rewrites_bare_pod_image_and_adds_pull_secret(self) -> None:
+        """Backup pods are bare Pods (spec at .spec, not .spec.template.spec) - they
+        must be rewritten too, otherwise they keep raw ghcr.io refs and fail on ODCN."""
+        ext = self._make_extension(
+            [{"from": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig", "imagePullSecret": "ghcr-rig-robot-pull-secret"}]
+        )
+        manifest = {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {"name": "db-backup-test"},
+            "spec": {"containers": [{"name": "backup", "image": "ghcr.io/minbzk/base-images/rig-backup:latest"}]},
+        }
+        result = ext.process(manifest)
+
+        assert (
+            result["spec"]["containers"][0]["image"] == "rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/rig-backup:latest"
+        )
+        assert result["spec"]["imagePullSecrets"] == [{"name": "ghcr-rig-robot-pull-secret"}]
+
     def test_no_rewrite_for_unmatched_image(self) -> None:
         ext = self._make_extension(
             [
