@@ -22,10 +22,12 @@ Pipeline (one cycle):
 
 Configuration:
   Copy config.example.py to config.py (gitignored) and edit it - ntfy topic/server,
-  namespace, window, loop interval, office-hours gate, dedup window, Claude on/off.
+  namespace, window, loop interval, morning catch-up, dedup window, Claude on/off.
+  Runs every cycle (no office-hours gate); runs before MORNING_BEFORE_HOUR use the
+  wider MORNING_WINDOW so overnight issues are not missed.
   The Grafana token is the only secret: read from the GRAFANA_TOKEN env var, else
   decrypted from the SOPS secret. A few settings can be overridden per-run via CLI
-  flags: --loop, --interval, --window, --all-hours, --no-claude, --no-ntfy.
+  flags: --loop, --interval, --window, --no-claude, --no-ntfy.
 """
 
 from __future__ import annotations
@@ -84,9 +86,11 @@ USE_CLAUDE = cfg.USE_CLAUDE
 SEND_NTFY = cfg.SEND_NTFY
 DEDUP_HOURS = cfg.DEDUP_HOURS
 CLAUDE_TIMEOUT = cfg.CLAUDE_TIMEOUT
-OFFICE_HOURS = cfg.OFFICE_HOURS
 LOOP_INTERVAL = cfg.LOOP_INTERVAL
 LIMIT = cfg.MAX_LINES
+MORNING_BEFORE_HOUR = getattr(cfg, "MORNING_BEFORE_HOUR", 9)  # runs before this local hour catch up further back
+MORNING_WINDOW = getattr(cfg, "MORNING_WINDOW", "now-16h")  # look-back for those early runs (~5pm prev day)
+WINDOW_OVERRIDDEN = False  # set when --window is passed
 
 log = logging.getLogger("log-watch")
 
@@ -274,13 +278,16 @@ def ntfy(title: str, body: str, priority: str, tags: str) -> bool:
 
 
 def run_cycle() -> int:
-    if OFFICE_HOURS:
-        now_local = datetime.now()  # noqa: DTZ005 - deliberate local wall-clock for office hours
-        if now_local.weekday() >= 5 or not (9 <= now_local.hour < 17):
-            log.info("outside office hours (%s, local) - skipping run", now_local.strftime("%a %H:%M"))
-            return 0
+    # Early-morning runs (before MORNING_BEFORE_HOUR local) widen the look-back so
+    # issues from overnight / since yesterday afternoon are swept up, not missed.
+    now_local = datetime.now()  # noqa: DTZ005 - local wall-clock for the morning check
+    if not WINDOW_OVERRIDDEN and now_local.hour < MORNING_BEFORE_HOUR:
+        window = MORNING_WINDOW
+        log.info("early run (%s local) - morning catch-up window %s", now_local.strftime("%a %H:%M"), window)
+    else:
+        window = WINDOW
 
-    log.info("log-watch start: %s/%s | window=%s | levels=%s", NAMESPACE, CONTAINER, WINDOW, LEVEL)
+    log.info("log-watch start: %s/%s | window=%s | levels=%s", NAMESPACE, CONTAINER, window, LEVEL)
 
     token = load_token()
     ds = find_loki_datasource(token)
@@ -289,7 +296,7 @@ def run_cycle() -> int:
         return 1
 
     expr = build_logql(NAMESPACE, CONTAINER, LEVEL, None)
-    rows = parse_frames(query_loki(token, ds, expr, WINDOW, "now", LIMIT))
+    rows = parse_frames(query_loki(token, ds, expr, window, "now", LIMIT))
     log.info("fetched %d log line(s) from Loki", len(rows))
 
     ignore = load_ignore_patterns()
@@ -394,7 +401,7 @@ def run_cycle() -> int:
 
 
 def main() -> int:
-    global WINDOW, USE_CLAUDE, SEND_NTFY, OFFICE_HOURS
+    global WINDOW, WINDOW_OVERRIDDEN, USE_CLAUDE, SEND_NTFY
     parser = argparse.ArgumentParser(description="OPI production-log triage watcher")
     parser.add_argument(
         "--loop",
@@ -402,8 +409,9 @@ def main() -> int:
         help=f"run forever, one cycle every --interval seconds (default {LOOP_INTERVAL})",
     )
     parser.add_argument("--interval", type=int, default=LOOP_INTERVAL, help="seconds between cycles in --loop mode")
-    parser.add_argument("--window", help="override the Loki look-back for this run (e.g. now-16h)")
-    parser.add_argument("--all-hours", action="store_true", help="ignore the office-hours gate for this run")
+    parser.add_argument(
+        "--window", help="override the Loki look-back for this run (e.g. now-16h); disables morning catch-up"
+    )
     parser.add_argument("--no-claude", action="store_true", help="skip the Claude triage")
     parser.add_argument("--no-ntfy", action="store_true", help="do not send ntfy (dry-run)")
     args = parser.parse_args()
@@ -411,8 +419,7 @@ def main() -> int:
     setup_logging()
     if args.window:
         WINDOW = args.window
-    if args.all_hours:
-        OFFICE_HOURS = False
+        WINDOW_OVERRIDDEN = True
     if args.no_claude:
         USE_CLAUDE = False
     if args.no_ntfy:
