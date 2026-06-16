@@ -27,7 +27,10 @@ WINDOW = "now-35m"  # look-back per run (35m = 30m cadence + 5m overlap)
 
 # --- behaviour --------------------------------------------------------------
 LOOP_INTERVAL = 1800  # seconds between runs in --loop mode (1800 = 30 min)
-OFFICE_HOURS = True  # True = only act Mon-Fri 09-17 local; False = run any time
+# Morning catch-up: runs before MORNING_BEFORE_HOUR (local) use MORNING_WINDOW instead
+# of WINDOW, so issues from overnight / since yesterday afternoon are not missed.
+MORNING_BEFORE_HOUR = 9
+MORNING_WINDOW = "now-16h"  # ~covers 5pm the previous day for an early-morning run
 DEDUP_HOURS = 6.0  # do not re-alert the same signature within this many hours
 USE_CLAUDE = True  # spawn `claude -p` to triage whatever is left after the ignore-list
 SEND_NTFY = True  # actually POST to ntfy (False = dry-run: log only)
