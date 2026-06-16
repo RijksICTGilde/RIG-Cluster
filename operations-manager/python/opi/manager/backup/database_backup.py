@@ -269,7 +269,7 @@ class DatabaseBackupManager(BaseBackupManager):
             trigger=trigger,
         )
 
-        manifest = self.kubectl.template_manifest(
+        manifest = self._template_manifest(
             template_content,
             {
                 "pod_name": pod_name,
@@ -482,7 +482,7 @@ class DatabaseBackupManager(BaseBackupManager):
         # Get the bucket name (may be per-project based on config)
         bucket_name = self.config.get_bucket_name(project_name, cluster)
 
-        manifest = self.kubectl.template_manifest(
+        manifest = self._template_manifest(
             template_content,
             {
                 "pod_name": pod_name,

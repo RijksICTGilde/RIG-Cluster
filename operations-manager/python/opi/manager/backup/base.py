@@ -10,12 +10,15 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import yaml
 
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.minio_mc import create_minio_connector
 from opi.core.cluster_config import get_volume_snapshot_class
 from opi.core.config import settings
+from opi.extensions.pipeline import load_extensions
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -551,6 +554,24 @@ class BaseBackupManager:
         self.kubectl = KubectlConnector()
         self.config = config or BackupConfig.from_settings()
         self.lock = BackupLock(self.kubectl)
+
+    def _template_manifest(self, manifest_content: str, variables: dict[str, Any]) -> str:
+        """Render a manifest template, then apply the cluster's registry rewrite.
+
+        Backup pods are bare ``Pod``s applied directly (outside the project manifest
+        pipeline), so without this they keep raw upstream image refs (e.g. ghcr.io)
+        and fail to pull on ODCN. Routing them through the same RegistryRewriteExtension
+        used for project workloads rewrites images to the RCR mirror and attaches the
+        pull secret. No-op on clusters without registry-rewrite extensions (local/sandbox).
+        """
+        rendered = self.kubectl.template_manifest(manifest_content, variables)
+        pipeline = load_extensions(settings.CLUSTER_MANAGER)
+        if not pipeline.has_extensions:
+            return rendered
+        manifest = yaml.safe_load(rendered)
+        if not isinstance(manifest, dict):
+            return rendered
+        return yaml.dump(pipeline.process_manifest(manifest), default_flow_style=False, sort_keys=False)
 
     async def get_status(self) -> BackupStatus:
         """Get current backup status."""

@@ -327,7 +327,7 @@ class PVCBackupManager(BaseBackupManager):
         with open(template_path) as f:
             template_content = f.read()
 
-        manifest = self.kubectl.template_manifest(
+        manifest = self._template_manifest(
             template_content,
             {
                 "snapshot_name": snapshot_name,
@@ -388,7 +388,7 @@ class PVCBackupManager(BaseBackupManager):
         with open(template_path) as f:
             template_content = f.read()
 
-        manifest = self.kubectl.template_manifest(
+        manifest = self._template_manifest(
             template_content,
             {
                 "clone_pvc_name": clone_pvc_name,
@@ -463,7 +463,7 @@ class PVCBackupManager(BaseBackupManager):
             trigger=trigger,
         )
 
-        manifest = self.kubectl.template_manifest(
+        manifest = self._template_manifest(
             template_content,
             {
                 "pod_name": pod_name,
@@ -850,7 +850,7 @@ spec:
       storage: {{ size }}
 """
 
-        manifest = self.kubectl.template_manifest(
+        manifest = self._template_manifest(
             template_content,
             {
                 "pvc_name": pvc_name,
@@ -1053,7 +1053,7 @@ spec:
         with open(template_path) as f:
             template_content = f.read()
 
-        manifest = self.kubectl.template_manifest(
+        manifest = self._template_manifest(
             template_content,
             {
                 "pvc_name": pvc_name,
@@ -1098,7 +1098,7 @@ spec:
         # Get the bucket name (may be per-project based on config)
         bucket_name = self.config.get_bucket_name(project_name, cluster)
 
-        manifest = self.kubectl.template_manifest(
+        manifest = self._template_manifest(
             template_content,
             {
                 "pod_name": pod_name,

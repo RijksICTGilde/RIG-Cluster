@@ -55,6 +55,8 @@ class RegistryRewriteExtension(ManifestExtension):
 
     def _get_pod_spec(self, manifest: dict[str, Any], kind: str) -> dict[str, Any] | None:
         """Extract the pod spec from a manifest, or None if not applicable."""
+        if kind == "Pod":
+            return manifest.get("spec")
         if kind in _POD_SPEC_KINDS:
             return manifest.get("spec", {}).get("template", {}).get("spec")
         if kind == _CRONJOB_KIND:
