@@ -923,11 +923,22 @@ class ProjectManager:
                 if service_category not in categorized_aliases[source_type]:
                     categorized_aliases[source_type][service_category] = {}
 
-                # Add to categorized collection
-                if alias_name in categorized_aliases[source_type][service_category]:
-                    logger.warning(
-                        f"Duplicate alias '{alias_name}' found in deployment '{deployment_name}', "
-                        f"using definition from component '{component_name}'"
+                # Add to categorized collection. Aliases are declared per component but
+                # merged into one shared secret per service for the deployment, so two
+                # components declaring the same alias is fine ONLY if the value matches.
+                existing = categorized_aliases[source_type][service_category].get(alias_name)
+                if existing is not None and existing != alias_template:
+                    # Unresolvable: a single shared secret cannot hold two values.
+                    raise ValueError(
+                        f"Conflicting alias '{alias_name}' in deployment '{deployment_name}': "
+                        f"component '{component_name}' defines a different value than another "
+                        f"component. Aliases for a service are merged into one shared secret, "
+                        f"so they must match."
+                    )
+                if existing is not None:
+                    logger.debug(
+                        f"Alias '{alias_name}' re-declared identically by component "
+                        f"'{component_name}' in deployment '{deployment_name}' (expected for shared services)"
                     )
 
                 categorized_aliases[source_type][service_category][alias_name] = alias_template
