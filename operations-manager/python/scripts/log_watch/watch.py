@@ -186,11 +186,34 @@ _SEV_EMOJI = {
 }
 
 
-def sev_emoji(line: str) -> str:
-    """Map a summary line's leading severity word (CRITICAL/HIGH/...) to a colored dot."""
+_SEV_RANK = {
+    "CRITICAL": 4,
+    "CRIT": 4,
+    "HIGH": 3,
+    "ERROR": 3,
+    "ERR": 3,
+    "MEDIUM": 2,
+    "MED": 2,
+    "WARN": 2,
+    "WARNING": 2,
+    "LOW": 1,
+    "INFO": 1,
+}
+
+
+def _sev_word(line: str) -> str:
     parts = line.strip().split(None, 1)
-    word = parts[0].rstrip(":").upper() if parts else ""
-    return _SEV_EMOJI.get(word, "\U0001f539")  # small blue diamond = unclassified
+    return parts[0].rstrip(":").upper() if parts else ""
+
+
+def sev_emoji(line: str) -> str:
+    """Map a line's leading severity word (CRITICAL/HIGH/...) to a colored dot."""
+    return _SEV_EMOJI.get(_sev_word(line), "\U0001f539")  # small blue diamond = unclassified
+
+
+def sev_rank(line: str) -> int:
+    """Numeric severity rank from a line's leading word - higher = more severe."""
+    return _SEV_RANK.get(_sev_word(line), 0)
 
 
 def extract_summary(verdict: str) -> str:
@@ -252,10 +275,10 @@ def run_claude(samples: list[str]) -> str:
         "known-issues ignore-list, so they are unexpected. Group related lines into distinct "
         "problems. Respond in EXACTLY this format and nothing else:\n\n"
         "SUMMARY:\n"
-        "<one short plain-language line per distinct problem (max 5). Start each line with the "
-        "severity in caps (CRITICAL/HIGH/MEDIUM/LOW), then what is broken and the affected "
-        "project/component, so an on-call engineer instantly understands it. ASCII only, no "
-        "markdown, no task IDs.>\n\n"
+        "<one short plain-language line per distinct problem (max 5), ordered most-severe first. "
+        "Start each line with the severity in caps (CRITICAL/HIGH/MEDIUM/LOW), then what is broken "
+        "and the affected project/component, so an on-call engineer instantly understands it. "
+        "ASCII only, no markdown, no task IDs.>\n\n"
         "DETAIL:\n"
         "<for each problem: most likely cause and the single most useful next action. You may "
         "use read-only kubectl/Loki to verify, but change nothing.>\n\n"
@@ -408,6 +431,9 @@ def run_cycle() -> int:
         ]
         if (extra := len(fresh) - len(body_lines)) > 0:
             body_lines.append(f"LOW (+{extra} more - see logs)")
+
+    # Sort the shown problems most-severe first (stable - keeps Claude's order within a tier).
+    body_lines.sort(key=lambda ln: -sev_rank(ln))
 
     # Severity dot per line + a blank line between for readability.
     # Body is UTF-8 data so emoji are fine (well under ntfy's 4096-byte attachment limit).
