@@ -224,7 +224,14 @@ async def _fetch_one_live_status(
     """
     deployment_name = deployment["name"]
     app_name = generate_argocd_application_name(project_name, deployment_name)
-    status_data = await argo.get_application_status(app_name)
+    try:
+        status_data = await argo.get_application_status(app_name)
+    except PermissionError:
+        # Permission denied - but that's OK: the app may not exist yet / ArgoCD RBAC is
+        # still propagating right after creation. Treat as "no Application yet" (Pending)
+        # instead of leaking a 403 to the caller; it self-heals within a minute or two.
+        logger.info("Permission denied for %s, but OK - app may not exist yet; reporting Pending", app_name)
+        status_data = None
 
     live = _extract_live_status(status_data)
     if live.status not in _PROBLEM_STATUSES:
