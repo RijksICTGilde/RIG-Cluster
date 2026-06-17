@@ -307,7 +307,13 @@ class ArgoConnector:
                 logger.info(f"Application {app_name} not found (404)")
                 return None
             elif status_code == 403:
-                logger.error(f"Permission denied accessing application {app_name}: {response_text}")
+                # Expected transient right after creating an app/AppProject (ArgoCD RBAC
+                # still propagating). Logged at debug; callers decide severity - retry loops
+                # warn while retrying and only error if it never resolves.
+                logger.debug(
+                    f"Permission denied accessing application {app_name} - this is OK, the app may "
+                    f"not exist yet / ArgoCD RBAC may still be propagating: {response_text}"
+                )
                 raise PermissionError(f"Permission denied accessing application '{app_name}'")
             else:
                 logger.error(f"Status request failed with status {status_code}: {response_text}")
