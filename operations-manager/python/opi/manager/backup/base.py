@@ -694,17 +694,20 @@ class BaseBackupManager:
 
             await asyncio.sleep(5)
 
-    # Container statuses that indicate unrecoverable errors
+    # Container statuses that are unrecoverable - fail immediately.
     FATAL_CONTAINER_STATUSES = frozenset(
         {
-            "imagepullbackoff",
-            "errimagepull",
             "crashloopbackoff",
             "createcontainerconfigerror",
             "invalidimagename",
             "errimageneverpull",
         }
     )
+    # Image-pull failures kubelet keeps retrying (e.g. a transient registry/network
+    # hiccup). NOT fatal on first sight - we let kubelet's backoff retry recover, and
+    # only give up if it stays stuck past IMAGE_PULL_GRACE_SECONDS.
+    RETRYABLE_PULL_STATUSES = frozenset({"imagepullbackoff", "errimagepull"})
+    IMAGE_PULL_GRACE_SECONDS = 180
 
     async def _wait_for_pod(self, namespace: str, pod_name: str, timeout: int | None = None) -> bool:
         """
@@ -717,6 +720,7 @@ class BaseBackupManager:
         logger.info(f"Waiting for pod {pod_name} to complete (timeout: {timeout}s)...")
 
         start_time = asyncio.get_event_loop().time()
+        pull_backoff_since: float | None = None  # when a retryable image-pull failure first appeared
 
         while True:
             elapsed = asyncio.get_event_loop().time() - start_time
@@ -739,15 +743,40 @@ class BaseBackupManager:
                 pod_data = json.loads(stdout)
                 phase = pod_data.get("status", {}).get("phase", "").lower()
 
-                # Check for fatal container status errors (e.g., ImagePullBackOff)
+                # Inspect container waiting-states. Truly-fatal states fail immediately;
+                # image-pull failures are left to kubelet's retry and only fail after a grace,
+                # so a transient registry/network hiccup doesn't kill an otherwise-fine backup.
                 container_statuses = pod_data.get("status", {}).get("containerStatuses", [])
+                fatal: tuple[str, str] | None = None
+                pull_retry_reason: str | None = None
                 for cs in container_statuses:
                     waiting = cs.get("state", {}).get("waiting", {})
                     reason = waiting.get("reason", "").lower()
                     if reason in self.FATAL_CONTAINER_STATUSES:
-                        message = waiting.get("message", "No details")
-                        logger.error(f"Pod {pod_name} has fatal container error: {reason} - {message}")
+                        fatal = (reason, waiting.get("message", "No details"))
+                        break
+                    if reason in self.RETRYABLE_PULL_STATUSES:
+                        pull_retry_reason = reason
+
+                if fatal:
+                    logger.error(f"Pod {pod_name} has fatal container error: {fatal[0]} - {fatal[1]}")
+                    return False
+
+                if pull_retry_reason:
+                    if pull_backoff_since is None:
+                        pull_backoff_since = elapsed
+                        logger.warning(
+                            f"Pod {pod_name} image pull failed ({pull_retry_reason}); letting kubelet "
+                            f"retry (grace {self.IMAGE_PULL_GRACE_SECONDS}s)"
+                        )
+                    elif elapsed - pull_backoff_since > self.IMAGE_PULL_GRACE_SECONDS:
+                        logger.error(
+                            f"Pod {pod_name} stuck in {pull_retry_reason} for "
+                            f">{self.IMAGE_PULL_GRACE_SECONDS}s - giving up"
+                        )
                         return False
+                else:
+                    pull_backoff_since = None  # recovered or no longer in a pull-backoff state
 
                 if phase == "succeeded":
                     logger.info(f"Pod {pod_name} completed successfully")
