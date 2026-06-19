@@ -126,6 +126,12 @@ components:
       OPENPROJECT_RAILS__CACHE__STORE: redis
       OPENPROJECT_DISABLE__PASSWORD__LOGIN: "true"
       OPENPROJECT_LOGIN__REQUIRED: "false"
+      # Memory tuning (see "Notes on memory tuning")
+      LD_PRELOAD: "libjemalloc.so.2"          # MUST set this; command: bypasses the entrypoint that would
+      USE_JEMALLOC: "true"                     #   honour USE_JEMALLOC, so this var alone does nothing
+      OPENPROJECT_WEB_WORKERS: "2"             # forked puma processes (CPU parallelism + resilience)
+      OPENPROJECT_WEB_MIN__THREADS: "2"        # NOTE the double underscore before THREADS
+      OPENPROJECT_WEB_MAX__THREADS: "8"        #   single underscore misroutes to web.max.threads and is ignored
 ```
 
 ### Notes on the alias block
@@ -180,6 +186,40 @@ components:
   (see "Manual steps" below) or you lock yourself out.
 - `OPENPROJECT_LOGIN__REQUIRED: "false"` allows anonymous read of public
   projects without forcing a Keycloak redirect.
+
+### Notes on memory tuning
+
+OpenProject runs Puma in clustered mode: a master forks `WEB_WORKERS`
+processes, each running up to `WEB_MAX_THREADS` threads. Memory is dominated
+by the workers (forked Ruby VMs). With `preload_app!` (default) the workers
+share most pages copy-on-write, so the real footprint is far below the sum of
+per-process RSS (e.g. master+2 workers showed ~650 MiB total via cgroup
+`memory.current`, not 3x600 MiB).
+
+- **Workers vs threads**: a worker is a full process → true CPU parallelism +
+  fault isolation (a stuck/leaking worker is restarted without taking the
+  others down). Threads only add I/O concurrency (Ruby's GVL serialises CPU
+  work within a process), so they barely affect idle RSS. For a handful of
+  users, `WEB_WORKERS: 2` with `MAX__THREADS: 8` is a good balance; drop to 1
+  worker only for a pure idle/demo instance.
+- **`LD_PRELOAD: "libjemalloc.so.2"` is mandatory for jemalloc here.** The
+  image's entrypoint sets it from `USE_JEMALLOC=true`, but our `command:`
+  override (seeder + web) bypasses the entrypoint, so `USE_JEMALLOC` alone is a
+  no-op. Verify it actually loaded: `grep -c jemalloc /proc/1/maps` inside the
+  pod (>0 = loaded). jemalloc does NOT lower cold-start RSS — its win is less
+  fragmentation and returning freed memory over time, which curbs the slow
+  creep toward the limit (and the per-boot seeder spike).
+- **Double underscore in thread vars**: `web` is a hash setting, so the leaf
+  key `max_threads` needs `OPENPROJECT_WEB_MAX__THREADS`. Single underscore
+  (`..._MAX_THREADS`) misroutes to `web.max.threads`, is silently ignored, and
+  you keep the default of ~16 threads (DB pool 17). Same trap as the cache
+  namespace. Proof it took effect: the log "Increasing database pool size to N
+  to match max threads" should show N = max_threads + 1.
+- Optional: `MALLOC_CONF: "dirty_decay_ms:1000,muzzy_decay_ms:0"` makes
+  jemalloc return idle memory to the kernel faster — only if you want the RSS
+  number to visibly shrink between bursts.
+- envFrom secret changes do NOT restart the pod; delete the pod (or roll the
+  deployment) to pick up new env values.
 
 ## Manual steps after first deploy
 
