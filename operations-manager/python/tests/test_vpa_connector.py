@@ -2,6 +2,26 @@
 
 import pytest
 from opi.connectors.vpa import parse_k8s_cpu_to_m, parse_vpa_status
+from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+
+# Real recommendation shape from a live odcn VPA: the recommender emits memory
+# in decimal-kilo form ("262144k"), not plain bytes. Regression guard - an
+# unhandled unit here makes parse_vpa_status return None and silently disables
+# the whole VPA path (memory + CPU) via the Prometheus fallback.
+_VPA_JSON_DECIMAL = {
+    "status": {
+        "recommendation": {
+            "containerRecommendations": [
+                {
+                    "containerName": "app",
+                    "lowerBound": {"cpu": "25m", "memory": "262144k"},
+                    "target": {"cpu": "25m", "memory": "262144k"},
+                    "upperBound": {"cpu": "25m", "memory": "262144k"},
+                }
+            ]
+        }
+    }
+}
 
 # Real status shape captured from an Off-mode VPA on odcn-production.
 _VPA_JSON = {
@@ -59,6 +79,14 @@ class TestParseVpaStatus:
 
     def test_missing_container_returns_none(self):
         assert parse_vpa_status(_VPA_JSON, container_name="sidecar") is None
+
+    def test_decimal_kilo_memory(self):
+        # 262144k = 262,144,000 bytes = 250.0 MiB (VPA's emitted format)
+        assert abs(parse_k8s_memory_to_mi("262144k") - 250.0) < 0.01
+        rec = parse_vpa_status(_VPA_JSON_DECIMAL)
+        assert rec is not None
+        assert rec.target_cpu_m == 25.0
+        assert abs(rec.target_memory_mi - 250.0) < 0.01
 
     def test_unparseable_value_returns_none(self):
         broken = {
