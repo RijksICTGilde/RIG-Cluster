@@ -1,0 +1,27 @@
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: "{{ name }}"
+  namespace: "{{ namespace }}"
+  labels:
+    app: "{{ name }}"
+    deployment: "{{ deployment_name }}"
+    project: "{{ project.name }}"
+    component: application
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: "{{ name }}"
+  # Recommender only: never evicts or mutates pods, so it creates no ArgoCD
+  # drift. The recommendation lives in this object's .status.recommendation and
+  # is consumed by the auto-tuner, which writes resource changes via GitOps.
+  updatePolicy:
+    updateMode: "Off"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        controlledResources:
+          - cpu
+          - memory
+        controlledValues: RequestsAndLimits

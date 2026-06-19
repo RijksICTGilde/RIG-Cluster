@@ -15,6 +15,8 @@ from typing import Any
 from jinja2 import Template
 from tenacity import retry, stop_after_attempt, wait_fixed
 
+from opi.connectors.vpa import VpaContainerRecommendation, parse_vpa_status
+
 logger = logging.getLogger(__name__)
 
 
@@ -1094,6 +1096,38 @@ class KubectlConnector:
         except Exception as e:
             logger.error(f"Error deleting {resource_type} {resource_name}: {e}")
             return False
+
+    async def get_vpa_recommendation(
+        self, namespace: str, workload_name: str, container_name: str = "app"
+    ) -> VpaContainerRecommendation | None:
+        """
+        Read a VerticalPodAutoscaler's recommendation for one container.
+
+        Returns the normalized recommendation (CPU in millicores, memory in
+        MiB), or None when the VPA is missing, its status is not yet populated
+        (freshly created), or the values cannot be parsed.
+
+        Args:
+            namespace: Namespace containing the VPA
+            workload_name: VPA object name (matches the Deployment name)
+            container_name: Container whose recommendation to read (default "app")
+        """
+        try:
+            args = ["get", "verticalpodautoscaler", workload_name, "-n", namespace, "-o", "json"]
+            stdout, stderr, code = await self._run_kubectl_command(args)
+
+            if code != 0:
+                if "NotFound" in stderr:
+                    logger.debug(f"No VPA '{workload_name}' in namespace {namespace}")
+                else:
+                    logger.warning(f"Failed to get VPA '{workload_name}': {stderr}")
+                return None
+
+            return parse_vpa_status(json.loads(stdout), container_name)
+
+        except Exception as e:
+            logger.error(f"Error getting VPA recommendation for '{workload_name}': {e}")
+            return None
 
     async def get_resources_by_label(
         self, resource_type: str, namespace: str, label_selector: str
