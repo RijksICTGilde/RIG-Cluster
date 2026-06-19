@@ -380,3 +380,42 @@ class TestFriendlyResourceNames:
         assert len(result) == 1
         assert result[0]["resource"] == "typesense"
         assert "image" in result[0]["message"].lower()
+
+
+class TestOrphanedComponentFlagging:
+    """Errors for components no longer in the deployment are flagged, not hidden."""
+
+    _CRASH = "[BackOff] back-off restarting failed container"
+
+    def test_flags_resource_for_removed_component(self):
+        errors = [{"resource": "Pod/productie-magazijna-5c75cf5664-wkrkf", "message": self._CRASH}]
+        result = interpret_argocd_errors(errors, deployment_name="productie", component_names=["profiel"])
+        assert len(result) == 1
+        assert result[0].get("orphaned") == "true"
+        assert result[0]["resource"] == "magazijna"
+
+    def test_does_not_flag_current_component(self):
+        errors = [{"resource": "Pod/productie-profiel-5c75cf5664-wkrkf", "message": self._CRASH}]
+        result = interpret_argocd_errors(errors, deployment_name="productie", component_names=["profiel"])
+        assert "orphaned" not in result[0]
+
+    def test_app_level_resource_never_flagged(self):
+        errors = [{"resource": "SyncOperation", "message": "one or more sync tasks failed"}]
+        result = interpret_argocd_errors(errors, deployment_name="productie", component_names=["profiel"])
+        assert "orphaned" not in result[0]
+
+    def test_prefix_does_not_confuse_similar_names(self):
+        # 'magazijn' is current; 'magazijna' was removed and must not match 'magazijn'.
+        errors = [{"resource": "Pod/productie-magazijna-5c75cf5664-wkrkf", "message": self._CRASH}]
+        result = interpret_argocd_errors(errors, deployment_name="productie", component_names=["magazijn"])
+        assert result[0].get("orphaned") == "true"
+
+    def test_no_component_names_does_not_flag(self):
+        errors = [{"resource": "Pod/productie-magazijna-5c75cf5664-wkrkf", "message": self._CRASH}]
+        result = interpret_argocd_errors(errors, deployment_name="productie")
+        assert "orphaned" not in result[0]
+
+    def test_empty_component_names_does_not_flag(self):
+        errors = [{"resource": "Pod/productie-magazijna-5c75cf5664-wkrkf", "message": self._CRASH}]
+        result = interpret_argocd_errors(errors, deployment_name="productie", component_names=[])
+        assert "orphaned" not in result[0]
