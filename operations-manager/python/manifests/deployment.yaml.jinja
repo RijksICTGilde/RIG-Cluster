@@ -13,6 +13,12 @@ spec:
     type: {{ pod_replacement_mode }}
   replicas: {{ replicas }}
   revisionHistoryLimit: 3
+  # Cap how long Kubernetes reports a stalled rollout as "Progressing" before
+  # flipping it to ProgressDeadlineExceeded (default is 600s). ArgoCD's health
+  # gate waits out this window, so a broken rollout (e.g. ImagePullBackOff) would
+  # otherwise hang the sync for 10 minutes. 300s leaves room for genuinely slow
+  # starts while failing visibly faster.
+  progressDeadlineSeconds: 300
   selector:
     matchLabels:
       app: "{{ name }}"

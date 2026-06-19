@@ -425,13 +425,145 @@ class TestCreateHealthCheckCallback:
 
         mock_check.assert_called_once()
 
-    def test_returns_none_when_max_oom_attempts_reached(self):
+    @patch("opi.services.oom_watcher.check_all_components_health", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_image_pull_still_detected_when_oom_budget_exhausted(self, mock_check):
+        """Regression: at the OOM cap the callback must stay non-None and still
+        raise on ImagePullBackOff. Previously it returned None, blinding all
+        inline detection (production symptom: broken image hung in Progressing).
+        """
         from opi.services.oom_watcher import OOM_INLINE_MAX_ATTEMPTS, _inline_oom_attempts
 
         _inline_oom_attempts["myproject/production"] = OOM_INLINE_MAX_ATTEMPTS
+        mock_check.return_value = [
+            PodHealthResult("comp-a", image_pull_error="ImagePullBackOff: Back-off pulling image")
+        ]
 
-        result = create_health_check_callback("myproject", "production", "rig-prd-ns", ["comp-a"])
-        assert result is None
+        callback = create_health_check_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=5)
+        assert callback is not None
+
+        with pytest.raises(DeploymentHealthError) as exc_info:
+            await callback(10)
+
+        assert exc_info.value.failures[0].failure_type == "image_pull"
+
+    @patch("opi.services.oom_watcher.check_all_components_health", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_crash_loop_still_detected_when_oom_budget_exhausted(self, mock_check):
+        """At the OOM cap, CrashLoopBackOff must still raise."""
+        from opi.services.oom_watcher import OOM_INLINE_MAX_ATTEMPTS, _inline_oom_attempts
+
+        _inline_oom_attempts["myproject/production"] = OOM_INLINE_MAX_ATTEMPTS
+        mock_check.return_value = [
+            PodHealthResult("comp-a", crash_loop_detected=True, crash_loop_message="CrashLoopBackOff")
+        ]
+
+        callback = create_health_check_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=5)
+        assert callback is not None
+
+        with pytest.raises(DeploymentHealthError) as exc_info:
+            await callback(10)
+
+        assert exc_info.value.failures[0].failure_type == "crash_loop"
+
+    @patch("opi.services.oom_watcher.check_all_components_health", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_oom_only_suppressed_when_budget_exhausted(self, mock_check):
+        """At the OOM cap, an OOM-only condition does not raise and does not
+        increment the counter further (OOM auto-tune is suppressed)."""
+        from opi.services.oom_watcher import OOM_INLINE_MAX_ATTEMPTS, _inline_oom_attempts
+
+        _inline_oom_attempts["myproject/production"] = OOM_INLINE_MAX_ATTEMPTS
+        mock_check.return_value = [PodHealthResult("comp-a", oom_detected=True)]
+
+        callback = create_health_check_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=0)
+        assert callback is not None
+
+        # OOM-only: must not raise now that the budget is spent
+        await callback(10)
+
+        # No OOM increment happened. The fresh-deploy pop runs at creation, so the
+        # key is absent — what matters is the counter was not pushed past the cap.
+        assert "myproject/production" not in _inline_oom_attempts
+
+    @patch("opi.services.oom_watcher.check_all_components_health", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_image_pull_raises_but_oom_suppressed_in_same_batch(self, mock_check):
+        """At the OOM cap, an image-pull failure in the same batch as an OOM
+        component still raises — but the error carries only the image_pull
+        failure, not the suppressed OOM."""
+        from opi.services.oom_watcher import OOM_INLINE_MAX_ATTEMPTS, _inline_oom_attempts
+
+        _inline_oom_attempts["myproject/production"] = OOM_INLINE_MAX_ATTEMPTS
+        mock_check.return_value = [
+            PodHealthResult("comp-a", oom_detected=True),
+            PodHealthResult("comp-b", image_pull_error="ImagePullBackOff: bad image"),
+        ]
+
+        callback = create_health_check_callback(
+            "myproject", "production", "rig-prd-ns", ["comp-a", "comp-b"], grace_seconds=5
+        )
+        assert callback is not None
+
+        with pytest.raises(DeploymentHealthError) as exc_info:
+            await callback(10)
+
+        types = {f.failure_type for f in exc_info.value.failures}
+        assert types == {"image_pull"}
+        # OOM suppressed: no OOM increment, counter not pushed past the cap.
+        assert "myproject/production" not in _inline_oom_attempts
+
+    @patch("opi.services.oom_watcher.check_all_components_health", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_oom_cap_bounds_tuning_within_a_deploy(self, mock_check):
+        """The OOM cap still bounds OOM auto-tune within a single deploy: each
+        OOM raise increments the counter, and once it reaches the cap the OOM
+        raise path stops (while the callback stays alive for other failures).
+
+        Mirrors the production loop: each OOM->tune->refresh re-creates the
+        callback, which reads the prior count before its fresh-deploy pop.
+        """
+        from opi.services.oom_watcher import OOM_INLINE_MAX_ATTEMPTS, _inline_oom_attempts
+
+        mock_check.return_value = [PodHealthResult("comp-a", oom_detected=True)]
+
+        # First OOM_INLINE_MAX_ATTEMPTS cycles each raise and bump the counter.
+        for expected in range(1, OOM_INLINE_MAX_ATTEMPTS + 1):
+            callback = create_health_check_callback(
+                "myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=0
+            )
+            with pytest.raises(DeploymentHealthError):
+                await callback(5)
+            assert _inline_oom_attempts["myproject/production"] == expected
+
+        # Next cycle: budget exhausted -> OOM no longer raises, no further bump.
+        # The creation pop clears the key; the cap was read from it beforehand.
+        callback = create_health_check_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=0)
+        await callback(5)
+        assert "myproject/production" not in _inline_oom_attempts
+
+    @patch("opi.services.oom_watcher.check_all_components_health", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_fresh_deploy_resets_oom_budget(self, mock_check):
+        """A genuinely fresh deploy (explicit counter reset) lets a later
+        legitimate OOM auto-tune again."""
+        from opi.services.oom_watcher import (
+            OOM_INLINE_MAX_ATTEMPTS,
+            _inline_oom_attempts,
+            reset_inline_oom_attempts,
+        )
+
+        _inline_oom_attempts["myproject/production"] = OOM_INLINE_MAX_ATTEMPTS
+        reset_inline_oom_attempts("myproject", "production")
+
+        mock_check.return_value = [PodHealthResult("comp-a", oom_detected=True)]
+        callback = create_health_check_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=0)
+
+        with pytest.raises(DeploymentHealthError) as exc_info:
+            await callback(5)
+
+        assert exc_info.value.failures[0].failure_type == "oom"
+        assert _inline_oom_attempts["myproject/production"] == 1
 
     @patch("opi.services.oom_watcher.check_all_components_health", new_callable=AsyncMock)
     @pytest.mark.asyncio
