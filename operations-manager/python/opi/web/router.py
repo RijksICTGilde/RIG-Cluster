@@ -1178,119 +1178,6 @@ async def project_details(request: Request, project_name: str):
             "helmfile": project_data_decrypted.get("helmfile", []),
         }
 
-        # Add ingress URLs for components that have publish-on-web service
-        from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
-        from opi.handlers.project_file_handler import ProjectFileHandler
-        from opi.utils.naming import HostnameFormat, generate_public_url, get_component_ingress_map
-
-        project_file_handler = ProjectFileHandler()
-
-        # Add ingress links to deployments for components with publish-on-web
-        for deployment in project_details["deployments"]:
-            cluster = deployment.get("cluster")
-            deployment["ingress_links"] = []
-
-            if cluster:
-                try:
-                    ingress_postfix = get_ingress_postfix(cluster)
-                    use_https = get_ingress_tls_enabled(cluster)
-                    subdomain = deployment.get("subdomain")
-                    base_domain = deployment.get("base-domain")
-                    hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
-                    domain_format = deployment.get("domain-format")
-
-                    for component in deployment.get("components", []):
-                        component_name = component.get("reference")
-                        if component_name:
-                            # Check if component has publish-on-web service (same as project_manager)
-                            has_publish_on_web = project_file_handler.extract_component_publish_on_web(
-                                project_data, component_name
-                            )
-
-                            if has_publish_on_web:
-                                ingress_map = get_component_ingress_map(
-                                    component_name=component_name,
-                                    deployment_name=deployment["name"],
-                                    project_name=project_name,
-                                    ingress_postfix=ingress_postfix,
-                                    subdomain=subdomain,
-                                    base_domain=base_domain,
-                                    hostname_format=hostname_format,
-                                    domain_format=domain_format,
-                                    project_data=project_data,
-                                    cluster=cluster,
-                                )
-
-                                # Create links for all ingress hostnames
-                                for ingress_name, hostname in ingress_map.items():
-                                    public_url = generate_public_url(hostname, use_https)
-                                    deployment["ingress_links"].append(
-                                        {
-                                            "component_name": component_name,
-                                            "ingress_name": ingress_name,
-                                            "hostname": hostname,
-                                            "url": public_url,
-                                        }
-                                    )
-                except Exception as ingress_error:
-                    logger.warning(
-                        f"Failed to generate ingress links for deployment {deployment.get('name')}: {ingress_error}"
-                    )
-
-        # Add ingress links to components that have publish-on-web
-        for component in project_details["components"]:
-            component["ingress_links"] = []
-            component_name = component.get("name")
-
-            if component_name:
-                # Check if component has publish-on-web service (same as project_manager)
-                has_publish_on_web = project_file_handler.extract_component_publish_on_web(project_data, component_name)
-
-                if has_publish_on_web:
-                    # Find all deployments that use this component
-                    for deployment in project_details["deployments"]:
-                        cluster = deployment.get("cluster")
-                        if cluster and any(
-                            c.get("reference") == component_name for c in deployment.get("components", [])
-                        ):
-                            try:
-                                ingress_postfix = get_ingress_postfix(cluster)
-                                use_https = get_ingress_tls_enabled(cluster)
-                                subdomain = deployment.get("subdomain")
-                                base_domain = deployment.get("base-domain")
-                                hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
-                                domain_format = deployment.get("domain-format")
-
-                                ingress_map = get_component_ingress_map(
-                                    component_name=component_name,
-                                    deployment_name=deployment["name"],
-                                    project_name=project_name,
-                                    ingress_postfix=ingress_postfix,
-                                    subdomain=subdomain,
-                                    base_domain=base_domain,
-                                    hostname_format=hostname_format,
-                                    domain_format=domain_format,
-                                    project_data=project_data,
-                                    cluster=cluster,
-                                )
-
-                                # Create links for all ingress hostnames
-                                for ingress_name, hostname in ingress_map.items():
-                                    public_url = generate_public_url(hostname, use_https)
-                                    component["ingress_links"].append(
-                                        {
-                                            "deployment_name": deployment["name"],
-                                            "cluster": cluster,
-                                            "ingress_name": ingress_name,
-                                            "hostname": hostname,
-                                            "url": public_url,
-                                        }
-                                    )
-                            except Exception as ingress_error:
-                                logger.warning(
-                                    f"Failed to generate ingress link for component {component_name} in deployment {deployment['name']}: {ingress_error}"
-                                )
-
         # Check Prometheus availability (metrics are lazy-loaded via HTMX)
         prometheus_available = False
         try:
@@ -1380,7 +1267,14 @@ async def project_details(request: Request, project_name: str):
                                 status_data=status_data,
                             )
 
-                        errors = interpret_argocd_errors(raw_errors, deployment_name=deployment_name)
+                        component_names = [
+                            c.get("reference") for c in deployment.get("components", []) or [] if c.get("reference")
+                        ]
+                        errors = interpret_argocd_errors(
+                            raw_errors,
+                            deployment_name=deployment_name,
+                            component_names=component_names,
+                        )
                         _annotate_age_dutch(errors)
 
                         last_sync = operation_state.get("finishedAt")
@@ -1526,16 +1420,22 @@ async def project_details(request: Request, project_name: str):
                                     cluster=cluster,
                                 )
 
+                                paths = project_file_handler.extract_deployment_component_paths(
+                                    project_data, deployment, component_name
+                                )
                                 for ingress_name, hostname in ingress_map.items():
-                                    public_url = generate_public_url(hostname, use_https)
-                                    deployment["ingress_links"].append(
-                                        {
-                                            "component_name": component_name,
-                                            "ingress_name": ingress_name,
-                                            "hostname": hostname,
-                                            "url": public_url,
-                                        }
-                                    )
+                                    for path_config in paths:
+                                        match = path_config.get("match") or "/"
+                                        public_url = generate_public_url(hostname, use_https, match)
+                                        deployment["ingress_links"].append(
+                                            {
+                                                "component_name": component_name,
+                                                "ingress_name": ingress_name,
+                                                "hostname": hostname,
+                                                "path": match,
+                                                "url": public_url,
+                                            }
+                                        )
                 except Exception as ingress_error:
                     logger.warning(
                         f"Failed to generate ingress links for deployment {deployment.get('name')}: {ingress_error}"
@@ -1577,17 +1477,23 @@ async def project_details(request: Request, project_name: str):
                                     cluster=cluster,
                                 )
 
+                                paths = project_file_handler.extract_deployment_component_paths(
+                                    project_data, deployment, component_name
+                                )
                                 for ingress_name, hostname in ingress_map.items():
-                                    public_url = generate_public_url(hostname, use_https)
-                                    component["ingress_links"].append(
-                                        {
-                                            "deployment_name": deployment["name"],
-                                            "cluster": cluster,
-                                            "ingress_name": ingress_name,
-                                            "hostname": hostname,
-                                            "url": public_url,
-                                        }
-                                    )
+                                    for path_config in paths:
+                                        match = path_config.get("match") or "/"
+                                        public_url = generate_public_url(hostname, use_https, match)
+                                        component["ingress_links"].append(
+                                            {
+                                                "deployment_name": deployment["name"],
+                                                "cluster": cluster,
+                                                "ingress_name": ingress_name,
+                                                "hostname": hostname,
+                                                "path": match,
+                                                "url": public_url,
+                                            }
+                                        )
                             except Exception as ingress_error:
                                 logger.warning(
                                     f"Failed to generate ingress links for component {component_name} in deployment {deployment['name']}: {ingress_error}"
@@ -2797,9 +2703,10 @@ async def deployment_memory_check(
         logger.debug(f"Memory check failed for {project_name}/{deployment_name}: {e}")
         warnings = []
 
-    # Supplement with kubectl-based OOM detection: Prometheus may report
-    # reason="Error" instead of "OOMKilled" for exit-code-137 kills,
-    # so kubectl (which checks both reason and exit code) is more reliable.
+    # Supplement with kubectl-based OOM detection: it reads the live
+    # lastState.terminated.reason == "OOMKilled" (the cgroup OOM-killer signal),
+    # which Prometheus does not expose directly. A bare exit code 137 is NOT an
+    # OOM (probe kills and evictions produce it too), so it is not used here.
     try:
         from opi.core.cluster_config import get_prefixed_namespace
         from opi.services.oom_watcher import check_pod_health
@@ -2951,7 +2858,7 @@ def _build_task_hierarchy(subtasks: list[dict]) -> list[dict]:
     main_tasks = []
     children: dict[str, list] = {}
     for st in subtasks:
-        entry = {"name": st.get("name", ""), "status": st.get("status", "pending")}
+        entry = {"name": st.get("name", ""), "status": st.get("status", "pending"), "error": st.get("error")}
         parent = st.get("parent_id")
         if parent:
             children.setdefault(parent, []).append(entry)
