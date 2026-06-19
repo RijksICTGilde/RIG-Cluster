@@ -56,6 +56,7 @@
                     <c-button kind="tertiary" size="sm" label="Bewerken"
                               showIcon="before" icon="bewerken"
                               hx-get="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/step/{{ section.section_id }}{{ _token_qs }}"
+                              {% if wizard_token %}hx-vals="{&quot;_wizard_token&quot;: &quot;{{ wizard_token }}&quot;}"{% endif %}
                               hx-target="#edit-section-inner" hx-swap="innerHTML" />
                 </div>
                 <div class="wizard-review__section-content">
@@ -91,6 +92,7 @@
         <div class="wizard-step__actions-right">
             <c-button kind="secondary" label="Vorige" showIcon="before" icon="delta-naar-links"
                       hx-get="/projects/{{ project_name }}/modal-wizard/{{ flow_id }}/step/{{ steps.last }}{{ _token_qs }}"
+                      {% if wizard_token %}hx-vals="{&quot;_wizard_token&quot;: &quot;{{ wizard_token }}&quot;}"{% endif %}
                       hx-target="#edit-section-inner" hx-swap="innerHTML" />
             {% if wizard_token %}<input type="hidden" id="modal-wizard-confirm-token" name="_wizard_token" value="{{ wizard_token }}" />{% endif %}
             <c-button kind="primary" label="{{ action_label }}"
