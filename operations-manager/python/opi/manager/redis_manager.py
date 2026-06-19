@@ -215,7 +215,7 @@ class RedisManager:
                 redis_secret,
             )
 
-            logger.info(f"Redis resources ready for {deployment_name} (user: {redis_username}, prefix: {key_prefix}*)")
+            logger.info(f"Redis resources ready for {deployment_name} (user: {redis_username}, prefix: {key_prefix}:*)")
 
         finally:
             if progress_manager and redis_task:
@@ -487,7 +487,7 @@ class RedisManager:
         """
         Create or update a Redis ACL user with key prefix restrictions.
 
-        Uses: ACL SETUSER <username> on ><password> resetpass ~<prefix>* +@all
+        Uses: ACL SETUSER <username> on ><password> resetpass ~<prefix>:* +@all
 
         When key_prefix is empty, the user gets access to all keys and channels
         (~* &*). This is needed for applications that don't support key prefixing.
@@ -498,7 +498,8 @@ class RedisManager:
             admin_password: Admin password for authentication
             username: ACL username to create
             user_password: Password for the new user
-            key_prefix: Key prefix restriction (e.g., "main-myproject:"), or empty for all keys
+            key_prefix: Key prefix token (e.g., "main-myproject"), or empty for all keys.
+                The ':' boundary delimiter is appended here, not carried in the token.
         """
         try:
             reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=5.0)
@@ -513,12 +514,14 @@ class RedisManager:
                 # - on: enable the user
                 # - resetpass: clear any existing passwords
                 # - ><password>: set the new password
-                # - ~<prefix>* or ~*: restrict to keys matching prefix (or all keys)
-                # - &<prefix>* or &*: restrict pub/sub channels to same prefix (or all channels)
+                # - ~<prefix>:* or ~*: restrict to keys matching prefix (or all keys)
+                # - &<prefix>:* or &*: restrict pub/sub channels to same prefix (or all channels)
                 # - +@all: allow all commands
+                # The ':' delimiter is added here so the exported prefix token stays
+                # a bare identifier; the boundary still requires a "<prefix>:" segment.
                 if key_prefix:
-                    key_pattern = f"~{key_prefix}*"
-                    channel_pattern = f"&{key_prefix}*"
+                    key_pattern = f"~{key_prefix}:*"
+                    channel_pattern = f"&{key_prefix}:*"
                 else:
                     key_pattern = "~*"
                     channel_pattern = "&*"
@@ -539,7 +542,7 @@ class RedisManager:
                 if not response.startswith("+OK"):
                     raise RuntimeError(f"Redis ACL SETUSER failed for {username}: {response}")
 
-                scope = f"{key_prefix}*" if key_prefix else "* (all keys)"
+                scope = f"{key_prefix}:*" if key_prefix else "* (all keys)"
                 logger.info(f"Created/updated Redis ACL user: {username} (keys+channels: {scope})")
 
                 # Persist ACL changes to disk so users survive Redis restarts
