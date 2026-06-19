@@ -325,9 +325,18 @@ class Settings(BaseSettings):
     # Resource tuning configuration
     RESOURCE_TUNING_WINDOW_HOURS: int = 24  # How far back to look for max usage
     RESOURCE_TUNING_MEMORY_BUFFER_PERCENT: int = 25  # Add 25% above max observed
-    RESOURCE_TUNING_THRESHOLD_PERCENT: int = 20  # Only recommend if diff > 20%
+    RESOURCE_TUNING_THRESHOLD_PERCENT: int = 20  # Legacy symmetric threshold (superseded by the asymmetric gate)
     RESOURCE_TUNING_OOM_FLOOR_MIN_AGE_DAYS: int = 10  # OOM floor may expire after this many days...
     RESOURCE_TUNING_OOM_FLOOR_STABLE_PERCENT: int = 50  # ...if observed max stays below this % of the floor
+    # Asymmetric deviation gate: react promptly to increases (reliability),
+    # conservatively to decreases (cost only) so we don't churn git/ArgoCD.
+    RESOURCE_TUNING_INCREASE_THRESHOLD: int = 10  # Apply an increase when the request grows by >= this %
+    RESOURCE_TUNING_DECREASE_THRESHOLD: int = 30  # Apply a decrease only when the request shrinks by >= this %
+    # Scheduled fleet-wide auto-tuner (reads VPA where available, else Prometheus)
+    RESOURCE_TUNING_SCHEDULER_ENABLED: bool = True
+    RESOURCE_TUNING_SCHEDULER_INTERVAL: int = 21600  # seconds between ticks (6h)
+    RESOURCE_TUNING_COOLDOWN_DAYS: int = 7  # Don't re-tune a project within this many days
+    RESOURCE_TUNING_MAX_PROJECTS_PER_TICK: int = 5  # Cap projects tuned per tick (anti-storm)
     # max_memory_limit_mi is now in cluster_config (per-cluster setting)
 
     # Deployment sanitization configuration

@@ -90,6 +90,94 @@ def _mb_to_k8s_memory(mb: float) -> str:
     return f"{rounded}Mi"
 
 
+def _m_to_k8s_cpu(m: float) -> str:
+    """Convert millicores to a Kubernetes CPU string, rounding up (min 1m)."""
+    rounded = math.ceil(m)
+    if rounded < 1:
+        rounded = 1
+    return f"{rounded}m"
+
+
+def passes_deviation_gate(
+    current: float,
+    recommended: float,
+    increase_threshold_percent: int,
+    decrease_threshold_percent: int,
+) -> bool:
+    """Asymmetric change gate used to avoid a storm of tiny tuning commits.
+
+    React promptly to increases (reliability), conservatively to decreases
+    (cost-only — not worth churning git/ArgoCD for a small reclaim).
+
+    Returns True when the change from ``current`` to ``recommended`` is large
+    enough to act on: increases must exceed ``increase_threshold_percent``,
+    decreases the (larger) ``decrease_threshold_percent``.
+    """
+    if current <= 0:
+        return True
+    deviation = abs(recommended - current) / current * 100
+    if recommended >= current:
+        return deviation >= increase_threshold_percent
+    return deviation >= decrease_threshold_percent
+
+
+def compute_cpu_recommendation(
+    target_cpu_m: float,
+    current_limit_m: float,
+    current_request_m: float,
+    buffer_percent: int = 25,
+    min_cpu_m: int = 25,
+    max_cpu_request_m: int = 250,
+    max_cpu_limit_m: int = 4000,
+) -> tuple[str, str, str]:
+    """Compute a CPU recommendation from a VPA target.
+
+    CPU is compressible (it throttles, never OOM-kills), so there is no floor
+    or emergency path. The request tracks the VPA target plus a buffer, capped
+    at ``max_cpu_request_m``. The limit mirrors the request only when the two
+    were equal (the untouched default); a deliberately-set limit is left frozen.
+    Both are bounded by the cluster CPU ceilings.
+
+    The caller decides whether the change is worth applying (see
+    :func:`passes_deviation_gate`); this function always returns the ideal
+    clamped values.
+
+    Returns:
+        Tuple of (recommended_limit, recommended_request, reason) as K8s strings.
+    """
+    buffer_factor = 1 + buffer_percent / 100
+    # A frozen limit was deliberately set to differ from the request; respect it.
+    limit_frozen = current_limit_m != current_request_m
+
+    recommended_request_m = target_cpu_m * buffer_factor
+    recommended_limit_m = current_limit_m if limit_frozen else recommended_request_m
+
+    # Enforce cluster minimum
+    recommended_request_m = max(recommended_request_m, float(min_cpu_m))
+    recommended_limit_m = max(recommended_limit_m, float(min_cpu_m))
+
+    # Enforce ceilings: requests are capped lower than limits
+    recommended_request_m = min(recommended_request_m, float(max_cpu_request_m))
+    if recommended_limit_m > max_cpu_limit_m:
+        recommended_limit_m = float(max_cpu_limit_m)
+
+    # Request should never exceed limit
+    recommended_request_m = min(recommended_request_m, recommended_limit_m)
+
+    recommended_limit = _m_to_k8s_cpu(recommended_limit_m)
+    recommended_request = _m_to_k8s_cpu(recommended_request_m)
+    limit_note = (
+        f" Limit unchanged at {recommended_limit_m:.0f}m"
+        if limit_frozen
+        else f" Limit kept equal at {recommended_limit_m:.0f}m"
+    )
+    reason = (
+        f"CPU request: VPA target {target_cpu_m:.0f}m + {buffer_percent}% "
+        f"= {recommended_request_m:.0f}m (cap {max_cpu_request_m}m).{limit_note}"
+    )
+    return recommended_limit, recommended_request, reason
+
+
 def compute_memory_recommendation(
     max_observed_mb: float,
     avg_observed_mb: float,
@@ -127,20 +215,27 @@ def compute_memory_recommendation(
     if max_memory_request_mi is None:
         max_memory_request_mi = max_memory_mi
     buffer_factor = 1 + buffer_percent / 100
-    recommended_limit_mb = max_observed_mb * buffer_factor
-    recommended_request_mb = avg_observed_mb * buffer_factor
 
-    # For apps using >= 100Mi, add a flat 25Mi buffer for request processing headroom
-    if max_observed_mb >= 100:
-        recommended_limit_mb += 25
-    if avg_observed_mb >= 100:
-        recommended_request_mb += 25
+    # A frozen limit is one we must not touch during a (non-OOM) reduction:
+    # the operator already set it to differ from the request, so we respect it.
+    limit_frozen = (not has_oom_kills) and (current_limit_mb != current_request_mb)
 
-    # If OOM kills detected, the actual need is higher than what we observed
-    # (pod was killed before reaching true peak).  Use a sliding bump factor:
-    # small pods get a larger multiplier because 1.5x of e.g. 25Mi is still
-    # too small to survive boot, while large pods only need a modest increase.
     if has_oom_kills:
+        # OOM: the limit must grow to stop the kills. Limit tracks peak,
+        # request tracks average; the bump below raises the limit when the
+        # observed peak alone is not enough.
+        recommended_limit_mb = max_observed_mb * buffer_factor
+        recommended_request_mb = avg_observed_mb * buffer_factor
+        # For apps using >= 100Mi, add a flat 25Mi processing headroom
+        if max_observed_mb >= 100:
+            recommended_limit_mb += 25
+        if avg_observed_mb >= 100:
+            recommended_request_mb += 25
+
+        # The actual need is higher than what we observed (pod was killed
+        # before reaching true peak).  Use a sliding bump factor: small pods
+        # get a larger multiplier because 1.5x of e.g. 25Mi is still too small
+        # to survive boot, while large pods only need a modest increase.
         if current_limit_mb < 64:
             oom_factor = 3.0
         elif current_limit_mb < 256:
@@ -155,6 +250,15 @@ def compute_memory_recommendation(
             ratio = current_request_mb / current_limit_mb if current_limit_mb > 0 else 1.0
             recommended_request_mb = max(recommended_request_mb, oom_minimum * ratio)
             recommended_limit_mb = oom_minimum
+    else:
+        # Reduction / tuning: the request tracks the peak observed usage
+        # ("the highest we measured") plus a buffer.  The limit mirrors the
+        # request only when the two were equal (the untouched default); when
+        # the limit was already set to differ from the request, leave it as-is.
+        recommended_request_mb = max_observed_mb * buffer_factor
+        if max_observed_mb >= 100:
+            recommended_request_mb += 25
+        recommended_limit_mb = current_limit_mb if limit_frozen else recommended_request_mb
 
     # Enforce cluster minimum
     recommended_limit_mb = max(recommended_limit_mb, float(min_memory_mi))
@@ -175,8 +279,10 @@ def compute_memory_recommendation(
 
     # Collapse request to limit when both are below the request cap
     # and the gap is < 10% — a tiny difference adds no value.
-    # Don't collapse when request is at its cap but limit is higher.
-    if recommended_limit_mb > 0 and recommended_limit_mb <= max_memory_request_mi:
+    # Don't collapse when request is at its cap but limit is higher, and
+    # never when the limit is frozen (that would silently raise the request
+    # to a limit we were asked to leave alone).
+    if not limit_frozen and recommended_limit_mb > 0 and recommended_limit_mb <= max_memory_request_mi:
         gap_ratio = (recommended_limit_mb - recommended_request_mb) / recommended_limit_mb
         if gap_ratio < 0.10:
             recommended_request_mb = recommended_limit_mb
@@ -195,10 +301,9 @@ def compute_memory_recommendation(
     recommended_limit = _mb_to_k8s_memory(recommended_limit_mb)
     recommended_request = _mb_to_k8s_memory(recommended_request_mb)
 
-    limit_extra = " + 25Mi headroom" if max_observed_mb >= 100 else ""
-    request_extra = " + 25Mi headroom" if avg_observed_mb >= 100 else ""
-
     if has_oom_kills:
+        limit_extra = " + 25Mi headroom" if max_observed_mb >= 100 else ""
+        request_extra = " + 25Mi headroom" if avg_observed_mb >= 100 else ""
         reason = (
             f"OOM kills detected. Limit: max {max_observed_mb:.0f}Mi "
             f"+ {buffer_percent}%{limit_extra} = {recommended_limit_mb:.0f}Mi "
@@ -206,9 +311,15 @@ def compute_memory_recommendation(
             f"Request: avg {avg_observed_mb:.0f}Mi + {buffer_percent}%{request_extra} = {recommended_request_mb:.0f}Mi"
         )
     else:
+        request_extra = " + 25Mi headroom" if max_observed_mb >= 100 else ""
+        limit_note = (
+            f" Limit unchanged at {recommended_limit_mb:.0f}Mi"
+            if limit_frozen
+            else f" Limit kept equal at {recommended_limit_mb:.0f}Mi"
+        )
         reason = (
-            f"Limit: max {max_observed_mb:.0f}Mi + {buffer_percent}%{limit_extra} = {recommended_limit_mb:.0f}Mi. "
-            f"Request: avg {avg_observed_mb:.0f}Mi + {buffer_percent}%{request_extra} = {recommended_request_mb:.0f}Mi"
+            f"Request: max {max_observed_mb:.0f}Mi + {buffer_percent}%{request_extra} "
+            f"= {recommended_request_mb:.0f}Mi.{limit_note}"
         )
 
     return recommended_limit, recommended_request, reason

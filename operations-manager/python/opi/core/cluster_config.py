@@ -41,6 +41,10 @@ CLUSTER_CONFIG = {
         "max_memory_limit_mi": 4096,
         "max_memory_request_mi": 1024,
         "uses_capsule": False,
+        "min_cpu_m": 25,
+        "max_cpu_request_m": 250,
+        "max_cpu_limit_m": 4000,
+        "supports_vpa": False,
         "ca_certificate": {
             "enabled": True,
             "node_path": "/etc/ssl/certs/kind-local-ca.crt",
@@ -92,6 +96,10 @@ CLUSTER_CONFIG = {
         "max_memory_limit_mi": 4096,
         "max_memory_request_mi": 1024,
         "uses_capsule": False,
+        "min_cpu_m": 25,
+        "max_cpu_request_m": 250,
+        "max_cpu_limit_m": 4000,
+        "supports_vpa": False,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
         },
@@ -141,6 +149,10 @@ CLUSTER_CONFIG = {
         "max_memory_limit_mi": 4096,
         "max_memory_request_mi": 1024,
         "uses_capsule": True,
+        "min_cpu_m": 25,
+        "max_cpu_request_m": 250,
+        "max_cpu_limit_m": 4000,
+        "supports_vpa": True,
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
@@ -712,6 +724,69 @@ def uses_capsule(cluster_name: str) -> bool:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("uses_capsule", False)
+
+
+def supports_vpa(cluster_name: str) -> bool:
+    """
+    Check if the cluster provides a Vertical Pod Autoscaler recommender.
+
+    When True, the platform runs a VPA recommender that publishes resource
+    recommendations to VerticalPodAutoscaler objects. Auto-tuning then sources
+    its recommendations from VPA (memory + CPU) instead of Prometheus.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        True if the cluster can create VPA objects and run a recommender
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("supports_vpa", False)
+
+
+def get_min_cpu_m(cluster_name: str) -> int:
+    """
+    Get the minimum CPU value in millicores for a specific cluster.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Minimum CPU in millicores
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("min_cpu_m", 25)
+
+
+def get_max_cpu_request_m(cluster_name: str) -> int:
+    """
+    Get the maximum CPU request in millicores for auto-tuning.
+
+    Auto-tuning never sets a CPU request above this ceiling; a pod that
+    genuinely needs more requires manual intervention.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Maximum CPU request in millicores
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("max_cpu_request_m", 250)
+
+
+def get_max_cpu_limit_m(cluster_name: str) -> int:
+    """
+    Get the maximum CPU limit in millicores for auto-tuning.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        Maximum CPU limit in millicores
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("max_cpu_limit_m", 4000)
 
 
 def get_letsencrypt_contact_email(cluster_name: str) -> str | None:

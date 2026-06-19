@@ -288,7 +288,8 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "memory": { "type": "string" }
+            "memory": { "type": "string" },
+            "cpu": { "type": "string" }
           }
         },
         "source": { "type": "string", "enum": ["auto-tune", "oom-watcher", "manual"] },
@@ -346,6 +347,7 @@
         "sso-rijk": { "type": "boolean" },
         "disabled": { "type": "boolean" },
         "disabled-reason": { "type": "string" },
+        "auto-tune-resources": { "type": "boolean" },
         "security": {
           "type": "object",
           "additionalProperties": false,
@@ -462,7 +464,8 @@
           "minItems": 1
         },
         "disabled": { "type": "boolean" },
-        "disabled-reason": { "type": "string" }
+        "disabled-reason": { "type": "string" },
+        "auto-tune-resources": { "type": "boolean" }
       }
     },
 
