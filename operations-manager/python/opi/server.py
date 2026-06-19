@@ -162,6 +162,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 except Exception as e:
                     logger.error("Failed to start backup scheduler: %s", e)
 
+            # Start resource tuning scheduler if enabled
+            if settings.RESOURCE_TUNING_SCHEDULER_ENABLED:
+                try:
+                    from opi.core.resource_tuning_scheduler import ResourceTuningScheduler
+
+                    _tuning_scheduler = ResourceTuningScheduler(cluster=settings.CLUSTER_MANAGER)
+                    await _tuning_scheduler.start()
+                    app.state.resource_tuning_scheduler = _tuning_scheduler
+                except Exception as e:
+                    logger.error("Failed to start resource tuning scheduler: %s", e)
+
         except Exception as e:
             logger.error("Failed to start task worker: %s", e)
     else:
@@ -208,6 +219,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     backup_scheduler = getattr(app.state, "backup_scheduler", None)
     if backup_scheduler is not None:
         await backup_scheduler.stop()
+
+    # Stop resource tuning scheduler
+    resource_tuning_scheduler = getattr(app.state, "resource_tuning_scheduler", None)
+    if resource_tuning_scheduler is not None:
+        await resource_tuning_scheduler.stop()
 
     # Stop task worker: stop claiming new tasks, then wait for active tasks to finish
     if _worker_instance is not None:

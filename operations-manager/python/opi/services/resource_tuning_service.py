@@ -14,17 +14,28 @@ from typing import Any
 from opi.connectors.git import GitConnector, create_git_connector_for_project_files
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.prometheus import get_metrics_connector
+from opi.connectors.vpa import parse_k8s_cpu_to_m
 from opi.core.cluster_config import (
+    get_max_cpu_limit_m,
+    get_max_cpu_request_m,
     get_max_memory_limit_mi,
     get_max_memory_request_mi,
+    get_min_cpu_m,
     get_min_memory_limit_mi,
     get_prefixed_namespace,
+    supports_vpa,
 )
 from opi.core.config import settings
 from opi.handlers.project_file_handler import ProjectFileHandler, ResourceFloor
 from opi.manager.project_manager import create_project_manager
 from opi.services.project_service import get_project_service
-from opi.services.resource_analyzer import _k8s_memory_to_mb, _mb_to_k8s_memory, compute_memory_recommendation
+from opi.services.resource_analyzer import (
+    _k8s_memory_to_mb,
+    _mb_to_k8s_memory,
+    compute_cpu_recommendation,
+    compute_memory_recommendation,
+    passes_deviation_gate,
+)
 from opi.utils.naming import generate_unique_name
 from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
 
@@ -198,6 +209,13 @@ class _ComponentAnalysis:
     has_oom_kills: bool
     floor_blocked: bool = False
     floor_set_at: str | None = None
+    # Sizing source for this analysis: "vpa" (recommender) or "prometheus".
+    source: str = "prometheus"
+    # CPU recommendation, present only when sourced from VPA and the change
+    # cleared the deviation gate. None means "leave CPU untouched".
+    new_cpu_limit: str | None = None
+    new_cpu_request: str | None = None
+    cpu_reason: str | None = None
 
 
 def _floor_is_expired(floor: ResourceFloor, max_observed_mb: float, has_oom_kills: bool) -> bool:
@@ -244,6 +262,11 @@ async def _analyze_component_resources(
     """
     unique_name = generate_unique_name(dep_name, component_ref)
 
+    # Respect the opt-out flag (auto-tuning is on by default)
+    if not file_handler.extract_auto_tune_enabled(project_data, dep_name, component_ref):
+        logger.debug(f"Auto-tuning disabled for {component_ref} in {dep_name}, skipping")
+        return None
+
     # Skip unhealthy deployments — their low memory usage is misleading
     if kubectl is not None and KubectlConnector.isConnected:
         try:
@@ -261,7 +284,8 @@ async def _analyze_component_resources(
             logger.warning(f"Failed to check deployment health for {unique_name}: {e}")
     window_hours = settings.RESOURCE_TUNING_WINDOW_HOURS
     buffer_percent = settings.RESOURCE_TUNING_MEMORY_BUFFER_PERCENT
-    threshold_percent = settings.RESOURCE_TUNING_THRESHOLD_PERCENT
+    increase_threshold = settings.RESOURCE_TUNING_INCREASE_THRESHOLD
+    decrease_threshold = settings.RESOURCE_TUNING_DECREASE_THRESHOLD
 
     current_resources = file_handler.extract_component_resources(project_data, component_ref)
     deployment_overrides = file_handler.extract_deployment_component_resources(project_data, dep_name, component_ref)
@@ -318,6 +342,23 @@ async def _analyze_component_resources(
     except Exception as e:
         logger.warning(f"Failed to query OOM kills for {unique_name}: {e}, assuming none")
 
+    # On VPA-capable clusters, prefer the recommender's target over the raw
+    # Prometheus window: it already encodes a percentile + safety margin and,
+    # unlike Prometheus here, also covers CPU. OOM detection above still comes
+    # from Prometheus (VPA does not expose it). When the VPA has no data yet
+    # (freshly created), fall back to the Prometheus memory sizing above.
+    source = "prometheus"
+    vpa_rec = None
+    if supports_vpa(cluster) and kubectl is not None and KubectlConnector.isConnected:
+        try:
+            vpa_rec = await kubectl.get_vpa_recommendation(namespace, unique_name)
+        except Exception as e:
+            logger.warning(f"Failed to read VPA recommendation for {unique_name}: {e}")
+    if vpa_rec is not None and not has_oom_kills:
+        source = "vpa"
+        max_observed_mb = vpa_rec.target_memory_mi
+        avg_observed_mb = vpa_rec.target_memory_mi
+
     if max_observed_mb == 0:
         if not has_oom_kills:
             logger.info(f"No memory data found for {unique_name}, skipping")
@@ -346,7 +387,9 @@ async def _analyze_component_resources(
         current_limit_mb=current_limit_mb,
         current_request_mb=current_request_mb,
         buffer_percent=buffer_percent,
-        threshold_percent=threshold_percent,
+        # Disable the symmetric threshold here; the asymmetric deviation gate
+        # below (increase vs decrease) decides whether the change is worth it.
+        threshold_percent=0,
         has_oom_kills=has_oom_kills,
         min_memory_mi=get_min_memory_limit_mi(cluster),
         max_memory_mi=get_max_memory_limit_mi(cluster),
@@ -408,6 +451,45 @@ async def _analyze_component_resources(
                     new_request = _mb_to_k8s_memory(limit_mb)
                 reason += f" (limit held at OOM floor {_mb_to_k8s_memory(oom_floor_mb)})"
 
+    # Asymmetric deviation gate for memory: react promptly to increases
+    # (reliability), conservatively to decreases (cost only). OOM always applies.
+    if not has_oom_kills:
+        new_request_mb = _k8s_memory_to_mb(new_request)
+        if not passes_deviation_gate(current_request_mb, new_request_mb, increase_threshold, decrease_threshold):
+            # Change too small to be worth a commit — keep current memory.
+            new_limit = current_resources["limits_memory"]
+            new_request = current_resources["requests_memory"]
+            floor_blocked = False
+
+    # CPU recommendation: only on VPA-capable clusters with a populated VPA.
+    new_cpu_limit: str | None = None
+    new_cpu_request: str | None = None
+    cpu_reason: str | None = None
+    if vpa_rec is not None:
+        current_cpu_limit_m = parse_k8s_cpu_to_m(current_resources["limits_cpu"])
+        current_cpu_request_m = parse_k8s_cpu_to_m(current_resources["requests_cpu"])
+        cpu_limit, cpu_request, cpu_reason_text = compute_cpu_recommendation(
+            target_cpu_m=vpa_rec.target_cpu_m,
+            current_limit_m=current_cpu_limit_m,
+            current_request_m=current_cpu_request_m,
+            buffer_percent=buffer_percent,
+            min_cpu_m=get_min_cpu_m(cluster),
+            max_cpu_request_m=get_max_cpu_request_m(cluster),
+            max_cpu_limit_m=get_max_cpu_limit_m(cluster),
+        )
+        new_cpu_request_m = parse_k8s_cpu_to_m(cpu_request)
+        if passes_deviation_gate(current_cpu_request_m, new_cpu_request_m, increase_threshold, decrease_threshold):
+            new_cpu_limit = cpu_limit
+            new_cpu_request = cpu_request
+            cpu_reason = cpu_reason_text
+
+    # Nothing worth changing for either resource — signal "unchanged".
+    memory_unchanged = (
+        new_limit == current_resources["limits_memory"] and new_request == current_resources["requests_memory"]
+    )
+    if memory_unchanged and new_cpu_limit is None:
+        return None
+
     return _ComponentAnalysis(
         current_resources=current_resources,
         new_limit=new_limit,
@@ -418,6 +500,10 @@ async def _analyze_component_resources(
         has_oom_kills=has_oom_kills,
         floor_blocked=floor_blocked,
         floor_set_at=oom_floor.set_at if floor_blocked and oom_floor is not None else None,
+        source=source,
+        new_cpu_limit=new_cpu_limit,
+        new_cpu_request=new_cpu_request,
+        cpu_reason=cpu_reason,
     )
 
 
@@ -510,13 +596,17 @@ async def check_deployment_resources(
                             recommended_request=analysis.new_request,
                         )
                     )
-            elif saving_mb > 0:
+            elif request_saving_mb > 0:
+                # Tuning reduces the request (the reserved memory); the saving
+                # is the freed request, not the limit.
                 results.append(
                     MemoryCheckResult(
                         component=component_ref,
                         current_limit=analysis.current_resources["limits_memory"],
                         recommended_limit=analysis.new_limit,
-                        saving_mb=saving_mb,
+                        saving_mb=request_saving_mb,
+                        current_request=analysis.current_resources["requests_memory"],
+                        recommended_request=analysis.new_request,
                     )
                 )
 
@@ -594,89 +684,118 @@ async def tune_deployment_resources(
                     unchanged.append(component_ref)
                     continue
 
-                # Skip if recommendation matches current values (avoids duplicate history entries
-                # when the tuner keeps hitting the max cap)
+                # Determine what actually changed (memory and/or CPU).
+                mem_changed = (
+                    analysis.new_limit != analysis.current_resources["limits_memory"]
+                    or analysis.new_request != analysis.current_resources["requests_memory"]
+                )
+                # A None CPU recommendation means "leave CPU untouched"; the
+                # is-not-None guard also narrows the values to str for downstream use.
+                cpu_changed = False
+                cpu_new_limit = ""
+                cpu_new_request = ""
                 if (
-                    analysis.new_limit == analysis.current_resources["limits_memory"]
-                    and analysis.new_request == analysis.current_resources["requests_memory"]
-                ):
-                    logger.info(
-                        f"Skipping {component_ref} in {dep_name}: recommendation matches current "
-                        f"({analysis.new_limit} limit, {analysis.new_request} request)"
+                    analysis.new_cpu_limit is not None
+                    and analysis.new_cpu_request is not None
+                    and (
+                        analysis.new_cpu_limit != analysis.current_resources["limits_cpu"]
+                        or analysis.new_cpu_request != analysis.current_resources["requests_cpu"]
                     )
+                ):
+                    cpu_changed = True
+                    cpu_new_limit = analysis.new_cpu_limit
+                    cpu_new_request = analysis.new_cpu_request
+                if not mem_changed and not cpu_changed:
+                    logger.info(f"Skipping {component_ref} in {dep_name}: recommendation matches current")
                     unchanged.append(component_ref)
                     continue
 
+                # Collect only the resource keys that changed.
+                resource_update: dict[str, str] = {}
+                if mem_changed:
+                    resource_update["limits_memory"] = analysis.new_limit
+                    resource_update["requests_memory"] = analysis.new_request
+                if cpu_changed:
+                    resource_update["limits_cpu"] = cpu_new_limit
+                    resource_update["requests_cpu"] = cpu_new_request
+
                 # Apply the change at deployment-component level
-                file_handler.set_deployment_component_resources(
-                    project_data,
-                    dep_name,
-                    component_ref,
-                    {
-                        "limits_memory": analysis.new_limit,
-                        "requests_memory": analysis.new_request,
-                    },
-                )
+                file_handler.set_deployment_component_resources(project_data, dep_name, component_ref, resource_update)
 
                 # Update base component definition so new deployments inherit
                 # a realistic starting point. The OOM watcher will bump up any
                 # deployment that actually needs more memory.
-                # Always write both request and limit together to keep them consistent.
                 base_resources = file_handler.extract_component_resources(project_data, component_ref)
-                if (
+                base_update: dict[str, str] = {}
+                if mem_changed and (
                     analysis.new_request != base_resources["requests_memory"]
                     or analysis.new_limit != base_resources["limits_memory"]
                 ):
-                    file_handler.set_component_resources(
-                        project_data,
-                        component_ref,
-                        {
-                            "requests_memory": analysis.new_request,
-                            "limits_memory": analysis.new_limit,
-                        },
-                    )
+                    base_update["requests_memory"] = analysis.new_request
+                    base_update["limits_memory"] = analysis.new_limit
+                if cpu_changed and (
+                    cpu_new_request != base_resources["requests_cpu"] or cpu_new_limit != base_resources["limits_cpu"]
+                ):
+                    base_update["requests_cpu"] = cpu_new_request
+                    base_update["limits_cpu"] = cpu_new_limit
+                if base_update:
+                    file_handler.set_component_resources(project_data, component_ref, base_update)
 
-                # Write resource history at both levels
+                # Write resource history at both levels (memory and/or CPU limits)
                 source = "oom-watcher" if analysis.has_oom_kills else "auto-tune"
                 now = datetime.now(UTC).isoformat()
+                history_limits: dict[str, str] = {}
+                if mem_changed:
+                    history_limits["memory"] = analysis.new_limit
+                if cpu_changed:
+                    history_limits["cpu"] = cpu_new_limit
+                history_reason = analysis.reason
+                if cpu_changed and analysis.cpu_reason:
+                    history_reason = f"{analysis.reason} {analysis.cpu_reason}"
                 deployment_history_entry: dict[str, Any] = {
                     "timestamp": now,
-                    "limits": {"memory": analysis.new_limit},
+                    "limits": history_limits,
                     "source": source,
-                    "reason": analysis.reason,
+                    "reason": history_reason,
                 }
                 file_handler.append_deployment_component_resource_history(
                     project_data, dep_name, component_ref, deployment_history_entry
                 )
                 component_history_entry: dict[str, Any] = {
                     "timestamp": now,
-                    "limits": {"memory": analysis.new_limit},
+                    "limits": history_limits,
                     "source": source,
                     "deployment": dep_name,
-                    "reason": analysis.reason,
+                    "reason": history_reason,
                 }
                 file_handler.append_component_resource_history(project_data, component_ref, component_history_entry)
 
-                changes.append(
-                    {
-                        "component": component_ref,
-                        "deployment": dep_name,
-                        "previous_limits_memory": analysis.current_resources["limits_memory"],
-                        "new_limits_memory": analysis.new_limit,
-                        "previous_requests_memory": analysis.current_resources["requests_memory"],
-                        "new_requests_memory": analysis.new_request,
-                        "max_observed_memory_mb": f"{analysis.max_observed_mb:.0f}",
-                        "avg_observed_memory_mb": f"{analysis.avg_observed_mb:.0f}",
-                        "has_oom_kills": str(analysis.has_oom_kills),
-                        "reason": analysis.reason,
-                    }
-                )
+                change_record: dict[str, str] = {
+                    "component": component_ref,
+                    "deployment": dep_name,
+                    "source": analysis.source,
+                    "previous_limits_memory": analysis.current_resources["limits_memory"],
+                    "new_limits_memory": analysis.new_limit,
+                    "previous_requests_memory": analysis.current_resources["requests_memory"],
+                    "new_requests_memory": analysis.new_request,
+                    "max_observed_memory_mb": f"{analysis.max_observed_mb:.0f}",
+                    "avg_observed_memory_mb": f"{analysis.avg_observed_mb:.0f}",
+                    "has_oom_kills": str(analysis.has_oom_kills),
+                    "reason": analysis.reason,
+                }
+                if cpu_changed:
+                    change_record["previous_limits_cpu"] = analysis.current_resources["limits_cpu"]
+                    change_record["new_limits_cpu"] = cpu_new_limit
+                    change_record["previous_requests_cpu"] = analysis.current_resources["requests_cpu"]
+                    change_record["new_requests_cpu"] = cpu_new_request
+                    change_record["cpu_reason"] = analysis.cpu_reason or ""
+                changes.append(change_record)
 
         # If changes were made, commit and optionally reprocess
         deployment_refresh_triggered = False
         if changes:
             component_names = [c["component"] for c in changes]
-            commit_msg = f"auto-tune: adjust memory resources for {', '.join(component_names)} in {project_name}"
+            commit_msg = f"auto-tune: adjust resources for {', '.join(component_names)} in {project_name}"
 
             await commit_project_yaml(project_name, filename, project_data, commit_msg, git_connector=git_connector)
             if not skip_reprocessing:
