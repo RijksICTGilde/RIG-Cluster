@@ -48,6 +48,8 @@ from opi.utils.naming import (
     generate_public_url,
     generate_pvc_manifest_type,
     generate_pvc_name,
+    generate_redis_key_prefix,
+    generate_redis_username,
     generate_registry_secret_name,
     generate_resource_identifier,
     generate_restore_pod_name,
@@ -1094,3 +1096,26 @@ class TestEnsureFqdn:
         """A hostname with a dot is already qualified enough."""
         result = ensure_fqdn("db.other-namespace.svc")
         assert result == "db.other-namespace.svc"
+
+
+class TestRedisNaming:
+    """Redis ACL username + key prefix conventions."""
+
+    def test_key_prefix_has_no_trailing_separator(self):
+        """The exported prefix is a bare token: no trailing ':' (which YAML-parses
+        as a hash) and no trailing '*'. The ':' delimiter belongs to the ACL
+        pattern, added in RedisManager, not to the identity token."""
+        prefix = generate_redis_key_prefix("myproject", "main")
+        assert prefix == "main-myproject"
+        assert not prefix.endswith(":")
+        assert not prefix.endswith("*")
+
+    def test_key_prefix_equals_username(self):
+        """Prefix token and ACL username are the same identity; the only former
+        difference was the trailing colon, now removed."""
+        assert generate_redis_key_prefix("myproject", "main") == generate_redis_username("myproject", "main")
+
+    def test_key_prefix_sanitized_and_lowercased(self):
+        prefix = generate_redis_key_prefix("My_Project", "Prod")
+        assert prefix == "prod-my_project"
+        assert not prefix.endswith(":")
