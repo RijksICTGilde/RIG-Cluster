@@ -236,6 +236,39 @@ class TestCheckPodHealth:
         result = await check_pod_health("rig-prd-ns", "prod-api")
         assert result.oom_detected is False
 
+    @patch("opi.services.oom_watcher.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_exit_137_without_oomkilled_not_oom(self, mock_kubectl_cls):
+        """exit code 137 with reason!=OOMKilled (e.g. a startup-probe SIGKILL)
+        must NOT be flagged as OOM. 137 is 128+SIGKILL and is produced by probe
+        kills and evictions too, so the cgroup OOMKilled reason is required."""
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        mock_kubectl_cls.isConnected = True
+
+        pods_json = json.dumps(
+            {
+                "items": [
+                    {
+                        "metadata": {"name": "prod-api-abc"},
+                        "status": {
+                            "containerStatuses": [
+                                {
+                                    "name": "app",
+                                    "lastState": {"terminated": {"reason": "Error", "exitCode": 137}},
+                                    "state": {},
+                                }
+                            ]
+                        },
+                    }
+                ]
+            }
+        )
+        mock_kubectl.run_command = AsyncMock(return_value=(pods_json, "", 0))
+
+        result = await check_pod_health("rig-prd-ns", "prod-api")
+        assert result.oom_detected is False
+
 
 # ---------------------------------------------------------------------------
 # check_all_components_health
