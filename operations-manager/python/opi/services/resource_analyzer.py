@@ -29,10 +29,12 @@ class ResourceRecommendation:
 def parse_k8s_memory_to_mi(value: str) -> float:
     """Convert a Kubernetes memory string to MiB (mebibytes).
 
-    Supports: Mi, Gi, M, G, Ki, and plain bytes.
+    Supports the full set of Kubernetes quantity suffixes: binary (Ki, Mi, Gi,
+    Ti, Pi), decimal (k, M, G, T, P - note lowercase k for kilo), and plain
+    bytes. The VPA recommender in particular emits decimal forms like "262144k".
 
     Args:
-        value: Kubernetes memory string (e.g., "512Mi", "1Gi", "536870912")
+        value: Kubernetes memory string (e.g., "512Mi", "1Gi", "262144k", "536870912")
 
     Returns:
         Value in MiB
@@ -48,13 +50,21 @@ def parse_k8s_memory_to_mi(value: str) -> float:
     num = float(match.group(1))
     unit = match.group(2)
 
+    mib = 1024 * 1024
     multipliers: dict[str, float] = {
-        "": 1 / (1024 * 1024),  # plain bytes
+        "": 1 / mib,  # plain bytes
+        # Binary (power-of-two) suffixes
         "Ki": 1 / 1024,
         "Mi": 1.0,
         "Gi": 1024.0,
-        "M": 1000000 / (1024 * 1024),  # decimal megabytes
-        "G": 1000000000 / (1024 * 1024),  # decimal gigabytes
+        "Ti": 1024.0 * 1024,
+        "Pi": 1024.0 * 1024 * 1024,
+        # Decimal (power-of-ten) suffixes - VPA emits these (e.g. "262144k")
+        "k": 1e3 / mib,
+        "M": 1e6 / mib,
+        "G": 1e9 / mib,
+        "T": 1e12 / mib,
+        "P": 1e15 / mib,
     }
 
     if unit not in multipliers:
