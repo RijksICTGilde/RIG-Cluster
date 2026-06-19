@@ -1,6 +1,6 @@
 # OpenProject on ZAD — sandbox runbook
 
-How OpenProject 17.4 was wired onto ZAD (sandbox), what env vars are needed, which
+How OpenProject 17.5 was wired onto ZAD (sandbox), what env vars are needed, which
 manual steps are required, and the known limitations. Use this if the sandbox is
 rebuilt or to clone the setup for another tenant.
 
@@ -25,7 +25,7 @@ rebuilt or to clone the setup for another tenant.
 ## Wrap image (EE bypass)
 
 ```dockerfile
-FROM openproject/openproject:17.4-slim
+FROM openproject/openproject:17.5-slim
 USER 0
 RUN sed -i \
     "s#EnterpriseToken.allows_to?(:sso_auth_providers) || name == \"developer\"#true#" \
@@ -38,9 +38,9 @@ USER 1000
 Build + load into Kind:
 
 ```bash
-docker build -t openproject-eebypass:17.4-slim .
-docker tag openproject-eebypass:17.4-slim local/openproject-eebypass:17.4-slim
-kind load docker-image openproject-eebypass:17.4-slim --name rig-sandbox
+docker build -t openproject-eebypass:17.5-slim .
+docker tag openproject-eebypass:17.5-slim local/openproject-eebypass:17.5-slim
+kind load docker-image openproject-eebypass:17.5-slim --name rig-sandbox
 ```
 
 The `local/` prefix in the project YAML is a ZAD signal "do not pull from
@@ -69,7 +69,7 @@ services:
 
 components:
   - name: app
-    image: local/openproject-eebypass:17.4-slim
+    image: local/openproject-eebypass:17.5-slim
     ports:
       inbound: [8080]
     security:
@@ -110,7 +110,7 @@ components:
       OPENPROJECT_FOG_CREDENTIALS_AWS__SECRET__ACCESS__KEY: $OBJECT_STORE_PASSWORD
       OPENPROJECT_FOG_CREDENTIALS_ENDPOINT: http://$OBJECT_STORE_HOST:$OBJECT_STORE_PORT
 
-      # Redis (presently unused since cache_store=file_store — see below)
+      # Redis cache (active — see notes below)
       CACHE_REDIS_URL: $REDIS_URL
       OPENPROJECT_CACHE_NAMESPACE: $REDIS_PREFIX
       CACHE_NAMESPACE: $REDIS_PREFIX
@@ -123,7 +123,7 @@ components:
       OPENPROJECT_ATTACHMENTS__STORAGE: "fog"
       OPENPROJECT_FOG_CREDENTIALS_PROVIDER: "AWS"
       OPENPROJECT_FOG_CREDENTIALS_PATH__STYLE: "true"
-      OPENPROJECT_RAILS__CACHE__STORE: file_store
+      OPENPROJECT_RAILS__CACHE__STORE: redis
       OPENPROJECT_DISABLE__PASSWORD__LOGIN: "true"
       OPENPROJECT_LOGIN__REQUIRED: "false"
 ```
@@ -140,16 +140,41 @@ components:
   crashes with "undefined method 'merge' for an instance of String" because
   the provider entry ends up as a String, not a Hash.
 - The redis-cache aliases (`CACHE_REDIS_URL`, `OPENPROJECT_CACHE_NAMESPACE`,
-  `CACHE_NAMESPACE`) are wired but unused (file_store cache active). Left in
-  place for the day the upstream RedisCacheStore Rails 8 kwargs bug is fixed.
+  `CACHE_NAMESPACE`) feed the active redis cache store. Set the Redis
+  `maxmemory-policy` to an `allkeys-*` variant (e.g. `allkeys-lru`) — otherwise
+  cache entries never expire and Redis eventually OOMs.
+- `OPENPROJECT_CACHE_NAMESPACE` MUST be a bare token with no trailing `:`.
+  ActiveSupport adds the `:` itself (`namespace_key` builds `"<ns>:<key>"`), and
+  the shared `rig-redis` ACL only permits keys matching `~<prefix>:*`. ZAD's
+  `$REDIS_PREFIX` is colon-free (see naming.py `generate_redis_key_prefix`), so
+  the alias above is correct. Do NOT hand it a value ending in `:` — OpenProject
+  YAML-parses env values, and `foo:` parses to the hash `{"foo"=>nil}`, which
+  corrupts the namespace and every key read fails with `NOPERM`.
+- The `CACHE_REDIS_URL` log line "Using unprefixed environment variables is
+  deprecated. Please use OPENPROJECT_CACHE_REDIS_URL" is a cosmetic WARNING, not
+  an error — the cache works with it. OpenProject does accept the prefixed name
+  (`OPENPROJECT_CACHE_REDIS_URL`, or the unambiguous `OPENPROJECT_CACHE__REDIS__URL`),
+  but its generic "CACHE_REDIS_URL is not set" message is a fixed string that
+  always cites the unprefixed name regardless of which form you set — so if a
+  rename appears to "miss" the value, check what ZAD actually rendered into the
+  container env, not OpenProject.
 
 ### Notes on user-env-vars
 
-- `OPENPROJECT_RAILS__CACHE__STORE: file_store` chosen because OpenProject
-  17.4 + Rails 8.1 + cache_namespace = positional-vs-kwargs bug in
-  `cache_store_configuration` (`cache_config << parameters` appends a hash
-  positionally, RedisCacheStore.new rejects). Upstream bug, switch back to
-  `redis` when fixed.
+- `OPENPROJECT_RAILS__CACHE__STORE: redis` — a shared cache so OpenProject can
+  run more than one replica (file_store is pod-local and diverges across
+  replicas, so it effectively pins you to a single replica). Earlier setups
+  used `file_store` to dodge a positional-vs-kwargs bug in
+  `cache_store_configuration` (`cache_config << parameters` appended the
+  cache_namespace hash positionally and `RedisCacheStore.new` rejected it),
+  present in OpenProject 17.4.0 + Rails 8.1. Fixed upstream in PR #23251 — a
+  cache-serializer security fix that also restructured this to merge the params
+  into the kwargs hash — shipped in 17.3.3 / 17.4.1 / 17.5.x. We pin a 17.5
+  release (see wrap image above), so redis works. Do NOT drop back below
+  17.4.1, or the bug returns and you must use `file_store`.
+  Redis needs BOTH fixes: (1) the 17.5 image (this kwargs bug), and (2) a
+  colon-free cache namespace (see the alias-block note on
+  `OPENPROJECT_CACHE_NAMESPACE`). With only one of the two, the pod crash-loops.
 - `OPENPROJECT_DISABLE__PASSWORD__LOGIN: "true"` removes the local-account
   login form. Only set this AFTER an OIDC user has been promoted to admin
   (see "Manual steps" below) or you lock yourself out.
@@ -240,7 +265,7 @@ Two ways to install the token:
    environment.
 
 After EE token is loaded, the wrap image can be replaced with the upstream
-`openproject/openproject:17.4-slim` in the project YAML deployment image
+`openproject/openproject:17.5-slim` in the project YAML deployment image
 field. Remove the `local/` prefix and the kind-loaded wrap image becomes
 unused.
 
@@ -248,8 +273,9 @@ unused.
 
 - **OIDC EE-gated**: the bypass image is a temporary workaround. Replace
   with an Enterprise Token (see section above) before any non-test use.
-- **Cache is file_store**: pod-local, lost on restart, doesn't share across
-  pods. Acceptable for single-replica deploys.
+- **Single replica only by default**: redis cache (above) makes multi-replica
+  safe, but background workers and seeder-on-boot (below) still assume one
+  instance. Scale the web container only after the worker/cron split is in place.
 - **No background workers**: only the web container runs. Mail delivery, async
   PDF export, repository sync etc. don't run. Add `worker` and `cron`
   components from the openproject helm chart pattern when needed.

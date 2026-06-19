@@ -607,20 +607,27 @@ def generate_redis_username(project_name: str, deployment_name: str) -> str:
 
 def generate_redis_key_prefix(project_name: str, deployment_name: str) -> str:
     """
-    Generate a consistent Redis key prefix for ACL restrictions.
+    Generate a consistent Redis key prefix (bare namespace token).
 
-    Format: {deployment}-{project}: (matching domain convention)
+    Format: {deployment}-{project} (matching domain convention).
+
+    Deliberately has NO trailing separator. The ':' delimiter is a property of
+    the ACL boundary, not of the namespace identity, so it is appended only when
+    building the ACL key/channel pattern (see RedisManager._create_acl_user).
+    Baking the colon into the exported value broke apps that prepend their own
+    separator (ActiveSupport: "namespace:key") or parse env values as structured
+    data (a trailing ':' is valid YAML for a hash).
 
     Args:
         project_name: Name of the project
         deployment_name: Name of the deployment
 
     Returns:
-        Redis key prefix string (without trailing *)
+        Redis key prefix token (no trailing ':' or '*')
     """
     project_clean = _sanitize_for_lowercase(project_name)
     deployment_clean = _sanitize_for_lowercase(deployment_name)
-    return f"{deployment_clean}-{project_clean}:"
+    return f"{deployment_clean}-{project_clean}"
 
 
 def generate_bucket_name(project_name: str, deployment_name: str, generation: int | None = None) -> str:
