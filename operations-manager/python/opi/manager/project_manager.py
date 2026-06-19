@@ -48,6 +48,7 @@ from opi.core.cluster_config import (
     get_minio_port,
     get_namespace,
     get_prefixed_namespace,
+    supports_vpa,
     uses_capsule,
 )
 from opi.core.config import settings
@@ -4912,6 +4913,15 @@ class ProjectManager:
                 logger.info(f"Including ingress manifest for component '{component_name}' (publish-on-web: true)")
             else:
                 logger.debug(f"Skipping ingress manifest for component '{component_name}' (publish-on-web: false)")
+
+            # Add an Off-mode VerticalPodAutoscaler only on clusters that run a VPA
+            # recommender. It mutates nothing (advice only); the auto-tuner reads its
+            # .status.recommendation to size memory and CPU via GitOps.
+            if supports_vpa(cluster):
+                manifests.append("vpa.yaml.jinja")
+                logger.debug(
+                    f"Including VPA manifest for component '{component_name}' (cluster '{cluster}' supports VPA)"
+                )
 
             # Construct the full output directory path once for reuse
             if target_dir:

@@ -1300,6 +1300,40 @@ class ProjectFileHandler:
         # Fall back to component-definition-level disabled state
         return self.extract_component_disabled(project_data, component_reference)
 
+    def extract_auto_tune_enabled(
+        self, project_data: dict[str, Any], deployment_name: str, component_reference: str
+    ) -> bool:
+        """
+        Whether auto-tuning is enabled for a component within a deployment.
+
+        Auto-tuning is opt-out: enabled unless ``auto-tune-resources`` is set to
+        false. A deployment-level override wins over the component definition,
+        which in turn wins over the default (True).
+
+        Args:
+            project_data: The parsed project data
+            deployment_name: Name of the deployment
+            component_reference: Reference name of the component
+
+        Returns:
+            True if auto-tuning should run for this component
+        """
+        deployments = project_data.get("deployments", [])
+        for deployment in deployments:
+            if deployment.get("name") != deployment_name:
+                continue
+            for comp in deployment.get("components", []):
+                if comp.get("reference") != component_reference:
+                    continue
+                if "auto-tune-resources" in comp:
+                    return bool(comp.get("auto-tune-resources"))
+
+        # Fall back to the component definition, default enabled
+        for comp in project_data.get("components", []):
+            if comp.get("name") == component_reference and "auto-tune-resources" in comp:
+                return bool(comp.get("auto-tune-resources"))
+        return True
+
     def set_deployment_component_disabled(
         self,
         project_data: dict[str, Any],
