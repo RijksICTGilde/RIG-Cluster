@@ -353,13 +353,39 @@ def _friendly_resource_name(resource: str, deployment_name: str) -> str:
     return name
 
 
-def interpret_argocd_errors(errors: list[dict[str, str]], deployment_name: str = "") -> list[dict[str, str]]:
+def _is_orphaned_resource(resource: str, deployment_name: str, valid_unique_names: set[str]) -> bool:
+    """True if a component-scoped resource has no matching current component.
+
+    Component resources are named ``{deployment_name}-{component}`` (pods and
+    replicasets carry that prefix plus a hash). Resources that are not scoped to
+    a component (app-level conditions, SyncOperation, shared resources) never
+    start with the deployment prefix and are never treated as orphaned.
+
+    The trailing-dash match keeps ``magazijn`` from matching ``magazijna``.
+    """
+    name = resource.split("/", 1)[-1] if "/" in resource else resource
+    if not name.startswith(f"{deployment_name}-"):
+        return False
+    return not any(name == unique or name.startswith(f"{unique}-") for unique in valid_unique_names)
+
+
+def interpret_argocd_errors(
+    errors: list[dict[str, str]],
+    deployment_name: str = "",
+    component_names: list[str] | None = None,
+) -> list[dict[str, str]]:
     """
     Interpret a mixed list of ArgoCD errors and K8s events.
 
     K8s events (resource starts with "Event/") are translated and deduplicated.
     ArgoCD errors are passed through but enriched with pattern matching.
     Resource names are simplified to component names when deployment_name is provided.
+
+    When ``component_names`` is a non-empty list, entries whose resource belongs
+    to a component no longer present in the deployment are flagged with
+    ``orphaned=True`` (a leftover whose cluster cleanup has not finished). The UI
+    renders these de-emphasised instead of as live deployment errors.
+
     Returns a list of error dicts compatible with the template.
     """
     k8s_events: list[dict[str, str]] = []
@@ -411,6 +437,14 @@ def interpret_argocd_errors(errors: list[dict[str, str]], deployment_name: str =
     # Other errors first, then interpreted events — then suppress symptoms and dedupe
     combined = _suppress_symptoms(other_errors + result)
     deduped = _dedupe_cross_source(combined)
+
+    # Flag leftovers from components no longer in the deployment (must run on the
+    # full resource name, before it is simplified to a bare component name).
+    if deployment_name and component_names:
+        valid_unique_names = {f"{deployment_name}-{ref}" for ref in component_names if ref}
+        for error in deduped:
+            if _is_orphaned_resource(error["resource"], deployment_name, valid_unique_names):
+                error["orphaned"] = "true"
 
     # Simplify resource names to component names
     if deployment_name:

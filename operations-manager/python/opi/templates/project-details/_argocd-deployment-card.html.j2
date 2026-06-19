@@ -135,15 +135,18 @@
 
         {# Errors Section (Expandable) #}
         {% if has_errors %}
+        {% set real_errors = errors | rejectattr('orphaned') | list %}
+        {% set orphan_errors = errors | selectattr('orphaned') | list %}
+        {% if real_errors %}
         <div>
             <button type="button" onclick="toggleArgoErrors('{{ _id_prefix }}')" aria-expanded="false"
                     style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 12px; background: #ffebee; border: 1px solid #ef9a9a; border-radius: 4px; cursor: pointer; font-size: 0.875rem; color: #c62828; text-align: left;">
                 <c-icon icon="waarschuwing" size="sm" color="rood" />
-                <span>{{ errors|length }} {% if errors|length == 1 %}probleem{% else %}problemen{% endif %} gevonden</span>
+                <span>{{ real_errors|length }} {% if real_errors|length == 1 %}probleem{% else %}problemen{% endif %} gevonden</span>
                 <c-icon icon="delta-omlaag" size="sm" style="margin-left: auto;" />
             </button>
             <div id="argocd-errors-{{ _id_prefix }}" style="display: none; margin-top: 8px; padding: 8px; background: #fff5f5; border: 1px solid #ffcdd2; border-radius: 4px;">
-                {% for error in errors %}
+                {% for error in real_errors %}
                 <div style="padding: 8px; {% if not loop.last %}border-bottom: 1px solid #ffcdd2;{% endif %}">
                     <c-layout-row gap="xs" verticalSpacing="center">
                         {% if error.get('severity') == 'informational' %}
@@ -171,6 +174,20 @@
             </div>
         </div>
         {% endif %}
+        {% if orphan_errors %}
+        <div style="margin-top: 8px; padding: 8px 12px; background: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 4px;">
+            <c-layout-row gap="xs" verticalSpacing="center">
+                <c-icon icon="info" size="sm" color="grijs-600" />
+                <span class="rvo-text--sm rvo-text--subtle">{{ orphan_errors|length }} {% if orphan_errors|length == 1 %}melding{% else %}meldingen{% endif %} van verwijderde componenten &mdash; opruiming nog niet voltooid</span>
+            </c-layout-row>
+            {% for error in orphan_errors %}
+            <p class="rvo-text--xs rvo-text--subtle" style="margin: 6px 0 0 24px; word-break: break-word;">
+                <strong>{{ error.resource }}</strong>: {{ error.message }}{% if error.get('age') %} ({{ error.age }}){% endif %}
+            </p>
+            {% endfor %}
+        </div>
         {% endif %}
+        {% endif %}
+        {% endif %}{# close: not has_image / different cluster / current cluster #}
     </c-layout-flow>
 </c-card>
