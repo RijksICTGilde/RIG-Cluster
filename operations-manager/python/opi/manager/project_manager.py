@@ -197,6 +197,85 @@ def _resolve_deployment_filter(deployment_name: str | None, deployment_names: li
     return None
 
 
+# Filename extensions used for generated per-component manifests. A file is only
+# considered for pruning when it ends with one of these (covers plain manifests
+# and both pre/post SOPS-encryption secret files).
+_COMPONENT_MANIFEST_EXTENSIONS: tuple[str, ...] = (
+    ".sops.yaml",
+    ".to-sops.yaml",
+    ".yaml",
+    ".yml",
+)
+
+
+def _select_orphaned_component_manifests(
+    directory: str,
+    keep_component_names: set[str],
+    removed_component_names: set[str],
+    deployment_name: str,
+) -> list[str]:
+    """Select per-component manifest files for components no longer in the deployment.
+
+    Per-component manifests are named with the component reference as the filename
+    prefix (e.g. ``<component>-deployment.yaml``, ``<component>-service.yaml``,
+    ``<component>-platform-secret.yaml``, ``<component>-user-secret.sops.yaml``,
+    ingress/pvc/configmap variants), and the authorization-wall cookie secret uses
+    the deployment-scoped unique name (``<deployment>-<component>-oauth2-cookie-...``).
+
+    A file is selected for pruning only when its prefix maps unambiguously to a
+    component that was removed (present in ``removed_component_names``) and not to
+    any surviving component (``keep_component_names``). Shared/deployment-level
+    files (kustomization, decrypt-sops, issuer-*, *-network-policy, keycloak/registry
+    secrets, etc.) never start with a removed component prefix and are left alone.
+
+    Args:
+        directory: Deployment manifest directory to scan (non-recursive).
+        keep_component_names: Component references currently in the deployment.
+        removed_component_names: Component references removed from the deployment.
+        deployment_name: Deployment name (for the unique-name oauth2 cookie prefix).
+
+    Returns:
+        Sorted list of basenames to remove.
+    """
+    if not removed_component_names or not os.path.isdir(directory):
+        return []
+
+    def _owning_component(basename: str) -> str | None:
+        """Return the component that a basename belongs to, longest prefix wins.
+
+        Considers both the bare ``<component>-`` prefix and the deployment-scoped
+        ``<deployment>-<component>-`` prefix used by the oauth2 cookie secret.
+        """
+        best: str | None = None
+        best_len = -1
+        for comp in keep_component_names | removed_component_names:
+            for prefix in (f"{comp}-", f"{deployment_name}-{comp}-"):
+                if basename.startswith(prefix) and len(prefix) > best_len:
+                    best = comp
+                    best_len = len(prefix)
+        return best
+
+    selected: list[str] = []
+    for path in glob.glob(os.path.join(directory, "*")):
+        if not os.path.isfile(path):
+            continue
+        basename = os.path.basename(path)
+        if not basename.endswith(_COMPONENT_MANIFEST_EXTENSIONS):
+            continue
+        # PVC manifests for a removed component are renamed to
+        # *.marked-for-deletion.yaml by pvc_manager.handle_service_removal so
+        # ArgoCD keeps the volume alive until the reconciliation grace period
+        # (recoverable if the removal was a mistake). Hard-deleting them here
+        # would prune the PVC and its data immediately, defeating that safety.
+        if basename.endswith(".marked-for-deletion.yaml"):
+            continue
+        owner = _owning_component(basename)
+        if owner is not None and owner in removed_component_names and owner not in keep_component_names:
+            selected.append(basename)
+
+    return sorted(selected)
+
+
 @dataclass
 class DeploymentResult:
     """Result information for a processed deployment."""
@@ -2632,6 +2711,47 @@ class ProjectManager:
             logger.info(f"No project private key for SOPS unchanged-check, re-encrypting: {e}")
             return None
 
+    def _prune_removed_component_manifests(self, deployment: dict[str, Any], target_path: str) -> None:
+        """Delete manifest files for components removed from this deployment.
+
+        Compares the previous deployment's component set against the current one;
+        for each component that disappeared, removes its generated per-component
+        manifest files from ``target_path`` so the rebuilt kustomization no longer
+        references them (and ArgoCD prunes the workloads). No-op when there is no
+        previous version to compare against or nothing was removed.
+
+        Args:
+            deployment: Current deployment configuration.
+            target_path: Absolute deployment manifest directory in the cloned repo.
+        """
+        deployment_name = deployment["name"]
+
+        previous_deployment = self.get_previous_deployment(deployment_name)
+        if not previous_deployment:
+            return
+
+        def _component_refs(dep: dict[str, Any]) -> set[str]:
+            return {
+                ref for comp in dep.get("components", []) if isinstance(comp, dict) and (ref := comp.get("reference"))
+            }
+
+        keep = _component_refs(deployment)
+        previous = _component_refs(previous_deployment)
+        removed = previous - keep
+        if not removed:
+            return
+
+        orphans = _select_orphaned_component_manifests(target_path, keep, removed, deployment_name)
+        if not orphans:
+            return
+
+        logger.info(
+            f"Pruning {len(orphans)} orphaned component manifest(s) from {deployment_name} "
+            f"(removed components: {', '.join(sorted(removed))}): {', '.join(orphans)}"
+        )
+        for basename in orphans:
+            os.remove(os.path.join(target_path, basename))
+
     async def _process_deployment_manifests(
         self,
         deployment: dict[str, Any],
@@ -2697,6 +2817,14 @@ class ProjectManager:
             raise
 
         # Note: SSO and user secrets are already created in create_application_manifests above
+
+        # Prune manifests for components that were removed from this deployment.
+        # create_application_manifests only writes/overwrites files for the CURRENT
+        # components; the kustomization is then rebuilt from the on-disk glob, so any
+        # leftover per-component files for removed components would otherwise be
+        # re-adopted and keep their dead workloads running in ArgoCD. Symmetric with
+        # the removed-service cleanup in DeleteProjectManager.
+        self._prune_removed_component_manifests(deployment, target_path)
 
         # Run manifest extensions (e.g. registry rewrite for ODCN)
         extension_pipeline = load_extensions(cluster_name)
