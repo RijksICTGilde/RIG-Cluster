@@ -132,7 +132,10 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
 
     Runs ``kubectl get pods -o json`` once and inspects each container's
     state for all three failure types:
-    - OOM: ``lastState.terminated.reason == "OOMKilled"`` or ``exitCode == 137``
+    - OOM: ``lastState.terminated.reason == "OOMKilled"`` (the cgroup OOM-killer
+      signal). A bare ``exitCode == 137`` is NOT treated as OOM: 137 is
+      ``128 + SIGKILL`` and is also produced by failed startup/liveness probes,
+      node-pressure evictions, and manual kills.
     - ImagePull: ``state.waiting.reason`` in {ImagePullBackOff, ErrImagePull,
       InvalidImageName, ErrImageNeverPull, ImageInspectError, RegistryUnavailable}
     - CrashLoop: ``state.waiting.reason == "CrashLoopBackOff"``
@@ -172,7 +175,7 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
                 terminated = last_state.get("terminated", {})
                 reason = terminated.get("reason", "")
                 exit_code = terminated.get("exitCode")
-                if reason == "OOMKilled" or exit_code == 137:
+                if reason == "OOMKilled":
                     oom_finished = terminated.get("finishedAt", "")
                     if pod_created and oom_finished and oom_finished < pod_created:
                         logger.debug(
