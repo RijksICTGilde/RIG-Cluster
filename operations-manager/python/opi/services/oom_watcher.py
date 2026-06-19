@@ -519,17 +519,24 @@ def create_health_check_callback(
         grace_seconds: Seconds to wait before checking (default 30)
 
     Returns:
-        Async callback ``(elapsed_seconds) -> None``, or None if max OOM attempts reached
+        Async callback ``(elapsed_seconds) -> None``. Always non-None: even when
+        the OOM auto-tune budget is exhausted, the callback still detects
+        ImagePullBackOff and CrashLoopBackOff and raises ``DeploymentHealthError``.
     """
     attempt_key = f"{project_name}/{deployment_name}"
     current_attempts = _inline_oom_attempts.get(attempt_key, 0)
-    if current_attempts >= OOM_INLINE_MAX_ATTEMPTS:
+    # When the OOM auto-tune budget is spent, only the OOM branch is suppressed —
+    # image-pull and crash-loop detection must keep working, otherwise a broken
+    # image on an OOM-exhausted deployment sits in Progressing until ArgoCD's
+    # progress deadline. Never return None here.
+    oom_budget_exhausted = current_attempts >= OOM_INLINE_MAX_ATTEMPTS
+    if oom_budget_exhausted:
         logger.warning(
-            "Health check: max OOM tune attempts (%d) reached for %s, skipping",
+            "Health check: max OOM tune attempts (%d) reached for %s, "
+            "OOM auto-tune disabled (image-pull/crash-loop still checked)",
             OOM_INLINE_MAX_ATTEMPTS,
             attempt_key,
         )
-        return None
 
     last_check_at = 0
 
@@ -547,7 +554,9 @@ def create_health_check_callback(
         # CrashLoopBackOff and ImagePullBackOff are visible immediately —
         # no grace period needed.  OOM needs the grace period because
         # lastState.terminated can contain stale data from a previous pod.
-        check_oom = elapsed_seconds >= grace_seconds
+        # Once the OOM auto-tune budget is exhausted, stop treating OOM as a
+        # detectable failure (no more tune cycles) but keep checking the rest.
+        check_oom = elapsed_seconds >= grace_seconds and not oom_budget_exhausted
 
         is_first_check = last_check_at == 0
         last_check_at = elapsed_seconds
@@ -588,7 +597,7 @@ def create_health_check_callback(
             # the OOM is guaranteed to be from the current lifecycle. Without this
             # exception, pods that OOM instantly on boot (e.g. 25Mi limit) get reported
             # only as CrashLoopBackOff and the auto-tune path never runs.
-            if health.oom_detected and (check_oom or health.crash_loop_detected):
+            if not oom_budget_exhausted and health.oom_detected and (check_oom or health.crash_loop_detected):
                 has_oom = True
                 failures.append(
                     ComponentFailure(
