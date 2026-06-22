@@ -78,6 +78,27 @@ def test_deployment_with_scheduled_backup_passes() -> None:
     validate_project_schema(project)
 
 
+def test_registry_with_secret_name_and_image_host_passes() -> None:
+    """A private image registry referenced by a pull secret is a real feature.
+
+    The 'add registry' API writes registries[].secretName (a pre-existing
+    imagePullSecret), and image-registry hosts are scheme-less (e.g.
+    rcr.rijksapps.nl/rig). A fail-closed schema that omits secretName or forces
+    a URL scheme rejects every project pulling from a private image registry -
+    exactly what silently broke dp-bn7's reprocessing.
+    """
+    project = _valid_project()
+    project["registries"] = [
+        {
+            "name": "rcr",
+            "url": "rcr.rijksapps.nl/rig",
+            "secretName": "rig-robot-pull-secret",
+        }
+    ]
+
+    validate_project_schema(project)
+
+
 def test_namespace_with_newline_is_rejected() -> None:
     """A namespace containing a newline (injection vector) must be rejected."""
     project = _valid_project()
