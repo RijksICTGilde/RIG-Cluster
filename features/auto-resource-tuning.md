@@ -146,7 +146,7 @@ Detects broken deployments (crash loops, missing images, OOM kills) and disables
 | `RESOURCE_TUNING_MIN_DELTA_MI` | `16` | Ignore memory changes smaller than this (absolute deadband) |
 | `RESOURCE_TUNING_MIN_DELTA_M` | `10` | Ignore CPU changes smaller than this in millicores (absolute deadband) |
 | `RESOURCE_TUNING_SCHEDULER_ENABLED` | `true` | Run the nightly fleet-wide tuner |
-| `RESOURCE_TUNING_HOUR` | `2` | Hour (Europe/Amsterdam) of the nightly sweep (off-peak) |
+| `RESOURCE_TUNING_HOUR` | `1` | Hour (Europe/Amsterdam) of the nightly sweep (off-peak, before backups) |
 | `RESOURCE_TUNING_PACE_SECONDS` | `15` | Delay after each changed project, to spread pod rollouts |
 
 Cluster-specific bounds live in `cluster_config.py`: memory via `get_min_memory_limit_mi()` / `get_max_memory_limit_mi()` / `get_max_memory_request_mi()`, CPU via `get_min_cpu_m()` (25m) / `get_max_cpu_request_m()` (250m) / `get_max_cpu_limit_m()` (4000m), and the `supports_vpa` capability flag.
@@ -203,7 +203,7 @@ All changes flow through git commits. The tuner reads recommendations (from the 
 
 ## Nightly Auto-Tuning
 
-`ResourceTuningScheduler` (`opi/core/resource_tuning_scheduler.py`, started from the server lifespan) runs **once a night** at `RESOURCE_TUNING_HOUR` (Europe/Amsterdam, default 02:00 — off-peak, so resize-triggered pod restarts don't disrupt traffic). Each night it:
+`ResourceTuningScheduler` (`opi/core/resource_tuning_scheduler.py`, started from the server lifespan) runs **once a night** at `RESOURCE_TUNING_HOUR` (Europe/Amsterdam, default 01:00 — off-peak, and an hour before backups (~02:00) so resize-triggered pod rollouts settle before the backup snapshot). Each night it:
 
 1. Enumerates every project with a deployment on this OPI's cluster.
 2. Calls `tune_deployment_resources(project)` for each. The deadband decides what actually changes; converged projects produce no change and cost only the (cheap, read-only) analysis.
