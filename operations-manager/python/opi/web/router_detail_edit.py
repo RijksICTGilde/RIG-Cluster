@@ -1393,13 +1393,14 @@ async def job_runner_form(request: Request, project_name: str, deployment_name: 
     """Return the job runner form HTML fragment."""
     from opi.utils.secrets import get_deployment_service_secrets
 
-    project, _user_email = _require_project_edit_access(request, project_name)
+    project, _user_email = require_project_edit_access(request, project_name)
     project_data = project.data or {}
 
     available_services = get_deployment_service_secrets(project_data, deployment_name)
 
     templates = get_templates()
     context = {
+        "request": request,
         "project_name": project_name,
         "deployment_name": deployment_name,
         "available_services": available_services,
@@ -1417,7 +1418,7 @@ async def job_runner_submit(request: Request, project_name: str, deployment_name
     """Validate form and return confirmation view."""
     from opi.utils.secrets import get_deployment_service_secrets
 
-    project, _user_email = _require_project_edit_access(request, project_name)
+    project, _user_email = require_project_edit_access(request, project_name)
     project_data = project.data or {}
 
     form = await request.form()
@@ -1457,6 +1458,7 @@ async def job_runner_submit(request: Request, project_name: str, deployment_name
 
     templates = get_templates()
     context = {
+        "request": request,
         "project_name": project_name,
         "deployment_name": deployment_name,
         "image": image,
@@ -1478,7 +1480,7 @@ async def job_runner_submit(request: Request, project_name: str, deployment_name
 @requires_sso
 async def job_runner_confirm(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Start the job as a background task and return progress view."""
-    _require_project_edit_access(request, project_name)
+    require_project_edit_access(request, project_name)
 
     form = await request.form()
     image = (form.get("image") or "").strip()

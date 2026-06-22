@@ -9,6 +9,7 @@
 <div class="edit-section-content">
     <form id="job-runner-form"
           hx-post="/projects/{{ project_name }}/run-job/{{ deployment_name }}"
+          hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
           hx-target="#edit-section-inner"
           hx-swap="innerHTML">
 
