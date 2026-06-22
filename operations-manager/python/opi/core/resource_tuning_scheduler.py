@@ -44,6 +44,23 @@ def _seconds_to_next_tick(period_seconds: int) -> float:
     return period_seconds - remainder if remainder else 0.0
 
 
+def _rotate_batch(items: list[Any], cursor: int, cap: int) -> tuple[list[Any], int]:
+    """Take up to ``cap`` items starting at ``cursor`` (wrapping around).
+
+    Returns ``(batch, next_cursor)``. Rotating the start each call guarantees
+    every item is reached within ceil(len/cap) calls, instead of always
+    re-taking the head - which matters because never-tuned projects share a
+    sort key and would otherwise be re-picked forever.
+    """
+    n = len(items)
+    if n == 0:
+        return [], 0
+    start = cursor % n
+    ordered = items[start:] + items[:start]
+    batch = ordered[:cap]
+    return batch, (start + len(batch)) % n
+
+
 def _latest_tune_timestamp(project_data: dict[str, Any]) -> datetime | None:
     """Most recent auto-tune/oom-watcher history timestamp across the project.
 
@@ -84,6 +101,9 @@ class ResourceTuningScheduler:
         self._cluster = cluster
         self._running = False
         self._task: asyncio.Task | None = None
+        # Rotating start offset into the due list, so successive ticks cover
+        # different projects instead of re-picking the same head every time.
+        self._cursor = 0
 
     async def start(self) -> None:
         """Start the scheduler loop as a background task."""
@@ -151,8 +171,15 @@ class ResourceTuningScheduler:
         if not due:
             return
 
-        due.sort(key=lambda item: item[0])
-        batch = due[: settings.RESOURCE_TUNING_MAX_PROJECTS_PER_TICK]
+        # Order by cooldown age (oldest/never-tuned first), name for determinism.
+        due.sort(key=lambda item: (item[0], item[1]))
+
+        # Rotate through the due list so successive ticks cover different
+        # projects. Without this, never-tuned projects all share the epoch sort
+        # key, a stable sort re-picks the same head every tick, and they only
+        # leave the list once a commit advances their cooldown - so idle/unhealthy
+        # head projects would starve the rest of the fleet forever.
+        batch, self._cursor = _rotate_batch(due, self._cursor, settings.RESOURCE_TUNING_MAX_PROJECTS_PER_TICK)
         logger.info("Resource tuning: %d project(s) due, tuning %d this tick", len(due), len(batch))
 
         for _, project_name in batch:
