@@ -64,3 +64,15 @@ class TestPassesDeviationGate:
 
     def test_zero_current_always_applies(self):
         assert passes_deviation_gate(0, 50, 10, 30) is True
+
+    def test_absolute_floor_blocks_small_change(self):
+        # 100 -> 130 is a 30% increase (clears the % gate) but only +30 abs;
+        # with a 50-unit floor it must be ignored.
+        assert passes_deviation_gate(100, 130, 10, 30, min_abs_delta=50) is False
+        # Same change with a smaller floor passes.
+        assert passes_deviation_gate(100, 130, 10, 30, min_abs_delta=20) is True
+
+    def test_absolute_floor_protects_tiny_pods(self):
+        # 25Mi -> 28Mi is 12% (clears the % gate) but only 3Mi - a 16Mi floor
+        # stops it churning near the minimum.
+        assert passes_deviation_gate(25, 28, 10, 30, min_abs_delta=16) is False

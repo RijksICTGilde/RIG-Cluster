@@ -451,11 +451,18 @@ async def _analyze_component_resources(
                     new_request = _mb_to_k8s_memory(limit_mb)
                 reason += f" (limit held at OOM floor {_mb_to_k8s_memory(oom_floor_mb)})"
 
-    # Asymmetric deviation gate for memory: react promptly to increases
-    # (reliability), conservatively to decreases (cost only). OOM always applies.
+    # Deadband gate for memory: react promptly to increases (reliability),
+    # conservatively to decreases (cost only), and ignore sub-floor drift.
+    # OOM always applies.
     if not has_oom_kills:
         new_request_mb = _k8s_memory_to_mb(new_request)
-        if not passes_deviation_gate(current_request_mb, new_request_mb, increase_threshold, decrease_threshold):
+        if not passes_deviation_gate(
+            current_request_mb,
+            new_request_mb,
+            increase_threshold,
+            decrease_threshold,
+            settings.RESOURCE_TUNING_MIN_DELTA_MI,
+        ):
             # Change too small to be worth a commit — keep current memory.
             new_limit = current_resources["limits_memory"]
             new_request = current_resources["requests_memory"]
@@ -478,7 +485,13 @@ async def _analyze_component_resources(
             max_cpu_limit_m=get_max_cpu_limit_m(cluster),
         )
         new_cpu_request_m = parse_k8s_cpu_to_m(cpu_request)
-        if passes_deviation_gate(current_cpu_request_m, new_cpu_request_m, increase_threshold, decrease_threshold):
+        if passes_deviation_gate(
+            current_cpu_request_m,
+            new_cpu_request_m,
+            increase_threshold,
+            decrease_threshold,
+            settings.RESOURCE_TUNING_MIN_DELTA_M,
+        ):
             new_cpu_limit = cpu_limit
             new_cpu_request = cpu_request
             cpu_reason = cpu_reason_text
