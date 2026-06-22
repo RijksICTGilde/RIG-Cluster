@@ -113,19 +113,27 @@ def passes_deviation_gate(
     recommended: float,
     increase_threshold_percent: int,
     decrease_threshold_percent: int,
+    min_abs_delta: float = 0.0,
 ) -> bool:
-    """Asymmetric change gate used to avoid a storm of tiny tuning commits.
+    """Deadband gate used to avoid churning on insignificant drift.
 
-    React promptly to increases (reliability), conservatively to decreases
-    (cost-only — not worth churning git/ArgoCD for a small reclaim).
+    A change must clear BOTH an absolute floor and a percentage threshold:
 
-    Returns True when the change from ``current`` to ``recommended`` is large
-    enough to act on: increases must exceed ``increase_threshold_percent``,
-    decreases the (larger) ``decrease_threshold_percent``.
+    - ``min_abs_delta``: ignore changes smaller than this in absolute terms
+      (e.g. a few Mi / a few millicores), so tiny pods near the floor don't
+      get resized on every sweep over a handful of megabytes.
+    - percentage: increases must exceed ``increase_threshold_percent`` (react
+      promptly — reliability), decreases the larger ``decrease_threshold_percent``
+      (conservative — a small reclaim isn't worth a pod rollout).
+
+    Returns True only when the change is worth acting on.
     """
+    delta = abs(recommended - current)
+    if delta < min_abs_delta:
+        return False
     if current <= 0:
         return True
-    deviation = abs(recommended - current) / current * 100
+    deviation = delta / current * 100
     if recommended >= current:
         return deviation >= increase_threshold_percent
     return deviation >= decrease_threshold_percent

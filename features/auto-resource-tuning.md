@@ -13,7 +13,7 @@ Recommendations come from one of two sources:
 - **VPA recommender** (on clusters where `supports_vpa` is true, e.g. `odcn-production`): an Off-mode `VerticalPodAutoscaler` is generated per component. The platform's recommender publishes CPU **and** memory recommendations to its `.status`, which the tuner reads. This is the preferred source and is the only one that tunes CPU.
 - **Prometheus** (fallback on non-VPA clusters, and for components whose VPA has no recommendation yet): the historical memory-usage window described below. Memory only.
 
-Available both as an on-demand API endpoint (`POST /api/resources/{project_name}/tune`) and as a scheduled background process that tunes the whole estate (see Scheduled Auto-Tuning).
+Available both as an on-demand API endpoint (`POST /api/resources/{project_name}/tune`) and as a nightly background sweep that tunes the whole estate (see Nightly Auto-Tuning).
 
 ## How It Works
 
@@ -143,16 +143,22 @@ Detects broken deployments (crash loops, missing images, OOM kills) and disables
 | `RESOURCE_TUNING_MEMORY_BUFFER_PERCENT` | `25` | Headroom above observed/VPA target |
 | `RESOURCE_TUNING_INCREASE_THRESHOLD` | `10` | Apply an increase when the request grows by ≥ this % |
 | `RESOURCE_TUNING_DECREASE_THRESHOLD` | `30` | Apply a decrease only when the request shrinks by ≥ this % |
-| `RESOURCE_TUNING_SCHEDULER_ENABLED` | `true` | Run the scheduled fleet-wide tuner |
-| `RESOURCE_TUNING_SCHEDULER_INTERVAL` | `21600` | Seconds between scheduler ticks (6h) |
-| `RESOURCE_TUNING_COOLDOWN_DAYS` | `7` | Don't re-tune a project within this many days |
-| `RESOURCE_TUNING_MAX_PROJECTS_PER_TICK` | `5` | Cap projects tuned per tick (anti-storm) |
+| `RESOURCE_TUNING_MIN_DELTA_MI` | `16` | Ignore memory changes smaller than this (absolute deadband) |
+| `RESOURCE_TUNING_MIN_DELTA_M` | `10` | Ignore CPU changes smaller than this in millicores (absolute deadband) |
+| `RESOURCE_TUNING_SCHEDULER_ENABLED` | `true` | Run the nightly fleet-wide tuner |
+| `RESOURCE_TUNING_HOUR` | `2` | Hour (Europe/Amsterdam) of the nightly sweep (off-peak) |
+| `RESOURCE_TUNING_PACE_SECONDS` | `15` | Delay after each changed project, to spread pod rollouts |
 
 Cluster-specific bounds live in `cluster_config.py`: memory via `get_min_memory_limit_mi()` / `get_max_memory_limit_mi()` / `get_max_memory_request_mi()`, CPU via `get_min_cpu_m()` (25m) / `get_max_cpu_request_m()` (250m) / `get_max_cpu_limit_m()` (4000m), and the `supports_vpa` capability flag.
 
-### Asymmetric Deviation Gate
+### Deviation Deadband
 
-To avoid a storm of tiny commits, changes are gated by direction: an **increase** is applied when the request grows by at least `RESOURCE_TUNING_INCREASE_THRESHOLD` (react promptly - reliability), while a **decrease** must clear the larger `RESOURCE_TUNING_DECREASE_THRESHOLD` (conservative - reclaiming a little memory/CPU isn't worth the churn). OOM-driven increases bypass the gate entirely.
+A change must clear **both** an absolute floor and a percentage threshold, so the tuner never churns on insignificant drift:
+
+- **Absolute floor** (`RESOURCE_TUNING_MIN_DELTA_MI` / `_M`): ignore changes of only a few Mi / millicores, so tiny pods near the cluster minimum don't get resized every sweep over a handful of megabytes.
+- **Percentage** (asymmetric): an **increase** applies at ≥ `RESOURCE_TUNING_INCREASE_THRESHOLD` (react promptly - reliability); a **decrease** must clear the larger `RESOURCE_TUNING_DECREASE_THRESHOLD` (conservative - a small reclaim isn't worth a pod rollout).
+
+OOM-driven increases bypass the deadband entirely. The deadband is also what makes an explicit cooldown unnecessary: a right-sized project's recommendation stays within the deadband of its current size, so the nightly sweep simply produces no change for it.
 
 ### Opt-Out
 
@@ -164,7 +170,7 @@ Auto-tuning is **on by default**. A component opts out with `auto-tune-resources
 |------|---------|
 | `opi/services/resource_analyzer.py` | Pure computation: usage/VPA target → memory & CPU recommendation, asymmetric gate |
 | `opi/services/resource_tuning_service.py` | Orchestrates analysis (VPA or Prometheus), applies changes, commits |
-| `opi/core/resource_tuning_scheduler.py` | Scheduled fleet-wide tuner (cooldown + per-tick cap) |
+| `opi/core/resource_tuning_scheduler.py` | Nightly fleet-wide tuner (off-peak sweep + rollout pacing) |
 | `opi/connectors/vpa.py` | Parse VPA `.status.recommendation` (CPU→m, memory→Mi) |
 | `opi/api/resource_router.py` | On-demand API endpoint |
 | `opi/handlers/project_file_handler.py` | YAML manipulation: read/write resources, opt-out flag |
@@ -195,15 +201,15 @@ All changes flow through git commits. The tuner reads recommendations (from the 
 | **Fresh git reads** | Tuning reads the latest YAML from git before modifying, preventing stale cache data from overwriting concurrent changes |
 | **Legacy key migration** | Flat `cpu`/`memory` resource keys are migrated into nested `requests`/`limits` before removal, preventing silent data loss |
 
-## Scheduled Auto-Tuning
+## Nightly Auto-Tuning
 
-`ResourceTuningScheduler` (`opi/core/resource_tuning_scheduler.py`, started from the server lifespan, modelled on `BackupScheduler`) runs every `RESOURCE_TUNING_SCHEDULER_INTERVAL` and tunes the whole estate:
+`ResourceTuningScheduler` (`opi/core/resource_tuning_scheduler.py`, started from the server lifespan) runs **once a night** at `RESOURCE_TUNING_HOUR` (Europe/Amsterdam, default 02:00 — off-peak, so resize-triggered pod restarts don't disrupt traffic). Each night it:
 
-1. Enumerate all projects with a deployment on this OPI's cluster.
-2. Select those past cooldown - the most recent `auto-tune`/`oom-watcher` resource-history timestamp is older than `RESOURCE_TUNING_COOLDOWN_DAYS` (or never tuned). No extra state store: the cooldown is read from the existing resource history.
-3. Tune the oldest-first batch, capped at `RESOURCE_TUNING_MAX_PROJECTS_PER_TICK`, by calling `tune_deployment_resources(project)`.
+1. Enumerates every project with a deployment on this OPI's cluster.
+2. Calls `tune_deployment_resources(project)` for each. The deadband decides what actually changes; converged projects produce no change and cost only the (cheap, read-only) analysis.
+3. Paces `RESOURCE_TUNING_PACE_SECONDS` after each project that changed, so a convergence night spreads its pod rollouts instead of bouncing the whole fleet at once.
 
-The per-project cooldown plus the per-tick cap bound how many commits/ArgoCD reprocessings happen per tick. Because reductions are conservative (decrease threshold + cooldown + OOM floor) and increases react to real pressure, enabling writes fleet-wide is safe even while freshly-created VPAs are still warming up their ~8-day histogram. Urgent memory increases in the meantime are handled by the reactive OOM watcher, which is independent of this cooldown.
+Why a nightly full sweep rather than a paced/capped/cooldown schedule: **checking is cheap** (VPA `.status` reads + a few Prometheus queries, no writes); the real cost — commit, reprocess, ArgoCD sync, rollout — is only paid when a project drifts past the deadband. So cost scales with how many projects *drift*, not how many are checked, and the deadband (not a cooldown) is what prevents night-to-night churn. Urgent under-provisioning between sweeps is handled out-of-band by the reactive OOM watcher.
 
 ## Related
 

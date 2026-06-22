@@ -334,9 +334,12 @@ class Settings(BaseSettings):
     RESOURCE_TUNING_DECREASE_THRESHOLD: int = 30  # Apply a decrease only when the request shrinks by >= this %
     # Scheduled fleet-wide auto-tuner (reads VPA where available, else Prometheus)
     RESOURCE_TUNING_SCHEDULER_ENABLED: bool = True
-    RESOURCE_TUNING_SCHEDULER_INTERVAL: int = 21600  # seconds between ticks (6h)
-    RESOURCE_TUNING_COOLDOWN_DAYS: int = 7  # Don't re-tune a project within this many days
-    RESOURCE_TUNING_MAX_PROJECTS_PER_TICK: int = 5  # Cap projects tuned per tick (anti-storm)
+    RESOURCE_TUNING_HOUR: int = 2  # Hour (Europe/Amsterdam) of the nightly fleet sweep, off-peak
+    RESOURCE_TUNING_PACE_SECONDS: int = 15  # Delay after each changed project, to spread pod rollouts
+    # Absolute deadband: ignore a change smaller than this regardless of percentage,
+    # so tiny pods near the floor don't churn on a few MB / a few millicores.
+    RESOURCE_TUNING_MIN_DELTA_MI: int = 16  # memory, in Mi
+    RESOURCE_TUNING_MIN_DELTA_M: int = 10  # CPU, in millicores
     # max_memory_limit_mi is now in cluster_config (per-cluster setting)
 
     # Deployment sanitization configuration
