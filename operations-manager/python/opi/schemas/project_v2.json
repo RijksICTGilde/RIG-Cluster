@@ -199,9 +199,10 @@
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string" },
-        "url": { "type": "string", "pattern": "^(?:https?|ssh|git)://[^\\s\\u0000\"]+\\Z" },
+        "url": { "type": "string", "pattern": "^(?:(?:https?|ssh|git)://)?[^\\s\\u0000\"]+\\Z" },
         "username": { "type": "string" },
-        "password": { "$ref": "#/$defs/age-encrypted-or-plain" }
+        "password": { "$ref": "#/$defs/age-encrypted-or-plain" },
+        "secretName": { "type": "string" }
       }
     },
 
