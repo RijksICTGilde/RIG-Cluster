@@ -496,16 +496,15 @@ class PrometheusConnector:
             return {
                 "cpu": [],
                 "memory": [],
-                "requests": [],
                 "network_in": [],
                 "network_out": [],
                 "disk_read": [],
                 "disk_write": [],
                 "cpu_limit": None,
                 "memory_limit": None,
+                "memory_request": None,
                 "cpu_timestamps": [],
                 "memory_timestamps": [],
-                "requests_timestamps": [],
                 "network_timestamps": [],
                 "disk_timestamps": [],
             }
@@ -517,16 +516,15 @@ class PrometheusConnector:
         result: dict[str, Any] = {
             "cpu": [],
             "memory": [],
-            "requests": [],
             "network_in": [],
             "network_out": [],
             "disk_read": [],
             "disk_write": [],
             "cpu_limit": None,
             "memory_limit": None,
+            "memory_request": None,
             "cpu_timestamps": [],
             "memory_timestamps": [],
-            "requests_timestamps": [],
             "network_timestamps": [],
             "disk_timestamps": [],
         }
@@ -575,29 +573,6 @@ class PrometheusConnector:
                             "value": round(memory_mb, 1),
                         }
                     )
-
-            # HTTP requests per minute time-series (rate * 60 for better readability)
-            requests_query = (
-                f'sum(rate(http_requests_total{{namespace="{namespace}",pod=~"{pod_prefix}.*"}}[{step}])) * 60'
-            )
-            requests_result = self.prom.custom_query_range(
-                query=requests_query,
-                start_time=start_time,
-                end_time=end_time,
-                step=step,
-            )
-
-            logger.debug(f"Prometheus requests result: {requests_result}")
-            if requests_result and len(requests_result) > 0 and "values" in requests_result[0]:
-                for ts, value in requests_result[0]["values"]:
-                    rpm = float(value)  # requests per minute
-                    result["requests"].append(
-                        {
-                            "timestamp": ts,
-                            "value": round(rpm, 1),
-                        }
-                    )
-                logger.debug(f"Processed {len(result['requests'])} request data points")
 
             # Network receive (bytes/sec, convert to KB/s)
             network_in_query = (
@@ -690,7 +665,6 @@ class PrometheusConnector:
             # Extract timestamps for each metric (will be converted to local time in browser)
             result["cpu_timestamps"] = [item["timestamp"] for item in result["cpu"]]
             result["memory_timestamps"] = [item["timestamp"] for item in result["memory"]]
-            result["requests_timestamps"] = [item["timestamp"] for item in result["requests"]]
             result["network_timestamps"] = [item["timestamp"] for item in result["network_in"]]
             result["disk_timestamps"] = [item["timestamp"] for item in result["disk_read"]]
 
@@ -718,6 +692,18 @@ class PrometheusConnector:
             if memory_limit_result and len(memory_limit_result) > 0:
                 memory_limit_bytes = float(memory_limit_result[0]["value"][1])
                 result["memory_limit"] = round(memory_limit_bytes / (1024 * 1024), 0)  # Convert to MB
+
+            # Memory request in bytes, convert to MB (shown on the chart when it
+            # differs from the limit — the tuner adjusts requests, not limits)
+            memory_request_query = (
+                f"max(kube_pod_container_resource_requests{{"
+                f'namespace="{namespace}",pod=~"{pod_prefix}.*",resource="memory"'
+                f"}})"
+            )
+            memory_request_result = self.prom.custom_query(memory_request_query)
+            if memory_request_result and len(memory_request_result) > 0:
+                memory_request_bytes = float(memory_request_result[0]["value"][1])
+                result["memory_request"] = round(memory_request_bytes / (1024 * 1024), 0)  # Convert to MB
 
         except Exception as e:
             logger.warning(f"Failed to get time-series metrics for {namespace}/{pod_prefix}: {e}")

@@ -681,16 +681,15 @@ class GrafanaPrometheusConnector:
             return {
                 "cpu": [],
                 "memory": [],
-                "requests": [],
                 "network_in": [],
                 "network_out": [],
                 "disk_read": [],
                 "disk_write": [],
                 "cpu_limit": None,
                 "memory_limit": None,
+                "memory_request": None,
                 "cpu_timestamps": [],
                 "memory_timestamps": [],
-                "requests_timestamps": [],
                 "network_timestamps": [],
                 "disk_timestamps": [],
             }
@@ -702,16 +701,15 @@ class GrafanaPrometheusConnector:
         result: dict[str, Any] = {
             "cpu": [],
             "memory": [],
-            "requests": [],
             "network_in": [],
             "network_out": [],
             "disk_read": [],
             "disk_write": [],
             "cpu_limit": None,
             "memory_limit": None,
+            "memory_request": None,
             "cpu_timestamps": [],
             "memory_timestamps": [],
-            "requests_timestamps": [],
             "network_timestamps": [],
             "disk_timestamps": [],
         }
@@ -727,9 +725,6 @@ class GrafanaPrometheusConnector:
                 "memory": (
                     f'sum(container_memory_working_set_bytes{{namespace="{namespace}",'
                     f'pod=~"{pod_prefix}.*",container!=""}})'
-                ),
-                "requests": (
-                    f'sum(rate(http_requests_total{{namespace="{namespace}",pod=~"{pod_prefix}.*"}}[{step}])) * 60'
                 ),
                 "network_in": (
                     f"sum(rate(container_network_receive_bytes_total{{"
@@ -766,7 +761,6 @@ class GrafanaPrometheusConnector:
                 # refId -> (result_key, multiplier, rounding)
                 "cpu": ("cpu", 1000, 2),  # cores -> millicores
                 "memory": ("memory", 1 / (1024 * 1024), 1),  # bytes -> MB
-                "requests": ("requests", 1, 1),
                 "network_in": ("network_in", 1, 2),
                 "network_out": ("network_out", 1, 2),
                 "disk_read": ("disk_read", 1, 2),
@@ -782,7 +776,6 @@ class GrafanaPrometheusConnector:
             # Extract timestamps
             result["cpu_timestamps"] = [item["timestamp"] for item in result["cpu"]]
             result["memory_timestamps"] = [item["timestamp"] for item in result["memory"]]
-            result["requests_timestamps"] = [item["timestamp"] for item in result["requests"]]
             result["network_timestamps"] = [item["timestamp"] for item in result["network_in"]]
             result["disk_timestamps"] = [item["timestamp"] for item in result["disk_read"]]
 
@@ -795,6 +788,11 @@ class GrafanaPrometheusConnector:
                 ),
                 "memory_limit": (
                     f"sum(kube_pod_container_resource_limits{{"
+                    f'namespace="{namespace}",pod=~"{pod_prefix}.*",resource="memory"'
+                    f"}})"
+                ),
+                "memory_request": (
+                    f"sum(kube_pod_container_resource_requests{{"
                     f'namespace="{namespace}",pod=~"{pod_prefix}.*",resource="memory"'
                     f"}})"
                 ),
@@ -811,6 +809,11 @@ class GrafanaPrometheusConnector:
             if memory_limit_data:
                 memory_limit_bytes = float(memory_limit_data[0]["value"][1])
                 result["memory_limit"] = round(memory_limit_bytes / (1024 * 1024), 0)
+
+            memory_request_data = limit_results.get("memory_request", [])
+            if memory_request_data:
+                memory_request_bytes = float(memory_request_data[0]["value"][1])
+                result["memory_request"] = round(memory_request_bytes / (1024 * 1024), 0)
 
         except Exception as e:
             logger.warning(f"Failed to get time-series metrics for {namespace}/{pod_prefix}: {e}")

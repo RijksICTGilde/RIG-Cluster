@@ -1997,6 +1997,8 @@
             const color = canvas.dataset.color || '#39870c';
             const limitStr = canvas.dataset.limit;
             const limit = (limitStr && limitStr !== 'null' && limitStr !== 'None') ? parseFloat(limitStr) : null;
+            const requestStr = canvas.dataset.request;
+            const request = (requestStr && requestStr !== 'null' && requestStr !== 'None') ? parseFloat(requestStr) : null;
 
             // Parse warning and critical thresholds for PVC storage charts
             const warningStr = canvas.dataset.warning;
@@ -2074,28 +2076,51 @@
                         }
                     };
                 }
-            } else if (limit !== null) {
-                annotations.limitLine = {
-                    type: 'line',
-                    yMin: limit,
-                    yMax: limit,
-                    borderColor: '#d52b1e',
-                    borderWidth: 2,
-                    borderDash: [6, 4],
-                    label: {
-                        display: true,
-                        content: 'Limit',
-                        position: 'end',
-                        backgroundColor: '#d52b1e',
-                        color: '#fff',
-                        font: { size: 10 }
-                    }
-                };
+            } else {
+                if (limit !== null) {
+                    annotations.limitLine = {
+                        type: 'line',
+                        yMin: limit,
+                        yMax: limit,
+                        borderColor: '#d52b1e',
+                        borderWidth: 2,
+                        borderDash: [6, 4],
+                        label: {
+                            display: true,
+                            content: 'Limit',
+                            position: 'end',
+                            backgroundColor: '#d52b1e',
+                            color: '#fff',
+                            font: { size: 10 }
+                        }
+                    };
+                }
+                // Show the request line only when it differs from the limit
+                // (the tuner adjusts requests, so request often sits below limit)
+                if (request !== null && request !== limit) {
+                    annotations.requestLine = {
+                        type: 'line',
+                        yMin: request,
+                        yMax: request,
+                        borderColor: '#007bc7',
+                        borderWidth: 2,
+                        borderDash: [3, 3],
+                        label: {
+                            display: true,
+                            content: 'Request',
+                            position: 'start',
+                            backgroundColor: '#007bc7',
+                            color: '#fff',
+                            font: { size: 10 }
+                        }
+                    };
+                }
             }
 
-            // Calculate y-axis max to include limit if present
+            // Calculate y-axis max to include limit/request if present
             const maxValue = Math.max(...values);
-            const yMax = limit ? Math.max(maxValue * 1.1, limit * 1.1) : maxValue * 1.1;
+            const refMax = Math.max(limit || 0, request || 0);
+            const yMax = refMax ? Math.max(maxValue * 1.1, refMax * 1.1) : maxValue * 1.1;
 
             new Chart(canvas, {
                 type: 'line',
