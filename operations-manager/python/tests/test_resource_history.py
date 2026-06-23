@@ -450,11 +450,13 @@ class TestTuneBaseComponentUpdate:
                 "source": "oom-watcher",
             }
         ]
+        # Coupled limit/request: an expired floor lets the limit follow the
+        # request down (a frozen, differing limit would stay put regardless).
         data = _make_project_data(
             component_limits="512Mi",
-            component_requests="256Mi",
+            component_requests="512Mi",
             deployment_limits="512Mi",
-            deployment_requests="256Mi",
+            deployment_requests="512Mi",
             deployment_history=oom_history,
         )
         mock_git_connector = AsyncMock()
@@ -569,10 +571,13 @@ class TestCheckDeploymentResources:
                 "source": "oom-watcher",
             }
         ]
+        # Coupled limit/request so the fresh floor actually holds the limit
+        # while the request is allowed to drop.
         data = _make_project_data(
             component_limits="512Mi",
+            component_requests="512Mi",
             deployment_limits="512Mi",
-            deployment_requests="256Mi",
+            deployment_requests="512Mi",
             deployment_history=oom_history,
         )
         mock_project = MagicMock()
@@ -586,7 +591,7 @@ class TestCheckDeploymentResources:
         assert len(results) == 1
         assert results[0].floor_blocked is True
         assert results[0].recommended_limit == "512Mi"
-        assert int(results[0].recommended_request.removesuffix("Mi")) < 256
+        assert int(results[0].recommended_request.removesuffix("Mi")) < 512
         assert results[0].saving_mb > 0
 
     @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
@@ -603,9 +608,13 @@ class TestCheckDeploymentResources:
                 "source": "oom-watcher",
             }
         ]
+        # Coupled limit/request so that, with the floor expired, the limit is
+        # free to follow the request down.
         data = _make_project_data(
             component_limits="512Mi",
+            component_requests="512Mi",
             deployment_limits="512Mi",
+            deployment_requests="512Mi",
             deployment_history=oom_history,
         )
         mock_project = MagicMock()
