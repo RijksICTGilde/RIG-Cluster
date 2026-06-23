@@ -11,6 +11,7 @@ from __future__ import annotations
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.generators import (
     AGEKeyPairGenerator,
+    AttachmentStagingResolveGenerator,
     EncryptedAPIKeyGenerator,
     EncryptedPrivateKeyGenerator,
     ProjectNameGenerator,
@@ -44,10 +45,16 @@ USER_ENV_VARS_ENCRYPT_GEN_EDITABLE = Editable(
     generator=UserEnvVarsEncryptGenerator(),
 )
 
+ATTACHMENTS_RESOLVE_GEN_EDITABLE = Editable(
+    yaml_path="_generated/attachments-resolved",
+    generator=AttachmentStagingResolveGenerator(),
+)
+
 GENERATED_EDITABLES_PURE: list[Editable] = [
     PROJECT_NAME_EDITABLE,
     AGE_PUBLIC_KEY_GEN_EDITABLE,
     AGE_PRIVATE_KEY_GEN_EDITABLE,
     API_KEY_GEN_EDITABLE,
     USER_ENV_VARS_ENCRYPT_GEN_EDITABLE,
+    ATTACHMENTS_RESOLVE_GEN_EDITABLE,
 ]
