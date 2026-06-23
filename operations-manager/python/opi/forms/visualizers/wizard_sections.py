@@ -162,6 +162,7 @@ COMPONENTS_SECTION = FormSection(
                 ),
                 Sequence(field_name="services{persistent-storage}/config"),
                 Sequence(field_name="services{temp-storage}/config"),
+                Sequence(field_name="services{attachments}/use"),
                 Fieldset(
                     legend="Prometheus metrics scraper configuratie",
                     depends_on="services",
