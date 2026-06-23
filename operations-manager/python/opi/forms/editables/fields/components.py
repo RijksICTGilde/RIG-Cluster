@@ -194,6 +194,44 @@ TEMP_STORAGE_SEQUENCE_EDITABLE = Editable(
     ],
 )
 
+ATTACHMENT_USE_REFERENCE_EDITABLE = Editable(
+    yaml_path="components[*]/services{attachments}/use[*]/reference",
+    values_provider="AttachmentOptionsProvider",
+    required=True,
+)
+
+ATTACHMENT_USE_PROVIDE_AS_EDITABLE = Editable(
+    yaml_path="components[*]/services{attachments}/use[*]/provide-as",
+    values_provider="AttachmentProvideAsOptionsProvider",
+    required=True,
+    default="file",
+)
+
+ATTACHMENT_USE_PATH_EDITABLE = Editable(
+    yaml_path="components[*]/services{attachments}/use[*]/path",
+    validator=PathValidator(),
+    remove_when_none=True,
+)
+
+ATTACHMENT_USE_ENV_NAME_EDITABLE = Editable(
+    yaml_path="components[*]/services{attachments}/use[*]/env-name",
+    remove_when_none=True,
+)
+
+ATTACHMENT_USE_SEQUENCE_EDITABLE = Editable(
+    yaml_path="components[*]/services{attachments}/use",
+    depends_on="components[*]/services",
+    show_when={"contains": "attachments"},
+    virtualize=("services", "_services-config"),
+    min_items=1,
+    children=[
+        ATTACHMENT_USE_REFERENCE_EDITABLE,
+        ATTACHMENT_USE_PROVIDE_AS_EDITABLE,
+        ATTACHMENT_USE_PATH_EDITABLE,
+        ATTACHMENT_USE_ENV_NAME_EDITABLE,
+    ],
+)
+
 METRICS_PORT_EDITABLE = Editable(
     yaml_path="components[*]/services{metrics-scraper}/port",
     converter=IntegerConverter(),
@@ -232,6 +270,7 @@ COMPONENTS_SEQUENCE_EDITABLE = Editable(
         COMPONENT_USER_ENV_VARS_EDITABLE,
         PERSISTENT_STORAGE_SEQUENCE_EDITABLE,
         TEMP_STORAGE_SEQUENCE_EDITABLE,
+        ATTACHMENT_USE_SEQUENCE_EDITABLE,
         METRICS_PORT_EDITABLE,
         METRICS_PATH_EDITABLE,
     ],
