@@ -28,6 +28,9 @@ class ServiceType(Enum):
     # Platform services (always-on, not user-selectable)
     PLATFORM = "platform"
 
+    # File attachments (uploaded files mounted into a pod or exposed as env-var)
+    ATTACHMENTS = "attachments"
+
 
 class CloneFromType(Enum):
     """Type of clone-from source for deployment cloning."""
