@@ -113,7 +113,7 @@
                 <c-layout-flow gap="sm">
                     {% for link in deployment.ingress_links %}
                     <c-button
-                        label="{{ link.component_name }}"
+                        label="{{ link.component_name }}{% if link.path and link.path != '/' %} {{ link.path }}{% endif %}"
                         kind="secondary"
                         size="sm"
                         showIcon="after"
