@@ -1986,7 +1986,7 @@ class ProjectManager:
 
             await self._argo_manager.wait_for_application_created(
                 app_name=infra_app_name,
-                timeout=120,  # 2 minutes timeout for application creation
+                timeout=360,  # 6 min: umbrella app-of-apps refresh can take minutes under load
             )
 
             logger.info(f"Infrastructure application '{infra_app_name}' has been created, refreshing it")
@@ -2158,11 +2158,12 @@ class ProjectManager:
                 precedence over ``deployment_name``). Use this to scope a redeploy to
                 the deployment(s) actually affected by a change (e.g. domain approval),
                 instead of reprocessing the whole project. Empty list = no deployments.
-            argocd_resources_changed: Whether ArgoCD Application/AppProject manifests
-                may have changed (new/removed deployment, repo URL change).  When False,
-                skips refreshing the user-applications ArgoCD app and waiting for app
-                creation — significantly faster for operations that only change deployment
-                manifests (e.g. resource tuning, image updates).  Defaults to True.
+            argocd_resources_changed: Retained for caller compatibility. The
+                user-applications refresh decision is now driven by ground-truth
+                Application existence (a refresh happens only when a target
+                Application CR is not yet present), so this flag no longer controls
+                it. Redeploys of existing apps skip the expensive umbrella refresh
+                regardless of this value.
 
         Returns:
             True if all operations were successful, False otherwise
@@ -2357,21 +2358,16 @@ class ProjectManager:
 
             argo_connector = create_argo_connector()
 
-            # Refresh user-applications (contains ArgoCD Application/AppProject manifests).
-            # Skip when only deployment manifests changed (e.g. resource tuning).
-            if argocd_resources_changed:
-                await argo_connector.refresh_application("user-applications")
-            else:
-                logger.info("Skipping user-applications refresh (no ArgoCD resource changes)")
-
             project_name = await self.get_name()
             deployments = await self.get_deployments(cluster_filter=True, deployment_names=targets)
             sync_failures: list[str] = []
 
             if deployments and project_name:
                 from opi.services.oom_watcher import (
+                    STALL_NOTICE_SECONDS,
                     DeploymentHealthError,
                     create_health_check_callback,
+                    describe_components_waiting,
                     disable_components_for_image_pull,
                 )
                 from opi.services.resource_tuning_service import tune_deployment_resources
@@ -2388,23 +2384,51 @@ class ProjectManager:
                 app_names = [ad[0] for ad in app_deployments]
                 logger.info(f"Waiting for {len(app_names)} ArgoCD applications to sync for {project_name}")
 
-                # Wait for all applications to be created (ArgoCD needs to sync user-applications first).
-                # Skip when user-applications refresh was skipped — apps already exist.
-                # All waits run concurrently: they are read-only polls.
-                if argocd_resources_changed:
+                # Decide whether the user-applications app-of-apps needs a refresh.
+                # A refresh re-renders all ~90 child apps (the umbrella lacks the
+                # manifest-generate-paths annotation, see issue #130), so it is slow
+                # and only worth it when a target Application CR does not yet exist
+                # (new deployment). For redeploys of existing apps it is wasted time
+                # in the critical path. Existence is checked against the Kubernetes
+                # API (ground truth); the ArgoCD API lies when its cache is stalled.
+                # Fail safe: anything not confirmed present (False or unknown None)
+                # triggers the refresh. The argocd_resources_changed flag is retained
+                # on the signature for caller compatibility but no longer drives this.
+                existence = await asyncio.gather(
+                    *(
+                        self._kubectl_connector.argocd_application_exists(
+                            app_name, get_argo_namespace(deployment.get("cluster", "local"))
+                        )
+                        for app_name, deployment in app_deployments
+                    )
+                )
+                apps_to_create = [app_names[i] for i, exists in enumerate(existence) if exists is not True]
+
+                # Wait for not-yet-present applications to be created (ArgoCD needs to
+                # sync user-applications first). All waits run concurrently: read-only polls.
+                if apps_to_create:
+                    logger.info(
+                        f"Refreshing user-applications: {len(apps_to_create)} application(s) not yet present "
+                        f"({', '.join(apps_to_create)})"
+                    )
+                    await argo_connector.refresh_application("user-applications")
 
                     async def _wait_created(app_name: str) -> str | None:
                         try:
                             await self._argo_manager.wait_for_application_created(
-                                app_name=app_name, timeout=120, poll_interval=5
+                                app_name=app_name, timeout=360, poll_interval=5
                             )
                             return None
                         except TimeoutError:
                             logger.error(f"Timed out waiting for ArgoCD application '{app_name}' to be created")
                             return f"{app_name}: timed out waiting for application to be created"
 
-                    created_results = await asyncio.gather(*(_wait_created(name) for name in app_names))
+                    created_results = await asyncio.gather(*(_wait_created(name) for name in apps_to_create))
                     sync_failures.extend(result for result in created_results if result)
+                else:
+                    logger.info(
+                        f"All {len(app_names)} target application(s) already exist; skipping user-applications refresh"
+                    )
 
                 # Refresh each application that was created, then wait for sync+healthy.
                 # Refresh + wait run concurrently per application (read-only polls);
@@ -2417,6 +2441,8 @@ class ProjectManager:
 
                     # Build health check callback for this deployment
                     oom_callback = None
+                    component_names: list[str] = []
+                    component_refs: dict[str, str] = {}
                     if namespace:
                         components = deployment.get("components", [])
                         component_names = [
@@ -2438,6 +2464,48 @@ class ProjectManager:
                                 component_refs=component_refs,
                             )
 
+                    # Live per-deployment progress subtask: surfaces "what are we
+                    # waiting on" each poll (which component, why), so a stalled
+                    # rollout is no longer silent. Falls back to None when there is
+                    # no progress manager (e.g. non-task callers).
+                    app_subtask = (
+                        progress_manager.add_subtask(argo_task, f"{dep_name}: uitrol voorbereiden…")
+                        if progress_manager and argo_task
+                        else None
+                    )
+
+                    # Track the last reported line per deployment to detect stalls.
+                    stall: dict[str, Any] = {"line": None, "since": 0}
+
+                    async def _on_progressing(elapsed: int) -> None:
+                        if app_subtask and namespace and component_names:
+                            try:
+                                statuses = await describe_components_waiting(namespace, component_names, component_refs)
+                            except Exception:
+                                statuses = []
+                            if statuses:
+                                detail = " · ".join(f"{ref}: {reason}" for ref, reason in statuses)
+                                line = f"{dep_name} — {detail}"
+                            else:
+                                line = f"{dep_name} — wachten tot componenten gereed zijn"
+
+                            if line != stall["line"]:
+                                stall["line"] = line
+                                stall["since"] = elapsed
+                            waited = elapsed - stall["since"]
+                            if waited >= STALL_NOTICE_SECONDS and statuses:
+                                comps = ", ".join(ref for ref, _ in statuses)
+                                line = f"{line}  (al {waited}s onveranderd — controleer eventueel de logs van: {comps})"
+                            progress_manager.update_task(app_subtask, line)
+
+                        # Failure detection (OOM / ImagePull / CrashLoop) runs after
+                        # reporting so the user still sees the live status before a
+                        # DeploymentHealthError aborts the wait.
+                        if oom_callback:
+                            await oom_callback(elapsed)
+
+                    on_progressing = _on_progressing if (app_subtask or oom_callback) else None
+
                     try:
                         reconciled_at = await argo_connector.refresh_application(app_name)
                         await self._argo_manager.wait_for_application_synced(
@@ -2445,18 +2513,35 @@ class ProjectManager:
                             timeout=300,
                             poll_interval=5,
                             refreshed_after=reconciled_at,
-                            on_progressing=oom_callback,
+                            on_progressing=on_progressing,
                         )
                         logger.info(f"Application '{app_name}' is synced and healthy")
+                        if app_subtask:
+                            progress_manager.update_task(app_subtask, f"{dep_name}: uitgerold en gezond")
+                            progress_manager.complete_subtask(app_subtask)
                         return {"app_name": app_name, "dep_name": dep_name, "status": "ok"}
                     except DeploymentHealthError as e:
                         logger.warning("Pod health issues during sync of '%s': %s", app_name, e)
+                        if app_subtask:
+                            comps = ", ".join(f.component_reference or f.component_name for f in e.failures)
+                            progress_manager.fail_subtask(
+                                app_subtask,
+                                f"{dep_name}: probleem bij {comps} — controleer de logs van dit/deze component(en)",
+                            )
                         return {"app_name": app_name, "dep_name": dep_name, "status": "health_error", "error": e}
                     except TimeoutError:
                         logger.error(f"Timed out waiting for '{app_name}' to sync")
+                        if app_subtask:
+                            last = stall["line"] or f"{dep_name}: nog niet gezond"
+                            progress_manager.fail_subtask(
+                                app_subtask,
+                                f"Time-out na 300s — {last}. Controleer de logs van het component.",
+                            )
                         return {"app_name": app_name, "dep_name": dep_name, "status": "timeout"}
                     except RuntimeError as e:
                         logger.error(f"Application '{app_name}' failed to sync: {e}")
+                        if app_subtask:
+                            progress_manager.fail_subtask(app_subtask, f"{dep_name}: {e}")
                         return {"app_name": app_name, "dep_name": dep_name, "status": "error", "error": e}
 
                 pending_apps = [(a, d) for a, d in app_deployments if not any(a in f for f in sync_failures)]
@@ -6779,6 +6864,13 @@ class ProjectManager:
         if await argo_connector.application_exists(app_name):
             logger.info(f"Refreshing ArgoCD application: {app_name}")
             await argo_connector.refresh_application(app_name)
+
+        # Schedule fire-and-forget health watcher so an image bump to a missing
+        # image (ImagePullBackOff) gets auto-disabled, same as the deploy path.
+        from opi.services.oom_watcher import schedule_oom_check
+
+        if settings.OOM_WATCHER_ENABLED:
+            schedule_oom_check(project_name, deployment_name)
 
         # 9. Build and return result
         actions_performed = ["image_update"]
