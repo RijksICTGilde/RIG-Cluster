@@ -46,12 +46,21 @@ def _converter_write(converter: Any, value: Any, context_data: dict[str, Any] | 
 
 
 def _read_submitted(submitted: dict[str, Any], ed: Editable) -> Any:
-    """Read a field value from submitted data, respecting virtualize."""
+    """Read a field value from submitted data, respecting virtualize.
+
+    Uses the list-aware ``smart_get_value`` (not plain ``get_value``) so that
+    reads stay symmetric with the writes in ``_write_field`` (which use
+    ``smart_set_value``). This matters on the final wizard pass, where the
+    submitted data is ``get_merged_data()`` with ``services`` devirtualized
+    back into a native list: a plain key like ``services/keycloak/...`` cannot
+    be traversed with ``get_value``, so a checkbox would read ``None`` ->
+    ``False`` and ``remove_when_none`` would silently delete it.
+    """
     virt = ed.virtualize
     read_path = apply_virtualize(ed.yaml_path, virt) if virt else ed.yaml_path
-    value = get_value(submitted, read_path)
+    value = smart_get_value(submitted, read_path)
     if value is None and virt and read_path != ed.yaml_path:
-        value = get_value(submitted, ed.yaml_path)
+        value = smart_get_value(submitted, ed.yaml_path)
     return value
 
 

@@ -258,3 +258,22 @@ class TestContainerImageValidator:
     def test_empty_returns_no_errors(self):
         assert ContainerImageValidator().validate("") == []
         assert ContainerImageValidator().validate(None) == []
+
+    def test_placeholder_brackets_rejected(self):
+        # The literal "<sha7>" placeholder that slipped past the old validator.
+        errors = ContainerImageValidator().validate("ghcr.io/minbzk/app:main-<sha7>")
+        assert errors
+        assert any("niet-toegestane tekens" in e for e in errors)
+        assert any("<" in e and ">" in e for e in errors)
+
+    def test_html_escaped_value_rejected(self):
+        # The multiply-HTML-escaped corruption seen in production.
+        errors = ContainerImageValidator().validate("ghcr.io/minbzk/app:main-&amp;amp;lt;sha7&amp;amp;gt;")
+        assert any("niet-toegestane tekens" in e for e in errors)
+
+    def test_leading_invalid_char_rejected(self):
+        errors = ContainerImageValidator().validate("-nginx:latest")
+        assert errors == ["Container image moet beginnen met een letter of cijfer"]
+
+    def test_valid_with_at_digest(self):
+        assert ContainerImageValidator().validate("registry/app@sha256:abc123") == []
