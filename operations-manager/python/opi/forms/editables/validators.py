@@ -105,17 +105,36 @@ class ComponentNameValidator:
 
 
 class ContainerImageValidator:
-    """Validates container image references are lowercase."""
+    """Validates container image references.
+
+    Enforces lowercase, no spaces, and the same allowed-character set as
+    the project schema's ``image`` pattern (alphanumerics plus ``._:/@-``,
+    starting with an alphanumeric). Keeping this in sync with the schema
+    means illegal characters are rejected up front with a clear message
+    instead of failing late during ``validate_project_schema``.
+    """
+
+    # Mirrors the "image" pattern in opi/schemas/project_v2.json.
+    _PATTERN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._:/@-]*)?\Z")
+    _ALLOWED_CHAR = re.compile(r"[A-Za-z0-9._:/@-]")
 
     def validate(self, value: Any) -> list[str]:
         if not value:
             return []
         value_str = str(value)
+        errors: list[str] = []
         if value_str != value_str.lower():
-            return ["Container image moet volledig in kleine letters zijn"]
+            errors.append("Container image moet volledig in kleine letters zijn")
         if " " in value_str:
-            return ["Container image mag geen spaties bevatten"]
-        return []
+            errors.append("Container image mag geen spaties bevatten")
+        if not self._PATTERN.match(value_str):
+            # Report the offending characters (spaces are flagged separately).
+            invalid = sorted({c for c in value_str if c != " " and not self._ALLOWED_CHAR.match(c)})
+            if invalid:
+                errors.append("Container image bevat niet-toegestane tekens: " + " ".join(invalid))
+            elif not errors:
+                errors.append("Container image moet beginnen met een letter of cijfer")
+        return errors
 
 
 class RealmRoleValidator:
