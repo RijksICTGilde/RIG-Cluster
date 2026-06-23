@@ -461,6 +461,15 @@ class ServiceAdapter:
             variables=[var.value for var in PlatformVariables],
             hidden=True,
         ),
+        ServiceType.ATTACHMENTS: ServiceDefinition(
+            name="Bijlagen",
+            description="Geuploade bestanden (bijv. certificaten) gekoppeld als bestand of env-var aan een component",
+            icon="map",
+            color="grijs-600",
+            scope="component",
+            variables=[],
+            hidden=True,
+        ),
         ServiceType.AUTHORIZATION_WALL: ServiceDefinition(
             name="Authorization Wall",
             description="OAuth2-proxy sidecar die Keycloak OIDC authenticatie afdwingt voor webapplicaties",
