@@ -51,6 +51,11 @@ HEALTH_CHECK_INTERVAL_SECONDS = 0
 # Stop checking after this many seconds (boot-time failures are fast).
 HEALTH_CHECK_MAX_ELAPSED_SECONDS = 120
 
+# When a component's waiting reason stays unchanged for this long, the progress
+# UI explicitly flags the stall (and points the user at that component's logs)
+# so silence during a stuck rollout becomes an actionable message.
+STALL_NOTICE_SECONDS = 45
+
 # Maximum number of inline OOM → tune → reprocess cycles per deployment.
 # With the sliding bump factor (3x/2x/1.5x), 3 attempts covers:
 #   25Mi → 75Mi → 150Mi → 300Mi  (should be enough for any boot)
@@ -227,6 +232,110 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
         logger.warning("Error checking pod health for %s/%s: %s", namespace, unique_name, e)
 
     return result
+
+
+def _describe_pod_waiting(pod: dict) -> str | None:
+    """Return a plain-language reason a pod is not Ready yet, or None if it looks ready.
+
+    Passes the raw Kubernetes reason/message through so the user gets the full
+    detail (and something to search for), wrapped in Dutch framing for the
+    common cases.
+    """
+    status = pod.get("status", {})
+    phase = status.get("phase", "")
+    container_statuses = status.get("containerStatuses", [])
+
+    # Not yet scheduled onto a node (e.g. insufficient memory/cpu, no node).
+    if phase == "Pending":
+        for cond in status.get("conditions", []):
+            if cond.get("type") == "PodScheduled" and cond.get("status") == "False":
+                msg = cond.get("message") or cond.get("reason") or "geen geschikte node beschikbaar"
+                return f"kan niet worden ingepland: {msg}"
+
+    # Container-level waiting reasons (pass the raw reason + message through).
+    for cs in container_statuses:
+        waiting = cs.get("state", {}).get("waiting")
+        if waiting:
+            reason = waiting.get("reason", "")
+            message = waiting.get("message", "")
+            suffix = f": {message}" if message else ""
+            if reason in _IMAGE_PULL_REASONS:
+                return f"image ophalen mislukt ({reason}){suffix}"
+            if reason in _CRASH_LOOP_REASONS:
+                return f"blijft herstarten na een crash{suffix}"
+            if reason == "ContainerCreating":
+                return f"container wordt aangemaakt{suffix}"
+            if reason:
+                return f"{reason}{suffix}"
+
+    # Running but not passing its readiness check (the classic silent stall).
+    not_ready = [
+        cs.get("name", "?")
+        for cs in container_statuses
+        if "running" in cs.get("state", {}) and not cs.get("ready", False)
+    ]
+    if not_ready:
+        return "draait, maar is nog niet gereed (readiness-check nog niet geslaagd)"
+
+    # Pod accepted but containers not reported yet.
+    if not container_statuses:
+        return "bezig met opstarten"
+
+    return None
+
+
+async def describe_components_waiting(
+    namespace: str,
+    component_names: list[str],
+    component_refs: dict[str, str] | None = None,
+) -> list[tuple[str, str]]:
+    """Describe, in plain language, why each component is not ready yet.
+
+    Diagnostic counterpart to :func:`check_pod_health`: it never raises and
+    never remediates. A single kubectl call lists the namespace pods; for every
+    component whose representative pod is not yet Ready it returns a
+    human-readable reason (scheduling problem, image pull, crash loop, container
+    creating, readiness not passing, ...).
+
+    Returns a list of ``(component_reference, reason)`` for not-ready components
+    only; ready components are omitted.
+    """
+    refs = component_refs or {}
+    wanted = set(component_names)
+    kubectl = KubectlConnector()
+
+    if not KubectlConnector.isConnected or not wanted:
+        return []
+
+    try:
+        args = ["get", "pods", "-n", namespace, "-o", "json"]
+        stdout, stderr, code = await kubectl.run_command(args)
+        if code != 0:
+            logger.debug("describe_components_waiting: kubectl failed for %s: %s", namespace, stderr)
+            return []
+        pods_data = json.loads(stdout)
+    except Exception as e:
+        logger.debug("describe_components_waiting: error for %s: %s", namespace, e)
+        return []
+
+    # One representative pod per component, matched by the `app` label.
+    pod_by_component: dict[str, dict] = {}
+    for pod in pods_data.get("items", []):
+        app = pod.get("metadata", {}).get("labels", {}).get("app", "")
+        if app in wanted and app not in pod_by_component:
+            pod_by_component[app] = pod
+
+    results: list[tuple[str, str]] = []
+    for unique_name in component_names:
+        ref = refs.get(unique_name, unique_name)
+        pod = pod_by_component.get(unique_name)
+        if pod is None:
+            results.append((ref, "pods worden aangemaakt"))
+            continue
+        reason = _describe_pod_waiting(pod)
+        if reason:
+            results.append((ref, reason))
+    return results
 
 
 async def disable_components_for_image_pull(
