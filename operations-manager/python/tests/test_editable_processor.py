@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from opi.forms.editables.converters import IntegerListConverter
+from opi.forms.editables.converters import EmptyToNoneConverter, IntegerListConverter
 from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.validators import EmailValidator, SlugValidator
@@ -543,3 +543,68 @@ class TestHiddenDependsOnSkipped:
         comp_services = result["components"][0]["services"]
         has_storage = any(isinstance(s, dict) and "persistent-storage" in s for s in comp_services)
         assert has_storage, f"persistent-storage config should be preserved, got: {comp_services}"
+
+
+class TestFinalPassServicesListCheckbox:
+    """Regression: the create-wizard final submit feeds ``get_merged_data()``
+    back as the submitted data, with ``services`` devirtualized into a native
+    list. A service-config checkbox (e.g. restrict-access ``enabled``) must
+    survive that pass; previously plain ``get_value`` could not traverse the
+    list, so the checkbox read ``None`` -> ``False`` and ``remove_when_none``
+    deleted it while its text siblings (read as ``None`` -> skipped) survived,
+    leaving an inconsistent ``restrict-access`` block without ``enabled``.
+    """
+
+    _SVC_VIRT = ("services", "_services-config")
+
+    def _editables(self):
+        enabled = EditableVisualizer(
+            editable=Editable(
+                yaml_path="services/keycloak/config/restrict-access/enabled",
+                converter=EmptyToNoneConverter(),
+                remove_when_none=True,
+                virtualize=self._SVC_VIRT,
+            ),
+            widget=WidgetType.CHECKBOX,
+            label="Toegang beperken",
+        )
+        role = EditableVisualizer(
+            editable=Editable(
+                yaml_path="services/keycloak/config/restrict-access/realm-role",
+                default="allowed-user",
+                depends_on="services/keycloak/config/restrict-access/enabled",
+                virtualize=self._SVC_VIRT,
+            ),
+            widget=WidgetType.TEXT,
+            label="Realm rol",
+        )
+        return [enabled, role]
+
+    async def test_checkbox_survives_final_pass_with_services_list(self):
+        processor = EditableFormProcessor()
+        # Mirrors router_wizard final submit: submitted == merged yaml_data,
+        # services already devirtualized to a native list.
+        merged = {
+            "services": [
+                "publish-on-web",
+                {
+                    "keycloak": {
+                        "config": {
+                            "restrict-access": {
+                                "enabled": True,
+                                "realm-role": "allowed-user",
+                            }
+                        }
+                    }
+                },
+            ],
+        }
+        result, errors = await processor.process_json_submission(merged, self._editables(), merged)
+        assert errors == {}
+
+        from opi.forms.editables.service_path import smart_get_value
+
+        assert smart_get_value(result, "services/keycloak/config/restrict-access/enabled") is True, (
+            "enabled checkbox must not be dropped on the final pass"
+        )
+        assert smart_get_value(result, "services/keycloak/config/restrict-access/realm-role") == "allowed-user"
