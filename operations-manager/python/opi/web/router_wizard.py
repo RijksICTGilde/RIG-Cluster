@@ -902,6 +902,17 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     section_data = _extract_section_data(section.editables, submitted_yaml)
     state.store_step_data(section_id, section_data)
 
+    # Run the section's post_merge reconciler against the merged view and
+    # persist affected component data back into step_data. The services step
+    # uses this to drop component-level service config when a project service
+    # is deselected; without persisting it here the components step would
+    # render stale config blocks until it was itself re-submitted (one
+    # navigation late).
+    if section.post_merge is not None:
+        section.post_merge(submitted_yaml, submitted_yaml)
+        if "components" in submitted_yaml:
+            state.store_step_data("components", {"components": submitted_yaml["components"]})
+
     # CENTRALIZED LOGGING - navigation decision point
     logger.info(
         "[%s] All validations passed. Forward navigation: is_forward=%s, goto=%r",
@@ -1644,6 +1655,11 @@ def _format_value(editable: Any, value: Any, yaml_data: dict[str, Any] | None = 
     Returns None if the value is empty/unset and should be omitted.
     """
     if value is None or value == "" or value == []:
+        return None
+
+    # Key-value editors (aliases, eigen omgevingsvariabelen) can contain
+    # secrets; never dump their values in the summary.
+    if str(editable.widget) == "key_value":
         return None
 
     # Apply converter.view() for display if available (e.g. ServiceListConverter
