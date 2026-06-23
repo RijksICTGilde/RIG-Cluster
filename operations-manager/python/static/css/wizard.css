@@ -209,6 +209,12 @@ c-fieldset c-fieldset {
 }
 
 /* Key-value editor */
+.kv-editor__label {
+    display: block;
+    font-size: 1.125rem;
+    font-weight: 700;
+    margin-bottom: 0.25rem;
+}
 .kv-toggle {
     display: inline-flex;
     border: 1px solid #ccc;
