@@ -942,7 +942,7 @@ def get_output_filename_from_template(template_filename: str, prefix: str = "") 
     return f"{prefix}-{base_filename}" if prefix else base_filename
 
 
-def generate_public_url(hostname: str, use_https: bool = True) -> str:
+def generate_public_url(hostname: str, use_https: bool = True, path: str = "/") -> str:
     """
     Generate a full public URL from a hostname.
 
@@ -952,6 +952,8 @@ def generate_public_url(hostname: str, use_https: bool = True) -> str:
     Args:
         hostname: The hostname (e.g., "webapp-frontend-myproject.dev.example.com")
         use_https: Whether to use HTTPS protocol (default: True)
+        path: Optional ingress match path (e.g., "/api"); root ("/") is omitted
+            to keep the URL clean.
 
     Returns:
         Full URL string
@@ -959,9 +961,12 @@ def generate_public_url(hostname: str, use_https: bool = True) -> str:
     Example:
         generate_public_url("webapp-frontend-myproject.dev.example.com")
         -> "https://webapp-frontend-myproject.dev.example.com"
+        generate_public_url("webapp-myproject.dev.example.com", path="/api")
+        -> "https://webapp-myproject.dev.example.com/api"
     """
     protocol = "https" if use_https else "http"
-    return f"{protocol}://{hostname}"
+    suffix = "" if not path or path == "/" else path
+    return f"{protocol}://{hostname}{suffix}"
 
 
 def ensure_url_has_protocol(url: str, use_https: bool = True) -> str:

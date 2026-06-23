@@ -85,7 +85,7 @@
                         <c-layout-flow gap="sm">
                             {% for link in component.ingress_links %}
                             <c-button
-                                label="{{ link.deployment_name }} ({{ link.cluster }})"
+                                label="{{ link.deployment_name }} ({{ link.cluster }}){% if link.path and link.path != '/' %} {{ link.path }}{% endif %}"
                                 kind="secondary"
                                 size="sm"
                                 showIcon="after"
