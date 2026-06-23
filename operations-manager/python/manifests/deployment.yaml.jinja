@@ -112,7 +112,7 @@ spec:
                 name: {{ secret_name }}
           {% endfor %}
           {% endif %}
-          {% if storage_configs or (ca_config and ca_config.enabled) %}
+          {% if storage_configs or (ca_config and ca_config.enabled) or (attachment_secret_mounts is defined and attachment_secret_mounts) %}
           volumeMounts:
           {% if storage_configs %}
           {% for storage in storage_configs %}
@@ -129,6 +129,14 @@ spec:
               mountPath: /etc/ssl/certs/{{ ca_config.hash }}.0
               readOnly: true
           {% endif %}
+          {% endif %}
+          {% if attachment_secret_mounts is defined and attachment_secret_mounts %}
+          {% for m in attachment_secret_mounts %}
+            - name: {{ m.name | tojson }}
+              mountPath: {{ m.mount_path | tojson }}
+              subPath: {{ m.sub_path | tojson }}
+              readOnly: true
+          {% endfor %}
           {% endif %}
           {% endif %}
           resources:
@@ -162,7 +170,7 @@ spec:
 {% include 'sidecar-' + sidecar + '.yaml.jinja' %}
 {% endfor %}
 {% endif %}
-      {% if storage_configs or (ca_config and ca_config.enabled) or (sidecars is defined and sidecars) %}
+      {% if storage_configs or (ca_config and ca_config.enabled) or (sidecars is defined and sidecars) or (attachment_secret_mounts is defined and attachment_secret_mounts) %}
       volumes:
       {% if storage_configs %}
       {% for storage in storage_configs %}
@@ -182,6 +190,13 @@ spec:
           hostPath:
             path: {{ ca_config.node_path }}
             type: File
+      {% endif %}
+      {% if attachment_secret_mounts is defined and attachment_secret_mounts %}
+      {% for m in attachment_secret_mounts | unique(attribute='name') %}
+        - name: {{ m.name | tojson }}
+          secret:
+            secretName: {{ m.secret_name | tojson }}
+      {% endfor %}
       {% endif %}
 {% if sidecars is defined and sidecars %}
 {% for sidecar in sidecars %}
