@@ -192,6 +192,38 @@ def decrypt_age_content_sync(encrypted_content: str, private_key: str) -> str | 
     return decrypted_content
 
 
+async def encrypt_file_to_age_block(raw_bytes: bytes, public_key: str | None) -> str:
+    """
+    Encrypt raw file bytes to an armored AGE block.
+
+    The bytes are base64-encoded first so an arbitrary (binary) payload survives the
+    string-based age helpers; the inner content is therefore always base64. Use
+    decrypt_age_block_to_bytes to recover the original bytes.
+    """
+    b64 = base64.b64encode(raw_bytes).decode("ascii")
+    return await encrypt_age_content(b64, public_key)
+
+
+def encrypt_file_to_age_block_sync(raw_bytes: bytes, public_key: str | None) -> str:
+    """Synchronous variant of encrypt_file_to_age_block."""
+    b64 = base64.b64encode(raw_bytes).decode("ascii")
+    return encrypt_age_content_sync(b64, public_key)
+
+
+async def decrypt_age_block_to_bytes(age_block: str, private_key: str) -> bytes:
+    """Decrypt an AGE block produced by encrypt_file_to_age_block back to the original bytes."""
+    b64 = await decrypt_age_content(age_block, private_key)
+    return base64.b64decode(b64)
+
+
+def decrypt_age_block_to_bytes_sync(age_block: str, private_key: str) -> bytes:
+    """Synchronous variant of decrypt_age_block_to_bytes."""
+    b64 = decrypt_age_content_sync(age_block, private_key)
+    if b64 is None:
+        raise ValueError("Age decryption of attachment block failed")
+    return base64.b64decode(b64)
+
+
 def is_age_encrypted(content: str) -> bool:
     """
     Check if content is age-encrypted by looking for age markers.

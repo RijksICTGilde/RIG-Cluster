@@ -17,7 +17,7 @@ from ruamel.yaml import YAML
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.resource_analyzer import _k8s_memory_to_mb
 from opi.services.schema_migration import migrate_to_latest
-from opi.utils.age import decrypt_password_smart_sync, get_decoded_project_private_key
+from opi.utils.age import decrypt_age_block_to_bytes, decrypt_password_smart_sync, get_decoded_project_private_key
 from opi.utils.env_vars import validate_and_parse_env_vars
 from opi.utils.yaml_util import save_yaml_to_path
 
@@ -849,6 +849,52 @@ class ProjectFileHandler:
         return await self._extract_user_env_vars(
             project_data, path, f"component '{component_reference}' in deployment '{deployment_name}'"
         )
+
+    async def resolve_attachments_for_component(
+        self, project_data: dict[str, Any], component: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Resolve a component's attachment uses to decrypted byte content.
+
+        Returns a list of dicts with keys: reference, provide-as, path, env-name, filename,
+        content_bytes. Uses the dedicated byte-decrypt (age block -> base64 -> bytes), NOT the
+        string-based env-var decrypt. Raises ValueError on a dangling reference or when binary
+        content is requested as an env-var value.
+        """
+        uses = extract_component_attachment_uses(component)
+        if not uses:
+            return []
+
+        catalog = extract_attachment_catalog(project_data)
+        private_key = await get_decoded_project_private_key(project_data)
+        resolved: list[dict[str, Any]] = []
+        for use in uses:
+            reference = use.get("reference")
+            if not reference:
+                continue
+            entry = catalog.get(reference)
+            if entry is None:
+                raise ValueError(f"Onbekende bijlage-referentie '{reference}'")
+            content_bytes = await decrypt_age_block_to_bytes(entry["content"], private_key)
+            provide_as = use.get("provide-as")
+            if provide_as == "env-var":
+                try:
+                    content_bytes.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise ValueError(
+                        f"Bijlage '{reference}' is binair en kan niet als env-var "
+                        f"'{use.get('env-name')}' worden geleverd; gebruik provide-as: file"
+                    ) from exc
+            resolved.append(
+                {
+                    "reference": reference,
+                    "provide-as": provide_as,
+                    "path": use.get("path"),
+                    "env-name": use.get("env-name"),
+                    "filename": entry.get("filename"),
+                    "content_bytes": content_bytes,
+                }
+            )
+        return resolved
 
     def get_persistent_storage(self, storage_configs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
@@ -2909,6 +2955,72 @@ def extract_storage_from_component_services(component: dict[str, Any]) -> list[d
                     storage_configs.append(config)
 
     return storage_configs
+
+
+def extract_attachment_catalog(project_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Extract the project-level attachments catalog (id -> {id, filename, content}).
+
+    Stored as a project-level service entry::
+
+        services:
+        - attachments:
+            data:
+            - id: mtlskeystore
+              filename: keystore.p12
+              content: <age block>
+    """
+    catalog: dict[str, dict[str, Any]] = {}
+    for entry in project_data.get("services", []):
+        if not isinstance(entry, dict):
+            continue
+        service_data = entry.get("attachments")
+        if not isinstance(service_data, dict):
+            continue
+        for item in service_data.get("data", []) or []:
+            if isinstance(item, dict) and item.get("id"):
+                catalog[item["id"]] = item
+    return catalog
+
+
+def extract_component_attachment_uses(component: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract a component's attachment ``use`` entries from its services list."""
+    uses: list[dict[str, Any]] = []
+    for entry in component.get("services", []):
+        if not isinstance(entry, dict):
+            continue
+        service_data = entry.get("attachments")
+        if not isinstance(service_data, dict):
+            continue
+        uses.extend(
+            item for item in (service_data.get("use", []) or []) if isinstance(item, dict) and item.get("reference")
+        )
+    return uses
+
+
+def validate_attachment_references(project_data: dict[str, Any]) -> list[str]:
+    """Return error strings for component attachment uses that reference an unknown catalog id."""
+    catalog_ids = set(extract_attachment_catalog(project_data).keys())
+    errors: list[str] = []
+    for component in project_data.get("components", []):
+        if not isinstance(component, dict):
+            continue
+        name = component.get("name", "?")
+        for use in extract_component_attachment_uses(component):
+            reference = use.get("reference")
+            if reference not in catalog_ids:
+                errors.append(f"Component '{name}' verwijst naar onbekende bijlage '{reference}'")
+    return errors
+
+
+def attachment_is_referenced(project_data: dict[str, Any], attachment_id: str) -> bool:
+    """True if any component uses the given attachment id (used as a delete-guard)."""
+    for component in project_data.get("components", []):
+        if not isinstance(component, dict):
+            continue
+        for use in extract_component_attachment_uses(component):
+            if use.get("reference") == attachment_id:
+                return True
+    return False
 
 
 def extract_service_names_from_component(component: dict[str, Any]) -> list[str]:
