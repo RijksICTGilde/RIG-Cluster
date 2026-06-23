@@ -103,9 +103,10 @@
                     style="cursor: pointer;"
                     @click="openServiceHelp('resources.html.j2')" />
         </div>
+        <c-p>De gereserveerde geheugen-request kan omlaag naar het werkelijke gebruik.</c-p>
         <c-ul>
             {% for w in saving_warnings %}
-            <c-li>{{ w.component }}: {{ w.current_limit }} &#8594; {{ w.recommended_limit }} ({{ w.saving_mb | int }}Mi besparing)</c-li>
+            <c-li>{{ w.component }}: request {{ w.current_request }} &#8594; {{ w.recommended_request }} ({{ w.saving_mb | int }}Mi besparing)</c-li>
             {% endfor %}
         </c-ul>
         <c-button kind="secondary" size="sm" label="Tune resources"

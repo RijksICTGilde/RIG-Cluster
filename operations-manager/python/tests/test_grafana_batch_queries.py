@@ -295,7 +295,6 @@ class TestComponentMetricsTimeseriesBatching:
             {
                 "cpu": (False, {}, [(1000000, 0.001), (2000000, 0.002)]),
                 "memory": (False, {}, [(1000000, 1048576), (2000000, 2097152)]),
-                "requests": (False, {}, []),
                 "network_in": (False, {}, []),
                 "network_out": (False, {}, []),
                 "disk_read": (False, {}, []),
@@ -306,6 +305,7 @@ class TestComponentMetricsTimeseriesBatching:
             {
                 "cpu_limit": (True, {}, [(1000000, 1.0)]),
                 "memory_limit": (True, {}, [(1000000, 536870912)]),
+                "memory_request": (True, {}, [(1000000, 268435456)]),
             }
         )
 
@@ -341,6 +341,7 @@ class TestComponentMetricsTimeseriesBatching:
         # Verify limits
         assert result["cpu_limit"] == round(1.0 * 1000, 0)
         assert result["memory_limit"] == round(536870912 / (1024 * 1024), 0)
+        assert result["memory_request"] == round(268435456 / (1024 * 1024), 0)
 
 
 class TestDeploymentParallelization:
@@ -359,16 +360,15 @@ class TestDeploymentParallelization:
             return {
                 "cpu": [],
                 "memory": [],
-                "requests": [],
                 "network_in": [],
                 "network_out": [],
                 "disk_read": [],
                 "disk_write": [],
                 "cpu_limit": None,
                 "memory_limit": None,
+                "memory_request": None,
                 "cpu_timestamps": [],
                 "memory_timestamps": [],
-                "requests_timestamps": [],
                 "network_timestamps": [],
                 "disk_timestamps": [],
             }
@@ -400,16 +400,15 @@ class TestDeploymentParallelization:
             return {
                 "cpu": [],
                 "memory": [],
-                "requests": [],
                 "network_in": [],
                 "network_out": [],
                 "disk_read": [],
                 "disk_write": [],
                 "cpu_limit": None,
                 "memory_limit": None,
+                "memory_request": None,
                 "cpu_timestamps": [],
                 "memory_timestamps": [],
-                "requests_timestamps": [],
                 "network_timestamps": [],
                 "disk_timestamps": [],
             }
