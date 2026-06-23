@@ -159,7 +159,7 @@ class WizardState:
     back into the real structure.
     """
 
-    def get_merged_data(self) -> dict[str, Any]:
+    def get_merged_data(self, strip_cleared: bool = True) -> dict[str, Any]:
         """Merge template and step data into a single dict.
 
         Merge order (later overrides earlier):
@@ -170,6 +170,12 @@ class WizardState:
         For list values (e.g. ``deployments``), items are merged by index
         so that sections sharing a top-level key combine their fields
         instead of overwriting each other.
+
+        When *strip_cleared* is True (the default), ``CLEARED_FIELD``
+        tombstones are removed after merging. Callers that perform a
+        further ``dict.update``-style merge into stored project data
+        (which cannot express a deleted key) pass ``strip_cleared=False``
+        so the tombstones survive to that merge and can be honored there.
         """
         import copy
 
@@ -233,7 +239,8 @@ class WizardState:
                 else:
                     merged[real_key] = virt_data
 
-        _strip_cleared_fields(merged)
+        if strip_cleared:
+            _strip_cleared_fields(merged)
         return merged
 
     def populate_virt_mappings(self, sections: list[Any]) -> None:
