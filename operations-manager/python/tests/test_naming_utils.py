@@ -478,6 +478,15 @@ class TestGeneratePublicUrl:
         result = generate_public_url("webapp.dev.example.com", use_https=False)
         assert result == "http://webapp.dev.example.com"
 
+    def test_appends_match_path(self):
+        """Appends a non-root ingress match path to the URL."""
+        result = generate_public_url("webapp.dev.example.com", path="/api")
+        assert result == "https://webapp.dev.example.com/api"
+
+    def test_root_path_omitted(self):
+        """Root path is omitted to keep the URL clean."""
+        assert generate_public_url("webapp.dev.example.com", path="/") == "https://webapp.dev.example.com"
+
 
 class TestEnsureUrlHasProtocol:
     """Tests for ensure_url_has_protocol function."""
