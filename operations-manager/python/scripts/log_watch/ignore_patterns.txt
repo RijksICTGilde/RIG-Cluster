@@ -23,7 +23,12 @@ Error checking application creation status: Permission denied
 Push rejected .*attempting rebase and retry \(attempt \d+/\d+\)
 
 # --- kubectl: existence probes during create/delete (NotFound is expected) ---
-kubectl get (configmap|secret|application).*Error from server \(NotFound\)
+# Also covers the metrics/OOM/tuning path iterating a project's declared
+# components when the Deployment (and its VPA) never materialized - i.e. the
+# project was never deployed, or a component has no image. A genuinely broken
+# deployment surfaces as CrashLoopBackOff/ImagePullBackOff/degraded ERRORs, not
+# a read-time "get ... NotFound", so those still escalate.
+kubectl get (configmap|secret|application|deployment|verticalpodautoscaler).*Error from server \(NotFound\)
 
 # --- API auth: rejected reads (missing/invalid key, missing param) ---
 Authentication failed for route .+ - no .*API-Key provided

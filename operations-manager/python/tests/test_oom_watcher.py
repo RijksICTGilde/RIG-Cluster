@@ -9,6 +9,7 @@ from opi.services.oom_watcher import (
     ComponentFailure,
     DeploymentHealthError,
     PodHealthResult,
+    _describe_pod_waiting,
     _queue_refresh_task,
     _run_oom_check,
     check_all_components_health,
@@ -894,3 +895,82 @@ class TestRunOomCheckTuneFailure:
         await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
 
         mock_queue.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _describe_pod_waiting: plain-language "what are we waiting on" reasons
+# ---------------------------------------------------------------------------
+
+
+def _pod(*, phase="Running", conditions=None, container_statuses=None) -> dict:
+    return {
+        "status": {
+            "phase": phase,
+            "conditions": conditions or [],
+            "containerStatuses": container_statuses or [],
+        }
+    }
+
+
+class TestDescribePodWaiting:
+    def test_unschedulable_pending_pod(self):
+        pod = _pod(
+            phase="Pending",
+            conditions=[{"type": "PodScheduled", "status": "False", "message": "Insufficient memory"}],
+        )
+        reason = _describe_pod_waiting(pod)
+        assert reason is not None
+        assert "kan niet worden ingepland" in reason
+        assert "Insufficient memory" in reason
+
+    def test_image_pull_passes_raw_reason_and_message(self):
+        pod = _pod(
+            container_statuses=[
+                {"name": "app", "state": {"waiting": {"reason": "ImagePullBackOff", "message": "not found"}}}
+            ]
+        )
+        reason = _describe_pod_waiting(pod)
+        assert reason is not None
+        assert "image ophalen mislukt" in reason
+        assert "ImagePullBackOff" in reason
+        assert "not found" in reason
+
+    def test_crash_loop(self):
+        pod = _pod(
+            container_statuses=[
+                {"name": "app", "state": {"waiting": {"reason": "CrashLoopBackOff", "message": "back-off 5m"}}}
+            ]
+        )
+        reason = _describe_pod_waiting(pod)
+        assert reason is not None
+        assert "blijft herstarten" in reason
+
+    def test_container_creating(self):
+        pod = _pod(container_statuses=[{"name": "app", "state": {"waiting": {"reason": "ContainerCreating"}}}])
+        assert _describe_pod_waiting(pod) == "container wordt aangemaakt"
+
+    def test_unknown_waiting_reason_is_passed_through(self):
+        pod = _pod(
+            container_statuses=[
+                {
+                    "name": "app",
+                    "state": {"waiting": {"reason": "CreateContainerConfigError", "message": "secret missing"}},
+                }
+            ]
+        )
+        reason = _describe_pod_waiting(pod)
+        assert reason == "CreateContainerConfigError: secret missing"
+
+    def test_running_but_not_ready(self):
+        pod = _pod(container_statuses=[{"name": "app", "ready": False, "state": {"running": {}}}])
+        reason = _describe_pod_waiting(pod)
+        assert reason is not None
+        assert "readiness-check" in reason
+
+    def test_no_container_statuses_yet(self):
+        pod = _pod(container_statuses=[])
+        assert _describe_pod_waiting(pod) == "bezig met opstarten"
+
+    def test_ready_pod_returns_none(self):
+        pod = _pod(container_statuses=[{"name": "app", "ready": True, "state": {"running": {}}}])
+        assert _describe_pod_waiting(pod) is None
