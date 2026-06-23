@@ -280,3 +280,91 @@ class TestWizardStateIntegration:
         active_ids = [s.section_id for s in active]
         assert "keycloak-config" in active_ids
         assert "postgresql-config" not in active_ids
+
+
+class TestServiceDeselectionReconcilesComponents:
+    """Regression: deselecting a project service in the CREATE wizard must
+    immediately prune the component-level service config, not one navigation
+    late. Mirrors the reconciliation ``submit_step`` runs after the services
+    step (run ``section.post_merge`` against the merged view, then persist the
+    pruned components back into ``step_data``).
+    """
+
+    def _state_with_storage_components(self, project_services: list) -> WizardState:
+        # Component 0 still carries persistent-storage + temp-storage config,
+        # as it would right after the user configured paths on the components
+        # step and then went back to deselect the storage services.
+        return WizardState(
+            flow_id="create-project",
+            current_step="services",
+            step_data={
+                "services": {"services": project_services},
+                "components": {
+                    "components": [
+                        {
+                            "name": "web",
+                            "services": [
+                                "publish-on-web",
+                                {
+                                    "persistent-storage": {
+                                        "config": [{"name": "data", "size": "1Gi", "mount-path": "/data"}]
+                                    }
+                                },
+                                {"temp-storage": {"config": [{"name": "tmp", "mount-path": "/tmp"}]}},
+                            ],
+                        }
+                    ]
+                },
+            },
+            active_sections=["services", "components"],
+        )
+
+    def test_services_section_has_reconciler_wired(self):
+        from opi.forms.visualizers.wizard_sections import (
+            SERVICES_SECTION,
+            _strip_removed_services_from_components,
+        )
+
+        assert SERVICES_SECTION.post_merge is _strip_removed_services_from_components
+
+    def test_deselecting_storage_prunes_component_config_in_one_step(self):
+        from opi.forms.visualizers.wizard_sections import SERVICES_SECTION
+
+        # User has deselected both storage services at the project level.
+        state = self._state_with_storage_components(["publish-on-web"])
+
+        # Sanity: before reconciliation the orphaned storage config is present.
+        before = state.get_merged_data()
+        before_names = {next(iter(s)) for s in before["components"][0]["services"] if isinstance(s, dict)}
+        assert {"persistent-storage", "temp-storage"} <= before_names
+
+        # Replicate what submit_step now does for the services step.
+        merged = state.get_merged_data()
+        assert SERVICES_SECTION.post_merge is not None
+        SERVICES_SECTION.post_merge(merged, merged)
+        state.store_step_data("components", {"components": merged["components"]})
+
+        # After: the component keeps only the still-selected service, and the
+        # storage config blocks are gone -- no second navigation needed.
+        after = state.get_merged_data()
+        comp_services = after["components"][0]["services"]
+        names = {s if isinstance(s, str) else next(iter(s)) for s in comp_services}
+        assert names == {"publish-on-web"}, f"expected only publish-on-web, got: {comp_services}"
+        assert all(not isinstance(s, dict) for s in comp_services), f"storage config must be gone: {comp_services}"
+
+    def test_kept_service_config_survives(self):
+        from opi.forms.visualizers.wizard_sections import SERVICES_SECTION
+
+        # persistent-storage stays selected; temp-storage is removed.
+        state = self._state_with_storage_components(["publish-on-web", {"persistent-storage": {"config": []}}])
+
+        merged = state.get_merged_data()
+        SERVICES_SECTION.post_merge(merged, merged)
+        state.store_step_data("components", {"components": merged["components"]})
+
+        after = state.get_merged_data()
+        comp_services = after["components"][0]["services"]
+        ps = [s for s in comp_services if isinstance(s, dict) and "persistent-storage" in s]
+        assert ps, f"persistent-storage config must be preserved, got: {comp_services}"
+        assert ps[0]["persistent-storage"]["config"][0]["name"] == "data"
+        assert not any(isinstance(s, dict) and "temp-storage" in s for s in comp_services)

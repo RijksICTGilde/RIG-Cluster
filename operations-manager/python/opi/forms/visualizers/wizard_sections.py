@@ -419,6 +419,14 @@ def _service_entry_name(entry: Any) -> str | None:
     return None
 
 
+# Wire the same component-reconciliation hook onto the create-wizard services
+# step. Defined here (not in the constructor at the top of the file) because
+# the helper is declared below SERVICES_SECTION. Without this, deselecting a
+# project service in the create wizard left orphaned component-level service
+# config until the components step was re-submitted (one navigation late).
+SERVICES_SECTION.post_merge = _strip_removed_services_from_components
+
+
 SERVICES_EDIT_SECTION = FormSection(
     section_id="services-edit",
     title="Services beheren",
