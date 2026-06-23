@@ -773,6 +773,29 @@ class ApprovalStatusOptionsProvider:
 
 
 # Registry of all available providers
+class AttachmentOptionsProvider:
+    """Provides the ids of attachments in the project-level attachments catalog as options."""
+
+    def __init__(self, yaml_data: dict[str, Any] | None = None) -> None:
+        self._yaml_data = yaml_data or {}
+
+    def get_options(self) -> list[dict[str, Any]]:
+        from opi.handlers.project_file_handler import extract_attachment_catalog
+
+        catalog = extract_attachment_catalog(self._yaml_data)
+        return [{"value": entry["id"], "label": entry.get("filename", entry["id"])} for entry in catalog.values()]
+
+
+class AttachmentProvideAsOptionsProvider:
+    """Static options for how an attachment is delivered into the pod."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": "file", "label": "Als bestand (gemount op een pad)"},
+            {"value": "env-var", "label": "Als waarde van een env-var (alleen tekst)"},
+        ]
+
+
 PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterOptionsProvider": ClusterOptionsProvider,
     "ServiceOptionsProvider": ServiceOptionsProvider,
@@ -804,6 +827,8 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "DomainFormatOptionsProvider": DomainFormatOptionsProvider,
     "DeploymentSelectOptionsProvider": DeploymentSelectOptionsProvider,
     "ApprovalStatusOptionsProvider": ApprovalStatusOptionsProvider,
+    "AttachmentOptionsProvider": AttachmentOptionsProvider,
+    "AttachmentProvideAsOptionsProvider": AttachmentProvideAsOptionsProvider,
 }
 
 
