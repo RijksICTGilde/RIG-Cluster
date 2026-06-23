@@ -333,8 +333,16 @@ def _apply_list_item_merge(
     For add: appends the new item to the list.
     For edit: updates the item at the given index in-place, preserving
     fields the form didn't touch (e.g. readonly ``name``).
+
+    A plain ``dict.update`` cannot express a deleted key, so a field the
+    user cleared (dropped from *item_data*) would otherwise be resurrected
+    from the existing item. ``item_data`` therefore carries ``CLEARED_FIELD``
+    tombstones for such fields (the caller builds *merged_data* with
+    ``strip_cleared=False``); after merging we drop the tombstoned keys.
     """
     import copy
+
+    from opi.forms.wizard.state import _strip_cleared_fields
 
     source_list = merged_data.get(list_key)
     if not isinstance(source_list, list) or idx >= len(source_list):
@@ -344,10 +352,13 @@ def _apply_list_item_merge(
     existing_list = existing_data.setdefault(list_key, [])
 
     if is_new:
+        _strip_cleared_fields(item_data)
         existing_list.append(item_data)
     elif idx < len(existing_list) and isinstance(existing_list[idx], dict):
         existing_list[idx].update(item_data)
+        _strip_cleared_fields(existing_list[idx])
     elif idx < len(existing_list):
+        _strip_cleared_fields(item_data)
         existing_list[idx] = item_data
 
 
@@ -1120,8 +1131,11 @@ async def _modal_do_submit(
             request, wizard_token, project_name, flow_id, action, state, templates
         )
 
-    # Merge all step data
-    merged_data = state.get_merged_data()
+    # Merge all step data. Keep CLEARED_FIELD tombstones (strip_cleared=False)
+    # so the dict.update-based merge into the stored project (which cannot
+    # express a deleted key) can honor cleared fields; _apply_list_item_merge
+    # and the defensive strip below remove the tombstones before save.
+    merged_data = state.get_merged_data(strip_cleared=False)
 
     # Collect editables for hook execution and the late transient strip.
     # Transients are intentionally preserved on merged_data here so that
@@ -1218,6 +1232,13 @@ async def _modal_do_submit(
     from opi.web.router_wizard import _apply_literal_scalars
 
     _apply_literal_scalars(existing_data)
+
+    # Defensive: drop any CLEARED_FIELD tombstones that survived the merges
+    # above (e.g. via the top-level apply_form_data_to_project path) so they
+    # never reach the saved project file.
+    from opi.forms.wizard.state import _strip_cleared_fields
+
+    _strip_cleared_fields(existing_data)
 
     # Save
     save_project_file(project.filename, existing_data)
