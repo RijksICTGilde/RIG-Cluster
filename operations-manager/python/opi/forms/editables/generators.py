@@ -127,6 +127,52 @@ class IssuerGenerator:
         return None
 
 
+class AttachmentStagingResolveGenerator:
+    """Resolve staged attachment uploads into encrypted catalog entries.
+
+    During the create-wizard a file is parked in the staging store and the
+    catalog entry carries ``content: "staging:<token>"``. At submit time (after
+    ``AGEKeyPairGenerator`` has produced the project public key) this generator
+    reads each staged file, encrypts it into an AGE block, replaces the
+    placeholder, and removes the staged file. Uses a ``_generated`` path - the
+    return value is discarded during cleanup.
+    """
+
+    _PREFIX = "staging:"
+
+    def generate(self, yaml_data: dict[str, Any]) -> Any:
+        from ruamel.yaml.scalarstring import LiteralScalarString
+
+        from opi.services import upload_staging
+        from opi.utils.age import encrypt_file_to_age_block_sync
+
+        public_key = yaml_data.get("config", {}).get("age-public-key")
+
+        for service in yaml_data.get("services", []):
+            if not isinstance(service, dict) or not isinstance(service.get("attachments"), dict):
+                continue
+            for entry in service["attachments"].get("data", []) or []:
+                if not isinstance(entry, dict):
+                    continue
+                content = entry.get("content")
+                if not isinstance(content, str) or not content.startswith(self._PREFIX):
+                    continue
+                token = content[len(self._PREFIX) :]
+                staged = upload_staging.read_staged(token)
+                if staged is None:
+                    logger.warning("Staged attachment '%s' not found; skipping", entry.get("id"))
+                    continue
+                if not public_key:
+                    logger.warning("No project public key available; cannot encrypt staged attachment")
+                    return True
+                raw_bytes, _ = staged
+                entry["content"] = LiteralScalarString(encrypt_file_to_age_block_sync(raw_bytes, public_key))
+                upload_staging.delete_staged(token)
+                logger.debug("Resolved staged attachment '%s'", entry.get("id"))
+
+        return True
+
+
 class UserEnvVarsEncryptGenerator:
     """Encrypt user-env-vars on each component with the project's AGE public key.
 
