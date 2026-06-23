@@ -120,6 +120,7 @@
                 EditorView.theme({
                     "&": { minHeight: "7.5rem" },
                     ".cm-scroller": { overflow: "auto" },
+                    ".cm-content, .cm-gutter": { minHeight: "7.5rem" },
                 }),
             ],
         });
