@@ -17,6 +17,7 @@ from typing import ClassVar
 
 import pytest
 import yaml
+from opi.forms.wizard.state import CLEARED_FIELD
 from opi.web.router_detail_edit import (
     _apply_list_item_merge,
     _detect_list_target,
@@ -211,6 +212,56 @@ class TestNonDestructiveComponentEdits:
 
         # Deployments untouched
         assert result["deployments"] == original["deployments"]
+
+
+class TestClearedFieldEdits:
+    """Clearing a field in a component/deployment edit must delete it.
+
+    A plain dict.update cannot express a deleted key, so the wizard carries
+    a CLEARED_FIELD tombstone for fields the user emptied (built with
+    get_merged_data(strip_cleared=False)). _apply_list_item_merge must drop
+    the tombstoned key instead of resurrecting the old value.
+    """
+
+    @pytest.fixture
+    def project_data(self) -> dict:
+        return {
+            "name": "test-project",
+            "components": [
+                {
+                    "name": "web",
+                    "type": "deployment",
+                    "ports": {"inbound": [8080]},
+                    "aliases": {"REDIS_HOSTS": "redis://web.redis:6379"},
+                },
+                {"name": "worker", "type": "deployment"},
+            ],
+            "deployments": [
+                {"name": "prod", "cluster": "local", "components": [{"reference": "web", "image": "nginx:latest"}]},
+            ],
+        }
+
+    def test_clearing_aliases_removes_the_key(self, project_data: dict) -> None:
+        original = copy.deepcopy(project_data)
+        # Tombstone on aliases = user emptied the aliases field.
+        merged = {"components": [{"aliases": CLEARED_FIELD, "ports": {"inbound": [8080]}}]}
+        result = _simulate_modal_save(project_data, merged, "modal-edit-component-0")
+
+        assert "aliases" not in result["components"][0], "Cleared aliases was resurrected"
+        # Untouched fields survive, tombstone never reaches the saved data.
+        assert result["components"][0]["name"] == "web"
+        assert result["components"][0]["ports"] == {"inbound": [8080]}
+        assert CLEARED_FIELD not in result["components"][0].values()
+        # Sibling component untouched.
+        assert result["components"][1] == original["components"][1]
+
+    def test_clearing_deployment_field_removes_the_key(self, project_data: dict) -> None:
+        project_data["deployments"][0]["domain-format"] = "project"
+        merged = {"deployments": [{"domain-format": CLEARED_FIELD}]}
+        result = _simulate_modal_save(project_data, merged, "modal-edit-deployment-0")
+
+        assert "domain-format" not in result["deployments"][0], "Cleared deployment field was resurrected"
+        assert result["deployments"][0]["name"] == "prod"
 
 
 class TestUnregisteredFlowDetection:
