@@ -24,6 +24,7 @@ from opi.web.menu import get_menu_items
 
 from ..utils.age import decrypt_age_content
 from .metrics_explorer_router import metrics_explorer_router
+from .router_attachments import attachments_router
 from .router_detail_edit import detail_edit_router
 from .router_self_service import check_subdomain_availability_web
 from .router_subdomain_admin import subdomain_admin_router
@@ -46,6 +47,7 @@ web_router.include_router(wizard_router)
 web_router.include_router(user_admin_router)
 web_router.include_router(usage_router)
 web_router.include_router(subdomain_admin_router)
+web_router.include_router(attachments_router)
 
 
 @web_router.get("/")
@@ -1162,6 +1164,8 @@ async def project_details(request: Request, project_name: str):
                 )
 
         # Prepare project details for template
+        from opi.handlers.project_file_handler import extract_attachment_catalog
+
         project_details = {
             "name": project_name,
             "display_name": project_data.get("display-name", project_name),
@@ -1176,6 +1180,10 @@ async def project_details(request: Request, project_name: str):
             "config": project_data_decrypted.get("config", {}),
             "helm_charts": project_data_decrypted.get("helm-charts", []),
             "helmfile": project_data_decrypted.get("helmfile", []),
+            "attachments": [
+                {"id": entry["id"], "filename": entry.get("filename", entry["id"])}
+                for entry in extract_attachment_catalog(project_data).values()
+            ],
         }
 
         # Check Prometheus availability (metrics are lazy-loaded via HTMX)

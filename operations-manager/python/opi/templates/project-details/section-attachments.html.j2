@@ -1,0 +1,60 @@
+{# Attachments overview + management section #}
+{% set can_edit = project.user_role in ['admin', 'owner'] %}
+<div id="attachments-section">
+<c-card outline="true" padding="xl" backgroundColor="wit">
+    <c-layout-flow gap="lg">
+        <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="map" size="xl" color="hemelblauw" />Bijlagen</c-heading>
+        <p class="rvo-text--subtle">Geuploade bestanden (bijvoorbeeld certificaten) die je per component als bestand of als env-var kunt koppelen.</p>
+
+        {% if project.attachments and project.attachments|length > 0 %}
+        <c-layout-flow gap="md">
+            {% for att in project.attachments | sort(attribute='id') %}
+            <c-card padding="md" backgroundColor="grijs-050" outline="true">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">
+                    <div>
+                        <strong>{{ att.filename }}</strong>
+                        <div class="rvo-text--sm rvo-text--subtle">id: <code>{{ att.id }}</code></div>
+                    </div>
+                    {% if can_edit %}
+                    <c-button kind="secondary" size="sm" label="Verwijderen"
+                              hx-delete="/projects/{{ project.name }}/attachments/{{ att.id }}"
+                              hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
+                              hx-target="#attachments-section"
+                              hx-swap="outerHTML"
+                              hx-confirm="Bijlage '{{ att.id }}' verwijderen?" />
+                    {% endif %}
+                </div>
+            </c-card>
+            {% endfor %}
+        </c-layout-flow>
+        {% else %}
+        <p class="rvo-text--subtle"><em>Nog geen bijlagen geupload.</em></p>
+        {% endif %}
+
+        {% if can_edit %}
+        <c-card padding="md" backgroundColor="grijs-050" outline="true">
+            <c-layout-flow gap="md">
+                <c-heading type="h3" textContent="Bestand uploaden" />
+                <form hx-post="/projects/{{ project.name }}/attachments/upload"
+                      hx-encoding="multipart/form-data"
+                      hx-target="#attachments-section"
+                      hx-swap="outerHTML">
+                    <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+                    <c-layout-flow gap="sm">
+                        <label class="utrecht-form-label" for="attachment_id">Identifier (kleine letters/cijfers, max 12 tekens)</label>
+                        <input type="text" id="attachment_id" name="attachment_id"
+                               class="utrecht-textbox utrecht-textbox--html-input"
+                               pattern="[a-z][a-z0-9]*" maxlength="12" required>
+                        <label class="utrecht-form-label" for="attachment-file">Bestand (max 256 KB)</label>
+                        <input type="file" id="attachment-file" name="file" class="rvo-file-input" required>
+                        <div>
+                            <c-button type="submit" kind="primary" size="sm" label="Uploaden" />
+                        </div>
+                    </c-layout-flow>
+                </form>
+            </c-layout-flow>
+        </c-card>
+        {% endif %}
+    </c-layout-flow>
+</c-card>
+</div>
