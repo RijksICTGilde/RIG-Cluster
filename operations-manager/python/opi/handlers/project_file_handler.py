@@ -851,16 +851,20 @@ class ProjectFileHandler:
         )
 
     async def resolve_attachments_for_component(
-        self, project_data: dict[str, Any], component: dict[str, Any]
+        self, project_data: dict[str, Any], component_name: str
     ) -> list[dict[str, Any]]:
-        """Resolve a component's attachment uses to decrypted byte content.
+        """Resolve a project-level component's attachment uses to decrypted byte content.
 
         Returns a list of dicts with keys: reference, provide-as, path, env-name, filename,
         content_bytes. Uses the dedicated byte-decrypt (age block -> base64 -> bytes), NOT the
         string-based env-var decrypt. Raises ValueError on a dangling reference or when binary
         content is requested as an env-var value.
         """
-        uses = extract_component_attachment_uses(component)
+        component = next(
+            (c for c in project_data.get("components", []) if isinstance(c, dict) and c.get("name") == component_name),
+            None,
+        )
+        uses = extract_component_attachment_uses(component) if component else []
         if not uses:
             return []
 

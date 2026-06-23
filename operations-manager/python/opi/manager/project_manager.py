@@ -4,6 +4,7 @@ Processing means it can create, update, or delete any resources defined in a pro
 """
 
 import asyncio
+import base64
 import contextlib
 import copy
 import glob
@@ -4570,6 +4571,33 @@ class ProjectManager:
                 # Deployment-level env-vars override all other env-vars
                 user_env_vars.update(deployment_env_vars)
 
+            # Resolve attachment uses for this component: file mounts and env-var content.
+            # File-mode attachments become a binary Secret mounted read-only at a path; env-var
+            # mode (text only) is injected via the existing user secret / envFrom path.
+            attachment_secret_mounts: list[dict[str, str]] = []
+            attachment_file_secrets: dict[str, dict[str, str]] = {}
+            resolved_attachments = await self._project_file_handler.resolve_attachments_for_component(
+                project_data, component_reference
+            )
+            for att in resolved_attachments:
+                reference = att["reference"]
+                if att["provide-as"] == "env-var":
+                    # Content was verified UTF-8 decodable in resolve(); expose as an env-var value.
+                    user_env_vars[att["env-name"]] = att["content_bytes"].decode("utf-8")
+                else:
+                    secret_name = f"{deployment_name}-attch-{reference}"
+                    attachment_file_secrets[secret_name] = {
+                        reference: base64.b64encode(att["content_bytes"]).decode("ascii")
+                    }
+                    attachment_secret_mounts.append(
+                        {
+                            "name": f"attch-{reference}",
+                            "secret_name": secret_name,
+                            "mount_path": att["path"],
+                            "sub_path": reference,
+                        }
+                    )
+
             # Create unique name combining deployment name and component name using centralized utility
             # Project name is not included since resources are deployed within project-specific namespaces
             unique_name = generate_unique_name(deployment_name, component_name)
@@ -4809,6 +4837,7 @@ class ProjectManager:
                 "storage_configs": processed_storage_configs,
                 "env_vars": env_vars,
                 "env_from_secrets": env_from_secrets,  # List of secrets for envFrom
+                "attachment_secret_mounts": attachment_secret_mounts,  # File-mode attachment volume mounts
                 # Cluster-specific ingress configuration
                 "enable_tls": get_ingress_tls_enabled(cluster),
                 "ip_whitelist": get_ingress_ip_whitelist(cluster),
@@ -5404,6 +5433,32 @@ class ProjectManager:
                 created_files.append(sops_filename)
                 logger.info(f"User secret will be SOPS encrypted: {sops_filename}")
                 logger.info(f"Successfully created user secret manifest: {user_secret_path}")
+
+            # Create binary secrets for file-mode attachments (one per attachment id per deployment).
+            # Keyed by secret name so duplicate references across components stay idempotent.
+            if attachment_file_secrets:
+                binary_secret_template_path = os.path.join(
+                    os.path.dirname(__file__), "..", "..", "manifests", "binary-secret.yaml.to-sops.jinja"
+                )
+                for secret_name, data_pairs in attachment_file_secrets.items():
+                    attachment_secret_vars = {
+                        "name": secret_name,
+                        "namespace": namespace,
+                        "secret_type": "attachment",
+                        "data_pairs": data_pairs,
+                    }
+                    attachment_manifest_name = generate_manifest_name(secret_name, "attachment-secret")
+                    self._manifest_generator.create_manifest_file(
+                        template_path=binary_secret_template_path,
+                        values=attachment_secret_vars,
+                        output_dir=full_output_dir,
+                        output_filename=attachment_manifest_name,
+                        use_sops=True,
+                    )
+                    attachment_sops_filename = f"{attachment_manifest_name}.to-sops.yaml"
+                    if attachment_sops_filename not in created_files:
+                        created_files.append(attachment_sops_filename)
+                    logger.info(f"Created attachment secret manifest: {secret_name}")
 
             # Create registry secrets for private container registries (deployment-level, created once)
             if component == components[0]:  # Only create registry secrets once per deployment
