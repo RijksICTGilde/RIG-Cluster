@@ -104,6 +104,27 @@ class ComponentNameValidator:
         return []
 
 
+class AttachmentIdValidator:
+    """
+    Validates attachment ids: same rules as component names (lowercase letters and
+    digits, starting with a letter, max 12 chars).
+
+    When called with context containing ``existing_attachment_ids``, also checks uniqueness.
+    """
+
+    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
+        if not value:
+            return []
+        value_str = str(value)
+        if len(value_str) > 12:
+            return ["Bijlage-id mag maximaal 12 tekens bevatten"]
+        if not re.match(r"^[a-z][a-z0-9]*$", value_str):
+            return ["Moet beginnen met een kleine letter en mag alleen kleine letters en cijfers bevatten"]
+        if context and value_str in context.get("existing_attachment_ids", []):
+            return [f"Er bestaat al een bijlage met de id '{value_str}'"]
+        return []
+
+
 class ContainerImageValidator:
     """Validates container image references.
 

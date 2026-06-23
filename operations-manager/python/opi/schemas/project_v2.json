@@ -228,6 +228,34 @@
       }
     },
 
+    "attachment-data-entry": {
+      "description": "A stored attachment in the project-level attachments catalog.",
+      "type": "object",
+      "required": ["id", "filename", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*\\Z", "maxLength": 12 },
+        "filename": { "type": "string" },
+        "content": { "$ref": "#/$defs/age-encrypted" }
+      }
+    },
+
+    "attachment-use-entry": {
+      "description": "A component-level reference to a catalog attachment plus how it is delivered.",
+      "type": "object",
+      "required": ["reference", "provide-as"],
+      "additionalProperties": false,
+      "properties": {
+        "reference": { "type": "string", "pattern": "^[a-z][a-z0-9]*\\Z", "maxLength": 12 },
+        "provide-as": { "type": "string", "enum": ["file", "env-var"] },
+        "path": { "type": "string", "pattern": "^/[^\\u0000]*\\Z" },
+        "env-name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\Z" }
+      },
+      "if": { "properties": { "provide-as": { "const": "file" } } },
+      "then": { "required": ["path"] },
+      "else": { "required": ["env-name"] }
+    },
+
     "component-path": {
       "type": "object",
       "required": ["match"],
