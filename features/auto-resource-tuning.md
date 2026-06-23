@@ -1,8 +1,8 @@
 # Auto Resource Tuning
 
-**Status**: Implemented (on-demand + scheduled, memory + CPU)
+**Status**: Implemented (on-demand + nightly, VPA-driven memory + CPU)
 **Created**: 2026-02-10
-**Updated**: 2026-06-19
+**Updated**: 2026-06-23
 
 ## Overview
 
@@ -18,52 +18,59 @@ Available both as an on-demand API endpoint (`POST /api/resources/{project_name}
 ## How It Works
 
 ```
-Prometheus (memory metrics + OOM kills)
-        |
-        | PromQL queries
-        v
-Resource Analyzer (compute_memory_recommendation)
-        |
-        | Compare observed vs declared, apply buffer + thresholds
-        v
-Resource Router (tune endpoint)
-        |
-        | Update deployment overrides + base component definition
-        v
-Project YAML (git commit) --> ArgoCD (deploy)
+  VPA recommender .status              Prometheus (fallback + OOM detection)
+  (memory + CPU: target/bounds)        (max_over_time memory, OOMKilled reason)
+              \                          /
+               v                        v
+          Resource Analyzer  (memory + CPU recommendation)
+                         |
+          request+buffer -> deadband gate -> OOM floor -> min/max clamps
+                         |
+                         v
+   Project YAML  --(git commit)-->  reprocess  -->  ArgoCD  -->  pod rollout
+   (deployment override + base component definition)
 ```
 
 ### Tuning Flow
 
-1. For each component in the target deployment(s):
-   - Query `max_over_time(container_memory_working_set_bytes{...})` for peak memory
-   - Query `avg_over_time(container_memory_working_set_bytes{...})` for average memory
-   - Query `kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}` for OOM kills
-2. Compute recommendations using the resource analyzer
-3. Write updated values to deployment-level overrides in the project YAML
-4. Optionally propagate the memory request to the base component definition (see below)
-5. Commit to git and trigger ArgoCD reprocessing
+For each component in the target deployment(s):
 
-### Recommendation Algorithm
+1. Skip if opted out (`auto-tune-resources: false`) or the deployment is not Available.
+2. Determine the recommendation source:
+   - If the cluster has VPA and the component's `VerticalPodAutoscaler` has a populated `.status` → use its `target` (memory **and** CPU).
+   - Otherwise fall back to Prometheus `max_over_time(container_memory_working_set_bytes{...})` over `RESOURCE_TUNING_WINDOW_HOURS` (memory only).
+   - OOM kills are always read from Prometheus (`kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}`).
+3. Compute the recommendation (analyzer), apply the deadband gate, OOM floor, and clamps.
+4. Write changed values to the deployment-level override and propagate the request to the base component definition (see below).
+5. Commit once per project, then reprocess so ArgoCD redeploys.
 
-Tuning drives the **request** (the reserved memory that actually counts against
-cluster capacity); the limit is treated as a passive ceiling:
+### Recommendation Algorithm (Memory)
 
-- **Request** = `max_observed * (1 + buffer%)` - sized to the peak ("the highest
-  we measured") so the reservation always covers real usage
-- Apps using >= 100Mi get an additional flat 25Mi headroom on top of the percentage buffer
+Tuning drives the **request** (the reserved memory that counts against cluster
+capacity); the limit is treated as a ceiling:
+
+- **Request** = `recommendation * (1 + buffer%)`, where `recommendation` is the
+  VPA `target` (VPA path) or the Prometheus peak `max_over_time` (fallback).
+  Apps using >= 100Mi get an extra flat 25Mi headroom on top of the percentage buffer.
 - **Limit**:
   - If the current limit **equals** the current request (the untouched default),
-    the limit follows the request down/up so the two stay equal.
-  - If the current limit **already differs** from the request (someone set it
-    deliberately, or a prior OOM raised it), the limit is **left untouched** -
-    only the request is tuned.
+    the limit follows the request so the two stay equal.
+  - If the current limit **already differs** from the request (set deliberately,
+    or raised by a prior OOM), the limit is **left untouched** - only the
+    request is tuned ("frozen limit").
 
-Both values are subject to:
-- A configurable cluster minimum (default 25Mi)
-- Request is capped to never exceed limit
-- Changes below the threshold percentage (default 20%, measured on the request)
-  are skipped (no noise commits)
+Subject to the cluster memory minimum (default 25Mi) and maximum; the request is
+capped to never exceed the limit; and the **deviation deadband** (below) decides
+whether the change is worth committing.
+
+### Recommendation Algorithm (CPU)
+
+CPU is tuned only on the VPA path (the Prometheus fallback leaves CPU untouched).
+CPU is compressible - it throttles rather than OOM-kills - so there is no floor
+or emergency path:
+
+- **Request** = VPA cpu `target * (1 + buffer%)`, clamped to `[min_cpu_m, max_cpu_request_m]` (25m..250m on odcn).
+- **Limit** follows the same frozen-vs-equal rule as memory, clamped to `max_cpu_limit_m` (4000m on odcn).
 
 The "Geheugen kan worden verminderd" portal card and its saving figure are
 expressed as the **request** reduction, since requests are what free scheduling
@@ -192,7 +199,7 @@ All changes flow through git commits. The tuner reads recommendations (from the 
 | Mechanism | Purpose |
 |-----------|---------|
 | **Cluster minimum** | Never set memory below 25Mi |
-| **Change threshold (20%)** | Only commit when the difference is meaningful |
+| **Deviation deadband** | Only commit when the change clears both a % threshold (10% up / 30% down) and an absolute floor (16Mi / 10m) |
 | **OOM kill priority** | Always increase memory when OOM kills are present |
 | **2x propagation cap** | Base component not inflated by outlier deployments |
 | **Frozen limit** | A limit already set to differ from the request is left untouched - only the request is tuned |
@@ -210,6 +217,18 @@ All changes flow through git commits. The tuner reads recommendations (from the 
 3. Paces `RESOURCE_TUNING_PACE_SECONDS` after each project that changed, so a convergence night spreads its pod rollouts instead of bouncing the whole fleet at once.
 
 Why a nightly full sweep rather than a paced/capped/cooldown schedule: **checking is cheap** (VPA `.status` reads + a few Prometheus queries, no writes); the real cost — commit, reprocess, ArgoCD sync, rollout — is only paid when a project drifts past the deadband. So cost scales with how many projects *drift*, not how many are checked, and the deadband (not a cooldown) is what prevents night-to-night churn. Urgent under-provisioning between sweeps is handled out-of-band by the reactive OOM watcher.
+
+## Known Limitations
+
+These are inherent to reactive, history-based autoscaling and are worth knowing before trusting the tuner blindly:
+
+- **Idle-then-spike (peak) risk.** The recommendation reflects only what was observed in the window. A workload that is idle during the window and then does something new is sized too low, and the first spike can OOM-kill it. This is worsened by the **limit-collapse** rule: when limit == request (the default), a memory *decrease* shrinks both, leaving zero burst headroom. *(Mitigation under consideration: drive the memory limit from the VPA `upperBound`, or keep a headroom multiple, so requests can shrink for packing while the limit keeps burst room.)*
+
+- **Window sensitivity.** Memory sized to `max_over_time` over a fixed window depends on what that window captured: one that caught a rare spike sizes generously, one that missed it sizes too lean. The VPA path (a decaying ~8-day histogram) is more robust and becomes the default as VPAs populate.
+
+- **OOM recovery timing gap.** When a freshly-resized pod OOMs, the reactive recovery re-derives `has_oom_kills` from the Prometheus OOM metric, which lags the kill by a scrape interval. If recovery runs within seconds of the kill it reads "no OOM yet", skips the bump, and logs "OOM detected but auto-tune could not determine new limits" - even though the no-metrics trial-and-error bump (1.5-3x) would have worked. *(Mitigation under consideration: pass the already-known OOM signal from the sync / OOM-watcher into the tune so the bump fires regardless of the metric lag.)*
+
+- **Net effect depends on provisioning.** On an *under*-provisioned fleet (many components at low defaults running real workloads), the tuner raises more than it lowers - net reserved memory goes *up*. That is reliability, not savings; the memory-reclaim story only pays out on an *over*-provisioned fleet.
 
 ## Related
 
