@@ -78,7 +78,7 @@ def _sample_project() -> dict[str, Any]:
                 "services": [
                     {
                         "attachments": {
-                            "use": [{"reference": "mtlskeystore", "provide-as": "file", "path": "/etc/tls/k.p12"}]
+                            "config": [{"reference": "mtlskeystore", "provide-as": "file", "path": "/etc/tls/k.p12"}]
                         }
                     },
                 ],
@@ -103,7 +103,7 @@ def test_reference_integrity() -> None:
     assert attachment_is_referenced(project, "mtlskeystore") is True
     assert attachment_is_referenced(project, "unknown") is False
     # Break the reference -> error reported
-    project["components"][0]["services"][0]["attachments"]["use"][0]["reference"] = "ghost"
+    project["components"][0]["services"][0]["attachments"]["config"][0]["reference"] = "ghost"
     errors = validate_attachment_references(project)
     assert len(errors) == 1
     assert "ghost" in errors[0]

@@ -784,8 +784,14 @@ class AttachmentOptionsProvider:
 
         catalog = extract_attachment_catalog(self._yaml_data)
         if not catalog:
-            return [{"value": "", "label": "Geen bijlagen geüpload — upload eerst op de Bijlagen-sectie"}]
-        return [{"value": entry["id"], "label": entry.get("filename", entry["id"])} for entry in catalog.values()]
+            return [{"value": "", "label": "Geen bijlagen geüpload: upload eerst op de Bijlagen-sectie"}]
+        return [
+            {
+                "value": entry["id"],
+                "label": f"{entry['id']} ({entry['filename']})" if entry.get("filename") else entry["id"],
+            }
+            for entry in catalog.values()
+        ]
 
 
 class AttachmentProvideAsOptionsProvider:
