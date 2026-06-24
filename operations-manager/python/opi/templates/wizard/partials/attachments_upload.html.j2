@@ -14,6 +14,7 @@
         <div style="margin-top:0.75rem;">
             <c-button type="button" kind="secondary" size="sm" label="Uploaden"
                       hx-post="/forms/wizard/create-project/attachments/stage"
+                      hx-ext="ignore:json-enc"
                       hx-encoding="multipart/form-data"
                       hx-include="#wiz-att-id, #wiz-att-file"
                       hx-target="#wiz-att-status"
@@ -24,5 +25,6 @@
     <div id="wiz-att-status"
          hx-get="/forms/wizard/create-project/attachments/list"
          hx-trigger="load"
+         hx-target="this"
          hx-swap="innerHTML"></div>
 </c-layout-flow>

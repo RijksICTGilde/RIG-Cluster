@@ -7,6 +7,7 @@
             <div><strong>{{ att.filename }}</strong> <span class="rvo-text--sm rvo-text--subtle">(id: {{ att.id }})</span></div>
             <c-button type="button" kind="secondary" size="xs" label="Verwijderen"
                       hx-post="/forms/wizard/{{ flow_id }}/attachments/unstage"
+                      hx-ext="ignore:json-enc"
                       hx-vals='{"attachment_id": "{{ att.id }}"}'
                       hx-target="#wiz-att-status"
                       hx-swap="innerHTML" />
