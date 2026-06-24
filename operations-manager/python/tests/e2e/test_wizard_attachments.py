@@ -46,8 +46,8 @@ def test_attachments_step_renders_upload_ui(app_server: str, auth_page: Page) ->
     assert auth_page.locator("#wiz-att-id").count() > 0
     assert auth_page.locator("#wiz-att-file").count() > 0
     assert auth_page.locator("button:has-text('Uploaden')").count() > 0
-    # Staged list is fetched async via hx-trigger=load; wait for it to populate.
-    auth_page.wait_for_selector("#wiz-att-status:has-text('Nog geen bijlagen')", timeout=10000)
+    # Current-attachments card renders server-side and is empty for a fresh project.
+    assert auth_page.locator("text=Nog geen bijlagen").count() > 0
 
 
 def test_attachments_upload_then_unstage(app_server: str, auth_page: Page, tmp_path: Path) -> None:
