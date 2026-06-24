@@ -126,7 +126,8 @@ class TestFlowDefinitions:
     def test_create_flow(self):
         assert CREATE_FLOW.flow_id == "create-project"
         assert CREATE_FLOW.show_review is True
-        assert len(CREATE_FLOW.sections) == 9
+        assert len(CREATE_FLOW.sections) == 10
+        assert "attachments" in [s.section_id for s in CREATE_FLOW.sections]
 
     def test_edit_flow(self):
         assert EDIT_FLOW.flow_id == "edit-project"

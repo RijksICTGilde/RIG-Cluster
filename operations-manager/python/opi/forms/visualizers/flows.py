@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from opi.forms.editables.fields.config_generated import GENERATED_EDITABLES_PURE
 from opi.forms.visualizers.wizard_sections import (
+    ATTACHMENTS_SECTION,
     AUTH_WALL_CONFIG_SECTION,
     BACKUP_SELECT_SECTION,
     COMPONENTS_EDIT_SECTION,
@@ -73,6 +74,7 @@ CREATE_FLOW = FormFlow(
         POSTGRESQL_CONFIG_SECTION,
         AUTH_WALL_CONFIG_SECTION,
         TEAM_SECTION,
+        ATTACHMENTS_SECTION,
         COMPONENTS_SECTION,
         build_deployment_wizard_section(0),
         build_domain_section(0),
