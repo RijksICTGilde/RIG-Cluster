@@ -468,7 +468,6 @@ class ServiceAdapter:
             color="grijs-600",
             scope="component",
             variables=[],
-            hidden=True,
         ),
         ServiceType.AUTHORIZATION_WALL: ServiceDefinition(
             name="Authorization Wall",
