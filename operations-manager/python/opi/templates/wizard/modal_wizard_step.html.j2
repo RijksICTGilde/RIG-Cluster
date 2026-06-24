@@ -62,7 +62,7 @@
           hx-post="{{ _step_url_prefix }}{{ section.section_id }}{{ _token_qs }}"
           hx-target="#edit-section-inner"
           hx-swap="innerHTML"
-          hx-disabled-elt="find button[type='submit']">
+          hx-disabled-elt="#modal-wizard-form button[type='submit']">
 
         {% if wizard_token %}
         <input type="hidden" name="_wizard_token" value="{{ wizard_token }}" />
