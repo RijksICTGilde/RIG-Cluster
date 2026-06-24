@@ -126,14 +126,13 @@ class ResolveAttachmentsHook:
             # The services picker stores an enabled service as a bare string; upgrade
             # "attachments" to its dict form in place rather than appending a duplicate.
             if entry == "attachments":
-                services[i] = {"attachments": {"data": []}}
-                data_list = services[i]["attachments"]["data"]
+                upgraded: list = []
+                services[i] = {"attachments": {"data": upgraded}}
+                data_list = upgraded
                 break
         if data_list is None:
-            new_entry: dict[str, Any] = {"attachments": {"data": []}}
-            services.append(new_entry)
-            data_list = new_entry["attachments"]["data"]
-        assert data_list is not None
+            data_list = []
+            services.append({"attachments": {"data": data_list}})
 
         existing_ids = {e.get("id") for e in data_list if isinstance(e, dict)}
         for att_id, info in staged.items():

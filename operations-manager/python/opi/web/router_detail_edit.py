@@ -1023,6 +1023,28 @@ async def restore_select_mode(request: Request, project_name: str) -> HTMLRespon
     return HTMLResponse(content=rendered)
 
 
+def _attachment_review_items(yaml_data: dict, state) -> list[str]:
+    """List committed + staged attachments for the review summary.
+
+    The attachments section is a TemplatePartial whose staged uploads live in the
+    wizard session (not yet in the YAML), so _build_section_fields finds nothing.
+    Surface both here so the user sees the upload they just made before saving.
+    """
+    items: list[str] = []
+    seen: set[str] = set()
+    for service in yaml_data.get("services", []):
+        if isinstance(service, dict) and isinstance(service.get("attachments"), dict):
+            for entry in service["attachments"].get("data", []) or []:
+                if isinstance(entry, dict) and entry.get("id"):
+                    items.append(f"{entry.get('filename', entry['id'])} ({entry['id']})")
+                    seen.add(entry["id"])
+    staged = getattr(state, "staged_attachments", None) or {}
+    for att_id, info in staged.items():
+        if att_id not in seen:
+            items.append(f"{info.get('filename', att_id)} ({att_id})")
+    return items
+
+
 def _render_modal_review(
     request: Request,
     wizard_token: str | None,
@@ -1039,6 +1061,10 @@ def _render_modal_review(
     section_summaries = []
     for section in active_sections:
         fields = _build_section_fields(section, yaml_data)
+        if section.section_id == "attachments":
+            att_items = _attachment_review_items(yaml_data, state)
+            if att_items:
+                fields = [*fields, {"label": "Bijlagen", "is_list": True, "value": att_items}]
         section_summaries.append(
             {
                 "section_id": section.section_id,
@@ -1229,7 +1255,7 @@ async def _modal_do_submit(
     hook_context = {
         "project_name": project_name,
         "resolvers": build_resolver_map(all_editables),
-        "staged_attachments": state.step_data.get("_staged_attachments") or {},
+        "staged_attachments": state.staged_attachments or {},
     }
     await run_hooks(
         FormState.PRE_SAVE,

@@ -1891,18 +1891,28 @@ async def _do_submit(
             # Create mode: merge staged attachment uploads into the project-level
             # attachments catalog before generators run (the combine generator
             # encrypts them once the AGE keypair exists).
-            staged_attachments = state.step_data.get("_staged_attachments") or {}
+            staged_attachments = state.staged_attachments or {}
             if staged_attachments:
                 services = final_data.setdefault("services", [])
                 data_list: list | None = None
-                for entry in services:
+                for i, entry in enumerate(services):
                     if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
                         data_list = entry["attachments"].setdefault("data", [])
+                        break
+                    # The services picker stores an enabled service as a bare string;
+                    # upgrade "attachments" to its dict form rather than duplicating it.
+                    if entry == "attachments":
+                        upgraded: list = []
+                        services[i] = {"attachments": {"data": upgraded}}
+                        data_list = upgraded
                         break
                 if data_list is None:
                     data_list = []
                     services.append({"attachments": {"data": data_list}})
+                existing_ids = {e.get("id") for e in data_list if isinstance(e, dict)}
                 for att_id, info in staged_attachments.items():
+                    if att_id in existing_ids:
+                        continue
                     data_list.append(
                         {"id": att_id, "filename": info.get("filename", att_id), "content": info.get("content")}
                     )
