@@ -10,7 +10,8 @@
                       hx-ext="ignore:json-enc"
                       hx-vals='{"attachment_id": "{{ att.id }}", "_wizard_token": "{{ wizard_token | default('') }}"}'
                       hx-target="#wiz-att-status"
-                      hx-swap="innerHTML" />
+                      hx-swap="innerHTML"
+                      hx-disabled-elt="this" />
         </div>
     </c-card>
     {% endfor %}
