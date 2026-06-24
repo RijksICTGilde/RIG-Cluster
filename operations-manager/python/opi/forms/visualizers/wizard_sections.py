@@ -771,6 +771,15 @@ RESTORE_TARGET_SECTION = FormSection(
     summary_fn=_restore_target_summary,
 )
 
+ATTACHMENTS_SECTION = FormSection(
+    section_id="attachments",
+    title="Bijlagen",
+    icon="map",
+    description="Upload optioneel bestanden (bijv. certificaten) om aan componenten te koppelen",
+    editables=[],
+    layout=[TemplatePartial(template="wizard/partials/attachments_upload.html.j2")],
+)
+
 
 def _new_deployment_summary(data: dict[str, Any], deployment_index: int = 0) -> str:
     """Build review summary for new deployment configuration."""

@@ -31,6 +31,7 @@ from .router_subdomain_admin import subdomain_admin_router
 from .router_usage import usage_router
 from .router_user_admin import user_admin_router
 from .router_wizard import wizard_router
+from .router_wizard_attachments import wizard_attachments_router
 from .services_router import services_router
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ web_router.include_router(user_admin_router)
 web_router.include_router(usage_router)
 web_router.include_router(subdomain_admin_router)
 web_router.include_router(attachments_router)
+web_router.include_router(wizard_attachments_router)
 
 
 @web_router.get("/")
