@@ -42,8 +42,8 @@ def test_data_entry_valid() -> None:
 def test_data_entry_invalid() -> None:
     v = _validator_for("attachment-data-entry")
     assert not v.is_valid({"id": "mtlskeystore", "filename": "keystore.p12"})  # missing content
-    assert not v.is_valid({"id": "Bad-Id", "filename": "x", "content": "base64+age:abc"})  # bad id pattern
-    assert not v.is_valid({"id": "toolongidentifier", "filename": "x", "content": "base64+age:abc"})  # >12
+    assert not v.is_valid({"id": "Bad_Id", "filename": "x", "content": "base64+age:abc"})  # bad id pattern (underscore/uppercase)
+    assert not v.is_valid({"id": "a" * 41, "filename": "x", "content": "base64+age:abc"})  # >40
     assert not v.is_valid({"id": "ok", "filename": "x", "content": "not-encrypted"})  # content pattern
 
 
