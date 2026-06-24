@@ -159,6 +159,15 @@ class WizardState:
     back into the real structure.
     """
 
+    staged_attachments: dict[str, Any] = field(default_factory=dict)
+    """Attachment uploads staged this session (id -> {filename, content="staging:<token>"}).
+
+    Kept OUT of ``step_data`` on purpose: that dict is keyed by section_id and
+    ``stash_inactive_sections`` would treat a stray non-section key as an inactive
+    section and discard it on the next step. Combined into the project at submit
+    (create: AttachmentStagingResolveGenerator; edit: ResolveAttachmentsHook).
+    """
+
     def get_merged_data(self, strip_cleared: bool = True) -> dict[str, Any]:
         """Merge template and step data into a single dict.
 
@@ -295,6 +304,7 @@ class WizardState:
             "stashed_data": self.stashed_data,
             "locked_services": self.locked_services,
             "virt_mappings": self.virt_mappings,
+            "staged_attachments": self.staged_attachments,
         }
 
     def stash_inactive_sections(self, active_section_ids: list[str]) -> None:
@@ -332,4 +342,5 @@ class WizardState:
             stashed_data=data.get("stashed_data", {}),
             locked_services=data.get("locked_services", []),
             virt_mappings=data.get("virt_mappings", {}),
+            staged_attachments=data.get("staged_attachments", {}),
         )
