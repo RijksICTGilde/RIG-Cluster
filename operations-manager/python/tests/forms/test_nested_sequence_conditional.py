@@ -20,7 +20,7 @@ YAML_DATA = {
             "services": [
                 {
                     "attachments": {
-                        "use": [
+                        "config": [
                             {"reference": "a", "provide-as": "file", "path": "/etc/tls/a"},
                             {"reference": "b", "provide-as": "env-var", "env-name": "B"},
                         ]
