@@ -99,7 +99,10 @@ class ProjectService:
         # member added via the team-edit modal (which only calls register) is
         # redirected to /permission-denied until the allowlist is rebuilt.
         if users:
-            get_user_service().add_allowed_emails([user.email for user in users])
+            member_emails = [
+                (user.get("email") if isinstance(user, dict) else getattr(user, "email", None)) for user in users
+            ]
+            get_user_service().add_allowed_emails([email for email in member_emails if email])
 
         return True
 
