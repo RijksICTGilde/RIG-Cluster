@@ -95,3 +95,40 @@ class StripTransientsHook:
     async def execute(self, yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
         processor = EditableFormProcessor()
         processor.strip_transients_from(yaml_data, self._editables)
+
+
+class ResolveAttachmentsHook:
+    """Inject staged attachment uploads into the catalog and encrypt them (edit flow).
+
+    The modal-edit flow already has the project AGE key in ``yaml_data`` at PRE_SAVE,
+    so staged uploads (passed via ``context['staged_attachments']``, a map id ->
+    {filename, content="staging:<token>"}) are written into the project-level
+    attachments service ``data`` list and encrypted here. The create flow does the
+    same via AttachmentStagingResolveGenerator instead, because its key is generated
+    only after PRE_SAVE.
+    """
+
+    order: int = 1
+
+    async def execute(self, yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
+        from opi.forms.editables.generators import AttachmentStagingResolveGenerator
+
+        staged = context.get("staged_attachments") or {}
+        if not staged:
+            return
+
+        services = yaml_data.setdefault("services", [])
+        data_list: list | None = None
+        for entry in services:
+            if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
+                data_list = entry["attachments"].setdefault("data", [])
+                break
+        if data_list is None:
+            data_list = []
+            services.append({"attachments": {"data": data_list}})
+        for att_id, info in staged.items():
+            data_list.append(
+                {"id": att_id, "filename": info.get("filename", att_id), "content": info.get("content")}
+            )
+
+        AttachmentStagingResolveGenerator().generate(yaml_data)
