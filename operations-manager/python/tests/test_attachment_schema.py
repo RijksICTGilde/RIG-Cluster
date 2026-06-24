@@ -194,4 +194,5 @@ def test_attachment_id_allows_hyphens_rejects_underscores() -> None:
     assert v.validate("my_cert")  # underscore rejected (invalid in a Secret/volume name)
     assert v.validate("my-")  # trailing hyphen rejected
     assert v.validate("-x")  # leading hyphen rejected
-    assert v.validate("a" * 13)  # over 12 chars rejected
+    assert v.validate("frontend-tls-keystore") == []  # descriptive name within 40
+    assert v.validate("a" * 41)  # over 40 chars rejected
