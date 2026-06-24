@@ -678,7 +678,7 @@ class FormRenderer:
         from opi.forms.editables.editable import apply_virtualize
         from opi.forms.editables.path import resolve_path
         from opi.forms.editables.service_path import smart_get_value
-        from opi.forms.visualizers.bridge import editable_to_form_field
+        from opi.forms.visualizers.bridge import editable_to_form_field, should_render_editable
 
         ed = editable.editable
         real_path = resolve_path(ed.yaml_path, parent_index)
@@ -708,12 +708,20 @@ class FormRenderer:
         for child_index in range(len(items)):
             item_children: list[FormField] = []
             for child_editable in editable.children or []:
-                # Pre-resolve the parent [*] so editable_to_form_field
-                # only needs to resolve the child [*].
+                # Pre-resolve the parent [*] so editable_to_form_field / show_when
+                # only need to resolve the child [*] (the nested item index).
                 resolved_editable = copy.copy(child_editable)
                 resolved_ed = copy.copy(child_editable.editable)
                 resolved_ed.yaml_path = resolve_path(child_editable.editable.yaml_path, parent_index)
+                if resolved_ed.depends_on:
+                    resolved_ed.depends_on = resolve_path(resolved_ed.depends_on, parent_index)
                 resolved_editable.editable = resolved_ed
+                # Honour conditional visibility (show_when) inside nested sequences too,
+                # so a field can be shown/hidden per item based on a sibling's value.
+                if not should_render_editable(
+                    resolved_editable, yaml_data, index=child_index, siblings=editable.children
+                ):
+                    continue
                 child_field = editable_to_form_field(
                     resolved_editable,
                     yaml_data,
