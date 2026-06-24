@@ -43,7 +43,13 @@
                           hx-swap="innerHTML"
                           hx-disabled-elt="this" />
             </div>
-            <div id="wiz-att-status"></div>
+            <div id="wiz-att-status"
+                 hx-get="/forms/wizard/create-project/attachments/list"
+                 hx-trigger="load"
+                 hx-vals='{"_wizard_token": "{{ _wizard_token | default('', true) }}"}'
+                 hx-target="this"
+                 hx-swap="innerHTML"
+                 hx-disabled-elt="this"></div>
         </c-layout-flow>
     </c-card>
 </c-layout-flow>
