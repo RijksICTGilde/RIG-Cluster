@@ -1,9 +1,11 @@
-{# Wizard attachments upload section (create flow). Files are staged out-of-band via #}
-{# a multipart endpoint; the staged list is loaded over htmx. CSRF is inherited from #}
-{# the surrounding wizard step form's hx-headers. flow_id is fixed to create-project. #}
+{# Attachments upload section, used in both the create wizard and the modal services-edit. #}
+{# Files are staged out-of-band via a multipart endpoint; the staged list is loaded over htmx. #}
+{# CSRF inherits from the surrounding wizard step form's hx-headers. _wizard_token (present in #}
+{# the modal flow's data) routes the request to the modal session; absent => cookie session. #}
 <c-layout-flow gap="md">
-    <p class="rvo-text--subtle">Upload optioneel bestanden (max 256 KB, bijvoorbeeld certificaten). Je koppelt ze later per component onder 'Bijlagen'. Deze stap mag je overslaan.</p>
+    <p class="rvo-text--subtle">Upload bestanden (max 256 KB, bijvoorbeeld certificaten). Je koppelt ze per component onder 'Bijlagen'. Optioneel.</p>
 
+    <input type="hidden" id="wiz-att-token" name="_wizard_token" value="{{ _wizard_token | default('') }}">
     <div class="rvo-form-group">
         <label class="utrecht-form-label" for="wiz-att-id">Identifier (kleine letters/cijfers, max 12 tekens)</label>
         <input type="text" id="wiz-att-id" name="attachment_id"
@@ -16,7 +18,7 @@
                       hx-post="/forms/wizard/create-project/attachments/stage"
                       hx-ext="ignore:json-enc"
                       hx-encoding="multipart/form-data"
-                      hx-include="#wiz-att-id, #wiz-att-file"
+                      hx-include="#wiz-att-id, #wiz-att-file, #wiz-att-token"
                       hx-target="#wiz-att-status"
                       hx-swap="innerHTML" />
         </div>
@@ -25,6 +27,7 @@
     <div id="wiz-att-status"
          hx-get="/forms/wizard/create-project/attachments/list"
          hx-trigger="load"
+         hx-vals='{"_wizard_token": "{{ _wizard_token | default('') }}"}'
          hx-target="this"
          hx-swap="innerHTML"></div>
 </c-layout-flow>

@@ -1,4 +1,4 @@
-{# Staged-attachments list fragment for the create wizard. Swapped into #wiz-att-status. #}
+{# Staged-attachments list fragment. Swapped into #wiz-att-status. #}
 {% if staged and staged|length > 0 %}
 <c-layout-flow gap="sm">
     {% for att in staged %}
@@ -6,9 +6,9 @@
         <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">
             <div><strong>{{ att.filename }}</strong> <span class="rvo-text--sm rvo-text--subtle">(id: {{ att.id }})</span></div>
             <c-button type="button" kind="secondary" size="xs" label="Verwijderen"
-                      hx-post="/forms/wizard/{{ flow_id }}/attachments/unstage"
+                      hx-post="/forms/wizard/create-project/attachments/unstage"
                       hx-ext="ignore:json-enc"
-                      hx-vals='{"attachment_id": "{{ att.id }}"}'
+                      hx-vals='{"attachment_id": "{{ att.id }}", "_wizard_token": "{{ wizard_token | default('') }}"}'
                       hx-target="#wiz-att-status"
                       hx-swap="innerHTML" />
         </div>
@@ -16,5 +16,5 @@
     {% endfor %}
 </c-layout-flow>
 {% else %}
-<p class="rvo-text--sm rvo-text--subtle"><em>Nog geen bijlagen geupload.</em></p>
+<p class="rvo-text--sm rvo-text--subtle"><em>Nog geen bijlagen geüpload.</em></p>
 {% endif %}
