@@ -106,8 +106,10 @@ class ComponentNameValidator:
 
 class AttachmentIdValidator:
     """
-    Validates attachment ids: same rules as component names (lowercase letters and
-    digits, starting with a letter, max 12 chars).
+    Validates attachment ids: lowercase letters, digits and hyphens, starting with a
+    letter and ending alphanumeric, max 40 chars. The id becomes part of a Kubernetes
+    volume name (``attch-{id}``), a DNS-1123 label capped at 63 chars, so 40 leaves
+    margin while allowing descriptive names.
 
     When called with context containing ``existing_attachment_ids``, also checks uniqueness.
     """
@@ -116,8 +118,8 @@ class AttachmentIdValidator:
         if not value:
             return []
         value_str = str(value)
-        if len(value_str) > 12:
-            return ["Bijlage-id mag maximaal 12 tekens bevatten"]
+        if len(value_str) > 40:
+            return ["Bijlage-id mag maximaal 40 tekens bevatten"]
         if not re.match(r"^[a-z]([a-z0-9-]*[a-z0-9])?$", value_str):
             return [
                 "Moet beginnen met een kleine letter, mag kleine letters, cijfers en streepjes bevatten, "
