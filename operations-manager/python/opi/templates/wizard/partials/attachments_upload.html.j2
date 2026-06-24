@@ -1,33 +1,48 @@
-{# Attachments upload section, used in both the create wizard and the modal services-edit. #}
-{# Files are staged out-of-band via a multipart endpoint; the staged list is loaded over htmx. #}
-{# CSRF inherits from the surrounding wizard step form's hx-headers. _wizard_token (present in #}
-{# the modal flow's data) routes the request to the modal session; absent => cookie session. #}
-<c-layout-flow gap="md">
-    <p class="rvo-text--subtle">Upload bestanden (max 256 KB, bijvoorbeeld certificaten). Je koppelt ze per component onder 'Bijlagen'. Optioneel.</p>
+{# Attachments: current list + upload. Used in the create wizard AND the services-edit modal. #}
+{# CSRF inherits from the surrounding wizard step form's hx-headers. _wizard_token (modal flow) #}
+{# routes staging to the modal session; absent => cookie session. No auto hx-trigger=load (it is #}
+{# fragile inside the modal); freshly staged files appear in #wiz-att-status after upload. #}
+{% set ns = namespace(items=[]) %}
+{% for s in services | default([]) %}
+  {% if s is mapping and s.attachments is mapping %}
+    {% for e in s.attachments.data | default([]) %}{% set ns.items = ns.items + [e] %}{% endfor %}
+  {% endif %}
+{% endfor %}
+<c-layout-flow gap="lg">
+    <c-card outline="true" padding="md" backgroundColor="grijs-050">
+        <c-layout-flow gap="sm">
+            <c-heading type="h3" textContent="Bijlagen in dit project" />
+            {% if ns.items %}
+            {% for att in ns.items %}
+            <div class="rvo-text--sm"><strong>{{ att.filename | default(att.id) }}</strong> <span class="rvo-text--subtle">(id: {{ att.id }})</span></div>
+            {% endfor %}
+            {% else %}
+            <p class="rvo-text--sm rvo-text--subtle"><em>Nog geen bijlagen.</em></p>
+            {% endif %}
+        </c-layout-flow>
+    </c-card>
 
-    <input type="hidden" id="wiz-att-token" name="_wizard_token" value="{{ _wizard_token | default('') }}">
-    <div class="rvo-form-group">
-        <label class="utrecht-form-label" for="wiz-att-id">Identifier (kleine letters/cijfers, max 12 tekens)</label>
-        <input type="text" id="wiz-att-id" name="attachment_id"
-               class="utrecht-textbox utrecht-textbox--html-input"
-               pattern="[a-z][a-z0-9]*" maxlength="12">
-        <label class="utrecht-form-label" for="wiz-att-file" style="margin-top:0.5rem;">Bestand</label>
-        <input type="file" id="wiz-att-file" name="file" class="rvo-file-input">
-        <div style="margin-top:0.75rem;">
-            <c-button type="button" kind="secondary" size="sm" label="Uploaden"
-                      hx-post="/forms/wizard/create-project/attachments/stage"
-                      hx-ext="ignore:json-enc"
-                      hx-encoding="multipart/form-data"
-                      hx-include="#wiz-att-id, #wiz-att-file, #wiz-att-token"
-                      hx-target="#wiz-att-status"
-                      hx-swap="innerHTML" />
-        </div>
-    </div>
-
-    <div id="wiz-att-status"
-         hx-get="/forms/wizard/create-project/attachments/list"
-         hx-trigger="load"
-         hx-vals='{"_wizard_token": "{{ _wizard_token | default('') }}"}'
-         hx-target="this"
-         hx-swap="innerHTML"></div>
+    <c-card outline="true" padding="md" backgroundColor="grijs-050">
+        <c-layout-flow gap="sm">
+            <c-heading type="h3" textContent="Nieuwe bijlage uploaden" />
+            <p class="rvo-text--sm rvo-text--subtle">Max 256 KB (bijvoorbeeld een certificaat). Koppelen doe je per component.</p>
+            <input type="hidden" id="wiz-att-token" name="_wizard_token" value="{{ _wizard_token | default('', true) }}">
+            <label class="utrecht-form-label" for="wiz-att-id">Identifier (kleine letters/cijfers, max 12 tekens)</label>
+            <input type="text" id="wiz-att-id" name="attachment_id"
+                   class="utrecht-textbox utrecht-textbox--html-input"
+                   pattern="[a-z][a-z0-9]*" maxlength="12">
+            <label class="utrecht-form-label" for="wiz-att-file" style="margin-top:0.5rem;">Bestand</label>
+            <input type="file" id="wiz-att-file" name="file" class="rvo-file-input">
+            <div style="margin-top:0.75rem;">
+                <c-button type="button" kind="secondary" size="sm" label="Uploaden"
+                          hx-post="/forms/wizard/create-project/attachments/stage"
+                          hx-ext="ignore:json-enc"
+                          hx-encoding="multipart/form-data"
+                          hx-include="#wiz-att-id, #wiz-att-file, #wiz-att-token"
+                          hx-target="#wiz-att-status"
+                          hx-swap="innerHTML" />
+            </div>
+            <div id="wiz-att-status"></div>
+        </c-layout-flow>
+    </c-card>
 </c-layout-flow>
