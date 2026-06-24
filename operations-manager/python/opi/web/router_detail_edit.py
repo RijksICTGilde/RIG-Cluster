@@ -1203,7 +1203,7 @@ async def _modal_do_submit(
     # the corresponding entry to ``domains.allowed-subdomains``. Mirrors the
     # equivalent block in router_wizard.py.
     from opi.forms.editables.editable import Editable, FormState, WidgetType
-    from opi.forms.editables.hooks import StripTransientsHook
+    from opi.forms.editables.hooks import ResolveAttachmentsHook, StripTransientsHook
     from opi.forms.editables.lifecycle import run_hooks
     from opi.forms.editables.resolvers import build_resolver_map
     from opi.forms.visualizers.visualizer import EditableVisualizer
@@ -1216,11 +1216,27 @@ async def _modal_do_submit(
         widget=WidgetType.HIDDEN,
         label="",
     )
+    # Resolve any files staged during this modal session into the encrypted catalog.
+    # The project AGE key is present in existing_data here, so the hook can encrypt.
+    attachments_hook_editable = EditableVisualizer(
+        editable=Editable(
+            yaml_path="_system/resolve-attachments",
+            hooks={FormState.PRE_SAVE: ResolveAttachmentsHook()},
+        ),
+        widget=WidgetType.HIDDEN,
+        label="",
+    )
     hook_context = {
         "project_name": project_name,
         "resolvers": build_resolver_map(all_editables),
+        "staged_attachments": state.step_data.get("_staged_attachments") or {},
     }
-    await run_hooks(FormState.PRE_SAVE, [*all_editables, strip_hook_editable], existing_data, hook_context)
+    await run_hooks(
+        FormState.PRE_SAVE,
+        [*all_editables, attachments_hook_editable, strip_hook_editable],
+        existing_data,
+        hook_context,
+    )
 
     # Defensive: ensure any transients not stripped by the PRE_SAVE chain
     # are still removed before save.
