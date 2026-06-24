@@ -234,7 +234,7 @@
       "required": ["id", "filename", "content"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*\\Z", "maxLength": 12 },
+        "id": { "type": "string", "pattern": "^[a-z]([a-z0-9-]*[a-z0-9])?\\Z", "maxLength": 12 },
         "filename": { "type": "string" },
         "content": { "$ref": "#/$defs/age-encrypted" }
       }
@@ -246,7 +246,7 @@
       "required": ["reference", "provide-as"],
       "additionalProperties": false,
       "properties": {
-        "reference": { "type": "string", "pattern": "^[a-z][a-z0-9]*\\Z", "maxLength": 12 },
+        "reference": { "type": "string", "pattern": "^[a-z]([a-z0-9-]*[a-z0-9])?\\Z", "maxLength": 12 },
         "provide-as": { "type": "string", "enum": ["file", "env-var"] },
         "path": { "type": "string", "pattern": "^/[^\\u0000]*\\Z" },
         "env-name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\Z" }
