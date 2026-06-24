@@ -211,11 +211,15 @@ ATTACHMENT_USE_PATH_EDITABLE = Editable(
     yaml_path="components[*]/services{attachments}/use[*]/path",
     validator=PathValidator(),
     remove_when_none=True,
+    depends_on="components[*]/services{attachments}/use[*]/provide-as",
+    show_when={"value": ["file"]},
 )
 
 ATTACHMENT_USE_ENV_NAME_EDITABLE = Editable(
     yaml_path="components[*]/services{attachments}/use[*]/env-name",
     remove_when_none=True,
+    depends_on="components[*]/services{attachments}/use[*]/provide-as",
+    show_when={"value": ["env-var"]},
 )
 
 ATTACHMENT_USE_SEQUENCE_EDITABLE = Editable(
