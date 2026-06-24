@@ -4577,7 +4577,7 @@ class ProjectManager:
             attachment_secret_mounts: list[dict[str, str]] = []
             attachment_file_secrets: dict[str, dict[str, str]] = {}
             resolved_attachments = await self._project_file_handler.resolve_attachments_for_component(
-                project_data, component_reference
+                project_data, component_reference, deployment_name=deployment_name
             )
             for att in resolved_attachments:
                 reference = att["reference"]
