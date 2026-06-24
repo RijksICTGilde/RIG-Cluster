@@ -783,6 +783,8 @@ class AttachmentOptionsProvider:
         from opi.handlers.project_file_handler import extract_attachment_catalog
 
         catalog = extract_attachment_catalog(self._yaml_data)
+        if not catalog:
+            return [{"value": "", "label": "Geen bijlagen geüpload — upload eerst op de Bijlagen-sectie"}]
         return [{"value": entry["id"], "label": entry.get("filename", entry["id"])} for entry in catalog.values()]
 
 
