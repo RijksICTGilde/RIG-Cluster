@@ -252,6 +252,7 @@ ATTACHMENT_USE_PROVIDE_AS = EditableVisualizer(
     widget=WidgetType.SELECT,
     label="Leveren als",
     help_text="Als bestand op een pad, of als waarde van een env-var (alleen tekstbestanden).",
+    attributes={"data-rerender": "true"},
 )
 
 ATTACHMENT_USE_PATH = EditableVisualizer(
