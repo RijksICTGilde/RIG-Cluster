@@ -249,3 +249,44 @@ class TestApiKeyDecryptionOnLoad:
 
         assert service.load_project_from_data(_encrypted_project_data(), "proj.yaml") is True
         assert service.get_project("proj").api_key == AGE_API_KEY
+
+
+class TestRegisterSyncsAllowlist:
+    """register() must add member emails to the global access allowlist.
+
+    The team-edit modal saves via load_project_from_data -> register only.
+    Before this sync, a newly added member was redirected to /permission-denied
+    until the next periodic Git refresh (or app restart) rebuilt the allowlist.
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset_user_service_singleton(self):
+        import opi.services.user_service as us
+
+        us._user_service = None
+        yield
+        us._user_service = None
+
+    def test_register_adds_member_emails_to_allowlist(self, service):
+        from opi.services.user_service import get_user_service
+
+        users = [ProjectUser(email="New.Member@Example.com", role="admin")]
+        service.register("proj", "k", "f.yaml", users=users)
+        assert get_user_service().is_email_allowed("new.member@example.com") is True
+
+    def test_load_project_from_data_adds_member_emails_to_allowlist(self, service):
+        from opi.services.user_service import get_user_service
+
+        data = {
+            "name": "proj",
+            "config": {"api-key": "k"},
+            "users": [{"email": "member@example.com", "role": "admin"}],
+        }
+        service.load_project_from_data(data, "f.yaml")
+        assert get_user_service().is_email_allowed("member@example.com") is True
+
+    def test_register_without_users_does_not_crash(self, service):
+        from opi.services.user_service import get_user_service
+
+        service.register("proj", "k", "f.yaml")
+        assert get_user_service().is_email_allowed("anybody@example.com") is False
