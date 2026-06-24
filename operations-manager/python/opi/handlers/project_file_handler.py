@@ -851,22 +851,35 @@ class ProjectFileHandler:
         )
 
     async def resolve_attachments_for_component(
-        self, project_data: dict[str, Any], component_name: str
+        self, project_data: dict[str, Any], component_name: str, deployment_name: str | None = None
     ) -> list[dict[str, Any]]:
-        """Resolve a project-level component's attachment uses to decrypted byte content.
+        """Resolve a component's attachment coupling to decrypted byte content.
+
+        When *deployment_name* is given, the deployment component's coupling is merged
+        on top of the base component's: union by ``reference`` with the deployment
+        winning on a collision (mirrors the user-env-vars override). After merging, the
+        delivery targets must be unique (no two references on the same ``path`` or the
+        same ``env-name``).
 
         Returns a list of dicts with keys: reference, provide-as, path, env-name, filename,
         content_bytes. Uses the dedicated byte-decrypt (age block -> base64 -> bytes), NOT the
-        string-based env-var decrypt. Raises ValueError on a dangling reference or when binary
-        content is requested as an env-var value.
+        string-based env-var decrypt. Raises ValueError on a dangling reference, a delivery
+        conflict, or when binary content is requested as an env-var value.
         """
         component = next(
             (c for c in project_data.get("components", []) if isinstance(c, dict) and c.get("name") == component_name),
             None,
         )
-        uses = extract_component_attachment_uses(component) if component else []
+        base_uses = extract_component_attachment_uses(component) if component else []
+        if deployment_name:
+            dep_uses = extract_deployment_component_attachment_uses(project_data, deployment_name, component_name)
+            uses = _merge_attachment_uses(base_uses, dep_uses)
+        else:
+            uses = base_uses
         if not uses:
             return []
+
+        _assert_unique_attachment_targets(uses, component_name, deployment_name)
 
         catalog = extract_attachment_catalog(project_data)
         private_key = await get_decoded_project_private_key(project_data)
@@ -3004,6 +3017,60 @@ def extract_component_attachment_uses(component: dict[str, Any]) -> list[dict[st
             coupling = service_data.get("use", [])
         uses.extend(item for item in (coupling or []) if isinstance(item, dict) and item.get("reference"))
     return uses
+
+
+def extract_deployment_component_attachment_uses(
+    project_data: dict[str, Any], deployment_name: str, component_reference: str
+) -> list[dict[str, Any]]:
+    """Extract the attachment coupling entries on a specific deployment's component override."""
+    for dep in project_data.get("deployments", []):
+        if not isinstance(dep, dict) or dep.get("name") != deployment_name:
+            continue
+        for comp in dep.get("components", []):
+            if isinstance(comp, dict) and comp.get("reference") == component_reference:
+                return extract_component_attachment_uses(comp)
+    return []
+
+
+def _merge_attachment_uses(
+    base: list[dict[str, Any]], override: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Union two coupling lists by ``reference``, with *override* winning on a collision.
+
+    Mirrors the user-env-vars override (``dict.update``): base entries apply unless the
+    deployment override re-couples the same reference. Base order is preserved; new
+    deployment-only references are appended.
+    """
+    merged: dict[str, dict[str, Any]] = {}
+    for use in (*base, *override):
+        if isinstance(use, dict) and use.get("reference"):
+            merged[use["reference"]] = use
+    return list(merged.values())
+
+
+def _assert_unique_attachment_targets(
+    uses: list[dict[str, Any]], component_name: str, deployment_name: str | None
+) -> None:
+    """Reject two different references mounting on the same path / the same env-var name."""
+    where = f"component '{component_name}'" + (f" in deployment '{deployment_name}'" if deployment_name else "")
+    paths: dict[str, str] = {}
+    env_names: dict[str, str] = {}
+    for use in uses:
+        ref = use.get("reference", "?")
+        if use.get("provide-as") == "file" and use.get("path"):
+            target = use["path"]
+            if target in paths:
+                raise ValueError(
+                    f"Bijlagen '{paths[target]}' en '{ref}' gebruiken hetzelfde pad '{target}' op {where}"
+                )
+            paths[target] = ref
+        elif use.get("provide-as") == "env-var" and use.get("env-name"):
+            target = use["env-name"]
+            if target in env_names:
+                raise ValueError(
+                    f"Bijlagen '{env_names[target]}' en '{ref}' gebruiken dezelfde env-var '{target}' op {where}"
+                )
+            env_names[target] = ref
 
 
 def validate_attachment_references(project_data: dict[str, Any]) -> list[str]:

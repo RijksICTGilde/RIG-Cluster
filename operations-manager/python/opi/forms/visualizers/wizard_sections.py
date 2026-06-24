@@ -30,6 +30,7 @@ from opi.forms.visualizers.fields.deployments import (
     DEPLOYMENT_BACKUP_SCHEDULE_MONTHDAY,
     DEPLOYMENT_BACKUP_SCHEDULE_TIME,
     DEPLOYMENT_CLONE_FROM,
+    DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE,
     DEPLOYMENT_COMP_IMAGE,
     DEPLOYMENT_COMP_REFERENCE,
     DEPLOYMENT_COMP_USER_ENV_VARS,
@@ -672,6 +673,7 @@ def build_deployment_edit_section(
     ref_vis = replace_segment_visualizer(DEPLOYMENT_COMP_REFERENCE, old_seg, new_seg)
     image_vis = replace_segment_visualizer(DEPLOYMENT_COMP_IMAGE, old_seg, new_seg)
     env_vis = replace_segment_visualizer(DEPLOYMENT_COMP_USER_ENV_VARS, old_seg, new_seg)
+    attach_vis = replace_segment_visualizer(DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE, old_seg, new_seg)
 
     seq_vis = replace_segment_visualizer(DEPLOYMENT_COMPONENTS_SEQ, old_seg, new_seg)
 
@@ -680,7 +682,7 @@ def build_deployment_edit_section(
         seq_ed = dataclasses.replace(seq_vis.editable, max_items=component_count)
         seq_vis = dataclasses.replace(seq_vis, editable=seq_ed)
 
-    seq_vis = dataclasses.replace(seq_vis, children=[ref_vis, image_vis, env_vis])
+    seq_vis = dataclasses.replace(seq_vis, children=[ref_vis, image_vis, env_vis, attach_vis])
 
     return FormSection(
         section_id=f"deployment-edit-{deployment_index}",
@@ -700,6 +702,7 @@ def build_deployment_edit_section(
                         description="Deployment-specifieke omgevingsvariabelen voor dit component.",
                         children=["user-env-vars"],
                     ),
+                    Sequence(field_name="services{attachments}/config"),
                 ],
             ),
         ],

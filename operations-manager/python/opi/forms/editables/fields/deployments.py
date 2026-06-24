@@ -141,6 +141,51 @@ DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE = Editable(
     remove_when_none=True,
 )
 
+# Per-deployment attachment coupling override. Mirrors the base-component coupling
+# (components[*]/services{attachments}/config) but on the deployment component, so a
+# certificate/file can differ per deployment. Optional (min_items=0): an empty list
+# means "use whatever the base component couples". Merge semantics (deployment wins
+# per reference) live in resolve_attachments_for_component.
+DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/services{attachments}/config[*]/reference",
+    values_provider="AttachmentOptionsProvider",
+    required=True,
+)
+
+DEPLOYMENT_COMP_ATTACHMENT_USE_PROVIDE_AS_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/services{attachments}/config[*]/provide-as",
+    values_provider="AttachmentProvideAsOptionsProvider",
+    required=True,
+    default="file",
+)
+
+DEPLOYMENT_COMP_ATTACHMENT_USE_PATH_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/services{attachments}/config[*]/path",
+    validator=PathValidator(),
+    remove_when_none=True,
+    depends_on="deployments[*]/components[*]/services{attachments}/config[*]/provide-as",
+    show_when={"value": ["file"]},
+)
+
+DEPLOYMENT_COMP_ATTACHMENT_USE_ENV_NAME_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/services{attachments}/config[*]/env-name",
+    remove_when_none=True,
+    depends_on="deployments[*]/components[*]/services{attachments}/config[*]/provide-as",
+    show_when={"value": ["env-var"]},
+)
+
+DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/services{attachments}/config",
+    virtualize=("services", "_services-config"),
+    min_items=0,
+    children=[
+        DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE_EDITABLE,
+        DEPLOYMENT_COMP_ATTACHMENT_USE_PROVIDE_AS_EDITABLE,
+        DEPLOYMENT_COMP_ATTACHMENT_USE_PATH_EDITABLE,
+        DEPLOYMENT_COMP_ATTACHMENT_USE_ENV_NAME_EDITABLE,
+    ],
+)
+
 DEPLOYMENT_COMPONENTS_SEQ_EDITABLE = Editable(
     yaml_path="deployments[*]/components",
     min_items=1,
@@ -150,6 +195,7 @@ DEPLOYMENT_COMPONENTS_SEQ_EDITABLE = Editable(
         DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
         DEPLOYMENT_COMP_PATH_EDITABLE,
         DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE,
+        DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE_EDITABLE,
     ],
 )
 
