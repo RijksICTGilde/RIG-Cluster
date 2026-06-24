@@ -1228,15 +1228,27 @@ def _find_sequence_editable(
     """
     import re
 
+    def _candidate_paths(ed: Any) -> list[str]:
+        # The rendered sequence path may use the virtualized service-config key
+        # (e.g. ``services{attachments}`` -> ``_services-config{attachments}``),
+        # while the editable carries the real key. Match against both forms.
+        paths = [ed.yaml_path]
+        virt = getattr(ed, "virtualize", None)
+        if virt:
+            real_seg, virt_seg = virt
+            paths.append(ed.yaml_path.replace(f"{real_seg}{{", f"{virt_seg}{{"))
+        return paths
+
     def _match(editable: Any) -> Any | None:
         ed = editable.editable
-        if ed.yaml_path == path:
-            return editable
-        # Check if the template path (with [*]) matches the concrete path (with [N])
-        if str(editable.widget) == "sequence":
-            pattern = re.escape(ed.yaml_path).replace(r"\[\*\]", r"\[\d+\]")
-            if re.fullmatch(pattern, path):
+        for candidate in _candidate_paths(ed):
+            if candidate == path:
                 return editable
+            # Check if the template path (with [*]) matches the concrete path (with [N])
+            if str(editable.widget) == "sequence":
+                pattern = re.escape(candidate).replace(r"\[\*\]", r"\[\d+\]")
+                if re.fullmatch(pattern, path):
+                    return editable
         # Recurse into children
         if editable.children:
             for child in editable.children:
@@ -1267,22 +1279,31 @@ def _empty_sequence_item(editable: Any | None) -> Any:
     if not has_complex:
         return ""
 
+    seq_path = editable.editable.yaml_path
+
+    def _relative_parts(child_path: str) -> list[str]:
+        # Field path relative to the sequence item: strip the "{seq_path}[*]/" prefix,
+        # so a deeply nested child (e.g. deployments[*]/components[*]/services{attachments}/
+        # config[*]/provide-as) yields just ["provide-as"] rather than the whole prefix.
+        rest = child_path.removeprefix(seq_path)
+        if "/" in rest:
+            rest = rest.split("/", 1)[1]  # drop the leading "[*]"/"[N]" index segment
+        return [p for p in rest.replace("[*]", "").split("/") if p]
+
     item: dict[str, Any] = {}
     for child in editable.children:
         child_ed = child.editable
         if str(child.widget) == "sequence" and child_ed.min_items:
             # Seed nested sequences with min_items empty entries
-            parts = child_ed.yaml_path.replace("[*]", "").split("/")
+            parts = _relative_parts(child_ed.yaml_path)
             current = item
-            for part in parts[1:-1]:
+            for part in parts[:-1]:
                 current = current.setdefault(part, {})
             current[parts[-1]] = ["" for _ in range(child_ed.min_items)]
         elif child_ed.default is not None:
-            # Extract the field key from the yaml_path (last segment, without [*])
-            parts = child_ed.yaml_path.replace("[*]", "").split("/")
-            # Build nested dict for nested paths (e.g. "ports/inbound")
+            parts = _relative_parts(child_ed.yaml_path)
             current = item
-            for part in parts[1:-1]:  # skip the sequence root and take intermediate parts
+            for part in parts[:-1]:
                 current = current.setdefault(part, {})
             current[parts[-1]] = child_ed.default
     return item

@@ -196,3 +196,16 @@ def test_attachment_id_allows_hyphens_rejects_underscores() -> None:
     assert v.validate("-x")  # leading hyphen rejected
     assert v.validate("frontend-tls-keystore") == []  # descriptive name within 40
     assert v.validate("a" * 41)  # over 40 chars rejected
+
+
+def test_sequence_add_resolves_virtualized_attachment_editable() -> None:
+    # The rendered add button sends the virtualized path (_services-config); the
+    # sequence-add must still resolve the editable and build a proper empty item.
+    from opi.forms.visualizers.wizard_sections import build_deployment_edit_section
+    from opi.web.router_wizard import _empty_sequence_item, _find_sequence_editable
+
+    section = build_deployment_edit_section(0, component_count=2)
+    vpath = "deployments[0]/components[0]/_services-config{attachments}/config"
+    ed = _find_sequence_editable(section, vpath)
+    assert ed is not None
+    assert _empty_sequence_item(ed) == {"provide-as": "file"}
