@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from opi.forms.editables.editable import EditableCondition, apply_virtualize
@@ -223,6 +224,12 @@ def should_render_editable(
         if dep_converter:
             dep_value = dep_converter.read(dep_value, context_data=yaml_data)
 
+    # Not in the data yet (e.g. a freshly added sequence item): fall back to the
+    # dependency field's default so show_when reflects the default selection on
+    # first render (e.g. provide-as defaults to "file" -> show the path field).
+    if dep_value is None and siblings:
+        dep_value = _find_default_for_path(siblings, depends_on)
+
     return evaluate_show_when(dep_value, show_when)
 
 
@@ -251,6 +258,29 @@ def _find_converter_for_path(
         # Recurse into groups
         if sib.children:
             result = _find_converter_for_path(sib.children, yaml_path)
+            if result is not None:
+                return result
+    return None
+
+
+def _normalize_indices(path: str) -> str:
+    """Collapse concrete sequence indices to the ``[*]`` template form for matching."""
+    return re.sub(r"\[\d+\]", "[*]", path)
+
+
+def _find_default_for_path(siblings: list[EditableVisualizer], yaml_path: str) -> Any | None:
+    """Find the ``default`` of the editable whose yaml_path matches *yaml_path*.
+
+    ``depends_on`` is resolved to a concrete ``[index]`` inside a sequence while the
+    sibling editables carry the ``[*]`` template path, so compare with indices
+    normalized to ``[*]``.
+    """
+    target = _normalize_indices(yaml_path)
+    for sib in siblings:
+        if _normalize_indices(sib.editable.yaml_path) == target:
+            return sib.editable.default
+        if sib.children:
+            result = _find_default_for_path(sib.children, yaml_path)
             if result is not None:
                 return result
     return None
