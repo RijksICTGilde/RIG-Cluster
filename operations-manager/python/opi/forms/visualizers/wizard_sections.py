@@ -775,7 +775,8 @@ ATTACHMENTS_SECTION = FormSection(
     section_id="attachments",
     title="Bijlagen",
     icon="map",
-    description="Upload optioneel bestanden (bijv. certificaten) om aan componenten te koppelen",
+    description="Upload bestanden (bijv. certificaten) om per component als bestand of env-var te koppelen",
+    visible=lambda data: "attachments" in _extract_services(data),
     editables=[],
     layout=[TemplatePartial(template="wizard/partials/attachments_upload.html.j2")],
 )

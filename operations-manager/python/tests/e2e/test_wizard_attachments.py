@@ -24,14 +24,18 @@ pytestmark = pytest.mark.e2e
 
 
 def _goto_attachments_step(wizard: WizardHelper) -> None:
-    """Navigate identity -> services -> team -> attachments (no services selected)."""
+    """Navigate identity -> services (enable attachments) -> team -> attachments.
+
+    The attachments step is a conditional service-config section (like keycloak-config):
+    it only appears once the 'attachments' service is enabled on the project.
+    """
     wizard.open_create_wizard()
     wizard.fill_identity(display_name="e2eattach")
     wizard.click_next()  # identity -> services
-    wizard.fill_services(None)
-    wizard.click_next()  # services -> team (conditional config steps skipped)
+    wizard.fill_services(["attachments"])
+    wizard.click_next()  # services -> team (other conditional config steps skipped)
     wizard.fill_team(email="test@example.com")
-    wizard.click_next()  # team -> attachments
+    wizard.click_next()  # team -> attachments (now visible)
     wizard.wait_for_step("Bijlagen")
 
 
