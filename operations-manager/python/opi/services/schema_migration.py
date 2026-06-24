@@ -434,6 +434,18 @@ def _fixup_v2_data(project_data: dict[str, Any]) -> bool:
         if _fixup_flat_resources(entity):
             cleaned = True
 
+        # Rename component-level attachments coupling key use -> config (consistency
+        # with other services' component-level "config"; the project-level catalog
+        # stays "data"). Keeps existing projects working after the rename.
+        services = entity.get("services")
+        if isinstance(services, list):
+            for svc in services:
+                if isinstance(svc, dict) and isinstance(svc.get("attachments"), dict):
+                    att = svc["attachments"]
+                    if "use" in att and "config" not in att:
+                        att["config"] = att.pop("use")
+                        cleaned = True
+
     # Strip stale root flags left on the project-level component catalog
     if _fixup_catalog_root(project_data):
         cleaned = True

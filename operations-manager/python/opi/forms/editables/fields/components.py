@@ -195,35 +195,35 @@ TEMP_STORAGE_SEQUENCE_EDITABLE = Editable(
 )
 
 ATTACHMENT_USE_REFERENCE_EDITABLE = Editable(
-    yaml_path="components[*]/services{attachments}/use[*]/reference",
+    yaml_path="components[*]/services{attachments}/config[*]/reference",
     values_provider="AttachmentOptionsProvider",
     required=True,
 )
 
 ATTACHMENT_USE_PROVIDE_AS_EDITABLE = Editable(
-    yaml_path="components[*]/services{attachments}/use[*]/provide-as",
+    yaml_path="components[*]/services{attachments}/config[*]/provide-as",
     values_provider="AttachmentProvideAsOptionsProvider",
     required=True,
     default="file",
 )
 
 ATTACHMENT_USE_PATH_EDITABLE = Editable(
-    yaml_path="components[*]/services{attachments}/use[*]/path",
+    yaml_path="components[*]/services{attachments}/config[*]/path",
     validator=PathValidator(),
     remove_when_none=True,
-    depends_on="components[*]/services{attachments}/use[*]/provide-as",
+    depends_on="components[*]/services{attachments}/config[*]/provide-as",
     show_when={"value": ["file"]},
 )
 
 ATTACHMENT_USE_ENV_NAME_EDITABLE = Editable(
-    yaml_path="components[*]/services{attachments}/use[*]/env-name",
+    yaml_path="components[*]/services{attachments}/config[*]/env-name",
     remove_when_none=True,
-    depends_on="components[*]/services{attachments}/use[*]/provide-as",
+    depends_on="components[*]/services{attachments}/config[*]/provide-as",
     show_when={"value": ["env-var"]},
 )
 
 ATTACHMENT_USE_SEQUENCE_EDITABLE = Editable(
-    yaml_path="components[*]/services{attachments}/use",
+    yaml_path="components[*]/services{attachments}/config",
     depends_on="components[*]/services",
     show_when={"contains": "attachments"},
     virtualize=("services", "_services-config"),
