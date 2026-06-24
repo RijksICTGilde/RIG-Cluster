@@ -494,7 +494,11 @@
         },
         "disabled": { "type": "boolean" },
         "disabled-reason": { "type": "string" },
-        "auto-tune-resources": { "type": "boolean" }
+        "auto-tune-resources": { "type": "boolean" },
+        "attachments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/attachment-use-entry" }
+        }
       }
     },
 

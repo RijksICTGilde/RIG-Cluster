@@ -147,36 +147,38 @@ DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE = Editable(
 # means "use whatever the base component couples". Merge semantics (deployment wins
 # per reference) live in resolve_attachments_for_component.
 DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/services{attachments}/config[*]/reference",
+    yaml_path="deployments[*]/components[*]/attachments[*]/reference",
     values_provider="AttachmentOptionsProvider",
     required=True,
 )
 
 DEPLOYMENT_COMP_ATTACHMENT_USE_PROVIDE_AS_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/services{attachments}/config[*]/provide-as",
+    yaml_path="deployments[*]/components[*]/attachments[*]/provide-as",
     values_provider="AttachmentProvideAsOptionsProvider",
     required=True,
     default="file",
 )
 
 DEPLOYMENT_COMP_ATTACHMENT_USE_PATH_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/services{attachments}/config[*]/path",
+    yaml_path="deployments[*]/components[*]/attachments[*]/path",
     validator=PathValidator(),
     remove_when_none=True,
-    depends_on="deployments[*]/components[*]/services{attachments}/config[*]/provide-as",
+    depends_on="deployments[*]/components[*]/attachments[*]/provide-as",
     show_when={"value": ["file"]},
 )
 
 DEPLOYMENT_COMP_ATTACHMENT_USE_ENV_NAME_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/services{attachments}/config[*]/env-name",
+    yaml_path="deployments[*]/components[*]/attachments[*]/env-name",
     remove_when_none=True,
-    depends_on="deployments[*]/components[*]/services{attachments}/config[*]/provide-as",
+    depends_on="deployments[*]/components[*]/attachments[*]/provide-as",
     show_when={"value": ["env-var"]},
 )
 
+# Stored as a plain ``attachments`` list on the deployment component (NOT under
+# ``services`` - that key is the deployment service-revision map with a different
+# shape). No virtualize needed, so the sequence path is real end-to-end.
 DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/services{attachments}/config",
-    virtualize=("services", "_services-config"),
+    yaml_path="deployments[*]/components[*]/attachments",
     min_items=0,
     children=[
         DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE_EDITABLE,

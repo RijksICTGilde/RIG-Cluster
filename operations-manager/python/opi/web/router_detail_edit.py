@@ -771,19 +771,28 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
             edit_mode=True,
         )
 
-        items = smart_get_value(merged, seq_path) if seq_path else []
+        # The rendered add/remove path is virtualized (e.g. _services-config{attachments}),
+        # but items are stored under (and read back from) the REAL path. Devirtualize so
+        # the new row lands where the renderer reads it instead of a dead virtual key.
+        editable = _find_sequence_editable(section, seq_path) if seq_path else None
+        data_path = seq_path
+        if editable is not None and getattr(editable.editable, "virtualize", None):
+            from opi.forms.editables.editable import reverse_virtualize
+
+            data_path = reverse_virtualize(seq_path, editable.editable.virtualize)
+
+        items = smart_get_value(merged, data_path) if data_path else []
         if not isinstance(items, list):
             items = []
 
         if seq_action == "add":
-            editable = _find_sequence_editable(section, seq_path)
             items.append(_empty_sequence_item(editable))
         elif seq_action == "remove":
             remove_index = int(seq_index) if seq_index not in (None, "") else -1
             if 0 <= remove_index < len(items):
                 items.pop(remove_index)
 
-        smart_set_value(merged, str(seq_path), items)
+        smart_set_value(merged, str(data_path), items)
         step_html = _render_section_html(section, merged, locked_services=None)
         rendered = _render_modal_step(request, wizard_token, state, flow_id, section, step_html, project_name)
         return HTMLResponse(content=rendered)
