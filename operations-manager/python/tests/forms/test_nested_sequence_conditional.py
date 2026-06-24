@@ -11,7 +11,11 @@ import copy
 
 from opi.forms.editables.path import resolve_path
 from opi.forms.visualizers.bridge import should_render_editable
-from opi.forms.visualizers.fields.components import ATTACHMENT_USE_ENV_NAME, ATTACHMENT_USE_PATH
+from opi.forms.visualizers.fields.components import (
+    ATTACHMENT_USE_ENV_NAME,
+    ATTACHMENT_USE_PATH,
+    ATTACHMENT_USE_SEQUENCE,
+)
 
 YAML_DATA = {
     "components": [
@@ -23,6 +27,7 @@ YAML_DATA = {
                         "config": [
                             {"reference": "a", "provide-as": "file", "path": "/etc/tls/a"},
                             {"reference": "b", "provide-as": "env-var", "env-name": "B"},
+                            {"reference": "c"},  # no provide-as yet -> falls back to default "file"
                         ]
                     }
                 }
@@ -34,14 +39,14 @@ YAML_DATA = {
 
 def _renders(visualizer, parent_index: int, child_index: int) -> bool:
     """Replicate _build_nested_sequence: pre-resolve the parent [*] in path + depends_on,
-    then evaluate show_when with the child index."""
+    then evaluate show_when with the child index and the item's sibling editables."""
     resolved = copy.copy(visualizer)
     ed = copy.copy(visualizer.editable)
     ed.yaml_path = resolve_path(visualizer.editable.yaml_path, parent_index)
     if ed.depends_on:
         ed.depends_on = resolve_path(ed.depends_on, parent_index)
     resolved.editable = ed
-    return should_render_editable(resolved, YAML_DATA, index=child_index)
+    return should_render_editable(resolved, YAML_DATA, index=child_index, siblings=ATTACHMENT_USE_SEQUENCE.children)
 
 
 def test_path_visible_only_for_file_items() -> None:
@@ -52,3 +57,10 @@ def test_path_visible_only_for_file_items() -> None:
 def test_env_name_visible_only_for_env_var_items() -> None:
     assert _renders(ATTACHMENT_USE_ENV_NAME, 0, 0) is False  # provide-as: file
     assert _renders(ATTACHMENT_USE_ENV_NAME, 0, 1) is True  # provide-as: env-var
+
+
+def test_default_provide_as_shows_path_on_first_render() -> None:
+    # A freshly added item has no provide-as in the data; show_when must fall back
+    # to the field's default ("file") so the path field is visible immediately.
+    assert _renders(ATTACHMENT_USE_PATH, 0, 2) is True
+    assert _renders(ATTACHMENT_USE_ENV_NAME, 0, 2) is False
