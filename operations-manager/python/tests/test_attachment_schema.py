@@ -117,6 +117,8 @@ def test_reference_integrity() -> None:
 
 
 def test_extract_deployment_component_attachment_uses() -> None:
+    # Per-deployment coupling lives on a dedicated ``attachments`` list (the deployment
+    # component's ``services`` is the system revision map with a different shape).
     project = {
         "deployments": [
             {
@@ -124,9 +126,7 @@ def test_extract_deployment_component_attachment_uses() -> None:
                 "components": [
                     {
                         "reference": "api",
-                        "services": [
-                            {"attachments": {"config": [{"reference": "ca", "provide-as": "file", "path": "/etc/ca"}]}}
-                        ],
+                        "attachments": [{"reference": "ca", "provide-as": "file", "path": "/etc/ca"}],
                     }
                 ],
             }
@@ -198,14 +198,15 @@ def test_attachment_id_allows_hyphens_rejects_underscores() -> None:
     assert v.validate("a" * 41)  # over 40 chars rejected
 
 
-def test_sequence_add_resolves_virtualized_attachment_editable() -> None:
-    # The rendered add button sends the virtualized path (_services-config); the
-    # sequence-add must still resolve the editable and build a proper empty item.
+def test_deployment_attachment_sequence_add_builds_proper_item() -> None:
+    # The per-deployment coupling is a plain ``attachments`` list (deeply nested:
+    # deployments[*]/components[*]/attachments). Sequence-add must resolve the editable
+    # and build a proper empty item (provide-as defaults to file), not "".
     from opi.forms.visualizers.wizard_sections import build_deployment_edit_section
     from opi.web.router_wizard import _empty_sequence_item, _find_sequence_editable
 
     section = build_deployment_edit_section(0, component_count=2)
-    vpath = "deployments[0]/components[0]/_services-config{attachments}/config"
-    ed = _find_sequence_editable(section, vpath)
+    path = "deployments[0]/components[0]/attachments"
+    ed = _find_sequence_editable(section, path)
     assert ed is not None
     assert _empty_sequence_item(ed) == {"provide-as": "file"}

@@ -1122,19 +1122,28 @@ async def _handle_sequence_action(
     if not seq_path:
         raise HTTPException(status_code=400, detail="Ontbrekend pad voor reeks-actie")
 
-    items = smart_get_value(yaml_data, seq_path)
+    # The rendered add/remove path is virtualized (e.g. _services-config{attachments}),
+    # but items are stored under (and read back from) the REAL path. Devirtualize so the
+    # new row lands where the renderer reads it instead of a dead virtual key.
+    editable = _find_sequence_editable(section, seq_path)
+    data_path = seq_path
+    if editable is not None and getattr(editable.editable, "virtualize", None):
+        from opi.forms.editables.editable import reverse_virtualize
+
+        data_path = reverse_virtualize(seq_path, editable.editable.virtualize)
+
+    items = smart_get_value(yaml_data, data_path)
     if not isinstance(items, list):
         items = []
 
     if action == "add":
-        editable = _find_sequence_editable(section, seq_path)
         items.append(_empty_sequence_item(editable))
     elif action == "remove":
         remove_index = int(seq_index) if seq_index not in (None, "") else -1
         if 0 <= remove_index < len(items):
             items.pop(remove_index)
 
-    smart_set_value(yaml_data, seq_path, items)
+    smart_set_value(yaml_data, data_path, items)
 
     # Persist the updated data
     section_data = _extract_section_data(section.editables, yaml_data)

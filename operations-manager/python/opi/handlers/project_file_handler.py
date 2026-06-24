@@ -3022,13 +3022,21 @@ def extract_component_attachment_uses(component: dict[str, Any]) -> list[dict[st
 def extract_deployment_component_attachment_uses(
     project_data: dict[str, Any], deployment_name: str, component_reference: str
 ) -> list[dict[str, Any]]:
-    """Extract the attachment coupling entries on a specific deployment's component override."""
+    """Extract the attachment coupling entries on a deployment component override.
+
+    Stored as a plain ``attachments`` list on the deployment component (``services``
+    there is the system-managed service-revision map with a different shape).
+    """
     for dep in project_data.get("deployments", []):
         if not isinstance(dep, dict) or dep.get("name") != deployment_name:
             continue
         for comp in dep.get("components", []):
             if isinstance(comp, dict) and comp.get("reference") == component_reference:
-                return extract_component_attachment_uses(comp)
+                return [
+                    item
+                    for item in (comp.get("attachments") or [])
+                    if isinstance(item, dict) and item.get("reference")
+                ]
     return []
 
 
