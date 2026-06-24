@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from ruamel.yaml import YAML
-from starlette.background import BackgroundTask
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
@@ -1285,9 +1284,13 @@ async def _modal_do_submit(
             except Exception:
                 logger.exception("after_save hook failed for section %s", section.section_id)
 
-    response = HTMLResponse(content=rendered)
-    response.background = BackgroundTask(_commit_to_git, project_name, existing_data, flow_id)
-    return response
+    # Await the Git commit so the change is durable before we report success.
+    # As a background task it raced the periodic project refresh, which could
+    # re-clone the pre-save file and momentarily drop the just-added member
+    # from the in-memory mapping; awaiting guarantees the member is present on
+    # the reload that closeEditModalAndReload() triggers.
+    await _commit_to_git(project_name, existing_data, flow_id)
+    return HTMLResponse(content=rendered)
 
 
 async def _handle_backup_restore_submit(

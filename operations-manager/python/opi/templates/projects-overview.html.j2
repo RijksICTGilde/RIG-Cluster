@@ -63,7 +63,9 @@
                         <tr class="project-row">
                             <td class="col-project">
                                 <div class="project-info">
-                                    <div class="project-name">{{ project.display_name or project.name }}</div>
+                                    <div class="project-name">
+                                        <a href="/projects/details/{{ project.name }}" class="project-name-link">{{ project.display_name or project.name }}</a>
+                                    </div>
                                     <div class="project-id">{{ project.name }}</div>
                                     <div class="project-description">{{ project.description or "Geen beschrijving beschikbaar" }}</div>
                                 </div>
@@ -107,11 +109,7 @@
                             </td>
                             <td class="col-actions">
                                 <div class="actions">
-                                    <c-button
-                                        label="Details"
-                                        kind="tertiary"
-                                        size="sm"
-                                        @click="window.location.href='/projects/details/{{ project.name }}'" />
+                                    <a href="/projects/details/{{ project.name }}" class="details-link">Details</a>
                                 </div>
                             </td>
                         </tr>
@@ -215,8 +213,35 @@
     /* Project Info */
     .project-info .project-name {
         font-weight: 600;
-        color: var(--rvo-color-grijs-900);
         margin-bottom: var(--rvo-space-xs);
+    }
+
+    .project-name-link {
+        color: var(--rvo-color-grijs-900);
+        text-decoration: none;
+    }
+
+    .project-name-link:hover {
+        color: var(--rvo-color-hemelblauw);
+        text-decoration: underline;
+    }
+
+    /* Details: real anchor styled like a tertiary button so middle-click /
+       ctrl-click can open the detail page in a new tab. */
+    .details-link {
+        display: inline-flex;
+        align-items: center;
+        padding: var(--rvo-space-xs) var(--rvo-space-sm);
+        color: var(--rvo-color-hemelblauw);
+        font-weight: 600;
+        font-size: 0.875rem;
+        text-decoration: none;
+        border-radius: 4px;
+    }
+
+    .details-link:hover {
+        text-decoration: underline;
+        background: var(--rvo-color-grijs-50);
     }
 
     .project-info .project-id {

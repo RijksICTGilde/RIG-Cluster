@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from opi.core.config import settings
 from opi.services.schema_migration import migrate_to_latest
+from opi.services.user_service import get_user_service
 from opi.utils.age import decrypt_age_content_sync, is_age_encrypted
 
 
@@ -91,6 +92,15 @@ class ProjectService:
         self._projects[project_name] = project
         action = "Updated" if is_update else "Registered"
         logger.debug(f"{action} project: {project_name} (file: {filename}) with {len(users) if users else 0} users")
+
+        # Keep the global access allowlist in sync with project membership so a
+        # newly added member can reach the portal immediately, without waiting
+        # for the next periodic Git refresh or an app restart. Without this, a
+        # member added via the team-edit modal (which only calls register) is
+        # redirected to /permission-denied until the allowlist is rebuilt.
+        if users:
+            get_user_service().add_allowed_emails([user.email for user in users])
+
         return True
 
     def get_project_by_api_key(self, api_key: str) -> Project | None:
