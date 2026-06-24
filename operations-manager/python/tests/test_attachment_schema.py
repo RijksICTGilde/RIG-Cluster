@@ -5,10 +5,14 @@ from pathlib import Path
 from typing import Any
 
 import jsonschema
+import pytest
 from opi.handlers.project_file_handler import (
+    _assert_unique_attachment_targets,
+    _merge_attachment_uses,
     attachment_is_referenced,
     extract_attachment_catalog,
     extract_component_attachment_uses,
+    extract_deployment_component_attachment_uses,
     validate_attachment_references,
 )
 
@@ -107,3 +111,74 @@ def test_reference_integrity() -> None:
     errors = validate_attachment_references(project)
     assert len(errors) == 1
     assert "ghost" in errors[0]
+
+
+# --- deployment-level coupling: extract + merge + conflict ---
+
+
+def test_extract_deployment_component_attachment_uses() -> None:
+    project = {
+        "deployments": [
+            {
+                "name": "prod",
+                "components": [
+                    {
+                        "reference": "api",
+                        "services": [
+                            {"attachments": {"config": [{"reference": "ca", "provide-as": "file", "path": "/etc/ca"}]}}
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    uses = extract_deployment_component_attachment_uses(project, "prod", "api")
+    assert len(uses) == 1
+    assert uses[0]["reference"] == "ca"
+    # wrong deployment / component -> nothing
+    assert extract_deployment_component_attachment_uses(project, "staging", "api") == []
+    assert extract_deployment_component_attachment_uses(project, "prod", "web") == []
+
+
+def test_merge_deployment_overrides_base_by_reference() -> None:
+    base = [
+        {"reference": "ca", "provide-as": "file", "path": "/etc/ca"},
+        {"reference": "kc", "provide-as": "env-var", "env-name": "KC"},
+    ]
+    override = [
+        {"reference": "ca", "provide-as": "file", "path": "/etc/prod-ca"},  # overrides base 'ca'
+        {"reference": "extra", "provide-as": "file", "path": "/etc/extra"},  # deployment-only
+    ]
+    merged = _merge_attachment_uses(base, override)
+    by_ref = {u["reference"]: u for u in merged}
+    assert len(merged) == 3
+    assert by_ref["ca"]["path"] == "/etc/prod-ca"  # deployment wins
+    assert by_ref["kc"]["env-name"] == "KC"  # base kept
+    assert by_ref["extra"]["path"] == "/etc/extra"  # deployment-only added
+
+
+def test_duplicate_path_rejected() -> None:
+    uses = [
+        {"reference": "a", "provide-as": "file", "path": "/etc/x"},
+        {"reference": "b", "provide-as": "file", "path": "/etc/x"},
+    ]
+    with pytest.raises(ValueError, match="hetzelfde pad"):
+        _assert_unique_attachment_targets(uses, "api", "prod")
+
+
+def test_duplicate_env_name_rejected() -> None:
+    uses = [
+        {"reference": "a", "provide-as": "env-var", "env-name": "TOK"},
+        {"reference": "b", "provide-as": "env-var", "env-name": "TOK"},
+    ]
+    with pytest.raises(ValueError, match="dezelfde env-var"):
+        _assert_unique_attachment_targets(uses, "api", None)
+
+
+def test_distinct_targets_pass() -> None:
+    uses = [
+        {"reference": "a", "provide-as": "file", "path": "/etc/a"},
+        {"reference": "b", "provide-as": "file", "path": "/etc/b"},
+        {"reference": "c", "provide-as": "env-var", "env-name": "C"},
+    ]
+    _assert_unique_attachment_targets(uses, "api", None)  # no raise

@@ -14,6 +14,11 @@ from opi.forms.editables.fields.deployments import (
     DEPLOYMENT_BASE_DOMAIN_EDITABLE,
     DEPLOYMENT_CLONE_FROM_EDITABLE,
     DEPLOYMENT_CLUSTER_EDITABLE,
+    DEPLOYMENT_COMP_ATTACHMENT_USE_ENV_NAME_EDITABLE,
+    DEPLOYMENT_COMP_ATTACHMENT_USE_PATH_EDITABLE,
+    DEPLOYMENT_COMP_ATTACHMENT_USE_PROVIDE_AS_EDITABLE,
+    DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE_EDITABLE,
+    DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE_EDITABLE,
     DEPLOYMENT_COMP_IMAGE_EDITABLE,
     DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
     DEPLOYMENT_COMP_REFERENCE_EDITABLE,
@@ -171,6 +176,48 @@ DEPLOYMENT_COMP_USER_ENV_VARS = EditableVisualizer(
     attributes={"kv_format": "env"},
 )
 
+DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Bijlage",
+    help_text="Kies een geuploade bijlage uit de catalogus.",
+)
+
+DEPLOYMENT_COMP_ATTACHMENT_USE_PROVIDE_AS = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_ATTACHMENT_USE_PROVIDE_AS_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Leveren als",
+    help_text="Als bestand op een pad, of als waarde van een env-var (alleen tekstbestanden).",
+    attributes={"data-rerender": "true"},
+)
+
+DEPLOYMENT_COMP_ATTACHMENT_USE_PATH = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_ATTACHMENT_USE_PATH_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Mount pad",
+    help_text="Vereist bij 'Als bestand': het pad in de container (bijv. /etc/tls/keystore.p12).",
+)
+
+DEPLOYMENT_COMP_ATTACHMENT_USE_ENV_NAME = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_ATTACHMENT_USE_ENV_NAME_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Env-var naam",
+    help_text="Vereist bij 'Als env-var': de naam van de omgevingsvariabele (bijv. CA_BUNDLE).",
+)
+
+DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE_EDITABLE,
+    widget=WidgetType.SEQUENCE,
+    label="Bijlagen",
+    help_text="Koppel bijlagen specifiek voor deze deployment (overschrijft de componentkoppeling per referentie).",
+    children=[
+        DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE,
+        DEPLOYMENT_COMP_ATTACHMENT_USE_PROVIDE_AS,
+        DEPLOYMENT_COMP_ATTACHMENT_USE_PATH,
+        DEPLOYMENT_COMP_ATTACHMENT_USE_ENV_NAME,
+    ],
+)
+
 DEPLOYMENT_COMPONENTS_SEQ = EditableVisualizer(
     editable=DEPLOYMENT_COMPONENTS_SEQ_EDITABLE,
     widget=WidgetType.SEQUENCE,
@@ -180,6 +227,7 @@ DEPLOYMENT_COMPONENTS_SEQ = EditableVisualizer(
         DEPLOYMENT_COMP_IMAGE,
         DEPLOYMENT_COMP_PULL_POLICY,
         DEPLOYMENT_COMP_USER_ENV_VARS,
+        DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE,
     ],
 )
 
