@@ -42,8 +42,6 @@ logger = logging.getLogger(__name__)
 
 wizard_attachments_router = APIRouter(prefix="/forms/wizard", tags=["wizard-attachments"])
 
-STAGED_KEY = "_staged_attachments"
-
 
 def _resolve_state(request: Request, wizard_token: str | None) -> tuple[Any, Callable[[Any], None] | None]:
     """Resolve the wizard state for both the full-page (cookie) and modal (_wizard_token) flows.
@@ -61,8 +59,13 @@ def _resolve_state(request: Request, wizard_token: str | None) -> tuple[Any, Cal
 
 
 def _staged(state: Any) -> dict[str, dict[str, Any]]:
-    """Return the staged-attachments map (id -> {filename, content}) from session state."""
-    return state.step_data.setdefault(STAGED_KEY, {})
+    """Return the staged-attachments map (id -> {filename, content}) from session state.
+
+    Stored on the dedicated ``staged_attachments`` field, NOT in ``step_data``: the
+    latter is keyed by section_id and ``stash_inactive_sections`` would discard a
+    stray non-section key on the next step navigation.
+    """
+    return state.staged_attachments
 
 
 def _list_response(request: Request, staged: dict[str, dict[str, Any]], wizard_token: str | None):
