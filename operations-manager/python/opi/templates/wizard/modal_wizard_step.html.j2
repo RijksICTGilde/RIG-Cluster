@@ -46,13 +46,23 @@
 
     {% set _step_url_prefix = step_base_url if step_base_url else "/projects/" ~ project_name ~ "/modal-wizard/" ~ flow_id ~ "/step/" %}
     {% set _token_qs = "?_wizard_token=" ~ wizard_token if wizard_token else "" %}
+    <style>
+        #modal-wizard-form .wizard-step__saving { display: none; }
+        #modal-wizard-form.htmx-request .wizard-step__saving {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--rvo-space-xs);
+            color: var(--rvo-color-grijs-700);
+        }
+    </style>
     <form id="modal-wizard-form"
           autocomplete="off"
           hx-ext="json-enc"
           hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
           hx-post="{{ _step_url_prefix }}{{ section.section_id }}{{ _token_qs }}"
           hx-target="#edit-section-inner"
-          hx-swap="innerHTML">
+          hx-swap="innerHTML"
+          hx-disabled-elt="find button[type='submit']">
 
         {% if wizard_token %}
         <input type="hidden" name="_wizard_token" value="{{ wizard_token }}" />
@@ -73,6 +83,11 @@
 
             <div class="wizard-step__actions-right">
                 {% if steps.is_last %}
+                {% if not (flow_id is defined and flow_id in ('modal-backup', 'modal-restore')) %}
+                <span class="wizard-step__saving" aria-hidden="true">
+                    <c-icon icon="refresh" size="sm" />Bezig met opslaan&hellip;
+                </span>
+                {% endif %}
                 <c-button type="submit" kind="primary" showIcon="before" icon="publicatie"
                     label="{% if flow_id is defined and flow_id in ('modal-backup', 'modal-restore') %}Verder{% else %}Opslaan{% endif %}" />
                 {% else %}
