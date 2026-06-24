@@ -118,8 +118,11 @@ class AttachmentIdValidator:
         value_str = str(value)
         if len(value_str) > 12:
             return ["Bijlage-id mag maximaal 12 tekens bevatten"]
-        if not re.match(r"^[a-z][a-z0-9]*$", value_str):
-            return ["Moet beginnen met een kleine letter en mag alleen kleine letters en cijfers bevatten"]
+        if not re.match(r"^[a-z]([a-z0-9-]*[a-z0-9])?$", value_str):
+            return [
+                "Moet beginnen met een kleine letter, mag kleine letters, cijfers en streepjes bevatten, "
+                "en moet eindigen op een letter of cijfer"
+            ]
         if context and value_str in context.get("existing_attachment_ids", []):
             return [f"Er bestaat al een bijlage met de id '{value_str}'"]
         return []
