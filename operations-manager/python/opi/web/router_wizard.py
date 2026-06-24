@@ -1888,7 +1888,26 @@ async def _do_submit(
         if state.project_name:
             return await _save_existing_project(request, state.project_name, final_data)
         else:
-            # Create mode: run generators (sets name, AGE keys, etc.),
+            # Create mode: merge staged attachment uploads into the project-level
+            # attachments catalog before generators run (the combine generator
+            # encrypts them once the AGE keypair exists).
+            staged_attachments = state.step_data.get("_staged_attachments") or {}
+            if staged_attachments:
+                services = final_data.setdefault("services", [])
+                data_list: list | None = None
+                for entry in services:
+                    if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
+                        data_list = entry["attachments"].setdefault("data", [])
+                        break
+                if data_list is None:
+                    data_list = []
+                    services.append({"attachments": {"data": data_list}})
+                for att_id, info in staged_attachments.items():
+                    data_list.append(
+                        {"id": att_id, "filename": info.get("filename", att_id), "content": info.get("content")}
+                    )
+
+            # Run generators (sets name, AGE keys, resolves staged attachments),
             # then assemble deployment (needs name for namespace).
             final_data = processor.apply_generators(flow.generated_editables, final_data)
             _assemble_deployment(final_data)

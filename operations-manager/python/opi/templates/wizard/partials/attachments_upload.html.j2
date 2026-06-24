@@ -1,0 +1,28 @@
+{# Wizard attachments upload section (create flow). Files are staged out-of-band via #}
+{# a multipart endpoint; the staged list is loaded over htmx. CSRF is inherited from #}
+{# the surrounding wizard step form's hx-headers. flow_id is fixed to create-project. #}
+<c-layout-flow gap="md">
+    <p class="rvo-text--subtle">Upload optioneel bestanden (max 256 KB, bijvoorbeeld certificaten). Je koppelt ze later per component onder 'Bijlagen'. Deze stap mag je overslaan.</p>
+
+    <div class="rvo-form-group">
+        <label class="utrecht-form-label" for="wiz-att-id">Identifier (kleine letters/cijfers, max 12 tekens)</label>
+        <input type="text" id="wiz-att-id" name="attachment_id"
+               class="utrecht-textbox utrecht-textbox--html-input"
+               pattern="[a-z][a-z0-9]*" maxlength="12">
+        <label class="utrecht-form-label" for="wiz-att-file" style="margin-top:0.5rem;">Bestand</label>
+        <input type="file" id="wiz-att-file" name="file" class="rvo-file-input">
+        <div style="margin-top:0.75rem;">
+            <c-button type="button" kind="secondary" size="sm" label="Uploaden"
+                      hx-post="/forms/wizard/create-project/attachments/stage"
+                      hx-encoding="multipart/form-data"
+                      hx-include="#wiz-att-id, #wiz-att-file"
+                      hx-target="#wiz-att-status"
+                      hx-swap="innerHTML" />
+        </div>
+    </div>
+
+    <div id="wiz-att-status"
+         hx-get="/forms/wizard/create-project/attachments/list"
+         hx-trigger="load"
+         hx-swap="innerHTML"></div>
+</c-layout-flow>
