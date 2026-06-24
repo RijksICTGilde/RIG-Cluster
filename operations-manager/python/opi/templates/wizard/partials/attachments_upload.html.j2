@@ -27,10 +27,10 @@
             <c-heading type="h3" textContent="Nieuwe bijlage uploaden" />
             <p class="rvo-text--sm rvo-text--subtle">Max 256 KB (bijvoorbeeld een certificaat). Koppelen doe je per component.</p>
             <input type="hidden" id="wiz-att-token" name="_wizard_token" value="{{ _wizard_token | default('', true) }}">
-            <label class="utrecht-form-label" for="wiz-att-id">Identifier (kleine letters, cijfers, streepjes; max 12)</label>
+            <label class="utrecht-form-label" for="wiz-att-id">Identifier (kleine letters, cijfers, streepjes; max 40)</label>
             <input type="text" id="wiz-att-id" name="attachment_id"
                    class="utrecht-textbox utrecht-textbox--html-input"
-                   pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="12">
+                   pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="40">
             <label class="utrecht-form-label" for="wiz-att-file" style="margin-top:0.5rem;">Bestand</label>
             <input type="file" id="wiz-att-file" name="file" class="rvo-file-input">
             <div style="margin-top:0.75rem;">
