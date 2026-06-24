@@ -2987,7 +2987,11 @@ def extract_attachment_catalog(project_data: dict[str, Any]) -> dict[str, dict[s
 
 
 def extract_component_attachment_uses(component: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract a component's attachment ``use`` entries from its services list."""
+    """Extract a component's attachment ``config`` coupling entries from its services list.
+
+    Reads the ``config`` key (``use`` is the pre-rename name, still accepted for any
+    not-yet-migrated data).
+    """
     uses: list[dict[str, Any]] = []
     for entry in component.get("services", []):
         if not isinstance(entry, dict):
@@ -2995,9 +2999,10 @@ def extract_component_attachment_uses(component: dict[str, Any]) -> list[dict[st
         service_data = entry.get("attachments")
         if not isinstance(service_data, dict):
             continue
-        uses.extend(
-            item for item in (service_data.get("use", []) or []) if isinstance(item, dict) and item.get("reference")
-        )
+        coupling = service_data.get("config")
+        if coupling is None:
+            coupling = service_data.get("use", [])
+        uses.extend(item for item in (coupling or []) if isinstance(item, dict) and item.get("reference"))
     return uses
 
 
