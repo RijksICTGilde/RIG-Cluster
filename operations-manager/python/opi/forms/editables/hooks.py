@@ -119,14 +119,26 @@ class ResolveAttachmentsHook:
 
         services = yaml_data.setdefault("services", [])
         data_list: list | None = None
-        for entry in services:
+        for i, entry in enumerate(services):
             if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
                 data_list = entry["attachments"].setdefault("data", [])
                 break
+            # The services picker stores an enabled service as a bare string; upgrade
+            # "attachments" to its dict form in place rather than appending a duplicate.
+            if entry == "attachments":
+                services[i] = {"attachments": {"data": []}}
+                data_list = services[i]["attachments"]["data"]
+                break
         if data_list is None:
-            data_list = []
-            services.append({"attachments": {"data": data_list}})
+            new_entry: dict[str, Any] = {"attachments": {"data": []}}
+            services.append(new_entry)
+            data_list = new_entry["attachments"]["data"]
+        assert data_list is not None
+
+        existing_ids = {e.get("id") for e in data_list if isinstance(e, dict)}
         for att_id, info in staged.items():
+            if att_id in existing_ids:
+                continue
             data_list.append(
                 {"id": att_id, "filename": info.get("filename", att_id), "content": info.get("content")}
             )
