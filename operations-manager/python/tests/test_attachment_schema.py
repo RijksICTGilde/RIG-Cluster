@@ -182,3 +182,16 @@ def test_distinct_targets_pass() -> None:
         {"reference": "c", "provide-as": "env-var", "env-name": "C"},
     ]
     _assert_unique_attachment_targets(uses, "api", None)  # no raise
+
+
+def test_attachment_id_allows_hyphens_rejects_underscores() -> None:
+    from opi.forms.editables.validators import AttachmentIdValidator
+
+    v = AttachmentIdValidator()
+    assert v.validate("my-cert") == []  # hyphen allowed (DNS-1123 safe)
+    assert v.validate("ca") == []
+    assert v.validate("a") == []
+    assert v.validate("my_cert")  # underscore rejected (invalid in a Secret/volume name)
+    assert v.validate("my-")  # trailing hyphen rejected
+    assert v.validate("-x")  # leading hyphen rejected
+    assert v.validate("a" * 13)  # over 12 chars rejected
