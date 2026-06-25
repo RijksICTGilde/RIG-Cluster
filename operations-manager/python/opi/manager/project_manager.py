@@ -5105,9 +5105,24 @@ class ProjectManager:
                             # PEM attachment and point the ingress at it (idempotent per path).
                             provided_tls_secret_name: str | None = None
                             if tls_mode == "provided":
-                                tls_data = await self._project_file_handler.resolve_publish_on_web_certificate(
-                                    project_data, component_name, deployment_name
-                                )
+                                try:
+                                    tls_data = await self._project_file_handler.resolve_publish_on_web_certificate(
+                                        project_data, component_name, deployment_name
+                                    )
+                                except ValueError as cert_error:
+                                    # A bad/missing customer certificate is a per-component config
+                                    # error. Don't abort the whole deployment: log it, record it on
+                                    # the deployment result, and skip just this ingress so the rest
+                                    # of the project still deploys.
+                                    logger.error(
+                                        f"publish-on-web 'provided' certificate error for "
+                                        f"{deployment_name}/{component_name}, skipping its ingress: {cert_error}"
+                                    )
+                                    result = self._deployment_results.get(deployment_name)
+                                    if result is not None:
+                                        result.status = "failed"
+                                        result.errors.append(str(cert_error))
+                                    continue
                                 if tls_data:
                                     provided_tls_secret_name = f"{deployment_name}-{component_name}-provided-tls"
                                     provided_tls_manifest_name = generate_manifest_name(
