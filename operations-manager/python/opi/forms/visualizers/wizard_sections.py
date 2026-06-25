@@ -712,7 +712,7 @@ def build_deployment_edit_section(
                         description="Deployment-specifieke omgevingsvariabelen voor dit component.",
                         children=["user-env-vars"],
                     ),
-                    Sequence(field_name="attachments/config"),
+                    Sequence(field_name="services/attachments/config"),
                 ],
             ),
         ],
@@ -748,8 +748,8 @@ def build_domain_cert_section(deployment_index: int) -> FormSection:
                     Fieldset(
                         legend="Certificaat",
                         children=[
-                            "publish-on-web/config/tls",
-                            "publish-on-web/config/attachment",
+                            "services/publish-on-web/config/tls",
+                            "services/publish-on-web/config/attachment",
                         ],
                     ),
                 ],

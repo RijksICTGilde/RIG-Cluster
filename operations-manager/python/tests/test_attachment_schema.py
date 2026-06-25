@@ -117,9 +117,9 @@ def test_reference_integrity() -> None:
 
 
 def test_extract_deployment_component_attachment_uses() -> None:
-    # Per-deployment coupling lives under a dedicated ``attachments.config`` (the
-    # deployment component's ``services`` is the system revision map with a different
-    # shape; the ``config`` wrapper matches the base-component coupling).
+    # Per-deployment coupling lives under ``services.attachments.config`` on the
+    # deployment component (services is a map; attachments sits next to the system
+    # revision-map entries, and the ``config`` wrapper matches the base-component).
     project = {
         "deployments": [
             {
@@ -127,7 +127,11 @@ def test_extract_deployment_component_attachment_uses() -> None:
                 "components": [
                     {
                         "reference": "api",
-                        "attachments": {"config": [{"reference": "ca", "provide-as": "file", "path": "/etc/ca"}]},
+                        "services": {
+                            "attachments": {
+                                "config": [{"reference": "ca", "provide-as": "file", "path": "/etc/ca"}]
+                            }
+                        },
                     }
                 ],
             }
@@ -200,14 +204,14 @@ def test_attachment_id_allows_hyphens_rejects_underscores() -> None:
 
 
 def test_deployment_attachment_sequence_add_builds_proper_item() -> None:
-    # The per-deployment coupling lives under ``attachments.config`` (deeply nested:
-    # deployments[*]/components[*]/attachments/config). Sequence-add must resolve the
-    # editable and build a proper empty item (provide-as defaults to file), not "".
+    # The per-deployment coupling lives under ``services.attachments.config`` (deeply
+    # nested: deployments[*]/components[*]/services/attachments/config). Sequence-add
+    # must resolve the editable and build a proper empty item (provide-as=file), not "".
     from opi.forms.visualizers.wizard_sections import build_deployment_edit_section
     from opi.web.router_wizard import _empty_sequence_item, _find_sequence_editable
 
     section = build_deployment_edit_section(0, component_count=2)
-    path = "deployments[0]/components[0]/attachments/config"
+    path = "deployments[0]/components[0]/services/attachments/config"
     ed = _find_sequence_editable(section, path)
     assert ed is not None
     assert _empty_sequence_item(ed) == {"provide-as": "file"}

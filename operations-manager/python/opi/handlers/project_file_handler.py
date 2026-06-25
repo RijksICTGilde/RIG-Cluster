@@ -979,14 +979,15 @@ class ProjectFileHandler:
         """
         valid = ("standard", "passthrough", "provided")
 
-        # 1. Per-deployment-component override
+        # 1. Per-deployment-component override (under services.publish-on-web.config)
         if deployment_name:
             for dep in project_data.get("deployments", []):
                 if dep.get("name") != deployment_name:
                     continue
                 for comp in dep.get("components", []):
                     if comp.get("reference") == component_name:
-                        mode = ((comp.get("publish-on-web") or {}).get("config") or {}).get("tls")
+                        pow_cfg = (comp.get("services") or {}).get("publish-on-web") or {}
+                        mode = (pow_cfg.get("config") or {}).get("tls")
                         if mode in valid:
                             return mode
                 break
@@ -3069,17 +3070,18 @@ def extract_deployment_component_attachment_uses(
 ) -> list[dict[str, Any]]:
     """Extract the attachment coupling entries on a deployment component override.
 
-    Stored under ``attachments.config`` on the deployment component (a dedicated key;
-    ``services`` there is the system-managed service-revision map with a different
-    shape). The ``config`` wrapper keeps the structure consistent with the base
-    component coupling (``services: - attachments: config:``).
+    Stored under ``services.attachments.config`` on the deployment component. The
+    deployment ``services`` is a map keyed by service name; ``attachments`` sits next to
+    the system revision-map entries, and the ``config`` wrapper keeps the structure
+    consistent with the base-component coupling (``services: - attachments: config:``).
     """
     for dep in project_data.get("deployments", []):
         if not isinstance(dep, dict) or dep.get("name") != deployment_name:
             continue
         for comp in dep.get("components", []):
             if isinstance(comp, dict) and comp.get("reference") == component_reference:
-                config = (comp.get("attachments") or {}).get("config") or []
+                attachments = (comp.get("services") or {}).get("attachments") or {}
+                config = attachments.get("config") or []
                 return [item for item in config if isinstance(item, dict) and item.get("reference")]
     return []
 
