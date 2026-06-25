@@ -508,8 +508,14 @@
         "disabled-reason": { "type": "string" },
         "auto-tune-resources": { "type": "boolean" },
         "attachments": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/attachment-use-entry" }
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "config": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/attachment-use-entry" }
+            }
+          }
         },
         "publish-on-web": {
           "type": "object",
