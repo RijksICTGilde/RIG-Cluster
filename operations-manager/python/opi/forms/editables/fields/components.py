@@ -246,6 +246,15 @@ PUBLISH_ON_WEB_TLS_EDITABLE = Editable(
     show_when={"contains": "publish-on-web"},
 )
 
+PUBLISH_ON_WEB_ATTACHMENT_EDITABLE = Editable(
+    yaml_path="components[*]/services{publish-on-web}/config/attachment",
+    values_provider="AttachmentOptionsProvider",
+    virtualize=("services", "_services-config"),
+    remove_when_none=True,
+    depends_on="components[*]/services{publish-on-web}/config/tls",
+    show_when={"value": ["provided"]},
+)
+
 METRICS_PORT_EDITABLE = Editable(
     yaml_path="components[*]/services{metrics-scraper}/port",
     converter=IntegerConverter(),
@@ -286,6 +295,7 @@ COMPONENTS_SEQUENCE_EDITABLE = Editable(
         TEMP_STORAGE_SEQUENCE_EDITABLE,
         ATTACHMENT_USE_SEQUENCE_EDITABLE,
         PUBLISH_ON_WEB_TLS_EDITABLE,
+        PUBLISH_ON_WEB_ATTACHMENT_EDITABLE,
         METRICS_PORT_EDITABLE,
         METRICS_PATH_EDITABLE,
     ],

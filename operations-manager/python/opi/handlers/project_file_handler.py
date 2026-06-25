@@ -964,21 +964,49 @@ class ProjectFileHandler:
         logger.debug(f"Component '{component_name}' has publish-on-web service: {has_publish_service}")
         return has_publish_service
 
-    def extract_component_publish_on_web_tls(self, project_data: dict[str, Any], component_name: str) -> str:
-        """Return the publish-on-web TLS mode for a component.
+    def extract_component_publish_on_web_tls(
+        self, project_data: dict[str, Any], component_name: str, deployment_name: str | None = None
+    ) -> str:
+        """Return the resolved publish-on-web TLS mode for a component.
 
         ``standard`` (default): the platform issues the certificate (cert-manager).
         ``passthrough``: the ingress passes TLS through untouched and the pod presents
         its own certificate; no platform certificate is issued.
+        ``provided``: the customer's own certificate, terminated on the ingress.
+
+        Resolution cascade: per-deployment override > component > root > ``standard``.
+        See features/publish-on-web-tls-modes.md.
         """
+        valid = ("standard", "passthrough", "provided")
+
+        # 1. Per-deployment-component override
+        if deployment_name:
+            for dep in project_data.get("deployments", []):
+                if dep.get("name") != deployment_name:
+                    continue
+                for comp in dep.get("components", []):
+                    if comp.get("reference") == component_name:
+                        mode = ((comp.get("publish-on-web") or {}).get("config") or {}).get("tls")
+                        if mode in valid:
+                            return mode
+                break
+
+        # 2. Component-level
         component = self._find_component(project_data, component_name)
-        if not component:
-            return "standard"
-        for entry in component.get("services", []):
+        if component:
+            for entry in component.get("services", []):
+                if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
+                    mode = (entry["publish-on-web"].get("config") or {}).get("tls")
+                    if mode in valid:
+                        return mode
+
+        # 3. Root (project services) default
+        for entry in project_data.get("services", []):
             if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
                 mode = (entry["publish-on-web"].get("config") or {}).get("tls")
-                if mode in ("standard", "passthrough"):
+                if mode in valid:
                     return mode
+
         return "standard"
 
     def extract_component_command(self, project_data: dict[str, Any], component_name: str) -> list[str] | None:
