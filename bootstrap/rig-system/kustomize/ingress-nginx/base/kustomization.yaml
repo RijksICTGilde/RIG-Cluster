@@ -34,3 +34,15 @@ patches:
       value:
         ingress-ready: "true"
         kubernetes.io/os: linux
+
+# Enable SSL passthrough so the publish-on-web passthrough TLS mode works on nginx.
+# Without this controller flag the nginx.ingress.kubernetes.io/ssl-passthrough
+# annotation is ignored. (ODCN's OpenShift Router does passthrough natively.)
+- target:
+    kind: Deployment
+    name: ingress-nginx-controller
+    namespace: ingress-nginx
+  patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --enable-ssl-passthrough
