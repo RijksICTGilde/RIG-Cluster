@@ -227,7 +227,8 @@ ATTACHMENT_USE_SEQUENCE_EDITABLE = Editable(
     depends_on="components[*]/services",
     show_when={"contains": "attachments"},
     virtualize=("services", "_services-config"),
-    min_items=1,
+    min_items=0,
+    remove_when_none=True,
     children=[
         ATTACHMENT_USE_REFERENCE_EDITABLE,
         ATTACHMENT_USE_PROVIDE_AS_EDITABLE,
