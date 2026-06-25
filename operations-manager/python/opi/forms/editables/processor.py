@@ -439,6 +439,13 @@ class EditableFormProcessor:
         if not isinstance(items, list):
             items = []
 
+        # Empty sequence + remove_when_none: don't persist an empty list (e.g. an
+        # attachments coupling with no entries). For a plain path this removes the key;
+        # skipping the write below avoids writing a fresh empty list.
+        if not items and ed.remove_when_none:
+            smart_delete_value(result, ed.yaml_path)
+            return
+
         # Save existing items so we can restore readonly fields after overwriting
         original_items = smart_get_value(result, ed.yaml_path) or []
 

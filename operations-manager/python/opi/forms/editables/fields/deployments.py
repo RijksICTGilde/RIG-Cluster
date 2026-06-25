@@ -180,6 +180,7 @@ DEPLOYMENT_COMP_ATTACHMENT_USE_ENV_NAME_EDITABLE = Editable(
 DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE_EDITABLE = Editable(
     yaml_path="deployments[*]/components[*]/attachments",
     min_items=0,
+    remove_when_none=True,
     children=[
         DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE_EDITABLE,
         DEPLOYMENT_COMP_ATTACHMENT_USE_PROVIDE_AS_EDITABLE,
