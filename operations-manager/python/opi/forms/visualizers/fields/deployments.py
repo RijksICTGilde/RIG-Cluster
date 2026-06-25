@@ -12,6 +12,7 @@ from opi.forms.editables.fields.deployments import (
     DEPLOYMENT_BACKUP_SCHEDULE_MONTHDAY_EDITABLE,
     DEPLOYMENT_BACKUP_SCHEDULE_TIME_EDITABLE,
     DEPLOYMENT_BASE_DOMAIN_EDITABLE,
+    DEPLOYMENT_CERT_COMPONENTS_SEQ_EDITABLE,
     DEPLOYMENT_CLONE_FROM_EDITABLE,
     DEPLOYMENT_CLUSTER_EDITABLE,
     DEPLOYMENT_COMP_ATTACHMENT_USE_ENV_NAME_EDITABLE,
@@ -20,6 +21,8 @@ from opi.forms.editables.fields.deployments import (
     DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE_EDITABLE,
     DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE_EDITABLE,
     DEPLOYMENT_COMP_IMAGE_EDITABLE,
+    DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE,
+    DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE,
     DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
     DEPLOYMENT_COMP_REFERENCE_EDITABLE,
     DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE,
@@ -228,6 +231,43 @@ DEPLOYMENT_COMPONENTS_SEQ = EditableVisualizer(
         DEPLOYMENT_COMP_PULL_POLICY,
         DEPLOYMENT_COMP_USER_ENV_VARS,
         DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE,
+    ],
+)
+
+DEPLOYMENT_COMP_REFERENCE_READONLY = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_REFERENCE_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Component",
+    readonly_on_edit=True,
+)
+
+DEPLOYMENT_COMP_PUBLISH_TLS = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="TLS-modus",
+    help_text=(
+        "Erven = gebruik de instelling van het component. Anders een override voor deze "
+        "deployment: standaard (platform), passthrough (cert op de pod), of aangeleverd "
+        "(eigen cert op de ingress)."
+    ),
+    attributes={"data-rerender": "true"},
+)
+
+DEPLOYMENT_COMP_PUBLISH_ATTACHMENT = EditableVisualizer(
+    editable=DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Certificaat (bijlage)",
+    help_text="De PEM-bijlage (cert + key) die als certificaat op de ingress komt.",
+)
+
+DEPLOYMENT_CERT_COMPONENTS_SEQ = EditableVisualizer(
+    editable=DEPLOYMENT_CERT_COMPONENTS_SEQ_EDITABLE,
+    widget=WidgetType.SEQUENCE,
+    label="Certificaten per component",
+    children=[
+        DEPLOYMENT_COMP_REFERENCE_READONLY,
+        DEPLOYMENT_COMP_PUBLISH_TLS,
+        DEPLOYMENT_COMP_PUBLISH_ATTACHMENT,
     ],
 )
 

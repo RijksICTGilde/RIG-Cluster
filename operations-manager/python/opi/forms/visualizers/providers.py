@@ -804,14 +804,26 @@ class AttachmentProvideAsOptionsProvider:
         ]
 
 
+_PUBLISH_TLS_MODE_OPTIONS = [
+    {"value": "standard", "label": "Standaard certificaat (platform regelt het)"},
+    {"value": "passthrough", "label": "Eigen certificaat op de pod (passthrough)"},
+    {"value": "provided", "label": "Eigen certificaat op de ingress (aangeleverd)"},
+]
+
+
 class PublishTlsModeOptionsProvider:
     """Static options for how TLS is handled on a published component."""
 
     def get_options(self) -> list[dict[str, Any]]:
-        return [
-            {"value": "standard", "label": "Standaard certificaat (platform regelt het)"},
-            {"value": "passthrough", "label": "Eigen certificaat op de pod (passthrough)"},
-        ]
+        return list(_PUBLISH_TLS_MODE_OPTIONS)
+
+
+class PublishTlsOverrideOptionsProvider:
+    """TLS mode options for a per-deployment override. The empty value means
+    'inherit' (no override): fall back to the component/root setting."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [{"value": "", "label": "Erven (geen override)"}, *_PUBLISH_TLS_MODE_OPTIONS]
 
 
 PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
@@ -848,6 +860,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "AttachmentOptionsProvider": AttachmentOptionsProvider,
     "AttachmentProvideAsOptionsProvider": AttachmentProvideAsOptionsProvider,
     "PublishTlsModeOptionsProvider": PublishTlsModeOptionsProvider,
+    "PublishTlsOverrideOptionsProvider": PublishTlsOverrideOptionsProvider,
 }
 
 

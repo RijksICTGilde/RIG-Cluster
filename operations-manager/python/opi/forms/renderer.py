@@ -575,6 +575,7 @@ class FormRenderer:
             description=editable.description,
             min_items=ed.min_items,
             max_items=ed.max_items,
+            add_remove=ed.add_remove,
             virtualize=virt,
         )
 
@@ -701,6 +702,7 @@ class FormRenderer:
             label=editable.label or "",
             min_items=ed.min_items,
             max_items=ed.max_items,
+            add_remove=ed.add_remove,
             virtualize=virt,
         )
 
