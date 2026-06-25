@@ -32,6 +32,7 @@ from opi.forms.editables.fields.components import (
     PERSISTENT_STORAGE_NAME_EDITABLE,
     PERSISTENT_STORAGE_SEQUENCE_EDITABLE,
     PERSISTENT_STORAGE_SIZE_EDITABLE,
+    PUBLISH_ON_WEB_TLS_EDITABLE,
     TEMP_STORAGE_MOUNT_PATH_EDITABLE,
     TEMP_STORAGE_NAME_EDITABLE,
     TEMP_STORAGE_SEQUENCE_EDITABLE,
@@ -291,6 +292,16 @@ METRICS_PATH = EditableVisualizer(
     description="Het pad waarop de Prometheus metrics beschikbaar zijn.",
 )
 
+PUBLISH_ON_WEB_TLS = EditableVisualizer(
+    editable=PUBLISH_ON_WEB_TLS_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="TLS-modus",
+    help_text=(
+        "Standaard: het platform regelt het certificaat. Passthrough: de pod presenteert "
+        "z'n eigen certificaat (koppel dat als bijlage aan dit component)."
+    ),
+)
+
 COMPONENTS_SEQUENCE = EditableVisualizer(
     editable=COMPONENTS_SEQUENCE_EDITABLE,
     widget=WidgetType.SEQUENCE,
@@ -311,6 +322,7 @@ COMPONENTS_SEQUENCE = EditableVisualizer(
         PERSISTENT_STORAGE_SEQUENCE,
         TEMP_STORAGE_SEQUENCE,
         ATTACHMENT_USE_SEQUENCE,
+        PUBLISH_ON_WEB_TLS,
         METRICS_PORT,
         METRICS_PATH,
     ],

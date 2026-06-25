@@ -8,6 +8,11 @@ metadata:
     # ============================================================
     haproxy.router.openshift.io/ip_whitelist: {{ ip_whitelist | default("0.0.0.0/0,::/0") }}
     haproxy.router.openshift.io/timeout: "300s"
+{% if passthrough %}
+    # Passthrough TLS: the OpenShift Router forwards the encrypted stream untouched;
+    # the pod terminates TLS with its own certificate. No edge certificate is used.
+    route.openshift.io/termination: passthrough
+{% endif %}
 {% if rewrite %}
     haproxy.router.openshift.io/rewrite-target: {{ (rewrite | default('', true)) | tojson }}
 {% endif %}
@@ -25,6 +30,10 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+{% if passthrough %}
+    # Passthrough TLS: nginx forwards TLS untouched; the pod terminates it.
+    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+{% endif %}
 {% if enable_tls %}
     # HSTS for NGINX (enabled by default, but explicit for clarity)
     nginx.ingress.kubernetes.io/hsts: "true"

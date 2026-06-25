@@ -165,6 +165,14 @@ COMPONENTS_SECTION = FormSection(
                 Sequence(field_name="services{temp-storage}/config"),
                 Sequence(field_name="services{attachments}/config"),
                 Fieldset(
+                    legend="Publicatie op het web",
+                    depends_on="services",
+                    show_when={"contains": "publish-on-web"},
+                    children=[
+                        "services{publish-on-web}/config/tls",
+                    ],
+                ),
+                Fieldset(
                     legend="Prometheus metrics scraper configuratie",
                     depends_on="services",
                     show_when={"contains": "metrics-scraper"},

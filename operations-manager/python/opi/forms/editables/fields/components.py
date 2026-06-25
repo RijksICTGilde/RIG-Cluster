@@ -237,6 +237,15 @@ ATTACHMENT_USE_SEQUENCE_EDITABLE = Editable(
     ],
 )
 
+PUBLISH_ON_WEB_TLS_EDITABLE = Editable(
+    yaml_path="components[*]/services{publish-on-web}/config/tls",
+    values_provider="PublishTlsModeOptionsProvider",
+    default="standard",
+    virtualize=("services", "_services-config"),
+    depends_on="components[*]/services",
+    show_when={"contains": "publish-on-web"},
+)
+
 METRICS_PORT_EDITABLE = Editable(
     yaml_path="components[*]/services{metrics-scraper}/port",
     converter=IntegerConverter(),
@@ -276,6 +285,7 @@ COMPONENTS_SEQUENCE_EDITABLE = Editable(
         PERSISTENT_STORAGE_SEQUENCE_EDITABLE,
         TEMP_STORAGE_SEQUENCE_EDITABLE,
         ATTACHMENT_USE_SEQUENCE_EDITABLE,
+        PUBLISH_ON_WEB_TLS_EDITABLE,
         METRICS_PORT_EDITABLE,
         METRICS_PATH_EDITABLE,
     ],
