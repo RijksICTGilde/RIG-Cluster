@@ -188,6 +188,56 @@ def test_passthrough_render_suppresses_cert() -> None:
     assert "secretName" not in h
 
 
+def test_provided_render_uses_attachment_secret_no_cert_manager() -> None:
+    h = _render(provided_tls_secret="staging-api-provided-tls")
+    assert 'secretName: "staging-api-provided-tls"' in h
+    assert "cert-manager.io/" not in h  # customer cert, no platform issuance
+    assert "route.openshift.io/termination: passthrough" not in h
+
+
+def test_split_tls_pem() -> None:
+    from opi.handlers.project_file_handler import _split_tls_pem
+
+    pem = (
+        "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"
+        "-----BEGIN PRIVATE KEY-----\nBBBB\n-----END PRIVATE KEY-----\n"
+    )
+    cert, key = _split_tls_pem(pem, "api")
+    assert "BEGIN CERTIFICATE" in cert
+    assert "PRIVATE" not in cert
+    assert "BEGIN PRIVATE KEY" in key
+    assert "CERTIFICATE" not in key
+
+    import pytest
+
+    with pytest.raises(ValueError, match="PRIVATE KEY"):  # no key
+        _split_tls_pem("-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n", "api")
+    with pytest.raises(ValueError, match="CERTIFICATE"):  # no cert
+        _split_tls_pem("-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----\n", "api")
+    with pytest.raises(ValueError, match="PRIVATE KEY"):  # two keys
+        _split_tls_pem(
+            "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n"
+            "-----BEGIN PRIVATE KEY-----\na\n-----END PRIVATE KEY-----\n"
+            "-----BEGIN PRIVATE KEY-----\nb\n-----END PRIVATE KEY-----\n",
+            "api",
+        )
+
+
+def test_resolve_publish_certificate_gating() -> None:
+    import asyncio
+
+    import pytest
+
+    h = ProjectFileHandler.__new__(ProjectFileHandler)
+    # Not provided -> None (no decryption attempted)
+    passthrough = {"components": [{"name": "api", "services": [{"publish-on-web": {"config": {"tls": "passthrough"}}}]}]}
+    assert asyncio.run(h.resolve_publish_on_web_certificate(passthrough, "api")) is None
+    # provided without an attachment -> ValueError
+    no_attach = {"components": [{"name": "api", "services": [{"publish-on-web": {"config": {"tls": "provided"}}}]}]}
+    with pytest.raises(ValueError, match="attachment"):
+        asyncio.run(h.resolve_publish_on_web_certificate(no_attach, "api"))
+
+
 def test_standard_render_keeps_cert() -> None:
     h = _render(passthrough=False, cluster_issuer="kind-ca-issuer")
     assert "route.openshift.io/termination: passthrough" not in h
