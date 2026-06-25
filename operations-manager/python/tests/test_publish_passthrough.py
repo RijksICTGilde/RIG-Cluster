@@ -25,7 +25,10 @@ def test_tls_resolution_cascade() -> None:
             {
                 "name": "prod",
                 "components": [
-                    {"reference": "api", "publish-on-web": {"config": {"tls": "provided", "attachment": "wc"}}},
+                    {
+                        "reference": "api",
+                        "services": {"publish-on-web": {"config": {"tls": "provided", "attachment": "wc"}}},
+                    },
                     {"reference": "web"},  # no override -> inherits (root passthrough)
                 ],
             }
@@ -55,7 +58,10 @@ def test_domain_cert_section_renders_per_component_without_add_remove() -> None:
             {
                 "name": "prod",
                 "components": [
-                    {"reference": "api", "publish-on-web": {"config": {"tls": "provided", "attachment": "wc"}}}
+                    {
+                        "reference": "api",
+                        "services": {"publish-on-web": {"config": {"tls": "provided", "attachment": "wc"}}},
+                    }
                 ],
             }
         ],

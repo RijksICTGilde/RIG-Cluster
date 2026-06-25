@@ -147,39 +147,40 @@ DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE = Editable(
 # means "use whatever the base component couples". Merge semantics (deployment wins
 # per reference) live in resolve_attachments_for_component.
 DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/attachments/config[*]/reference",
+    yaml_path="deployments[*]/components[*]/services/attachments/config[*]/reference",
     values_provider="AttachmentOptionsProvider",
     required=True,
 )
 
 DEPLOYMENT_COMP_ATTACHMENT_USE_PROVIDE_AS_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/attachments/config[*]/provide-as",
+    yaml_path="deployments[*]/components[*]/services/attachments/config[*]/provide-as",
     values_provider="AttachmentProvideAsOptionsProvider",
     required=True,
     default="file",
 )
 
 DEPLOYMENT_COMP_ATTACHMENT_USE_PATH_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/attachments/config[*]/path",
+    yaml_path="deployments[*]/components[*]/services/attachments/config[*]/path",
     validator=PathValidator(),
     remove_when_none=True,
-    depends_on="deployments[*]/components[*]/attachments/config[*]/provide-as",
+    depends_on="deployments[*]/components[*]/services/attachments/config[*]/provide-as",
     show_when={"value": ["file"]},
 )
 
 DEPLOYMENT_COMP_ATTACHMENT_USE_ENV_NAME_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/attachments/config[*]/env-name",
+    yaml_path="deployments[*]/components[*]/services/attachments/config[*]/env-name",
     remove_when_none=True,
-    depends_on="deployments[*]/components[*]/attachments/config[*]/provide-as",
+    depends_on="deployments[*]/components[*]/services/attachments/config[*]/provide-as",
     show_when={"value": ["env-var"]},
 )
 
-# Stored under ``attachments.config`` on the deployment component (NOT under
-# ``services`` - that key is the deployment service-revision map with a different
-# shape). The ``config`` wrapper matches the base-component coupling. No virtualize
-# needed, so the sequence path is real end-to-end.
+# Stored under ``services.attachments.config`` on the deployment component. The
+# deployment ``services`` is a map (keyed by service name); ``attachments`` sits next
+# to the system revision-map entries (persistent-storage etc.) and the ``config``
+# wrapper matches the base-component coupling. No virtualize needed (services is a real
+# map here), so the path is real end-to-end.
 DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/attachments/config",
+    yaml_path="deployments[*]/components[*]/services/attachments/config",
     min_items=0,
     remove_when_none=True,
     children=[
@@ -204,20 +205,21 @@ DEPLOYMENT_COMPONENTS_SEQ_EDITABLE = Editable(
 )
 
 # Per-deployment publish-on-web TLS override. Empty value = "erven" (no override):
-# resolution falls back to the component/root setting. Stored under a dedicated
-# 'publish-on-web' key on the deployment component (its 'services' is the service-
-# revision map). See features/publish-on-web-tls-modes.md.
+# resolution falls back to the component/root setting. Stored under
+# ``services.publish-on-web.config`` on the deployment component (services is a map;
+# this sits next to the system revision-map entries). See
+# features/publish-on-web-tls-modes.md.
 DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/publish-on-web/config/tls",
+    yaml_path="deployments[*]/components[*]/services/publish-on-web/config/tls",
     values_provider="PublishTlsOverrideOptionsProvider",
     remove_when_none=True,
 )
 
 DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/publish-on-web/config/attachment",
+    yaml_path="deployments[*]/components[*]/services/publish-on-web/config/attachment",
     values_provider="AttachmentOptionsProvider",
     remove_when_none=True,
-    depends_on="deployments[*]/components[*]/publish-on-web/config/tls",
+    depends_on="deployments[*]/components[*]/services/publish-on-web/config/tls",
     show_when={"value": ["provided"]},
 )
 

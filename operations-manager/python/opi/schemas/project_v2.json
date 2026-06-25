@@ -483,6 +483,25 @@
         },
         "services": {
           "type": "object",
+          "properties": {
+            "attachments": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "config": {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/attachment-use-entry" }
+                }
+              }
+            },
+            "publish-on-web": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "config": { "$ref": "#/$defs/publish-on-web-config" }
+              }
+            }
+          },
           "additionalProperties": {
             "type": "array",
             "items": { "$ref": "#/$defs/deployment-service" }
@@ -506,24 +525,7 @@
         },
         "disabled": { "type": "boolean" },
         "disabled-reason": { "type": "string" },
-        "auto-tune-resources": { "type": "boolean" },
-        "attachments": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "config": {
-              "type": "array",
-              "items": { "$ref": "#/$defs/attachment-use-entry" }
-            }
-          }
-        },
-        "publish-on-web": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "config": { "$ref": "#/$defs/publish-on-web-config" }
-          }
-        }
+        "auto-tune-resources": { "type": "boolean" }
       }
     },
 
