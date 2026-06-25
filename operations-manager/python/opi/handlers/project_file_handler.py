@@ -5,6 +5,7 @@ This module provides functionality to read, parse, and analyze changes in projec
 including git-based diff generation and structured change extraction.
 """
 
+import base64
 import logging
 import re
 from dataclasses import dataclass
@@ -964,6 +965,48 @@ class ProjectFileHandler:
         logger.debug(f"Component '{component_name}' has publish-on-web service: {has_publish_service}")
         return has_publish_service
 
+    def _resolve_publish_on_web_config(
+        self, project_data: dict[str, Any], component_name: str, deployment_name: str | None = None
+    ) -> dict[str, Any]:
+        """Resolve the winning publish-on-web config block for a component.
+
+        Cascade: per-deployment override > component > root. Returns the whole config
+        dict (``{tls, attachment}``) from the first level that defines a valid ``tls``,
+        so the mode and its certificate attachment always come from the same level.
+        Returns ``{}`` when nothing is configured. See features/publish-on-web-tls-modes.md.
+        """
+        valid = ("standard", "passthrough", "provided")
+
+        # 1. Per-deployment-component override (under services.publish-on-web.config)
+        if deployment_name:
+            for dep in project_data.get("deployments", []):
+                if dep.get("name") != deployment_name:
+                    continue
+                for comp in dep.get("components", []):
+                    if comp.get("reference") == component_name:
+                        cfg = ((comp.get("services") or {}).get("publish-on-web") or {}).get("config") or {}
+                        if cfg.get("tls") in valid:
+                            return cfg
+                break
+
+        # 2. Component-level
+        component = self._find_component(project_data, component_name)
+        if component:
+            for entry in component.get("services", []):
+                if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
+                    cfg = entry["publish-on-web"].get("config") or {}
+                    if cfg.get("tls") in valid:
+                        return cfg
+
+        # 3. Root (project services) default
+        for entry in project_data.get("services", []):
+            if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
+                cfg = entry["publish-on-web"].get("config") or {}
+                if cfg.get("tls") in valid:
+                    return cfg
+
+        return {}
+
     def extract_component_publish_on_web_tls(
         self, project_data: dict[str, Any], component_name: str, deployment_name: str | None = None
     ) -> str:
@@ -975,40 +1018,39 @@ class ProjectFileHandler:
         ``provided``: the customer's own certificate, terminated on the ingress.
 
         Resolution cascade: per-deployment override > component > root > ``standard``.
-        See features/publish-on-web-tls-modes.md.
         """
-        valid = ("standard", "passthrough", "provided")
+        return self._resolve_publish_on_web_config(project_data, component_name, deployment_name).get("tls") or "standard"
 
-        # 1. Per-deployment-component override (under services.publish-on-web.config)
-        if deployment_name:
-            for dep in project_data.get("deployments", []):
-                if dep.get("name") != deployment_name:
-                    continue
-                for comp in dep.get("components", []):
-                    if comp.get("reference") == component_name:
-                        pow_cfg = (comp.get("services") or {}).get("publish-on-web") or {}
-                        mode = (pow_cfg.get("config") or {}).get("tls")
-                        if mode in valid:
-                            return mode
-                break
+    async def resolve_publish_on_web_certificate(
+        self, project_data: dict[str, Any], component_name: str, deployment_name: str | None = None
+    ) -> dict[str, str] | None:
+        """For ``tls: provided``, resolve the referenced PEM attachment to a TLS Secret.
 
-        # 2. Component-level
-        component = self._find_component(project_data, component_name)
-        if component:
-            for entry in component.get("services", []):
-                if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
-                    mode = (entry["publish-on-web"].get("config") or {}).get("tls")
-                    if mode in valid:
-                        return mode
+        Reads the catalog attachment named by ``config.attachment``, AGE-decrypts it,
+        splits the PEM into the certificate chain and private key, and returns the
+        base64-encoded ``{"tls.crt": ..., "tls.key": ...}`` for a ``kubernetes.io/tls``
+        Secret. Returns ``None`` when the mode is not ``provided``. Raises ``ValueError``
+        on a missing attachment reference, a dangling reference, or a malformed PEM.
+        """
+        cfg = self._resolve_publish_on_web_config(project_data, component_name, deployment_name)
+        if cfg.get("tls") != "provided":
+            return None
 
-        # 3. Root (project services) default
-        for entry in project_data.get("services", []):
-            if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
-                mode = (entry["publish-on-web"].get("config") or {}).get("tls")
-                if mode in valid:
-                    return mode
+        reference = cfg.get("attachment")
+        if not reference:
+            raise ValueError(f"Component '{component_name}': tls 'provided' requires a certificate attachment")
 
-        return "standard"
+        entry = extract_attachment_catalog(project_data).get(reference)
+        if not entry:
+            raise ValueError(f"Component '{component_name}': publish-on-web certificate references unknown attachment '{reference}'")
+
+        private_key = await get_decoded_project_private_key(project_data)
+        pem_bytes = await decrypt_age_block_to_bytes(entry["content"], private_key)
+        cert_pem, key_pem = _split_tls_pem(pem_bytes.decode("utf-8"), component_name)
+        return {
+            "tls.crt": base64.b64encode(cert_pem.encode("utf-8")).decode("ascii"),
+            "tls.key": base64.b64encode(key_pem.encode("utf-8")).decode("ascii"),
+        }
 
     def extract_component_command(self, project_data: dict[str, Any], component_name: str) -> list[str] | None:
         """Extract the optional component-level ``command`` override.
@@ -3018,6 +3060,31 @@ def extract_storage_from_component_services(component: dict[str, Any]) -> list[d
                     storage_configs.append(config)
 
     return storage_configs
+
+
+_PEM_CERT_RE = re.compile(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", re.DOTALL)
+_PEM_KEY_RE = re.compile(
+    r"-----BEGIN (?:RSA |EC )?PRIVATE KEY-----.*?-----END (?:RSA |EC )?PRIVATE KEY-----", re.DOTALL
+)
+
+
+def _split_tls_pem(pem_text: str, component_name: str) -> tuple[str, str]:
+    """Split a PEM bundle into (certificate-chain, private-key) for a kubernetes.io/tls Secret.
+
+    Requires at least one CERTIFICATE block and exactly one PRIVATE KEY block.
+    """
+    certs = _PEM_CERT_RE.findall(pem_text)
+    keys = _PEM_KEY_RE.findall(pem_text)
+    if not certs:
+        raise ValueError(f"Component '{component_name}': certificate attachment has no CERTIFICATE block")
+    if len(keys) != 1:
+        raise ValueError(
+            f"Component '{component_name}': certificate attachment must contain exactly one PRIVATE KEY block "
+            f"(found {len(keys)})"
+        )
+    cert_chain = "\n".join(block.strip() for block in certs) + "\n"
+    key = keys[0].strip() + "\n"
+    return cert_chain, key
 
 
 def extract_attachment_catalog(project_data: dict[str, Any]) -> dict[str, dict[str, Any]]:

@@ -92,7 +92,12 @@ spec:
                   number: {{ service_port | default(80) }}
 {% if enable_tls %}
   tls:
-{% if issuer_name or cluster_issuer %}
+{% if provided_tls_secret %}
+    # Own certificate provided by the customer (tls: provided); no cert-manager issuance.
+    - hosts:
+        - {{ (hostname | default('', true)) | tojson }}
+      secretName: {{ provided_tls_secret | tojson }}
+{% elif issuer_name or cluster_issuer %}
     - hosts:
         - {{ (hostname | default('', true)) | tojson }}
       secretName: {{ (tls_secret_name | default('', true)) | tojson }}
