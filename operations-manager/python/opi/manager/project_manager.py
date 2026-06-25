@@ -5084,7 +5084,20 @@ class ProjectManager:
                             ingress_issuer_name = None
                             ingress_cluster_issuer = None
 
-                            if base_domain and issuer_config:
+                            # Passthrough TLS: the pod presents its own certificate, so the
+                            # platform issues none. Leaving both issuers None drops the
+                            # cert-manager annotation and the tls secretName, so no certificate
+                            # is requested for this ingress.
+                            ingress_passthrough = (
+                                self._project_file_handler.extract_component_publish_on_web_tls(
+                                    project_data, component_name
+                                )
+                                == "passthrough"
+                            )
+
+                            if ingress_passthrough:
+                                pass
+                            elif base_domain and issuer_config:
                                 # External domain with specified issuer
                                 if issuer_config in ("letsencrypt", "letsencrypt-staging"):
                                     # Auto-generated namespace Issuer for Let's Encrypt
@@ -5111,6 +5124,7 @@ class ProjectManager:
                                     "external_dns_target": get_external_dns_target_for_hostname(
                                         cluster, ingress_hostname
                                     ),
+                                    "passthrough": ingress_passthrough,
                                 }
                             )
 

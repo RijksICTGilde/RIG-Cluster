@@ -804,6 +804,16 @@ class AttachmentProvideAsOptionsProvider:
         ]
 
 
+class PublishTlsModeOptionsProvider:
+    """Static options for how TLS is handled on a published component."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": "standard", "label": "Standaard certificaat (platform regelt het)"},
+            {"value": "passthrough", "label": "Eigen certificaat op de pod (passthrough)"},
+        ]
+
+
 PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterOptionsProvider": ClusterOptionsProvider,
     "ServiceOptionsProvider": ServiceOptionsProvider,
@@ -837,6 +847,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ApprovalStatusOptionsProvider": ApprovalStatusOptionsProvider,
     "AttachmentOptionsProvider": AttachmentOptionsProvider,
     "AttachmentProvideAsOptionsProvider": AttachmentProvideAsOptionsProvider,
+    "PublishTlsModeOptionsProvider": PublishTlsModeOptionsProvider,
 }
 
 
