@@ -86,6 +86,44 @@ def test_domain_cert_save_preserves_unmanaged_deployment_fields() -> None:
     assert comp["services"]["publish-on-web"]["config"]["tls"] == "passthrough"  # managed field set
 
 
+def test_domain_cert_erven_prunes_empty_publish_on_web() -> None:
+    """Setting the override back to 'erven' (empty) must remove the whole publish-on-web
+    key, not leave noisy empty ancestors (publish-on-web: {config: {}}), while siblings
+    under services and the image are preserved."""
+    import asyncio
+
+    from opi.forms.editables.processor import EditableFormProcessor
+    from opi.forms.visualizers.wizard_sections import build_domain_cert_section
+
+    project = {
+        "components": [{"name": "backend", "services": ["publish-on-web"]}],
+        "deployments": [
+            {
+                "name": "staging",
+                "components": [
+                    {
+                        "reference": "backend",
+                        "image": "x",
+                        "services": {
+                            "publish-on-web": {"config": {"tls": "passthrough"}},
+                            "attachments": {"config": [{"reference": "sso", "provide-as": "file", "path": "/x"}]},
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    submitted = {"deployments": [{"components": [{"services": {"publish-on-web": {"config": {"tls": ""}}}}]}]}
+    section = build_domain_cert_section(0)
+    result, _ = asyncio.run(
+        EditableFormProcessor().process_json_submission(submitted, section.editables, project, edit_mode=True)
+    )
+    services = result["deployments"][0]["components"][0]["services"]
+    assert "publish-on-web" not in services  # empty override pruned, no config: {} noise
+    assert result["deployments"][0]["components"][0]["image"] == "x"
+    assert services["attachments"]["config"][0]["reference"] == "sso"
+
+
 def test_domain_cert_section_renders_per_component_without_add_remove() -> None:
     from opi.forms.visualizers.wizard_sections import build_domain_cert_section
     from opi.web.router_wizard import _create_renderer

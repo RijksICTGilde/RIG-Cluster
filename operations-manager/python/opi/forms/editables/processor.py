@@ -13,7 +13,12 @@ from typing import TYPE_CHECKING, Any
 from opi.forms.editables.converters import keep_existing_ciphertext_if_unchanged
 from opi.forms.editables.editable import WidgetType, apply_virtualize
 from opi.forms.editables.path import get_value, resolve_path
-from opi.forms.editables.service_path import smart_delete_value, smart_get_value, smart_set_value
+from opi.forms.editables.service_path import (
+    is_service_config_path,
+    smart_delete_value,
+    smart_get_value,
+    smart_set_value,
+)
 from opi.forms.visualizers.bridge import should_render_editable
 
 logger = logging.getLogger(__name__)
@@ -82,6 +87,29 @@ def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]
         else:
             base[key] = copy.deepcopy(value)
     return base
+
+
+def _prune_empty_ancestors(data: dict[str, Any], path: str) -> None:
+    """After deleting a leaf, remove now-empty ancestor dicts (noise like ``config: {}``).
+
+    Walks up the path removing each dict key whose value became an empty dict, stopping
+    at the first non-empty container or a list-item segment (``...[N]``). Skipped for
+    service-config and service-map (``{...}``) paths, where an empty entry is meaningful
+    (it marks a selected service in the base-component services list).
+    """
+    if is_service_config_path(path) or "{" in path:
+        return
+    parts = path.split("/")
+    while len(parts) > 1:
+        parts = parts[:-1]
+        if parts[-1].endswith("]"):
+            break
+        parent_path = "/".join(parts)
+        node = smart_get_value(data, parent_path)
+        if isinstance(node, dict) and not node:
+            smart_delete_value(data, parent_path)
+        else:
+            break
 
 
 if TYPE_CHECKING:
@@ -310,6 +338,7 @@ class EditableFormProcessor:
             value = keep_existing_ciphertext_if_unchanged(existing, value, data)
         if not value and editable.remove_when_none:
             smart_delete_value(data, path)
+            _prune_empty_ancestors(data, path)
         else:
             smart_set_value(data, path, value)
 
