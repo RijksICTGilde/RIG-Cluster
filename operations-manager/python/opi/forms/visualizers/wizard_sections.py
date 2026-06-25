@@ -712,7 +712,7 @@ def build_deployment_edit_section(
                         description="Deployment-specifieke omgevingsvariabelen voor dit component.",
                         children=["user-env-vars"],
                     ),
-                    Sequence(field_name="attachments"),
+                    Sequence(field_name="attachments/config"),
                 ],
             ),
         ],
