@@ -88,11 +88,15 @@ validated in Python.
 ## Status
 
 - **Done**: `passthrough` at the component level + cert suppression + the inline
-  TLS-modus editable (commits c1edb128, 2de5f381). Per-deployment attachment override
-  exists (the cert for passthrough).
-- **Schema-locked (this note)**: the full 3-mode, 3-level cascade model + `provided`.
-- **Next**: the resolution helper (deployment > component > root), wiring root +
-  deployment-override into manifest generation, the `provided` mode (PEM -> tls
-  Secret), and the wizard options (mode select at the three levels + a cert-attachment
-  picker shown for `provided`).
+  TLS-modus editable (c1edb128, 2de5f381). Schema for all 3 modes + 3-level cascade
+  (d605ed24). Resolution cascade (deployment > component > root > standard) wired into
+  ingress generation; the per-deployment override wizard step (modal-edit-domain step
+  2, read-only component list, `provided` + cert-attachment picker); the component-level
+  select gained `provided` + its picker; `add_remove=False` on sequences (601face0).
+- **Next**: the `provided` manifest, take a referenced PEM attachment, split into a
+  `kubernetes.io/tls` Secret, and have the ingress use it (`tls.secretName`) with
+  cert-manager suppressed. Until then the wizard saves `provided` but the manifest
+  treats it as standard.
+- **Also derivable now**: the same per-component step in the Create wizard (after the
+  web address step), writing the component-level definition.
 - **Deferred**: a MetalLB `type: LoadBalancer` service for FSC raw-TCP / port 8443.
