@@ -29,6 +29,7 @@ from opi.forms.visualizers.fields.deployments import (
     DEPLOYMENT_BACKUP_SCHEDULE_DAY,
     DEPLOYMENT_BACKUP_SCHEDULE_MONTHDAY,
     DEPLOYMENT_BACKUP_SCHEDULE_TIME,
+    DEPLOYMENT_CERT_COMPONENTS_SEQ,
     DEPLOYMENT_CLONE_FROM,
     DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE,
     DEPLOYMENT_COMP_IMAGE,
@@ -170,6 +171,7 @@ COMPONENTS_SECTION = FormSection(
                     show_when={"contains": "publish-on-web"},
                     children=[
                         "services{publish-on-web}/config/tls",
+                        "services{publish-on-web}/config/attachment",
                     ],
                 ),
                 Fieldset(
@@ -711,6 +713,45 @@ def build_deployment_edit_section(
                         children=["user-env-vars"],
                     ),
                     Sequence(field_name="attachments"),
+                ],
+            ),
+        ],
+        post_save_action="process_project",
+    )
+
+
+def build_domain_cert_section(deployment_index: int) -> FormSection:
+    """Per-component TLS-mode step for the domain wizard (modal-edit-domain).
+
+    Lists the deployment's components (reference read-only, no add/remove) with a
+    per-component TLS-mode override (erven/standard/passthrough/provided) and, for
+    'provided', a certificate-attachment picker. Saves to
+    deployments[N].components[*].publish-on-web.config.
+    """
+    from opi.forms.editables.reindex import replace_segment_visualizer
+
+    old_seg = "deployments[*]"
+    new_seg = f"deployments[{deployment_index}]"
+    seq_vis = replace_segment_visualizer(DEPLOYMENT_CERT_COMPONENTS_SEQ, old_seg, new_seg)
+
+    return FormSection(
+        section_id=f"domain-cert-{deployment_index}",
+        title="Certificaten per component",
+        icon="sleutel",
+        description="Kies per component hoe het TLS-certificaat geregeld wordt",
+        editables=[seq_vis],
+        layout=[
+            Sequence(
+                field_name=f"deployments[{deployment_index}]/components",
+                child_layout=[
+                    "reference",
+                    Fieldset(
+                        legend="Certificaat",
+                        children=[
+                            "publish-on-web/config/tls",
+                            "publish-on-web/config/attachment",
+                        ],
+                    ),
                 ],
             ),
         ],

@@ -94,7 +94,6 @@ EDIT_FLOW = FormFlow(
         KEYCLOAK_CONFIG_SECTION,
         POSTGRESQL_CONFIG_SECTION,
         AUTH_WALL_CONFIG_SECTION,
-        ATTACHMENTS_SECTION,
         TEAM_SECTION,
         COMPONENTS_SECTION,
         DEPLOYMENTS_SECTION,
@@ -301,16 +300,22 @@ def build_backup_schedule_flow(deployment_index: int) -> FormFlow:
 
 
 def build_domain_edit_flow(deployment_index: int) -> FormFlow:
-    """Build a modal edit flow for a specific deployment's domain config."""
-    from opi.forms.visualizers.wizard_sections import build_domain_section
+    """Build a modal edit flow for a specific deployment's domain config.
 
-    section = build_domain_section(deployment_index, edit_mode=True)
+    Two steps: the web address itself, then a per-component TLS-mode step where each
+    component can override how its certificate is handled.
+    """
+    from opi.forms.visualizers.wizard_sections import build_domain_cert_section, build_domain_section
+
     return FormFlow(
         flow_id=f"modal-edit-domain-{deployment_index}",
         title="Webadres bewerken",
         mode=FlowMode.WIZARD,
         show_review=True,
-        sections=[section],
+        sections=[
+            build_domain_section(deployment_index, edit_mode=True),
+            build_domain_cert_section(deployment_index),
+        ],
     )
 
 

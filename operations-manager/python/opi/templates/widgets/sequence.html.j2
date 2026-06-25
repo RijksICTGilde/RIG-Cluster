@@ -12,7 +12,7 @@
     <div class="rvo-sequence__items" id="{{ field.path|e }}-items">
         {% for item in items_html %}{{ item }}{% endfor %}
     </div>
-    {% if not fixed_size %}
+    {% if not fixed_size and field.add_remove %}
     <div class="rvo-sequence__actions">
         <c-button kind="tertiary" size="sm"
                   showIcon="before" icon="plus"
