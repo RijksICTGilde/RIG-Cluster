@@ -47,6 +47,45 @@ def test_domain_flow_has_cert_step() -> None:
     assert [s.section_id for s in flow.sections] == ["domain-edit-0", "domain-cert-0"]
 
 
+def test_domain_cert_save_preserves_unmanaged_deployment_fields() -> None:
+    """A focused sequence edit must merge, not clobber: editing only publish-on-web in
+    the domain-cert step must keep image, the attachment coupling, and the system
+    service-revision map on the deployment component."""
+    import asyncio
+
+    from opi.forms.editables.processor import EditableFormProcessor
+    from opi.forms.visualizers.wizard_sections import build_domain_cert_section
+
+    project = {
+        "components": [{"name": "backend", "services": ["publish-on-web"]}],
+        "deployments": [
+            {
+                "name": "staging",
+                "components": [
+                    {
+                        "reference": "backend",
+                        "image": "local/hello-zad-backend",
+                        "services": {
+                            "attachments": {"config": [{"reference": "sso", "provide-as": "file", "path": "/x"}]},
+                            "persistent-storage": [{"reference": "data", "config": {"generation": 0}}],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    submitted = {"deployments": [{"components": [{"services": {"publish-on-web": {"config": {"tls": "passthrough"}}}}]}]}
+    section = build_domain_cert_section(0)
+    result, _ = asyncio.run(
+        EditableFormProcessor().process_json_submission(submitted, section.editables, project, edit_mode=True)
+    )
+    comp = result["deployments"][0]["components"][0]
+    assert comp["image"] == "local/hello-zad-backend"  # unmanaged top-level field kept
+    assert comp["services"]["attachments"]["config"][0]["reference"] == "sso"  # sibling service kept
+    assert comp["services"]["persistent-storage"][0]["config"]["generation"] == 0  # revision map kept
+    assert comp["services"]["publish-on-web"]["config"]["tls"] == "passthrough"  # managed field set
+
+
 def test_domain_cert_section_renders_per_component_without_add_remove() -> None:
     from opi.forms.visualizers.wizard_sections import build_domain_cert_section
     from opi.web.router_wizard import _create_renderer
