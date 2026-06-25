@@ -97,10 +97,11 @@ service-entry and is validated in Python.
   ingress generation; the per-deployment override wizard step (modal-edit-domain step
   2, read-only component list, `provided` + cert-attachment picker); the component-level
   select gained `provided` + its picker; `add_remove=False` on sequences (601face0).
-- **Next**: the `provided` manifest, take a referenced PEM attachment, split into a
-  `kubernetes.io/tls` Secret, and have the ingress use it (`tls.secretName`) with
-  cert-manager suppressed. Until then the wizard saves `provided` but the manifest
-  treats it as standard.
-- **Also derivable now**: the same per-component step in the Create wizard (after the
+- **Done (`provided`)**: the referenced PEM attachment is AGE-decrypted, split into a
+  cert chain + key, and rendered as a SOPS-encrypted `kubernetes.io/tls` Secret; the
+  ingress uses it via `tls.secretName` with cert-manager suppressed. PEM validation
+  (>=1 certificate + exactly one private key). Reuses the binary-secret template
+  (`secret_k8s_type`).
+- **Next / derivable now**: the same per-component step in the Create wizard (after the
   web address step), writing the component-level definition.
 - **Deferred**: a MetalLB `type: LoadBalancer` service for FSC raw-TCP / port 8443.

@@ -5091,18 +5091,53 @@ class ProjectManager:
                             ingress_issuer_name = None
                             ingress_cluster_issuer = None
 
-                            # Passthrough TLS: the pod presents its own certificate, so the
-                            # platform issues none. Leaving both issuers None drops the
-                            # cert-manager annotation and the tls secretName, so no certificate
-                            # is requested for this ingress.
-                            ingress_passthrough = (
-                                self._project_file_handler.extract_component_publish_on_web_tls(
+                            # Resolve the publish-on-web TLS mode for this component.
+                            # passthrough: the pod presents its own certificate; provided: the
+                            # customer's own certificate rendered as a kubernetes.io/tls Secret
+                            # on the ingress. Both leave the issuers None so no cert-manager
+                            # annotation is emitted and the platform issues nothing.
+                            tls_mode = self._project_file_handler.extract_component_publish_on_web_tls(
+                                project_data, component_name, deployment_name
+                            )
+                            ingress_passthrough = tls_mode == "passthrough"
+
+                            # provided: build a SOPS-encrypted tls Secret from the referenced
+                            # PEM attachment and point the ingress at it (idempotent per path).
+                            provided_tls_secret_name: str | None = None
+                            if tls_mode == "provided":
+                                tls_data = await self._project_file_handler.resolve_publish_on_web_certificate(
                                     project_data, component_name, deployment_name
                                 )
-                                == "passthrough"
-                            )
+                                if tls_data:
+                                    provided_tls_secret_name = f"{deployment_name}-{component_name}-provided-tls"
+                                    provided_tls_manifest_name = generate_manifest_name(
+                                        provided_tls_secret_name, "tls-secret"
+                                    )
+                                    self._manifest_generator.create_manifest_file(
+                                        template_path=os.path.join(
+                                            os.path.dirname(__file__),
+                                            "..",
+                                            "..",
+                                            "manifests",
+                                            "binary-secret.yaml.to-sops.jinja",
+                                        ),
+                                        values={
+                                            "name": provided_tls_secret_name,
+                                            "namespace": namespace,
+                                            "secret_type": "tls",
+                                            "secret_k8s_type": "kubernetes.io/tls",
+                                            "data_pairs": tls_data,
+                                        },
+                                        output_dir=full_output_dir,
+                                        output_filename=provided_tls_manifest_name,
+                                        use_sops=True,
+                                    )
+                                    provided_tls_sops_filename = f"{provided_tls_manifest_name}.to-sops.yaml"
+                                    if provided_tls_sops_filename not in created_files:
+                                        created_files.append(provided_tls_sops_filename)
 
-                            if ingress_passthrough:
+                            if ingress_passthrough or provided_tls_secret_name:
+                                # No platform issuance: pod cert (passthrough) or customer cert (provided).
                                 pass
                             elif base_domain and issuer_config:
                                 # External domain with specified issuer
@@ -5132,6 +5167,7 @@ class ProjectManager:
                                         cluster, ingress_hostname
                                     ),
                                     "passthrough": ingress_passthrough,
+                                    "provided_tls_secret": provided_tls_secret_name,
                                 }
                             )
 
