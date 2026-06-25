@@ -34,6 +34,56 @@ def _coerce_to_list(value: Any) -> list[Any]:
     return [value]
 
 
+def _match_original_item(item: Any, originals: list[Any], index: int) -> Any:
+    """Find the pre-edit item matching a submitted sequence item.
+
+    Matches on a stable identity key (``reference`` or ``name``) so add / remove /
+    reorder are handled; falls back to positional index.
+    """
+    if isinstance(item, dict):
+        for key in ("reference", "name"):
+            ident = item.get(key)
+            if ident:
+                for orig in originals:
+                    if isinstance(orig, dict) and orig.get(key) == ident:
+                        return orig
+    if 0 <= index < len(originals):
+        return originals[index]
+    return None
+
+
+def _prune_paths(item: dict[str, Any], rel_paths: list[str]) -> dict[str, Any]:
+    """Remove the given ``/``-separated relative paths from a (copied) item.
+
+    Used to drop the fields a sequence section actually manages, so the rest of the
+    original item can be merged back in without re-introducing user-removed values.
+    """
+    for rel in rel_paths:
+        segs = [s for s in rel.split("/") if s and "[" not in s]
+        if not segs:
+            continue
+        node: Any = item
+        for seg in segs[:-1]:
+            if isinstance(node, dict) and seg in node:
+                node = node[seg]
+            else:
+                node = None
+                break
+        if isinstance(node, dict):
+            node.pop(segs[-1], None)
+    return item
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """Deep-merge ``overlay`` into ``base`` in place; overlay wins on conflicts."""
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = copy.deepcopy(value)
+    return base
+
+
 if TYPE_CHECKING:
     from opi.forms.editables.editable import Editable
     from opi.forms.visualizers.sections import FormSection
@@ -449,8 +499,29 @@ class EditableFormProcessor:
         # Save existing items so we can restore readonly fields after overwriting
         original_items = smart_get_value(result, ed.yaml_path) or []
 
-        # Write the submitted items into result (correct count + raw values)
-        smart_set_value(result, ed.yaml_path, copy.deepcopy(items))
+        # Write the submitted items into result. Each submitted item is merged over its
+        # pre-edit counterpart (matched by reference/name, else index) so fields this
+        # section does NOT manage (e.g. image, the service-revision map, sibling
+        # services) are preserved instead of being clobbered by the overwrite. Managed
+        # fields are pruned from the original first, so user-removed values are not
+        # re-introduced; the per-child processing below sets the managed values.
+        prefix = f"{ed.yaml_path}[*]/"
+        managed_rel = [
+            child.editable.yaml_path.removeprefix(prefix)
+            for child in (vis.children or [])
+            if not (child.readonly or (child.readonly_on_edit and edit_mode))
+            and child.editable.yaml_path.startswith(prefix)
+        ]
+        merged_items: list[Any] = []
+        originals = original_items if isinstance(original_items, list) else []
+        for idx, item in enumerate(items):
+            orig = _match_original_item(item, originals, idx)
+            if isinstance(item, dict) and isinstance(orig, dict):
+                base = _prune_paths(copy.deepcopy(orig), managed_rel)
+                merged_items.append(_deep_merge(base, copy.deepcopy(item)))
+            else:
+                merged_items.append(copy.deepcopy(item))
+        smart_set_value(result, ed.yaml_path, merged_items)
 
         # Strip the virtual key from result so it doesn't leak into YAML
         if virt and read_path != ed.yaml_path:
