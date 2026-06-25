@@ -298,7 +298,9 @@ PUBLISH_ON_WEB_TLS = EditableVisualizer(
     label="TLS-modus",
     help_text=(
         "Standaard: het platform regelt het certificaat. Passthrough: de pod presenteert "
-        "z'n eigen certificaat (koppel dat als bijlage aan dit component)."
+        "z'n eigen certificaat (koppel dat als bijlage aan dit component). Let op: passthrough "
+        "werkt alleen als dit component een eigen hostname heeft (een domain-format met het "
+        "component erin), of als dit het enige gepubliceerde component is."
     ),
 )
 
