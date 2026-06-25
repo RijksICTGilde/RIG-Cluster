@@ -964,6 +964,23 @@ class ProjectFileHandler:
         logger.debug(f"Component '{component_name}' has publish-on-web service: {has_publish_service}")
         return has_publish_service
 
+    def extract_component_publish_on_web_tls(self, project_data: dict[str, Any], component_name: str) -> str:
+        """Return the publish-on-web TLS mode for a component.
+
+        ``standard`` (default): the platform issues the certificate (cert-manager).
+        ``passthrough``: the ingress passes TLS through untouched and the pod presents
+        its own certificate; no platform certificate is issued.
+        """
+        component = self._find_component(project_data, component_name)
+        if not component:
+            return "standard"
+        for entry in component.get("services", []):
+            if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
+                mode = (entry["publish-on-web"].get("config") or {}).get("tls")
+                if mode in ("standard", "passthrough"):
+                    return mode
+        return "standard"
+
     def extract_component_command(self, project_data: dict[str, Any], component_name: str) -> list[str] | None:
         """Extract the optional component-level ``command`` override.
 
