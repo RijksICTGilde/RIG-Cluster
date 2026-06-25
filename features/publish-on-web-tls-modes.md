@@ -54,17 +54,20 @@ The same config can appear at, in increasing precedence:
          - publish-on-web:
              config: { tls: provided, attachment: wildcardcert }
    ```
-3. **Per component per deployment** (override) - overrides component. A dedicated
-   `publish-on-web` key on the deployment component (its `services` is the
-   system service-revision map, so it cannot be a services-list entry there):
+3. **Per component per deployment** (override) - overrides component. Under the
+   deployment component's `services` map (which is keyed by service name; the override
+   sits next to the system revision-map entries like `persistent-storage`):
    ```yaml
    deployments:
      - name: prod
        components:
          - reference: api
-           publish-on-web:
-             config: { tls: provided, attachment: prodwildcard }
+           services:
+             publish-on-web:
+               config: { tls: provided, attachment: prodwildcard }
    ```
+   The per-deployment attachment coupling lives the same way, under
+   `services.attachments.config`.
 
 **Resolution: deployment-component > component > root > built-in `standard`.**
 
@@ -82,8 +85,9 @@ passthrough.
 
 `$defs.publish-on-web-config` in `opi/schemas/project_v2.json` (tls enum + attachment,
 `attachment` required when `tls: provided`). Referenced by the deployment-component's
-`publish-on-web.config`; at root/component it rides the generic service-entry and is
-validated in Python.
+`services.publish-on-web.config` (a named property on the deployment `services` map,
+alongside `services.attachments.config`); at root/component it rides the generic
+service-entry and is validated in Python.
 
 ## Status
 
