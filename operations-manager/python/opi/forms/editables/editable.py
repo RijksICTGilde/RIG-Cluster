@@ -189,6 +189,7 @@ class Editable:
     children: list[Editable] | None = None
     min_items: int = 0
     max_items: int | None = None
+    add_remove: bool = True
     depends_on: str | None = None
     show_when: dict[str, Any] | EditableCondition | None = None
     transient: bool = False

@@ -5090,7 +5090,7 @@ class ProjectManager:
                             # is requested for this ingress.
                             ingress_passthrough = (
                                 self._project_file_handler.extract_component_publish_on_web_tls(
-                                    project_data, component_name
+                                    project_data, component_name, deployment_name
                                 )
                                 == "passthrough"
                             )

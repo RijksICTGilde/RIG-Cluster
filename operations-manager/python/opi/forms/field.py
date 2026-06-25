@@ -89,6 +89,7 @@ class FormField:
     readonly_on_edit: bool = False
     min_items: int = 0
     max_items: int | None = None
+    add_remove: bool = True
     htmx_attrs: dict[str, str] = field(default_factory=dict)
     help_text: str | None = None
     edit_mode: bool = False

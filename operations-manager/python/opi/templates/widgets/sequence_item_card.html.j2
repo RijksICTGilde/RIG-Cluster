@@ -5,7 +5,7 @@
 {% set remove_disabled = (field.children|length if field.children else 0) <= min_items %}
 {% set remove_label = field.attributes.get('remove_label', 'Verwijderen') %}
 <div class="rvo-sequence__item rvo-card rvo-card--outline rvo-card--padding-md" data-index="{{ index }}">
-    {% if not fixed_size %}
+    {% if not fixed_size and field.add_remove %}
     <div class="rvo-sequence__item-header">
         <span></span>
         <c-button kind="warning-subtle" size="sm"

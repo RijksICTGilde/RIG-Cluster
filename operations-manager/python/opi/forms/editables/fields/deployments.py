@@ -202,6 +202,38 @@ DEPLOYMENT_COMPONENTS_SEQ_EDITABLE = Editable(
     ],
 )
 
+# Per-deployment publish-on-web TLS override. Empty value = "erven" (no override):
+# resolution falls back to the component/root setting. Stored under a dedicated
+# 'publish-on-web' key on the deployment component (its 'services' is the service-
+# revision map). See features/publish-on-web-tls-modes.md.
+DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/publish-on-web/config/tls",
+    values_provider="PublishTlsOverrideOptionsProvider",
+    remove_when_none=True,
+)
+
+DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE = Editable(
+    yaml_path="deployments[*]/components[*]/publish-on-web/config/attachment",
+    values_provider="AttachmentOptionsProvider",
+    remove_when_none=True,
+    depends_on="deployments[*]/components[*]/publish-on-web/config/tls",
+    show_when={"value": ["provided"]},
+)
+
+# Focused, read-only-component sequence for the domain wizard's per-component TLS step.
+# Reuses the deployment-components path; the reference is shown read-only (you only pick
+# the TLS mode here, you do not add/remove components).
+DEPLOYMENT_CERT_COMPONENTS_SEQ_EDITABLE = Editable(
+    yaml_path="deployments[*]/components",
+    min_items=0,
+    add_remove=False,
+    children=[
+        DEPLOYMENT_COMP_REFERENCE_EDITABLE,
+        DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE,
+        DEPLOYMENT_COMP_PUBLISH_ATTACHMENT_EDITABLE,
+    ],
+)
+
 DEPLOYMENTS_SEQUENCE_EDITABLE = Editable(
     yaml_path="deployments",
     children=[
