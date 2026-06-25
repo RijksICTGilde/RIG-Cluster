@@ -256,6 +256,18 @@
       "else": { "required": ["env-name"] }
     },
 
+    "publish-on-web-config": {
+      "description": "TLS handling for a published component. standard = platform certificate (Let's Encrypt); passthrough = the pod presents its own certificate (couple it separately as an attachment, mounted in the pod); provided = own certificate terminated on the ingress (reference the catalog attachment PEM via 'attachment'). Applies at root (project services), per component (component services), and as a per-deployment-component override; resolution is deployment > component > root > standard.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tls": { "type": "string", "enum": ["standard", "passthrough", "provided"] },
+        "attachment": { "type": "string", "pattern": "^[a-z]([a-z0-9-]*[a-z0-9])?\\Z", "maxLength": 40 }
+      },
+      "if": { "properties": { "tls": { "const": "provided" } }, "required": ["tls"] },
+      "then": { "required": ["attachment"] }
+    },
+
     "component-path": {
       "type": "object",
       "required": ["match"],
@@ -498,6 +510,13 @@
         "attachments": {
           "type": "array",
           "items": { "$ref": "#/$defs/attachment-use-entry" }
+        },
+        "publish-on-web": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "config": { "$ref": "#/$defs/publish-on-web-config" }
+          }
         }
       }
     },
