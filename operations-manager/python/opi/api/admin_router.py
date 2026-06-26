@@ -8,6 +8,7 @@ Endpoints:
     POST /api/v2/admin/cleanup/trigger               - Trigger cleanup (purge expired)
     POST /api/v2/admin/reconciliation/trigger         - Trigger full reconciliation
     DELETE /api/v2/admin/marked-for-deletion/{mark_id} - Remove a specific mark
+    GET  /api/v2/admin/deployments/drift             - Report live-but-undeclared deployments
 """
 
 import logging
@@ -212,6 +213,40 @@ async def orphan_sweep_report(request: Request) -> JSONResponse:
     project_yamls: list[dict[str, Any]] = [p.data for p in all_projects.values() if p.data]
 
     report = await sweep(pool, project_yamls, cluster=settings.CLUSTER_MANAGER)
+    return JSONResponse(content=report, status_code=200)
+
+
+@admin_router.get("/deployments/drift")
+@validate_admin_api_key
+async def deployment_drift_report(request: Request) -> JSONResponse:
+    """Report deployments that are live on the cluster but no longer declared.
+
+    Compares the deployments in the project files against the live ArgoCD
+    Application resources. Surfaces ``orphaned_deployments`` (a live application
+    with no project-file entry, the toets-hn7/pr-36-class durable failure where a
+    terminal delete left the app/manifests/pods running) and
+    ``missing_deployments`` (declared but no live application). Performs ZERO
+    mutations; remediation is a deliberate operator step.
+
+    Example:
+        curl -X GET "http://localhost:9595/api/v2/admin/deployments/drift" \\
+          -H "X-API-Key: your-admin-api-key"
+    """
+    from opi.connectors.kubectl import create_kubectl_connector
+    from opi.core.cluster_config import get_argo_namespace
+    from opi.jobs.deployment_drift import classify_deployment_drift
+    from opi.services.project_service import get_project_service
+
+    cluster = settings.CLUSTER_MANAGER
+    all_projects = get_project_service().get_all_projects()
+    project_yamls: list[dict[str, Any]] = [p.data for p in all_projects.values() if p.data]
+
+    kubectl = create_kubectl_connector()
+    # OPI labels every Application it creates with `project`; selecting on the
+    # label's existence lists all OPI-managed apps without depending on ArgoCD RBAC.
+    argo_apps = await kubectl.get_resources_by_label("applications.argoproj.io", get_argo_namespace(cluster), "project")
+
+    report = classify_deployment_drift(project_yamls, cluster, argo_apps)
     return JSONResponse(content=report, status_code=200)
 
 

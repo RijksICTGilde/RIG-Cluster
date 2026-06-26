@@ -31,6 +31,28 @@ class TaskType(StrEnum):
     RESTORE = "restore"
 
 
+# Task types that mutate a project's shared git files (projects/<project>.yaml and
+# the per-project ArgoCD kustomization.yaml). Two of these running concurrently for
+# the same project race on those shared files and can hit an unrecoverable rebase
+# conflict on push. They are serialized per project at claim time (see
+# claim_next_task). Clone/backup/restore are intentionally excluded: they touch
+# per-deployment data only, so serializing a slow restore behind project edits would
+# add latency without preventing any conflict.
+PROJECT_FILE_MUTATING_TASK_TYPES: frozenset[str] = frozenset(
+    {
+        TaskType.UPSERT_DEPLOYMENT,
+        TaskType.UPDATE_IMAGE,
+        TaskType.DELETE_DEPLOYMENT,
+        TaskType.REFRESH_DEPLOYMENT,
+        TaskType.REFRESH_PROJECT,
+        TaskType.CREATE_PROJECT,
+        TaskType.ADD_COMPONENT,
+        TaskType.ADD_COMPONENT_TO_DEPLOYMENT,
+        TaskType.ADD_SERVICE,
+    }
+)
+
+
 class AsyncTaskStatus(StrEnum):
     """Task lifecycle: pending → claimed → running → completed/failed.
 
@@ -223,6 +245,10 @@ class AsyncTaskService:
                 # Build optional per-type concurrency filter
                 type_limit_sql = ""
                 params: list[Any] = [cluster]
+                # $2: the set of project-file-mutating task types, used by the
+                # in-flight guard below to serialize them per project.
+                params.append([str(t) for t in PROJECT_FILE_MUTATING_TASK_TYPES])
+                mutating_idx = len(params)
                 if type_concurrency_limits:
                     # For each limited type, add a condition that skips pending
                     # tasks of that type when the limit is already reached.
@@ -243,10 +269,15 @@ class AsyncTaskService:
                         params.extend([task_type, max_concurrent])
                     type_limit_sql = "AND " + " AND ".join(conditions)
 
-                # Claim the next pending task, but skip tasks where another
-                # task for the same project/deployment is already in-flight.
-                # This prevents concurrent processing of the same deployment
-                # which could cause race conditions in git/ArgoCD operations.
+                # Claim the next pending task, but skip tasks where a conflicting
+                # task is already in-flight. Two cases are excluded:
+                #   1. Same project AND same deployment - never process one
+                #      deployment twice at once (git/ArgoCD race).
+                #   2. Both tasks mutate the project's shared git files - serialize
+                #      these per project (any deployment), because they edit the
+                #      same projects/<project>.yaml and ArgoCD kustomization.yaml
+                #      and a concurrent push can hit an unrecoverable rebase
+                #      conflict (e.g. two sibling deployment deletes).
                 row = await conn.fetchrow(
                     f"""
                     SELECT id FROM async_tasks t
@@ -254,9 +285,15 @@ class AsyncTaskService:
                       AND NOT EXISTS (
                           SELECT 1 FROM async_tasks running
                           WHERE running.project_name = t.project_name
-                            AND running.deployment_name IS NOT DISTINCT FROM t.deployment_name
                             AND running.status IN ('claimed', 'running')
                             AND running.id != t.id
+                            AND (
+                                running.deployment_name IS NOT DISTINCT FROM t.deployment_name
+                                OR (
+                                    t.task_type = ANY(${mutating_idx}::text[])
+                                    AND running.task_type = ANY(${mutating_idx}::text[])
+                                )
+                            )
                       )
                       {type_limit_sql}
                     ORDER BY t.created_at ASC

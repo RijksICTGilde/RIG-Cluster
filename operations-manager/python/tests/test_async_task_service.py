@@ -204,6 +204,49 @@ async def test_claim_next_task_empty(
     mock_pool.release.assert_awaited_once_with(mock_connection)
 
 
+async def test_claim_next_task_serializes_mutating_tasks_per_project(
+    task_service: AsyncTaskService,
+    mock_pool: MagicMock,
+    mock_connection: AsyncMock,
+) -> None:
+    """The claim query serializes project-file-mutating tasks per project.
+
+    Two sibling deployment deletes (same project, different deployment) edit the
+    same projects/<project>.yaml and ArgoCD kustomization.yaml; running them
+    concurrently caused the toets-hn7/pr-36 rebase-conflict incident. The guard
+    must exclude any in-flight mutating task for the same project, regardless of
+    deployment_name, while leaving non-mutating tasks (backup/restore) on the
+    per-deployment behavior.
+    """
+    from opi.core.async_task_service import PROJECT_FILE_MUTATING_TASK_TYPES
+
+    mock_pool.acquire.return_value = mock_connection
+    mock_connection.fetchrow = AsyncMock(return_value=None)
+    tx_ctx = MagicMock()
+    tx_ctx.__aenter__ = AsyncMock()
+    tx_ctx.__aexit__ = AsyncMock(return_value=False)
+    mock_connection.transaction = MagicMock(return_value=tx_ctx)
+
+    await task_service.claim_next_task(cluster="test-cluster")
+
+    select_sql, params = mock_connection.fetchrow.await_args.args[0], mock_connection.fetchrow.await_args.args[1:]
+
+    # The mutating-types set is passed as a query parameter and used to serialize
+    # mutating-vs-mutating pairs per project (any deployment).
+    mutating_param = next(p for p in params if isinstance(p, list))
+    assert "delete_deployment" in mutating_param
+    assert "upsert_deployment" in mutating_param
+    # Backups/restores must NOT serialize per project.
+    assert "backup" not in mutating_param
+    assert "restore" not in mutating_param
+    assert set(mutating_param) == {str(t) for t in PROJECT_FILE_MUTATING_TASK_TYPES}
+
+    # The per-deployment guard is retained, and the per-project mutating guard is added.
+    assert "running.deployment_name IS NOT DISTINCT FROM t.deployment_name" in select_sql
+    assert "t.task_type = ANY(" in select_sql
+    assert "running.task_type = ANY(" in select_sql
+
+
 async def test_start_task(
     task_service: AsyncTaskService,
     mock_pool: MagicMock,
