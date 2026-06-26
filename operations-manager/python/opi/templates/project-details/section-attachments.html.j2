@@ -7,7 +7,7 @@
             <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="map" size="xl" color="hemelblauw" />Bijlagen</c-heading>
             {% if can_edit %}
             <c-button kind="secondary" size="sm" label="Toevoegen" showIcon="before" icon="plus"
-                      @click="openEditModal('modal-add-attachment', 'Bijlage toevoegen')" />
+                      @click="openEditModal('modal-edit-attachments', 'Bijlagen')" />
             {% endif %}
         </c-layout-flow>
         <p class="rvo-text--subtle">Geuploade bestanden (bijvoorbeeld certificaten) die je per component als bestand of als env-var kunt koppelen.</p>
