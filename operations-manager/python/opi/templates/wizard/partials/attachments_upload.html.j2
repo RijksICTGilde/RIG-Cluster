@@ -30,7 +30,14 @@
             <label class="utrecht-form-label" for="wiz-att-id">Identifier (kleine letters, cijfers, streepjes; max 40)</label>
             <input type="text" id="wiz-att-id" name="attachment_id"
                    class="utrecht-textbox utrecht-textbox--html-input"
-                   pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="40">
+                   pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="40"
+                   hx-post="/forms/wizard/create-project/attachments/validate-id"
+                   hx-ext="ignore:json-enc"
+                   hx-trigger="change, keyup changed delay:400ms"
+                   hx-include="#wiz-att-id, #wiz-att-token"
+                   hx-target="#wiz-att-id-error"
+                   hx-swap="innerHTML">
+            <div id="wiz-att-id-error"></div>
             <label class="utrecht-form-label" for="wiz-att-file" style="margin-top:0.5rem;">Bestand</label>
             <input type="file" id="wiz-att-file" name="file" class="rvo-file-input">
             <div style="margin-top:0.75rem;">
