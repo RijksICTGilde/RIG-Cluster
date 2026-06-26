@@ -15,8 +15,8 @@
     <div style="padding: var(--rvo-space-xl);">
         <c-layout-flow gap="lg">
             <c-heading type="h3" id="danger-confirm-title"></c-heading>
-            <div id="danger-confirm-body">
-                <p id="danger-confirm-message"></p>
+            <c-layout-flow gap="md" id="danger-confirm-body">
+                <p id="danger-confirm-message" style="margin: 0;"></p>
                 <div id="danger-confirm-error" style="display: none; color: var(--rvo-color-rood-600);"></div>
                 <div id="danger-confirm-progress" style="display: none;">
                     <p class="rvo-text--subtle" id="danger-confirm-progress-text">Bezig...</p>
@@ -35,7 +35,7 @@
                                   hx-swap="innerHTML" />
                     </span>
                 </c-layout-flow>
-            </div>
+            </c-layout-flow>
         </c-layout-flow>
     </div>
 </div>
