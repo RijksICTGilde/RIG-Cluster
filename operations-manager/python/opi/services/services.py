@@ -494,18 +494,30 @@ class ServiceAdapter:
     }
 
     @classmethod
-    def resolve_service_dependencies(cls, selected: list[str]) -> list[str]:
+    def resolve_service_dependencies(cls, selected: list[Any]) -> list[Any]:
         """Add missing service-level dependencies to a list of selected services.
 
-        Only resolves ``services/X`` requires (single-level paths).
-        Config-level requirements are not resolved here.
+        Entries may be bare service names (str) or single-key dicts carrying config
+        (e.g. ``{"keycloak": {...}}`` or ``{"attachments": {"data": ...}}``); dict
+        entries are preserved as-is. Only resolves ``services/X`` requires
+        (single-level paths). Config-level requirements are not resolved here.
 
-        Returns a new list with dependencies prepended before the services
-        that need them, preserving original order.
+        Returns a new list with missing dependency names prepended, preserving order.
         """
-        selected_set = set(selected)
+
+        def _name(entry: Any) -> str | None:
+            if isinstance(entry, str):
+                return entry
+            if isinstance(entry, dict):
+                return next(iter(entry), None)
+            return None
+
+        selected_set = {name for entry in selected if (name := _name(entry)) is not None}
         to_add: list[str] = []
-        for svc_name in selected:
+        for entry in selected:
+            svc_name = _name(entry)
+            if svc_name is None:
+                continue
             try:
                 svc_type = ServiceType(svc_name)
             except ValueError:

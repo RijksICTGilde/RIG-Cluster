@@ -17,7 +17,7 @@
             <span class="rvo-text--sm rvo-text--subtle"> (kleine letters, cijfers en streepjes, max 40)</span>
             <input type="text" id="add-att-id" name="attachment_id"
                    class="utrecht-textbox utrecht-textbox--html-input"
-                   pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="40" required
+                   maxlength="40"
                    value="{{ attachment_id | default('', true) }}">
         </div>
 
