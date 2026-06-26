@@ -17,9 +17,8 @@
                 <c-layout-flow gap="md">
                     <div class="service-header">
                         {% set service_def = ServiceAdapter.get_service_definition(service.enum) %}
-                        <c-icon icon="{{ service_def.icon }}" size="xl" color="{{ service_def.color }}"></c-icon>
                         <div>
-                            <c-heading type="h3" textContent="{{ service_def.name }}" />
+                            <c-heading type="h3"><c-icon icon="{{ service_def.icon }}" size="xl" color="{{ service_def.color }}" />{{ service_def.name }}</c-heading>
                             <div class="service-scope">{{ service_def.scope|title }} scope</div>
                         </div>
                     </div>
