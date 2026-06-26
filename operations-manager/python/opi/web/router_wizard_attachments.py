@@ -69,25 +69,33 @@ def _staged(state: Any) -> dict[str, dict[str, Any]]:
     return state.staged_attachments
 
 
-def _list_response(
+def _attachments_list_response(
     request: Request,
-    staged: dict[str, dict[str, Any]],
+    state: Any,
     wizard_token: str | None,
     error: str | None = None,
     reset: bool = False,
 ):
-    """Render the staged list (with an optional error banner) as an HTML fragment.
+    """Render the unified attachments list (existing catalog + files staged this session).
 
     htmx does not swap non-2xx responses and an HTTPException renders as JSON, so upload
-    errors are returned as this 200 HTML fragment instead, swapped into #wiz-att-status.
-    ``reset`` adds out-of-band swaps that clear the identifier + file inputs after a
+    errors are returned as this 200 HTML fragment instead, swapped into #wiz-att-list.
+    ``reset`` adds out-of-band swaps that clear the inputs and flash a success tick after a
     successful upload so the form is ready for the next one.
     """
     templates = get_templates()
-    items = [{"id": att_id, "filename": info.get("filename", att_id)} for att_id, info in staged.items()]
+    staged = _staged(state) if state else {}
+    staged_items = [{"id": att_id, "filename": info.get("filename", att_id)} for att_id, info in staged.items()]
     return templates.TemplateResponse(
-        "wizard/partials/attachments_staged_list.html.j2",
-        {"request": request, "staged": items, "wizard_token": wizard_token or "", "error": error, "reset": reset},
+        "wizard/partials/attachments_list.html.j2",
+        {
+            "request": request,
+            "services": _session_services(state),
+            "staged": staged_items,
+            "wizard_token": wizard_token or "",
+            "error": error,
+            "reset": reset,
+        },
     )
 
 
@@ -118,15 +126,6 @@ def _catalog_ids(state: Any) -> list[str]:
     ]
 
 
-def _catalog_response(request: Request, state: Any, wizard_token: str | None, error: str | None = None):
-    """Render the existing-attachments (catalog) list as an HTML fragment."""
-    templates = get_templates()
-    return templates.TemplateResponse(
-        "wizard/partials/attachments_catalog_list.html.j2",
-        {"request": request, "services": _session_services(state), "wizard_token": wizard_token or "", "error": error},
-    )
-
-
 def _remove_from_session_catalog(state: Any, attachment_id: str) -> None:
     """Drop an attachment from the catalog carried in step_data so the save persists the removal."""
     for section_data in state.step_data.values():
@@ -145,10 +144,9 @@ def _remove_from_session_catalog(state: Any, attachment_id: str) -> None:
 @wizard_attachments_router.get("/{flow_id}/attachments/list")
 @requires_sso
 async def list_staged(request: Request, flow_id: str, wizard_token: str | None = Query(None, alias="_wizard_token")):
-    """Render the current staged-attachments list (used on section load)."""
+    """Render the unified attachments list (used on section load)."""
     state, _ = _resolve_state(request, wizard_token)
-    staged = _staged(state) if state else {}
-    return _list_response(request, staged, wizard_token)
+    return _attachments_list_response(request, state, wizard_token)
 
 
 @wizard_attachments_router.post("/{flow_id}/attachments/stage")
@@ -169,18 +167,18 @@ async def stage_attachment(
     existing = list(staged.keys()) + _catalog_ids(state)
     errors = AttachmentIdValidator().validate(attachment_id, {"existing_attachment_ids": existing})
     if errors:
-        return _list_response(request, staged, wizard_token, error="; ".join(errors))
+        return _attachments_list_response(request, state, wizard_token, error="; ".join(errors))
 
     raw = await file.read()
     try:
         token = upload_staging.stage_file(raw, file.filename or attachment_id)
     except ValueError as exc:
-        return _list_response(request, staged, wizard_token, error=str(exc))
+        return _attachments_list_response(request, state, wizard_token, error=str(exc))
 
     staged[attachment_id] = {"filename": file.filename or attachment_id, "content": f"staging:{token}"}
     save(state)
     logger.info(f"Staged attachment '{attachment_id}' for wizard flow '{flow_id}'")
-    return _list_response(request, staged, wizard_token, reset=True)
+    return _attachments_list_response(request, state, wizard_token, reset=True)
 
 
 @wizard_attachments_router.post("/{flow_id}/attachments/validate-id")
@@ -230,7 +228,7 @@ async def unstage_attachment(
         if isinstance(content, str) and content.startswith("staging:"):
             upload_staging.delete_staged(content[len("staging:") :])
     save(state)
-    return _list_response(request, staged, wizard_token)
+    return _attachments_list_response(request, state, wizard_token)
 
 
 @wizard_attachments_router.post("/{flow_id}/attachments/remove-existing/{attachment_id}")
@@ -252,7 +250,7 @@ async def remove_existing_attachment(
         raise HTTPException(status_code=400, detail="Geen actieve wizard-sessie")
 
     if attachment_is_referenced(state.get_merged_data(), attachment_id):
-        return _catalog_response(
+        return _attachments_list_response(
             request,
             state,
             wizard_token,
@@ -262,4 +260,4 @@ async def remove_existing_attachment(
     _remove_from_session_catalog(state, attachment_id)
     save(state)
     logger.info(f"Removed attachment '{attachment_id}' from the session catalog for flow '{flow_id}'")
-    return _catalog_response(request, state, wizard_token)
+    return _attachments_list_response(request, state, wizard_token)
