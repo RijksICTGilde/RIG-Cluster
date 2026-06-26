@@ -336,3 +336,32 @@ class TestFilterComponentAndDeploymentServices:
         deployment = ServiceAdapter.filter_deployment_services(all_services)
         assert set(component) | set(deployment) == set(all_services)
         assert set(component) & set(deployment) == set()
+
+
+class TestResolveServiceDependencies:
+    """resolve_service_dependencies must handle the mixed services list (bare names +
+    single-key config dicts like {'attachments': {'data': ...}}) without crashing on a
+    set() over dicts, and preserve the dict entries."""
+
+    def test_preserves_dict_entries_in_mixed_list(self):
+        from opi.services.services import ServiceAdapter
+
+        mixed = [
+            "publish-on-web",
+            {"keycloak": {"config": {"template": "sso-support"}}},
+            {"attachments": {"data": [{"id": "sso", "filename": "c.pem", "content": "x"}]}},
+        ]
+        out = ServiceAdapter.resolve_service_dependencies(mixed)
+        assert any(isinstance(e, dict) and "attachments" in e for e in out)
+        assert any(isinstance(e, dict) and "keycloak" in e for e in out)
+        # the attachments catalog data survives
+        att = next(e for e in out if isinstance(e, dict) and "attachments" in e)
+        assert att["attachments"]["data"][0]["id"] == "sso"
+
+    def test_bare_string_list_still_works(self):
+        from opi.services.services import ServiceAdapter
+
+        assert ServiceAdapter.resolve_service_dependencies(["publish-on-web", "minio-storage"]) == [
+            "publish-on-web",
+            "minio-storage",
+        ]
