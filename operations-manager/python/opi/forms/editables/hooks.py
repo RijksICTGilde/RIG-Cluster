@@ -143,3 +143,31 @@ class ResolveAttachmentsHook:
             )
 
         AttachmentStagingResolveGenerator().generate(yaml_data)
+
+
+class PreserveAttachmentContentHook:
+    """Re-attach the encrypted content of existing attachments at save (smart merge).
+
+    The modal wizard strips attachment ``content`` from its session state (only ``id`` +
+    ``filename`` are needed to display the catalog), so the saved catalog entries arrive
+    without ``content``. This restores it from the original project data, captured before
+    the form merge and passed via ``context['original_attachment_content']`` ({id ->
+    content}). It is the "preserve a field the form does not carry" case: new uploads are
+    handled separately by ``ResolveAttachmentsHook`` (tmp staging); this covers existing
+    ones. Runs before ``StripTransientsHook`` so the restored content survives.
+    """
+
+    order: int = 1
+
+    async def execute(self, yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
+        original = context.get("original_attachment_content") or {}
+        if not original:
+            return
+        for entry in yaml_data.get("services", []):
+            if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
+                for att in entry["attachments"].get("data", []) or []:
+                    if isinstance(att, dict) and not att.get("content"):
+                        content = original.get(att.get("id"))
+                        if content:
+                            att["content"] = content
+                break

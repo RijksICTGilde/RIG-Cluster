@@ -297,6 +297,24 @@ def _pad_sparse_submission(body: dict[str, Any], flow_id: str, section_id: str =
     return body
 
 
+def _strip_attachment_content(project_data: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of project_data with attachment ``content`` removed (id/filename kept).
+
+    The wizard only needs the catalog metadata to display attachments; carrying the
+    encrypted blocks bloats the disk-backed session. The content is re-attached from the
+    stored project at save (PreserveAttachmentContentHook).
+    """
+    import copy
+
+    data = copy.deepcopy(project_data)
+    for entry in data.get("services", []):
+        if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
+            for att in entry["attachments"].get("data", []) or []:
+                if isinstance(att, dict):
+                    att.pop("content", None)
+    return data
+
+
 def _detect_list_target(flow_id: str, state: Any) -> tuple[str, int, bool] | None:
     """Detect if a flow targets a single item in a list.
 
@@ -626,8 +644,11 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     for section in flow.sections:
         processor.populate_deferred_fields(project_data, section.editables)
 
-    # Pre-fill step data from existing project
-    step_data = _split_data_across_sections(flow, project_data)
+    # Pre-fill step data from existing project. Strip attachment content first: only
+    # id/filename are needed to display the catalog, and carrying the encrypted blocks
+    # bloats the disk-backed session. The content is re-attached from the stored project
+    # at save (PreserveAttachmentContentHook).
+    step_data = _split_data_across_sections(flow, _strip_attachment_content(project_data))
 
     # Resolve active sections with pre-filled data.
     # For single-section edit flows the section's visibility lambda may not
@@ -1203,6 +1224,17 @@ async def _modal_do_submit(
 
     existing_data = project.data or {}
 
+    # Capture existing attachments' encrypted content before the form merge: the wizard
+    # strips it from the session (see _strip_attachment_content), so it is re-attached at
+    # save by PreserveAttachmentContentHook keyed by id.
+    from opi.handlers.project_file_handler import extract_attachment_catalog
+
+    original_attachment_content = {
+        att_id: entry.get("content")
+        for att_id, entry in extract_attachment_catalog(existing_data).items()
+        if isinstance(entry, dict) and entry.get("content")
+    }
+
     # Targeted list merge for flows that operate on a single list item.
     # Instead of replacing the entire list, we add or update one entry.
     list_target = _detect_list_target(flow_id, state)
@@ -1246,7 +1278,11 @@ async def _modal_do_submit(
     # the corresponding entry to ``domains.allowed-subdomains``. Mirrors the
     # equivalent block in router_wizard.py.
     from opi.forms.editables.editable import Editable, FormState, WidgetType
-    from opi.forms.editables.hooks import ResolveAttachmentsHook, StripTransientsHook
+    from opi.forms.editables.hooks import (
+        PreserveAttachmentContentHook,
+        ResolveAttachmentsHook,
+        StripTransientsHook,
+    )
     from opi.forms.editables.lifecycle import run_hooks
     from opi.forms.editables.resolvers import build_resolver_map
     from opi.forms.visualizers.visualizer import EditableVisualizer
@@ -1269,14 +1305,29 @@ async def _modal_do_submit(
         widget=WidgetType.HIDDEN,
         label="",
     )
+    # Re-attach existing attachments' content stripped from the wizard session.
+    preserve_attachments_hook_editable = EditableVisualizer(
+        editable=Editable(
+            yaml_path="_system/preserve-attachment-content",
+            hooks={FormState.PRE_SAVE: PreserveAttachmentContentHook()},
+        ),
+        widget=WidgetType.HIDDEN,
+        label="",
+    )
     hook_context = {
         "project_name": project_name,
         "resolvers": build_resolver_map(all_editables),
         "staged_attachments": state.staged_attachments or {},
+        "original_attachment_content": original_attachment_content,
     }
     await run_hooks(
         FormState.PRE_SAVE,
-        [*all_editables, attachments_hook_editable, strip_hook_editable],
+        [
+            *all_editables,
+            attachments_hook_editable,
+            preserve_attachments_hook_editable,
+            strip_hook_editable,
+        ],
         existing_data,
         hook_context,
     )
