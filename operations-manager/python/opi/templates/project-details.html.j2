@@ -1886,9 +1886,11 @@
     }
 
     function showAttachmentDeleteModal(attachmentId, usedBy) {
-        var inUse = Array.isArray(usedBy) && usedBy.length > 0;
+        // usedBy is a plain comma-separated string (NOT JSON): a ROOS c-button re-emits
+        // attribute values with double quotes, which mangles any bracketed/quoted JSON.
+        var inUse = !!usedBy && usedBy.length > 0;
         var message = inUse
-            ? "Deze bijlage is in gebruik door component(en): " + usedBy.join(', ') +
+            ? "Deze bijlage is in gebruik door: " + usedBy +
               ". Verwijder eerst de koppeling(en); zolang de bijlage in gebruik is kan deze niet verwijderd worden."
             : "Weet je zeker dat je bijlage '" + attachmentId + "' wilt verwijderen?";
         showDangerConfirmation('attachment', attachmentId, message);

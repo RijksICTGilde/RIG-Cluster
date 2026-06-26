@@ -23,7 +23,7 @@
                     </div>
                     {% if can_edit %}
                     <c-button kind="secondary" size="sm" label="Verwijderen"
-                              @click="showAttachmentDeleteModal('{{ att.id }}', {{ att.used_by | default([]) | tojson }})" />
+                              @click="showAttachmentDeleteModal('{{ att.id }}', '{{ att.used_by | default([]) | join(', ') }}')" />
                     {% endif %}
                 </div>
             </c-card>
