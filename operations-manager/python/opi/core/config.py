@@ -149,6 +149,12 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     CLUSTER_MANAGER: str = "local"
 
+    # Idle session timeout. The session cookie is re-signed on every response,
+    # so this acts as a sliding window: a session expires only after this many
+    # seconds of inactivity. Shared by the HTTP SessionMiddleware and the
+    # WebSocket handshake so both enforce the same lifetime.
+    SESSION_MAX_AGE_SECONDS: int = 28800  # 8 hours - one workday
+
     # Development mode: "reload" (hot-reload) | "debug" (debugger) | "production"
     DEBUG_MODE: str = "reload"
 
