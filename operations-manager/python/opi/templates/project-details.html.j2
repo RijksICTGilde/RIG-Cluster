@@ -1847,7 +1847,7 @@
         dangerActionType = actionType;
         dangerActionTarget = target;
 
-        var titles = { project: 'Project verwijderen', deployment: 'Deployment verwijderen', component: 'Component verwijderen', refresh: 'Project herverwerken', 'deployment-refresh': 'Deployment herverwerken' };
+        var titles = { project: 'Project verwijderen', deployment: 'Deployment verwijderen', component: 'Component verwijderen', attachment: 'Bijlage verwijderen', refresh: 'Project herverwerken', 'deployment-refresh': 'Deployment herverwerken' };
         var title = titles[actionType] || 'Verwijderen';
         document.getElementById('danger-confirm-title').textContent = title;
         document.getElementById('danger-confirm-message').textContent = message;
@@ -1876,6 +1876,19 @@
         document.body.style.overflow = 'hidden';
     }
 
+    function showAttachmentDeleteModal(attachmentId, usedBy) {
+        var inUse = Array.isArray(usedBy) && usedBy.length > 0;
+        var message = inUse
+            ? "Deze bijlage is in gebruik door component(en): " + usedBy.join(', ') +
+              ". Verwijder eerst de koppeling(en); zolang de bijlage in gebruik is kan deze niet verwijderd worden."
+            : "Weet je zeker dat je bijlage '" + attachmentId + "' wilt verwijderen?";
+        showDangerConfirmation('attachment', attachmentId, message);
+        // The catalog delete-guard refuses an in-use attachment; mirror that by disabling
+        // the modal's delete button (the server still enforces it).
+        var deleteBtn = document.querySelector('#danger-confirm-btn-delete button');
+        if (deleteBtn) { deleteBtn.disabled = inUse; }
+    }
+
     function hideDangerConfirmation() {
         // Clear body to stop any htmx polling
         document.getElementById('danger-confirm-body').innerHTML = '';
@@ -1892,6 +1905,33 @@
         errorEl.style.display = 'none';
         progressEl.style.display = '';
         actionsEl.style.display = 'none';
+
+        // Attachment delete is a DELETE on the attachments endpoint, which returns an HTML
+        // fragment (not JSON); just reload on success and surface the detail on refusal.
+        if (dangerActionType === 'attachment') {
+            var attUrl = '/projects/' + encodeURIComponent('{{ project.name }}') +
+                         '/attachments/' + encodeURIComponent(dangerActionTarget);
+            try {
+                var attResp = await fetch(attUrl, {
+                    method: 'DELETE',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': '{{ request.state.csrf_token }}' },
+                    credentials: 'same-origin'
+                });
+                if (attResp.ok) { window.location.reload(); return; }
+                var attDetail = '';
+                try { attDetail = (await attResp.json()).detail; } catch (_) {}
+                progressEl.style.display = 'none';
+                actionsEl.style.display = '';
+                errorEl.textContent = attDetail || 'Verwijderen mislukt';
+                errorEl.style.display = '';
+            } catch (e) {
+                progressEl.style.display = 'none';
+                actionsEl.style.display = '';
+                errorEl.textContent = 'Verwijderen mislukt';
+                errorEl.style.display = '';
+            }
+            return;
+        }
 
         var url;
         if (dangerActionType === 'project') {

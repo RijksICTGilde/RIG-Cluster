@@ -1166,7 +1166,9 @@ async def project_details(request: Request, project_name: str):
                 )
 
         # Prepare project details for template
-        from opi.handlers.project_file_handler import extract_attachment_catalog
+        from opi.handlers.project_file_handler import extract_attachment_catalog, extract_attachment_usage
+
+        _attachment_usage = extract_attachment_usage(project_data)
 
         project_details = {
             "name": project_name,
@@ -1183,7 +1185,11 @@ async def project_details(request: Request, project_name: str):
             "helm_charts": project_data_decrypted.get("helm-charts", []),
             "helmfile": project_data_decrypted.get("helmfile", []),
             "attachments": [
-                {"id": entry["id"], "filename": entry.get("filename", entry["id"])}
+                {
+                    "id": entry["id"],
+                    "filename": entry.get("filename", entry["id"]),
+                    "used_by": _attachment_usage.get(entry["id"], []),
+                }
                 for entry in extract_attachment_catalog(project_data).values()
             ],
         }
