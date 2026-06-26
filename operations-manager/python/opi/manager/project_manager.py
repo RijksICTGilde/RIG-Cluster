@@ -2646,9 +2646,13 @@ class ProjectManager:
                             logger.error("OOM auto-tune failed for %s/%s: %s", project_name, dep_name, tune_err)
                             sync_failures.append(f"{app_name}: OOM detected, auto-tune failed: {tune_err}")
 
-                    # Handle ImagePullBackOff: disable component, queue refresh
+                    # Handle ImagePullBackOff: disable component, queue refresh.
+                    # Use component_reference (the user-facing YAML reference), not
+                    # component_name (the unique deployment-scoped name): disabling looks
+                    # the component up by `reference`, so passing the unique name silently
+                    # fails to match and the component is never scaled to 0.
                     if image_pull_failures:
-                        disabled_components = [(f.component_name, f.message) for f in image_pull_failures]
+                        disabled_components = [(f.component_reference, f.message) for f in image_pull_failures]
                         try:
                             await disable_components_for_image_pull(project_name, dep_name, disabled_components)
                             await self._queue_refresh_task(task_service, project_name, dep_name)
