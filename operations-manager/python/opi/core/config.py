@@ -346,6 +346,11 @@ class Settings(BaseSettings):
     # so tiny pods near the floor don't churn on a few MB / a few millicores.
     RESOURCE_TUNING_MIN_DELTA_MI: int = 16  # memory, in Mi
     RESOURCE_TUNING_MIN_DELTA_M: int = 10  # CPU, in millicores
+    # Mirrors the upstream VPA recommender's podMinMemoryMb floor
+    # (--pod-recommendation-min-allowed-memory-mb). A target at this value carries
+    # no real signal (usage is below the floor), so fall back to Prometheus for the
+    # memory request. Keep in sync with the recommender flag on the cluster.
+    VPA_MEMORY_FLOOR_MI: int = 250
     # max_memory_limit_mi is now in cluster_config (per-cluster setting)
 
     # Deployment sanitization configuration

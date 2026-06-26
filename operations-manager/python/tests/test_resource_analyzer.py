@@ -145,6 +145,41 @@ class TestComputeMemoryRecommendation:
         assert request == "325Mi"
         assert limit == "325Mi"
 
+    def test_vpa_source_adds_no_buffer(self):
+        # VPA target already carries its own margin: take it as-is, no *1.25, no +25Mi.
+        result = compute_memory_recommendation(
+            max_observed_mb=300,
+            avg_observed_mb=300,
+            current_limit_mb=512,
+            current_request_mb=512,
+            buffer_percent=25,
+            threshold_percent=20,
+            source="vpa",
+        )
+        assert result is not None
+        limit, request, reason = result
+        assert request == "300Mi"  # target passed through, unbuffered
+        assert limit == "300Mi"
+        assert "VPA target 300Mi" in reason
+        assert "+ 25%" not in reason
+
+    def test_vpa_source_clamped_to_frozen_limit(self):
+        # Unbuffered VPA target above a frozen limit -> request clamps to the limit.
+        result = compute_memory_recommendation(
+            max_observed_mb=400,
+            avg_observed_mb=400,
+            current_limit_mb=256,
+            current_request_mb=64,
+            buffer_percent=25,
+            threshold_percent=20,
+            source="vpa",
+        )
+        assert result is not None
+        limit, request, reason = result
+        assert limit == "256Mi"  # frozen, untouched
+        assert request == "256Mi"  # target 400 clamped to the limit
+        assert "VPA target 400Mi = 256Mi" in reason
+
     def test_request_never_exceeds_limit(self):
         # Frozen limit 200 < computed request 400 -> request capped to the limit.
         result = compute_memory_recommendation(
