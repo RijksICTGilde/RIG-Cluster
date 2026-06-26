@@ -494,6 +494,35 @@ class TestBareDomainComponentEditable:
         assert DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE.remove_when_none is True
 
 
+class TestRootComponentEditable:
+    def test_editable_yaml_path(self):
+        from opi.forms.editables.fields.domains import DOMAIN_ROOT_COMPONENT_EDITABLE
+
+        assert DOMAIN_ROOT_COMPONENT_EDITABLE.yaml_path == "deployments[*]/root-component"
+
+    def test_editable_remove_when_none(self):
+        from opi.forms.editables.fields.domains import DOMAIN_ROOT_COMPONENT_EDITABLE
+
+        assert DOMAIN_ROOT_COMPONENT_EDITABLE.remove_when_none is True
+
+    async def test_empty_root_component_key_is_removed(self):
+        """Clearing the root-component must delete the key, not write an empty value."""
+        from opi.forms.editables.fields.domains import DOMAIN_ROOT_COMPONENT_EDITABLE
+
+        seq_ed = Editable(yaml_path="deployments", children=[DOMAIN_ROOT_COMPONENT_EDITABLE])
+        item_vis = EditableVisualizer(editable=DOMAIN_ROOT_COMPONENT_EDITABLE, widget=WidgetType.SELECT, label="Root")
+        seq_vis = EditableVisualizer(
+            editable=seq_ed, widget=WidgetType.SEQUENCE, label="Deployments", children=[item_vis]
+        )
+        processor = EditableFormProcessor()
+        # domain-format must be a root-component format so the field renders.
+        data = {"deployments": [{"name": "prod", "domain-format": "component.subdomain", "root-component": ""}]}
+
+        result, _errors = await processor.process_json_submission(data, [seq_vis], data)
+
+        assert "root-component" not in result["deployments"][0]
+
+
 class TestBareDomainComponentProvider:
     def test_provider_has_empty_option(self):
         from opi.forms.visualizers.providers import BareDomainComponentOptionsProvider
