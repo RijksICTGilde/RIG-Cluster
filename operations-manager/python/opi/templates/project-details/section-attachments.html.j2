@@ -23,11 +23,7 @@
                     </div>
                     {% if can_edit %}
                     <c-button kind="secondary" size="sm" label="Verwijderen"
-                              hx-delete="/projects/{{ project.name }}/attachments/{{ att.id }}"
-                              hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
-                              hx-target="#attachments-section"
-                              hx-swap="outerHTML"
-                              hx-confirm="Bijlage '{{ att.id }}' verwijderen?" />
+                              @click="showAttachmentDeleteModal('{{ att.id }}', {{ att.used_by | default([]) | tojson }})" />
                     {% endif %}
                 </div>
             </c-card>
