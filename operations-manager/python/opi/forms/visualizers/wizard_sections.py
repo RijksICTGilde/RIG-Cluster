@@ -10,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
+from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.editables.enforcers import (
     ComponentServicesEnforcer,
     DomainConfigEnforcer,
@@ -58,6 +59,7 @@ from opi.forms.visualizers.fields.services import (
 )
 from opi.forms.visualizers.fields.team import USERS_SEQUENCE
 from opi.forms.visualizers.sections import FormSection
+from opi.forms.visualizers.visualizer import EditableVisualizer
 
 
 def _extract_services(data: dict[str, Any]) -> list[str]:
@@ -823,13 +825,23 @@ RESTORE_TARGET_SECTION = FormSection(
     summary_fn=_restore_target_summary,
 )
 
+# Read-only carrier so ``services`` (and thus the attachments catalog) reaches the partial
+# for display, even when this section runs standalone (modal-edit-attachments) without the
+# services-selection section. ``readonly`` => skipped on save, so it never rewrites services.
+_ATTACHMENTS_SERVICES_CARRIER = EditableVisualizer(
+    editable=Editable(yaml_path="services"),
+    widget=WidgetType.HIDDEN,
+    label="",
+    readonly=True,
+)
+
 ATTACHMENTS_SECTION = FormSection(
     section_id="attachments",
     title="Bijlagen",
     icon="map",
     description="Upload bestanden (bijv. certificaten) om per component als bestand of env-var te koppelen",
     visible=lambda data: "attachments" in _extract_services(data),
-    editables=[],
+    editables=[_ATTACHMENTS_SERVICES_CARRIER],
     layout=[TemplatePartial(template="wizard/partials/attachments_upload.html.j2")],
 )
 
