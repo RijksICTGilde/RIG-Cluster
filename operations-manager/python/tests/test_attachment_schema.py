@@ -283,3 +283,26 @@ def test_strip_and_preserve_attachment_content_roundtrip() -> None:
     asyncio.run(PreserveAttachmentContentHook().execute(fresh, {}))
     fv = next(e for e in fresh["services"] if isinstance(e, dict) and "attachments" in e)
     assert "content" not in fv["attachments"]["data"][0]
+
+
+def test_modal_edit_attachments_flow_carries_services_for_display() -> None:
+    """The standalone modal-edit-attachments flow (single ATTACHMENTS_SECTION) must carry
+    `services` into step_data via the read-only carrier, so the upload partial can list
+    existing attachments even without the services-selection section present."""
+    from opi.forms.visualizers.flows import get_flow
+    from opi.web.router_wizard import _split_data_across_sections
+
+    flow = get_flow("modal-edit-attachments")
+    assert [s.section_id for s in flow.sections] == ["attachments"]
+
+    project = {
+        "services": [
+            "publish-on-web",
+            {"attachments": {"data": [{"id": "sso", "filename": "cert.pem", "content": "AGEBLOCK"}]}},
+        ]
+    }
+    step_data = _split_data_across_sections(flow, project)
+    carried = step_data.get("attachments", {}).get("services")
+    assert carried, "services not carried into the attachments step"
+    catalog = [d for s in carried if isinstance(s, dict) and "attachments" in s for d in s["attachments"]["data"]]
+    assert [(d["id"], d["filename"]) for d in catalog] == [("sso", "cert.pem")]
