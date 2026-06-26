@@ -306,12 +306,12 @@ def _strip_attachment_content(project_data: dict[str, Any]) -> dict[str, Any]:
     """
     import copy
 
+    from opi.handlers.project_file_handler import find_attachment_data_list
+
     data = copy.deepcopy(project_data)
-    for entry in data.get("services", []):
-        if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
-            for att in entry["attachments"].get("data", []) or []:
-                if isinstance(att, dict):
-                    att.pop("content", None)
+    for att in find_attachment_data_list(data.get("services")) or []:
+        if isinstance(att, dict):
+            att.pop("content", None)
     return data
 
 

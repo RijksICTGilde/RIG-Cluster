@@ -160,14 +160,14 @@ class PreserveAttachmentContentHook:
     order: int = 1
 
     async def execute(self, yaml_data: dict[str, Any], context: dict[str, Any]) -> None:
+        from opi.handlers.project_file_handler import find_attachment_data_list
+
         original = context.get("original_attachment_content") or {}
-        if not original:
+        data = find_attachment_data_list(yaml_data.get("services")) if original else None
+        if not data:
             return
-        for entry in yaml_data.get("services", []):
-            if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
-                for att in entry["attachments"].get("data", []) or []:
-                    if isinstance(att, dict) and not att.get("content"):
-                        content = original.get(att.get("id"))
-                        if content:
-                            att["content"] = content
-                break
+        for att in data:
+            if isinstance(att, dict) and not att.get("content"):
+                content = original.get(att.get("id"))
+                if content:
+                    att["content"] = content
