@@ -167,12 +167,37 @@ class ServiceListConverter:
         When a storage service is checked, ``json-enc.js`` promotes the
         string entry to a dict (``{"persistent-storage": {"config": ...}}``).
         These dicts are kept as-is so storage config is preserved.
+
+        The attachments catalog ``data`` (uploaded files, encrypted) is managed by the
+        project Bijlagen UI, not this service-selection form, so it is absent from the
+        submission. It is restored from the existing project data onto the still-selected
+        ``attachments`` entry; otherwise saving the services list would silently drop
+        every uploaded attachment.
         """
-        if isinstance(value, list):
-            return value
         if isinstance(value, str) and value:
-            return [value]
-        return []
+            value = [value]
+        if not isinstance(value, list):
+            return []
+
+        existing_data = self._existing_attachments_data(context_data)
+        if existing_data is not None:
+            value = [self._restore_attachments_data(item, existing_data) for item in value]
+        return value
+
+    @staticmethod
+    def _existing_attachments_data(context_data: dict[str, Any] | None) -> Any:
+        for entry in (context_data or {}).get("services", []):
+            if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
+                return entry["attachments"].get("data")
+        return None
+
+    @staticmethod
+    def _restore_attachments_data(item: Any, existing_data: Any) -> Any:
+        name = item if isinstance(item, str) else (next(iter(item), None) if isinstance(item, dict) else None)
+        if name != "attachments":
+            return item
+        current = item["attachments"] if isinstance(item, dict) and isinstance(item.get("attachments"), dict) else {}
+        return {"attachments": {**current, "data": existing_data}}
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str]:
         """For display: just service names."""
