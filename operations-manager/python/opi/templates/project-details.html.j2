@@ -1843,9 +1843,18 @@
     var dangerActionType = '';
     var dangerActionTarget = '';
 
+    var dangerConfirmBodyHTML = null;
+
     function showDangerConfirmation(actionType, target, message) {
         dangerActionType = actionType;
         dangerActionTarget = target;
+
+        // Capture the pristine modal body once so hideDangerConfirmation can restore it.
+        // (A refresh action swaps htmx progress into the body; without a restore the static
+        // elements stay gone and reopening hits null getElementById lookups.)
+        if (dangerConfirmBodyHTML === null) {
+            dangerConfirmBodyHTML = document.getElementById('danger-confirm-body').innerHTML;
+        }
 
         var titles = { project: 'Project verwijderen', deployment: 'Deployment verwijderen', component: 'Component verwijderen', attachment: 'Bijlage verwijderen', refresh: 'Project herverwerken', 'deployment-refresh': 'Deployment herverwerken' };
         var title = titles[actionType] || 'Verwijderen';
@@ -1890,8 +1899,11 @@
     }
 
     function hideDangerConfirmation() {
-        // Clear body to stop any htmx polling
-        document.getElementById('danger-confirm-body').innerHTML = '';
+        // Restore the pristine body (stops any htmx polling AND resets the static elements
+        // so reopening the modal does not hit null getElementById lookups).
+        if (dangerConfirmBodyHTML !== null) {
+            document.getElementById('danger-confirm-body').innerHTML = dangerConfirmBodyHTML;
+        }
         document.getElementById('danger-confirm-backdrop').classList.remove('is-open');
         document.getElementById('danger-confirm-modal').classList.remove('is-open');
         document.body.style.overflow = '';

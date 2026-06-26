@@ -325,3 +325,26 @@ def test_wizard_session_catalog_removal_and_ids() -> None:
     remaining = [a["id"] for s in state.step_data["attachments"]["services"] for a in s["attachments"]["data"]]
     assert remaining == ["ca"]
     assert _catalog_ids(state) == ["ca"]
+
+
+def test_attachment_usage_includes_publish_on_web_provided() -> None:
+    """A publish-on-web 'provided' certificate counts as usage (delete-guard + modal), at
+    component and deployment-component level; a non-provided tls mode does not."""
+    from opi.handlers.project_file_handler import attachment_is_referenced, extract_attachment_usage
+
+    comp = {"components": [{"name": "backend", "services": [{"publish-on-web": {"config": {"tls": "provided", "attachment": "real-cert"}}}]}]}
+    assert extract_attachment_usage(comp) == {"real-cert": ["backend"]}
+    assert attachment_is_referenced(comp, "real-cert")
+
+    dep = {
+        "components": [{"name": "backend"}],
+        "deployments": [
+            {"name": "staging", "components": [{"reference": "backend", "services": {"publish-on-web": {"config": {"tls": "provided", "attachment": "real-cert"}}}}]}
+        ],
+    }
+    assert extract_attachment_usage(dep) == {"real-cert": ["backend (staging)"]}
+    assert attachment_is_referenced(dep, "real-cert")
+
+    standard = {"components": [{"name": "backend", "services": [{"publish-on-web": {"config": {"tls": "standard", "attachment": "x"}}}]}]}
+    assert extract_attachment_usage(standard) == {}
+    assert not attachment_is_referenced(standard, "x")
