@@ -1,0 +1,9 @@
+{# Modal content shown after a successful attachment upload. Closing reloads the page so
+   the new attachment appears in the Bijlagen section. #}
+<div class="edit-section-content">
+    <c-layout-flow gap="md">
+        <c-alert kind="success" heading="Bijlage toegevoegd"
+                 content="Bijlage '{{ attachment_id }}' is geüpload. Koppel 'm per component (als bestand of via publish-on-web)." />
+        <c-button kind="primary" label="Sluiten" @click="closeEditModalAndReload()" />
+    </c-layout-flow>
+</div>
