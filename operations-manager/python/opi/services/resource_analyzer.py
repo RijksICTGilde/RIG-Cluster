@@ -207,6 +207,7 @@ def compute_memory_recommendation(
     min_memory_mi: int = 25,
     max_memory_mi: int = 4096,
     max_memory_request_mi: int | None = None,
+    source: str = "prometheus",
 ) -> tuple[str, str, str] | None:
     """
     Compute a memory recommendation based on observed usage.
@@ -225,6 +226,9 @@ def compute_memory_recommendation(
         min_memory_mi: Minimum memory value in Mi enforced by the container runtime
         max_memory_mi: Maximum memory limit in Mi
         max_memory_request_mi: Maximum memory request in Mi (defaults to max_memory_mi)
+        source: Where the observed values came from. "vpa" means they are the
+            recommender's target, which already carries its own margin, so we add
+            no buffer of our own; "prometheus" is a raw measurement, which we buffer.
 
     Returns:
         Tuple of (recommended_limit, recommended_request, reason) as K8s strings,
@@ -232,7 +236,10 @@ def compute_memory_recommendation(
     """
     if max_memory_request_mi is None:
         max_memory_request_mi = max_memory_mi
-    buffer_factor = 1 + buffer_percent / 100
+    # The VPA target already bakes in a percentile + safety margin; only the raw
+    # Prometheus measurement gets our buffer on top.
+    use_buffer = source != "vpa"
+    buffer_factor = 1 + buffer_percent / 100 if use_buffer else 1.0
 
     # A frozen limit is one we must not touch during a (non-OOM) reduction:
     # the operator already set it to differ from the request, so we respect it.
@@ -245,9 +252,9 @@ def compute_memory_recommendation(
         recommended_limit_mb = max_observed_mb * buffer_factor
         recommended_request_mb = avg_observed_mb * buffer_factor
         # For apps using >= 100Mi, add a flat 25Mi processing headroom
-        if max_observed_mb >= 100:
+        if use_buffer and max_observed_mb >= 100:
             recommended_limit_mb += 25
-        if avg_observed_mb >= 100:
+        if use_buffer and avg_observed_mb >= 100:
             recommended_request_mb += 25
 
         # The actual need is higher than what we observed (pod was killed
@@ -274,7 +281,7 @@ def compute_memory_recommendation(
         # request only when the two were equal (the untouched default); when
         # the limit was already set to differ from the request, leave it as-is.
         recommended_request_mb = max_observed_mb * buffer_factor
-        if max_observed_mb >= 100:
+        if use_buffer and max_observed_mb >= 100:
             recommended_request_mb += 25
         recommended_limit_mb = current_limit_mb if limit_frozen else recommended_request_mb
 
@@ -329,15 +336,16 @@ def compute_memory_recommendation(
             f"Request: avg {avg_observed_mb:.0f}Mi + {buffer_percent}%{request_extra} = {recommended_request_mb:.0f}Mi"
         )
     else:
-        request_extra = " + 25Mi headroom" if max_observed_mb >= 100 else ""
         limit_note = (
             f" Limit unchanged at {recommended_limit_mb:.0f}Mi"
             if limit_frozen
             else f" Limit kept equal at {recommended_limit_mb:.0f}Mi"
         )
-        reason = (
-            f"Request: max {max_observed_mb:.0f}Mi + {buffer_percent}%{request_extra} "
-            f"= {recommended_request_mb:.0f}Mi.{limit_note}"
-        )
+        if use_buffer:
+            request_extra = " + 25Mi headroom" if max_observed_mb >= 100 else ""
+            request_calc = f"max {max_observed_mb:.0f}Mi + {buffer_percent}%{request_extra}"
+        else:
+            request_calc = f"VPA target {max_observed_mb:.0f}Mi"
+        reason = f"Request: {request_calc} = {recommended_request_mb:.0f}Mi.{limit_note}"
 
     return recommended_limit, recommended_request, reason
