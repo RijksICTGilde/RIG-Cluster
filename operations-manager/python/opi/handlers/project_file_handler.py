@@ -3209,35 +3209,68 @@ def validate_attachment_references(project_data: dict[str, Any]) -> list[str]:
     return errors
 
 
-def attachment_is_referenced(project_data: dict[str, Any], attachment_id: str) -> bool:
-    """True if any component uses the given attachment id (used as a delete-guard)."""
-    for component in project_data.get("components", []):
-        if not isinstance(component, dict):
-            continue
-        for use in extract_component_attachment_uses(component):
-            if use.get("reference") == attachment_id:
-                return True
-    return False
+def _publish_on_web_provided_ref(config: Any) -> str | None:
+    """The attachment id of a publish-on-web config, only when its tls mode is 'provided'."""
+    if isinstance(config, dict) and config.get("tls") == "provided":
+        ref = config.get("attachment")
+        return ref if isinstance(ref, str) and ref else None
+    return None
 
 
 def extract_attachment_usage(project_data: dict[str, Any]) -> dict[str, list[str]]:
-    """Map each attachment id to the component names that reference it.
+    """Map each attachment id to the places that reference it (component names / labels).
 
-    Mirrors ``attachment_is_referenced`` (component uses) so the delete-confirmation modal
-    can show exactly why the server-side delete-guard would refuse a deletion.
+    Covers component attachment ``use`` couplings, deployment-component ``use`` overrides,
+    and publish-on-web ``provided`` certificates at root, component and deployment-component
+    level. Used both as the delete-guard (``attachment_is_referenced``) and by the
+    delete-confirmation modal, so the two never disagree.
     """
     usage: dict[str, list[str]] = {}
+
+    def add(ref: Any, label: str) -> None:
+        if not isinstance(ref, str) or not ref:
+            return
+        names = usage.setdefault(ref, [])
+        if label and label not in names:
+            names.append(label)
+
+    # Component level: attachment couplings + publish-on-web provided certificate.
     for component in project_data.get("components", []):
         if not isinstance(component, dict):
             continue
         name = component.get("name", "")
         for use in extract_component_attachment_uses(component):
-            ref = use.get("reference")
-            if ref:
-                names = usage.setdefault(ref, [])
-                if name and name not in names:
-                    names.append(name)
+            add(use.get("reference"), name)
+        for entry in component.get("services", []):
+            if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
+                add(_publish_on_web_provided_ref(entry["publish-on-web"].get("config")), name)
+
+    # Deployment-component overrides: attachment couplings + publish-on-web provided cert.
+    for dep in project_data.get("deployments", []):
+        if not isinstance(dep, dict):
+            continue
+        dep_name = dep.get("name", "")
+        for comp in dep.get("components", []):
+            if not isinstance(comp, dict):
+                continue
+            cref = comp.get("reference", "")
+            label = f"{cref} ({dep_name})" if dep_name else cref
+            for use in extract_deployment_component_attachment_uses(project_data, dep_name, cref):
+                add(use.get("reference"), label)
+            cfg = ((comp.get("services") or {}).get("publish-on-web") or {}).get("config")
+            add(_publish_on_web_provided_ref(cfg), label)
+
+    # Root publish-on-web default certificate.
+    for entry in project_data.get("services", []):
+        if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
+            add(_publish_on_web_provided_ref(entry["publish-on-web"].get("config")), "publicatie (project-breed)")
+
     return usage
+
+
+def attachment_is_referenced(project_data: dict[str, Any], attachment_id: str) -> bool:
+    """True if any component or publish-on-web certificate uses the attachment (delete-guard)."""
+    return attachment_id in extract_attachment_usage(project_data)
 
 
 def extract_service_names_from_component(component: dict[str, Any]) -> list[str]:
