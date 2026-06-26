@@ -3112,6 +3112,22 @@ def extract_attachment_catalog(project_data: dict[str, Any]) -> dict[str, dict[s
     return catalog
 
 
+def find_attachment_data_list(services: Any) -> list[Any] | None:
+    """Return the existing attachments ``data`` list within a services list, or None.
+
+    Single source of truth for where the catalog lives, for callers that mutate it in place
+    (strip/restore content, remove an entry). Read-only callers use extract_attachment_catalog.
+    """
+    if not isinstance(services, list):
+        return None
+    for entry in services:
+        if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
+            data = entry["attachments"].get("data")
+            if isinstance(data, list):
+                return data
+    return None
+
+
 def extract_component_attachment_uses(component: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract a component's attachment ``config`` coupling entries from its services list.
 
