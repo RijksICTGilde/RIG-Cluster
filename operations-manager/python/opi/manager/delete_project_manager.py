@@ -28,6 +28,7 @@ from opi.utils.naming import (
     generate_infrastructure_argocd_folder_path,
     get_output_filename_from_template,
 )
+from opi.utils.yaml_util import load_yaml_from_path, save_yaml_to_path
 
 logger = logging.getLogger(__name__)
 
@@ -1631,9 +1632,26 @@ class DeleteProjectManager:
 
                 await self.project_manager.save_project_data()
 
+                async def _reapply_remove_deployment() -> None:
+                    # Recovery path for a rebase conflict on the shared project file:
+                    # a concurrent writer (e.g. a sibling deployment delete) edited the
+                    # same deployments list. Re-read the file as it now exists on the
+                    # freshly reset working tree and re-remove this deployment, so the
+                    # other change is preserved instead of conflicting. Reads/writes the
+                    # file directly to bypass the cached in-memory project data.
+                    project_file_path = await self.project_manager.get_project_full_file_path()
+                    fresh_data = load_yaml_from_path(project_file_path)
+                    if fresh_data is None:
+                        return
+                    fresh_data["deployments"] = [
+                        dep for dep in fresh_data.get("deployments", []) if dep.get("name") != deployment_name
+                    ]
+                    save_yaml_to_path(project_file_path, fresh_data)
+
                 git_connector = await self.project_manager.get_git_connector_for_project_files()
                 await git_connector.commit_and_push(
-                    f"Delete deployment '{deployment_name}' from project {project_name}"
+                    f"Delete deployment '{deployment_name}' from project {project_name}",
+                    reapply=_reapply_remove_deployment,
                 )
 
                 deletion_results["operations"].append(
