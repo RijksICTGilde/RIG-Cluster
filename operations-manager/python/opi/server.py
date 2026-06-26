@@ -365,6 +365,7 @@ def create_app() -> FastAPI:
         secret_key=settings.SECRET_KEY,
         same_site="lax",
         https_only=not settings.DEBUG,
+        max_age=settings.SESSION_MAX_AGE_SECONDS,
     )
     app.add_middleware(
         SecurityHeadersMiddleware,
