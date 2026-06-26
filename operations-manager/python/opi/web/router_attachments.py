@@ -71,24 +71,36 @@ async def upload_attachment(
     attachment_id: str = Form(...),
     file: UploadFile = File(...),
 ):
-    """Encrypt an uploaded file and store it in the project's attachments catalog."""
-    project, user_email = require_project_edit_access(request, project_name)
+    """Encrypt an uploaded file and store it in the project's attachments catalog.
+
+    Called from the project-details "Bijlage toevoegen" modal: returns the modal upload
+    form re-rendered with an error message on a validation failure, or a success fragment
+    on success (both swapped into the modal content).
+    """
+    project, _user_email = require_project_edit_access(request, project_name)
     project_data = project.data or {}
+    templates = get_templates()
+
+    def _form_with_error(message: str) -> Any:
+        return templates.TemplateResponse(
+            "project-details/modal-add-attachment.html.j2",
+            {"request": request, "project_name": project_name, "error": message, "attachment_id": attachment_id},
+        )
 
     existing_ids = list(extract_attachment_catalog(project_data).keys())
     errors = AttachmentIdValidator().validate(attachment_id, {"existing_attachment_ids": existing_ids})
     if errors:
-        raise HTTPException(status_code=400, detail="; ".join(errors))
+        return _form_with_error("; ".join(errors))
 
     raw = await file.read()
     if not raw:
-        raise HTTPException(status_code=400, detail="Leeg bestand geupload")
+        return _form_with_error("Leeg bestand geüpload")
     if len(raw) > ATTACHMENT_MAX_SIZE_BYTES:
-        raise HTTPException(status_code=413, detail=f"Bestand te groot (max {ATTACHMENT_MAX_SIZE_BYTES // 1024} KB)")
+        return _form_with_error(f"Bestand te groot (max {ATTACHMENT_MAX_SIZE_BYTES // 1024} KB)")
 
     public_key = (project_data.get("config") or {}).get("age-public-key")
     if not public_key:
-        raise HTTPException(status_code=400, detail="Project heeft geen age-public-key")
+        return _form_with_error("Project heeft geen age-public-key")
 
     block = await encrypt_file_to_age_block(raw, public_key)
     _attachments_data_list(project_data).append(
@@ -104,8 +116,10 @@ async def upload_attachment(
     await commit_project_yaml(project_name, f"{project_name}.yaml", project_data, f"Add attachment '{attachment_id}'")
     logger.info(f"Stored attachment '{attachment_id}' for project '{project_name}'")
 
-    user_role = get_project_service().get_user_role_for_project(project_name, user_email)
-    return _section_response(request, project_name, project_data, user_role)
+    return templates.TemplateResponse(
+        "project-details/modal-attachment-added.html.j2",
+        {"request": request, "project_name": project_name, "attachment_id": attachment_id},
+    )
 
 
 @attachments_router.delete("/{project_name}/attachments/{attachment_id}")
