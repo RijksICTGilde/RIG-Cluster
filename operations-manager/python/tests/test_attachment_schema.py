@@ -243,3 +243,43 @@ def test_service_list_converter_preserves_attachments_data() -> None:
 
     # No existing catalog -> unchanged.
     assert converter.write(["publish-on-web"], context_data={"services": ["publish-on-web"]}) == ["publish-on-web"]
+
+
+def test_strip_and_preserve_attachment_content_roundtrip() -> None:
+    """The wizard strips attachment content from its session; the save hook re-attaches it
+    from the original project data. End-to-end: strip -> capture -> hook restores."""
+    import asyncio
+
+    from opi.forms.editables.hooks import PreserveAttachmentContentHook
+    from opi.web.router_detail_edit import _strip_attachment_content
+
+    block = "-----BEGIN AGE ENCRYPTED FILE-----\nabc\n-----END AGE ENCRYPTED FILE-----"
+    project = {
+        "services": [
+            "publish-on-web",
+            {"attachments": {"data": [{"id": "sso", "filename": "cert.pem", "content": block}]}},
+        ]
+    }
+
+    # 1. Wizard view: content stripped, metadata kept, original untouched.
+    stripped = _strip_attachment_content(project)
+    sa = next(e for e in stripped["services"] if isinstance(e, dict) and "attachments" in e)
+    assert "content" not in sa["attachments"]["data"][0]
+    assert sa["attachments"]["data"][0]["filename"] == "cert.pem"
+    oa = next(e for e in project["services"] if isinstance(e, dict) and "attachments" in e)
+    assert oa["attachments"]["data"][0]["content"] == block  # deepcopy, original intact
+
+    # 2. Capture original content (as _modal_do_submit does), 3. hook restores at save.
+    original_content = {"sso": block}
+    saved = _strip_attachment_content(project)  # content-less, like the merged session data
+    asyncio.run(
+        PreserveAttachmentContentHook().execute(saved, {"original_attachment_content": original_content})
+    )
+    sv = next(e for e in saved["services"] if isinstance(e, dict) and "attachments" in e)
+    assert sv["attachments"]["data"][0]["content"] == block
+
+    # No original captured (new project / no attachments) -> hook is a no-op, no crash.
+    fresh = _strip_attachment_content(project)
+    asyncio.run(PreserveAttachmentContentHook().execute(fresh, {}))
+    fv = next(e for e in fresh["services"] if isinstance(e, dict) and "attachments" in e)
+    assert "content" not in fv["attachments"]["data"][0]
