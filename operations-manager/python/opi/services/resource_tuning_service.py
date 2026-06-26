@@ -354,7 +354,11 @@ async def _analyze_component_resources(
             vpa_rec = await kubectl.get_vpa_recommendation(namespace, unique_name)
         except Exception as e:
             logger.warning(f"Failed to read VPA recommendation for {unique_name}: {e}")
-    if vpa_rec is not None and not has_oom_kills:
+    # The recommender never advises below its built-in floor (VPA_MEMORY_FLOOR_MI),
+    # so a target at the floor means "usage is below this" rather than a real need.
+    # In that case keep the Prometheus sizing so the request tracks actual usage.
+    # CPU below still sources from the VPA regardless (no Prometheus CPU path).
+    if vpa_rec is not None and not has_oom_kills and vpa_rec.target_memory_mi > settings.VPA_MEMORY_FLOOR_MI:
         source = "vpa"
         max_observed_mb = vpa_rec.target_memory_mi
         avg_observed_mb = vpa_rec.target_memory_mi
@@ -394,6 +398,7 @@ async def _analyze_component_resources(
         min_memory_mi=get_min_memory_limit_mi(cluster),
         max_memory_mi=get_max_memory_limit_mi(cluster),
         max_memory_request_mi=get_max_memory_request_mi(cluster),
+        source=source,
     )
 
     if recommendation is None:
