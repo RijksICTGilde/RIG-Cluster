@@ -14,6 +14,7 @@ from opi.utils.naming import (
     find_root_component,
     generate_argocd_application_filename,
     generate_argocd_application_name,
+    generate_argocd_repository_secret_name,
     generate_backup_clone_pvc_name,
     generate_backup_pod_name,
     generate_backup_prefix,
@@ -867,6 +868,19 @@ class TestInfrastructureNaming:
         """Generates full path to infrastructure ArgoCD application file."""
         result = generate_infrastructure_argocd_application_path("production", "myproject")
         assert result == "production/myproject-infrastructure/myproject-infrastructure-argocd-application.yaml"
+
+    def test_infrastructure_repo_secret_name_distinct_from_project(self):
+        """The infrastructure repo secret must be scoped to the infra app so it does not
+        collide with the parent project's repo secret (same URL) when both subfolders are
+        rendered into the single user-applications ArgoCD app (RepeatedResourceWarning).
+        Mirrors how argo_manager derives the two names."""
+        project_secret = generate_argocd_repository_secret_name("myproject", "main-repo")
+        infra_secret = generate_argocd_repository_secret_name(
+            generate_infrastructure_application_name("myproject"), "main-repo"
+        )
+        assert project_secret == "myproject-main-repo"
+        assert infra_secret == "myproject-infrastructure-main-repo"
+        assert project_secret != infra_secret
 
 
 class TestNormalizeBaseDomain:
