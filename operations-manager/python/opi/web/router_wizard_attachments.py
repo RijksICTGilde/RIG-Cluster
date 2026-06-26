@@ -68,12 +68,31 @@ def _staged(state: Any) -> dict[str, dict[str, Any]]:
     return state.staged_attachments
 
 
-def _list_response(request: Request, staged: dict[str, dict[str, Any]], wizard_token: str | None):
+def _list_response(
+    request: Request,
+    staged: dict[str, dict[str, Any]],
+    wizard_token: str | None,
+    error: str | None = None,
+):
+    """Render the staged list (with an optional error banner) as an HTML fragment.
+
+    htmx does not swap non-2xx responses and an HTTPException renders as JSON, so upload
+    errors are returned as this 200 HTML fragment instead, swapped into #wiz-att-status.
+    """
     templates = get_templates()
     items = [{"id": att_id, "filename": info.get("filename", att_id)} for att_id, info in staged.items()]
     return templates.TemplateResponse(
         "wizard/partials/attachments_staged_list.html.j2",
-        {"request": request, "staged": items, "wizard_token": wizard_token or ""},
+        {"request": request, "staged": items, "wizard_token": wizard_token or "", "error": error},
+    )
+
+
+def _id_error_response(request: Request, error: str | None):
+    """Render the inline identifier-validation result (an alert, or empty to clear it)."""
+    templates = get_templates()
+    return templates.TemplateResponse(
+        "wizard/partials/attachments_id_error.html.j2",
+        {"request": request, "error": error},
     )
 
 
@@ -103,18 +122,40 @@ async def stage_attachment(
     staged = _staged(state)
     errors = AttachmentIdValidator().validate(attachment_id, {"existing_attachment_ids": list(staged.keys())})
     if errors:
-        raise HTTPException(status_code=400, detail="; ".join(errors))
+        return _list_response(request, staged, wizard_token, error="; ".join(errors))
 
     raw = await file.read()
     try:
         token = upload_staging.stage_file(raw, file.filename or attachment_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _list_response(request, staged, wizard_token, error=str(exc))
 
     staged[attachment_id] = {"filename": file.filename or attachment_id, "content": f"staging:{token}"}
     save(state)
     logger.info(f"Staged attachment '{attachment_id}' for wizard flow '{flow_id}'")
     return _list_response(request, staged, wizard_token)
+
+
+@wizard_attachments_router.post("/{flow_id}/attachments/validate-id")
+@requires_sso
+async def validate_attachment_id(
+    request: Request,
+    flow_id: str,
+    attachment_id: str = Form(""),
+    wizard_token: str | None = Form(None, alias="_wizard_token"),
+):
+    """Validate the identifier on change so the error surfaces before the file upload.
+
+    Returns an inline HTML alert (or empty to clear it). An empty field is not an error
+    (the user has not finished typing yet).
+    """
+    state, _ = _resolve_state(request, wizard_token)
+    staged = _staged(state) if state else {}
+    error: str | None = None
+    if attachment_id:
+        errors = AttachmentIdValidator().validate(attachment_id, {"existing_attachment_ids": list(staged.keys())})
+        error = "; ".join(errors) if errors else None
+    return _id_error_response(request, error)
 
 
 @wizard_attachments_router.post("/{flow_id}/attachments/unstage")
