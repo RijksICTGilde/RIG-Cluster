@@ -147,6 +147,14 @@ MODAL_EDIT_SERVICES_FLOW = FormFlow(
     ],
 )
 
+MODAL_EDIT_ATTACHMENTS_FLOW = FormFlow(
+    flow_id="modal-edit-attachments",
+    title="Bijlagen",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[ATTACHMENTS_SECTION],
+)
+
 MODAL_EDIT_KEYCLOAK_FLOW = FormFlow(
     flow_id="modal-edit-keycloak-config",
     title="Keycloak configuratie",
@@ -206,6 +214,7 @@ FLOW_REGISTRY: dict[str, FormFlow] = {
     MODAL_EDIT_TEAM_FLOW.flow_id: MODAL_EDIT_TEAM_FLOW,
     MODAL_EDIT_COMPONENTS_FLOW.flow_id: MODAL_EDIT_COMPONENTS_FLOW,
     MODAL_EDIT_SERVICES_FLOW.flow_id: MODAL_EDIT_SERVICES_FLOW,
+    MODAL_EDIT_ATTACHMENTS_FLOW.flow_id: MODAL_EDIT_ATTACHMENTS_FLOW,
     MODAL_EDIT_KEYCLOAK_FLOW.flow_id: MODAL_EDIT_KEYCLOAK_FLOW,
     MODAL_EDIT_POSTGRESQL_FLOW.flow_id: MODAL_EDIT_POSTGRESQL_FLOW,
     MODAL_EDIT_AUTH_WALL_FLOW.flow_id: MODAL_EDIT_AUTH_WALL_FLOW,

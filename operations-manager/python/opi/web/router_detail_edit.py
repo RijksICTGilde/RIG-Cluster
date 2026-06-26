@@ -597,14 +597,6 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 
     project_data = project.data or {}
 
-    # Adding a project attachment is not an editables flow but a simple multipart upload;
-    # render its own modal form (posts to the direct /attachments/upload endpoint).
-    if flow_id == "modal-add-attachment":
-        return get_templates().TemplateResponse(
-            "project-details/modal-add-attachment.html.j2",
-            {"request": request, "project_name": project_name},
-        )
-
     # Pass context to dynamic flow builders (e.g. component_count for deployment edit)
     flow_context: dict[str, Any] = {}
     if flow_id.startswith(("modal-edit-deployment-", "modal-add-deployment-")):
