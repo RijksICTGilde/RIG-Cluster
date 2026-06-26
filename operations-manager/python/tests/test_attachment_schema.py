@@ -215,3 +215,31 @@ def test_deployment_attachment_sequence_add_builds_proper_item() -> None:
     ed = _find_sequence_editable(section, path)
     assert ed is not None
     assert _empty_sequence_item(ed) == {"provide-as": "file"}
+
+
+def test_service_list_converter_preserves_attachments_data() -> None:
+    """Saving the project service selection must NOT drop the attachments catalog
+    ``data`` (managed by the Bijlagen UI, absent from the selection form)."""
+    from opi.forms.editables.converters import ServiceListConverter
+
+    converter = ServiceListConverter()
+    existing = {
+        "services": [
+            "publish-on-web",
+            {"keycloak": {"config": {"template": "sso-support"}}},
+            {"attachments": {"data": [{"id": "sso", "filename": "c.pem", "content": "AGE..."}]}},
+        ]
+    }
+    # Selection form posts bare service names (attachments still checked, no data).
+    out = converter.write(["publish-on-web", "keycloak", "attachments"], context_data=existing)
+    attachments = [e for e in out if isinstance(e, dict) and "attachments" in e]
+    assert attachments, "attachments entry dropped"
+    assert attachments[0]["attachments"]["data"][0]["id"] == "sso"
+
+    # Deselecting attachments removes it (no resurrection from existing data).
+    out_removed = converter.write(["publish-on-web"], context_data=existing)
+    assert not any(isinstance(e, dict) and "attachments" in e for e in out_removed)
+    assert "attachments" not in out_removed
+
+    # No existing catalog -> unchanged.
+    assert converter.write(["publish-on-web"], context_data={"services": ["publish-on-web"]}) == ["publish-on-web"]
