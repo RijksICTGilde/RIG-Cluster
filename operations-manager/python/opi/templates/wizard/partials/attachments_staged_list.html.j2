@@ -1,4 +1,7 @@
 {# Staged-attachments list fragment. Swapped into #wiz-att-status. #}
+{% if error %}
+<c-alert kind="error" content="{{ error }}" style="margin-bottom:0.75rem;" />
+{% endif %}
 {% if staged and staged|length > 0 %}
 <c-layout-flow gap="sm">
     {% for att in staged %}
