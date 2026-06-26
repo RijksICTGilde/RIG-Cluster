@@ -1,0 +1,31 @@
+{# Existing project attachments (the catalog). Swapped into #wiz-att-catalog after a
+   removal. Removing is a session edit applied on save; a referenced attachment is blocked. #}
+{% set ns = namespace(items=[]) %}
+{% for s in services | default([]) %}
+  {% if s is mapping and s.attachments is mapping %}
+    {% for e in s.attachments.data | default([]) %}{% set ns.items = ns.items + [e] %}{% endfor %}
+  {% endif %}
+{% endfor %}
+{% if error %}
+<c-alert kind="error" content="{{ error }}" style="margin-bottom:0.5rem;" />
+{% endif %}
+{% if ns.items %}
+<c-layout-flow gap="sm">
+    {% for att in ns.items %}
+    <c-card padding="sm" backgroundColor="grijs-050" outline="true">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">
+            <div><strong>{{ att.filename | default(att.id) }}</strong> <span class="rvo-text--sm rvo-text--subtle">(id: {{ att.id }})</span></div>
+            <c-button type="button" kind="secondary" size="xs" label="Verwijderen"
+                      hx-post="/forms/wizard/create-project/attachments/remove-existing/{{ att.id }}"
+                      hx-ext="ignore:json-enc"
+                      hx-include="#wiz-att-token"
+                      hx-target="#wiz-att-catalog"
+                      hx-swap="innerHTML"
+                      hx-disabled-elt="this" />
+        </div>
+    </c-card>
+    {% endfor %}
+</c-layout-flow>
+{% else %}
+<p class="rvo-text--sm rvo-text--subtle"><em>Nog geen bijlagen.</em></p>
+{% endif %}
