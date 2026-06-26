@@ -306,3 +306,22 @@ def test_modal_edit_attachments_flow_carries_services_for_display() -> None:
     assert carried, "services not carried into the attachments step"
     catalog = [d for s in carried if isinstance(s, dict) and "attachments" in s for d in s["attachments"]["data"]]
     assert [(d["id"], d["filename"]) for d in catalog] == [("sso", "cert.pem")]
+
+
+def test_wizard_session_catalog_removal_and_ids() -> None:
+    """Removing an existing attachment edits the carried services in step_data (applied on
+    save), and _catalog_ids reflects what is already in the catalog for uniqueness checks."""
+    from types import SimpleNamespace
+
+    from opi.web.router_wizard_attachments import _catalog_ids, _remove_from_session_catalog
+
+    services = [{"attachments": {"data": [{"id": "sso", "filename": "a"}, {"id": "ca", "filename": "b"}]}}]
+    state = SimpleNamespace(
+        step_data={"attachments": {"services": services}},
+        get_merged_data=lambda: {"services": services},
+    )
+    assert _catalog_ids(state) == ["sso", "ca"]
+    _remove_from_session_catalog(state, "sso")
+    remaining = [a["id"] for s in state.step_data["attachments"]["services"] for a in s["attachments"]["data"]]
+    assert remaining == ["ca"]
+    assert _catalog_ids(state) == ["ca"]
