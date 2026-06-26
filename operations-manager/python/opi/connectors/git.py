@@ -46,6 +46,16 @@ def _obfuscate_git_command(cmd_str: str) -> str:
     return obfuscated
 
 
+class GitPushConflictError(RuntimeError):
+    """Raised when a push fails because a rebase on the remote branch hit a
+    content conflict that git cannot resolve automatically.
+
+    Distinct from generic push failures so callers can react specifically (for
+    example by re-reading the remote state and re-applying their intended change
+    instead of failing terminally). See push_changes(reapply=...).
+    """
+
+
 class GitConnector:
     """Connector for interacting with Git repositories using GitPython."""
 
@@ -825,6 +835,23 @@ class GitConnector:
             logger.error(f"Failed to rebase on {server_info}: {e}")
             raise
 
+    async def _reset_to_remote(self, branch: str | None = None) -> None:
+        """Discard local commits and working-tree changes, hard-resetting to
+        origin/<branch>.
+
+        Used to recover from an unresolvable rebase conflict before re-applying an
+        intended change on top of the current remote state.
+        """
+        target_branch = branch or self.branch
+        fetch_cmd = ["fetch", "origin", target_branch]
+        _, stderr, code = await self._run_git_command(fetch_cmd, cwd=self.__working_dir)
+        self._check_git_command_result(code, stderr, f"fetch origin/{target_branch}")
+
+        reset_cmd = ["reset", "--hard", f"origin/{target_branch}"]
+        _, stderr, code = await self._run_git_command(reset_cmd, cwd=self.__working_dir)
+        self._check_git_command_result(code, stderr, f"reset --hard origin/{target_branch}")
+        logger.info(f"Hard-reset working tree to origin/{target_branch}")
+
     async def file_changed_between_commits(self, file_path: str, old_commit: str, new_commit: str) -> bool:
         """
         Check if a specific file was changed between commits using git diff.
@@ -1098,7 +1125,11 @@ class GitConnector:
                 "Dit zou secrets in platte tekst naar git committen; operatie afgebroken."
             )
 
-    async def commit_and_push(self, message: str) -> None:
+    async def commit_and_push(
+        self,
+        message: str,
+        reapply: Callable[[], Coroutine[Any, Any, None]] | None = None,
+    ) -> None:
         """
         Commit all changes in the working directory and push to remote repository.
         This stages all changes (including new files, modifications, and deletions) before committing.
@@ -1106,6 +1137,10 @@ class GitConnector:
 
         Args:
             message: Commit message
+            reapply: Optional async callback that re-applies the intended change to
+                the working tree if the push hits an unresolvable rebase conflict.
+                See push_changes for the recovery contract. When omitted, a rebase
+                conflict raises GitPushConflictError.
         """
         logger.debug(f"Committing and pushing all changes: {message}")
 
@@ -1122,7 +1157,7 @@ class GitConnector:
 
         # Commit and push the changes
         await self.commit_changes(message)
-        await self.push_changes()
+        await self.push_changes(reapply=reapply, commit_message=message)
 
         logger.info(f"Successfully committed and pushed all changes: {message}")
 
@@ -1333,19 +1368,42 @@ class GitConnector:
         logger.debug(f"Successfully committed changes: {message}")
 
     # TODO: update push changes to handle rebase, and if rebase fails, commit and push to temporary branch
-    async def push_changes(self, branch: str | None = None, max_retries: int = 5) -> None:
+    async def push_changes(
+        self,
+        branch: str | None = None,
+        max_retries: int = 5,
+        reapply: Callable[[], Coroutine[Any, Any, None]] | None = None,
+        commit_message: str | None = None,
+    ) -> None:
         """
         Push committed changes to remote repository.
 
         If the push fails due to non-fast-forward (remote has newer commits),
         this method will automatically fetch, rebase, and retry the push.
 
+        If a non-fast-forward push then hits a content conflict during rebase
+        (concurrent writers touching the same file region, e.g. two sibling
+        deployment deletes editing the same project file), behaviour depends on
+        ``reapply``:
+
+        - When ``reapply`` is provided, the local commit is discarded, the working
+          tree is hard-reset to the current remote state, ``reapply`` re-applies the
+          intended change on top of it, and the push is retried. This converges
+          instead of failing on a textual conflict that is semantically trivial.
+        - When ``reapply`` is None (default), a ``GitPushConflictError`` is raised.
+
         Args:
             branch: Branch to push to (defaults to configured branch)
             max_retries: Maximum number of push attempts after rebase (default: 5)
+            reapply: Optional async callback that re-applies the caller's intended
+                change to the working tree (files only; staging and commit are
+                handled here). Invoked after a hard reset to the current remote.
+            commit_message: Commit message used when re-committing a re-applied
+                change. Required for the re-apply path to produce a clean commit.
 
         Raises:
-            RuntimeError: If push fails after all retries or if rebase has conflicts
+            GitPushConflictError: If rebase hits a conflict and no ``reapply`` is given.
+            RuntimeError: If push fails after all retries for other reasons.
         """
         await self.ensure_repo_cloned()
 
@@ -1380,8 +1438,21 @@ class GitConnector:
 
                 rebase_success = await self._rebase_on_remote(target_branch)
                 if not rebase_success:
+                    if reapply is not None:
+                        logger.warning(
+                            f"Rebase conflict on {target_branch}; resetting to current remote "
+                            f"and re-applying the intended change before retrying push"
+                        )
+                        await self._reset_to_remote(target_branch)
+                        await reapply()
+                        # Stage and commit the re-applied change on top of the
+                        # now-current remote state, then retry the push.
+                        await self._run_git_command(["add", "-A"], cwd=self.__working_dir)
+                        await self.commit_changes(commit_message or "Re-apply change after rebase conflict")
+                        continue
+
                     server_info = self._get_server_context()
-                    raise RuntimeError(
+                    raise GitPushConflictError(
                         f"Cannot push to {target_branch} on {server_info}: "
                         f"Remote has conflicting changes that cannot be automatically merged. "
                         f"Manual intervention required."
