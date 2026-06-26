@@ -1,0 +1,14 @@
+{# Identifier field for a new attachment. Re-rendered by validate-id (swapped into
+   #wiz-att-id-field) with the standard field error state when the id is invalid/duplicate,
+   so it matches every other form field instead of a separate alert. #}
+<c-text-input-field id="wiz-att-id" name="attachment_id" label="Identifier"
+    helperText="Kleine letters, cijfers en streepjes, max 40."
+    value="{{ attachment_id | default('', true) }}"
+    invalid="{{ 'true' if error else '' }}"
+    errorText="{{ error | default('', true) }}"
+    hx-post="/forms/wizard/create-project/attachments/validate-id"
+    hx-ext="ignore:json-enc"
+    hx-trigger="change"
+    hx-include="#wiz-att-id, #wiz-att-token"
+    hx-target="#wiz-att-id-field"
+    hx-swap="innerHTML" />
