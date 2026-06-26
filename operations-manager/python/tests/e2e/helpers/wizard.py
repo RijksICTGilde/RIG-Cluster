@@ -223,7 +223,7 @@ class WizardHelper:
         self.page.locator("#wiz-att-id").fill(attachment_id)
         self.page.locator("#wiz-att-file").set_input_files(file_path)
         self.page.locator("button:has-text('Uploaden')").first.click()
-        self.page.wait_for_selector(f"#wiz-att-status:has-text('{attachment_id}')", timeout=timeout)
+        self.page.wait_for_selector(f"#wiz-att-list:has-text('{attachment_id}')", timeout=timeout)
 
     def screenshot(self, name: str, directory: Path) -> Path:
         """Take a full-page screenshot and save it.
