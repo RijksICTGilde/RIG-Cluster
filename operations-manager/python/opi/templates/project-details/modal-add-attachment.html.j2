@@ -1,6 +1,7 @@
-{# Modal content: add a project attachment. Reuses the wizard upload-card UI but posts to
-   the direct (project-level) upload endpoint, which encrypts + appends + commits. The
-   endpoint swaps this same modal content with a success fragment or this form + an error. #}
+{# Modal content: add a project attachment. Uses the framework field component so the
+   identifier only shows an error state (red + errorText) when the server reports one,
+   never on a fresh/empty field. Posts to the direct /attachments/upload endpoint, which
+   swaps this same modal content with a success fragment or this form + the error. #}
 <div class="edit-section-content">
     <c-layout-flow gap="md">
         <p class="rvo-text--subtle">
@@ -9,21 +10,18 @@
         </p>
 
         {% if error %}
-        <div class="edit-section-error">{{ error }}</div>
+        <c-text-input-field id="add-att-id" name="attachment_id" label="Identifier"
+            helperText="Kleine letters, cijfers en streepjes, maximaal 40 tekens."
+            value="{{ attachment_id | default('', true) }}"
+            invalid="true" errorText="{{ error }}" />
+        {% else %}
+        <c-text-input-field id="add-att-id" name="attachment_id" label="Identifier"
+            helperText="Kleine letters, cijfers en streepjes, maximaal 40 tekens." />
         {% endif %}
 
-        <div>
-            <label class="utrecht-form-label" for="add-att-id">Identifier</label>
-            <span class="rvo-text--sm rvo-text--subtle"> (kleine letters, cijfers en streepjes, max 40)</span>
-            <input type="text" id="add-att-id" name="attachment_id"
-                   class="utrecht-textbox utrecht-textbox--html-input"
-                   maxlength="40"
-                   value="{{ attachment_id | default('', true) }}">
-        </div>
-
-        <div>
+        <div class="rvo-form-group">
             <label class="utrecht-form-label" for="add-att-file">Bestand</label>
-            <input type="file" id="add-att-file" name="file" class="rvo-file-input" required>
+            <input type="file" id="add-att-file" name="file" class="rvo-file-input">
         </div>
 
         <c-layout-flow row="true" gap="sm">
