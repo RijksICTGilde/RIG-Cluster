@@ -36,6 +36,7 @@ from opi.forms.wizard.session import (
     save_modal_state_by_token,
     save_wizard_state,
 )
+from opi.handlers.project_file_handler import attachment_is_referenced
 from opi.services import upload_staging
 
 logger = logging.getLogger(__name__)
@@ -73,17 +74,20 @@ def _list_response(
     staged: dict[str, dict[str, Any]],
     wizard_token: str | None,
     error: str | None = None,
+    reset: bool = False,
 ):
     """Render the staged list (with an optional error banner) as an HTML fragment.
 
     htmx does not swap non-2xx responses and an HTTPException renders as JSON, so upload
     errors are returned as this 200 HTML fragment instead, swapped into #wiz-att-status.
+    ``reset`` adds out-of-band swaps that clear the identifier + file inputs after a
+    successful upload so the form is ready for the next one.
     """
     templates = get_templates()
     items = [{"id": att_id, "filename": info.get("filename", att_id)} for att_id, info in staged.items()]
     return templates.TemplateResponse(
         "wizard/partials/attachments_staged_list.html.j2",
-        {"request": request, "staged": items, "wizard_token": wizard_token or "", "error": error},
+        {"request": request, "staged": items, "wizard_token": wizard_token or "", "error": error, "reset": reset},
     )
 
 
@@ -94,6 +98,48 @@ def _id_field_response(request: Request, error: str | None, attachment_id: str):
         "wizard/partials/attachments_id_field.html.j2",
         {"request": request, "error": error, "attachment_id": attachment_id},
     )
+
+
+def _session_services(state: Any) -> list:
+    """The project services carried in the wizard session (includes the attachments catalog)."""
+    if state is None:
+        return []
+    return state.get_merged_data().get("services") or []
+
+
+def _catalog_ids(state: Any) -> list[str]:
+    """Identifiers already present in the project's attachments catalog (this session)."""
+    return [
+        att["id"]
+        for entry in _session_services(state)
+        if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict)
+        for att in entry["attachments"].get("data") or []
+        if isinstance(att, dict) and att.get("id")
+    ]
+
+
+def _catalog_response(request: Request, state: Any, wizard_token: str | None, error: str | None = None):
+    """Render the existing-attachments (catalog) list as an HTML fragment."""
+    templates = get_templates()
+    return templates.TemplateResponse(
+        "wizard/partials/attachments_catalog_list.html.j2",
+        {"request": request, "services": _session_services(state), "wizard_token": wizard_token or "", "error": error},
+    )
+
+
+def _remove_from_session_catalog(state: Any, attachment_id: str) -> None:
+    """Drop an attachment from the catalog carried in step_data so the save persists the removal."""
+    for section_data in state.step_data.values():
+        services = section_data.get("services")
+        if not isinstance(services, list):
+            continue
+        for entry in services:
+            if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
+                data = entry["attachments"].get("data")
+                if isinstance(data, list):
+                    entry["attachments"]["data"] = [
+                        a for a in data if not (isinstance(a, dict) and a.get("id") == attachment_id)
+                    ]
 
 
 @wizard_attachments_router.get("/{flow_id}/attachments/list")
@@ -120,7 +166,8 @@ async def stage_attachment(
         raise HTTPException(status_code=400, detail="Geen actieve wizard-sessie")
 
     staged = _staged(state)
-    errors = AttachmentIdValidator().validate(attachment_id, {"existing_attachment_ids": list(staged.keys())})
+    existing = list(staged.keys()) + _catalog_ids(state)
+    errors = AttachmentIdValidator().validate(attachment_id, {"existing_attachment_ids": existing})
     if errors:
         return _list_response(request, staged, wizard_token, error="; ".join(errors))
 
@@ -133,7 +180,7 @@ async def stage_attachment(
     staged[attachment_id] = {"filename": file.filename or attachment_id, "content": f"staging:{token}"}
     save(state)
     logger.info(f"Staged attachment '{attachment_id}' for wizard flow '{flow_id}'")
-    return _list_response(request, staged, wizard_token)
+    return _list_response(request, staged, wizard_token, reset=True)
 
 
 @wizard_attachments_router.post("/{flow_id}/attachments/validate-id")
@@ -153,20 +200,25 @@ async def validate_attachment_id(
     staged = _staged(state) if state else {}
     error: str | None = None
     if attachment_id:
-        errors = AttachmentIdValidator().validate(attachment_id, {"existing_attachment_ids": list(staged.keys())})
+        existing = list(staged.keys()) + _catalog_ids(state)
+        errors = AttachmentIdValidator().validate(attachment_id, {"existing_attachment_ids": existing})
         error = "; ".join(errors) if errors else None
     return _id_field_response(request, error, attachment_id)
 
 
-@wizard_attachments_router.post("/{flow_id}/attachments/unstage")
+@wizard_attachments_router.post("/{flow_id}/attachments/unstage/{attachment_id}")
 @requires_sso
 async def unstage_attachment(
     request: Request,
     flow_id: str,
-    attachment_id: str = Form(...),
+    attachment_id: str,
     wizard_token: str | None = Form(None, alias="_wizard_token"),
 ):
-    """Remove a staged attachment and delete its staged file."""
+    """Remove a staged attachment and delete its staged file.
+
+    ``attachment_id`` rides the URL path, not an hx-vals JSON attribute: the ROOS c-button
+    re-emits attribute values with double quotes, which mangles inline JSON.
+    """
     state, save = _resolve_state(request, wizard_token)
     if state is None or save is None:
         raise HTTPException(status_code=400, detail="Geen actieve wizard-sessie")
@@ -179,3 +231,35 @@ async def unstage_attachment(
             upload_staging.delete_staged(content[len("staging:") :])
     save(state)
     return _list_response(request, staged, wizard_token)
+
+
+@wizard_attachments_router.post("/{flow_id}/attachments/remove-existing/{attachment_id}")
+@requires_sso
+async def remove_existing_attachment(
+    request: Request,
+    flow_id: str,
+    attachment_id: str,
+    wizard_token: str | None = Form(None, alias="_wizard_token"),
+):
+    """Remove an existing catalog attachment within the wizard session (applied on save).
+
+    Done in the session (not an immediate delete) because the wizard carries the catalog
+    and would otherwise re-write the deleted entry back on save. Blocked when a component
+    still references the attachment.
+    """
+    state, save = _resolve_state(request, wizard_token)
+    if state is None or save is None:
+        raise HTTPException(status_code=400, detail="Geen actieve wizard-sessie")
+
+    if attachment_is_referenced(state.get_merged_data(), attachment_id):
+        return _catalog_response(
+            request,
+            state,
+            wizard_token,
+            error=f"Bijlage '{attachment_id}' is in gebruik door een component en kan niet verwijderd worden.",
+        )
+
+    _remove_from_session_catalog(state, attachment_id)
+    save(state)
+    logger.info(f"Removed attachment '{attachment_id}' from the session catalog for flow '{flow_id}'")
+    return _catalog_response(request, state, wizard_token)

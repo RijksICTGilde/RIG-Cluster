@@ -2,23 +2,13 @@
 {# CSRF inherits from the surrounding wizard step form's hx-headers. _wizard_token (modal flow) #}
 {# routes staging to the modal session; absent => cookie session. No auto hx-trigger=load (it is #}
 {# fragile inside the modal); freshly staged files appear in #wiz-att-status after upload. #}
-{% set ns = namespace(items=[]) %}
-{% for s in services | default([]) %}
-  {% if s is mapping and s.attachments is mapping %}
-    {% for e in s.attachments.data | default([]) %}{% set ns.items = ns.items + [e] %}{% endfor %}
-  {% endif %}
-{% endfor %}
 <c-layout-flow gap="lg">
     <c-card outline="true" padding="md" backgroundColor="grijs-050">
         <c-layout-flow gap="sm">
             <c-heading type="h3" textContent="Bijlagen in dit project" />
-            {% if ns.items %}
-            {% for att in ns.items %}
-            <div class="rvo-text--sm"><strong>{{ att.filename | default(att.id) }}</strong> <span class="rvo-text--subtle">(id: {{ att.id }})</span></div>
-            {% endfor %}
-            {% else %}
-            <p class="rvo-text--sm rvo-text--subtle"><em>Nog geen bijlagen.</em></p>
-            {% endif %}
+            <div id="wiz-att-catalog">
+                {% include "wizard/partials/attachments_catalog_list.html.j2" %}
+            </div>
         </c-layout-flow>
     </c-card>
 

@@ -9,9 +9,9 @@
         <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">
             <div><strong>{{ att.filename }}</strong> <span class="rvo-text--sm rvo-text--subtle">(id: {{ att.id }})</span></div>
             <c-button type="button" kind="secondary" size="xs" label="Verwijderen"
-                      hx-post="/forms/wizard/create-project/attachments/unstage"
+                      hx-post="/forms/wizard/create-project/attachments/unstage/{{ att.id }}"
                       hx-ext="ignore:json-enc"
-                      hx-vals='{"attachment_id": "{{ att.id }}", "_wizard_token": "{{ wizard_token | default('') }}"}'
+                      hx-include="#wiz-att-token"
                       hx-target="#wiz-att-status"
                       hx-swap="innerHTML"
                       hx-disabled-elt="this" />
@@ -21,4 +21,11 @@
 </c-layout-flow>
 {% else %}
 <p class="rvo-text--sm rvo-text--subtle"><em>Nog geen bijlagen geüpload.</em></p>
+{% endif %}
+{% if reset %}
+{# Out-of-band: clear the identifier + file inputs after a successful upload. #}
+<div id="wiz-att-id-field" hx-swap-oob="true">
+    {% include "wizard/partials/attachments_id_field.html.j2" %}
+</div>
+<input type="file" id="wiz-att-file" name="file" class="rvo-file-input" hx-swap-oob="true">
 {% endif %}
