@@ -56,7 +56,9 @@ _connection_lock = asyncio.Lock()  # Protect concurrent access within a worker
 MAX_CONNECTIONS_PER_USER = 5
 MAX_GLOBAL_CONNECTIONS = 100
 MAX_MESSAGES_PER_SECOND = 100  # Rate limit for log messages
-SESSION_MAX_AGE_SECONDS = 86400  # 24 hours - sessions older than this are rejected
+# Idle session timeout for WebSocket handshakes, shared with the HTTP
+# SessionMiddleware so both reject sessions that have been idle too long.
+SESSION_MAX_AGE_SECONDS = settings.SESSION_MAX_AGE_SECONDS
 MAX_CLIENT_MESSAGE_SIZE = 1024  # 1KB max for client messages (actions like pause/resume/switch)
 
 # Heartbeat interval
