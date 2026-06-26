@@ -1,0 +1,42 @@
+{# Modal content: add a project attachment. Reuses the wizard upload-card UI but posts to
+   the direct (project-level) upload endpoint, which encrypts + appends + commits. The
+   endpoint swaps this same modal content with a success fragment or this form + an error. #}
+<div class="edit-section-content">
+    <c-layout-flow gap="md">
+        <p class="rvo-text--subtle">
+            Upload een bestand (bijvoorbeeld een certificaat: cert + key in één PEM). Max 256 KB.
+            Koppelen aan een component doe je daarna per component.
+        </p>
+
+        {% if error %}
+        <div class="edit-section-error">{{ error }}</div>
+        {% endif %}
+
+        <div>
+            <label class="utrecht-form-label" for="add-att-id">Identifier</label>
+            <span class="rvo-text--sm rvo-text--subtle"> (kleine letters, cijfers en streepjes, max 40)</span>
+            <input type="text" id="add-att-id" name="attachment_id"
+                   class="utrecht-textbox utrecht-textbox--html-input"
+                   pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="40" required
+                   value="{{ attachment_id | default('', true) }}">
+        </div>
+
+        <div>
+            <label class="utrecht-form-label" for="add-att-file">Bestand</label>
+            <input type="file" id="add-att-file" name="file" class="rvo-file-input" required>
+        </div>
+
+        <c-layout-flow row="true" gap="sm">
+            <c-button kind="primary" label="Uploaden"
+                      hx-post="/projects/{{ project_name }}/attachments/upload"
+                      hx-ext="ignore:json-enc"
+                      hx-encoding="multipart/form-data"
+                      hx-include="#add-att-id, #add-att-file"
+                      hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
+                      hx-target="#edit-section-inner"
+                      hx-swap="innerHTML"
+                      hx-disabled-elt="this" />
+            <c-button kind="secondary" label="Annuleren" @click="closeEditModal()" />
+        </c-layout-flow>
+    </c-layout-flow>
+</div>

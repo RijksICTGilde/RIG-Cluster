@@ -3,7 +3,13 @@
 <div id="attachments-section">
 <c-card outline="true" padding="xl" backgroundColor="wit">
     <c-layout-flow gap="lg">
-        <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="map" size="xl" color="hemelblauw" />Bijlagen</c-heading>
+        <c-layout-flow row="true" justifyContent="space-between" alignItems="center">
+            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="map" size="xl" color="hemelblauw" />Bijlagen</c-heading>
+            {% if can_edit %}
+            <c-button kind="secondary" size="sm" label="Toevoegen" showIcon="before" icon="plus"
+                      @click="openEditModal('modal-add-attachment', 'Bijlage toevoegen')" />
+            {% endif %}
+        </c-layout-flow>
         <p class="rvo-text--subtle">Geuploade bestanden (bijvoorbeeld certificaten) die je per component als bestand of als env-var kunt koppelen.</p>
 
         {% if project.attachments and project.attachments|length > 0 %}
@@ -29,10 +35,6 @@
         </c-layout-flow>
         {% else %}
         <p class="rvo-text--subtle"><em>Nog geen bijlagen geupload.</em></p>
-        {% endif %}
-
-        {% if can_edit %}
-        <p class="rvo-text--sm rvo-text--subtle">Nieuwe bijlagen uploaden doe je via <strong>Services beheren &rarr; Bijlagen</strong>.</p>
         {% endif %}
     </c-layout-flow>
 </c-card>
