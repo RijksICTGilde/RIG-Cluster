@@ -3220,6 +3220,26 @@ def attachment_is_referenced(project_data: dict[str, Any], attachment_id: str) -
     return False
 
 
+def extract_attachment_usage(project_data: dict[str, Any]) -> dict[str, list[str]]:
+    """Map each attachment id to the component names that reference it.
+
+    Mirrors ``attachment_is_referenced`` (component uses) so the delete-confirmation modal
+    can show exactly why the server-side delete-guard would refuse a deletion.
+    """
+    usage: dict[str, list[str]] = {}
+    for component in project_data.get("components", []):
+        if not isinstance(component, dict):
+            continue
+        name = component.get("name", "")
+        for use in extract_component_attachment_uses(component):
+            ref = use.get("reference")
+            if ref:
+                names = usage.setdefault(ref, [])
+                if name and name not in names:
+                    names.append(name)
+    return usage
+
+
 def extract_service_names_from_component(component: dict[str, Any]) -> list[str]:
     """
     Extract service names from a component's services list.
