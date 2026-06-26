@@ -666,9 +666,14 @@ class ArgoManager:
 
             logger.info(f"Created infrastructure AppProject: {appproject_file_path}")
 
-            # Create repository secret for infrastructure (same as normal deployments)
+            # Create repository secret for infrastructure (same as normal deployments).
+            # Scope the secret name to the infrastructure app so it does not collide with the
+            # parent project's repository secret (same repo URL) when both subfolders are
+            # rendered into the single user-applications ArgoCD app (RepeatedResourceWarning).
             repo_name = repo_info.get("name", "main-repo")
-            unique_repo_name = generate_argocd_repository_secret_name(project_name, repo_name)
+            unique_repo_name = generate_argocd_repository_secret_name(
+                generate_infrastructure_application_name(project_name), repo_name
+            )
 
             # Prepare variables for the manifest template
             variables = await self.prepare_repository_variables(
