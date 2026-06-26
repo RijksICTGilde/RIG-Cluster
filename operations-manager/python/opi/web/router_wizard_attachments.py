@@ -36,7 +36,11 @@ from opi.forms.wizard.session import (
     save_modal_state_by_token,
     save_wizard_state,
 )
-from opi.handlers.project_file_handler import attachment_is_referenced
+from opi.handlers.project_file_handler import (
+    attachment_is_referenced,
+    extract_attachment_catalog,
+    find_attachment_data_list,
+)
 from opi.services import upload_staging
 
 logger = logging.getLogger(__name__)
@@ -117,28 +121,15 @@ def _session_services(state: Any) -> list:
 
 def _catalog_ids(state: Any) -> list[str]:
     """Identifiers already present in the project's attachments catalog (this session)."""
-    return [
-        att["id"]
-        for entry in _session_services(state)
-        if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict)
-        for att in entry["attachments"].get("data") or []
-        if isinstance(att, dict) and att.get("id")
-    ]
+    return list(extract_attachment_catalog(state.get_merged_data()).keys()) if state else []
 
 
 def _remove_from_session_catalog(state: Any, attachment_id: str) -> None:
     """Drop an attachment from the catalog carried in step_data so the save persists the removal."""
     for section_data in state.step_data.values():
-        services = section_data.get("services")
-        if not isinstance(services, list):
-            continue
-        for entry in services:
-            if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
-                data = entry["attachments"].get("data")
-                if isinstance(data, list):
-                    entry["attachments"]["data"] = [
-                        a for a in data if not (isinstance(a, dict) and a.get("id") == attachment_id)
-                    ]
+        data = find_attachment_data_list(section_data.get("services"))
+        if data is not None:
+            data[:] = [a for a in data if not (isinstance(a, dict) and a.get("id") == attachment_id)]
 
 
 @wizard_attachments_router.get("/{flow_id}/attachments/list")

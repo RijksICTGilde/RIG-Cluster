@@ -1,138 +1,50 @@
-"""Web endpoints for managing project file attachments (upload, delete).
+"""Web endpoint for deleting a project file attachment.
 
-For an existing project the AGE public key already exists, so uploads are
-encrypted immediately and written into the project-level ``attachments``
-service catalog. The wizard/create flow (which has no key yet) will use a
-separate staging mechanism; that is out of scope here.
+The catalog (id -> {filename, content}) lives under a project-level ``attachments`` service
+entry; new uploads run through the wizard staging flow (router_wizard_attachments).
 """
 
 import logging
-from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from ruamel.yaml.scalarstring import LiteralScalarString
+from fastapi import APIRouter, HTTPException, Request
 
 from opi.core.auth_decorators import requires_sso
-from opi.core.templates import get_templates
-from opi.forms.editables.validators import AttachmentIdValidator
 from opi.handlers.project_file_handler import (
     attachment_is_referenced,
-    extract_attachment_catalog,
+    find_attachment_data_list,
     save_project_file,
 )
 from opi.services.project_service import get_project_service
 from opi.services.resource_tuning_service import commit_project_yaml
-from opi.utils.age import encrypt_file_to_age_block
 from opi.web.project_edit_security import require_project_edit_access
 
 logger = logging.getLogger(__name__)
 
 attachments_router = APIRouter(prefix="/projects", tags=["attachments"])
 
-ATTACHMENT_MAX_SIZE_BYTES = 256 * 1024
-
-
-def _attachments_data_list(project_data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return the catalog ``data`` list under the project-level attachments service, creating it if absent."""
-    services = project_data.setdefault("services", [])
-    for entry in services:
-        if isinstance(entry, dict) and "attachments" in entry:
-            service_data = entry["attachments"]
-            if not isinstance(service_data, dict):
-                service_data = {}
-                entry["attachments"] = service_data
-            return service_data.setdefault("data", [])
-    data: list[dict[str, Any]] = []
-    services.append({"attachments": {"data": data}})
-    return data
-
-
-def _section_response(request: Request, project_name: str, project_data: dict[str, Any], user_role: str | None):
-    """Render the attachments section as an HTMX fragment after a mutation."""
-    templates = get_templates()
-    attachments = [
-        {"id": entry["id"], "filename": entry.get("filename", entry["id"])}
-        for entry in extract_attachment_catalog(project_data).values()
-    ]
-    return templates.TemplateResponse(
-        "project-details/section-attachments.html.j2",
-        {
-            "request": request,
-            "project": {"name": project_name, "user_role": user_role, "attachments": attachments},
-        },
-    )
-
-
-@attachments_router.post("/{project_name}/attachments/upload")
-@requires_sso
-async def upload_attachment(
-    request: Request,
-    project_name: str,
-    attachment_id: str = Form(...),
-    file: UploadFile = File(...),
-):
-    """Encrypt an uploaded file and store it in the project's attachments catalog."""
-    project, user_email = require_project_edit_access(request, project_name)
-    project_data = project.data or {}
-
-    existing_ids = list(extract_attachment_catalog(project_data).keys())
-    errors = AttachmentIdValidator().validate(attachment_id, {"existing_attachment_ids": existing_ids})
-    if errors:
-        raise HTTPException(status_code=400, detail="; ".join(errors))
-
-    raw = await file.read()
-    if not raw:
-        raise HTTPException(status_code=400, detail="Leeg bestand geupload")
-    if len(raw) > ATTACHMENT_MAX_SIZE_BYTES:
-        raise HTTPException(status_code=413, detail=f"Bestand te groot (max {ATTACHMENT_MAX_SIZE_BYTES // 1024} KB)")
-
-    public_key = (project_data.get("config") or {}).get("age-public-key")
-    if not public_key:
-        raise HTTPException(status_code=400, detail="Project heeft geen age-public-key")
-
-    block = await encrypt_file_to_age_block(raw, public_key)
-    _attachments_data_list(project_data).append(
-        {
-            "id": attachment_id,
-            "filename": file.filename or attachment_id,
-            "content": LiteralScalarString(block),
-        }
-    )
-
-    save_project_file(project.filename, project_data)
-    get_project_service().load_project_from_data(project_data, project.filename)
-    await commit_project_yaml(project_name, f"{project_name}.yaml", project_data, f"Add attachment '{attachment_id}'")
-    logger.info(f"Stored attachment '{attachment_id}' for project '{project_name}'")
-
-    user_role = get_project_service().get_user_role_for_project(project_name, user_email)
-    return _section_response(request, project_name, project_data, user_role)
-
 
 @attachments_router.delete("/{project_name}/attachments/{attachment_id}")
 @requires_sso
 async def delete_attachment(request: Request, project_name: str, attachment_id: str):
-    """Remove an attachment from the catalog, refusing if a component still references it."""
-    project, user_email = require_project_edit_access(request, project_name)
+    """Remove an attachment from the catalog, refusing if it is still in use."""
+    project, _user_email = require_project_edit_access(request, project_name)
     project_data = project.data or {}
 
     if attachment_is_referenced(project_data, attachment_id):
         raise HTTPException(
             status_code=409,
-            detail=f"Bijlage '{attachment_id}' is in gebruik door een component en kan niet worden verwijderd",
+            detail=f"Bijlage '{attachment_id}' is in gebruik en kan niet worden verwijderd",
         )
 
-    data = _attachments_data_list(project_data)
-    remaining = [entry for entry in data if entry.get("id") != attachment_id]
-    if len(remaining) == len(data):
+    data = find_attachment_data_list(project_data.get("services"))
+    remaining = [entry for entry in (data or []) if entry.get("id") != attachment_id]
+    if data is None or len(remaining) == len(data):
         raise HTTPException(status_code=404, detail=f"Bijlage '{attachment_id}' niet gevonden")
     data[:] = remaining
 
     save_project_file(project.filename, project_data)
     get_project_service().load_project_from_data(project_data, project.filename)
-    await commit_project_yaml(
-        project_name, f"{project_name}.yaml", project_data, f"Remove attachment '{attachment_id}'"
-    )
+    await commit_project_yaml(project_name, f"{project_name}.yaml", project_data, f"Remove attachment '{attachment_id}'")
     logger.info(f"Removed attachment '{attachment_id}' from project '{project_name}'")
 
-    user_role = get_project_service().get_user_role_for_project(project_name, user_email)
-    return _section_response(request, project_name, project_data, user_role)
+    return {"success": True}
