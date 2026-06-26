@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-
 from tests.e2e.helpers.wizard import WizardHelper
 
 if TYPE_CHECKING:
@@ -58,10 +57,10 @@ def test_attachments_upload_then_unstage(app_server: str, auth_page: Page, tmp_p
     cert.write_text("-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----\n")
     wizard.upload_attachment("cacert", str(cert))
 
-    status = auth_page.locator("#wiz-att-status")
+    status = auth_page.locator("#wiz-att-list")
     assert "ca.pem" in (status.text_content() or "")
     assert "cacert" in (status.text_content() or "")
 
     # Unstage it again -> list returns to empty.
-    auth_page.locator("#wiz-att-status button:has-text('Verwijderen')").first.click()
-    auth_page.wait_for_selector("#wiz-att-status:has-text('Nog geen bijlagen')", timeout=10000)
+    auth_page.locator("#wiz-att-list button:has-text('Verwijderen')").first.click()
+    auth_page.wait_for_selector("#wiz-att-list:has-text('Nog geen bijlagen')", timeout=10000)
