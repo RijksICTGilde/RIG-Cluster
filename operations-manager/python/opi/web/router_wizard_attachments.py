@@ -87,12 +87,12 @@ def _list_response(
     )
 
 
-def _id_error_response(request: Request, error: str | None):
-    """Render the inline identifier-validation result (an alert, or empty to clear it)."""
+def _id_field_response(request: Request, error: str | None, attachment_id: str):
+    """Re-render the identifier field with the standard field-error state (invalid + errorText)."""
     templates = get_templates()
     return templates.TemplateResponse(
-        "wizard/partials/attachments_id_error.html.j2",
-        {"request": request, "error": error},
+        "wizard/partials/attachments_id_field.html.j2",
+        {"request": request, "error": error, "attachment_id": attachment_id},
     )
 
 
@@ -155,7 +155,7 @@ async def validate_attachment_id(
     if attachment_id:
         errors = AttachmentIdValidator().validate(attachment_id, {"existing_attachment_ids": list(staged.keys())})
         error = "; ".join(errors) if errors else None
-    return _id_error_response(request, error)
+    return _id_field_response(request, error, attachment_id)
 
 
 @wizard_attachments_router.post("/{flow_id}/attachments/unstage")
