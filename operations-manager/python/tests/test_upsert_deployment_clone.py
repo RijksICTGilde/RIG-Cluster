@@ -1,9 +1,16 @@
 """Tests for the config-clone behavior of upsert_deployment (create path).
 
 Cloning a deployment (cloneFrom, used by CI to create PR previews) deep-copies
-the source deployment's config. The backup block must NOT be copied: inheriting
-the source's schedule made every PR preview accumulate nightly snapshots that
-nothing ever cleaned up.
+the source deployment's config. Several fields must NOT be copied:
+
+- The backup block: inheriting the source's schedule made every PR preview
+  accumulate nightly snapshots that nothing ever cleaned up.
+- The custom-domain config (base-domain, domain-mode, domain-format, issuer):
+  cloned deployments use the default cluster domain. domain-format in
+  particular is dangerous to inherit: a dot-based format like
+  ``component.subdomain`` without the source's base-domain resolves onto the
+  cluster wildcard, producing a multi-label host the single-label wildcard
+  cert cannot cover (browser cert warning).
 """
 
 from types import SimpleNamespace
@@ -95,9 +102,54 @@ class TestUpsertDeploymentClone:
 
         assert result["success"] is True
         new_deployment = next(d for d in project_data["deployments"] if d["name"] == "pr-123")
-        assert new_deployment["domain-format"] == "subdomain-only"
         assert new_deployment["cluster"] == "odcn-production"
         assert new_deployment["clone-from"] == {"type": "deployment", "reference": "production", "mode": "once"}
+
+    async def test_clone_does_not_inherit_dot_domain_format(self):
+        """Regression: a clone of a nice-url/dot deployment must not inherit
+        its domain-format, base-domain, domain-mode or subdomain.
+
+        Mirrors the real regel-k4c bug: PR previews cloned from the production
+        ``regelrecht`` deployment (domain-mode nice-url, base-domain rijks.app,
+        domain-format component.subdomain) inherited the dot format but lost
+        base-domain, so the host resolved to ``editor.<pr>.<cluster-wildcard>``
+        which the single-label wildcard cert does not cover.
+        """
+        pm = _make_manager()
+        project_data = {
+            "name": "demo",
+            "clusters": ["odcn-production"],
+            "repositories": [{"name": "main-repo"}],
+            "deployments": [
+                {
+                    "name": "regelrecht",
+                    "cluster": "odcn-production",
+                    "namespace": "demo",
+                    "domain-mode": "nice-url",
+                    "subdomain": "regelrecht",
+                    "base-domain": "rijks.app",
+                    "domain-format": "component.subdomain",
+                    "issuer": "letsencrypt",
+                    "components": [{"reference": "editor", "image": "ghcr.io/org/editor:v1"}],
+                }
+            ],
+        }
+        _wire_create_mocks(pm, project_data)
+
+        with patch("opi.manager.project_manager.ensure_domain_requests"):
+            result = await pm.upsert_deployment(
+                deployment_name="pr857",
+                components=[SimpleNamespace(reference="editor", image="ghcr.io/org/editor:pr857")],
+                clone_from="regelrecht",
+            )
+
+        assert result["success"] is True
+        new_deployment = next(d for d in project_data["deployments"] if d["name"] == "pr857")
+        # The custom-domain config must NOT leak into the clone.
+        assert "domain-format" not in new_deployment
+        assert "base-domain" not in new_deployment
+        assert "domain-mode" not in new_deployment
+        assert "issuer" not in new_deployment
 
     async def test_clone_leaves_source_backup_untouched(self):
         pm = _make_manager()

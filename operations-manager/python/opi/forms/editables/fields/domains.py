@@ -71,6 +71,7 @@ DOMAIN_ROOT_COMPONENT_EDITABLE = Editable(
     values_provider="RootComponentOptionsProvider",
     depends_on="deployments[*]/domain-format",
     show_when={"value": ROOT_COMPONENT_FORMAT_IDS},
+    remove_when_none=True,
 )
 
 DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE = Editable(

@@ -6261,9 +6261,13 @@ class ProjectManager:
 
                         # Clone properties from source, excluding fields that must be
                         # unique or that tie the deployment to a custom domain setup.
-                        # Custom domains (base-domain, domain-mode, issuer) are not copied
-                        # because cloned deployments should use the default cluster domain
-                        # rather than inheriting the source's DNS config.
+                        # Custom domains (base-domain, domain-mode, domain-format, issuer)
+                        # are not copied because cloned deployments should use the default
+                        # cluster domain rather than inheriting the source's DNS config.
+                        # domain-format in particular must be dropped: a dot-based format
+                        # (e.g. component.subdomain) inherited without the source's
+                        # base-domain resolves onto the cluster wildcard, producing a
+                        # multi-label host the single-label wildcard cert cannot cover.
                         # The backup block is not copied either: backups are an explicit
                         # per-deployment choice, and inheriting the source's schedule made
                         # every PR preview accumulate nightly snapshots.
@@ -6273,6 +6277,7 @@ class ProjectManager:
                             "subdomain",
                             "base-domain",
                             "domain-mode",
+                            "domain-format",
                             "issuer",
                             "backup",
                         ]
