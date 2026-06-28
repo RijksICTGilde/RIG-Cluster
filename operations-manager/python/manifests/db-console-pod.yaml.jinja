@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ name }}"
+  namespace: "{{ namespace }}"
+  labels:
+    # app = the console's own name, so the console Service selects only this pod.
+    app: "{{ name }}"
+    # deployment = the TARGET deployment, so the existing tenant NetworkPolicy
+    # (which selects on `deployment`) already permits egress to PostgreSQL.
+    deployment: "{{ target_deployment }}"
+    project: "{{ project.name }}"
+    component: application
+    network-policy: allow-db-access
+{% for k, v in (extra_labels or {}).items() %}
+    {{ k }}: {{ v | tojson }}
+{% endfor %}
+{% if extra_annotations %}
+  annotations:
+{% for k, v in extra_annotations.items() %}
+    {{ k }}: {{ v | tojson }}
+{% endfor %}
+{% endif %}
+spec:
+  restartPolicy: Never
+  # Hard self-terminate backstop: even if the reaper is down, the pod stops
+  # serving after the TTL. The reaper still removes the rest of the bundle.
+  activeDeadlineSeconds: {{ ttl_seconds | default(3600) }}
+  securityContext:
+{% include 'pod-security-context.yaml.jinja' %}
+  # NB: list items below are indented to match the shared sidecar partial
+  # (8-space items, 10-space fields), which is included verbatim.
+  containers:
+        - name: console
+          image: {{ (tool_image | default('', true)) | tojson }}
+          imagePullPolicy: {{ image_pull_policy | default('IfNotPresent') }}
+{% if tool_args %}
+          args:
+{% for a in tool_args %}
+            - {{ a | tojson }}
+{% endfor %}
+{% endif %}
+          ports:
+            - containerPort: {{ application_port }}
+              name: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          env:
+            # Give the tool a writable HOME (dbgate keeps state under $HOME);
+            # the emptyDir below makes it writable under an arbitrary UID.
+            - name: HOME
+              value: {{ (tool_home | default('/tmp', true)) | tojson }}
+{% for env_name, env_value in (extra_env or {}).items() %}
+            - name: {{ env_name | tojson }}
+              value: {{ env_value | tojson }}
+{% endfor %}
+          envFrom:
+            - secretRef:
+                name: {{ secret_name | tojson }}
+          volumeMounts:
+            - name: tool-home
+              mountPath: {{ (tool_home | default('/tmp', true)) | tojson }}
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          startupProbe:
+            tcpSocket:
+              port: {{ application_port }}
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            tcpSocket:
+              port: {{ application_port }}
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            failureThreshold: 3
+{% set section = 'container' %}
+{% include 'sidecar-authorization-wall.yaml.jinja' %}
+  volumes:
+        - name: tool-home
+          emptyDir:
+            sizeLimit: "256Mi"
+{% set section = 'volumes' %}
+{% include 'sidecar-authorization-wall.yaml.jinja' %}

@@ -2,7 +2,7 @@
 
 **Status**: Implemented (on-demand + nightly, VPA-driven memory + CPU)
 **Created**: 2026-02-10
-**Updated**: 2026-06-23
+**Updated**: 2026-06-26
 
 ## Overview
 
@@ -10,8 +10,10 @@ The auto resource tuning system computes recommended Kubernetes resource request
 
 Recommendations come from one of two sources:
 
-- **VPA recommender** (on clusters where `supports_vpa` is true, e.g. `odcn-production`): an Off-mode `VerticalPodAutoscaler` is generated per component. The platform's recommender publishes CPU **and** memory recommendations to its `.status`, which the tuner reads. This is the preferred source and is the only one that tunes CPU.
-- **Prometheus** (fallback on non-VPA clusters, and for components whose VPA has no recommendation yet): the historical memory-usage window described below. Memory only.
+- **VPA recommender** (on clusters where `supports_vpa` is true, e.g. `odcn-production`): an Off-mode `VerticalPodAutoscaler` is generated per component. The platform's recommender publishes CPU **and** memory recommendations to its `.status`, which the tuner reads. It is the only source that tunes CPU. For memory it is used **only when its target exceeds the recommender's built-in floor** (`VPA_MEMORY_FLOOR_MI`, 250Mi); the upstream recommender never advises below that floor, so a target sitting at it means "real usage is below the floor", not a genuine need (see Recommender Floor below).
+- **Prometheus** (fallback on non-VPA clusters, for components whose VPA has no recommendation yet, **and whenever the VPA memory target is at the floor**): the historical memory-usage window described below. Memory only.
+
+Because the VPA target already carries its own percentile + safety margin, the tuner adds **no buffer of its own on top of a VPA memory target**. The percentage buffer and the flat 25Mi headroom apply **only to raw Prometheus measurements**.
 
 Available both as an on-demand API endpoint (`POST /api/resources/{project_name}/tune`) and as a nightly background sweep that tunes the whole estate (see Nightly Auto-Tuning).
 
@@ -37,9 +39,9 @@ For each component in the target deployment(s):
 
 1. Skip if opted out (`auto-tune-resources: false`) or the deployment is not Available.
 2. Determine the recommendation source:
-   - If the cluster has VPA and the component's `VerticalPodAutoscaler` has a populated `.status` → use its `target` (memory **and** CPU).
-   - Otherwise fall back to Prometheus `max_over_time(container_memory_working_set_bytes{...})` over `RESOURCE_TUNING_WINDOW_HOURS` (memory only).
-   - OOM kills are always read from Prometheus (`kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}`).
+   - **CPU**: if the cluster has VPA and the component's `VerticalPodAutoscaler` has a populated `.status` → use its CPU `target`. (No Prometheus CPU path exists.)
+   - **Memory**: use the VPA memory `target` **only if it exceeds `VPA_MEMORY_FLOOR_MI`** (the recommender's floor). Otherwise (no VPA, empty `.status`, or target at the floor) fall back to Prometheus `max_over_time(container_memory_working_set_bytes{...})` over `RESOURCE_TUNING_WINDOW_HOURS`.
+   - OOM kills are always read from Prometheus (`kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}`); when OOM kills are present the VPA target is not used (the OOM path drives the limit instead).
 3. Compute the recommendation (analyzer), apply the deadband gate, OOM floor, and clamps.
 4. Write changed values to the deployment-level override and propagate the request to the base component definition (see below).
 5. Commit once per project, then reprocess so ArgoCD redeploys.
@@ -49,9 +51,13 @@ For each component in the target deployment(s):
 Tuning drives the **request** (the reserved memory that counts against cluster
 capacity); the limit is treated as a ceiling:
 
-- **Request** = `recommendation * (1 + buffer%)`, where `recommendation` is the
-  VPA `target` (VPA path) or the Prometheus peak `max_over_time` (fallback).
-  Apps using >= 100Mi get an extra flat 25Mi headroom on top of the percentage buffer.
+- **Request**:
+  - **Prometheus path**: `peak * (1 + buffer%)`, where `peak` is the Prometheus
+    `max_over_time`. Apps using >= 100Mi get an extra flat 25Mi headroom on top of
+    the percentage buffer.
+  - **VPA path**: the VPA `target` is taken **as-is, with no buffer and no 25Mi
+    headroom**: it already includes the recommender's own margin. (The reason
+    string reads `Request: VPA target <N>Mi = <N>Mi` rather than `max ... + 25%`.)
 - **Limit**:
   - If the current limit **equals** the current request (the untouched default),
     the limit follows the request so the two stay equal.
@@ -63,6 +69,26 @@ Subject to the cluster memory minimum (default 25Mi) and maximum; the request is
 capped to never exceed the limit; and the **deviation deadband** (below) decides
 whether the change is worth committing.
 
+### Recommender Floor
+
+The upstream VPA recommender never recommends below a built-in minimum
+(`podMinMemoryMb`, 250Mi by default; `podMinCPUMillicores`, 25m). When a workload
+genuinely uses less than that, the recommender clamps its `target` **up** to the
+floor. So a memory target of exactly 250Mi does not mean "this pod needs 250Mi":
+it means "this pod uses less than 250Mi and the recommender won't say how much
+less". Taken at face value this over-provisions every small workload, which is the
+common case here.
+
+To keep memory requests usage-based, the tuner treats a VPA memory target at/below
+`VPA_MEMORY_FLOOR_MI` as **no usable signal** and falls back to the Prometheus
+measurement (the real usage), which has no such floor. `VPA_MEMORY_FLOOR_MI` is a
+plain mirror of the recommender's `--pod-recommendation-min-allowed-memory-mb`
+flag: if the platform changes that flag, this constant must change with it.
+
+This refinement is **memory-only** by design (see the note under the CPU
+algorithm). Lowering the recommender's floor platform-wide, the alternative that
+would also fix CPU, lives outside this repo (it is a recommender deployment flag).
+
 ### Recommendation Algorithm (CPU)
 
 CPU is tuned only on the VPA path (the Prometheus fallback leaves CPU untouched).
@@ -71,6 +97,12 @@ or emergency path:
 
 - **Request** = VPA cpu `target * (1 + buffer%)`, clamped to `[min_cpu_m, max_cpu_request_m]` (25m..250m on odcn).
 - **Limit** follows the same frozen-vs-equal rule as memory, clamped to `max_cpu_limit_m` (4000m on odcn).
+
+Note: the memory-only refinements (the `VPA_MEMORY_FLOOR_MI` fallback and the
+"no buffer on a VPA target" rule) do **not** apply to CPU. CPU still adds the
+buffer on top of the VPA target and has no Prometheus fallback, so a component
+whose CPU target sits at the recommender floor stays at `floor + buffer` (e.g.
+`25m + 25% ≈ 31m`). CPU is compressible and cheap, so this is accepted.
 
 The "Geheugen kan worden verminderd" portal card and its saving figure are
 expressed as the **request** reduction, since requests are what free scheduling
@@ -147,7 +179,8 @@ Detects broken deployments (crash loops, missing images, OOM kills) and disables
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `RESOURCE_TUNING_WINDOW_HOURS` | `24` | Prometheus lookback window |
-| `RESOURCE_TUNING_MEMORY_BUFFER_PERCENT` | `25` | Headroom above observed/VPA target |
+| `RESOURCE_TUNING_MEMORY_BUFFER_PERCENT` | `25` | Headroom above the Prometheus measurement (memory). Not applied to a VPA memory target; still applied to the VPA CPU target |
+| `VPA_MEMORY_FLOOR_MI` | `250` | Mirrors the recommender's `--pod-recommendation-min-allowed-memory-mb` floor. A VPA memory target at/below this is treated as "no signal" and the tuner falls back to Prometheus. Keep in sync with the recommender flag on the cluster |
 | `RESOURCE_TUNING_INCREASE_THRESHOLD` | `10` | Apply an increase when the request grows by ≥ this % |
 | `RESOURCE_TUNING_DECREASE_THRESHOLD` | `30` | Apply a decrease only when the request shrinks by ≥ this % |
 | `RESOURCE_TUNING_MIN_DELTA_MI` | `16` | Ignore memory changes smaller than this (absolute deadband) |
@@ -224,7 +257,9 @@ These are inherent to reactive, history-based autoscaling and are worth knowing 
 
 - **Idle-then-spike (peak) risk.** The recommendation reflects only what was observed in the window. A workload that is idle during the window and then does something new is sized too low, and the first spike can OOM-kill it. This is worsened by the **limit-collapse** rule: when limit == request (the default), a memory *decrease* shrinks both, leaving zero burst headroom. *(Mitigation under consideration: drive the memory limit from the VPA `upperBound`, or keep a headroom multiple, so requests can shrink for packing while the limit keeps burst room.)*
 
-- **Window sensitivity.** Memory sized to `max_over_time` over a fixed window depends on what that window captured: one that caught a rare spike sizes generously, one that missed it sizes too lean. The VPA path (a decaying ~8-day histogram) is more robust and becomes the default as VPAs populate.
+- **Window sensitivity.** Memory sized to `max_over_time` over a fixed window depends on what that window captured: one that caught a rare spike sizes generously, one that missed it sizes too lean. The VPA path (a decaying ~8-day histogram) is more robust, but only contributes above the recommender floor (see Recommender Floor); for the many workloads that use less than the floor, Prometheus remains the effective source for memory requests.
+
+- **Recommender floor on CPU.** The `VPA_MEMORY_FLOOR_MI` fallback fixes memory only. CPU has no Prometheus path, so a component using less than `podMinCPUMillicores` (25m) is sized at `floor + buffer` (~31m) regardless of actual usage. Accepted because CPU is compressible and cheap; the platform-level fix is lowering the recommender's CPU floor flag.
 
 - **OOM recovery timing gap.** When a freshly-resized pod OOMs, the reactive recovery re-derives `has_oom_kills` from the Prometheus OOM metric, which lags the kill by a scrape interval. If recovery runs within seconds of the kill it reads "no OOM yet", skips the bump, and logs "OOM detected but auto-tune could not determine new limits" - even though the no-metrics trial-and-error bump (1.5-3x) would have worked. *(Mitigation under consideration: pass the already-known OOM signal from the sync / OOM-watcher into the tune so the bump fires regardless of the metric lag.)*
 

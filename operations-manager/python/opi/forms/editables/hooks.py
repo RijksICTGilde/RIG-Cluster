@@ -138,9 +138,7 @@ class ResolveAttachmentsHook:
         for att_id, info in staged.items():
             if att_id in existing_ids:
                 continue
-            data_list.append(
-                {"id": att_id, "filename": info.get("filename", att_id), "content": info.get("content")}
-            )
+            data_list.append({"id": att_id, "filename": info.get("filename", att_id), "content": info.get("content")})
 
         AttachmentStagingResolveGenerator().generate(yaml_data)
 

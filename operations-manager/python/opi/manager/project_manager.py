@@ -64,6 +64,7 @@ from opi.handlers.project_file_handler import (
 )
 from opi.handlers.sops import SopsHandler
 from opi.manager.revision_manager import RevisionManager
+from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
 from opi.services.project_service import ProjectUser, get_project_service
 from opi.utils.age import (
@@ -2835,7 +2836,9 @@ class ProjectManager:
 
         # Components that own files here: current ones (stale-file pruning) plus any
         # from the previous version (removed-component pruning).
-        component_names = _component_refs(deployment) | _component_refs(self.get_previous_deployment(deployment_name) or {})
+        component_names = _component_refs(deployment) | _component_refs(
+            self.get_previous_deployment(deployment_name) or {}
+        )
         if not component_names:
             return
 
@@ -4503,13 +4506,10 @@ class ProjectManager:
 
             # Extract imagePullPolicy from deployment-level component configuration (not component definition)
             # This allows overriding the pull policy per deployment
-            image_pull_policy = component.get("imagePullPolicy", "Always")
-
-            # Support local Kind cluster images: "local/imagename:tag" strips the prefix
-            # and sets imagePullPolicy to Never (image must be pre-loaded into Kind)
-            if image_url.startswith("local/"):
-                image_url = image_url[len("local/") :]
-                image_pull_policy = "Never"
+            # Resolve image + pull policy via the shared helper (handles the
+            # local/ Kind-image special); one implementation across deployments,
+            # the database console and jobs.
+            image_url, image_pull_policy = resolve_image(image_url, component.get("imagePullPolicy", "Always"))
 
             # Extract storage configuration from component
             storage_configs = self._project_file_handler.extract_component_storage(project_data, component_reference)

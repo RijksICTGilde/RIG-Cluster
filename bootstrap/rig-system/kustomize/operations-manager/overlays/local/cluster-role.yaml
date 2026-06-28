@@ -11,7 +11,7 @@ rules:
   # tenant-ns; per-namespace Role+RoleBinding is follow-up #90.
   - apiGroups: [""]
     resources: [secrets]
-    verbs: [create, get, patch]
+    verbs: [create, get, list, patch, delete]
   # Prometheus/kubelet scrape endpoints onder dezelfde SA.
   - nonResourceURLs: [/metrics, /metrics/cadvisor]
     verbs: [get]
@@ -26,7 +26,7 @@ rules:
   # Backup-lock (ConfigMap in rig-system) coordineert concurrent backups.
   - apiGroups: [""]
     resources: [configmaps]
-    verbs: [create, get, delete, patch, update]
+    verbs: [create, get, list, delete, patch, update]
   # PVC backups + restores: clones aanmaken/opruimen.
   - apiGroups: [""]
     resources: [persistentvolumeclaims]
@@ -43,3 +43,11 @@ rules:
   - apiGroups: [snapshot.storage.k8s.io]
     resources: [volumesnapshots]
     verbs: [create, get, list, delete]
+  # Tijdelijke databaseconsole: OPI plaatst en verwijdert de Service + Ingress
+  # rechtstreeks (buiten ArgoCD om), als een eenmalige actie per sessie.
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [create, get, list, delete, patch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [create, get, list, delete, patch]

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ (name ~ "-emails") | tojson }}
+  namespace: {{ namespace | tojson }}
+  labels:
+    app: {{ name | tojson }}
+    project: {{ project.name | tojson }}
+    component: application
+{% for k, v in (extra_labels or {}).items() %}
+    {{ k }}: {{ v | tojson }}
+{% endfor %}
+data:
+  # oauth2-proxy --authenticated-emails-file: one allowed email per line.
+  # Only these project members pass the auth wall (Keycloak only authenticates).
+  emails.txt: |
+{% for email in emails %}
+    {{ email }}
+{% endfor %}

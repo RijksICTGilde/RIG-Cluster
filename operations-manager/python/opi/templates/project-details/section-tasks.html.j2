@@ -1,0 +1,43 @@
+{# Tasks/runs table fragment (lazy-loaded into the Taken tab).
+   Expects: project_name, items (normalized rows: console/job runs + background
+   tasks like upserts/refreshes), newest first. #}
+<c-card outline="true" padding="lg" backgroundColor="wit">
+    <c-layout-flow gap="md">
+        <c-heading type="h2" style="margin-bottom: 0;">
+            <c-icon icon="klok" size="xl" color="hemelblauw" />Taken
+        </c-heading>
+        {% if not items %}
+        <c-p>Er zijn nog geen taken uitgevoerd voor dit project.</c-p>
+        {% else %}
+        <table class="backup-table" style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr>
+                    <th>Soort</th>
+                    <th>Deployment</th>
+                    <th>Status</th>
+                    <th>Door</th>
+                    <th>Gestart</th>
+                    <th>Beëindigd</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr>
+                    <td>{{ item.soort }}</td>
+                    <td>{{ item.deployment or "-" }}</td>
+                    <td>
+                        {{ item.status }}
+                        {% if item.active and item.step %}
+                        <br><small style="color: var(--rvo-color-grijs-700);">{{ item.step }}{% if item.progress %} ({{ item.progress }}%){% endif %}</small>
+                        {% endif %}
+                    </td>
+                    <td>{{ item.door or "-" }}</td>
+                    <td>{{ (item.gestart or "")[:16] | replace("T", " ") }}</td>
+                    <td>{{ ((item.beeindigd or "")[:16] | replace("T", " ")) if item.beeindigd else "-" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </c-layout-flow>
+</c-card>
