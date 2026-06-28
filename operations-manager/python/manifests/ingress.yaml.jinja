@@ -2,6 +2,12 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ name }}
+{% if extra_labels %}
+  labels:
+{% for k, v in extra_labels.items() %}
+    {{ k }}: {{ v | tojson }}
+{% endfor %}
+{% endif %}
   annotations:
     # ============================================================
     # OpenShift/HAProxy annotations

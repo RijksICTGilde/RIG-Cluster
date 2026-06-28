@@ -208,6 +208,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         except Exception as e:
             logger.error(f"Failed to initialize federation service: {e}")
 
+    # Start the run reaper (sweeps both console and job bundles) if either is enabled.
+    if settings.DB_CONSOLE_ENABLED or settings.JOB_ENABLED:
+        try:
+            from opi.core.db_console_reaper import DbConsoleReaper
+
+            _db_console_reaper = DbConsoleReaper(cluster=settings.CLUSTER_MANAGER)
+            await _db_console_reaper.start()
+            app.state.db_console_reaper = _db_console_reaper
+        except Exception as e:
+            logger.error("Failed to start database console reaper: %s", e)
+
     yield
 
     # Begin graceful drain: reject new task creation via API immediately
@@ -224,6 +235,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     resource_tuning_scheduler = getattr(app.state, "resource_tuning_scheduler", None)
     if resource_tuning_scheduler is not None:
         await resource_tuning_scheduler.stop()
+
+    # Stop database console reaper
+    db_console_reaper = getattr(app.state, "db_console_reaper", None)
+    if db_console_reaper is not None:
+        await db_console_reaper.stop()
 
     # Stop task worker: stop claiming new tasks, then wait for active tasks to finish
     if _worker_instance is not None:

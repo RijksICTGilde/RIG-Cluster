@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 from opi.core.auth_decorators import requires_sso
 from opi.core.templates import get_templates
-from opi.forms.editables.validators import AttachmentIdValidator
+from opi.forms.editables.validators import AttachmentIdValidator, RequiredValidator
 from opi.forms.wizard.session import (
     get_modal_state_by_token,
     get_wizard_state,
@@ -156,7 +156,12 @@ async def stage_attachment(
 
     staged = _staged(state)
     existing = list(staged.keys()) + _catalog_ids(state)
-    errors = AttachmentIdValidator().validate(attachment_id, {"existing_attachment_ids": existing})
+    # The id becomes part of the Secret/volume name, so an empty id must be rejected
+    # here (AttachmentIdValidator defers emptiness to RequiredValidator by convention).
+    attachment_id = attachment_id.strip()
+    errors = RequiredValidator().validate(attachment_id) or AttachmentIdValidator().validate(
+        attachment_id, {"existing_attachment_ids": existing}
+    )
     if errors:
         return _attachments_list_response(request, state, wizard_token, error="; ".join(errors))
 

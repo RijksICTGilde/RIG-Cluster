@@ -1019,7 +1019,9 @@ class ProjectFileHandler:
 
         Resolution cascade: per-deployment override > component > root > ``standard``.
         """
-        return self._resolve_publish_on_web_config(project_data, component_name, deployment_name).get("tls") or "standard"
+        return (
+            self._resolve_publish_on_web_config(project_data, component_name, deployment_name).get("tls") or "standard"
+        )
 
     async def resolve_publish_on_web_certificate(
         self, project_data: dict[str, Any], component_name: str, deployment_name: str | None = None
@@ -1042,7 +1044,9 @@ class ProjectFileHandler:
 
         entry = extract_attachment_catalog(project_data).get(reference)
         if not entry:
-            raise ValueError(f"Component '{component_name}': publish-on-web certificate references unknown attachment '{reference}'")
+            raise ValueError(
+                f"Component '{component_name}': publish-on-web certificate references unknown attachment '{reference}'"
+            )
 
         private_key = await get_decoded_project_private_key(project_data)
         pem_bytes = await decrypt_age_block_to_bytes(entry["content"], private_key)
@@ -3169,9 +3173,7 @@ def extract_deployment_component_attachment_uses(
     return []
 
 
-def _merge_attachment_uses(
-    base: list[dict[str, Any]], override: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
+def _merge_attachment_uses(base: list[dict[str, Any]], override: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Union two coupling lists by ``reference``, with *override* winning on a collision.
 
     Mirrors the user-env-vars override (``dict.update``): base entries apply unless the
@@ -3197,9 +3199,7 @@ def _assert_unique_attachment_targets(
         if use.get("provide-as") == "file" and use.get("path"):
             target = use["path"]
             if target in paths:
-                raise ValueError(
-                    f"Bijlagen '{paths[target]}' en '{ref}' gebruiken hetzelfde pad '{target}' op {where}"
-                )
+                raise ValueError(f"Bijlagen '{paths[target]}' en '{ref}' gebruiken hetzelfde pad '{target}' op {where}")
             paths[target] = ref
         elif use.get("provide-as") == "env-var" and use.get("env-name"):
             target = use["env-name"]

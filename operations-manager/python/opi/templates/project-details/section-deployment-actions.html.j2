@@ -22,6 +22,20 @@
                     showIcon="before"
                     icon="refresh"
                     @click="showDangerConfirmation('deployment-refresh', '{{ deployment.name }}', 'Weet u zeker dat u deployment &quot;{{ deployment.name }}&quot; wilt herverwerken? Dit synchroniseert de manifesten voor deze deployment.')" />
+                <c-button
+                    label="Databaseconsole"
+                    kind="secondary"
+                    size="sm"
+                    showIcon="before"
+                    icon="database"
+                    @click="openDbConsoleModal('{{ deployment.name }}')" />
+                <c-button
+                    label="Job uitvoeren"
+                    kind="secondary"
+                    size="sm"
+                    showIcon="before"
+                    icon="uitvoering"
+                    @click="openJobModal('{{ deployment.name }}')" />
             </c-layout-row>
         </c-layout-flow>
     </c-card>

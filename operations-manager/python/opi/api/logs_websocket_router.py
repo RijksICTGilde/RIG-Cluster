@@ -33,6 +33,7 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from itsdangerous import BadSignature, TimestampSigner
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import get_prefixed_namespace
+from opi.manager.run_support import LABEL_RUN
 from opi.core.config import settings
 from opi.services.project_service import get_project_service
 from opi.services.user_service import get_user_service
@@ -370,33 +371,39 @@ async def stream_logs(
                 target_deployment = depl
                 break
 
-        if not target_deployment:
-            await send_message(websocket, "error", message="Resource not found")
-            await websocket.close(code=4004)
-            return
-
-        # Check if deployment is on current cluster
-        if target_deployment.get("cluster") != current_cluster:
-            await send_message(websocket, "error", message="Resource not available on this cluster")
-            await websocket.close(code=4003)
-            return
-
-        # Find the component
-        components = target_deployment.get("components", [])
-        target_component = None
-        for comp in components:
-            if comp.get("reference") == component:
-                target_component = comp
-                break
-
-        if not target_component:
-            await send_message(websocket, "error", message="Resource not found")
-            await websocket.close(code=4004)
-            return
-
-        # Get namespace and k8s deployment name
         namespace = get_prefixed_namespace(current_cluster, project_name)
-        k8s_deployment_name = generate_unique_name(deployment, component)
+
+        if target_deployment:
+            # Normal deployment/component: validate cluster + component.
+            if target_deployment.get("cluster") != current_cluster:
+                await send_message(websocket, "error", message="Resource not available on this cluster")
+                await websocket.close(code=4003)
+                return
+
+            components = target_deployment.get("components", [])
+            target_component = None
+            for comp in components:
+                if comp.get("reference") == component:
+                    target_component = comp
+                    break
+
+            if not target_component:
+                await send_message(websocket, "error", message="Resource not found")
+                await websocket.close(code=4004)
+                return
+
+            k8s_deployment_name = generate_unique_name(deployment, component)
+        else:
+            # Ad-hoc run pod (database console / job): the `deployment` param is the
+            # pod's `app` label. Only allow it if that pod is actually a run bundle
+            # (carries the rig.zad/run label) in the user's own project namespace, so
+            # a member cannot tail arbitrary pods by guessing an app label.
+            run_pods = await kubectl.get_resources_by_label("pod", namespace, f"app={deployment},{LABEL_RUN}")
+            if not run_pods:
+                await send_message(websocket, "error", message="Resource not found")
+                await websocket.close(code=4004)
+                return
+            k8s_deployment_name = deployment
 
         await send_message(
             websocket,

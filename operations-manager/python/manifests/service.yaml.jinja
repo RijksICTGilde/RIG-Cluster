@@ -6,6 +6,9 @@ metadata:
   labels:
     app: {{ (name | default('', true)) | tojson }}
     project: {{ (project.name | default('', true)) | tojson }}
+{% for k, v in (extra_labels or {}).items() %}
+    {{ k }}: {{ v | tojson }}
+{% endfor %}
 spec:
   selector:
     app: {{ (name | default('', true)) | tojson }}

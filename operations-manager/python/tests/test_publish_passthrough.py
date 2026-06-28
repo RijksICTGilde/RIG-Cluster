@@ -74,7 +74,9 @@ def test_domain_cert_save_preserves_unmanaged_deployment_fields() -> None:
             }
         ],
     }
-    submitted = {"deployments": [{"components": [{"services": {"publish-on-web": {"config": {"tls": "passthrough"}}}}]}]}
+    submitted = {
+        "deployments": [{"components": [{"services": {"publish-on-web": {"config": {"tls": "passthrough"}}}}]}]
+    }
     section = build_domain_cert_section(0)
     result, _ = asyncio.run(
         EditableFormProcessor().process_json_submission(submitted, section.editables, project, edit_mode=True)
@@ -173,9 +175,15 @@ def test_tls_mode_read() -> None:
 
 def _render(**extra) -> str:
     base = {
-        "name": "api-ing", "service_name": "api", "hostname": "app.rijksapps.nl", "path": "/",
-        "enable_tls": True, "tls_secret_name": "api-tls", "external_dns_target": "router.rijksapps.nl",
-        "issuer_name": None, "cluster_issuer": None,
+        "name": "api-ing",
+        "service_name": "api",
+        "hostname": "app.rijksapps.nl",
+        "path": "/",
+        "enable_tls": True,
+        "tls_secret_name": "api-tls",
+        "external_dns_target": "router.rijksapps.nl",
+        "issuer_name": None,
+        "cluster_issuer": None,
     }
     return _ENV.get_template("ingress.yaml.jinja").render({**base, **extra})
 
@@ -230,7 +238,9 @@ def test_resolve_publish_certificate_gating() -> None:
 
     h = ProjectFileHandler.__new__(ProjectFileHandler)
     # Not provided -> None (no decryption attempted)
-    passthrough = {"components": [{"name": "api", "services": [{"publish-on-web": {"config": {"tls": "passthrough"}}}]}]}
+    passthrough = {
+        "components": [{"name": "api", "services": [{"publish-on-web": {"config": {"tls": "passthrough"}}}]}]
+    }
     assert asyncio.run(h.resolve_publish_on_web_certificate(passthrough, "api")) is None
     # provided without an attachment -> ValueError
     no_attach = {"components": [{"name": "api", "services": [{"publish-on-web": {"config": {"tls": "provided"}}}]}]}
