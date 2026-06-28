@@ -295,6 +295,55 @@ class KeycloakConnector:
             self.admin.change_current_realm("master")
             raise
 
+    async def delete_oidc_client(self, realm_name: str, client_id: str) -> bool:
+        """
+        Delete an OIDC client by its clientId from the specified realm.
+
+        Idempotent: returns False if the client does not exist.
+
+        Args:
+            realm_name: Realm the client lives in
+            client_id: The client's clientId field
+
+        Returns:
+            True if a client was deleted, False if none was found
+        """
+        logger.info(f"Deleting OIDC client '{client_id}' from realm '{realm_name}'")
+        try:
+            # find_client_by_client_id switches back to master, so re-switch before delete
+            target = await self.find_client_by_client_id(client_id, realm_name)
+            if not target:
+                logger.debug(f"OIDC client '{client_id}' not found in realm '{realm_name}', nothing to delete")
+                return False
+
+            self.admin.change_current_realm(realm_name)
+            self.admin.delete_client(client_id=target["id"])
+            self.admin.change_current_realm("master")
+            logger.info(f"Successfully deleted OIDC client '{client_id}' from realm '{realm_name}'")
+            return True
+
+        except KeycloakError as e:
+            logger.error(f"Failed to delete OIDC client '{client_id}': {e}")
+            self.admin.change_current_realm("master")
+            raise
+
+    async def list_client_ids_by_prefix(self, realm_name: str, prefix: str) -> list[str]:
+        """
+        Return the clientIds in a realm that start with the given prefix.
+
+        Used to garbage-collect orphaned ephemeral clients (e.g. dbconsole-*).
+        """
+        try:
+            self.admin.change_current_realm(realm_name)
+            all_clients = self.admin.get_clients()
+            self.admin.change_current_realm("master")
+            return [c.get("clientId", "") for c in all_clients if c.get("clientId", "").startswith(prefix)]
+
+        except KeycloakError as e:
+            logger.error(f"Failed to list clients by prefix '{prefix}' in realm '{realm_name}': {e}")
+            self.admin.change_current_realm("master")
+            raise
+
     def _generate_client_secret(self) -> str:
         """
         Generate a secure client secret.

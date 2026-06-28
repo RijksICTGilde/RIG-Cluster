@@ -44,7 +44,9 @@ async def delete_attachment(request: Request, project_name: str, attachment_id: 
 
     save_project_file(project.filename, project_data)
     get_project_service().load_project_from_data(project_data, project.filename)
-    await commit_project_yaml(project_name, f"{project_name}.yaml", project_data, f"Remove attachment '{attachment_id}'")
+    await commit_project_yaml(
+        project_name, f"{project_name}.yaml", project_data, f"Remove attachment '{attachment_id}'"
+    )
     logger.info(f"Removed attachment '{attachment_id}' from project '{project_name}'")
 
     return {"success": True}

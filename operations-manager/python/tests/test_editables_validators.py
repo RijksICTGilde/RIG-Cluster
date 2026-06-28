@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from opi.forms.editables.validators import (
+    AttachmentIdValidator,
     ComponentNameValidator,
     ContainerImageValidator,
     EmailValidator,
@@ -10,6 +11,24 @@ from opi.forms.editables.validators import (
     RequiredValidator,
     SlugValidator,
 )
+
+
+class TestAttachmentIdValidator:
+    def test_valid_id(self):
+        assert AttachmentIdValidator().validate("my-cert-1") == []
+
+    def test_empty_deferred_to_required(self):
+        # By convention the format validator skips empty; the staging route pairs
+        # it with RequiredValidator so an empty id is rejected (not staged under '').
+        assert AttachmentIdValidator().validate("") == []
+        assert RequiredValidator().validate("") == ["Dit veld is verplicht"]
+
+    def test_rejects_bad_format(self):
+        assert AttachmentIdValidator().validate("1bad") != []
+
+    def test_rejects_duplicate(self):
+        errors = AttachmentIdValidator().validate("cert", {"existing_attachment_ids": ["cert"]})
+        assert errors != []
 
 
 class TestSlugValidator:

@@ -1131,6 +1131,72 @@ class PostgresConnector:
             )
             raise PostgresExecutionError(f"Permission granting failed: {e}") from e
 
+    async def grant_readonly_on_schema(self, database: str, schema_name: str, username: str) -> dict[str, Any]:
+        """Grant strictly read-only access on a schema to a role.
+
+        Unlike grant_schema_permissions (which grants ALL on tables), this grants
+        only CONNECT/USAGE/SELECT and sets default privileges so tables created
+        later in the session stay readable. This is the server-side boundary for a
+        read-only database console; the tool's own read-only flag is only a hint.
+
+        Args:
+            database: Database where the schema lives (connection target)
+            schema_name: Schema to grant read access on
+            username: Role that receives read-only access
+
+        Returns:
+            Dictionary with operation status and details
+
+        Raises:
+            PostgresExecutionError: If granting fails
+            PostgresValidationError: If input validation fails
+        """
+        try:
+            validated_database = self._validate_identifier(database, "database")
+            validated_schema_name = self._validate_identifier(schema_name, "schema name")
+            validated_username = self._validate_identifier(username, "username")
+
+            conn = await self._get_or_create_connection(validated_database)
+
+            schema_exists = await conn.fetchval(
+                "SELECT 1 FROM information_schema.schemata WHERE schema_name = $1", validated_schema_name
+            )
+            user_exists = await conn.fetchval("SELECT 1 FROM pg_user WHERE usename = $1", validated_username)
+
+            # Raise (don't return a status dict) so a missing schema/user can't
+            # silently produce a read-only console that can read nothing.
+            if not schema_exists:
+                raise PostgresExecutionError(f"Schema {validated_schema_name} does not exist")
+            if not user_exists:
+                raise PostgresExecutionError(f"User {validated_username} does not exist")
+
+            quoted_database = self._quote_identifier(validated_database)
+            quoted_schema = self._quote_identifier(validated_schema_name)
+            quoted_username = self._quote_identifier(validated_username)
+
+            statements = [
+                f"GRANT CONNECT ON DATABASE {quoted_database} TO {quoted_username}",
+                f"GRANT USAGE ON SCHEMA {quoted_schema} TO {quoted_username}",
+                f"GRANT SELECT ON ALL TABLES IN SCHEMA {quoted_schema} TO {quoted_username}",
+                f"GRANT SELECT ON ALL SEQUENCES IN SCHEMA {quoted_schema} TO {quoted_username}",
+                f"ALTER DEFAULT PRIVILEGES IN SCHEMA {quoted_schema} GRANT SELECT ON TABLES TO {quoted_username}",
+            ]
+            for statement in statements:
+                await conn.execute(statement)
+
+            logger.info(
+                f"Granted read-only access on schema {validated_schema_name} "
+                f"to role {validated_username} in database {validated_database} on host {self._host}"
+            )
+            return {"status": "granted", "message": "Read-only access granted successfully"}
+
+        except PostgresValidationError:
+            logger.exception("Validation failed for read-only grant")
+            raise
+        except Exception as e:
+            logger.exception(f"Failed to grant read-only access on schema {schema_name} on {self._host}")
+            raise PostgresExecutionError(f"Read-only grant failed: {e}") from e
+
     async def _get_schema_extensions(
         self,
         database: str,

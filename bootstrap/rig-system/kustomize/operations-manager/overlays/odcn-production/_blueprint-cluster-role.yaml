@@ -17,7 +17,7 @@ rules:
   # tenant-ns; delete voor key-rotation (zie project_manager._ensure_sops_secret).
   - apiGroups: [""]
     resources: [secrets]
-    verbs: [create, get, patch, delete]
+    verbs: [create, get, list, patch, delete]
   # Prometheus service-discovery onder dezelfde SA.
   - apiGroups: [""]
     resources: [nodes, nodes/proxy, nodes/metrics, services, endpoints]
@@ -36,7 +36,7 @@ rules:
   # Backup-lock (ConfigMap) coordineert concurrent backups.
   - apiGroups: [""]
     resources: [configmaps]
-    verbs: [create, get, delete, patch, update]
+    verbs: [create, get, list, delete, patch, update]
   # PVC backups + restores: clones aanmaken/opruimen.
   - apiGroups: [""]
     resources: [persistentvolumeclaims]
@@ -53,3 +53,12 @@ rules:
   - apiGroups: [snapshot.storage.k8s.io]
     resources: [volumesnapshots]
     verbs: [create, get, list, delete]
+  # Tijdelijke databaseconsole: OPI plaatst en verwijdert de Service + Ingress
+  # rechtstreeks (buiten ArgoCD om). Op odcn dekt Capsule's admin-RoleBinding dit
+  # al; hier alleen voor parity met de local/sandbox cluster-role.
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [create, get, list, delete, patch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [create, get, list, delete, patch]

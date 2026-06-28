@@ -42,7 +42,9 @@ def test_data_entry_valid() -> None:
 def test_data_entry_invalid() -> None:
     v = _validator_for("attachment-data-entry")
     assert not v.is_valid({"id": "mtlskeystore", "filename": "keystore.p12"})  # missing content
-    assert not v.is_valid({"id": "Bad_Id", "filename": "x", "content": "base64+age:abc"})  # bad id pattern (underscore/uppercase)
+    assert not v.is_valid(
+        {"id": "Bad_Id", "filename": "x", "content": "base64+age:abc"}
+    )  # bad id pattern (underscore/uppercase)
     assert not v.is_valid({"id": "a" * 41, "filename": "x", "content": "base64+age:abc"})  # >40
     assert not v.is_valid({"id": "ok", "filename": "x", "content": "not-encrypted"})  # content pattern
 
@@ -128,9 +130,7 @@ def test_extract_deployment_component_attachment_uses() -> None:
                     {
                         "reference": "api",
                         "services": {
-                            "attachments": {
-                                "config": [{"reference": "ca", "provide-as": "file", "path": "/etc/ca"}]
-                            }
+                            "attachments": {"config": [{"reference": "ca", "provide-as": "file", "path": "/etc/ca"}]}
                         },
                     }
                 ],
@@ -272,9 +272,7 @@ def test_strip_and_preserve_attachment_content_roundtrip() -> None:
     # 2. Capture original content (as _modal_do_submit does), 3. hook restores at save.
     original_content = {"sso": block}
     saved = _strip_attachment_content(project)  # content-less, like the merged session data
-    asyncio.run(
-        PreserveAttachmentContentHook().execute(saved, {"original_attachment_content": original_content})
-    )
+    asyncio.run(PreserveAttachmentContentHook().execute(saved, {"original_attachment_content": original_content}))
     sv = next(e for e in saved["services"] if isinstance(e, dict) and "attachments" in e)
     assert sv["attachments"]["data"][0]["content"] == block
 
@@ -332,19 +330,38 @@ def test_attachment_usage_includes_publish_on_web_provided() -> None:
     component and deployment-component level; a non-provided tls mode does not."""
     from opi.handlers.project_file_handler import attachment_is_referenced, extract_attachment_usage
 
-    comp = {"components": [{"name": "backend", "services": [{"publish-on-web": {"config": {"tls": "provided", "attachment": "real-cert"}}}]}]}
+    comp = {
+        "components": [
+            {
+                "name": "backend",
+                "services": [{"publish-on-web": {"config": {"tls": "provided", "attachment": "real-cert"}}}],
+            }
+        ]
+    }
     assert extract_attachment_usage(comp) == {"real-cert": ["backend"]}
     assert attachment_is_referenced(comp, "real-cert")
 
     dep = {
         "components": [{"name": "backend"}],
         "deployments": [
-            {"name": "staging", "components": [{"reference": "backend", "services": {"publish-on-web": {"config": {"tls": "provided", "attachment": "real-cert"}}}}]}
+            {
+                "name": "staging",
+                "components": [
+                    {
+                        "reference": "backend",
+                        "services": {"publish-on-web": {"config": {"tls": "provided", "attachment": "real-cert"}}},
+                    }
+                ],
+            }
         ],
     }
     assert extract_attachment_usage(dep) == {"real-cert": ["backend (staging)"]}
     assert attachment_is_referenced(dep, "real-cert")
 
-    standard = {"components": [{"name": "backend", "services": [{"publish-on-web": {"config": {"tls": "standard", "attachment": "x"}}}]}]}
+    standard = {
+        "components": [
+            {"name": "backend", "services": [{"publish-on-web": {"config": {"tls": "standard", "attachment": "x"}}}]}
+        ]
+    }
     assert extract_attachment_usage(standard) == {}
     assert not attachment_is_referenced(standard, "x")
