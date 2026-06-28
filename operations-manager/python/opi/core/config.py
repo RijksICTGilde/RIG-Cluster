@@ -414,6 +414,23 @@ class Settings(BaseSettings):
     BACKUP_SWEEP_DRY_RUN: bool = True
     BACKUP_ORPHAN_RETENTION_DAYS: int = 30
 
+    # Ephemeral database console (on-request, auto-expiring web DB client).
+    # OPI applies/removes these directly (outside git/ArgoCD); a reaper enforces
+    # the TTL and a per-pod activeDeadlineSeconds is the hard backstop.
+    DB_CONSOLE_ENABLED: bool = True
+    DB_CONSOLE_TTL_SECONDS: int = 3600  # Session lifetime (default 1 hour)
+    DB_CONSOLE_REAP_INTERVAL_SECONDS: int = 60  # How often the reaper sweeps for expired sessions
+    # Tool images. Defaults are docker.io refs for local/dev; production overlays
+    # MUST override these with a mirror reachable on the cluster (e.g. rcr.rijksapps.nl),
+    # since docker.io/ghcr are blocked on ODCN.
+    DB_CONSOLE_PGWEB_IMAGE: str = "sosedoff/pgweb:0.16.2"
+    DB_CONSOLE_DBGATE_IMAGE: str = "dbgate/dbgate:6.6.1"
+
+    # Ad-hoc job runs (run an image + command once; a "run" like the console).
+    # Independently toggleable and TTL'd; the shared run reaper sweeps both kinds.
+    JOB_ENABLED: bool = True
+    JOB_TTL_SECONDS: int = 3600  # Max job lifetime; pod kept until then so logs stay readable
+
     @model_validator(mode="after")
     def _enforce_secure_secret_key(self) -> Settings:
         """Fail closed when an explicitly-set SECRET_KEY is too short."""

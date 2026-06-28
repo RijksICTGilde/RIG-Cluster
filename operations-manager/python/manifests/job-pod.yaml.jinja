@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ name }}"
+  namespace: "{{ namespace }}"
+  labels:
+    # app = the job's own name, so the log stream (kubectl logs -l app=...) and
+    # the job's own selectors target only this pod.
+    app: "{{ name }}"
+    # deployment = the TARGET deployment, so the existing tenant NetworkPolicy
+    # (which selects on `deployment`) already permits egress to PostgreSQL.
+    deployment: "{{ target_deployment }}"
+    project: "{{ project.name }}"
+    component: application
+    network-policy: allow-db-access
+{% for k, v in (extra_labels or {}).items() %}
+    {{ k }}: {{ v | tojson }}
+{% endfor %}
+{% if extra_annotations %}
+  annotations:
+{% for k, v in extra_annotations.items() %}
+    {{ k }}: {{ v | tojson }}
+{% endfor %}
+{% endif %}
+spec:
+  restartPolicy: Never
+  # Hard backstop: the pod self-terminates after the TTL even if the reaper is down.
+  activeDeadlineSeconds: {{ ttl_seconds | default(3600) }}
+  securityContext:
+{% include 'pod-security-context.yaml.jinja' %}
+  containers:
+    - name: job
+      image: {{ (image | default('', true)) | tojson }}
+      imagePullPolicy: {{ image_pull_policy | default('IfNotPresent') }}
+{% if command %}
+      # Run the user command via a shell so things like "alembic upgrade head" work.
+      # Omitted when no command is given, so the image's own entrypoint/cmd runs.
+      command:
+        - /bin/sh
+        - -c
+        - {{ command | tojson }}
+{% endif %}
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        readOnlyRootFilesystem: false
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+      env:
+        - name: HOME
+          value: {{ (tool_home | default('/tmp', true)) | tojson }}
+{% for env_name, env_value in (extra_env or {}).items() %}
+        - name: {{ env_name | tojson }}
+          value: {{ env_value | tojson }}
+{% endfor %}
+{% if db_secret_name %}
+      # The deployment's database connection (host/port/user/password/db + DATABASE_SERVER_FULL),
+      # exactly what a normal component gets, so migrations can connect.
+      envFrom:
+        - secretRef:
+            name: {{ db_secret_name | tojson }}
+{% endif %}
+      volumeMounts:
+        - name: tool-home
+          mountPath: {{ (tool_home | default('/tmp', true)) | tojson }}
+      resources:
+        requests:
+          memory: "64Mi"
+          cpu: "50m"
+        limits:
+          memory: "512Mi"
+          cpu: "1000m"
+  volumes:
+    - name: tool-home
+      emptyDir:
+        sizeLimit: "256Mi"

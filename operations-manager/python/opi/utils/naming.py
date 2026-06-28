@@ -567,6 +567,79 @@ def generate_database_name(project_name: str, deployment_name: str, generation: 
     return _truncate_if_needed(database, 63)  # PostgreSQL database limit
 
 
+# Shared prefix for all ephemeral database-console resources (k8s names, the
+# Keycloak client id and the hostname). The reaper uses it to find orphaned
+# Keycloak clients whose pod is gone.
+DB_CONSOLE_PREFIX = "dbconsole"
+
+# Prefix for ad-hoc job pods (run-an-image-with-a-command).
+JOB_PREFIX = "job"
+
+
+def generate_job_name(project_name: str, deployment_name: str, session_id: str) -> str:
+    """
+    Generate the Kubernetes Pod name for an ad-hoc job run.
+
+    Format: job-{project}-{deployment}-{session_id}, sanitized + capped at 63.
+    """
+    name = f"{JOB_PREFIX}-{project_name}-{deployment_name}-{session_id}"
+    return sanitize_kubernetes_name(name, 63)
+
+
+def generate_db_console_name(project_name: str, deployment_name: str, session_id: str) -> str:
+    """
+    Generate the Kubernetes resource name for an ephemeral database console.
+
+    Format: dbconsole-{project}-{deployment}-{session_id}
+
+    Example:
+        generate_db_console_name("amt", "prod", "7f3a9c2b") -> "dbconsole-amt-prod-7f3a9c2b"
+    """
+    name = f"{DB_CONSOLE_PREFIX}-{project_name}-{deployment_name}-{session_id}"
+    return sanitize_kubernetes_name(name, 63)
+
+
+def generate_db_console_client_id(session_id: str) -> str:
+    """
+    Generate the Keycloak OIDC client id for an ephemeral database console.
+
+    Kept short and prefix-based (dbconsole-{session_id}) so the reaper can
+    garbage-collect orphaned clients by prefix.
+    """
+    return f"{DB_CONSOLE_PREFIX}-{session_id}"
+
+
+def generate_db_console_hostname(project_name: str, session_id: str, ingress_postfix: str) -> str:
+    """
+    Generate the ingress hostname for an ephemeral database console.
+
+    Format: dbconsole-{project}-{session_id}{ingress_postfix}. Including the
+    project makes the host more recognizable/unique. The label is sanitized to a
+    valid DNS-1123 label and capped at 63 chars. The dbconsole- prefix lives
+    under the cluster wildcard DNS/TLS, so no per-host DNS or cert work is needed.
+
+    Example:
+        generate_db_console_hostname("amt", "7f3a9c2b", ".sandbox.rijksapp.dev")
+        -> "dbconsole-amt-7f3a9c2b.sandbox.rijksapp.dev"
+    """
+    label = sanitize_kubernetes_name(f"{DB_CONSOLE_PREFIX}-{project_name}-{session_id}", 63)
+    return f"{label}{ingress_postfix}"
+
+
+def generate_db_console_ro_role(project_name: str, deployment_name: str, session_id: str) -> str:
+    """
+    Generate the ephemeral read-only PostgreSQL role name for a database console.
+
+    Format: {project}_{deployment}_ro_{session_id} (valid SQL identifier,
+    underscore separated, truncated to PostgreSQL's 63-char limit).
+    """
+    project_clean = _sanitize_for_identifier(project_name)
+    deployment_clean = _sanitize_for_identifier(deployment_name)
+    session_clean = _sanitize_for_identifier(session_id)
+    role = f"{project_clean}_{deployment_clean}_ro_{session_clean}"
+    return _truncate_if_needed(role, 63)
+
+
 def generate_minio_username(project_name: str, deployment_name: str) -> str:
     """
     Generate a consistent MinIO username.

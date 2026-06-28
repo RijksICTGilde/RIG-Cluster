@@ -20,6 +20,7 @@
     <c-tabs>
         <c-tab-item label="Project" href="#" selected="true" @click="switchTab('project', event)" />
         <c-tab-item label="Deployments" href="#" @click="switchTab('deployments', event)" />
+        <c-tab-item label="Taken" href="#" @click="switchTab('taken', event)" />
     </c-tabs>
 
     {# ==================== PROJECT TAB ==================== #}
@@ -58,6 +59,14 @@
         {% include "project-details/section-deployments.html.j2" %}
         {% include "project-details/section-backups.html.j2" %}
         {% include "project-details/section-env-vars.html.j2" %}
+    </c-layout-flow>
+
+    <c-layout-flow id="tab-taken" gap="lg" style="display: none;">
+        {# Lazy-loaded + polled so running tasks show live status/progress.
+           innerHTML swap keeps the polling trigger on this div. #}
+        <div hx-get="/projects/{{ project.name }}/tasks" hx-trigger="load, every 5s" hx-swap="innerHTML">
+            <c-p>Taken worden geladen...</c-p>
+        </div>
     </c-layout-flow>
 
 </c-layout-flow>
@@ -1141,6 +1150,7 @@
         // Hide all tab content
         document.getElementById('tab-project').style.display = 'none';
         document.getElementById('tab-deployments').style.display = 'none';
+        document.getElementById('tab-taken').style.display = 'none';
 
         // Show selected tab
         document.getElementById('tab-' + tabName).style.display = '';
@@ -1795,6 +1805,69 @@
             if (typeof htmx !== 'undefined') htmx.process(innerEl);
             // Initialize wizard widgets (service cards, KV editors) in the new content
             if (typeof initWizardWidgets === 'function') initWizardWidgets(innerEl);
+        })
+        .catch(function(err) {
+            innerEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';
+        });
+    }
+
+    /* Database console: reuse the edit-modal shell, but load the console body
+       (form / startup monitor / running URL) from the db-console endpoint. The
+       body drives itself via HTMX (start, poll status, stop). */
+    function openDbConsoleModal(deployment) {
+        document.getElementById('edit-section-title-text').textContent = 'Databaseconsole - ' + deployment;
+        var errorEl = document.getElementById('edit-section-error');
+        if (errorEl) errorEl.style.display = 'none';
+        var innerEl = document.getElementById('edit-section-inner');
+        innerEl.innerHTML =
+            '<div class="edit-section-content">' +
+                '<div class="edit-section-loading"><p>Laden...</p></div>' +
+            '</div>';
+        document.getElementById('edit-section-backdrop').classList.add('is-open');
+        document.getElementById('edit-section-modal').classList.add('is-open');
+        document.body.style.overflow = 'hidden';
+
+        fetch('/projects/{{ project.name }}/db-console/' + encodeURIComponent(deployment) + '/modal', {
+            credentials: 'same-origin',
+        })
+        .then(function(response) {
+            if (!response.ok) throw new Error('Fout bij het laden van de console');
+            return response.text();
+        })
+        .then(function(html) {
+            innerEl.innerHTML = html;
+            if (typeof htmx !== 'undefined') htmx.process(innerEl);
+        })
+        .catch(function(err) {
+            innerEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';
+        });
+    }
+
+    /* Job runner: same modal shell, loads the job body (form / status / logs link)
+       from the jobs endpoint; the body drives itself via HTMX. */
+    function openJobModal(deployment) {
+        document.getElementById('edit-section-title-text').textContent = 'Job uitvoeren - ' + deployment;
+        var errorEl = document.getElementById('edit-section-error');
+        if (errorEl) errorEl.style.display = 'none';
+        var innerEl = document.getElementById('edit-section-inner');
+        innerEl.innerHTML =
+            '<div class="edit-section-content">' +
+                '<div class="edit-section-loading"><p>Laden...</p></div>' +
+            '</div>';
+        document.getElementById('edit-section-backdrop').classList.add('is-open');
+        document.getElementById('edit-section-modal').classList.add('is-open');
+        document.body.style.overflow = 'hidden';
+
+        fetch('/projects/{{ project.name }}/jobs/' + encodeURIComponent(deployment) + '/modal', {
+            credentials: 'same-origin',
+        })
+        .then(function(response) {
+            if (!response.ok) throw new Error('Fout bij het laden van de job');
+            return response.text();
+        })
+        .then(function(html) {
+            innerEl.innerHTML = html;
+            if (typeof htmx !== 'undefined') htmx.process(innerEl);
         })
         .catch(function(err) {
             innerEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';
