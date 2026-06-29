@@ -6575,6 +6575,42 @@ class ProjectManager:
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
+    async def delete_component(self, component_name: str) -> dict[str, Any]:
+        """Remove a component definition from the project.
+
+        Mirrors add_component's read-mutate-save-commit lifecycle so the deletion goes through
+        the single ProjectManager path (fresh contents from Git, save, commit+push). It never
+        builds the commit from the in-memory cache, which could lag behind Git and silently
+        overwrite components added since the cache was last refreshed.
+        """
+        try:
+            project_data = await self.get_contents()
+            project_name = await self.get_name()
+
+            components = project_data.get("components", []) or []
+            if not any(isinstance(c, dict) and c.get("name") == component_name for c in components):
+                return {
+                    "success": False,
+                    "error": f"Component '{component_name}' niet gevonden",
+                    "error_type": "not_found",
+                }
+
+            project_data["components"] = [
+                c for c in components if not (isinstance(c, dict) and c.get("name") == component_name)
+            ]
+
+            await self.save_project_data()
+            git_connector = await self.get_git_connector_for_project_files()
+            await git_connector.commit_and_push(f"Remove component '{component_name}' from project '{project_name}'")
+
+            logger.info(f"Successfully removed component '{component_name}' from project '{project_name}'")
+            return {"success": True}
+
+        except Exception as e:
+            error_msg = f"Error removing component '{component_name}': {e}"
+            logger.exception(error_msg)
+            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+
     async def add_service(
         self,
         service_name: str,
