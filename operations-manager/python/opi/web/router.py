@@ -414,7 +414,6 @@ async def delete_component_web(request: Request, project_name: str, component_na
     try:
         from fastapi.responses import JSONResponse
 
-        from opi.handlers.project_file_handler import save_project_file
         from opi.services.project_service import get_project_service
 
         user = get_current_user(request)
@@ -438,40 +437,26 @@ async def delete_component_web(request: Request, project_name: str, component_na
         if not project:
             return JSONResponse(content={"error": "Project niet gevonden"}, status_code=404)
 
-        project_data = project.data or {}
-        components = list(project_data.get("components", []))
-
-        # Find and remove the component by name
-        original_count = len(components)
-        components = [c for c in components if c.get("name") != component_name]
-        if len(components) == original_count:
-            return JSONResponse(content={"error": f"Component '{component_name}' niet gevonden"}, status_code=404)
-
-        project_data["components"] = components
-        save_project_file(project.filename, project_data)
-        project_service.load_project_from_data(project_data, project.filename)
-        logger.info(f"Component '{component_name}' removed from '{project_name}', triggering reprocessing")
-
-        # Trigger reprocessing via V2 async task
-        from io import StringIO
-
-        from ruamel.yaml import YAML
-
+        # Mutate through the single ProjectManager path: it reads fresh contents from Git,
+        # then saves and commits, so a lagging read cache can never overwrite newer Git state.
         from opi.core.task_helpers import create_async_task
+        from opi.manager.project_manager import ProjectManager
 
-        yaml_instance = YAML()
-        yaml_instance.preserve_quotes = True
-        yaml_instance.width = 4096
-        yaml_output = StringIO()
-        yaml_instance.dump(project_data, yaml_output)
-        yaml_content = yaml_output.getvalue()
+        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+        result = await project_manager.delete_component(component_name)
+        if not result["success"]:
+            status = 404 if result.get("error_type") == "not_found" else 500
+            return JSONResponse(content={"error": result["error"]}, status_code=status)
+
+        # Refresh the read cache to the committed state, then reprocess from Git to apply it.
+        project_service.load_project_from_data(await project_manager.get_contents(), project.filename)
+        logger.info(f"Component '{component_name}' removed from '{project_name}', triggering reprocessing")
 
         await create_async_task(
             request=request,
-            task_type="create_project",
+            task_type="refresh_project",
             project_name=project_name,
-            payload={"project_name": project_name, "yaml_content": yaml_content},
-            max_attempts=1,
+            payload={"project_name": project_name, "force_clone": True},
         )
 
         return JSONResponse(
