@@ -5,6 +5,9 @@ metadata:
   namespace: rig-prd-operations
   annotations:
     cert-manager.io/issuer: letsencrypt-operations-manager
+    cert-manager.io/private-key-algorithm: ECDSA
+    cert-manager.io/private-key-size: "384"
+    cert-manager.io/private-key-rotation-policy: Always
     external-dns.alpha.kubernetes.io/target: router.rijksapp.nl
     haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0,::/0"
     haproxy.router.openshift.io/timeout: "300s"

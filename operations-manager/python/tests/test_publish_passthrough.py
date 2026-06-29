@@ -252,4 +252,8 @@ def test_standard_render_keeps_cert() -> None:
     h = _render(passthrough=False, cluster_issuer="kind-ca-issuer")
     assert "route.openshift.io/termination: passthrough" not in h
     assert "cert-manager.io/cluster-issuer: kind-ca-issuer" in h
+    # Strong key material requested for platform-issued certs (no RSA-2048 default).
+    assert "cert-manager.io/private-key-algorithm: ECDSA" in h
+    assert 'cert-manager.io/private-key-size: "384"' in h
+    assert "cert-manager.io/private-key-rotation-policy: Always" in h
     assert "secretName" in h

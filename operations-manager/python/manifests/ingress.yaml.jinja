@@ -77,6 +77,12 @@ metadata:
 {% elif cluster_issuer %}
     cert-manager.io/cluster-issuer: {{ cluster_issuer }}
 {% endif %}
+{% if issuer_name or cluster_issuer %}
+    # Modern key material: ECDSA P-384, fresh key on every renewal (no RSA-2048 default).
+    cert-manager.io/private-key-algorithm: ECDSA
+    cert-manager.io/private-key-size: "384"
+    cert-manager.io/private-key-rotation-policy: Always
+{% endif %}
 {% if external_dns_target %}
     # ============================================================
     # External-DNS target - overrides the default LB-status hostname
