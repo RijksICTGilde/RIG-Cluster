@@ -80,6 +80,18 @@ class TestServiceListConverter:
         conv = ServiceListConverter()
         assert conv.view(value) == conv.read(value)
 
+    def test_component_scope_never_restores_catalog_data(self):
+        # A component's services must never receive the project attachments catalog data,
+        # or the whole catalog gets duplicated onto the component.
+        ctx = {"services": [{"attachments": {"data": [{"id": "ca-root", "filename": "r.pem", "content": "x"}]}}]}
+        assert ServiceListConverter().write(["attachments"], ctx) == ["attachments"]
+
+    def test_project_scope_restores_catalog_data(self):
+        # The project services list keeps the uploaded attachments catalog on save.
+        ctx = {"services": [{"attachments": {"data": [{"id": "ca-root", "filename": "r.pem", "content": "x"}]}}]}
+        result = ServiceListConverter(preserve_catalog_data=True).write(["attachments"], ctx)
+        assert result[0]["attachments"]["data"][0]["id"] == "ca-root"
+
 
 class TestIntegerListConverter:
     def test_read_list_to_string(self):
