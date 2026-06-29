@@ -59,7 +59,9 @@ from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.generation.manifests import ManifestGenerator
 from opi.handlers.project_file_handler import (
     ProjectFileHandler,
+    attachment_is_referenced,
     extract_service_names_from_component,
+    find_attachment_data_list,
     save_project_file,
 )
 from opi.handlers.sops import SopsHandler
@@ -6608,6 +6610,42 @@ class ProjectManager:
 
         except Exception as e:
             error_msg = f"Error removing component '{component_name}': {e}"
+            logger.exception(error_msg)
+            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+
+    async def remove_attachment(self, attachment_id: str) -> dict[str, Any]:
+        """Remove an attachment from the project's catalog.
+
+        Idempotent (already-absent is a no-op success) and refuses removal while the attachment
+        is still referenced. Uses the single ProjectManager path: fresh contents from Git, save,
+        commit and push, with no cache in the mutate-commit path.
+        """
+        try:
+            project_data = await self.get_contents()
+            project_name = await self.get_name()
+
+            data = find_attachment_data_list(project_data.get("services"))
+            if data is None or not any(isinstance(e, dict) and e.get("id") == attachment_id for e in data):
+                return {"success": True, "changed": False}
+
+            if attachment_is_referenced(project_data, attachment_id):
+                return {
+                    "success": False,
+                    "error": f"Bijlage '{attachment_id}' is in gebruik en kan niet worden verwijderd",
+                    "error_type": "in_use",
+                }
+
+            data[:] = [e for e in data if not (isinstance(e, dict) and e.get("id") == attachment_id)]
+
+            await self.save_project_data()
+            git_connector = await self.get_git_connector_for_project_files()
+            await git_connector.commit_and_push(f"Remove attachment '{attachment_id}' from project '{project_name}'")
+
+            logger.info(f"Removed attachment '{attachment_id}' from project '{project_name}'")
+            return {"success": True, "changed": True}
+
+        except Exception as e:
+            error_msg = f"Error removing attachment '{attachment_id}': {e}"
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
