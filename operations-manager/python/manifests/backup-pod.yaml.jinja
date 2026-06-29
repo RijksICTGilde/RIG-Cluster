@@ -7,6 +7,9 @@ metadata:
     app.kubernetes.io/name: pvc-backup
     app.kubernetes.io/component: backup-job
     app.kubernetes.io/managed-by: opi-backup
+    # Match the deployment's tenant NetworkPolicy so this pod is allowed egress to
+    # the backup MinIO (the baseline selects deployment=<name>).
+    deployment: "{{ deployment_name | default('unknown') }}"
     backup.rig.nl/pvc: "{{ pvc_name }}"
     backup.rig.nl/timestamp: "{{ timestamp }}"
     backup.rig.nl/trigger: "{{ trigger | default('scheduled') }}"
