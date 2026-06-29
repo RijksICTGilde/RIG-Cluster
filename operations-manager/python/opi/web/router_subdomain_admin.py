@@ -328,7 +328,12 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
     if not project:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
 
-    existing_data = project.data or {}
+    # Read fresh from Git, not the cache, so the approval merges onto current state and a
+    # lagging cache is never committed back over newer Git data (the cache/Git timing fix).
+    from opi.manager.project_manager import ProjectManager
+
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+    existing_data = await project_manager.get_contents()
     existing_data.update(merged_data)
 
     # Run post_merge — maps _approval_items back to domains structure
