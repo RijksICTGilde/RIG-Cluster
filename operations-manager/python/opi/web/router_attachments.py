@@ -26,9 +26,19 @@ attachments_router = APIRouter(prefix="/projects", tags=["attachments"])
 @attachments_router.delete("/{project_name}/attachments/{attachment_id}")
 @requires_sso
 async def delete_attachment(request: Request, project_name: str, attachment_id: str):
-    """Remove an attachment from the catalog, refusing if it is still in use."""
+    """Remove an attachment from the catalog, refusing if it is still in use.
+
+    Idempotent: if the attachment is already gone (e.g. a stale page deleting it twice),
+    report success without a commit so the page reload simply reflects the current state,
+    instead of a confusing "not found".
+    """
     project, _user_email = require_project_edit_access(request, project_name)
     project_data = project.data or {}
+
+    data = find_attachment_data_list(project_data.get("services"))
+    if data is None or not any(isinstance(e, dict) and e.get("id") == attachment_id for e in data):
+        logger.info(f"Attachment '{attachment_id}' already absent from project '{project_name}', nothing to delete")
+        return {"success": True}
 
     if attachment_is_referenced(project_data, attachment_id):
         raise HTTPException(
@@ -36,11 +46,7 @@ async def delete_attachment(request: Request, project_name: str, attachment_id: 
             detail=f"Bijlage '{attachment_id}' is in gebruik en kan niet worden verwijderd",
         )
 
-    data = find_attachment_data_list(project_data.get("services"))
-    remaining = [entry for entry in (data or []) if entry.get("id") != attachment_id]
-    if data is None or len(remaining) == len(data):
-        raise HTTPException(status_code=404, detail=f"Bijlage '{attachment_id}' niet gevonden")
-    data[:] = remaining
+    data[:] = [entry for entry in data if entry.get("id") != attachment_id]
 
     save_project_file(project.filename, project_data)
     get_project_service().load_project_from_data(project_data, project.filename)
