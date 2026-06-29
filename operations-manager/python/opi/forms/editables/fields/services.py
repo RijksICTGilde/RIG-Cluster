@@ -15,7 +15,7 @@ from opi.forms.editables.validators import RangeValidator, RealmRoleValidator, U
 
 SERVICES_EDITABLE = Editable(
     yaml_path="services",
-    converter=ServiceListConverter(),
+    converter=ServiceListConverter(preserve_catalog_data=True),
     values_provider="ServiceOptionsProvider",
 )
 
