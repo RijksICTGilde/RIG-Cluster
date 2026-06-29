@@ -21,8 +21,8 @@ from opi.forms.editables.resolvers import ClusterDefaultDomain
 from opi.forms.editables.validators import (
     BaseDomainValidator,
     CustomDomainValidator,
-    DeploymentNameValidator,
     DomainFormatValidator,
+    KubernetesNameValidator,
     SubdomainValidator,
 )
 from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS, SUBDOMAIN_FORMAT_IDS
@@ -129,5 +129,5 @@ WIZARD_DEPLOYMENT_NAME_EDITABLE = Editable(
     yaml_path="deployments[*]/name",
     required=True,
     default="productie",
-    validator=DeploymentNameValidator(),
+    validator=KubernetesNameValidator("Deploymentnaam"),
 )

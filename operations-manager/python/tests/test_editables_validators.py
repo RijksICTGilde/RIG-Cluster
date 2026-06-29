@@ -298,37 +298,39 @@ class TestContainerImageValidator:
         assert ContainerImageValidator().validate("registry/app@sha256:abc123") == []
 
 
-class TestDeploymentNameValidator:
-    """Deployment name must be a Kubernetes-safe label: lowercase, starts with a letter
-    (so never all-digits, and out of YAML's int parsing), digits/hyphens, max 63."""
+class TestKubernetesNameValidator:
+    """Names that become Kubernetes resource names (deployment, storage, ...): lowercase,
+    start with a letter (so never all-digits or parsed as a YAML int), digits/hyphens."""
 
-    def test_rejects_spaces_and_capitals(self):
-        from opi.forms.editables.validators import DeploymentNameValidator
+    def test_rejects_spaces_capitals_and_digit_starts(self):
+        from opi.forms.editables.validators import KubernetesNameValidator
 
-        assert DeploymentNameValidator().validate("MOZa Dienstverlenerportaal PoC")
-
-    def test_rejects_all_digits_and_leading_digit(self):
-        from opi.forms.editables.validators import DeploymentNameValidator
-
-        v = DeploymentNameValidator()
+        v = KubernetesNameValidator("Deploymentnaam")
+        assert v.validate("MOZa Dienstverlenerportaal PoC")
         assert v.validate("123")
         assert v.validate("1abc")
 
-    def test_rejects_too_long(self):
-        from opi.forms.editables.validators import DeploymentNameValidator
+    def test_label_appears_in_message(self):
+        from opi.forms.editables.validators import KubernetesNameValidator
 
-        assert DeploymentNameValidator().validate("a" * 64)
+        assert "Opslagnaam" in KubernetesNameValidator("Opslagnaam").validate("Bad Name")[0]
+
+    def test_respects_max_length(self):
+        from opi.forms.editables.validators import KubernetesNameValidator
+
+        assert KubernetesNameValidator("Naam", max_length=12).validate("a" * 13)
+        assert KubernetesNameValidator("Naam").validate("a" * 64)
 
     def test_accepts_valid_names(self):
-        from opi.forms.editables.validators import DeploymentNameValidator
+        from opi.forms.editables.validators import KubernetesNameValidator
 
-        v = DeploymentNameValidator()
+        v = KubernetesNameValidator("Deploymentnaam")
         assert v.validate("productie") == []
         assert v.validate("mozad-dle") == []
         assert v.validate("a") == []
 
     def test_empty_is_not_a_format_error(self):
-        from opi.forms.editables.validators import DeploymentNameValidator
+        from opi.forms.editables.validators import KubernetesNameValidator
 
         # Emptiness is enforced by required=True, not here.
-        assert DeploymentNameValidator().validate("") == []
+        assert KubernetesNameValidator("Naam").validate("") == []
