@@ -14,6 +14,7 @@ from opi.forms.editables.validators import (
     ComponentNameValidator,
     ContainerImageValidator,
     KeyValueValidator,
+    KubernetesNameValidator,
     MemoryRangeValidator,
     MemoryRequestRangeValidator,
     PathValidator,
@@ -132,6 +133,7 @@ COMPONENT_USER_ENV_VARS_EDITABLE = Editable(
 
 PERSISTENT_STORAGE_NAME_EDITABLE = Editable(
     yaml_path="components[*]/services{persistent-storage}/config[*]/name",
+    validator=KubernetesNameValidator("Opslagnaam"),
     required=True,
     default="data",
 )
@@ -164,6 +166,7 @@ PERSISTENT_STORAGE_SEQUENCE_EDITABLE = Editable(
 
 TEMP_STORAGE_NAME_EDITABLE = Editable(
     yaml_path="components[*]/services{temp-storage}/config[*]/name",
+    validator=KubernetesNameValidator("Opslagnaam"),
     required=True,
     default="tmp",
 )

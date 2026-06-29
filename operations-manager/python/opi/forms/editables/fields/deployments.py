@@ -16,9 +16,9 @@ from opi.forms.editables.editable import Editable
 from opi.forms.editables.validators import (
     BaseDomainValidator,
     CustomDomainValidator,
-    DeploymentNameValidator,
     DomainFormatValidator,
     KeyValueValidator,
+    KubernetesNameValidator,
     PathValidator,
     SubdomainValidator,
 )
@@ -27,7 +27,9 @@ from opi.forms.editables.validators import (
 # Pure Editable definitions (data logic only)
 # ===========================================================================
 
-DEPLOYMENT_NAME_EDITABLE = Editable(yaml_path="deployments[*]/name", required=True, validator=DeploymentNameValidator())
+DEPLOYMENT_NAME_EDITABLE = Editable(
+    yaml_path="deployments[*]/name", required=True, validator=KubernetesNameValidator("Deploymentnaam")
+)
 DEPLOYMENT_CLUSTER_EDITABLE = Editable(
     yaml_path="deployments[*]/cluster", required=True, values_provider="ClusterOptionsProvider"
 )
