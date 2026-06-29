@@ -104,25 +104,29 @@ class ComponentNameValidator:
         return []
 
 
-class DeploymentNameValidator:
-    """Validates a deployment name as a Kubernetes-safe label.
+class KubernetesNameValidator:
+    """Validates a name that becomes part of Kubernetes resource names (deployment, PVC, ...).
 
-    The name becomes part of Kubernetes resource names, so it must start with a lowercase
-    letter (also keeps it out of YAML's int parsing, so never all-digits) and then contain
-    only lowercase letters, digits and hyphens, ending alphanumeric, max 63 chars. The
-    explicit message names the common mistakes (spaces, capitals) since the wizard field is
-    free text. Cross-deployment uniqueness is handled by UniqueDeploymentNameEnforcer.
+    Must start with a lowercase letter (so it is never all-digits, nor parsed as a YAML int),
+    then lowercase letters, digits and hyphens, ending alphanumeric, within ``max_length``.
+    ``label`` names the field in the message; the wizard fields are free text, so the message
+    spells out the common mistakes (spaces, capitals). Uniqueness, where relevant, is
+    enforced elsewhere (e.g. UniqueDeploymentNameEnforcer).
     """
+
+    def __init__(self, label: str = "Naam", max_length: int = 63) -> None:
+        self._label = label
+        self._max_length = max_length
 
     def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
         if not value:
             return []
         value_str = str(value)
-        if len(value_str) > 63:
-            return ["Deploymentnaam mag maximaal 63 tekens bevatten"]
+        if len(value_str) > self._max_length:
+            return [f"{self._label} mag maximaal {self._max_length} tekens bevatten"]
         if not re.match(r"^[a-z]([-a-z0-9]*[a-z0-9])?$", value_str):
             return [
-                "Deploymentnaam moet met een kleine letter beginnen en mag alleen kleine letters, "
+                f"{self._label} moet met een kleine letter beginnen en mag alleen kleine letters, "
                 "cijfers en streepjes bevatten, geen spaties of hoofdletters"
             ]
         return []
