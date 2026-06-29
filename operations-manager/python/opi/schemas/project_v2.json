@@ -425,7 +425,7 @@
       "required": ["name", "cluster", "namespace"],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
+        "name": { "type": "string", "pattern": "^[a-z]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
         "cluster": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
         "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
         "repository": { "type": "string" },

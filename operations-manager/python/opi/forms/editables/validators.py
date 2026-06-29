@@ -104,6 +104,30 @@ class ComponentNameValidator:
         return []
 
 
+class DeploymentNameValidator:
+    """Validates a deployment name as a Kubernetes-safe label.
+
+    The name becomes part of Kubernetes resource names, so it must start with a lowercase
+    letter (also keeps it out of YAML's int parsing, so never all-digits) and then contain
+    only lowercase letters, digits and hyphens, ending alphanumeric, max 63 chars. The
+    explicit message names the common mistakes (spaces, capitals) since the wizard field is
+    free text. Cross-deployment uniqueness is handled by UniqueDeploymentNameEnforcer.
+    """
+
+    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
+        if not value:
+            return []
+        value_str = str(value)
+        if len(value_str) > 63:
+            return ["Deploymentnaam mag maximaal 63 tekens bevatten"]
+        if not re.match(r"^[a-z]([-a-z0-9]*[a-z0-9])?$", value_str):
+            return [
+                "Deploymentnaam moet met een kleine letter beginnen en mag alleen kleine letters, "
+                "cijfers en streepjes bevatten, geen spaties of hoofdletters"
+            ]
+        return []
+
+
 class AttachmentIdValidator:
     """
     Validates attachment ids: lowercase letters, digits and hyphens, starting with a
