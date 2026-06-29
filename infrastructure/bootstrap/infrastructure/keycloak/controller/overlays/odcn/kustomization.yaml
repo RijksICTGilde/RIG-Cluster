@@ -27,6 +27,15 @@ patches:
       - op: add
         path: /metadata/annotations/cert-manager.io~1issuer
         value: letsencrypt-keycloak
+      - op: add
+        path: /metadata/annotations/cert-manager.io~1private-key-algorithm
+        value: ECDSA
+      - op: add
+        path: /metadata/annotations/cert-manager.io~1private-key-size
+        value: "384"
+      - op: add
+        path: /metadata/annotations/cert-manager.io~1private-key-rotation-policy
+        value: Always
       - op: remove
         path: /spec/ingressClassName
       - op: replace
