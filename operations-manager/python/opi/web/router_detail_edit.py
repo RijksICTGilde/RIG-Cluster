@@ -1214,7 +1214,12 @@ async def _modal_do_submit(
     if not project:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
 
-    existing_data = project.data or {}
+    # Read fresh from Git, not the cache, so the form merges onto current state and a lagging
+    # cache is never committed back over newer Git data (the cache/Git timing fix).
+    from opi.manager.project_manager import ProjectManager
+
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+    existing_data = await project_manager.get_contents()
 
     # Capture existing attachments' encrypted content before the form merge: the wizard
     # strips it from the session (see _strip_attachment_content), so it is re-attached at
