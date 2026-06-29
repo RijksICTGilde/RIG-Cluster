@@ -150,6 +150,13 @@ class EnsureListConverter:
 class ServiceListConverter:
     """Converts mixed str/dict service list to/from structured format."""
 
+    def __init__(self, preserve_catalog_data: bool = False) -> None:
+        # The attachments catalog ``data`` lives only on the PROJECT services list. Restoring
+        # it is correct there, but it must NOT be restored onto a component's services list (a
+        # component only references attachments via ``config``); doing so duplicates the whole
+        # catalog onto the component. Only the project-level editable opts in.
+        self._preserve_catalog_data = preserve_catalog_data
+
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str]:
         """Extract service names from mixed list."""
         from opi.services.services import ServiceAdapter
@@ -179,9 +186,10 @@ class ServiceListConverter:
         if not isinstance(value, list):
             return []
 
-        existing_data = self._existing_attachments_data(context_data)
-        if existing_data is not None:
-            value = [self._restore_attachments_data(item, existing_data) for item in value]
+        if self._preserve_catalog_data:
+            existing_data = self._existing_attachments_data(context_data)
+            if existing_data is not None:
+                value = [self._restore_attachments_data(item, existing_data) for item in value]
         return value
 
     @staticmethod
