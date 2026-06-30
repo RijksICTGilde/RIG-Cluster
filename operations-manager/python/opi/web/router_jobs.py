@@ -19,7 +19,8 @@ from opi.core.auth_decorators import requires_sso
 from opi.core.config import settings
 from opi.core.templates import get_templates
 from opi.manager.job_manager import JobError, get_job_manager
-from opi.services.runs_service import get_runs_service
+from opi.manager.run_support import pending_state, spawn
+from opi.services.runs_service import RunKind, get_runs_service
 from opi.web.router_detail_edit import _require_project_member_access
 
 logger = logging.getLogger(__name__)
@@ -39,20 +40,27 @@ async def _render(
     errors: dict[str, str] | None = None,
     form_image: str = "",
     form_command: str = "",
+    include_pending: bool = False,
 ) -> HTMLResponse:
     """Render the job modal body for the current state.
 
     `errors` carries per-field validation messages (rendered inline on the
     fields, the codebase's normal form-validation pattern); form_image/command
     preserve what the user typed when re-rendering the form after a validation
-    failure.
+    failure. include_pending lets the status poll surface 'starting'/'failed'
+    from the runs registry before the pod exists (background provisioning).
     """
     job = None
     if force_state:
         state = force_state
     else:
         job = await get_job_manager().get_job(project_name, deployment_name)
-        state = job.state if job else "none"
+        if job is not None:
+            state = job.state
+        elif include_pending:
+            state, error = await pending_state(project_name, deployment_name, RunKind.JOB, "job", error)
+        else:
+            state = "none"
 
     templates = get_templates()
     return templates.TemplateResponse(
@@ -189,7 +197,7 @@ async def job_modal(request: Request, project_name: str, deployment_name: str) -
 async def job_status(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Polled by the modal while a job is starting/running."""
     _require_project_member_access(request, project_name)
-    return await _render(request, project_name, deployment_name)
+    return await _render(request, project_name, deployment_name, include_pending=True)
 
 
 @jobs_router.post("/{project_name}/jobs", response_class=HTMLResponse)
@@ -220,8 +228,9 @@ async def job_start(request: Request, project_name: str) -> HTMLResponse:
             form_command=command,
         )
 
+    manager = get_job_manager()
     try:
-        await get_job_manager().start(
+        job = await manager.begin(
             project_name=project_name,
             deployment_name=deployment_name,
             image=image,
@@ -229,14 +238,19 @@ async def job_start(request: Request, project_name: str) -> HTMLResponse:
             started_by=user_email,
         )
     except JobError as exc:
-        return await _render(request, project_name, deployment_name, error=str(exc))
+        return await _render(
+            request, project_name, deployment_name, error=str(exc), form_image=image, form_command=command
+        )
     except Exception:
         logger.exception("Unexpected error starting job for %s/%s", project_name, deployment_name)
         return await _render(
             request, project_name, deployment_name, error="Onverwachte fout bij het starten van de job."
         )
 
-    return await _render(request, project_name, deployment_name)
+    # Apply the pod in the background so the click returns immediately; the modal
+    # polls /status, which shows 'starting' from the registry until the pod is up.
+    spawn(manager.provision(project_name, deployment_name, job.session_id, image, command, user_email))
+    return await _render(request, project_name, deployment_name, force_state="starting")
 
 
 @jobs_router.post("/{project_name}/jobs/{session_id}/stop", response_class=HTMLResponse)

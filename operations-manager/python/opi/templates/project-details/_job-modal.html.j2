@@ -49,6 +49,16 @@
         </c-layout-flow>
     </c-card>
 
+{% elif state == 'starting' %}
+    {# Background provisioning: the run is registered but the pod is not visible
+       yet (job is None), so show a spinner card; the wrapper above keeps polling. #}
+    <c-card outline="true" padding="md" backgroundColor="wit">
+        <c-layout-flow gap="sm">
+            <c-heading type="h5" textContent="Job wordt gestart..." />
+            <c-p>Even geduld, de job wordt opgestart.</c-p>
+        </c-layout-flow>
+    </c-card>
+
 {% else %}
     <c-card outline="true" padding="lg" backgroundColor="wit">
         <c-layout-flow gap="md">
@@ -59,7 +69,8 @@
                   hx-headers="{&quot;X-CSRF-Token&quot;: &quot;{{ request.state.csrf_token }}&quot;}"
                   hx-vals="{&quot;deployment&quot;: &quot;{{ deployment_name }}&quot;}"
                   hx-target="#job-modal-body"
-                  hx-swap="outerHTML">
+                  hx-swap="outerHTML"
+                  hx-disabled-elt="find button">
                 <c-layout-flow gap="md">
                     <c-text-input-field
                         id="job-image-{{ deployment_name }}"
