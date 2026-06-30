@@ -91,15 +91,6 @@
             {% endif %}
         </div>
 
-        {# Memory Overprovision Check (lazy-loaded) #}
-        {% if prometheus_available | default(false) %}
-        <div id="memory-check-{{ _id_prefix }}"
-             hx-get="/projects/details/{{ project.name }}/memory-check/{{ deployment.name }}?id_prefix={{ _id_prefix }}"
-             hx-trigger="load"
-             hx-swap="innerHTML">
-        </div>
-        {% endif %}
-
         {# Last Sync Time #}
         {% if status.get('last_sync') %}
         <c-layout-row gap="xs" verticalSpacing="center">
