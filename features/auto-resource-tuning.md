@@ -58,16 +58,29 @@ capacity); the limit is treated as a ceiling:
   - **VPA path**: the VPA `target` is taken **as-is, with no buffer and no 25Mi
     headroom**: it already includes the recommender's own margin. (The reason
     string reads `Request: VPA target <N>Mi = <N>Mi` rather than `max ... + 25%`.)
-- **Limit**:
-  - If the current limit **equals** the current request (the untouched default),
-    the limit follows the request so the two stay equal.
-  - If the current limit **already differs** from the request (set deliberately,
-    or raised by a prior OOM), the limit is **left untouched** - only the
-    request is tuned ("frozen limit").
+- **Limit** = `observed peak * RESOURCE_TUNING_MEMORY_LIMIT_FACTOR` (default 1.5x),
+  never below the request. The limit is **not frozen**: it decays as the peak
+  decays, instead of being held forever at a value a prior one-time spike (or OOM
+  bump) left behind. Two things keep this safe:
+  - A **valid OOM floor** is the lower bound (see OOM Kill Handling). A real,
+    recent peak is remembered and protects the limit; only when that floor
+    expires (stale: old enough and usage since stayed well below it) does the
+    limit drop toward `peak * factor`.
+  - The **OOM watcher** is the reactive net for boot/startup spikes that fell
+    *outside* the observation window. We cannot size for a spike we never saw, so
+    if the limit decayed too far, the next restart OOMs once, the watcher bumps it
+    back, and the floor remembers it. This is the deliberate trade for not
+    permanently over-provisioning every workload.
+
+Why peak-based and not an absolute floor: a flat minimum limit (e.g. 256Mi) would
+over-provision genuinely small pods (an nginx sidecar at 25Mi does not need a
+256Mi ceiling). Sizing the limit from the observed peak lets it scale with the
+workload in both directions.
 
 Subject to the cluster memory minimum (default 25Mi) and maximum; the request is
-capped to never exceed the limit; and the **deviation deadband** (below) decides
-whether the change is worth committing.
+capped to never exceed the limit; and the **deviation deadband** (below, checked
+on request *and* limit independently) decides whether the change is worth
+committing.
 
 ### Recommender Floor
 
@@ -96,13 +109,16 @@ CPU is compressible - it throttles rather than OOM-kills - so there is no floor
 or emergency path:
 
 - **Request** = VPA cpu `target * (1 + buffer%)`, clamped to `[min_cpu_m, max_cpu_request_m]` (25m..250m on odcn).
-- **Limit** follows the same frozen-vs-equal rule as memory, clamped to `max_cpu_limit_m` (4000m on odcn).
+- **Limit**: mirrors the request when the two were equal (the untouched default);
+  a limit already set to differ from the request is left **frozen**. Clamped to
+  `max_cpu_limit_m` (4000m on odcn).
 
-Note: the memory-only refinements (the `VPA_MEMORY_FLOOR_MI` fallback and the
-"no buffer on a VPA target" rule) do **not** apply to CPU. CPU still adds the
-buffer on top of the VPA target and has no Prometheus fallback, so a component
-whose CPU target sits at the recommender floor stays at `floor + buffer` (e.g.
-`25m + 25% ≈ 31m`). CPU is compressible and cheap, so this is accepted.
+Note: the memory-only refinements do **not** apply to CPU. CPU keeps the
+frozen-limit rule (memory dropped it in favour of a decaying peak-based limit),
+still adds the buffer on top of the VPA target, has no Prometheus fallback, and
+has no `VPA_MEMORY_FLOOR_MI` equivalent. So a component whose CPU target sits at
+the recommender floor stays at `floor + buffer` (e.g. `25m + 25% ≈ 31m`). CPU is
+compressible and cheap, so this asymmetry is accepted.
 
 The "Geheugen kan worden verminderd" portal card and its saving figure are
 expressed as the **request** reduction, since requests are what free scheduling
@@ -158,7 +174,7 @@ Response:
       "max_observed_memory_mb": "100",
       "avg_observed_memory_mb": "80",
       "has_oom_kills": "False",
-      "reason": "Request: max 100Mi + 25% + 25Mi headroom = 150Mi. Limit kept equal at 150Mi"
+      "reason": "Request: max 100Mi + 25% + 25Mi headroom = 150Mi. Limit: max 100Mi x 1.5 = 150Mi"
     }
   ],
   "unchanged": [],
@@ -179,7 +195,8 @@ Detects broken deployments (crash loops, missing images, OOM kills) and disables
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `RESOURCE_TUNING_WINDOW_HOURS` | `24` | Prometheus lookback window |
-| `RESOURCE_TUNING_MEMORY_BUFFER_PERCENT` | `25` | Headroom above the Prometheus measurement (memory). Not applied to a VPA memory target; still applied to the VPA CPU target |
+| `RESOURCE_TUNING_MEMORY_BUFFER_PERCENT` | `25` | Headroom above the Prometheus measurement (memory request). Not applied to a VPA memory target; still applied to the VPA CPU target |
+| `RESOURCE_TUNING_MEMORY_LIMIT_FACTOR` | `1.5` | Memory limit = observed peak x this factor (burst headroom). The limit decays with the peak; a valid OOM floor is the lower bound |
 | `VPA_MEMORY_FLOOR_MI` | `250` | Mirrors the recommender's `--pod-recommendation-min-allowed-memory-mb` floor. A VPA memory target at/below this is treated as "no signal" and the tuner falls back to Prometheus. Keep in sync with the recommender flag on the cluster |
 | `RESOURCE_TUNING_INCREASE_THRESHOLD` | `10` | Apply an increase when the request grows by ≥ this % |
 | `RESOURCE_TUNING_DECREASE_THRESHOLD` | `30` | Apply a decrease only when the request shrinks by ≥ this % |
@@ -235,7 +252,9 @@ All changes flow through git commits. The tuner reads recommendations (from the 
 | **Deviation deadband** | Only commit when the change clears both a % threshold (10% up / 30% down) and an absolute floor (16Mi / 10m) |
 | **OOM kill priority** | Always increase memory when OOM kills are present |
 | **2x propagation cap** | Base component not inflated by outlier deployments |
-| **Frozen limit** | A limit already set to differ from the request is left untouched - only the request is tuned |
+| **OOM floor (memory limit)** | A valid (recent, not-yet-stale) OOM floor is the lower bound for the memory limit, so a real past peak is never undercut; the limit only decays once the floor expires |
+| **OOM watcher net** | The reactive OOM watcher re-bumps a limit that decayed too far (e.g. an unobserved boot spike), so the peak-based limit can shrink without permanently risking startup |
+| **Frozen limit (CPU only)** | A CPU limit already set to differ from the request is left untouched; memory limits are no longer frozen (they track the peak) |
 | **Git-based changes** | All changes are auditable, reviewable, and reversible |
 | **Deployment-level scoping** | Tuning writes to deployment overrides, not shared definitions (except request propagation) |
 | **Fresh git reads** | Tuning reads the latest YAML from git before modifying, preventing stale cache data from overwriting concurrent changes |
@@ -255,7 +274,7 @@ Why a nightly full sweep rather than a paced/capped/cooldown schedule: **checkin
 
 These are inherent to reactive, history-based autoscaling and are worth knowing before trusting the tuner blindly:
 
-- **Idle-then-spike (peak) risk.** The recommendation reflects only what was observed in the window. A workload that is idle during the window and then does something new is sized too low, and the first spike can OOM-kill it. This is worsened by the **limit-collapse** rule: when limit == request (the default), a memory *decrease* shrinks both, leaving zero burst headroom. *(Mitigation under consideration: drive the memory limit from the VPA `upperBound`, or keep a headroom multiple, so requests can shrink for packing while the limit keeps burst room.)*
+- **Idle-then-spike / boot-spike risk.** The recommendation reflects only what was observed in the window. A workload that is idle (or simply not restarted) during the window and then boots or does something new is sized too low, and the first spike can OOM-kill it. The memory limit is now `peak x limit_factor` (default 1.5x) rather than collapsed onto the request, which gives burst headroom *above the observed peak*; but it cannot cover a spike that was never observed at all (a boot that did not happen inside the window). That residual case is handled reactively: the limit OOMs once on the next restart, the OOM watcher bumps it, and the OOM floor remembers it. This is the deliberate trade for not permanently over-provisioning. The boot spike is fundamentally an observation gap, not something a recommender (ours or the VPA) can size for in advance.
 
 - **Window sensitivity.** Memory sized to `max_over_time` over a fixed window depends on what that window captured: one that caught a rare spike sizes generously, one that missed it sizes too lean. The VPA path (a decaying ~8-day histogram) is more robust, but only contributes above the recommender floor (see Recommender Floor); for the many workloads that use less than the floor, Prometheus remains the effective source for memory requests.
 
