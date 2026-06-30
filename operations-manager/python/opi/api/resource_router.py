@@ -16,9 +16,9 @@ from opi.connectors.prometheus import get_metrics_connector
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.manager.project_manager import ProjectManager
 from opi.services.project_service import get_project_service
 from opi.services.resource_tuning_service import (
-    commit_project_yaml,
     trigger_reprocessing,
     tune_deployment_resources,
 )
@@ -114,7 +114,29 @@ async def sanitize_deployment(
         project_name: Name of the project
         deployment: Optional specific deployment name to sanitize
     """
-    project_data, filename = _get_project_data(project_name)
+    # Existence check via the cache; load fresh (migrated) data from git for the
+    # mutation so a stale cache cannot overwrite concurrent changes on commit.
+    _, filename = _get_project_data(project_name)
+    # Explicitly close the ProjectManager so its temp git clone is cleaned up.
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
+    try:
+        return await _run_sanitize(project_manager, project_name, deployment, filename)
+    finally:
+        await project_manager.close()
+
+
+async def _run_sanitize(
+    project_manager: ProjectManager,
+    project_name: str,
+    deployment: str | None,
+    filename: str,
+) -> JSONResponse:
+    """Run the sanitize pass over a project's deployments and persist disabled components.
+
+    The ProjectManager (and its temp git clone cleanup) is owned by the caller,
+    which closes it once this returns.
+    """
+    project_data = await project_manager.get_contents()
     file_handler = ProjectFileHandler()
 
     try:
@@ -235,7 +257,7 @@ async def sanitize_deployment(
         component_names = [c["component"] for c in disabled_components]
         commit_msg = f"sanitize: disable broken components {', '.join(component_names)} in {project_name}"
 
-        await commit_project_yaml(project_name, filename, project_data, commit_msg)
+        await project_manager.save_and_commit_project(project_data, commit_msg)
         await trigger_reprocessing(project_name, filename, deployment)
 
     return JSONResponse(

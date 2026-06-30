@@ -27,7 +27,7 @@ from opi.core.cluster_config import (
 )
 from opi.core.config import settings
 from opi.handlers.project_file_handler import ProjectFileHandler, ResourceFloor
-from opi.manager.project_manager import create_project_manager
+from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.project_service import get_project_service
 from opi.services.resource_analyzer import (
     _k8s_memory_to_mb,
@@ -36,8 +36,9 @@ from opi.services.resource_analyzer import (
     compute_memory_recommendation,
     passes_deviation_gate,
 )
+from opi.services.schema_migration import migrate_to_latest
 from opi.utils.naming import generate_unique_name
-from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
+from opi.utils.yaml_util import load_yaml_from_string
 
 logger = logging.getLogger(__name__)
 
@@ -129,40 +130,10 @@ async def get_project_data_from_git(project_name: str) -> tuple[dict[str, Any], 
         await git_connector.close()
         raise ValueError(f"Failed to parse YAML for project '{project_name}' from git")
 
+    # Migrate to the latest schema so the dict is safe to validate and commit.
+    project_data, _ = migrate_to_latest(project_data)
+
     return project_data, filename, git_connector
-
-
-async def commit_project_yaml(
-    project_name: str,
-    filename: str,
-    project_data: dict[str, Any],
-    commit_message: str,
-    git_connector: GitConnector | None = None,
-) -> None:
-    """
-    Write updated project data back to git and commit.
-
-    Args:
-        project_name: Name of the project
-        filename: Project YAML filename
-        project_data: Updated project data dict
-        commit_message: Git commit message
-        git_connector: Optional existing connector to reuse (caller manages lifecycle)
-    """
-
-    updated_yaml = dump_yaml_to_string(project_data)
-
-    owns_connector = git_connector is None
-    if owns_connector:
-        git_connector = await create_git_connector_for_project_files(project_name)
-    try:
-        file_path = f"projects/{filename}"
-        await git_connector.add_file(file_path, updated_yaml)
-        await git_connector.commit_and_push(commit_message)
-        logger.info(f"Committed project YAML changes: {commit_message}")
-    finally:
-        if owns_connector:
-            await git_connector.close()
 
 
 async def trigger_reprocessing(
@@ -399,6 +370,7 @@ async def _analyze_component_resources(
         max_memory_mi=get_max_memory_limit_mi(cluster),
         max_memory_request_mi=get_max_memory_request_mi(cluster),
         source=source,
+        limit_factor=settings.RESOURCE_TUNING_MEMORY_LIMIT_FACTOR,
     )
 
     if recommendation is None:
@@ -458,17 +430,28 @@ async def _analyze_component_resources(
 
     # Deadband gate for memory: react promptly to increases (reliability),
     # conservatively to decreases (cost only), and ignore sub-floor drift.
-    # OOM always applies.
+    # OOM always applies. The gate is checked on request AND limit independently:
+    # a stale limit that needs to decay must commit even when the request is
+    # already right (and vice versa).
     if not has_oom_kills:
         new_request_mb = _k8s_memory_to_mb(new_request)
-        if not passes_deviation_gate(
+        new_limit_mb = _k8s_memory_to_mb(new_limit)
+        request_passes = passes_deviation_gate(
             current_request_mb,
             new_request_mb,
             increase_threshold,
             decrease_threshold,
             settings.RESOURCE_TUNING_MIN_DELTA_MI,
-        ):
-            # Change too small to be worth a commit — keep current memory.
+        )
+        limit_passes = passes_deviation_gate(
+            current_limit_mb,
+            new_limit_mb,
+            increase_threshold,
+            decrease_threshold,
+            settings.RESOURCE_TUNING_MIN_DELTA_MI,
+        )
+        if not request_passes and not limit_passes:
+            # Both changes too small to be worth a commit — keep current memory.
             new_limit = current_resources["limits_memory"]
             new_request = current_resources["requests_memory"]
             floor_blocked = False
@@ -657,6 +640,10 @@ async def tune_deployment_resources(
     # the in-memory cache was last populated.
     project_data, filename, git_connector = await get_project_data_from_git(project_name)
     file_handler = ProjectFileHandler()
+    project_manager = ProjectManager(
+        project_file_relative_path=f"projects/{filename}",
+        git_connector_for_project_files=git_connector,
+    )
 
     try:
         try:
@@ -815,7 +802,7 @@ async def tune_deployment_resources(
             component_names = [c["component"] for c in changes]
             commit_msg = f"auto-tune: adjust resources for {', '.join(component_names)} in {project_name}"
 
-            await commit_project_yaml(project_name, filename, project_data, commit_msg, git_connector=git_connector)
+            await project_manager.save_and_commit_project(project_data, commit_msg, enforce_validation=False)
             if not skip_reprocessing:
                 deployment_refresh_triggered = await trigger_reprocessing(
                     project_name, filename, deployment_name, argocd_resources_changed=False

@@ -18,12 +18,8 @@ def _make_project_manager() -> ProjectManager:
 def project_manager() -> ProjectManager:
     pm = _make_project_manager()
 
-    mock_git = AsyncMock()
-    mock_git.commit_and_push = AsyncMock()
-
     pm.get_name = AsyncMock(return_value="test-project")
-    pm.save_project_data = AsyncMock()
-    pm.get_git_connector_for_project_files = AsyncMock(return_value=mock_git)
+    pm.save_and_commit_project = AsyncMock()
 
     return pm
 
@@ -46,7 +42,7 @@ class TestUpsertRegistryBySecret:
             "secretName": "rcr-pull-secret",
         }
         assert len(project_data["registries"]) == 1
-        project_manager.save_project_data.assert_awaited_once()
+        project_manager.save_and_commit_project.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_update_existing_registry(self, project_manager: ProjectManager) -> None:
@@ -99,9 +95,10 @@ class TestUpsertRegistryBySecret:
 
         await project_manager.upsert_registry_by_secret(name="my-reg", url="ghcr.io", secret_name="secret")
 
-        git_mock = await project_manager.get_git_connector_for_project_files()
-        git_mock.commit_and_push.assert_awaited_once_with(
-            "Add registry 'my-reg' (secretName) in project 'test-project'"
+        project_manager.save_and_commit_project.assert_awaited_once()
+        assert (
+            project_manager.save_and_commit_project.await_args.args[1]
+            == "Add registry 'my-reg' (secretName) in project 'test-project'"
         )
 
     @pytest.mark.asyncio
@@ -111,9 +108,10 @@ class TestUpsertRegistryBySecret:
 
         await project_manager.upsert_registry_by_secret(name="my-reg", url="new.io", secret_name="new")
 
-        git_mock = await project_manager.get_git_connector_for_project_files()
-        git_mock.commit_and_push.assert_awaited_once_with(
-            "Update registry 'my-reg' (secretName) in project 'test-project'"
+        project_manager.save_and_commit_project.assert_awaited_once()
+        assert (
+            project_manager.save_and_commit_project.await_args.args[1]
+            == "Update registry 'my-reg' (secretName) in project 'test-project'"
         )
 
 
@@ -175,7 +173,7 @@ class TestUpsertRegistryByCredentials:
 
         assert result["success"] is False
         assert result["error_type"] == "missing_public_key"
-        project_manager.save_project_data.assert_not_awaited()
+        project_manager.save_and_commit_project.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch("opi.manager.project_manager.encrypt_age_content", new_callable=AsyncMock)
@@ -191,7 +189,8 @@ class TestUpsertRegistryByCredentials:
             name="my-reg", url="ghcr.io", username="user", password="pass"
         )
 
-        git_mock = await project_manager.get_git_connector_for_project_files()
-        git_mock.commit_and_push.assert_awaited_once_with(
-            "Add registry 'my-reg' (credentials) in project 'test-project'"
+        project_manager.save_and_commit_project.assert_awaited_once()
+        assert (
+            project_manager.save_and_commit_project.await_args.args[1]
+            == "Add registry 'my-reg' (credentials) in project 'test-project'"
         )

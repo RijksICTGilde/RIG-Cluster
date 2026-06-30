@@ -30,6 +30,17 @@ class ProjectSchemaError(Exception):
     """
 
 
+class ProjectIntegrityError(Exception):
+    """Raised when a project file is schema-valid but structurally inconsistent.
+
+    Covers the cross-field checks the JSON schema cannot express: duplicate
+    component/deployment names, dangling component references, colliding ingress
+    paths, invalid root components and hard domain-config violations. Like
+    ProjectSchemaError the message is user-facing and in Dutch, and the caller
+    must reject the project (fails closed).
+    """
+
+
 @lru_cache(maxsize=1)
 def _get_validator() -> Draft202012Validator:
     with SCHEMA_PATH.open(encoding="utf-8") as schema_file:
