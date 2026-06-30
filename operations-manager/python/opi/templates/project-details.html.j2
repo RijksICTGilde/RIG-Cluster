@@ -64,9 +64,9 @@
     </c-layout-flow>
 
     <c-layout-flow id="tab-taken" gap="lg" style="display: none;">
-        {# Lazy-loaded + polled so running tasks show live status/progress.
-           innerHTML swap keeps the polling trigger on this div. #}
-        <div hx-get="/projects/{{ project.name }}/tasks" hx-trigger="load, every 5s" hx-swap="innerHTML">
+        {# Loaded + polled only while the Taken tab is open (startTasksPoll/stopTasksPoll),
+           so we don't poll every 5s from page load on tabs the user is not viewing. #}
+        <div id="tasks-content" data-tasks-url="/projects/{{ project.name }}/tasks">
             <c-p>Taken worden geladen...</c-p>
         </div>
     </c-layout-flow>
@@ -1157,6 +1157,14 @@
         // Show selected tab
         document.getElementById('tab-' + tabName).style.display = '';
 
+        // Load the Taken list (it then polls itself via htmx) only while its tab is open;
+        // clearing it on any other tab removes the poller so htmx stops polling.
+        var t = document.getElementById('tasks-content');
+        if (t) {
+            if (tabName === 'taken') htmx.ajax('GET', t.dataset.tasksUrl, { target: '#tasks-content', swap: 'innerHTML' });
+            else t.innerHTML = '';
+        }
+
         // Update URL hash to preserve tab state across reloads
         if (tabName === 'deployments') {
             var gs = document.getElementById('global-deployment-selector');
@@ -2097,6 +2105,8 @@
             if (parts.length > 1) {
                 switchDeployment(parts[1]);
             }
+        } else if (hash === 'taken') {
+            switchTab('taken');
         }
     })();
 </script>
