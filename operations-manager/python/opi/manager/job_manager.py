@@ -28,6 +28,7 @@ from opi.manager.run_support import (
     apply_bundle,
     delete_bundle,
     find_deployment,
+    is_stale_starting,
     parse_expires,
     resolve_image,
 )
@@ -81,12 +82,16 @@ class JobManager:
     def _job_selector(self, deployment_name: str) -> str:
         return f"{LABEL_RUN_DEPLOYMENT}={deployment_name},{LABEL_RUN_KIND}={RunKind.JOB}"
 
-    async def start(self, project_name: str, deployment_name: str, image: str, command: str, started_by: str) -> JobRun:
-        """Provision and apply a job pod; return its description (state=starting)."""
+    async def begin(self, project_name: str, deployment_name: str, image: str, command: str, started_by: str) -> JobRun:
+        """Validate + register a job run (status 'starting'); fast, no apply.
+
+        Raises JobError on validation problems so the click gets immediate
+        feedback. The slow apply runs in provision().
+        """
         if not image.strip():
             raise JobError("Geen image opgegeven")
         # Shared local/ image handling (Kind-loaded images -> pull policy Never).
-        image, image_pull_policy = resolve_image(image)
+        image, _pull = resolve_image(image)
         # Command is optional: empty means run the image's default entrypoint/cmd.
         command = command.strip()
 
@@ -104,58 +109,38 @@ class JobManager:
 
         namespace = f"{get_namespace_prefix(cluster)}{project_name}"
 
-        # One job per deployment at a time (stop the previous one first).
+        # One job per deployment at a time (a running pod, or an in-flight start).
         existing = await self._kubectl.get_resources_by_label("pod", namespace, self._job_selector(deployment_name))
         if existing:
             raise JobError("Er draait al een job voor deze deployment. Stop die eerst.")
-
-        # Wire the deployment's database connection if it has one (the migrations use case).
-        db_secret = await DatabaseSecret.get_data(
-            kubectl_connector=self._kubectl, namespace=namespace, prefix=deployment_name
-        )
-        db_secret_name = DatabaseSecret.get_secret_name(deployment_name) if db_secret else None
+        try:
+            latest = await get_runs_service().get_latest_run(project_name, deployment_name, RunKind.JOB)
+        except Exception:
+            latest = None
+        if latest and latest.get("status") == "starting":
+            # No pod exists (checked above). A 'starting' row with no pod is either
+            # mid-provision or a dead start (OPI restarted before the pod was applied).
+            # A stale row would otherwise wedge jobs forever, so reconcile it
+            # (mark expired) and allow this start; a fresh one is still in flight.
+            if is_stale_starting(latest):
+                logger.warning(
+                    "Reconciling stale 'starting' job run for %s/%s (session=%s); "
+                    "provisioning never completed (likely an OPI restart).",
+                    project_name,
+                    deployment_name,
+                    latest.get("session_id"),
+                )
+                await get_runs_service().mark_ended(
+                    latest["session_id"],
+                    RunStatus.EXPIRED,
+                    error_message="Reconciled: provisioning never completed.",
+                )
+            else:
+                raise JobError("Er wordt al een job gestart voor deze deployment.")
 
         session_id = secrets.token_hex(4)
         name = generate_job_name(project_name, deployment_name, session_id)
         expires_at = datetime.now(UTC) + timedelta(seconds=settings.JOB_TTL_SECONDS)
-
-        extra_labels = {
-            LABEL_RUN: session_id,
-            LABEL_RUN_KIND: str(RunKind.JOB),
-            LABEL_RUN_PROJECT: project_name,
-            LABEL_RUN_DEPLOYMENT: deployment_name,
-        }
-        extra_annotations = {
-            ANNOT_EXPIRES: expires_at.isoformat(),
-            ANNOT_OPENED_BY: started_by,
-            ANNOT_IMAGE: image,
-            ANNOT_COMMAND: command,
-        }
-
-        common = {
-            "name": name,
-            "namespace": namespace,
-            "project": {"name": project_name},
-            "cluster": cluster,
-            "extra_labels": extra_labels,
-            "extra_annotations": extra_annotations,
-        }
-        pod = render_template(
-            "job-pod.yaml.jinja",
-            {
-                **common,
-                "target_deployment": deployment_name,
-                "ttl_seconds": settings.JOB_TTL_SECONDS,
-                "image": image,
-                "image_pull_policy": image_pull_policy,
-                "command": command,
-                "db_secret_name": db_secret_name,
-            },
-        )
-        ok, stderr = await apply_bundle(self._kubectl, namespace, [pod], cluster)
-        if not ok:
-            raise JobError(f"Kon de job niet starten: {stderr.strip() or 'onbekende fout'}")
-
         try:
             await get_runs_service().create_run(
                 kind=RunKind.JOB,
@@ -170,10 +155,10 @@ class JobManager:
                 started_by=started_by,
                 expires_at=expires_at,
             )
-        except Exception:
-            logger.exception("Failed to record run for job session %s (continuing)", session_id)
+        except Exception as exc:
+            logger.exception("Failed to register job run for %s/%s", project_name, deployment_name)
+            raise JobError("Kon de job niet registreren.") from exc
 
-        logger.info("Started job '%s' for %s/%s by %s", name, project_name, deployment_name, started_by)
         return JobRun(
             session_id=session_id,
             name=name,
@@ -186,6 +171,70 @@ class JobManager:
             expires_at=expires_at,
             state="starting",
         )
+
+    async def provision(
+        self, project_name: str, deployment_name: str, session_id: str, image: str, command: str, started_by: str
+    ) -> None:
+        """Apply the job pod for a run registered by begin() (runs in the background).
+
+        Marks the run failed and cleans up on any error; never raises.
+        """
+        cluster = settings.CLUSTER_MANAGER
+        namespace = f"{get_namespace_prefix(cluster)}{project_name}"
+        try:
+            image, image_pull_policy = resolve_image(image)
+            command = command.strip()
+            # Wire the deployment's database connection if it has one (migrations use case).
+            db_secret = await DatabaseSecret.get_data(
+                kubectl_connector=self._kubectl, namespace=namespace, prefix=deployment_name
+            )
+            db_secret_name = DatabaseSecret.get_secret_name(deployment_name) if db_secret else None
+
+            name = generate_job_name(project_name, deployment_name, session_id)
+            expires_at = datetime.now(UTC) + timedelta(seconds=settings.JOB_TTL_SECONDS)
+            extra_labels = {
+                LABEL_RUN: session_id,
+                LABEL_RUN_KIND: str(RunKind.JOB),
+                LABEL_RUN_PROJECT: project_name,
+                LABEL_RUN_DEPLOYMENT: deployment_name,
+            }
+            extra_annotations = {
+                ANNOT_EXPIRES: expires_at.isoformat(),
+                ANNOT_OPENED_BY: started_by,
+                ANNOT_IMAGE: image,
+                ANNOT_COMMAND: command,
+            }
+            common = {
+                "name": name,
+                "namespace": namespace,
+                "project": {"name": project_name},
+                "cluster": cluster,
+                "extra_labels": extra_labels,
+                "extra_annotations": extra_annotations,
+            }
+            pod = render_template(
+                "job-pod.yaml.jinja",
+                {
+                    **common,
+                    "target_deployment": deployment_name,
+                    "ttl_seconds": settings.JOB_TTL_SECONDS,
+                    "image": image,
+                    "image_pull_policy": image_pull_policy,
+                    "command": command,
+                    "db_secret_name": db_secret_name,
+                },
+            )
+            ok, stderr = await apply_bundle(self._kubectl, namespace, [pod], cluster)
+            if not ok:
+                raise JobError(f"Kon de job niet starten: {stderr.strip() or 'onbekende fout'}")
+            logger.info("Started job '%s' for %s/%s by %s", name, project_name, deployment_name, started_by)
+        except Exception as exc:
+            logger.exception("Failed to provision job %s for %s/%s", session_id, project_name, deployment_name)
+            try:
+                await get_runs_service().mark_ended(session_id, RunStatus.FAILED, error_message=str(exc))
+            except Exception:
+                logger.exception("Failed to mark run failed for job session %s", session_id)
+            await delete_bundle(self._kubectl, namespace, session_id)
 
     async def get_job(self, project_name: str, deployment_name: str) -> JobRun | None:
         """Return the live job for a deployment (None if none), reconciling its run row."""

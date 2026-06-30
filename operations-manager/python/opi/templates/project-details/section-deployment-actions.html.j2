@@ -1,5 +1,8 @@
 {# Deployment Actions Section - quick actions per deployment #}
 {% if user_role in ["admin", "owner"] and project.deployments %}
+    {# Database console only makes sense when the project has a PostgreSQL service. #}
+    {% set service_values = project.services | default([]) | map(attribute='value') | list %}
+    {% set has_database = 'postgresql-database' in service_values or 'namespace-postgresql-database' in service_values %}
     {% for deployment in project.deployments | sort(attribute='name') %}
     {% set original_index = project.deployments.index(deployment) %}
     <div class="deployment-section" id="deployment-actions-{{ deployment.name }}"
@@ -22,6 +25,7 @@
                     showIcon="before"
                     icon="refresh"
                     @click="showDangerConfirmation('deployment-refresh', '{{ deployment.name }}', 'Weet u zeker dat u deployment &quot;{{ deployment.name }}&quot; wilt herverwerken? Dit synchroniseert de manifesten voor deze deployment.')" />
+                {% if has_database %}
                 <c-button
                     label="Databaseconsole"
                     kind="secondary"
@@ -29,6 +33,7 @@
                     showIcon="before"
                     icon="database"
                     @click="openDbConsoleModal('{{ deployment.name }}')" />
+                {% endif %}
                 <c-button
                     label="Job uitvoeren"
                     kind="secondary"

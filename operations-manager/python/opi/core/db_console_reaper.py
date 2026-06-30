@@ -21,9 +21,7 @@ from opi.core.cluster_config import get_namespace_prefix
 from opi.core.config import settings
 from opi.manager.db_console_manager import (
     ANNOT_CLIENT_ID,
-    ANNOT_DB_HOST,
     ANNOT_REALM,
-    ANNOT_RO_ROLE,
     DbConsoleManager,
     client_recently_created,
     get_db_console_manager,
@@ -107,11 +105,11 @@ class DbConsoleReaper:
                 if client_id:
                     live_client_ids.add(client_id)
                 if self._is_expired(annotations.get(ANNOT_EXPIRES), now):
-                    await self._teardown_pod(manager, meta, namespace, name)
+                    await self._teardown_pod(manager, meta, namespace)
                 elif session_id:
                     live_sessions.add(session_id)
 
-            await self._reap_orphans(kubectl, manager, namespace, name, live_sessions, now)
+            await self._reap_orphans(kubectl, manager, namespace, live_sessions, now)
 
         await self._gc_orphan_clients(live_client_ids)
 
@@ -120,7 +118,6 @@ class DbConsoleReaper:
         kubectl,
         manager: DbConsoleManager,
         namespace: str,
-        project_name: str,
         live_sessions: set[str],
         now: datetime,
     ) -> None:
@@ -154,12 +151,8 @@ class DbConsoleReaper:
                 await manager.teardown(
                     namespace=namespace,
                     session_id=session_id,
-                    project_name=project_name,
-                    cluster=self._cluster,
                     realm=None,
                     client_id=None,
-                    ro_role=None,
-                    db_host=None,
                     end_status=RunStatus.EXPIRED,
                 )
             except Exception:
@@ -183,7 +176,7 @@ class DbConsoleReaper:
         except ValueError:
             return False
 
-    async def _teardown_pod(self, manager: DbConsoleManager, meta: dict, namespace: str, project_name: str) -> None:
+    async def _teardown_pod(self, manager: DbConsoleManager, meta: dict, namespace: str) -> None:
         labels = meta.get("labels", {}) or {}
         annotations = meta.get("annotations", {}) or {}
         session_id = labels.get(LABEL_RUN, "")
@@ -192,12 +185,8 @@ class DbConsoleReaper:
             await manager.teardown(
                 namespace=namespace,
                 session_id=session_id,
-                project_name=project_name,
-                cluster=self._cluster,
                 realm=annotations.get(ANNOT_REALM),
                 client_id=annotations.get(ANNOT_CLIENT_ID),
-                ro_role=annotations.get(ANNOT_RO_ROLE),
-                db_host=annotations.get(ANNOT_DB_HOST),
                 end_status=RunStatus.EXPIRED,
             )
         except Exception:
