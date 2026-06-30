@@ -120,9 +120,17 @@ has no `VPA_MEMORY_FLOOR_MI` equivalent. So a component whose CPU target sits at
 the recommender floor stays at `floor + buffer` (e.g. `25m + 25% ≈ 31m`). CPU is
 compressible and cheap, so this asymmetry is accepted.
 
-The "Geheugen kan worden verminderd" portal card and its saving figure are
-expressed as the **request** reduction, since requests are what free scheduling
-capacity.
+### UI surfacing (OOM only)
+
+The project page lazy-loads a memory-check fragment
+(`_memory-check.html.j2`, served by `check_deployment_resources()`). It uses the
+same analysis as the tuner but **only surfaces OOM conditions**
+(under-provisioning): a component being OOM-killed, and the special case where it
+is already at the cluster max and needs manual intervention. Memory *reductions*
+are **not** shown: the nightly auto-tuner applies them automatically, so advising
+a reduction the system will make on its own (and only above the 30% decrease
+deadband) was redundant and confusing. The earlier "Geheugen kan worden
+verminderd" and floor-held-request cards were removed for this reason.
 
 ### OOM Kill Handling
 

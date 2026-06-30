@@ -54,18 +54,18 @@ class TuneResult:
 
 @dataclass
 class MemoryCheckResult:
-    """Per-component result of a memory check (overprovision or OOM)."""
+    """Per-component result of a memory check.
+
+    Only OOM (under-provisioning) is surfaced in the UI; memory reductions are
+    applied automatically by the nightly auto-tuner, so they are not reported
+    here as advice.
+    """
 
     component: str
     current_limit: str
     recommended_limit: str
     saving_mb: float
     oom_detected: bool = False
-    # Set when an OOM floor holds the limit while the request can still drop
-    floor_blocked: bool = False
-    floor_set_at: str | None = None
-    current_request: str = ""
-    recommended_request: str = ""
 
 
 def get_project_data(project_name: str) -> tuple[dict[str, Any], str]:
@@ -513,18 +513,19 @@ async def check_deployment_resources(
     deployment_name: str,
 ) -> list[MemoryCheckResult]:
     """
-    Check if a deployment's components are overprovisioned (read-only).
+    Check a deployment's components for OOM (under-provisioning), read-only.
 
     Uses the exact same Prometheus queries, thresholds, and recommendation
-    logic as the tuner. Returns results for every component where the tuner
-    would recommend a lower limit.
+    logic as the tuner, but reports only components with OOM kills. Memory
+    reductions are applied automatically by the nightly tuner and are not
+    surfaced here.
 
     Args:
         project_name: Name of the project
         deployment_name: Deployment to check
 
     Returns:
-        List of MemoryCheckResult for overprovisioned components
+        List of MemoryCheckResult for components with OOM kills
     """
     project_data, _filename = get_project_data(project_name)
     file_handler = ProjectFileHandler()
@@ -567,49 +568,22 @@ async def check_deployment_resources(
             if analysis is None:
                 continue
 
+            # Only OOM (under-provisioning) is surfaced in the UI. Memory
+            # reductions, including a floor-held limit with a droppable request,
+            # are applied automatically by the nightly tuner and no longer shown.
+            if not analysis.has_oom_kills:
+                continue
             current_limit_mb = _k8s_memory_to_mb(analysis.current_resources["limits_memory"])
             new_limit_mb = _k8s_memory_to_mb(analysis.new_limit)
-            saving_mb = current_limit_mb - new_limit_mb
-            current_request_mb = _k8s_memory_to_mb(analysis.current_resources["requests_memory"])
-            request_saving_mb = current_request_mb - _k8s_memory_to_mb(analysis.new_request)
-
-            if analysis.has_oom_kills:
-                results.append(
-                    MemoryCheckResult(
-                        component=component_ref,
-                        current_limit=analysis.current_resources["limits_memory"],
-                        recommended_limit=analysis.new_limit,
-                        saving_mb=saving_mb,
-                        oom_detected=True,
-                    )
+            results.append(
+                MemoryCheckResult(
+                    component=component_ref,
+                    current_limit=analysis.current_resources["limits_memory"],
+                    recommended_limit=analysis.new_limit,
+                    saving_mb=current_limit_mb - new_limit_mb,
+                    oom_detected=True,
                 )
-            elif analysis.floor_blocked:
-                if saving_mb > 0 or request_saving_mb > 0:
-                    results.append(
-                        MemoryCheckResult(
-                            component=component_ref,
-                            current_limit=analysis.current_resources["limits_memory"],
-                            recommended_limit=analysis.new_limit,
-                            saving_mb=max(saving_mb, 0) + max(request_saving_mb, 0),
-                            floor_blocked=True,
-                            floor_set_at=analysis.floor_set_at,
-                            current_request=analysis.current_resources["requests_memory"],
-                            recommended_request=analysis.new_request,
-                        )
-                    )
-            elif request_saving_mb > 0:
-                # Tuning reduces the request (the reserved memory); the saving
-                # is the freed request, not the limit.
-                results.append(
-                    MemoryCheckResult(
-                        component=component_ref,
-                        current_limit=analysis.current_resources["limits_memory"],
-                        recommended_limit=analysis.new_limit,
-                        saving_mb=request_saving_mb,
-                        current_request=analysis.current_resources["requests_memory"],
-                        recommended_request=analysis.new_request,
-                    )
-                )
+            )
 
     return results
 
