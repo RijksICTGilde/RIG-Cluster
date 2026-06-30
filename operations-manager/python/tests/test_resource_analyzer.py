@@ -64,10 +64,10 @@ class TestMbToK8sMemory:
 class TestComputeMemoryRecommendation:
     """Tests for compute_memory_recommendation.
 
-    Tuning (non-OOM) drives the *request* from peak observed usage. The limit
-    only follows the request when the two were equal (the untouched default);
-    a limit already set to differ from the request is left alone. The OOM path
-    is unchanged: it still raises the limit to stop the kills.
+    Tuning (non-OOM) drives the *request* from observed usage + buffer and sizes
+    the *limit* as the observed peak times limit_factor (burst headroom). The
+    limit is no longer frozen: it decays with the peak. The OOM path is
+    unchanged: it still raises the limit to stop the kills.
     """
 
     def test_within_threshold_returns_none(self):
@@ -98,8 +98,9 @@ class TestComputeMemoryRecommendation:
         assert limit == "150Mi"  # mirrors the request when they were equal
         assert "max 100Mi" in reason
 
-    def test_frozen_limit_left_untouched(self):
-        # Limit (512) already differs from request (256): tune only the request.
+    def test_decoupled_limit_decays_with_peak(self):
+        # Limit (512) differs from request (256) but is no longer frozen:
+        # both are resized from the peak. limit = max(100*1.5, request).
         result = compute_memory_recommendation(
             max_observed_mb=100,
             avg_observed_mb=80,
@@ -111,8 +112,8 @@ class TestComputeMemoryRecommendation:
         assert result is not None
         limit, request, reason = result
         assert request == "150Mi"  # 100 * 1.25 + 25
-        assert limit == "512Mi"  # unchanged
-        assert "unchanged" in reason
+        assert limit == "150Mi"  # max(100*1.5=150, 150); no longer held at 512
+        assert "Limit: max 100Mi x 1.5" in reason
 
     def test_request_based_on_peak_not_average(self):
         # Coupled 512/512. Request uses MAX (300), not avg (100).
@@ -127,7 +128,7 @@ class TestComputeMemoryRecommendation:
         assert result is not None
         limit, request, reason = result
         assert request == "400Mi"  # 300 * 1.25 + 25
-        assert limit == "400Mi"
+        assert limit == "450Mi"  # max(300*1.5=450, 400)
         assert "max 300Mi" in reason
 
     def test_buffer_calculation(self):
@@ -159,12 +160,12 @@ class TestComputeMemoryRecommendation:
         assert result is not None
         limit, request, reason = result
         assert request == "300Mi"  # target passed through, unbuffered
-        assert limit == "300Mi"
+        assert limit == "450Mi"  # max(300*1.5=450, 300): burst headroom on the limit
         assert "VPA target 300Mi" in reason
         assert "+ 25%" not in reason
 
-    def test_vpa_source_clamped_to_frozen_limit(self):
-        # Unbuffered VPA target above a frozen limit -> request clamps to the limit.
+    def test_vpa_source_limit_from_target(self):
+        # VPA request is the unbuffered target; the limit is target * limit_factor.
         result = compute_memory_recommendation(
             max_observed_mb=400,
             avg_observed_mb=400,
@@ -176,24 +177,27 @@ class TestComputeMemoryRecommendation:
         )
         assert result is not None
         limit, request, reason = result
-        assert limit == "256Mi"  # frozen, untouched
-        assert request == "256Mi"  # target 400 clamped to the limit
-        assert "VPA target 400Mi = 256Mi" in reason
+        assert request == "400Mi"  # unbuffered target
+        assert limit == "600Mi"  # max(400*1.5=600, 400)
+        assert "VPA target 400Mi" in reason
 
-    def test_request_never_exceeds_limit(self):
-        # Frozen limit 200 < computed request 400 -> request capped to the limit.
+    def test_request_never_exceeds_capped_limit(self):
+        # When max_memory_mi caps the limit below the computed request, the
+        # request follows the capped limit down (request never exceeds limit).
         result = compute_memory_recommendation(
             max_observed_mb=300,
             avg_observed_mb=120,
-            current_limit_mb=200,
-            current_request_mb=64,
+            current_limit_mb=512,
+            current_request_mb=512,
             buffer_percent=25,
             threshold_percent=20,
+            max_memory_mi=350,
+            max_memory_request_mi=350,
         )
         assert result is not None
         limit, request, _ = result
-        assert limit == "200Mi"  # frozen, untouched
-        assert request == "200Mi"  # 300*1.25+25=400 capped to the limit
+        assert limit == "350Mi"  # max(450,400) capped to max_memory_mi
+        assert request == "350Mi"  # 400 capped to the request cap and the limit
 
     def test_small_app_no_absolute_buffer(self):
         # Coupled 256/256. max=50 -> 50*1.25 = 62.5 (no +25, below 100).
@@ -208,7 +212,7 @@ class TestComputeMemoryRecommendation:
         assert result is not None
         limit, request, _ = result
         assert request == "63Mi"  # 62.5 ceil
-        assert limit == "63Mi"
+        assert limit == "75Mi"  # max(50*1.5=75, 62.5)
 
     def test_significant_increase_coupled(self):
         # Coupled 256/256. Peak grew: request 300*1.25+25 = 400; limit follows.
@@ -223,7 +227,7 @@ class TestComputeMemoryRecommendation:
         assert result is not None
         limit, request, _ = result
         assert request == "400Mi"
-        assert limit == "400Mi"
+        assert limit == "450Mi"  # max(300*1.5=450, 400)
 
     def test_minimum_memory_enforced(self):
         # Coupled 512/512. Very low usage clamped to min_memory_mi.
@@ -272,7 +276,7 @@ class TestComputeMemoryRecommendation:
         )
         assert result is not None
         limit, request, _ = result
-        assert limit == "2525Mi"
+        assert limit == "3000Mi"  # max(2000*1.5=3000, 2525)
         assert request == "1024Mi"
 
     def test_request_not_capped_when_below_max_request(self):
@@ -290,8 +294,39 @@ class TestComputeMemoryRecommendation:
         )
         assert result is not None
         limit, request, _ = result
-        assert limit == "400Mi"
+        assert limit == "450Mi"  # max(300*1.5=450, 400)
         assert request == "400Mi"
+
+    def test_limit_decays_when_peak_drops(self):
+        # A previously high limit (768) is not frozen: with a low peak the limit
+        # decays to peak * limit_factor while the request tracks usage.
+        result = compute_memory_recommendation(
+            max_observed_mb=66,
+            avg_observed_mb=60,
+            current_limit_mb=768,
+            current_request_mb=83,
+            buffer_percent=25,
+            threshold_percent=20,
+        )
+        assert result is not None
+        limit, request, _ = result
+        assert request == "83Mi"  # 66 * 1.25 = 82.5 -> 83
+        assert limit == "99Mi"  # max(66*1.5=99, 83); was 768
+
+    def test_small_pod_gets_no_inflated_limit(self):
+        # An nginx-like pod at 25Mi gets a small limit, not an absolute floor.
+        result = compute_memory_recommendation(
+            max_observed_mb=25,
+            avg_observed_mb=20,
+            current_limit_mb=256,
+            current_request_mb=256,
+            buffer_percent=25,
+            threshold_percent=20,
+        )
+        assert result is not None
+        limit, request, _ = result
+        assert request == "32Mi"  # 25 * 1.25 = 31.25 -> 32
+        assert limit == "38Mi"  # max(25*1.5=37.5, 31.25) -> 38
 
     # --- OOM path (unchanged: still raises the limit) ---
 
