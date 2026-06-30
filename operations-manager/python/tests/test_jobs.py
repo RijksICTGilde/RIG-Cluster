@@ -241,6 +241,26 @@ def test_job_modal_form_renders():
     assert 'name="command"' in html
 
 
+def test_job_modal_starting_without_job_shows_spinner_not_form():
+    # Background provisioning: state=starting but the pod (job) isn't visible yet.
+    # Must show the spinner + keep polling, NOT fall back to the form.
+    html = _render_modal(
+        project_name="proj",
+        deployment_name="dep",
+        job=None,
+        state="starting",
+        error=None,
+        errors=None,
+        form_image="",
+        form_command="",
+        ttl_seconds=3600,
+        enabled=True,
+    )
+    assert "Job wordt gestart" in html
+    assert "/projects/proj/jobs/dep/status" in html  # self-polls
+    assert 'name="image"' not in html  # not the form
+
+
 def test_job_modal_shows_field_error_inline():
     html = _render_modal(
         project_name="proj",

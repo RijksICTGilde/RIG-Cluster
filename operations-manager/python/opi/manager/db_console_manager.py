@@ -14,8 +14,8 @@ Design highlights:
 - Authenticates against the ZAD realm (derived from OIDC_DISCOVERY_URL) with a
   dedicated per-session OIDC client created on demand and deleted at teardown -
   no Keycloak redirect-URI wildcards, no shared client.
-- Read-only mode provisions an ephemeral SELECT-only PostgreSQL role (the tool's
-  own read-only flag is only a hint); read-write reuses the deployment's DB user.
+- Connects with the deployment's own database credentials (no minted roles); the
+  access level is whatever those credentials have.
 - The console Pod carries the target deployment's `deployment` label so the
   existing tenant NetworkPolicy already permits egress to PostgreSQL.
 - TLS relies on the cluster's default/wildcard ingress certificate (no per-host
@@ -35,9 +35,7 @@ from typing import Any
 
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import create_kubectl_connector
-from opi.connectors.postgres import create_postgres_connector
 from opi.core.cluster_config import (
-    get_infrastructure_namespace,
     get_ingress_ip_whitelist,
     get_ingress_postfix,
     get_namespace_prefix,
@@ -55,17 +53,16 @@ from opi.manager.run_support import (
     apply_bundle,
     delete_bundle,
     find_deployment,
+    is_stale_starting,
     parse_expires,
     resolve_image,
 )
 from opi.services.project_service import get_project_service
 from opi.services.runs_service import RunKind, RunStatus, get_runs_service
-from opi.services.services_enums import ServiceType
 from opi.utils.naming import (
     generate_db_console_client_id,
     generate_db_console_hostname,
     generate_db_console_name,
-    generate_db_console_ro_role,
 )
 from opi.utils.secrets import DatabaseSecret
 
@@ -79,11 +76,9 @@ LABEL_PROJECT = LABEL_RUN_PROJECT
 LABEL_DEPLOYMENT = LABEL_RUN_DEPLOYMENT
 
 # Console-specific annotations (carry everything teardown needs after a restart).
-ANNOT_MODE = "rig.zad/db-console-mode"
 ANNOT_TOOL = "rig.zad/db-console-tool"
 ANNOT_REALM = "rig.zad/oidc-realm"
 ANNOT_CLIENT_ID = "rig.zad/oidc-client-id"
-ANNOT_RO_ROLE = "rig.zad/ephemeral-role"
 ANNOT_DB_HOST = "rig.zad/db-host"
 ANNOT_DB_NAME = "rig.zad/db-name"
 
@@ -93,13 +88,6 @@ class DbConsoleTool(StrEnum):
 
     PGWEB = "pgweb"
     DBGATE = "dbgate"
-
-
-class DbConsoleMode(StrEnum):
-    """Access mode for a console session."""
-
-    READ_ONLY = "ro"
-    READ_WRITE = "rw"
 
 
 # The oauth2-proxy sidecar (Service targetPort) port; the tool listens behind it.
@@ -150,7 +138,6 @@ class DbConsoleSession:
     project: str
     deployment: str
     tool: DbConsoleTool
-    mode: DbConsoleMode
     opened_by: str
     hostname: str
     url: str
@@ -182,65 +169,21 @@ class DbConsoleManager:
         return (settings.OIDC_DISCOVERY_URL or "").replace("/.well-known/openid-configuration", "")
 
     @staticmethod
-    def _uses_namespace_postgresql(project_data: dict[str, Any]) -> bool:
-        """True if the project uses a namespace-dedicated PostgreSQL (vs the shared server).
-
-        Mirrors DatabaseManager._project_uses_namespace_postgresql: the choice is
-        driven by the project-level `services` config, not by the DB hostname.
-        """
-        for service_item in project_data.get("services", []) or []:
-            if isinstance(service_item, str) and service_item == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value:
-                return True
-            if isinstance(service_item, dict) and ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item:
-                return True
-        return False
-
-    async def _admin_connector(self, db_host: str, project_name: str, cluster: str):
-        """Build a PostgreSQL admin connector bound to the deployment's DB server.
-
-        Shared server -> platform admin credentials; a namespace-dedicated server
-        -> the CloudNativePG superuser secret in the infra namespace. Whether the
-        project is namespace-dedicated is read from its service config (not from
-        the hostname), matching how the database manager resolves credentials.
-        """
-        project = self._project_service.get_project(project_name)
-        uses_namespace = bool(project and project.data and self._uses_namespace_postgresql(project.data))
-
-        if not uses_namespace:
-            return create_postgres_connector(
-                host=db_host,
-                admin_username=settings.DATABASE_ADMIN_NAME,
-                admin_password=settings.DATABASE_ADMIN_PASSWORD,
-            )
-
-        infra_namespace = get_infrastructure_namespace(cluster, project_name)
-        secret_name = f"{project_name.lower()}-postgres-superuser"
-        secret_data = await self._kubectl.get_secret(secret_name, infra_namespace)
-        if not secret_data or not secret_data.get("username") or not secret_data.get("password"):
-            raise DbConsoleError(
-                f"Superuser secret '{secret_name}' not found in '{infra_namespace}'; cannot provision read-only role."
-            )
-        return create_postgres_connector(
-            host=db_host,
-            admin_username=secret_data["username"],
-            admin_password=secret_data["password"],
-        )
-
-    @staticmethod
     def _tool_config(
-        tool: DbConsoleTool, mode: DbConsoleMode, db_secret: DatabaseSecret, user: str, password: str
+        tool: DbConsoleTool, db_secret: DatabaseSecret, user: str, password: str
     ) -> tuple[str, int, list[str], dict[str, str]]:
-        """Return (image, container_port, args, connection_secret_data) per tool."""
+        """Return (image, container_port, args, connection_secret_data) per tool.
+
+        The console connects with the deployment's own database credentials; the
+        access level is whatever those credentials already have (read-write).
+        """
         port = _TOOL_PORTS[tool]
-        read_only = mode == DbConsoleMode.READ_ONLY
         if tool == DbConsoleTool.PGWEB:
             image = settings.DB_CONSOLE_PGWEB_IMAGE
             # --lock-session pins pgweb to the single configured connection and hides
             # the disconnect / "new connection" UI, so a logged-in member cannot point
             # the console at another host/database. --no-ssh blocks SSH tunnels too.
             args = ["--bind=0.0.0.0", f"--listen={port}", "--no-ssh", "--lock-session"]
-            if read_only:
-                args.append("--readonly")
             url = (
                 f"postgresql://{user}:{password}@{db_secret.host}:{db_secret.port}/{db_secret.database}"
                 f"?options=--search_path%3D{db_secret.schema},public"
@@ -262,21 +205,22 @@ class DbConsoleManager:
             "DATABASE_con1": db_secret.database,
             "ENGINE_con1": "postgres@dbgate-plugin-postgres",
         }
-        if read_only:
-            conn["READONLY_con1"] = "1"
         return image, port, [], conn
 
     # ------------------------------------------------------------------- public
 
-    async def start(
+    async def begin(
         self,
         project_name: str,
         deployment_name: str,
-        mode: DbConsoleMode,
         tool: DbConsoleTool,
         opened_by: str,
     ) -> DbConsoleSession:
-        """Provision and apply a console bundle; return the session description."""
+        """Validate + register a console run (status 'starting'); fast, no provisioning.
+
+        Raises DbConsoleError on validation problems so the start click gets
+        immediate feedback. The slow provisioning runs in provision().
+        """
         project = self._project_service.get_project(project_name)
         if not project or not project.data:
             raise DbConsoleError(f"Project '{project_name}' not found")
@@ -299,15 +243,125 @@ class DbConsoleManager:
         if not db_secret:
             raise DbConsoleError(f"Deployment '{deployment_name}' has no database to connect to.")
 
-        # One active console per deployment.
+        # One active console per deployment (a running pod, or an in-flight start).
         existing = await self._kubectl.get_resources_by_label("pod", namespace, f"{LABEL_DEPLOYMENT}={deployment_name}")
         if existing:
             raise DbConsoleError(
                 f"A database console is already running for deployment '{deployment_name}'. "
                 "Stop it before starting a new one."
             )
+        try:
+            latest = await get_runs_service().get_latest_run(project_name, deployment_name, RunKind.DB_CONSOLE)
+        except Exception:
+            latest = None
+        if latest and latest.get("status") == "starting":
+            # No pod exists (checked above). A 'starting' row with no pod is either
+            # mid-provision or a dead start (OPI restarted before the pod was applied).
+            # A stale row would otherwise wedge the console forever, so reconcile it
+            # (mark expired) and allow this start; a fresh one is still in flight.
+            if is_stale_starting(latest):
+                logger.warning(
+                    "Reconciling stale 'starting' db-console run for %s/%s (session=%s); "
+                    "provisioning never completed (likely an OPI restart).",
+                    project_name,
+                    deployment_name,
+                    latest.get("session_id"),
+                )
+                await get_runs_service().mark_ended(
+                    latest["session_id"],
+                    RunStatus.EXPIRED,
+                    error_message="Reconciled: provisioning never completed.",
+                )
+            else:
+                raise DbConsoleError(f"A database console is already starting for deployment '{deployment_name}'.")
 
         session_id = secrets.token_hex(4)
+        name = generate_db_console_name(project_name, deployment_name, session_id)
+        hostname = generate_db_console_hostname(project_name, session_id, get_ingress_postfix(cluster))
+        expires_at = datetime.now(UTC) + timedelta(seconds=settings.DB_CONSOLE_TTL_SECONDS)
+        try:
+            await get_runs_service().create_run(
+                kind=RunKind.DB_CONSOLE,
+                session_id=session_id,
+                cluster=cluster,
+                project=project_name,
+                deployment=deployment_name,
+                namespace=namespace,
+                name=name,
+                spec={"tool": tool.value},
+                url=f"https://{hostname}/",
+                started_by=opened_by,
+                expires_at=expires_at,
+            )
+        except Exception as exc:
+            logger.exception("Failed to register database console run for %s/%s", project_name, deployment_name)
+            raise DbConsoleError("Kon de console niet registreren.") from exc
+
+        return DbConsoleSession(
+            session_id=session_id,
+            name=name,
+            namespace=namespace,
+            project=project_name,
+            deployment=deployment_name,
+            tool=tool,
+            opened_by=opened_by,
+            hostname=hostname,
+            url=f"https://{hostname}/",
+            expires_at=expires_at,
+        )
+
+    async def provision(
+        self,
+        project_name: str,
+        deployment_name: str,
+        session_id: str,
+        tool: DbConsoleTool,
+        opened_by: str,
+    ) -> None:
+        """Slow provisioning for a console registered by begin() (runs in the background).
+
+        Marks the run failed and cleans up on any error; never raises.
+        """
+        try:
+            await self._provision_bundle(project_name, deployment_name, session_id, tool, opened_by)
+        except Exception as exc:
+            logger.exception(
+                "Failed to provision database console %s for %s/%s", session_id, project_name, deployment_name
+            )
+            cluster = settings.CLUSTER_MANAGER
+            namespace = f"{get_namespace_prefix(cluster)}{project_name}"
+            try:
+                await get_runs_service().mark_ended(session_id, RunStatus.FAILED, error_message=str(exc))
+            except Exception:
+                logger.exception("Failed to mark run failed for session %s", session_id)
+            await self.teardown(
+                namespace=namespace,
+                session_id=session_id,
+                realm=self._zad_realm(),
+                client_id=generate_db_console_client_id(session_id),
+                end_status=RunStatus.FAILED,
+            )
+
+    async def _provision_bundle(
+        self,
+        project_name: str,
+        deployment_name: str,
+        session_id: str,
+        tool: DbConsoleTool,
+        opened_by: str,
+    ) -> None:
+        """Render + apply the console bundle (the slow part). Raises on failure."""
+        project = self._project_service.get_project(project_name)
+        deployment = find_deployment(project.data, deployment_name) if project and project.data else None
+        if project is None or deployment is None:
+            raise DbConsoleError("Project of deployment niet meer gevonden.")
+        cluster = deployment.get("cluster", settings.CLUSTER_MANAGER)
+        namespace = f"{get_namespace_prefix(cluster)}{project_name}"
+        db_secret = await DatabaseSecret.get_data(
+            kubectl_connector=self._kubectl, namespace=namespace, prefix=deployment_name
+        )
+        if not db_secret:
+            raise DbConsoleError("Geen database om mee te verbinden.")
         name = generate_db_console_name(project_name, deployment_name, session_id)
         hostname = generate_db_console_hostname(project_name, session_id, get_ingress_postfix(cluster))
         client_id = generate_db_console_client_id(session_id)
@@ -329,24 +383,21 @@ class DbConsoleManager:
         # Protect this fresh client from the reaper's orphan GC until its pod is visible.
         mark_client_created(client_id)
 
-        # Connection credentials: RW reuses the app user; RO provisions a role.
-        ro_role: str | None = None
-        if mode == DbConsoleMode.READ_ONLY:
-            ro_role = generate_db_console_ro_role(project_name, deployment_name, session_id)
-            ro_password = f"Db{secrets.token_hex(20)}9"
-            pg = await self._admin_connector(db_secret.host, project_name, cluster)
-            try:
-                await pg.create_user(ro_role, ro_password)
-                await pg.grant_readonly_on_schema(db_secret.database, db_secret.schema, ro_role)
-                await pg.set_role_search_path(ro_role, db_secret.database, db_secret.schema)
-            finally:
-                await pg.close()
-            conn_user, conn_password = ro_role, ro_password
+        # Connect with the deployment's persistent read-only role so writes are
+        # impossible server-side. Deployments not yet reprocessed since the
+        # read-only role was introduced have no ro credentials; fall back to the
+        # read-write user so the console keeps working until the next reprocess.
+        if db_secret.ro_username and db_secret.ro_password:
+            conn_user, conn_password = db_secret.ro_username, db_secret.ro_password
         else:
+            logger.warning(
+                f"No read-only database credentials for deployment '{deployment_name}'; "
+                f"falling back to read-write user. Reprocess the deployment to provision the read-only role."
+            )
             conn_user, conn_password = db_secret.username, db_secret.password
 
         tool_image, application_port, tool_args, conn_secret = self._tool_config(
-            tool, mode, db_secret, conn_user, conn_password
+            tool, db_secret, conn_user, conn_password
         )
         # Shared local/ image handling (Kind-loaded tool images -> pull policy Never).
         tool_image, image_pull_policy = resolve_image(tool_image)
@@ -363,7 +414,6 @@ class DbConsoleManager:
         }
         extra_annotations = {
             ANNOT_EXPIRES: expires_at.isoformat(),
-            ANNOT_MODE: mode.value,
             ANNOT_TOOL: tool.value,
             ANNOT_OPENED_BY: opened_by,
             ANNOT_HOSTNAME: hostname,
@@ -372,8 +422,6 @@ class DbConsoleManager:
             ANNOT_DB_HOST: db_secret.host,
             ANNOT_DB_NAME: db_secret.database,
         }
-        if ro_role:
-            extra_annotations[ANNOT_RO_ROLE] = ro_role
 
         authorization_wall = {
             "issuer_url": self._issuer_url(),
@@ -395,75 +443,24 @@ class DbConsoleManager:
             "extra_annotations": extra_annotations,
         }
 
-        try:
-            await self._apply_bundle(
-                namespace=namespace,
-                common=common,
-                secret_data=secret_data,
-                emails=emails,
-                authorization_wall=authorization_wall,
-                target_deployment=deployment_name,
-                tool_image=tool_image,
-                image_pull_policy=image_pull_policy,
-                application_port=application_port,
-                tool_args=tool_args,
-                hostname=hostname,
-                cluster=cluster,
-            )
-        except Exception:
-            # Roll back a partial start so nothing is left behind: the label-scoped
-            # delete clears any resources that did apply, plus the OIDC client and
-            # the ephemeral read-only role we created above.
-            await self.teardown(
-                namespace=namespace,
-                session_id=session_id,
-                project_name=project_name,
-                cluster=cluster,
-                realm=realm,
-                client_id=client_id,
-                ro_role=ro_role,
-                db_host=db_secret.host,
-                end_status=RunStatus.FAILED,
-            )
-            raise
-
-        # Register the run for administration/history. Best-effort: the cluster
-        # bundle is the live source of truth, so a DB hiccup must not fail the start
-        # (the label-based reaper still cleans up even without a row).
-        try:
-            await get_runs_service().create_run(
-                kind=RunKind.DB_CONSOLE,
-                session_id=session_id,
-                cluster=cluster,
-                project=project_name,
-                deployment=deployment_name,
-                namespace=namespace,
-                name=name,
-                spec={"tool": tool.value, "mode": mode.value},
-                url=f"https://{hostname}/",
-                started_by=opened_by,
-                expires_at=expires_at,
-            )
-        except Exception:
-            logger.exception("Failed to record run for database console session %s (continuing)", session_id)
-
-        logger.info(
-            f"Started {tool} {mode} database console '{name}' for {project_name}/{deployment_name} "
-            f"by {opened_by}, expires {expires_at.isoformat()}"
-        )
-
-        return DbConsoleSession(
-            session_id=session_id,
-            name=name,
+        # The run row already exists (begin() created it as 'starting'); a failure
+        # here propagates to provision(), which marks it failed and tears down.
+        await self._apply_bundle(
             namespace=namespace,
-            project=project_name,
-            deployment=deployment_name,
-            tool=tool,
-            mode=mode,
-            opened_by=opened_by,
+            common=common,
+            secret_data=secret_data,
+            emails=emails,
+            authorization_wall=authorization_wall,
+            target_deployment=deployment_name,
+            tool_image=tool_image,
+            image_pull_policy=image_pull_policy,
+            application_port=application_port,
+            tool_args=tool_args,
             hostname=hostname,
-            url=f"https://{hostname}/",
-            expires_at=expires_at,
+            cluster=cluster,
+        )
+        logger.info(
+            "Provisioned %s database console '%s' for %s/%s by %s", tool, name, project_name, deployment_name, opened_by
         )
 
     async def _apply_bundle(
@@ -533,12 +530,8 @@ class DbConsoleManager:
         *,
         namespace: str,
         session_id: str,
-        project_name: str,
-        cluster: str,
         realm: str | None,
         client_id: str | None,
-        ro_role: str | None,
-        db_host: str | None,
         end_status: RunStatus = RunStatus.STOPPED,
         ended_by: str | None = None,
     ) -> None:
@@ -553,17 +546,6 @@ class DbConsoleManager:
                 await keycloak.delete_oidc_client(realm, client_id)
             except Exception:
                 logger.exception(f"Failed to delete OIDC client '{client_id}' for console session '{session_id}'")
-
-        # Ephemeral read-only role.
-        if ro_role and db_host:
-            try:
-                pg = await self._admin_connector(db_host, project_name, cluster)
-                try:
-                    await pg.delete_user(ro_role)
-                finally:
-                    await pg.close()
-            except Exception:
-                logger.exception(f"Failed to drop ephemeral role '{ro_role}' for console session '{session_id}'")
 
         # Record the terminal state for administration/history (best-effort).
         try:
@@ -590,12 +572,8 @@ class DbConsoleManager:
         await self.teardown(
             namespace=namespace,
             session_id=session_id,
-            project_name=project_name,
-            cluster=cluster,
             realm=annotations.get(ANNOT_REALM),
             client_id=annotations.get(ANNOT_CLIENT_ID),
-            ro_role=annotations.get(ANNOT_RO_ROLE),
-            db_host=annotations.get(ANNOT_DB_HOST),
             end_status=RunStatus.STOPPED,
             ended_by=ended_by,
         )
@@ -638,7 +616,6 @@ class DbConsoleManager:
         expires_at = parse_expires(annotations.get(ANNOT_EXPIRES)) or datetime.now(UTC)
         hostname = annotations.get(ANNOT_HOSTNAME, "")
         tool = _enum_or_default(DbConsoleTool, annotations.get(ANNOT_TOOL), DbConsoleTool.PGWEB)
-        mode = _enum_or_default(DbConsoleMode, annotations.get(ANNOT_MODE), DbConsoleMode.READ_ONLY)
         return DbConsoleSession(
             session_id=labels.get(LABEL_SESSION, ""),
             name=meta.get("name", ""),
@@ -646,7 +623,6 @@ class DbConsoleManager:
             project=project_name,
             deployment=labels.get(LABEL_DEPLOYMENT, ""),
             tool=tool,
-            mode=mode,
             opened_by=annotations.get(ANNOT_OPENED_BY, ""),
             hostname=hostname,
             url=f"https://{hostname}/" if hostname else "",
