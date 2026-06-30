@@ -82,6 +82,7 @@ from opi.utils.env_vars import detect_circular_references, extract_variable_refe
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
     DOMAIN_FORMAT_TEMPLATES,
+    ROOT_COMPONENT_FORMAT_IDS,
     HostnameFormat,
     generate_argocd_application_name,
     generate_bare_domain_hostname,
@@ -6440,6 +6441,16 @@ class ProjectManager:
                                 if key not in clone_exclude_keys
                             }
                         )
+
+                        # A clone uses its own (target) domain setup, not the source's.
+                        # Drop an inherited root-component when the target format does not
+                        # expose a root host, so it isn't carried as inert config. Same
+                        # applicability rule as validate_root_component.
+                        if new_deployment.get("root-component"):
+                            target_mode = new_deployment.get("domain-mode")
+                            target_format = new_deployment.get("domain-format")
+                            if target_mode != "nice-url" and target_format not in ROOT_COMPONENT_FORMAT_IDS:
+                                new_deployment.pop("root-component", None)
 
                         # When the source's subdomain matches its deployment name, it means
                         # components share a single hostname and use paths to differentiate.
