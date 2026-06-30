@@ -330,7 +330,11 @@ class Settings(BaseSettings):
 
     # Resource tuning configuration
     RESOURCE_TUNING_WINDOW_HOURS: int = 24  # How far back to look for max usage
-    RESOURCE_TUNING_MEMORY_BUFFER_PERCENT: int = 25  # Add 25% above max observed
+    RESOURCE_TUNING_MEMORY_BUFFER_PERCENT: int = 25  # Add 25% above max observed (request)
+    # Memory limit = observed peak x this factor (burst headroom above the peak).
+    # Limits decay with the peak instead of being frozen; a valid OOM floor is the
+    # lower bound and the OOM watcher is the reactive net for unobserved boot spikes.
+    RESOURCE_TUNING_MEMORY_LIMIT_FACTOR: float = 1.5
     RESOURCE_TUNING_THRESHOLD_PERCENT: int = 20  # Legacy symmetric threshold (superseded by the asymmetric gate)
     RESOURCE_TUNING_OOM_FLOOR_MIN_AGE_DAYS: int = 10  # OOM floor may expire after this many days...
     RESOURCE_TUNING_OOM_FLOOR_STABLE_PERCENT: int = 50  # ...if observed max stays below this % of the floor

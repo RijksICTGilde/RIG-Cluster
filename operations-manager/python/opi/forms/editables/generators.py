@@ -163,8 +163,12 @@ class AttachmentStagingResolveGenerator:
                     logger.warning("Staged attachment '%s' not found; skipping", entry.get("id"))
                     continue
                 if not public_key:
-                    logger.warning("No project public key available; cannot encrypt staged attachment")
-                    return True
+                    # Fail closed: returning here would commit the literal
+                    # 'staging:<token>' placeholder, which later fails AGE
+                    # decryption at deploy time. Abort the save instead.
+                    raise ValueError(
+                        f"Kan bijlage '{entry.get('id')}' niet versleutelen: project heeft geen AGE-publieke sleutel."
+                    )
                 raw_bytes, _ = staged
                 entry["content"] = LiteralScalarString(encrypt_file_to_age_block_sync(raw_bytes, public_key))
                 upload_staging.delete_staged(token)
