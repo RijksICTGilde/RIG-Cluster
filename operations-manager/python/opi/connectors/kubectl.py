@@ -421,7 +421,14 @@ class KubectlConnector:
         stdout, stderr, code = await self._run_kubectl_command(args)
 
         if code != 0:
-            logger.error(f"Failed to retrieve SOPS secret: {stderr}")
+            stderr_lower = stderr.lower()
+            if "notfound" in stderr_lower or "not found" in stderr_lower or "forbidden" in stderr_lower:
+                # Expected during new-project bootstrap: the namespace, the secret, or
+                # its Capsule RBAC may not exist yet. Callers treat None as "not present"
+                # and retry, so this absence is a warning, not an error to escalate on.
+                logger.warning(f"SOPS secret not available in namespace {namespace} yet: {stderr.strip()}")
+            else:
+                logger.error(f"Failed to retrieve SOPS secret: {stderr}")
             return None
 
         # Decode the base64 encoded key

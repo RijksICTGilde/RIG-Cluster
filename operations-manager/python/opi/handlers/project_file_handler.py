@@ -3211,17 +3211,20 @@ def _assert_unique_attachment_targets(
 
 
 def validate_attachment_references(project_data: dict[str, Any]) -> list[str]:
-    """Return error strings for component attachment uses that reference an unknown catalog id."""
+    """Return error strings for attachment references that point at an unknown catalog id.
+
+    Covers every reference site that would otherwise fail later at deploy/resolve
+    time: component attachment ``use`` couplings, deployment-component ``use``
+    overrides, and publish-on-web ``provided`` certificates (root, component and
+    deployment-component level) -- the same sites ``extract_attachment_usage``
+    aggregates, so validation and the delete-guard never disagree.
+    """
     catalog_ids = set(extract_attachment_catalog(project_data).keys())
     errors: list[str] = []
-    for component in project_data.get("components", []):
-        if not isinstance(component, dict):
-            continue
-        name = component.get("name", "?")
-        for use in extract_component_attachment_uses(component):
-            reference = use.get("reference")
-            if reference not in catalog_ids:
-                errors.append(f"Component '{name}' verwijst naar onbekende bijlage '{reference}'")
+    for reference, where in extract_attachment_usage(project_data).items():
+        if reference not in catalog_ids:
+            locations = ", ".join(where) if where else "?"
+            errors.append(f"Onbekende bijlage-referentie '{reference}' gebruikt door: {locations}")
     return errors
 
 

@@ -131,6 +131,25 @@ class RunsService:
         finally:
             await self._pool.release(conn)
 
+    async def get_latest_run(self, project: str, deployment: str, kind: RunKind) -> dict | None:
+        """Most recent run for a project+deployment of a given kind (any status).
+
+        Used by the status poll to show 'starting'/'failed' before the pod exists
+        (the slow provisioning runs in the background).
+        """
+        conn = await self._pool.acquire()
+        try:
+            row = await conn.fetchrow(
+                "SELECT * FROM runs WHERE project = $1 AND deployment = $2 AND kind = $3 "
+                "ORDER BY started_at DESC LIMIT 1",
+                project,
+                deployment,
+                str(kind),
+            )
+            return _row_to_dict(row)
+        finally:
+            await self._pool.release(conn)
+
     async def mark_running(self, session_id: str, url: str | None = None) -> None:
         """Promote a starting run to running once its pod is ready (idempotent)."""
         conn = await self._pool.acquire()

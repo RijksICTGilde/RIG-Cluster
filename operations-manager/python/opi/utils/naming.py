@@ -626,20 +626,6 @@ def generate_db_console_hostname(project_name: str, session_id: str, ingress_pos
     return f"{label}{ingress_postfix}"
 
 
-def generate_db_console_ro_role(project_name: str, deployment_name: str, session_id: str) -> str:
-    """
-    Generate the ephemeral read-only PostgreSQL role name for a database console.
-
-    Format: {project}_{deployment}_ro_{session_id} (valid SQL identifier,
-    underscore separated, truncated to PostgreSQL's 63-char limit).
-    """
-    project_clean = _sanitize_for_identifier(project_name)
-    deployment_clean = _sanitize_for_identifier(deployment_name)
-    session_clean = _sanitize_for_identifier(session_id)
-    role = f"{project_clean}_{deployment_clean}_ro_{session_clean}"
-    return _truncate_if_needed(role, 63)
-
-
 def generate_minio_username(project_name: str, deployment_name: str) -> str:
     """
     Generate a consistent MinIO username.
