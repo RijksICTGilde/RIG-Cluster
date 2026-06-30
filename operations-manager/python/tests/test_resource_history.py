@@ -3,8 +3,8 @@ Tests for resource history and memory overprovision features.
 
 Covers:
 - ProjectFileHandler: history append/read/floor methods
-- resource_tuning_service: base component updates, history writing, OOM floor enforcement,
-  check_deployment_resources, deepcopy safety in get_project_data
+- resource_tuning_service: base component updates, history writing, OOM floor
+  enforcement, deepcopy safety in get_project_data
 """
 
 from datetime import UTC, datetime
@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.services.resource_tuning_service import (
-    check_deployment_resources,
     get_project_data,
     tune_deployment_resources,
 )
@@ -486,87 +485,6 @@ class TestTuneBaseComponentUpdate:
         committed_data = mock_pm.save_and_commit_project.call_args[0][0]
         dep_resources = committed_data["deployments"][0]["components"][0]["resources"]
         assert int(dep_resources["limits"]["memory"].removesuffix("Mi")) < 512
-
-
-# ---------------------------------------------------------------------------
-# check_deployment_resources
-# ---------------------------------------------------------------------------
-
-
-class TestCheckDeploymentResources:
-    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
-    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
-    @patch("opi.services.resource_tuning_service.get_project_service")
-    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
-    @pytest.mark.asyncio
-    async def test_overprovisioned_without_oom_not_reported(self, mock_connector, mock_service, mock_prefix, mock_min):
-        """Overprovisioned components without OOM are no longer surfaced in the
-        UI; the nightly tuner reclaims them automatically."""
-        data = _make_project_data(component_limits="1024Mi", component_requests="512Mi")
-        mock_project = MagicMock()
-        mock_project.data = data
-        mock_project.filename = "test.yaml"
-        mock_service.return_value.get_project.return_value = mock_project
-        # Low usage compared to the 1024Mi limit, but no OOM kills.
-        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=200, avg_mb=150)
-
-        results = await check_deployment_resources("test-project", "production")
-
-        assert results == []
-
-    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
-    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
-    @patch("opi.services.resource_tuning_service.get_project_service")
-    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
-    @pytest.mark.asyncio
-    async def test_returns_oom_warning(self, mock_connector, mock_service, mock_prefix, mock_min):
-        """Should return OOM warning even when there are no savings."""
-        data = _make_project_data(component_limits="256Mi", component_requests="200Mi")
-        mock_project = MagicMock()
-        mock_project.data = data
-        mock_project.filename = "test.yaml"
-        mock_service.return_value.get_project.return_value = mock_project
-        # Usage near limits but with OOM kills
-        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=200, avg_mb=180, has_oom=True)
-
-        results = await check_deployment_resources("test-project", "production")
-
-        assert len(results) == 1
-        assert results[0].oom_detected is True
-        assert results[0].component == "api"
-
-    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
-    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
-    @patch("opi.services.resource_tuning_service.get_project_service")
-    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
-    @pytest.mark.asyncio
-    async def test_returns_empty_when_no_savings(self, mock_connector, mock_service, mock_prefix, mock_min):
-        """No results when usage matches configured limits."""
-        data = _make_project_data(component_limits="256Mi", component_requests="200Mi")
-        mock_project = MagicMock()
-        mock_project.data = data
-        mock_project.filename = "test.yaml"
-        mock_service.return_value.get_project.return_value = mock_project
-        # Usage close to limits - no savings
-        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=200, avg_mb=180)
-
-        results = await check_deployment_resources("test-project", "production")
-        assert len(results) == 0
-
-    @patch("opi.services.resource_tuning_service.get_project_service")
-    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
-    @pytest.mark.asyncio
-    async def test_returns_empty_when_metrics_unavailable(self, mock_connector, mock_service):
-        """Gracefully returns empty list when Prometheus is down."""
-        mock_connector.side_effect = RuntimeError("Connection refused")
-        data = _make_project_data()
-        mock_project = MagicMock()
-        mock_project.data = data
-        mock_project.filename = "test.yaml"
-        mock_service.return_value.get_project.return_value = mock_project
-
-        results = await check_deployment_resources("test-project", "production")
-        assert results == []
 
 
 # ---------------------------------------------------------------------------

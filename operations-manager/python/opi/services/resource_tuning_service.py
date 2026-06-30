@@ -52,22 +52,6 @@ class TuneResult:
     deployment_refresh_triggered: bool = False
 
 
-@dataclass
-class MemoryCheckResult:
-    """Per-component result of a memory check.
-
-    Only OOM (under-provisioning) is surfaced in the UI; memory reductions are
-    applied automatically by the nightly auto-tuner, so they are not reported
-    here as advice.
-    """
-
-    component: str
-    current_limit: str
-    recommended_limit: str
-    saving_mb: float
-    oom_detected: bool = False
-
-
 def get_project_data(project_name: str) -> tuple[dict[str, Any], str]:
     """
     Get a deep copy of project data and filename from the project service cache.
@@ -506,86 +490,6 @@ async def _analyze_component_resources(
         new_cpu_request=new_cpu_request,
         cpu_reason=cpu_reason,
     )
-
-
-async def check_deployment_resources(
-    project_name: str,
-    deployment_name: str,
-) -> list[MemoryCheckResult]:
-    """
-    Check a deployment's components for OOM (under-provisioning), read-only.
-
-    Uses the exact same Prometheus queries, thresholds, and recommendation
-    logic as the tuner, but reports only components with OOM kills. Memory
-    reductions are applied automatically by the nightly tuner and are not
-    surfaced here.
-
-    Args:
-        project_name: Name of the project
-        deployment_name: Deployment to check
-
-    Returns:
-        List of MemoryCheckResult for components with OOM kills
-    """
-    project_data, _filename = get_project_data(project_name)
-    file_handler = ProjectFileHandler()
-
-    try:
-        connector = await get_metrics_connector()
-    except Exception:
-        return []
-
-    kubectl = KubectlConnector()
-    results: list[MemoryCheckResult] = []
-
-    deployments = project_data.get("deployments", [])
-    for dep in deployments:
-        if dep.get("name") != deployment_name:
-            continue
-
-        base_namespace = dep.get("namespace")
-        cluster = dep.get("cluster")
-        if not base_namespace or not cluster:
-            continue
-
-        namespace = get_prefixed_namespace(cluster, base_namespace)
-
-        for comp in dep.get("components", []):
-            component_ref = comp.get("reference", "")
-            if not component_ref:
-                continue
-
-            analysis = await _analyze_component_resources(
-                connector,
-                file_handler,
-                project_data,
-                deployment_name,
-                component_ref,
-                namespace,
-                cluster,
-                kubectl=kubectl,
-            )
-            if analysis is None:
-                continue
-
-            # Only OOM (under-provisioning) is surfaced in the UI. Memory
-            # reductions, including a floor-held limit with a droppable request,
-            # are applied automatically by the nightly tuner and no longer shown.
-            if not analysis.has_oom_kills:
-                continue
-            current_limit_mb = _k8s_memory_to_mb(analysis.current_resources["limits_memory"])
-            new_limit_mb = _k8s_memory_to_mb(analysis.new_limit)
-            results.append(
-                MemoryCheckResult(
-                    component=component_ref,
-                    current_limit=analysis.current_resources["limits_memory"],
-                    recommended_limit=analysis.new_limit,
-                    saving_mb=current_limit_mb - new_limit_mb,
-                    oom_detected=True,
-                )
-            )
-
-    return results
 
 
 async def tune_deployment_resources(
