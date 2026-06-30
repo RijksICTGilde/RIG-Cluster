@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.services.resource_tuning_service import (
-    MemoryCheckResult,
     check_deployment_resources,
     get_project_data,
     tune_deployment_resources,
@@ -500,22 +499,20 @@ class TestCheckDeploymentResources:
     @patch("opi.services.resource_tuning_service.get_project_service")
     @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
     @pytest.mark.asyncio
-    async def test_returns_overprovisioned_components(self, mock_connector, mock_service, mock_prefix, mock_min):
+    async def test_overprovisioned_without_oom_not_reported(self, mock_connector, mock_service, mock_prefix, mock_min):
+        """Overprovisioned components without OOM are no longer surfaced in the
+        UI; the nightly tuner reclaims them automatically."""
         data = _make_project_data(component_limits="1024Mi", component_requests="512Mi")
         mock_project = MagicMock()
         mock_project.data = data
         mock_project.filename = "test.yaml"
         mock_service.return_value.get_project.return_value = mock_project
-        # Low usage compared to 1024Mi limit
+        # Low usage compared to the 1024Mi limit, but no OOM kills.
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=200, avg_mb=150)
 
         results = await check_deployment_resources("test-project", "production")
 
-        assert len(results) == 1
-        assert isinstance(results[0], MemoryCheckResult)
-        assert results[0].component == "api"
-        assert results[0].saving_mb > 0
-        assert results[0].oom_detected is False
+        assert results == []
 
     @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
     @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
@@ -570,81 +567,6 @@ class TestCheckDeploymentResources:
 
         results = await check_deployment_resources("test-project", "production")
         assert results == []
-
-    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
-    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
-    @patch("opi.services.resource_tuning_service.get_project_service")
-    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
-    @pytest.mark.asyncio
-    async def test_fresh_oom_floor_reports_request_only_saving(
-        self, mock_connector, mock_service, mock_prefix, mock_min
-    ):
-        """A recent OOM floor holds the limit but still reports the request reduction."""
-        oom_history = [
-            {
-                "timestamp": datetime.now(UTC).isoformat(),
-                "limits": {"memory": "512Mi"},
-                "source": "oom-watcher",
-            }
-        ]
-        # Coupled limit/request so the fresh floor actually holds the limit
-        # while the request is allowed to drop.
-        data = _make_project_data(
-            component_limits="512Mi",
-            component_requests="512Mi",
-            deployment_limits="512Mi",
-            deployment_requests="512Mi",
-            deployment_history=oom_history,
-        )
-        mock_project = MagicMock()
-        mock_project.data = data
-        mock_project.filename = "test.yaml"
-        mock_service.return_value.get_project.return_value = mock_project
-        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=100, avg_mb=80)
-
-        results = await check_deployment_resources("test-project", "production")
-
-        assert len(results) == 1
-        assert results[0].floor_blocked is True
-        assert results[0].recommended_limit == "512Mi"
-        assert int(results[0].recommended_request.removesuffix("Mi")) < 512
-        assert results[0].saving_mb > 0
-
-    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
-    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
-    @patch("opi.services.resource_tuning_service.get_project_service")
-    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
-    @pytest.mark.asyncio
-    async def test_stale_oom_floor_reports_normal_saving(self, mock_connector, mock_service, mock_prefix, mock_min):
-        """An expired OOM floor no longer suppresses the overprovision warning."""
-        oom_history = [
-            {
-                "timestamp": "2026-01-01T00:00:00+00:00",
-                "limits": {"memory": "512Mi"},
-                "source": "oom-watcher",
-            }
-        ]
-        # Coupled limit/request so that, with the floor expired, the limit is
-        # free to follow the request down.
-        data = _make_project_data(
-            component_limits="512Mi",
-            component_requests="512Mi",
-            deployment_limits="512Mi",
-            deployment_requests="512Mi",
-            deployment_history=oom_history,
-        )
-        mock_project = MagicMock()
-        mock_project.data = data
-        mock_project.filename = "test.yaml"
-        mock_service.return_value.get_project.return_value = mock_project
-        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=100, avg_mb=80)
-
-        results = await check_deployment_resources("test-project", "production")
-
-        assert len(results) == 1
-        assert results[0].floor_blocked is False
-        assert int(results[0].recommended_limit.removesuffix("Mi")) < 512
-        assert results[0].saving_mb > 0
 
 
 # ---------------------------------------------------------------------------
