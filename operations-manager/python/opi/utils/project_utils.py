@@ -14,6 +14,7 @@ from opi.core.config import settings
 from opi.services import ServiceAdapter
 from opi.utils.age import encrypt_age_content
 from opi.utils.api_keys import generate_api_key
+from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
 from opi.utils.sops import generate_sops_key_pair
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import LiteralScalarString
@@ -61,26 +62,34 @@ def validate_root_component(
     root_component_name: str | None,
     deployment_component_names: list[str],
     domain_mode: str,
+    domain_format: str | None = None,
 ) -> None:
     """
     Validate root-component constraints on a deployment.
 
+    root-component only applies when the deployment's domain setup exposes a root
+    host: the legacy ``nice-url`` domain mode, or a domain-format whose template
+    has a droppable ``{component}`` prefix (``ROOT_COMPONENT_FORMAT_IDS``). On any
+    other format (e.g. the dash formats) it is inert, so a value that was inherited
+    -- a clone copying the source's root-component -- is ignored rather than
+    rejected.
+
     Args:
         root_component_name: Value of ``root-component`` on the deployment, or None
         deployment_component_names: Names of components referenced by this deployment
-        domain_mode: The deployment's domain mode
+        domain_mode: The deployment's domain mode (legacy)
+        domain_format: The deployment's domain-format id, if set
 
     Raises:
-        ComponentValidationError: If root component constraints are violated
+        ComponentValidationError: If root-component applies but names a component
+            that is not part of this deployment
     """
     if not root_component_name:
         return
 
-    if domain_mode != "nice-url":
-        raise ComponentValidationError(
-            f"root-component is only valid in nice-url domain mode, "
-            f"but domain mode is '{domain_mode}'. root-component: {root_component_name}"
-        )
+    supports_root = domain_mode == "nice-url" or domain_format in ROOT_COMPONENT_FORMAT_IDS
+    if not supports_root:
+        return
 
     if root_component_name not in deployment_component_names:
         raise ComponentValidationError(
