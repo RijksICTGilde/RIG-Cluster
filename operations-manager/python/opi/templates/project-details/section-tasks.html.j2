@@ -1,6 +1,9 @@
 {# Tasks/runs table fragment (lazy-loaded into the Taken tab).
    Expects: project_name, items (normalized rows: console/job runs + background
    tasks like upserts/refreshes), newest first. #}
+{# Self-polling wrapper: refreshes every 5s while present in the DOM. The Taken tab loads this
+   fragment when opened and clears its slot when left, so htmx polls only while the tab is open. #}
+<div hx-get="/projects/{{ project_name }}/tasks" hx-trigger="every 5s" hx-swap="outerHTML">
 <c-card outline="true" padding="lg" backgroundColor="wit">
     <c-layout-flow gap="md">
         <c-heading type="h2" style="margin-bottom: 0;">
@@ -41,3 +44,4 @@
         {% endif %}
     </c-layout-flow>
 </c-card>
+</div>
