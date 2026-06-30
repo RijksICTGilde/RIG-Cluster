@@ -9,7 +9,6 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 from opi.core.auth_decorators import requires_sso
-from opi.services.project_service import get_project_service
 from opi.web.project_edit_security import require_project_edit_access
 
 logger = logging.getLogger(__name__)
@@ -28,17 +27,18 @@ async def delete_attachment(request: Request, project_name: str, attachment_id: 
     """
     from opi.manager.project_manager import ProjectManager
 
-    project, _user_email = require_project_edit_access(request, project_name)
+    require_project_edit_access(request, project_name)
 
-    # Single ProjectManager path: read fresh from Git, mutate, save, commit. No stale cache.
+    # Single ProjectManager path: read fresh from Git, mutate, save, commit. The
+    # save already refreshes the read-only cache, so no extra reload is needed.
     project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
-    result = await project_manager.remove_attachment(attachment_id)
+    try:
+        result = await project_manager.remove_attachment(attachment_id)
+    finally:
+        await project_manager.close()
     if not result["success"]:
         if result.get("error_type") == "in_use":
             raise HTTPException(status_code=409, detail=result["error"])
         raise HTTPException(status_code=500, detail=result.get("error") or "Verwijderen mislukt")
-
-    if result.get("changed"):
-        get_project_service().load_project_from_data(await project_manager.get_contents(), project.filename)
 
     return {"success": True}
