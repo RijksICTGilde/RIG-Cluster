@@ -127,6 +127,20 @@ class DatabaseVariables(Enum):
         secret_key="password",
         aliases=["APP_DATABASE_PASSWORD"],
     )
+    USER_RO = VariableDefinition(
+        name="DATABASE_SERVER_USER_RO",
+        description="Read-only database gebruikersnaam",
+        source="secret",
+        secret_key="ro_username",
+        aliases=["APP_DATABASE_USER_RO"],
+    )
+    PASSWORD_RO = VariableDefinition(
+        name="DATABASE_PASSWORD_RO",
+        description="Read-only database gebruiker wachtwoord",
+        source="secret",
+        secret_key="ro_password",
+        aliases=["APP_DATABASE_PASSWORD_RO"],
+    )
     DATABASE = VariableDefinition(
         name="DATABASE_DB",
         description="Database naam",

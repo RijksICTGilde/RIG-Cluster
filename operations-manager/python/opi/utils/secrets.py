@@ -153,6 +153,11 @@ class DatabaseSecret(BaseSecret):
     password: str
     database: str
     schema: str
+    # Read-only role for the database console (and read-only application use).
+    # Defaulted so secrets persisted before this field existed still deserialize;
+    # they are populated on the next deployment reprocess.
+    ro_username: str = ""
+    ro_password: str = ""
 
     SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-database"
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.POSTGRESQL_DATABASE

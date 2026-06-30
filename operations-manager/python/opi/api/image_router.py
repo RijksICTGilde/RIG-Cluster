@@ -101,7 +101,10 @@ async def push_image(
 
         if deployment and component:
             project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
-            await project_manager.update_image_and_regenerate(deployment, component, image_ref)
+            try:
+                await project_manager.update_image_and_regenerate(deployment, component, image_ref)
+            finally:
+                await project_manager.close()
             response_data["deployment_updated"] = True
             response_data["deployment"] = deployment
             response_data["component"] = component
