@@ -217,12 +217,41 @@ def test_deployment_attachment_sequence_add_builds_proper_item() -> None:
     assert _empty_sequence_item(ed) == {"provide-as": "file"}
 
 
+def test_keycloak_additional_clients_add_resolves_virtualized_path() -> None:
+    # Regression: the keycloak "add client" button renders the VIRTUALIZED service
+    # path (services -> _services-config), i.e. "_services-config/keycloak/config/
+    # additional-clients". _find_sequence_editable must resolve it (via the same
+    # apply_virtualize the renderer uses). A brace-only rewrite missed this segment
+    # form, so the editable was None, the add produced "" instead of an item, and the
+    # button silently no-op'd in production (HTTP 200, no row added).
+    from opi.forms.editables.editable import apply_virtualize
+    from opi.forms.editables.fields.services import KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE
+    from opi.forms.visualizers.flows import get_flow
+    from opi.web.router_wizard import _empty_sequence_item, _find_sequence_editable
+
+    flow = get_flow("modal-edit-keycloak-config")
+    section = next(s for s in flow.sections if s.section_id == "keycloak-config")
+
+    rendered_path = apply_virtualize(
+        KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE.yaml_path,
+        KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE.virtualize,
+    )
+    assert rendered_path == "_services-config/keycloak/config/additional-clients"
+
+    ed = _find_sequence_editable(section, rendered_path)
+    assert ed is not None, "virtualized keycloak additional-clients path must resolve (add-client button)"
+    # A resolved editable builds a real item, not the empty-string fallback that None produces.
+    assert _empty_sequence_item(ed) != ""
+
+
 def test_service_list_converter_preserves_attachments_data() -> None:
     """Saving the project service selection must NOT drop the attachments catalog
     ``data`` (managed by the Bijlagen UI, absent from the selection form)."""
     from opi.forms.editables.converters import ServiceListConverter
 
-    converter = ServiceListConverter()
+    # The project-level services field opts into catalog-data preservation; the
+    # component-level field deliberately does not (it would duplicate the catalog).
+    converter = ServiceListConverter(preserve_catalog_data=True)
     existing = {
         "services": [
             "publish-on-web",
