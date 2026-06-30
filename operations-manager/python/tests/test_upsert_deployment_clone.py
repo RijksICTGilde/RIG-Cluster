@@ -150,6 +150,41 @@ class TestUpsertDeploymentClone:
         assert "domain-mode" not in new_deployment
         assert "issuer" not in new_deployment
 
+    async def test_clone_drops_root_component_when_target_has_no_root_format(self):
+        """A clone uses the default cluster domain (no nice-url / dot format), so an
+        inherited root-component would be inert. It must be dropped (mirrors pr884)."""
+        pm = _make_manager()
+        project_data = {
+            "name": "demo",
+            "clusters": ["odcn-production"],
+            "repositories": [{"name": "main-repo"}],
+            "deployments": [
+                {
+                    "name": "regelrecht",
+                    "cluster": "odcn-production",
+                    "namespace": "demo",
+                    "domain-mode": "nice-url",
+                    "subdomain": "regelrecht",
+                    "base-domain": "rijks.app",
+                    "domain-format": "component.subdomain",
+                    "root-component": "editor",
+                    "components": [{"reference": "editor", "image": "ghcr.io/org/editor:v1"}],
+                }
+            ],
+        }
+        _wire_create_mocks(pm, project_data)
+
+        with patch("opi.manager.project_manager.ensure_domain_requests"):
+            result = await pm.upsert_deployment(
+                deployment_name="pr884",
+                components=[SimpleNamespace(reference="editor", image="ghcr.io/org/editor:pr884")],
+                clone_from="regelrecht",
+            )
+
+        assert result["success"] is True
+        new_deployment = next(d for d in project_data["deployments"] if d["name"] == "pr884")
+        assert "root-component" not in new_deployment
+
     async def test_clone_leaves_source_backup_untouched(self):
         pm = _make_manager()
         project_data = _project_with_scheduled_source()
