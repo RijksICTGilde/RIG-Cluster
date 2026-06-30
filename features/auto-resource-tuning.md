@@ -120,17 +120,21 @@ has no `VPA_MEMORY_FLOOR_MI` equivalent. So a component whose CPU target sits at
 the recommender floor stays at `floor + buffer` (e.g. `25m + 25% ≈ 31m`). CPU is
 compressible and cheap, so this asymmetry is accepted.
 
-### UI surfacing (OOM only)
+### No manual UI tuning
 
-The project page lazy-loads a memory-check fragment
-(`_memory-check.html.j2`, served by `check_deployment_resources()`). It uses the
-same analysis as the tuner but **only surfaces OOM conditions**
-(under-provisioning): a component being OOM-killed, and the special case where it
-is already at the cluster max and needs manual intervention. Memory *reductions*
-are **not** shown: the nightly auto-tuner applies them automatically, so advising
-a reduction the system will make on its own (and only above the 30% decrease
-deadband) was redundant and confusing. The earlier "Geheugen kan worden
-verminderd" and floor-held-request cards were removed for this reason.
+There is **no per-deployment memory-check fragment or manual "Tune resources"
+button** in the project UI. It was removed once tuning became fully automatic:
+reductions are applied by the nightly sweep, increases by the reactive OOM
+watcher, so a read-only advice card plus a manual trigger only duplicated what the
+system already does (and the card surfaced sub-deadband savings the tuner ignores,
+which read as inconsistent). Removing it also dropped an expensive per-card
+Prometheus + kubectl call on every project-page load.
+
+What still surfaces a problem: the deployment card's **ArgoCD health badge**
+(a crashing or OOM pod shows `Degraded`). The one case this no longer spells out
+explicitly is "OOM while already at the cluster max" (needs manual intervention);
+the proper home for that is service-level monitoring/alerting, not a page-load
+call. Programmatic tuning remains available via `POST /api/resources/{project}/tune`.
 
 ### OOM Kill Handling
 
