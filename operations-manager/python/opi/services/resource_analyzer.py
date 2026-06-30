@@ -208,12 +208,17 @@ def compute_memory_recommendation(
     max_memory_mi: int = 4096,
     max_memory_request_mi: int | None = None,
     source: str = "prometheus",
+    limit_factor: float = 1.5,
 ) -> tuple[str, str, str] | None:
     """
     Compute a memory recommendation based on observed usage.
 
-    Uses avg observed + buffer for requests (typical usage) and
-    max observed + buffer for limits (peak protection).
+    The request tracks observed usage + buffer; the limit is the observed peak
+    times ``limit_factor`` (burst headroom above the peak). The limit is no
+    longer frozen to its prior value: it decays as the peak decays. A valid OOM
+    floor (enforced by the caller) is the lower bound that protects a real past
+    peak, and the OOM watcher is the reactive net for boot spikes that fell
+    outside the observation window.
 
     Args:
         max_observed_mb: Maximum observed memory usage in MB
@@ -229,6 +234,8 @@ def compute_memory_recommendation(
         source: Where the observed values came from. "vpa" means they are the
             recommender's target, which already carries its own margin, so we add
             no buffer of our own; "prometheus" is a raw measurement, which we buffer.
+        limit_factor: Multiplier applied to the observed peak to size the limit
+            (burst headroom). Applied regardless of source.
 
     Returns:
         Tuple of (recommended_limit, recommended_request, reason) as K8s strings,
@@ -240,10 +247,6 @@ def compute_memory_recommendation(
     # Prometheus measurement gets our buffer on top.
     use_buffer = source != "vpa"
     buffer_factor = 1 + buffer_percent / 100 if use_buffer else 1.0
-
-    # A frozen limit is one we must not touch during a (non-OOM) reduction:
-    # the operator already set it to differ from the request, so we respect it.
-    limit_frozen = (not has_oom_kills) and (current_limit_mb != current_request_mb)
 
     if has_oom_kills:
         # OOM: the limit must grow to stop the kills. Limit tracks peak,
@@ -276,14 +279,14 @@ def compute_memory_recommendation(
             recommended_request_mb = max(recommended_request_mb, oom_minimum * ratio)
             recommended_limit_mb = oom_minimum
     else:
-        # Reduction / tuning: the request tracks the peak observed usage
-        # ("the highest we measured") plus a buffer.  The limit mirrors the
-        # request only when the two were equal (the untouched default); when
-        # the limit was already set to differ from the request, leave it as-is.
+        # Reduction / tuning: the request tracks the observed usage plus a buffer;
+        # the limit is the observed peak times limit_factor (burst headroom), never
+        # below the request. The limit is not frozen to its prior value, so it
+        # decays as the peak decays. A valid OOM floor (caller) is the lower bound.
         recommended_request_mb = max_observed_mb * buffer_factor
         if use_buffer and max_observed_mb >= 100:
             recommended_request_mb += 25
-        recommended_limit_mb = current_limit_mb if limit_frozen else recommended_request_mb
+        recommended_limit_mb = max(max_observed_mb * limit_factor, recommended_request_mb)
 
     # Enforce cluster minimum
     recommended_limit_mb = max(recommended_limit_mb, float(min_memory_mi))
@@ -301,16 +304,6 @@ def compute_memory_recommendation(
 
     # Request should never exceed limit
     recommended_request_mb = min(recommended_request_mb, recommended_limit_mb)
-
-    # Collapse request to limit when both are below the request cap
-    # and the gap is < 10% — a tiny difference adds no value.
-    # Don't collapse when request is at its cap but limit is higher, and
-    # never when the limit is frozen (that would silently raise the request
-    # to a limit we were asked to leave alone).
-    if not limit_frozen and recommended_limit_mb > 0 and recommended_limit_mb <= max_memory_request_mi:
-        gap_ratio = (recommended_limit_mb - recommended_request_mb) / recommended_limit_mb
-        if gap_ratio < 0.10:
-            recommended_request_mb = recommended_limit_mb
 
     # Check if the change is significant enough
     if not has_oom_kills:
@@ -336,16 +329,16 @@ def compute_memory_recommendation(
             f"Request: avg {avg_observed_mb:.0f}Mi + {buffer_percent}%{request_extra} = {recommended_request_mb:.0f}Mi"
         )
     else:
-        limit_note = (
-            f" Limit unchanged at {recommended_limit_mb:.0f}Mi"
-            if limit_frozen
-            else f" Limit kept equal at {recommended_limit_mb:.0f}Mi"
-        )
         if use_buffer:
             request_extra = " + 25Mi headroom" if max_observed_mb >= 100 else ""
+            basis_label = "max"
             request_calc = f"max {max_observed_mb:.0f}Mi + {buffer_percent}%{request_extra}"
         else:
+            basis_label = "VPA target"
             request_calc = f"VPA target {max_observed_mb:.0f}Mi"
-        reason = f"Request: {request_calc} = {recommended_request_mb:.0f}Mi.{limit_note}"
+        reason = (
+            f"Request: {request_calc} = {recommended_request_mb:.0f}Mi. "
+            f"Limit: {basis_label} {max_observed_mb:.0f}Mi x {limit_factor:g} = {recommended_limit_mb:.0f}Mi"
+        )
 
     return recommended_limit, recommended_request, reason
