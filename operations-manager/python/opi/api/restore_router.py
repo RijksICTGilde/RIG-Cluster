@@ -14,7 +14,6 @@ from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_m
 from opi.core.config import settings
 from opi.handlers.project_file_handler import (
     create_project_file_handler,
-    save_project_file,
 )
 
 if TYPE_CHECKING:
@@ -776,7 +775,6 @@ async def restore_project_pvc(
             project_file_handler.set_storage_generation(
                 project_data, body.deployment_name, body.component_name, body.storage_name, next_generation
             )
-            save_project_file(project_file_path, project_data)
 
             # 11. Commit and push the change
             commit_message = (
@@ -787,7 +785,11 @@ async def restore_project_pvc(
                 f"Storage: {body.storage_name}\n"
                 f"Generation: {current_generation} -> {next_generation}"
             )
-            await git_connector.commit_and_push(commit_message)
+            restore_project_manager = ProjectManager(
+                project_file_relative_path=f"projects/{project.filename}",
+                git_connector_for_project_files=git_connector,
+            )
+            await restore_project_manager.save_and_commit_project(project_data, commit_message)
             logger.info("Project file committed and pushed")
 
         # 12. Trigger project refresh for the specific deployment
@@ -1218,7 +1220,6 @@ async def restore_backup_run(
             if generation_updates:
                 for upd in generation_updates:
                     _set_generation(project_file_handler, project_data, upd)
-                save_project_file(project_file_path, project_data)
                 project_updated = True
 
                 # Commit and push
@@ -1229,7 +1230,11 @@ async def restore_backup_run(
                     f"Deployment: {deployment_name}\n"
                     f"Resources restored: {', '.join(restored_names)}"
                 )
-                await git_connector.commit_and_push(commit_message)
+                restore_project_manager = ProjectManager(
+                    project_file_relative_path=f"projects/{project.filename}",
+                    git_connector_for_project_files=git_connector,
+                )
+                await restore_project_manager.save_and_commit_project(project_data, commit_message)
                 logger.info("Project file committed and pushed")
 
         # Trigger project refresh
@@ -1689,8 +1694,6 @@ async def restore_deployment_resource(
                 project_file_handler.set_deployment_service_generation(
                     project_data, deployment_name, ServiceType.MINIO_STORAGE.value, result["new_generation"]
                 )
-            save_project_file(project_file_path, project_data)
-
             # 5. Commit and push the change
             commit_message = (
                 f"Restore {body.resource_type} {result['old_resource_name']} to {result['new_resource_name']}\n\n"
@@ -1701,7 +1704,11 @@ async def restore_deployment_resource(
                 f"Generation: {result['old_generation']} -> {result['new_generation']}\n"
                 f"Snapshot: {body.snapshot_id}"
             )
-            await git_connector.commit_and_push(commit_message)
+            restore_project_manager = ProjectManager(
+                project_file_relative_path=f"projects/{project.filename}",
+                git_connector_for_project_files=git_connector,
+            )
+            await restore_project_manager.save_and_commit_project(project_data, commit_message)
             logger.info("Project file committed and pushed")
 
         # 6. Trigger project refresh if requested

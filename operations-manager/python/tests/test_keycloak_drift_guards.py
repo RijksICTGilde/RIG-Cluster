@@ -99,10 +99,7 @@ class TestSetupProjectRealmImmediatePersist:
     async def test_credentials_pushed_immediately_after_admin_creation(self) -> None:
         project_manager = MagicMock()
         project_manager.get_contents = AsyncMock(return_value={"config": {"age-public-key": "age1publickey"}})
-        project_manager.save_project_data = AsyncMock()
-        git_connector = MagicMock()
-        git_connector.commit_and_push = AsyncMock()
-        project_manager.get_git_connector_for_project_files = AsyncMock(return_value=git_connector)
+        project_manager.save_and_commit_project = AsyncMock()
 
         manager = KeycloakManager(project_manager)
 
@@ -129,9 +126,8 @@ class TestSetupProjectRealmImmediatePersist:
                 config={"template": "sso-support"},
             )
 
-        project_manager.save_project_data.assert_awaited_once()
-        git_connector.commit_and_push.assert_awaited_once()
-        commit_message = git_connector.commit_and_push.await_args.args[0]
+        project_manager.save_and_commit_project.assert_awaited_once()
+        commit_message = project_manager.save_and_commit_project.await_args.args[1]
         assert "regel-k4c" in commit_message
         assert result["username"] == "regel_k4c_odcn_production_admin"
         assert result["password"]

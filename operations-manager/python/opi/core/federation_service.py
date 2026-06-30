@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from opi.connectors.opi import OpiConnector, OpiConnectorError
 from opi.core.config import settings
+from opi.services.project_service import get_project_service
 
 if TYPE_CHECKING:
     from opi.core.federation_config import FederationRegistry, PeerConfig
@@ -166,8 +167,11 @@ class FederationService:
     async def resolve_cluster(self, project_name: str, deployment_name: str | None) -> str:
         """Determine the target cluster for a deployment.
 
-        Reads the project YAML from git and extracts the cluster field.
-        Falls back to the local CLUSTER_MANAGER setting on any error.
+        Reads the deployment's cluster from the in-memory project cache (the same
+        source other hot-path readers use); on a cache miss it falls back to a
+        single git read, closing the git connector afterwards so the federation
+        routing path does not re-clone the projects repo and leak connectors on
+        every call. Falls back to the local CLUSTER_MANAGER setting on any error.
         """
         if not deployment_name:
             return settings.CLUSTER_MANAGER
@@ -176,7 +180,22 @@ class FederationService:
             from opi.handlers.project_file_handler import ProjectFileHandler
 
             handler = ProjectFileHandler()
-            project_data = await handler.get_project_data(project_name)
+
+            # Primary: in-memory cache (no clone).
+            cached = get_project_service().get_project(project_name)
+            if cached is not None and cached.data is not None:
+                cluster = handler.extract_deployment_cluster(cached.data, deployment_name)
+                if cluster:
+                    return cluster
+
+            # Fallback: single git read; always close the connector.
+            from opi.manager.project_manager import ProjectManager
+
+            project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+            try:
+                project_data = await project_manager.get_contents()
+            finally:
+                await project_manager.close()
             if project_data is None:
                 logger.warning(
                     "Federation: no project data for %s, falling back to local cluster",

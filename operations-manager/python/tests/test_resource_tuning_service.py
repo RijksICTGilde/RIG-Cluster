@@ -54,7 +54,7 @@ class TestTuneDeploymentResources:
     @patch("opi.services.resource_tuning_service.get_max_memory_limit_mi", return_value=4096)
     @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-my-project")
     @patch("opi.services.resource_tuning_service.trigger_reprocessing", new_callable=AsyncMock)
-    @patch("opi.services.resource_tuning_service.commit_project_yaml", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.ProjectManager")
     @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
     @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
     @pytest.mark.asyncio
@@ -62,7 +62,7 @@ class TestTuneDeploymentResources:
         self,
         mock_get_connector,
         mock_get_from_git,
-        mock_commit,
+        mock_pm_cls,
         mock_reprocess,
         mock_prefix,
         mock_max_mem,
@@ -91,6 +91,9 @@ class TestTuneDeploymentResources:
         }
         mock_git_connector = AsyncMock()
         mock_get_from_git.return_value = (project_data, "my-project.yaml", mock_git_connector)
+        # The tune path persists via ProjectManager.save_and_commit_project; mock the
+        # constructed manager so no real validation/git runs.
+        mock_pm_cls.return_value = AsyncMock()
 
         mock_connector = AsyncMock()
         mock_connector.custom_query.side_effect = [

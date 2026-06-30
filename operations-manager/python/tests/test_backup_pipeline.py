@@ -1197,18 +1197,20 @@ class TestCreateDeploymentFromSourceYAML:
         _bt = "opi.core.backup_tasks"
         with (
             patch(f"{_bt}.get_project_service") as mock_ps,
-            patch(f"{_bt}.save_project_file") as mock_save,
-            patch(f"{_bt}.create_git_connector_for_project_files") as mock_git,
+            patch(f"{_bt}.ProjectManager") as mock_pm_cls,
         ):
             mock_ps.return_value.get_project.return_value = mock_project
-            mock_ps.return_value.load_project_from_data = MagicMock()
-            mock_git_conn = AsyncMock()
-            mock_git.return_value = mock_git_conn
+            # The mutation now reads fresh via ProjectManager.get_contents() and
+            # persists through save_and_commit_project (the single validated path).
+            mock_pm = MagicMock()
+            mock_pm.get_contents = AsyncMock(return_value=project_data)
+            mock_pm.save_and_commit_project = AsyncMock()
+            mock_pm.close = AsyncMock()
+            mock_pm_cls.return_value = mock_pm
 
             yield {
                 "project_data": project_data,
-                "save": mock_save,
-                "git": mock_git_conn,
+                "save": mock_pm.save_and_commit_project,
                 "project_service": mock_ps,
             }
 
@@ -1296,14 +1298,16 @@ class TestCreateDeploymentFromSourceYAML:
         assert new_dep["repository"] == "main"
 
     def test_saves_and_commits(self, yaml_mocks) -> None:
-        """Project file is saved locally and committed to git."""
+        """Project file is persisted through the single validated save path."""
         from opi.core.backup_tasks import _create_deployment_from_source
 
         _run(_create_deployment_from_source("test-project", "staging", "production"))
 
-        yaml_mocks["save"].assert_called_once_with("test-project.yaml", yaml_mocks["project_data"])
-        yaml_mocks["git"].create_or_update_file.assert_awaited_once()
-        commit_msg = yaml_mocks["git"].create_or_update_file.call_args.kwargs.get("commit_message", "")
+        yaml_mocks["save"].assert_called_once()
+        # save_and_commit_project(project_data, commit_message)
+        save_args = yaml_mocks["save"].call_args.args
+        assert save_args[0] is yaml_mocks["project_data"]
+        commit_msg = save_args[1]
         assert "staging" in commit_msg
         assert "production" in commit_msg
 

@@ -7,7 +7,6 @@ Extracted to avoid circular import issues.
 
 import logging
 import re
-from io import StringIO
 from typing import Any
 
 from fastapi import HTTPException
@@ -437,10 +436,7 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
         if users:
             project_config["users"] = users
 
-    # Use ruamel.yaml for proper multiline string handling
-    yaml_instance = YAML()
-    yaml_instance.preserve_quotes = True
-    yaml_instance.width = 4096  # Prevent line wrapping
+    from opi.utils.yaml_util import dump_yaml_to_string
 
     # Handle multiline password with literal block scalar
     password = project_config["repositories"][0]["password"]
@@ -452,10 +448,8 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
     if api_key and "\n" in api_key:
         project_config["config"]["api-key"] = LiteralScalarString(api_key)
 
-    # Generate YAML content
-    yaml_output = StringIO()
-    yaml_instance.dump(project_config, yaml_output)
-    yaml_content = yaml_output.getvalue()
+    # Generate YAML content via the single canonical writer
+    yaml_content = dump_yaml_to_string(project_config)
 
     logger.info(
         f"Generated project YAML for {project_data.project_name} with {len(components_list)} components "

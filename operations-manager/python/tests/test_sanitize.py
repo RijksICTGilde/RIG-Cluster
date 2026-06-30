@@ -9,14 +9,14 @@ class TestSanitizeUnhealthyPods:
     """Test sanitize endpoint with unhealthy deployments."""
 
     @patch("opi.api.resource_router.trigger_reprocessing", new_callable=AsyncMock)
-    @patch("opi.api.resource_router.commit_project_yaml", new_callable=AsyncMock)
+    @patch("opi.api.resource_router.ProjectManager")
     @patch("opi.api.resource_router.KubectlConnector")
     @patch("opi.api.resource_router.get_project_service")
     @patch("opi.api.resource_router.get_metrics_connector", new_callable=AsyncMock)
     @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
     @pytest.mark.asyncio
     async def test_high_restarts_disables_component(
-        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_commit, mock_reprocess
+        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_pm_cls, mock_reprocess
     ):
         project_data = {
             "name": "my-project",
@@ -36,6 +36,12 @@ class TestSanitizeUnhealthyPods:
         mock_service = MagicMock()
         mock_service.get_project.return_value = mock_project
         mock_get_service.return_value = mock_service
+
+        mock_pm = MagicMock()
+        mock_pm.get_contents = AsyncMock(return_value=project_data)
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm.close = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
 
         # Kubectl returns 0 ready pods
         mock_kubectl = AsyncMock()
@@ -66,13 +72,14 @@ class TestSanitizeUnhealthyPods:
         assert "15 restarts" in result["disabled"][0]["reason"]
         assert "0/1 pods ready" in result["disabled"][0]["reason"]
 
+    @patch("opi.api.resource_router.ProjectManager")
     @patch("opi.api.resource_router.KubectlConnector")
     @patch("opi.api.resource_router.get_project_service")
     @patch("opi.api.resource_router.get_metrics_connector")
     @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
     @pytest.mark.asyncio
     async def test_healthy_components_not_disabled(
-        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls
+        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_pm_cls
     ):
         project_data = {
             "name": "my-project",
@@ -92,6 +99,12 @@ class TestSanitizeUnhealthyPods:
         mock_service = MagicMock()
         mock_service.get_project.return_value = mock_project
         mock_get_service.return_value = mock_service
+
+        mock_pm = MagicMock()
+        mock_pm.get_contents = AsyncMock(return_value=project_data)
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm.close = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
 
         # Kubectl returns healthy pods
         mock_kubectl = AsyncMock()
@@ -120,12 +133,15 @@ class TestSanitizeUnhealthyPods:
         assert len(result["disabled"]) == 0
         assert "api" in result["healthy"]
 
+    @patch("opi.api.resource_router.ProjectManager")
     @patch("opi.api.resource_router.KubectlConnector")
     @patch("opi.api.resource_router.get_project_service")
     @patch("opi.api.resource_router.get_metrics_connector")
     @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
     @pytest.mark.asyncio
-    async def test_already_disabled_skipped(self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls):
+    async def test_already_disabled_skipped(
+        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_pm_cls
+    ):
         project_data = {
             "name": "my-project",
             "components": [{"name": "api", "disabled": True, "disabled-reason": "previously broken"}],
@@ -144,6 +160,12 @@ class TestSanitizeUnhealthyPods:
         mock_service = MagicMock()
         mock_service.get_project.return_value = mock_project
         mock_get_service.return_value = mock_service
+
+        mock_pm = MagicMock()
+        mock_pm.get_contents = AsyncMock(return_value=project_data)
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm.close = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
 
         mock_kubectl = AsyncMock()
         mock_kubectl_cls.return_value = mock_kubectl
@@ -164,14 +186,14 @@ class TestSanitizeUnhealthyPods:
         mock_kubectl.get_deployment_status.assert_not_called()
 
     @patch("opi.api.resource_router.trigger_reprocessing", new_callable=AsyncMock)
-    @patch("opi.api.resource_router.commit_project_yaml", new_callable=AsyncMock)
+    @patch("opi.api.resource_router.ProjectManager")
     @patch("opi.api.resource_router.KubectlConnector")
     @patch("opi.api.resource_router.get_project_service")
     @patch("opi.api.resource_router.get_metrics_connector", new_callable=AsyncMock)
     @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
     @pytest.mark.asyncio
     async def test_image_pull_backoff_disables_component(
-        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_commit, mock_reprocess
+        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_pm_cls, mock_reprocess
     ):
         project_data = {
             "name": "my-project",
@@ -191,6 +213,12 @@ class TestSanitizeUnhealthyPods:
         mock_service = MagicMock()
         mock_service.get_project.return_value = mock_project
         mock_get_service.return_value = mock_service
+
+        mock_pm = MagicMock()
+        mock_pm.get_contents = AsyncMock(return_value=project_data)
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm.close = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
 
         # Kubectl returns 0 ready pods and image pull events
         mock_kubectl = AsyncMock()
@@ -224,13 +252,14 @@ class TestSanitizeUnhealthyPods:
         assert result["disabled"][0]["component"] == "api"
         assert "ImagePullBackOff" in result["disabled"][0]["reason"]
 
+    @patch("opi.api.resource_router.ProjectManager")
     @patch("opi.api.resource_router.KubectlConnector")
     @patch("opi.api.resource_router.get_project_service")
     @patch("opi.api.resource_router.get_metrics_connector", new_callable=AsyncMock)
     @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
     @pytest.mark.asyncio
     async def test_image_pull_event_for_other_component_ignored(
-        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls
+        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_pm_cls
     ):
         project_data = {
             "name": "my-project",
@@ -250,6 +279,12 @@ class TestSanitizeUnhealthyPods:
         mock_service = MagicMock()
         mock_service.get_project.return_value = mock_project
         mock_get_service.return_value = mock_service
+
+        mock_pm = MagicMock()
+        mock_pm.get_contents = AsyncMock(return_value=project_data)
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm.close = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
 
         # Kubectl: healthy pods, but image pull event for a DIFFERENT component
         mock_kubectl = AsyncMock()

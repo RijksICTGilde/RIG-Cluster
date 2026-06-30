@@ -8,14 +8,13 @@ Reuses the editable form framework — no custom form processing.
 from __future__ import annotations
 
 import logging
-from io import StringIO
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from ruamel.yaml import YAML
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.visualizers.flows import get_flow
@@ -29,7 +28,6 @@ from opi.forms.wizard.session import (
     init_modal_state_tokenized,
     save_modal_state_by_token,
 )
-from opi.handlers.project_file_handler import save_project_file
 from opi.services.project_service import get_project_service
 from opi.web.menu import get_menu_items
 from opi.web.router_wizard import _apply_literal_scalars
@@ -332,48 +330,63 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
     # lagging cache is never committed back over newer Git data (the cache/Git timing fix).
     from opi.manager.project_manager import ProjectManager
 
+    # Explicitly close the ProjectManager so its temp git clone is cleaned up,
+    # on every exit path including the validation-error re-render below.
     project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
-    existing_data = await project_manager.get_contents()
-    existing_data.update(merged_data)
+    try:
+        existing_data = await project_manager.get_contents()
+        existing_data.update(merged_data)
 
-    # Run post_merge — maps _approval_items back to domains structure
-    for section in active_sections:
-        if section.post_merge:
-            section.post_merge(existing_data, merged_data)
+        # Run post_merge — maps _approval_items back to domains structure
+        for section in active_sections:
+            if section.post_merge:
+                section.post_merge(existing_data, merged_data)
 
-    # Determine which deployment(s) are actually affected by this approval so
-    # the redeploy can be scoped to just those, instead of reprocessing the
-    # whole project. Any non-skip decision (approved OR denied) on a domain or
-    # subdomain redeploys every deployment referencing it. An empty result
-    # means no current deployment uses the decided domain(s): the status is
-    # still persisted, but nothing is redeployed.
-    from opi.connectors.subdomain import find_deployments_for_domain_item
+        # Determine which deployment(s) are actually affected by this approval so
+        # the redeploy can be scoped to just those, instead of reprocessing the
+        # whole project. Any non-skip decision (approved OR denied) on a domain or
+        # subdomain redeploys every deployment referencing it. An empty result
+        # means no current deployment uses the decided domain(s): the status is
+        # still persisted, but nothing is redeployed.
+        from opi.connectors.subdomain import find_deployments_for_domain_item
 
-    affected_deployments: set[str] = set()
-    for item in merged_data.get("_approval_items", []):
-        if not isinstance(item, dict) or item.get("status", "skip") == "skip":
-            continue
-        affected_deployments.update(find_deployments_for_domain_item(existing_data, item))
-    deployment_names = sorted(affected_deployments)
+        affected_deployments: set[str] = set()
+        for item in merged_data.get("_approval_items", []):
+            if not isinstance(item, dict) or item.get("status", "skip") == "skip":
+                continue
+            affected_deployments.update(find_deployments_for_domain_item(existing_data, item))
+        deployment_names = sorted(affected_deployments)
 
-    # Strip transient keys that should not persist to YAML
-    existing_data.pop("_admin_email", None)
-    existing_data.pop("_approval_items", None)
+        # Strip transient keys that should not persist to YAML
+        existing_data.pop("_admin_email", None)
+        existing_data.pop("_approval_items", None)
 
-    _apply_literal_scalars(existing_data)
+        _apply_literal_scalars(existing_data)
 
-    # Save
-    save_project_file(project.filename, existing_data)
-    project_service.load_project_from_data(existing_data, project.filename)
+        # Save through the single validated path: schema + structural integrity
+        # validation, canonical dumper, commit + push, and cache refresh in one shot.
+        # A validation failure re-renders the approval step with the message instead
+        # of 500ing (e.g. pre-existing structural drift surfaced by the full check).
+        try:
+            await project_manager.save_and_commit_project(
+                existing_data, f"Update project {project_name} (domain approval)"
+            )
+        except (ProjectSchemaError, ProjectIntegrityError) as e:
+            logger.warning("Domain approval save rejected by validation for %s: %s", project_name, e)
+            first_section = active_sections[0]
+            step_html = _render_section_html(first_section, state.get_merged_data())
+            rendered = _render_modal_step(
+                request, wizard_token, state, first_section, step_html, project_name, global_errors=[str(e)]
+            )
+            return HTMLResponse(content=rendered)
+    finally:
+        await project_manager.close()
     logger.info("Project %s domains updated via admin approval (by %s)", project_name, user.get("email"))
 
     # Trigger full project processing
-    yaml_instance = YAML()
-    yaml_instance.preserve_quotes = True
-    yaml_instance.width = 4096
-    yaml_output = StringIO()
-    yaml_instance.dump(existing_data, yaml_output)
-    yaml_content = yaml_output.getvalue()
+    from opi.utils.yaml_util import dump_yaml_to_string
+
+    yaml_content = dump_yaml_to_string(existing_data)
 
     from opi.core.task_helpers import create_async_task
 

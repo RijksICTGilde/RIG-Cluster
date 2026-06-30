@@ -9,15 +9,14 @@ from __future__ import annotations
 
 import logging
 import re
-from io import StringIO
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from ruamel.yaml import YAML
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
+from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
@@ -101,22 +100,6 @@ detail_edit_router = APIRouter(prefix="/projects", tags=["detail-edit"])
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-async def _commit_to_git(project_name: str, project_data: dict[str, Any], section_id: str) -> None:
-    """Commit and push a project file change to git without deployment."""
-    from opi.services.resource_tuning_service import commit_project_yaml
-
-    try:
-        filename = f"{project_name}.yaml"
-        await commit_project_yaml(
-            project_name,
-            filename,
-            project_data,
-            f"Update {project_name} ({section_id})",
-        )
-    except Exception:
-        logger.exception("Failed to commit %s to git", project_name)
 
 
 def _create_renderer() -> FormRenderer:
@@ -508,13 +491,9 @@ async def _start_deployment(
 ) -> str:
     """Create a V2 async task for deployment processing. Returns task_id."""
     from opi.core.task_helpers import create_async_task
+    from opi.utils.yaml_util import dump_yaml_to_string
 
-    yaml_instance = YAML()
-    yaml_instance.preserve_quotes = True
-    yaml_instance.width = 4096
-    yaml_output = StringIO()
-    yaml_instance.dump(result_yaml, yaml_output)
-    yaml_content = yaml_output.getvalue()
+    yaml_content = dump_yaml_to_string(result_yaml)
 
     task = await create_async_task(
         request=request,
@@ -1082,6 +1061,7 @@ def _render_modal_review(
     flow_id: str,
     active_sections,
     state,
+    global_errors: list[str] | None = None,
 ) -> HTMLResponse:
     """Render the review/confirmation page for the modal wizard."""
     from opi.web.router_wizard import _build_section_fields
@@ -1142,6 +1122,7 @@ def _render_modal_review(
             "section_summaries": section_summaries,
             "action_label": "Bevestigen en verwerken",
             "warnings": warnings,
+            "global_errors": global_errors or [],
         }
     )
     process_components = templates.env.filters.get("process_components")
@@ -1157,7 +1138,6 @@ async def _modal_do_submit(
     flow_id: str,
 ) -> HTMLResponse:
     """Execute the final modal wizard submission."""
-    from opi.handlers.project_file_handler import save_project_file
     from opi.services.project_service import get_project_service
 
     # TOCTOU recheck on the mutating request. Backup/restore has its own
@@ -1196,7 +1176,6 @@ async def _modal_do_submit(
     # Transients are intentionally preserved on merged_data here so that
     # PRE_SAVE hooks (e.g. SubdomainRequestHook reading ``_request-subdomain``)
     # see them after the list-item merge into ``existing_data``.
-    processor = EditableFormProcessor()
     all_editables = [ed for section in active_sections for ed in section.editables]
 
     # Strip template-only keys: template_data provides context for rendering
@@ -1218,7 +1197,89 @@ async def _modal_do_submit(
     # cache is never committed back over newer Git data (the cache/Git timing fix).
     from opi.manager.project_manager import ProjectManager
 
+    # Explicitly close the ProjectManager so its temp git clone is cleaned up on
+    # every exit path (success, validation-error re-render, or an unexpected raise).
     project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+    try:
+        existing_data, render_response = await _process_and_save_modal_edit(
+            request,
+            project_manager,
+            project_name,
+            flow_id,
+            wizard_token,
+            merged_data,
+            active_sections,
+            all_editables,
+            state,
+        )
+    finally:
+        await project_manager.close()
+
+    if render_response is not None:
+        return render_response
+    logger.info("Project %s updated via modal wizard (flow=%s)", project_name, flow_id)
+
+    if action == "process_project":
+        # Extract targeted deployment name from flow_id when editing a specific deployment
+        target_deployment_name = _extract_deployment_name_from_flow(flow_id, existing_data)
+        task_id = await _start_deployment(request, project_name, existing_data, deployment_name=target_deployment_name)
+        if target_deployment_name:
+            logger.info(
+                "Starting targeted deployment for %s/%s (task=%s, flow=%s)",
+                project_name,
+                target_deployment_name,
+                task_id,
+                flow_id,
+            )
+        else:
+            logger.info("Starting full project processing for %s (task=%s, flow=%s)", project_name, task_id, flow_id)
+
+        rendered = templates.get_template("wizard/modal_wizard_progress.html.j2").render(
+            {"task_id": task_id, "project_name": project_name}
+        )
+        process_components = templates.env.filters.get("process_components")
+        if process_components:
+            rendered = str(process_components(rendered))
+
+        clear_modal_state_by_token(wizard_token)
+        return HTMLResponse(content=rendered)
+
+    # save_only
+    clear_modal_state_by_token(wizard_token)
+    rendered = templates.get_template("wizard/modal_wizard_success.html.j2").render({})
+    process_components = templates.env.filters.get("process_components")
+    if process_components:
+        rendered = str(process_components(rendered))
+
+    # Run after_save hooks (fire-and-forget)
+    for section in active_sections:
+        if section.after_save:
+            try:
+                await section.after_save(request)
+            except Exception:
+                logger.exception("after_save hook failed for section %s", section.section_id)
+
+    return HTMLResponse(content=rendered)
+
+
+async def _process_and_save_modal_edit(
+    request: Request,
+    project_manager: ProjectManager,
+    project_name: str,
+    flow_id: str,
+    wizard_token: str | None,
+    merged_data: dict,
+    active_sections,
+    all_editables,
+    state,
+) -> tuple[dict, HTMLResponse | None]:
+    """Read, merge the modal-edit form into the project, and persist it.
+
+    Returns ``(existing_data, render_response)``. ``render_response`` is non-None
+    only when validation rejected the save and the caller should return it (the
+    review re-render). The ProjectManager lifecycle (and its temp clone cleanup)
+    is owned by the caller, which closes it once this returns.
+    """
     existing_data = await project_manager.get_contents()
 
     # Capture existing attachments' encrypted content before the form merge: the wizard
@@ -1346,58 +1407,18 @@ async def _modal_do_submit(
 
     _strip_cleared_fields(existing_data)
 
-    # Save
-    save_project_file(project.filename, existing_data)
-    project_service.load_project_from_data(existing_data, project.filename)
-    logger.info("Project %s updated via modal wizard (flow=%s)", project_name, flow_id)
-
-    if action == "process_project":
-        # Extract targeted deployment name from flow_id when editing a specific deployment
-        target_deployment_name = _extract_deployment_name_from_flow(flow_id, existing_data)
-        task_id = await _start_deployment(request, project_name, existing_data, deployment_name=target_deployment_name)
-        if target_deployment_name:
-            logger.info(
-                "Starting targeted deployment for %s/%s (task=%s, flow=%s)",
-                project_name,
-                target_deployment_name,
-                task_id,
-                flow_id,
-            )
-        else:
-            logger.info("Starting full project processing for %s (task=%s, flow=%s)", project_name, task_id, flow_id)
-
-        rendered = templates.get_template("wizard/modal_wizard_progress.html.j2").render(
-            {"task_id": task_id, "project_name": project_name}
+    # Save through the single validated path: schema + structural integrity
+    # validation, canonical dumper, commit + push, and cache refresh in one shot.
+    # A validation failure (e.g. pre-existing structural drift surfaced by the
+    # full-project check) is returned to the caller as a review re-render.
+    try:
+        await project_manager.save_and_commit_project(existing_data, f"Update {project_name} ({flow_id})")
+    except (ProjectSchemaError, ProjectIntegrityError) as e:
+        logger.warning("Modal wizard save rejected by validation for %s (flow=%s): %s", project_name, flow_id, e)
+        return existing_data, _render_modal_review(
+            request, wizard_token, project_name, flow_id, active_sections, state, global_errors=[str(e)]
         )
-        process_components = templates.env.filters.get("process_components")
-        if process_components:
-            rendered = str(process_components(rendered))
-
-        clear_modal_state_by_token(wizard_token)
-        return HTMLResponse(content=rendered)
-
-    # save_only
-    clear_modal_state_by_token(wizard_token)
-    rendered = templates.get_template("wizard/modal_wizard_success.html.j2").render({})
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
-
-    # Run after_save hooks (fire-and-forget)
-    for section in active_sections:
-        if section.after_save:
-            try:
-                await section.after_save(request)
-            except Exception:
-                logger.exception("after_save hook failed for section %s", section.section_id)
-
-    # Await the Git commit so the change is durable before we report success.
-    # As a background task it raced the periodic project refresh, which could
-    # re-clone the pre-save file and momentarily drop the just-added member
-    # from the in-memory mapping; awaiting guarantees the member is present on
-    # the reload that closeEditModalAndReload() triggers.
-    await _commit_to_git(project_name, existing_data, flow_id)
-    return HTMLResponse(content=rendered)
+    return existing_data, None
 
 
 async def _handle_backup_restore_submit(

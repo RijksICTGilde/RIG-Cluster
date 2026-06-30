@@ -1629,11 +1629,9 @@ class DeleteProjectManager:
                 ]
                 current_project_data["deployments"] = updated_deployments
 
-                await self.project_manager.save_project_data()
-
-                git_connector = await self.project_manager.get_git_connector_for_project_files()
-                await git_connector.commit_and_push(
-                    f"Delete deployment '{deployment_name}' from project {project_name}"
+                await self.project_manager.save_and_commit_project(
+                    current_project_data,
+                    f"Delete deployment '{deployment_name}' from project {project_name}",
                 )
 
                 deletion_results["operations"].append(

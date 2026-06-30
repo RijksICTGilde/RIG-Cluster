@@ -355,12 +355,14 @@ async def disable_components_for_image_pull(
         disabled_components: List of (component_reference, error_message) tuples
     """
     from opi.handlers.project_file_handler import ProjectFileHandler
-    from opi.services.resource_tuning_service import (
-        commit_project_yaml,
-        get_project_data_from_git,
-    )
+    from opi.manager.project_manager import ProjectManager
+    from opi.services.resource_tuning_service import get_project_data_from_git
 
     project_data, filename, git_connector = await get_project_data_from_git(project_name)
+    project_manager = ProjectManager(
+        project_file_relative_path=f"projects/{filename}",
+        git_connector_for_project_files=git_connector,
+    )
     try:
         file_handler = ProjectFileHandler()
         names = []
@@ -371,7 +373,7 @@ async def disable_components_for_image_pull(
             names.append(component_ref)
 
         commit_msg = f"auto-disable: image pull errors for {', '.join(names)} in {project_name}/{deployment_name}"
-        await commit_project_yaml(project_name, filename, project_data, commit_msg, git_connector)
+        await project_manager.save_and_commit_project(project_data, commit_msg, enforce_validation=False)
     finally:
         await git_connector.close()
 
