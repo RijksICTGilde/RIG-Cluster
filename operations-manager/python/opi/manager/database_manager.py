@@ -243,6 +243,15 @@ class DatabaseManager:
                 schema=db_schema,
             )
 
+            # Ensure the persistent read-only role exists alongside the main user.
+            ro_username, ro_password = await self._ensure_readonly_user(
+                deployment_name=deployment_name,
+                deployment=deployment,
+                main_username=db_username,
+                database=db_database,
+                schema=db_schema,
+            )
+
             # PHASE 3: FINAL STATE STORAGE - Store working credentials with correct host
             logger.info(f"Phase 3: Storing final credentials for {project_name}/{deployment_name}")
             database_secret = DatabaseSecret(
@@ -252,6 +261,8 @@ class DatabaseManager:
                 password=final_password,
                 schema=db_schema,
                 database=db_database,
+                ro_username=ro_username,
+                ro_password=ro_password,
             )
             self.project_manager._add_secret_to_create(
                 deployment_name,
@@ -302,6 +313,44 @@ class DatabaseManager:
         else:
             # User was created (or error occurred)
             return db_password, create_result
+
+    async def _ensure_readonly_user(
+        self,
+        deployment_name: str,
+        deployment: dict[str, Any],
+        main_username: str,
+        database: str,
+        schema: str,
+    ) -> tuple[str, str]:
+        """Ensure a persistent read-only role exists for the deployment's database.
+
+        The role mirrors the main user's lifecycle: created alongside it, granted
+        SELECT-only on the schema, with a default search_path so it resolves the
+        deployment schema. The read-only database console (and read-only
+        application use) connect as this role, so writes are impossible
+        server-side. Its password is kept stable across syncs by reusing the
+        value already stored in the deployment's database secret.
+
+        Returns:
+            Tuple of (ro_username, ro_password).
+        """
+        ro_username = f"{main_username}_ro"
+
+        # Reuse the stored read-only password to avoid churning the secret (and
+        # any consumer of it) on every reprocess; generate one only if absent.
+        existing = await self._get_existing_database_credentials_from_k8s(deployment_name, deployment)
+        ro_password = existing.ro_password if existing and existing.ro_password else ""
+        if not ro_password:
+            ro_password = generate_secure_password(min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20)
+
+        create_result = await self.postgres_connector.create_user(username=ro_username, password=ro_password)
+        if create_result["status"] == "exists":
+            await self.postgres_connector.update_user_password(username=ro_username, new_password=ro_password)
+
+        await self.postgres_connector.grant_readonly_on_schema(database, schema, ro_username)
+        await self.postgres_connector.set_role_search_path(username=ro_username, database=database, schema=schema)
+
+        return ro_username, ro_password
 
     async def _resolve_database_credentials(
         self,
@@ -1054,6 +1103,36 @@ class DatabaseManager:
                 )
                 deletion_results["errors"].append(f"Error deleting user {db_username}: {e}")
                 logger.exception(f"Error deleting database user {db_username}: {e}")
+
+            # Delete the read-only companion role (created alongside the main user).
+            ro_username = f"{db_username}_ro"
+            try:
+                ro_result = await self.postgres_connector.delete_user(username=ro_username)
+                if ro_result["status"] in ["success", "deleted"]:
+                    deletion_results["operations"].append(
+                        {"type": "database_user_deletion", "target": ro_username, "status": "success"}
+                    )
+                    logger.info(f"Successfully deleted read-only database user: {ro_username}")
+                else:
+                    not_found = "does not exist" in ro_result.get("message", "")
+                    deletion_results["operations"].append(
+                        {
+                            "type": "database_user_deletion",
+                            "target": ro_username,
+                            "status": "not_found" if not_found else "failed",
+                            "error": ro_result.get("message", "Unknown error"),
+                        }
+                    )
+                    if not not_found:
+                        deletion_results["errors"].append(
+                            f"Failed to delete user {ro_username}: {ro_result.get('message')}"
+                        )
+            except Exception as e:
+                deletion_results["operations"].append(
+                    {"type": "database_user_deletion", "target": ro_username, "status": "error", "error": str(e)}
+                )
+                deletion_results["errors"].append(f"Error deleting user {ro_username}: {e}")
+                logger.exception(f"Error deleting read-only database user {ro_username}: {e}")
 
         except Exception as e:
             deletion_results["success"] = False
@@ -2023,6 +2102,15 @@ class DatabaseManager:
 
             # STEP 7: Store credentials in memory map
             try:
+                # Ensure the persistent read-only role is granted on the (possibly
+                # newly versioned) clone target schema.
+                ro_username, ro_password = await self._ensure_readonly_user(
+                    deployment_name=deployment_name,
+                    deployment=deployment,
+                    main_username=target_username,
+                    database=target_database,
+                    schema=target_schema,
+                )
                 database_secret = DatabaseSecret(
                     host=self._db_host,
                     port=5432,
@@ -2030,6 +2118,8 @@ class DatabaseManager:
                     password=target_password,
                     schema=target_schema,
                     database=target_database,
+                    ro_username=ro_username,
+                    ro_password=ro_password,
                 )
                 self.project_manager._add_secret_to_create(deployment_name, "database", database_secret)
                 result["operations"].append({"type": "credentials_stored_in_memory", "status": "success"})

@@ -436,6 +436,12 @@ class ArgoConnector:
                 reconciled_at = json.loads(response_text).get("status", {}).get("reconciledAt")
                 logger.debug(f"Application '{app_name}' reconciledAt after refresh: {reconciled_at}")
                 return reconciled_at
+            elif status_code == 404:
+                # Expected during new-project bootstrap: ArgoCD has not created the
+                # application yet. Callers wait for it to appear and retry, so this is a
+                # warning, not an error to escalate on. Mirrors get_application_status().
+                logger.warning(f"Application {app_name} not present yet (404), skipping {refresh_type} refresh")
+                return None
             else:
                 logger.error(f"{refresh_type.title()} refresh failed with status {status_code}: {response_text}")
                 return None

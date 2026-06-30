@@ -44,6 +44,16 @@
         </c-layout-flow>
         {% endif %}
 
+        {% if global_errors %}
+        <c-alert kind="error" heading="Fouten">
+            <ul>
+                {% for err in global_errors %}
+                <li>{{ err }}</li>
+                {% endfor %}
+            </ul>
+        </c-alert>
+        {% endif %}
+
         {% set _token_qs = "?_wizard_token=" ~ wizard_token if wizard_token else "" %}
         {% for section in section_summaries %}
         <c-card outline="true" padding="md">
