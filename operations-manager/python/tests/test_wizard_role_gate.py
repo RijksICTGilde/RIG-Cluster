@@ -56,6 +56,31 @@ STORED_DATA: dict[str, Any] = {
 }
 
 
+def _patch_project_manager(captured: dict[str, Any]):
+    """Patch ProjectManager so _save_existing_project reads STORED_DATA fresh via
+    the single-load-path (get_contents) and captures what the single-save-path
+    (save_and_commit_project) persists, without touching real git/kubectl connectors.
+    """
+    import copy
+
+    class _FakeProjectManager:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def get_contents(self) -> dict[str, Any]:
+            return copy.deepcopy(STORED_DATA)
+
+        async def save_and_commit_project(
+            self, project_data: dict[str, Any], commit_message: str, **_kwargs: Any
+        ) -> None:
+            captured["data"] = project_data
+
+        async def close(self) -> None:
+            pass
+
+    return patch("opi.manager.project_manager.ProjectManager", _FakeProjectManager)
+
+
 @pytest.fixture
 def project_service() -> ProjectService:
     """Singleton ProjectService seeded with one project, cleaned up after."""
@@ -154,13 +179,17 @@ async def test_owner_save_rejects_immutable_field_in_payload(project_service: Pr
         "display-name": "Renamed By Owner",
         "name": "evil-rename",
     }
+    captured: dict[str, Any] = {}
     with (
         patch("opi.web.project_edit_security.get_current_user", return_value={"email": OWNER_EMAIL}),
+        _patch_project_manager(captured),
         pytest.raises(HTTPException) as exc,
     ):
         await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload)
     assert exc.value.status_code == 400
     assert "name" in exc.value.detail
+    # The forbidden payload must be rejected before anything is persisted.
+    assert "data" not in captured
 
 
 @pytest.mark.asyncio
@@ -172,13 +201,17 @@ async def test_owner_save_rejects_clusters_in_payload(project_service: ProjectSe
         "display-name": "Same Name",
         "clusters": ["attacker-cluster"],
     }
+    captured: dict[str, Any] = {}
     with (
         patch("opi.web.project_edit_security.get_current_user", return_value={"email": OWNER_EMAIL}),
+        _patch_project_manager(captured),
         pytest.raises(HTTPException) as exc,
     ):
         await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload)
     assert exc.value.status_code == 400
     assert "clusters" in exc.value.detail
+    # The forbidden payload must be rejected before anything is persisted.
+    assert "data" not in captured
 
 
 @pytest.mark.asyncio
@@ -192,9 +225,6 @@ async def test_owner_save_can_update_users_and_config(project_service: ProjectSe
     """
     captured: dict[str, Any] = {}
 
-    def fake_save(file_path: str, project_data: dict[str, Any]) -> None:
-        captured["data"] = project_data
-
     payload = {
         "display-name": "Same Name",
         "users": [
@@ -205,8 +235,7 @@ async def test_owner_save_can_update_users_and_config(project_service: ProjectSe
     }
     with (
         patch("opi.web.project_edit_security.get_current_user", return_value={"email": OWNER_EMAIL}),
-        patch("opi.handlers.project_file_handler.save_project_file", side_effect=fake_save),
-        patch.object(project_service, "load_project_from_data", return_value=True),
+        _patch_project_manager(captured),
         patch("opi.web.router_wizard.clear_wizard_state"),
     ):
         response = await _save_existing_project(_request_for(OWNER_EMAIL), PROJECT_NAME, payload)

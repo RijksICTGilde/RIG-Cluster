@@ -1,6 +1,5 @@
 """Unit tests for opi.core.task_manager module-level functions and TaskProgressManager class."""
 
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -15,20 +14,6 @@ def clean_task_state():
     yield
     task_manager._projects.clear()
     task_manager._project_managers.clear()
-
-
-@pytest.fixture(autouse=True)
-def _mock_settings():
-    """Mock settings for all task manager tests."""
-    with patch("opi.core.task_manager.settings", new_callable=MagicMock):
-        yield
-
-
-@pytest.fixture(autouse=True)
-def _mock_git():
-    """Mock GitConnector for all task manager tests."""
-    with patch("opi.core.task_manager.GitConnector", new_callable=MagicMock):
-        yield
 
 
 # ---------------------------------------------------------------------------

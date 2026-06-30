@@ -30,15 +30,14 @@ def _make_manager():
 
 
 def _wire_update_mocks(pm, project_data: dict) -> AsyncMock:
-    """Mock the collaborators of the update path; returns the git connector mock."""
+    """Mock the collaborators of the update path; returns the save_and_commit mock."""
     pm.get_contents = AsyncMock(return_value=project_data)
     pm.get_name = AsyncMock(return_value="demo")
     pm.get_deployments = AsyncMock(return_value=project_data["deployments"])
     pm._validate_component_references = MagicMock(return_value={"success": True, "error": None})
-    pm.save_project_data = AsyncMock()
-    git_connector = AsyncMock()
-    pm.get_git_connector_for_project_files = AsyncMock(return_value=git_connector)
-    return git_connector
+    save = AsyncMock()
+    pm.save_and_commit_project = save
+    return save
 
 
 def _project(image: str) -> dict:
@@ -57,7 +56,7 @@ class TestUpsertCommitMessage:
     async def test_image_bump_is_named_in_commit_message(self):
         pm = _make_manager()
         project_data = _project("ghcr.io/org/app:v1")
-        git_connector = _wire_update_mocks(pm, project_data)
+        save = _wire_update_mocks(pm, project_data)
 
         with patch("opi.manager.project_manager.ensure_domain_requests"):
             result = await pm.upsert_deployment(
@@ -66,13 +65,13 @@ class TestUpsertCommitMessage:
             )
 
         assert result["success"] is True
-        message = git_connector.commit_and_push.call_args.args[0]
+        message = save.call_args.args[1]
         assert message == "Update deployment 'pr-372' in project 'demo': frontend image to ghcr.io/org/app:v2"
 
     async def test_new_component_is_named_in_commit_message(self):
         pm = _make_manager()
         project_data = _project("ghcr.io/org/app:v1")
-        git_connector = _wire_update_mocks(pm, project_data)
+        save = _wire_update_mocks(pm, project_data)
 
         with patch("opi.manager.project_manager.ensure_domain_requests"):
             result = await pm.upsert_deployment(
@@ -81,13 +80,13 @@ class TestUpsertCommitMessage:
             )
 
         assert result["success"] is True
-        message = git_connector.commit_and_push.call_args.args[0]
+        message = save.call_args.args[1]
         assert "add component worker" in message
 
     async def test_unchanged_image_falls_back_to_configuration(self):
         pm = _make_manager()
         project_data = _project("ghcr.io/org/app:v1")
-        git_connector = _wire_update_mocks(pm, project_data)
+        save = _wire_update_mocks(pm, project_data)
 
         with patch("opi.manager.project_manager.ensure_domain_requests"):
             result = await pm.upsert_deployment(
@@ -96,5 +95,5 @@ class TestUpsertCommitMessage:
             )
 
         assert result["success"] is True
-        message = git_connector.commit_and_push.call_args.args[0]
+        message = save.call_args.args[1]
         assert message == "Update deployment 'pr-372' in project 'demo': configuration"

@@ -8,23 +8,18 @@ from __future__ import annotations
 
 import copy
 import logging
-from io import StringIO
 from typing import TYPE_CHECKING, Any
-
-from ruamel.yaml import YAML
 
 from opi.api.restore_router import (
     _restore_bucket_with_versioning,
     _restore_database_with_versioning,
     _restore_pvc_with_versioning,
 )
-from opi.connectors.git import create_git_connector_for_project_files
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
 from opi.handlers.project_file_handler import (
     create_project_file_handler,
     extract_storage_from_component_services,
-    save_project_file,
 )
 from opi.manager.backup import create_backup_manager
 from opi.manager.project_manager import ProjectManager, create_project_manager
@@ -110,7 +105,36 @@ async def _create_deployment_from_source(
         msg = f"Project '{project_name}' niet gevonden"
         raise ValueError(msg)
 
-    project_data = project.data
+    # Read fresh from Git (not the read-only cache) so the mutation merges onto
+    # current state and persists through the single validated save path.
+    # Explicitly close the ProjectManager so its temp git clone is cleaned up.
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+    try:
+        await _build_and_save_restore_deployment(
+            project_manager,
+            project_name,
+            target_deployment,
+            source_deployment,
+            deployment_config,
+            backup_items,
+        )
+    finally:
+        await project_manager.close()
+
+
+async def _build_and_save_restore_deployment(
+    project_manager: ProjectManager,
+    project_name: str,
+    target_deployment: str,
+    source_deployment: str,
+    deployment_config: dict[str, Any] | None,
+    backup_items: list[dict[str, Any]] | None,
+) -> None:
+    """Build the restore-target deployment and persist it via the validated save path.
+
+    The ProjectManager (and its temp git clone cleanup) is owned by the caller.
+    """
+    project_data = await project_manager.get_contents()
 
     # Find source deployment
     source_dep = None
@@ -161,24 +185,12 @@ async def _create_deployment_from_source(
     # Add deployment to project data
     project_data["deployments"].append(new_deployment)
 
-    # Save and commit
-    save_project_file(project.filename, project_data)
-    project_service.load_project_from_data(project_data, project.filename)
-
-    git_connector = await create_git_connector_for_project_files(project_name)
-    yaml_instance = YAML()
-    yaml_instance.preserve_quotes = True
-    yaml_instance.width = 4096
-    yaml_output = StringIO()
-    yaml_instance.dump(project_data, yaml_output)
-
-    await git_connector.create_or_update_file(
-        f"projects/{project_name}.yaml",
-        yaml_output.getvalue(),
-        do_commit_and_push=True,
-        commit_message=(
-            f"Add deployment '{target_deployment}' to project '{project_name}' (restore from '{source_deployment}')"
-        ),
+    # Persist through the single validated path (schema + structural validation,
+    # canonical dumper, commit + push, cache refresh).
+    await project_manager.save_and_commit_project(
+        project_data,
+        f"Add deployment '{target_deployment}' to project '{project_name}' (restore from '{source_deployment}')",
+        enforce_validation=False,
     )
     logger.info(
         "Created deployment '%s' in project '%s' (cloned from '%s' for backup restore)",
@@ -461,36 +473,32 @@ async def _restore_single_resource(
         project_service = get_project_service()
         project = project_service.get_project(project_name)
         if project and project.data:
-            if resource_type == "pvc":
-                project_file_handler.set_storage_generation(
-                    project.data, deployment_name, component_name, reference_name, new_generation
-                )
-            elif resource_type == "database":
-                project_file_handler.set_database_generation(
-                    project.data, deployment_name, component_name, reference_name, new_generation
-                )
-            elif resource_type == "bucket":
-                project_file_handler.set_bucket_generation(
-                    project.data, deployment_name, component_name, reference_name, new_generation
-                )
+            # Read fresh from Git (not the read-only cache) and persist through the
+            # single validated save path.
+            # Explicitly close the ProjectManager so its temp git clone is cleaned up.
+            project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+            try:
+                project_data = await project_manager.get_contents()
+                if resource_type == "pvc":
+                    project_file_handler.set_storage_generation(
+                        project_data, deployment_name, component_name, reference_name, new_generation
+                    )
+                elif resource_type == "database":
+                    project_file_handler.set_database_generation(
+                        project_data, deployment_name, component_name, reference_name, new_generation
+                    )
+                elif resource_type == "bucket":
+                    project_file_handler.set_bucket_generation(
+                        project_data, deployment_name, component_name, reference_name, new_generation
+                    )
 
-            save_project_file(project.filename, project.data)
-            project_service.load_project_from_data(project.data, project.filename)
-
-            # Commit to git
-            git_connector = await create_git_connector_for_project_files(project_name)
-            yaml_instance = YAML()
-            yaml_instance.preserve_quotes = True
-            yaml_instance.width = 4096
-            yaml_output = StringIO()
-            yaml_instance.dump(project.data, yaml_output)
-
-            await git_connector.create_or_update_file(
-                f"projects/{project_name}.yaml",
-                yaml_output.getvalue(),
-                do_commit_and_push=True,
-                commit_message=f"Restore {resource_type} for {project_name}/{deployment_name} (gen {new_generation})",
-            )
+                await project_manager.save_and_commit_project(
+                    project_data,
+                    f"Restore {resource_type} for {project_name}/{deployment_name} (gen {new_generation})",
+                    enforce_validation=False,
+                )
+            finally:
+                await project_manager.close()
 
     logger.info(
         "Restored %s for %s/%s: %s -> %s (gen %s -> %s)",

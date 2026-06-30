@@ -37,15 +37,14 @@ def _make_manager():
 
 
 def _wire_create_mocks(pm, project_data: dict) -> AsyncMock:
-    """Mock the collaborators of the create path; returns the git connector mock."""
+    """Mock the collaborators of the create path; returns the save_and_commit mock."""
     pm.get_contents = AsyncMock(return_value=project_data)
     pm.get_name = AsyncMock(return_value="demo")
     pm.get_deployments = AsyncMock(return_value=project_data["deployments"])
     pm._validate_component_references = MagicMock(return_value={"success": True, "error": None})
-    pm.save_project_data = AsyncMock()
-    git_connector = AsyncMock()
-    pm.get_git_connector_for_project_files = AsyncMock(return_value=git_connector)
-    return git_connector
+    save = AsyncMock()
+    pm.save_and_commit_project = save
+    return save
 
 
 def _project_with_scheduled_source() -> dict:

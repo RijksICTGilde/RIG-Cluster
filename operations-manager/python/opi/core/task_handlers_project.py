@@ -100,6 +100,8 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     progress.update_current_step("Pushing project file to Git")
 
     try:
+        from opi.utils.yaml_util import load_yaml_from_string
+
         git_connector_for_project_files = GitConnector(
             repo_url=settings.GIT_PROJECTS_SERVER_URL,
             username=settings.GIT_PROJECTS_SERVER_USERNAME,
@@ -131,12 +133,21 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             progress.fail_project(error_msg)
             return {"project_name": project_name, "status": "failed", "error": error_msg}
 
-        await git_connector_for_project_files.create_or_update_file(
-            project_file_path,
-            yaml_content,
-            do_commit_and_push=True,
-            commit_message=commit_message,
+        project_data_dict = load_yaml_from_string(yaml_content)
+        if not project_data_dict:
+            error_msg = f"Kon de projectconfiguratie voor '{project_name}' niet inlezen"
+            progress.fail_task(git_task, error_msg)
+            progress.fail_project(error_msg)
+            return {"project_name": project_name, "status": "failed", "error": error_msg}
+
+        # Persist through the single validated save path: schema + structural
+        # integrity validation, canonical dumper, commit + push, and cache
+        # refresh in one shot. Replaces the previous unvalidated direct commit.
+        project_manager = ProjectManager(
+            project_file_relative_path=project_file_path,
+            git_connector_for_project_files=git_connector_for_project_files,
         )
+        await project_manager.save_and_commit_project(project_data_dict, commit_message)
         logger.info("Project file created and pushed at %s", project_file_path)
         progress.complete_task(git_task)
     except Exception as exc:
@@ -152,9 +163,6 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     progress.update_current_step("Deploying project")
 
     try:
-        project_manager = ProjectManager(
-            git_connector_for_project_files=git_connector_for_project_files,
-        )
         try:
             processing_result = await project_manager.process_project_from_git(
                 project_file_path, progress, deployment_name=deployment_name, deployment_names=deployment_names
@@ -179,18 +187,11 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             from opi.core.config import settings as app_settings
             from opi.services.oom_watcher import schedule_oom_check
 
-            if app_settings.OOM_WATCHER_ENABLED:
-                from io import StringIO as _StringIO
-
-                from ruamel.yaml import YAML as RuamelYAML
-
-                _yaml_parser = RuamelYAML()
-                parsed_data = _yaml_parser.load(_StringIO(yaml_content))
-                if parsed_data and isinstance(parsed_data, dict):
-                    for dep in parsed_data.get("deployments", []):
-                        dep_name = dep.get("name", "")
-                        if dep_name:
-                            schedule_oom_check(project_name, dep_name)
+            if app_settings.OOM_WATCHER_ENABLED and isinstance(project_data_dict, dict):
+                for dep in project_data_dict.get("deployments", []):
+                    dep_name = dep.get("name", "")
+                    if dep_name:
+                        schedule_oom_check(project_name, dep_name)
 
             progress.update_current_step(f"Project {project_name} succesvol geimplementeerd")
             progress.complete_project()

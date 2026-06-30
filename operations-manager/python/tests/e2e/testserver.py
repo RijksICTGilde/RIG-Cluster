@@ -193,10 +193,6 @@ def create_test_app():
                 new_callable=AsyncMock,
                 return_value=None,
             ),
-            patch(
-                "opi.core.simple_background.process_project_yaml_background",
-                new_callable=AsyncMock,
-            ),
             patch("opi.core.config.settings.SOPS_AGE_PRIVATE_KEY", TEST_AGE_PRIVATE_KEY),
             patch(
                 "opi.connectors.prometheus.get_metrics_connector",

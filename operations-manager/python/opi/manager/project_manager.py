@@ -15,7 +15,6 @@ import shutil
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar, cast
-from warnings import deprecated
 
 from fastapi import HTTPException
 from jsonpath_ng.ext import parse as jsonpath_parse
@@ -53,7 +52,7 @@ from opi.core.cluster_config import (
     uses_capsule,
 )
 from opi.core.config import settings
-from opi.core.project_schema import validate_project_schema
+from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.extensions import load_extensions
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.generation.manifests import ManifestGenerator
@@ -63,6 +62,7 @@ from opi.handlers.project_file_handler import (
     extract_service_names_from_component,
     find_attachment_data_list,
     save_project_file,
+    validate_attachment_references,
 )
 from opi.handlers.sops import SopsHandler
 from opi.manager.revision_manager import RevisionManager
@@ -1288,6 +1288,160 @@ class ProjectManager:
     async def save_project_data(self) -> None:
         project_full_file_path = await self.get_project_full_file_path()
         save_yaml_to_path(project_full_file_path, await self.get_contents())
+
+    async def _validate_structural_integrity(self, project_data: dict[str, Any]) -> None:
+        """Validate cross-field structural integrity of a complete project dict.
+
+        Runs the reference/uniqueness/path/root/domain checks that were previously
+        scattered across add_component, add_component_to_deployment and
+        upsert_deployment, against the final merged dict so they hold no matter
+        which caller produced it. Meant to run AFTER json-schema validation and
+        BEFORE any write or commit. Raises ProjectIntegrityError on the first
+        violation; fails closed.
+        """
+        project_name = project_data.get("name", "(onbekend)")
+        components = project_data.get("components", []) or []
+        deployments = project_data.get("deployments", []) or []
+
+        # Component names unique
+        seen_components: set[str] = set()
+        for comp in components:
+            if not isinstance(comp, dict):
+                continue
+            cname = comp.get("name")
+            if cname in seen_components:
+                raise ProjectIntegrityError(f"Project '{project_name}': component '{cname}' is meervoudig gedefinieerd")
+            seen_components.add(cname)
+
+        project_service_names = set(
+            ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", []))
+        )
+        component_by_name = {c.get("name"): c for c in components if isinstance(c, dict)}
+
+        # Component service references resolve to a project-level service
+        for comp in components:
+            if not isinstance(comp, dict):
+                continue
+            comp_service_names = ServiceAdapter.extract_service_names_from_project_services(comp.get("services", []))
+            invalid_services = [s for s in comp_service_names if s not in project_service_names]
+            if invalid_services:
+                raise ProjectIntegrityError(
+                    f"Project '{project_name}': component '{comp.get('name')}' verwijst naar services die niet op "
+                    f"projectniveau bestaan: {invalid_services}"
+                )
+
+        # Deployment names unique
+        seen_deployments: set[str] = set()
+        for index, dep in enumerate(deployments):
+            if not isinstance(dep, dict):
+                continue
+            dep_name = dep.get("name")
+            if dep_name in seen_deployments:
+                raise ProjectIntegrityError(
+                    f"Project '{project_name}': deployment '{dep_name}' is meervoudig gedefinieerd"
+                )
+            seen_deployments.add(dep_name)
+
+            refs = dep.get("components", []) or []
+            domain_mode = dep.get("domain-mode", "component-specific")
+
+            # All component references resolve to a defined component
+            reference_result = self._validate_component_references(project_data, refs, "deployment")
+            if not reference_result["success"]:
+                raise ProjectIntegrityError(reference_result["error"])
+
+            # Ingress path uniqueness within the deployment
+            paths = []
+            for ref in refs:
+                ref_name = ref.get("reference") if isinstance(ref, dict) else None
+                comp = component_by_name.get(ref_name)
+                if comp:
+                    paths.append(comp.get("path", "/"))
+            try:
+                validate_component_paths(paths, domain_mode)
+            except ComponentValidationError as e:
+                raise ProjectIntegrityError(str(e)) from e
+
+            # Root component constraints
+            root_ref = dep.get("root-component")
+            if root_ref:
+                ref_names = [r.get("reference") for r in refs if isinstance(r, dict) and r.get("reference")]
+                try:
+                    validate_root_component(root_ref, ref_names, domain_mode)
+                except ComponentValidationError as e:
+                    raise ProjectIntegrityError(str(e)) from e
+
+            # Hard domain-config violations. A FieldWarning (e.g. an unapproved
+            # custom domain) is non-fatal: the UI handles it via domain-request
+            # entries, so only a ValueError/FieldError is a structural rejection.
+            try:
+                await DomainConfigEnforcer(deployment_index=index).enforce(project_data, {"project_name": project_name})
+            except FieldWarning:
+                pass
+            except ValueError as e:
+                raise ProjectIntegrityError(str(e)) from e
+
+        # Attachment references must resolve to a catalog entry, so an unknown id
+        # is rejected at save time instead of failing later at deploy/resolve time.
+        attachment_errors = validate_attachment_references(project_data)
+        if attachment_errors:
+            raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(attachment_errors)}")
+
+    async def save_and_commit_project(
+        self,
+        project_data: dict[str, Any],
+        commit_message: str,
+        *,
+        refresh_cache: bool = True,
+        enforce_validation: bool = True,
+    ) -> None:
+        """The ONLY validated way to persist a mutated project file.
+
+        Order (fails closed -- steps 1-2 happen before any disk write or commit):
+            1. validate_project_schema       -- JSON schema, raises ProjectSchemaError
+            2. _validate_structural_integrity -- refs/uniqueness/paths/domain, raises ProjectIntegrityError
+            3. save_yaml_to_path              -- canonical dumper only
+            4. commit_and_push                -- single commit + push
+            5. load_project_from_data         -- refresh read-only cache (when refresh_cache)
+
+        The input dict must already be migrated to the latest schema -- callers
+        obtain it via get_contents(), which auto-migrates on read.
+
+        enforce_validation: when True (the default, for user-driven edits/creates),
+        a schema or structural violation aborts the save. Trusted, narrow
+        programmatic mutators (auto-tune, oom_watcher, backup restore, keycloak
+        config) pass False: validation still runs and logs any violation at
+        WARNING, but the write proceeds, so unrelated pre-existing drift cannot
+        block a recovery/optimization/credential write (which would otherwise
+        leave on-disk and live state out of sync). It never introduces a
+        less-validated write path: the same checks run either way.
+        """
+        try:
+            validate_project_schema(project_data)
+            await self._validate_structural_integrity(project_data)
+        except (ProjectSchemaError, ProjectIntegrityError) as e:
+            if enforce_validation:
+                raise
+            logger.warning(
+                "Persisting project '%s' despite a validation failure (enforce_validation=False); "
+                "the project file has pre-existing drift that should be repaired: %s",
+                project_data.get("name", "(onbekend)"),
+                e,
+            )
+
+        project_full_file_path = await self.get_project_full_file_path()
+        save_yaml_to_path(project_full_file_path, project_data)
+
+        git_connector = await self.get_git_connector_for_project_files()
+        await git_connector.commit_and_push(commit_message)
+
+        if refresh_cache:
+            filename = (
+                os.path.basename(self._project_file_relative_path)
+                if self._project_file_relative_path
+                else f"{project_data.get('name')}.yaml"
+            )
+            get_project_service().load_project_from_data(project_data, filename)
 
     async def check_and_create_namespaces(
         self, deployment_name: str | None = None, deployment_names: list[str] | None = None
@@ -6197,12 +6351,6 @@ class ProjectManager:
                 # Ensure unapproved domains/subdomains get request entries
                 ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
 
-                # Save the updated project data
-                await self.save_project_data()
-
-                # Commit changes to Git
-                git_connector = await self.get_git_connector_for_project_files()
-
                 # Build descriptive commit message (component parts were collected
                 # during the update loop, before the old values were overwritten)
                 if domain_format is not None:
@@ -6216,7 +6364,9 @@ class ProjectManager:
 
                 details = ", ".join(change_parts) if change_parts else "configuration"
                 commit_message = f"Update deployment '{deployment_name}' in project '{project_name}': {details}"
-                await git_connector.commit_and_push(commit_message)
+
+                # Validate (schema + structural) then save and commit through the single path
+                await self.save_and_commit_project(project_data, commit_message)
 
                 logger.info(f"Successfully updated deployment '{deployment_name}' in project '{project_name}'")
                 result: dict[str, Any] = {"success": True, "created": False, "error": None, "error_type": None}
@@ -6371,16 +6521,12 @@ class ProjectManager:
                 # Ensure unapproved domains/subdomains get request entries
                 ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
 
-                # Save the updated project data
-                await self.save_project_data()
-
-                # Commit changes to Git
-                git_connector = await self.get_git_connector_for_project_files()
                 commit_message = f"Add deployment '{deployment_name}' to project '{project_name}'"
                 if clone_from:
                     commit_message += f" (cloned from '{clone_from}')"
 
-                await git_connector.commit_and_push(commit_message)
+                # Validate (schema + structural) then save and commit through the single path
+                await self.save_and_commit_project(project_data, commit_message)
 
                 logger.info(f"Successfully created deployment '{deployment_name}' in project '{project_name}'")
                 result_create: dict[str, Any] = {"success": True, "created": True, "error": None, "error_type": None}
@@ -6553,14 +6699,11 @@ class ProjectManager:
                             deployment["root-component"] = name
                         deployments_updated.append(dep_name)
 
-            # Save and commit
-            await self.save_project_data()
-
-            git_connector = await self.get_git_connector_for_project_files()
+            # Validate (schema + structural) then save and commit through the single path
             commit_message = f"Add component '{name}' to project '{project_name}'"
             if deployments_updated:
                 commit_message += f" (deployments: {', '.join(deployments_updated)})"
-            await git_connector.commit_and_push(commit_message)
+            await self.save_and_commit_project(project_data, commit_message)
 
             logger.info(f"Successfully added component '{name}' to project '{project_name}'")
             result: dict[str, Any] = {
@@ -6601,9 +6744,9 @@ class ProjectManager:
                 c for c in components if not (isinstance(c, dict) and c.get("name") == component_name)
             ]
 
-            await self.save_project_data()
-            git_connector = await self.get_git_connector_for_project_files()
-            await git_connector.commit_and_push(f"Remove component '{component_name}' from project '{project_name}'")
+            await self.save_and_commit_project(
+                project_data, f"Remove component '{component_name}' from project '{project_name}'"
+            )
 
             logger.info(f"Successfully removed component '{component_name}' from project '{project_name}'")
             return {"success": True}
@@ -6637,9 +6780,9 @@ class ProjectManager:
 
             data[:] = [e for e in data if not (isinstance(e, dict) and e.get("id") == attachment_id)]
 
-            await self.save_project_data()
-            git_connector = await self.get_git_connector_for_project_files()
-            await git_connector.commit_and_push(f"Remove attachment '{attachment_id}' from project '{project_name}'")
+            await self.save_and_commit_project(
+                project_data, f"Remove attachment '{attachment_id}' from project '{project_name}'"
+            )
 
             logger.info(f"Removed attachment '{attachment_id}' from project '{project_name}'")
             return {"success": True, "changed": True}
@@ -6682,11 +6825,9 @@ class ProjectManager:
 
             # Persist changes only when something was actually added
             if result["services_added"]:
-                await self.save_project_data()
-                git_connector = await self.get_git_connector_for_project_files()
                 added = ", ".join(result["services_added"])
                 commit_message = f"Add service(s) {added} to project '{project_name}'"
-                await git_connector.commit_and_push(commit_message)
+                await self.save_and_commit_project(project_data, commit_message)
 
             logger.info(
                 f"Add service '{service_name}' to project '{project_name}': "
@@ -6792,14 +6933,11 @@ class ProjectManager:
             component_ref: dict[str, Any] = {"reference": component_name, "image": normalized_image}
             target_deployment.setdefault("components", []).append(component_ref)
 
-            # Save and commit
-            await self.save_project_data()
-
-            git_connector = await self.get_git_connector_for_project_files()
+            # Validate (schema + structural) then save and commit through the single path
             commit_message = (
                 f"Add component '{component_name}' to deployment '{deployment_name}' in project '{project_name}'"
             )
-            await git_connector.commit_and_push(commit_message)
+            await self.save_and_commit_project(project_data, commit_message)
 
             logger.info(
                 f"Successfully added component '{component_name}' to deployment '{deployment_name}' "
@@ -6852,11 +6990,10 @@ class ProjectManager:
 
         project_data["registries"] = registries
 
-        await self.save_project_data()
-
-        git_connector = await self.get_git_connector_for_project_files()
         action = "Add" if created else "Update"
-        await git_connector.commit_and_push(f"{action} registry '{name}' (secretName) in project '{project_name}'")
+        await self.save_and_commit_project(
+            project_data, f"{action} registry '{name}' (secretName) in project '{project_name}'"
+        )
 
         logger.info(f"Successfully {'added' if created else 'updated'} registry '{name}' in project '{project_name}'")
         return {"success": True, "created": created, "registry": registry_entry}
@@ -6909,11 +7046,10 @@ class ProjectManager:
 
         project_data["registries"] = registries
 
-        await self.save_project_data()
-
-        git_connector = await self.get_git_connector_for_project_files()
         action = "Add" if created else "Update"
-        await git_connector.commit_and_push(f"{action} registry '{name}' (credentials) in project '{project_name}'")
+        await self.save_and_commit_project(
+            project_data, f"{action} registry '{name}' (credentials) in project '{project_name}'"
+        )
 
         logger.info(f"Successfully {'added' if created else 'updated'} registry '{name}' in project '{project_name}'")
         return {"success": True, "created": created, "registry": {"name": name, "url": url, "username": username}}
@@ -7037,18 +7173,13 @@ class ProjectManager:
                         f"Incremented generation for {component_name}/{storage_name}: {current_gen} -> {new_gen}"
                     )
 
-        # 5. Save project YAML
-        await self.save_project_data()
-        logger.info("Saved updated project data")
-
-        # 6. Commit project YAML changes
-        git_connector = await self.get_git_connector_for_project_files()
+        # 5 + 6. Validate (schema + structural), save and commit through the single path
         commit_msg = f"Update {component_name} image to {new_image_url}"
         if generation_changes:
             storage_list = ", ".join(generation_changes.keys())
             commit_msg += f" and recreate PVCs: {storage_list}"
-        await git_connector.commit_and_push(commit_msg)
-        logger.info("Committed project YAML changes")
+        await self.save_and_commit_project(project_data, commit_msg)
+        logger.info("Saved and committed project YAML changes")
 
         # 7. CRITICAL: Process entire project for this deployment
         # This ensures all resources are created/updated (not just manifests)
@@ -7142,54 +7273,6 @@ class ProjectManager:
             return {"success": False, "error": error_msg, "invalid_references": invalid_references}
 
         return {"success": True, "error": None, "invalid_references": None}
-
-    @deprecated("We most likely need to use get_contents() instead")
-    async def get_project_data(self, project_name: str) -> dict[str, Any]:
-        """
-        Retrieve and parse project data from Git repository.
-
-        This is a foundational method that handles the common pattern of:
-        1. Creating git connector
-        2. Reading project YAML file
-        3. Parsing the content
-
-        Args:
-            project_name: Name of the project
-
-        Returns:
-            Parsed project data as dictionary
-
-        Raises:
-            HTTPException: If project not found or parsing fails
-        """
-        try:
-            # TODO: replace this logic with the correct method calls.. this should not be done this way!!
-            # Create git connector to read from projects repository
-            git_connector = GitConnector(
-                repo_url=settings.GIT_PROJECTS_SERVER_URL,
-                username=settings.GIT_PROJECTS_SERVER_USERNAME,
-                password=settings.GIT_PROJECTS_SERVER_PASSWORD,
-                branch=settings.GIT_PROJECTS_SERVER_BRANCH,
-                repo_path=settings.GIT_PROJECTS_SERVER_REPO_PATH,
-                project_name=project_name,  # Add project context for data retrieval operations
-            )
-
-            # Read the project file
-            project_file_path = f"projects/{project_name}.yaml"
-            project_content = await git_connector.read_file_content(project_file_path)
-            if not project_content:
-                raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-
-            # Parse the project YAML
-            yaml = YAML()
-            project_data = yaml.load(project_content)
-            return project_data
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception(f"Error reading project data for {project_name}: {e}")
-            raise HTTPException(status_code=500, detail=f"Error reading project data: {e!s}")
 
     async def update_project_field_by_path(
         self, project_name: str, json_path: str, new_value: Any, commit_message: str
