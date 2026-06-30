@@ -1367,7 +1367,7 @@ class ProjectManager:
             if root_ref:
                 ref_names = [r.get("reference") for r in refs if isinstance(r, dict) and r.get("reference")]
                 try:
-                    validate_root_component(root_ref, ref_names, domain_mode)
+                    validate_root_component(root_ref, ref_names, domain_mode, dep.get("domain-format"))
                 except ComponentValidationError as e:
                     raise ProjectIntegrityError(str(e)) from e
 
@@ -6632,7 +6632,9 @@ class ProjectManager:
                         c.get("reference") for c in deployment.get("components", []) if c.get("reference")
                     ]
                     try:
-                        validate_root_component(name, [*dep_component_names, name], domain_mode)
+                        validate_root_component(
+                            name, [*dep_component_names, name], domain_mode, deployment.get("domain-format")
+                        )
                     except ComponentValidationError as e:
                         return {
                             "success": False,

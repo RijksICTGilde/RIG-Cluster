@@ -99,13 +99,19 @@ class TestValidateRootComponent:
         with pytest.raises(ComponentValidationError, match="not a component in this deployment"):
             validate_root_component("missing", ["frontend", "backend"], "nice-url")
 
-    def test_root_in_non_nice_url_mode_raises(self):
-        with pytest.raises(ComponentValidationError, match="only valid in nice-url domain mode"):
-            validate_root_component("frontend", ["frontend"], "deployment-name")
+    def test_root_on_unsupported_format_is_inert(self):
+        # Dash formats don't expose a root host; root-component is ignored, not an
+        # error (e.g. a clone that inherited it from a nice-url source).
+        validate_root_component("frontend", ["frontend"], "component-specific")
+        validate_root_component("docs", ["editor"], "component-specific", "component-deployment-project")
 
-    def test_root_in_component_specific_mode_raises(self):
-        with pytest.raises(ComponentValidationError, match="only valid in nice-url domain mode"):
-            validate_root_component("frontend", ["frontend"], "component-specific")
+    def test_root_on_dot_format_validates_component(self):
+        # A format that supports root-component still validates the named component.
+        validate_root_component(
+            "frontend", ["frontend", "worker"], "component-specific", "component.deployment.project"
+        )
+        with pytest.raises(ComponentValidationError, match="not a component in this deployment"):
+            validate_root_component("missing", ["frontend"], "component-specific", "component.deployment.project")
 
     def test_none_root_always_passes(self):
         validate_root_component(None, [], "nice-url")
