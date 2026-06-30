@@ -11,8 +11,10 @@
         {% set _grid_cols = "one" if _dep_count == 1 else ("two" if _dep_count == 2 else ("three" if _dep_count == 3 else "four")) %}
         <c-grid columns="{{ _grid_cols }}" gap="md">
             {% for deployment in project.deployments | sort(attribute='name') %}
-            {% set _argocd_card_id_prefix = deployment.name %}
-            {% include "project-details/_argocd-deployment-card.html.j2" %}
+            <div hx-get="/projects/details/{{ project.name }}/argocd-status/{{ deployment.name }}?prefix={{ deployment.name }}"
+                 hx-trigger="load" hx-swap="innerHTML">
+                <p class="rvo-text--subtle">ArgoCD status laden...</p>
+            </div>
             {% endfor %}
         </c-grid>
     </c-layout-flow>

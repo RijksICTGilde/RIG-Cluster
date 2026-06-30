@@ -4,8 +4,10 @@
 <div class="deployment-section" id="argocd-{{ deployment.name }}"
      {% if not loop.first and project.deployments|length > 1 %}style="display: none;"{% endif %}>
 
-    {% set _argocd_card_id_prefix = "dep-" ~ deployment.name %}
-    {% include "project-details/_argocd-deployment-card.html.j2" %}
+    <div hx-get="/projects/details/{{ project.name }}/argocd-status/{{ deployment.name }}?prefix=dep-{{ deployment.name }}"
+         hx-trigger="load" hx-swap="innerHTML">
+        <p class="rvo-text--subtle">ArgoCD status laden...</p>
+    </div>
 </div>
 {% endfor %}
 {% endif %}

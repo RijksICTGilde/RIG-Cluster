@@ -2,7 +2,7 @@
 Web routes for serving HTML pages (non-API endpoints).
 """
 
-import asyncio
+import asyncio  # noqa: TC003  # used at runtime by the module-level _background_tasks annotation
 import copy
 import logging
 from typing import TYPE_CHECKING, Any
@@ -1197,122 +1197,13 @@ async def project_details(request: Request, project_name: str):
         except Exception as e:
             logger.debug(f"Prometheus not available: {e}")
 
-        # Fetch ArgoCD status for each deployment (in parallel)
-        from datetime import datetime
-
-        from opi.services.deployment_diagnostics import gather_deployment_errors
-        from opi.services.event_interpreter import interpret_argocd_errors
-
-        def _unavailable_result(app_name: str, message: str, source: str = "Application") -> dict[str, Any]:
-            return {
-                "app_name": app_name,
-                "available": False,
-                "health": "Unknown",
-                "sync": "Unknown",
-                "errors": [{"resource": source, "message": message}],
-            }
-
-        def _annotate_age_dutch(errors: list[dict[str, Any]]) -> None:
-            """Add the Dutch ``age`` field in-place for entries that carry a timestamp."""
-            now = datetime.now(UTC)
-            for error in errors:
-                ts = error.get("timestamp")
-                if not ts:
-                    continue
-                try:
-                    dt = datetime.fromisoformat(ts)
-                    diff_min = int((now - dt).total_seconds() / 60)
-                    if diff_min < 1:
-                        error["age"] = "zojuist"
-                    elif diff_min < 60:
-                        error["age"] = f"{diff_min} min geleden"
-                    else:
-                        error["age"] = f"{diff_min // 60} uur geleden"
-                except ValueError, TypeError:
-                    pass
-
-        argocd_status: dict[str, dict[str, Any]] = {}
+        # ArgoCD status is loaded lazily per deployment via /argocd-status/{deployment} so it
+        # does not block the page render; only the cheap availability check stays here.
         argocd_available = False
         try:
-            from opi.connectors.argo import ArgoConnector, create_argo_connector
-            from opi.connectors.kubectl import create_kubectl_connector
-            from opi.utils.naming import generate_argocd_application_name
+            from opi.connectors.argo import create_argo_connector
 
-            argo_connector = create_argo_connector()
-            argocd_available = argo_connector.auth_token is not None
-
-            if argocd_available:
-                kubectl_connector = create_kubectl_connector()
-
-                async def _fetch_deployment_status(
-                    deployment: dict[str, Any],
-                    argo: ArgoConnector,
-                ) -> tuple[str, dict[str, Any]] | None:
-                    """Fetch ArgoCD status for a single deployment, with errors when unhealthy."""
-                    deployment_name = deployment.get("name")
-                    if not deployment_name:
-                        return None
-                    app_name = generate_argocd_application_name(project_name, deployment_name)
-                    try:
-                        status_data = await argo.get_application_status(app_name)
-                        if not status_data:
-                            return deployment_name, _unavailable_result(app_name, "Application not found in ArgoCD")
-
-                        status = status_data.get("status", {})
-                        health = status.get("health", {})
-                        sync = status.get("sync", {})
-                        operation_state = status.get("operationState", {})
-                        app_health = health.get("status", "Unknown")
-
-                        raw_errors: list[dict[str, str]] = []
-                        if app_health != "Healthy":
-                            raw_errors = await gather_deployment_errors(
-                                argo=argo,
-                                kubectl=kubectl_connector,
-                                app_name=app_name,
-                                base_namespace=deployment.get("namespace", ""),
-                                cluster=deployment.get("cluster", ""),
-                                deployment_name=deployment_name,
-                                status_data=status_data,
-                            )
-
-                        component_names = [
-                            c.get("reference") for c in deployment.get("components", []) or [] if c.get("reference")
-                        ]
-                        errors = interpret_argocd_errors(
-                            raw_errors,
-                            deployment_name=deployment_name,
-                            component_names=component_names,
-                        )
-                        _annotate_age_dutch(errors)
-
-                        last_sync = operation_state.get("finishedAt")
-                        if not last_sync and sync.get("status") == "Synced":
-                            last_sync = status.get("reconciledAt")
-
-                        return deployment_name, {
-                            "app_name": app_name,
-                            "available": True,
-                            "health": health.get("status", "Unknown"),
-                            "health_message": health.get("message"),
-                            "sync": sync.get("status", "Unknown"),
-                            "revision": sync.get("revision", "")[:7] if sync.get("revision") else None,
-                            "last_sync": last_sync,
-                            "operation_phase": operation_state.get("phase"),
-                            "operation_message": operation_state.get("message"),
-                            "errors": errors,
-                        }
-                    except Exception as app_error:
-                        logger.warning(f"Failed to fetch ArgoCD status for {app_name}: {app_error}")
-                        return deployment_name, _unavailable_result(app_name, str(app_error), source="API")
-
-                results = await asyncio.gather(
-                    *[_fetch_deployment_status(dep, argo_connector) for dep in project_details["deployments"]]
-                )
-                for result in results:
-                    if result is not None:
-                        argocd_status[result[0]] = result[1]
-
+            argocd_available = create_argo_connector().auth_token is not None
         except Exception as argo_error:
             logger.warning(f"Failed to connect to ArgoCD: {argo_error}")
 
@@ -1526,7 +1417,6 @@ async def project_details(request: Request, project_name: str):
                 "user_role": user_role,
                 "ServiceAdapter": ServiceAdapter,
                 "prometheus_available": prometheus_available,
-                "argocd_status": argocd_status,
                 "argocd_available": argocd_available,
                 "deployment_backups": deployment_backups,
                 "backups_available": backups_available,
@@ -1558,6 +1448,150 @@ async def project_details(request: Request, project_name: str):
                 error_msg += f"\nSource: {lines[line_num].strip()}"
 
         raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+
+
+def _argocd_unavailable_result(app_name: str, message: str, source: str = "Application") -> dict[str, Any]:
+    return {
+        "app_name": app_name,
+        "available": False,
+        "health": "Unknown",
+        "sync": "Unknown",
+        "errors": [{"resource": source, "message": message}],
+    }
+
+
+def _annotate_argocd_error_ages(errors: list[dict[str, Any]]) -> None:
+    """Add the Dutch ``age`` field in-place for entries that carry a timestamp."""
+    from datetime import datetime
+
+    now = datetime.now(UTC)
+    for error in errors:
+        ts = error.get("timestamp")
+        if not ts:
+            continue
+        try:
+            dt = datetime.fromisoformat(ts)
+            diff_min = int((now - dt).total_seconds() / 60)
+            if diff_min < 1:
+                error["age"] = "zojuist"
+            elif diff_min < 60:
+                error["age"] = f"{diff_min} min geleden"
+            else:
+                error["age"] = f"{diff_min // 60} uur geleden"
+        except ValueError, TypeError:
+            pass
+
+
+async def _fetch_argocd_deployment_status(
+    project_name: str, deployment: dict[str, Any], argo: Any, kubectl: Any
+) -> dict[str, Any]:
+    """Fetch ArgoCD status for one deployment, with interpreted errors when unhealthy."""
+    from opi.services.deployment_diagnostics import gather_deployment_errors
+    from opi.services.event_interpreter import interpret_argocd_errors
+    from opi.utils.naming import generate_argocd_application_name
+
+    deployment_name = deployment.get("name") or ""
+    app_name = generate_argocd_application_name(project_name, deployment_name)
+    try:
+        status_data = await argo.get_application_status(app_name)
+        if not status_data:
+            return _argocd_unavailable_result(app_name, "Application not found in ArgoCD")
+
+        status = status_data.get("status", {})
+        health = status.get("health", {})
+        sync = status.get("sync", {})
+        operation_state = status.get("operationState", {})
+        app_health = health.get("status", "Unknown")
+
+        raw_errors: list[dict[str, str]] = []
+        if app_health != "Healthy":
+            raw_errors = await gather_deployment_errors(
+                argo=argo,
+                kubectl=kubectl,
+                app_name=app_name,
+                base_namespace=deployment.get("namespace", ""),
+                cluster=deployment.get("cluster", ""),
+                deployment_name=deployment_name,
+                status_data=status_data,
+            )
+
+        component_names = [c.get("reference") for c in deployment.get("components", []) or [] if c.get("reference")]
+        errors = interpret_argocd_errors(raw_errors, deployment_name=deployment_name, component_names=component_names)
+        _annotate_argocd_error_ages(errors)
+
+        last_sync = operation_state.get("finishedAt")
+        if not last_sync and sync.get("status") == "Synced":
+            last_sync = status.get("reconciledAt")
+
+        return {
+            "app_name": app_name,
+            "available": True,
+            "health": health.get("status", "Unknown"),
+            "health_message": health.get("message"),
+            "sync": sync.get("status", "Unknown"),
+            "revision": sync.get("revision", "")[:7] if sync.get("revision") else None,
+            "last_sync": last_sync,
+            "operation_phase": operation_state.get("phase"),
+            "operation_message": operation_state.get("message"),
+            "errors": errors,
+        }
+    except Exception as app_error:
+        logger.warning(f"Failed to fetch ArgoCD status for {app_name}: {app_error}")
+        return _argocd_unavailable_result(app_name, str(app_error), source="API")
+
+
+@web_router.get("/projects/details/{project_name}/argocd-status/{deployment_name}", response_class=HTMLResponse)
+@requires_sso
+async def argocd_status_fragment(
+    request: Request, project_name: str, deployment_name: str, prefix: str = ""
+) -> HTMLResponse:
+    """ArgoCD status HTML fragment for a single deployment (HTMX lazy-load)."""
+    from opi.connectors.argo import create_argo_connector
+    from opi.connectors.kubectl import create_kubectl_connector
+    from opi.core.config import settings
+    from opi.core.startup import ensure_projects_fresh
+    from opi.services.project_service import get_project_service
+    from opi.utils.naming import generate_argocd_application_name
+
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    await ensure_projects_fresh()
+
+    project_service = get_project_service()
+    if not project_service.is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    project = project_service.get_project(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    deployment = next(
+        (d for d in (project.data or {}).get("deployments", []) if d.get("name") == deployment_name),
+        None,
+    )
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+
+    argo = create_argo_connector()
+    if argo.auth_token is None:
+        status = _argocd_unavailable_result(
+            generate_argocd_application_name(project_name, deployment_name), "ArgoCD niet beschikbaar"
+        )
+    else:
+        status = await _fetch_argocd_deployment_status(project_name, deployment, argo, create_kubectl_connector())
+
+    return get_templates().TemplateResponse(
+        "project-details/_argocd-deployment-card.html.j2",
+        {
+            "request": request,
+            "project": project,
+            "deployment": deployment,
+            "argocd_status": {deployment_name: status},
+            "_argocd_card_id_prefix": prefix or deployment_name,
+            "current_cluster": settings.CLUSTER_MANAGER,
+        },
+    )
 
 
 @web_router.get("/projects/details/{project_name}/metrics/{deployment_name}", response_class=HTMLResponse)
