@@ -150,3 +150,200 @@ class TestServiceCategoryMapping:
         m = ProjectManager.__new__(ProjectManager)
         assert m._get_service_category_name(ServiceType.POSTGRESQL_DATABASE) == "database"
         assert m._get_service_category_name(ServiceType.NAMESPACE_POSTGRESQL_DATABASE) == "database"
+
+
+def _valid_project_for_save() -> dict:
+    """A minimal schema-valid project used by the central-save tests."""
+    return {
+        "name": "valid-project",
+        "description": "A valid project",
+        "clusters": ["local", "odcn-production"],
+        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "repositories": [
+            {
+                "name": "main-repo",
+                "url": "ssh://git@host.docker.internal:2222/srv/git/valid.git",
+                "branch": "main",
+                "path": "infra",
+            }
+        ],
+        "components": [
+            {
+                "name": "frontend",
+                "type": "deployment",
+                "ports": {"inbound": [8080], "outbound": [443]},
+                "storage": [{"type": "persistent", "size": "10Gi", "mount-path": "/data"}],
+            }
+        ],
+        "deployments": [
+            {
+                "name": "productie",
+                "cluster": "odcn-production",
+                "namespace": "valid-project",
+                "repository": "main-repo",
+                "components": [{"reference": "frontend", "image": "nginx:latest"}],
+            }
+        ],
+    }
+
+
+class TestSaveAndCommitProjectValidation:
+    """save_and_commit_project must validate schema + structural integrity BEFORE any write/commit."""
+
+    @pytest.mark.asyncio
+    async def test_schema_invalid_dict_raises_and_never_commits(self):
+        """A schema violation must abort before save_yaml_to_path and commit_and_push run."""
+        from unittest.mock import AsyncMock, patch
+
+        from opi.core.project_schema import ProjectSchemaError
+
+        pm = ProjectManager.__new__(ProjectManager)
+        pm._project_file_relative_path = "projects/valid-project.yaml"
+
+        git = AsyncMock()
+        invalid = _valid_project_for_save()
+        invalid["name"] = 123  # schema requires a string
+
+        with (
+            patch.object(ProjectManager, "get_project_full_file_path", new=AsyncMock(return_value="/tmp/p.yaml")),
+            patch.object(ProjectManager, "get_git_connector_for_project_files", new=AsyncMock(return_value=git)),
+            patch("opi.manager.project_manager.save_yaml_to_path") as save_mock,
+            patch("opi.manager.project_manager.get_project_service") as svc_mock,
+            pytest.raises(ProjectSchemaError),
+        ):
+            await pm.save_and_commit_project(invalid, "msg")
+
+        save_mock.assert_not_called()
+        git.commit_and_push.assert_not_called()
+        svc_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_structural_dangling_reference_raises(self):
+        """A deployment referencing an undefined component is a structural rejection."""
+        from opi.core.project_schema import ProjectIntegrityError
+
+        pm = ProjectManager.__new__(ProjectManager)
+        project = _valid_project_for_save()
+        project["deployments"][0]["components"] = [{"reference": "ghost", "image": "nginx:latest"}]
+
+        with pytest.raises(ProjectIntegrityError):
+            await pm._validate_structural_integrity(project)
+
+    @pytest.mark.asyncio
+    async def test_structural_duplicate_component_raises(self):
+        """Two components with the same name is a structural rejection."""
+        from opi.core.project_schema import ProjectIntegrityError
+
+        pm = ProjectManager.__new__(ProjectManager)
+        project = _valid_project_for_save()
+        project["components"].append({"name": "frontend", "type": "deployment"})
+
+        with pytest.raises(ProjectIntegrityError):
+            await pm._validate_structural_integrity(project)
+
+    @pytest.mark.asyncio
+    async def test_valid_dict_commits_once_and_refreshes_cache(self):
+        """A valid dict is written once, committed once, and refreshes the read-only cache."""
+        from unittest.mock import AsyncMock, patch
+
+        pm = ProjectManager.__new__(ProjectManager)
+        pm._project_file_relative_path = "projects/valid-project.yaml"
+
+        git = AsyncMock()
+        valid = _valid_project_for_save()
+
+        with (
+            patch.object(ProjectManager, "_validate_structural_integrity", new=AsyncMock()),
+            patch.object(ProjectManager, "get_project_full_file_path", new=AsyncMock(return_value="/tmp/p.yaml")),
+            patch.object(ProjectManager, "get_git_connector_for_project_files", new=AsyncMock(return_value=git)),
+            patch("opi.manager.project_manager.save_yaml_to_path") as save_mock,
+            patch("opi.manager.project_manager.get_project_service") as svc_mock,
+        ):
+            await pm.save_and_commit_project(valid, "Add component")
+
+        save_mock.assert_called_once()
+        git.commit_and_push.assert_awaited_once_with("Add component")
+        svc_mock.return_value.load_project_from_data.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_refresh_cache_false_skips_cache_load(self):
+        """refresh_cache=False still commits but does not touch the in-memory cache."""
+        from unittest.mock import AsyncMock, patch
+
+        pm = ProjectManager.__new__(ProjectManager)
+        pm._project_file_relative_path = "projects/valid-project.yaml"
+
+        git = AsyncMock()
+        valid = _valid_project_for_save()
+
+        with (
+            patch.object(ProjectManager, "_validate_structural_integrity", new=AsyncMock()),
+            patch.object(ProjectManager, "get_project_full_file_path", new=AsyncMock(return_value="/tmp/p.yaml")),
+            patch.object(ProjectManager, "get_git_connector_for_project_files", new=AsyncMock(return_value=git)),
+            patch("opi.manager.project_manager.save_yaml_to_path"),
+            patch("opi.manager.project_manager.get_project_service") as svc_mock,
+        ):
+            await pm.save_and_commit_project(valid, "Add component", refresh_cache=False)
+
+        git.commit_and_push.assert_awaited_once()
+        svc_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_enforce_validation_false_commits_despite_structural_failure(self):
+        """Trusted background mutators (enforce_validation=False) persist even when the
+        project has pre-existing structural drift; validation runs but only warns."""
+        from unittest.mock import AsyncMock, patch
+
+        from opi.core.project_schema import ProjectIntegrityError
+
+        pm = ProjectManager.__new__(ProjectManager)
+        pm._project_file_relative_path = "projects/valid-project.yaml"
+
+        git = AsyncMock()
+        valid = _valid_project_for_save()
+
+        with (
+            patch.object(
+                ProjectManager,
+                "_validate_structural_integrity",
+                new=AsyncMock(side_effect=ProjectIntegrityError("pre-existing drift")),
+            ),
+            patch.object(ProjectManager, "get_project_full_file_path", new=AsyncMock(return_value="/tmp/p.yaml")),
+            patch.object(ProjectManager, "get_git_connector_for_project_files", new=AsyncMock(return_value=git)),
+            patch("opi.manager.project_manager.save_yaml_to_path") as save_mock,
+            patch("opi.manager.project_manager.get_project_service"),
+        ):
+            await pm.save_and_commit_project(valid, "auto-tune", enforce_validation=False)
+
+        save_mock.assert_called_once()
+        git.commit_and_push.assert_awaited_once_with("auto-tune")
+
+    @pytest.mark.asyncio
+    async def test_enforce_validation_true_aborts_on_structural_failure(self):
+        """The default (enforce_validation=True) still fails closed: no write, no commit."""
+        from unittest.mock import AsyncMock, patch
+
+        from opi.core.project_schema import ProjectIntegrityError
+
+        pm = ProjectManager.__new__(ProjectManager)
+        pm._project_file_relative_path = "projects/valid-project.yaml"
+
+        git = AsyncMock()
+        valid = _valid_project_for_save()
+
+        with (
+            patch.object(
+                ProjectManager,
+                "_validate_structural_integrity",
+                new=AsyncMock(side_effect=ProjectIntegrityError("introduced drift")),
+            ),
+            patch.object(ProjectManager, "get_project_full_file_path", new=AsyncMock(return_value="/tmp/p.yaml")),
+            patch.object(ProjectManager, "get_git_connector_for_project_files", new=AsyncMock(return_value=git)),
+            patch("opi.manager.project_manager.save_yaml_to_path") as save_mock,
+            patch("opi.manager.project_manager.get_project_service"),
+            pytest.raises(ProjectIntegrityError),
+        ):
+            await pm.save_and_commit_project(valid, "user edit")
+
+        save_mock.assert_not_called()
+        git.commit_and_push.assert_not_awaited()

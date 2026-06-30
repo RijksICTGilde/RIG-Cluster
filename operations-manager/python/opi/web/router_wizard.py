@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
@@ -1238,14 +1239,19 @@ def _find_sequence_editable(
     import re
 
     def _candidate_paths(ed: Any) -> list[str]:
-        # The rendered sequence path may use the virtualized service-config key
-        # (e.g. ``services{attachments}`` -> ``_services-config{attachments}``),
-        # while the editable carries the real key. Match against both forms.
+        # The rendered sequence path uses the virtualized service-config key,
+        # while the editable carries the real key. Rewrite with the SAME helper
+        # the renderer uses (apply_virtualize) so both the brace form
+        # (``services{attachments}`` -> ``_services-config{attachments}``) and the
+        # segment form (``services/keycloak/...`` -> ``_services-config/keycloak/...``)
+        # match. A hand-rolled brace-only replace silently missed the segment form,
+        # so e.g. the keycloak "add client" button no-op'd.
+        from opi.forms.editables.editable import apply_virtualize
+
         paths = [ed.yaml_path]
         virt = getattr(ed, "virtualize", None)
         if virt:
-            real_seg, virt_seg = virt
-            paths.append(ed.yaml_path.replace(f"{real_seg}{{", f"{virt_seg}{{"))
+            paths.append(apply_virtualize(ed.yaml_path, virt))
         return paths
 
     def _match(editable: Any) -> Any | None:
@@ -1952,6 +1958,18 @@ async def _do_submit(
             final_data = processor.apply_generators(flow.generated_editables, final_data)
             _assemble_deployment(final_data)
             return await _start_project_creation(request, final_data)
+    except (ProjectSchemaError, ProjectIntegrityError) as e:
+        # Re-render the wizard with the validation message instead of 500ing
+        # (e.g. pre-existing structural drift surfaced by the full-project check).
+        logger.warning("Wizard save rejected by validation for %s: %s", state.project_name or "(new)", e)
+        error_section = active_sections[0]
+        state.current_step = error_section.section_id
+        save_wizard_state(request, state)
+        step_html = _render_step_html(
+            error_section, yaml_data=yaml_data, errors={}, edit_mode=state.project_name is not None
+        )
+        context = _build_step_context(request, flow_id, error_section, step_html, errors={}, global_errors=[str(e)])
+        return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
     except Exception:
         logger.exception("Wizard submit failed")
         raise
@@ -1963,19 +1981,25 @@ async def _save_existing_project(
     data: dict[str, Any],
 ) -> HTMLResponse:
     """Save updated data to an existing project."""
-    from opi.handlers.project_file_handler import save_project_file
-    from opi.services.project_service import get_project_service
+    from opi.manager.project_manager import ProjectManager
     from opi.web.project_edit_security import apply_form_data_to_project, require_project_edit_access
 
     # TOCTOU recheck on the mutating request.
-    project, _user_email = require_project_edit_access(request, project_name)
+    require_project_edit_access(request, project_name)
 
-    project_service = get_project_service()
+    # Read fresh from Git, not the cache, so the form merges onto current state and a
+    # lagging cache is never committed back over newer Git data (the cache/Git timing fix).
+    # Explicitly close the ProjectManager so its temp git clone is cleaned up.
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+    try:
+        existing_data = await project_manager.get_contents()
+        existing_data = apply_form_data_to_project(existing_data, data)
 
-    existing_data = apply_form_data_to_project(project.data or {}, data)
-
-    save_project_file(project.filename, existing_data)
-    project_service.load_project_from_data(existing_data, project.filename)
+        # Persist through the single validated path: schema + structural integrity
+        # validation, canonical dumper, commit + push, and cache refresh in one shot.
+        await project_manager.save_and_commit_project(existing_data, f"Update project {project_name} via wizard")
+    finally:
+        await project_manager.close()
 
     clear_wizard_state(request)
     logger.info("Project %s updated via wizard", project_name)
@@ -1998,9 +2022,7 @@ async def _start_project_creation(
     original form.  This handles git commit, ProjectManager deployment,
     ArgoCD sync, and progress tracking.
     """
-    from io import StringIO
-
-    from ruamel.yaml import YAML
+    from opi.utils.yaml_util import dump_yaml_to_string
 
     project_name = data.get("name", "")
     if not project_name:
@@ -2009,13 +2031,8 @@ async def _start_project_creation(
     # Ensure multiline AGE-encrypted values use literal block scalars
     _apply_literal_scalars(data)
 
-    # Serialize to YAML string
-    yaml_instance = YAML()
-    yaml_instance.preserve_quotes = True
-    yaml_instance.width = 4096
-    yaml_output = StringIO()
-    yaml_instance.dump(data, yaml_output)
-    yaml_content = yaml_output.getvalue()
+    # Serialize to YAML string via the single canonical writer
+    yaml_content = dump_yaml_to_string(data)
 
     # Create V2 async task — the task worker handles git commit + processing
     from opi.core.task_helpers import create_async_task

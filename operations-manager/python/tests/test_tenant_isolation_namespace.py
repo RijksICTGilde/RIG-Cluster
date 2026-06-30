@@ -20,7 +20,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 from opi.core import git_monitor
-from opi.core.simple_background import process_project_yaml_background
 from opi.manager.project_manager import ProjectManager
 
 
@@ -112,97 +111,6 @@ class TestNamespacePinning:
 
         with pytest.raises(ValueError, match="victim-project"):
             await pm.get_deployments(cluster_filter=True)
-
-
-class _FakeGitConnector:
-    """Minimal stand-in for GitConnector used by the background task."""
-
-    def __init__(self, *, file_exists: bool):
-        self._file_exists = file_exists
-        self.create_or_update_file = AsyncMock()
-
-    async def file_exists(self, file_path: str) -> bool:
-        return self._file_exists
-
-    async def close(self) -> None:
-        return None
-
-
-class _FakeProjectManager:
-    """No-op ProjectManager so the test stops at the git write step."""
-
-    def __init__(self, *args, **kwargs):
-        pass
-
-    async def process_project_from_git(self, *args, **kwargs) -> bool:
-        return True
-
-    async def close(self) -> None:
-        return None
-
-
-class TestProjectTakeoverGuard:
-    """VULN 2: the create flow must not overwrite an existing project file."""
-
-    @pytest.fixture(autouse=True)
-    def _patch_git_connector(self, monkeypatch):
-        """Capture the GitConnector the background task builds."""
-        self.created_connectors: list[_FakeGitConnector] = []
-        self.next_file_exists = False
-
-        def _factory(*args, **kwargs):
-            connector = _FakeGitConnector(file_exists=self.next_file_exists)
-            self.created_connectors.append(connector)
-            return connector
-
-        monkeypatch.setattr("opi.core.simple_background.GitConnector", _factory)
-        monkeypatch.setattr("opi.core.simple_background.ProjectManager", _FakeProjectManager)
-
-    @pytest.mark.asyncio
-    async def test_create_with_existing_project_is_rejected(self, monkeypatch):
-        """is_new_project=True + existing file -> no overwrite."""
-        self.next_file_exists = True
-
-        await process_project_yaml_background(
-            task_id="t1",
-            project_name="victim-project",
-            yaml_content="name: victim-project\n",
-            is_new_project=True,
-        )
-
-        connector = self.created_connectors[0]
-        connector.create_or_update_file.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_create_with_new_name_proceeds_to_write(self):
-        """is_new_project=True + no existing file -> file is written."""
-        self.next_file_exists = False
-
-        await process_project_yaml_background(
-            task_id="t2",
-            project_name="brand-new-project",
-            yaml_content="name: brand-new-project\n",
-            is_new_project=True,
-        )
-
-        connector = self.created_connectors[0]
-        connector.create_or_update_file.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_update_existing_project_still_writes(self):
-        """The legitimate update flow (is_new_project=False) must still
-        rewrite an existing file - the guard only applies to create."""
-        self.next_file_exists = True
-
-        await process_project_yaml_background(
-            task_id="t3",
-            project_name="owned-project",
-            yaml_content="name: owned-project\n",
-            is_new_project=False,
-        )
-
-        connector = self.created_connectors[0]
-        connector.create_or_update_file.assert_awaited_once()
 
 
 class _SpyKubectl:
@@ -415,9 +323,16 @@ class TestHandleCreateProjectExistenceCheck:
 
         # Stub ProjectManager so the handler doesn't try to process the project.
         # We only care that the write happened (and the existence check did not block).
+        # The edit flow now persists through the single validated path
+        # (save_and_commit_project), not the raw create_or_update_file commit.
+        saved_calls: list[tuple] = []
+
         class _FakeProjectManager:
             def __init__(self, *args, **kwargs):
                 pass
+
+            async def save_and_commit_project(self, project_data, commit_message, **_kwargs):
+                saved_calls.append((project_data, commit_message))
 
             async def process_project_from_git(self, *_args, **_kwargs):
                 return None  # short-circuit; tested logic is already past
@@ -442,5 +357,7 @@ class TestHandleCreateProjectExistenceCheck:
         }
         await task_handlers_project.handle_create_project(payload, progress)
 
-        # The write MUST have happened despite the file existing.
-        fake_connector.create_or_update_file.assert_called_once()
+        # The write MUST have happened despite the file existing, now via the
+        # single validated save path rather than a raw create_or_update_file commit.
+        assert len(saved_calls) == 1
+        assert saved_calls[0][0].get("name") == "existing-project"

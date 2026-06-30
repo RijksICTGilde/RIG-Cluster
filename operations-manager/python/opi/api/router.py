@@ -1548,6 +1548,29 @@ async def add_service(
             detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
+    # Validate service name is non-empty and well-formed
+    service_name = service_data.service.strip()
+    if not service_name:
+        raise HTTPException(
+            status_code=400,
+            detail="Servicenaam mag niet leeg zijn.",
+        )
+    sanitized_service = sanitize_kubernetes_name(service_name)
+    if sanitized_service != service_name.lower():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ongeldige servicenaam. Gebruik alleen kleine letters, cijfers en koppeltekens. Voorgesteld: {sanitized_service}",
+        )
+
+    # Validate component names are non-empty strings
+    if service_data.components:
+        for component_name in service_data.components:
+            if not component_name.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Componentnamen mogen niet leeg zijn.",
+                )
+
     # Async path (default) - use /api/v2/ for pure async
     if not sync:
         task = await create_async_task(
@@ -2766,12 +2789,29 @@ async def create_self_service_project(
         # Create project file in Git repository
         project_file_path = f"projects/{project_data.project_name}.yaml"
         await git_connector_for_project_files.check_overwrite_project_file(project_file_path)
-        await git_connector_for_project_files.create_or_update_file(project_file_path, yaml_content, False)
+
+        # Persist through the single validated save path so the self-service API
+        # uses the same chokepoint as the UI and the other API endpoints: schema +
+        # structural validation before the commit, canonical dumper, cache refresh.
+        from opi.utils.yaml_util import load_yaml_from_string
+
+        project_manager = ProjectManager(
+            project_file_relative_path=project_file_path,
+            git_connector_for_project_files=git_connector_for_project_files,
+        )
+        project_dict = load_yaml_from_string(yaml_content)
+        if not project_dict:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Kon de projectconfiguratie voor '{project_data.project_name}' niet inlezen",
+            )
+        await project_manager.save_and_commit_project(
+            project_dict, f"Create project {project_data.project_name} (self-service)"
+        )
 
         logger.info(f"Self-service project file created successfully: {project_file_path}")
 
-        # Process the project file
-        project_manager = ProjectManager(git_connector_for_project_files=git_connector_for_project_files)
+        # Process the project file (reuses the bound ProjectManager)
         processing_result = await project_manager.process_project_from_git(project_file_path)
 
         if processing_result:

@@ -442,14 +442,18 @@ async def delete_component_web(request: Request, project_name: str, component_na
         from opi.core.task_helpers import create_async_task
         from opi.manager.project_manager import ProjectManager
 
+        # Explicitly close the ProjectManager so its temp git clone is cleaned up.
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
-        result = await project_manager.delete_component(component_name)
+        try:
+            result = await project_manager.delete_component(component_name)
+        finally:
+            await project_manager.close()
         if not result["success"]:
             status = 404 if result.get("error_type") == "not_found" else 500
             return JSONResponse(content={"error": result["error"]}, status_code=status)
 
-        # Refresh the read cache to the committed state, then reprocess from Git to apply it.
-        project_service.load_project_from_data(await project_manager.get_contents(), project.filename)
+        # delete_component already refreshed the read cache via save_and_commit_project;
+        # reprocess from Git to apply the deletion.
         logger.info(f"Component '{component_name}' removed from '{project_name}', triggering reprocessing")
 
         await create_async_task(
@@ -2002,18 +2006,16 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
     """
     from fastapi.responses import JSONResponse
 
-    from opi.connectors.git import GitConnector
     from opi.connectors.subdomain import (
         create_subdomain_connector,
         validate_base_domain,
         validate_subdomain,
     )
-    from opi.core.config import settings
-    from opi.manager.project_manager import create_project_manager
+    from opi.manager.project_manager import ProjectManager
     from opi.services.project_service import get_project_service
 
     # Track state for rollback
-    original_yaml_content: str | None = None
+    original_data: dict[str, Any] | None = None
     git_committed = False
     subdomain_registered = False
     old_subdomain_info: dict | None = None
@@ -2151,27 +2153,14 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
             if not is_valid:
                 raise HTTPException(status_code=400, detail=error_msg)
 
-        # Create Git connector for projects repository
-        git_connector = GitConnector(
-            repo_url=settings.GIT_PROJECTS_SERVER_URL,
-            username=settings.GIT_PROJECTS_SERVER_USERNAME,
-            password=settings.GIT_PROJECTS_SERVER_PASSWORD,
-            branch=settings.GIT_PROJECTS_SERVER_BRANCH,
-            repo_path=settings.GIT_PROJECTS_SERVER_REPO_PATH,
-        )
-
-        # Load current YAML content (store for potential rollback)
+        # Mutate through the bound ProjectManager: it reads fresh, migrated
+        # contents from Git and persists via the single validated save path.
         project_file_path = f"projects/{project.filename}"
-        original_yaml_content = await git_connector.read_file(project_file_path)
+        project_manager = ProjectManager(project_file_relative_path=project_file_path)
+        project_yaml = await project_manager.get_contents()
 
-        # Update YAML using ruamel.yaml to preserve structure
-        from io import StringIO
-
-        from ruamel.yaml import YAML
-
-        yaml = YAML()
-        yaml.preserve_quotes = True
-        project_yaml = yaml.load(StringIO(original_yaml_content))
+        # Keep a copy of the pre-edit state for rollback on failure.
+        original_data = copy.deepcopy(project_yaml)
 
         # Find and update deployment
         yaml_deployments = project_yaml.get("deployments", [])
@@ -2215,21 +2204,14 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
 
                 break
 
-        # Write updated YAML to string
-        stream = StringIO()
-        yaml.dump(project_yaml, stream)
-        updated_yaml = stream.getvalue()
-
         # === STEP 1: Save to git ===
         # Sanitize commit message by removing potentially dangerous characters
         safe_deployment_name = "".join(c for c in deployment_name if c.isalnum() or c in "-_")
         safe_project_name = "".join(c for c in project_name if c.isalnum() or c in "-_")
 
-        await git_connector.create_or_update_file(
-            project_file_path,
-            updated_yaml,
-            do_commit_and_push=True,
-            commit_message=f"Update domain settings for deployment '{safe_deployment_name}' in project '{safe_project_name}'",
+        await project_manager.save_and_commit_project(
+            project_yaml,
+            f"Update domain settings for deployment '{safe_deployment_name}' in project '{safe_project_name}'",
         )
         git_committed = True
         logger.info(f"Updated domain settings for {project_name}/{deployment_name} by {user_email}")
@@ -2262,13 +2244,11 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
             logger.error(f"Subdomain registration failed: {subdomain_error}")
 
             # Rollback git commit first
-            if git_committed and original_yaml_content:
+            if git_committed and original_data is not None:
                 try:
-                    await git_connector.create_or_update_file(
-                        project_file_path,
-                        original_yaml_content,
-                        do_commit_and_push=True,
-                        commit_message=f"Rollback domain settings for '{safe_deployment_name}' (subdomain registration failed)",
+                    await project_manager.save_and_commit_project(
+                        original_data,
+                        f"Rollback domain settings for '{safe_deployment_name}' (subdomain registration failed)",
                     )
                     logger.info(f"Rolled back git commit for {project_name}/{deployment_name}")
                 except Exception as rollback_error:
@@ -2292,7 +2272,6 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
             raise HTTPException(status_code=500, detail="Failed to register subdomain. Changes have been rolled back.")
 
         # === STEP 3: Re-process project to apply changes ===
-        project_manager = create_project_manager()
         try:
             processing_result = await project_manager.process_project_from_git(
                 project_file_path, deployment_name=deployment_name
@@ -2319,13 +2298,11 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
             # This ensures consistent state even if one rollback fails
 
             # Rollback git commit first
-            if git_committed and original_yaml_content:
+            if git_committed and original_data is not None:
                 try:
-                    await git_connector.create_or_update_file(
-                        project_file_path,
-                        original_yaml_content,
-                        do_commit_and_push=True,
-                        commit_message=f"Rollback domain settings for '{safe_deployment_name}' (processing failed)",
+                    await project_manager.save_and_commit_project(
+                        original_data,
+                        f"Rollback domain settings for '{safe_deployment_name}' (processing failed)",
                     )
                     logger.info(f"Rolled back git commit for {project_name}/{deployment_name}")
                 except Exception as git_rollback_error:
@@ -2959,7 +2936,6 @@ async def tune_deployment(request: Request, project_name: str, deployment_name: 
 
     async def _run_tune() -> None:
         from opi.services.resource_tuning_service import (
-            commit_project_yaml,
             get_project_data,
             trigger_reprocessing,
         )
@@ -3081,7 +3057,20 @@ async def tune_deployment(request: Request, project_name: str, deployment_name: 
                 commit_task = progress.add_task("Wijzigingen opslaan")
                 component_names = [c["component"] for c in changes]
                 commit_msg = f"auto-tune: adjust memory resources for {', '.join(component_names)} in {project_name}"
-                await commit_project_yaml(project_name, filename, project_data, commit_msg)
+
+                # Persist through the single validated save path (schema +
+                # structural integrity validation, canonical dumper, commit +
+                # push, cache refresh). The cache-sourced data is migrated to the
+                # latest schema first so it is safe to validate and commit.
+                from opi.manager.project_manager import ProjectManager
+                from opi.services.schema_migration import migrate_to_latest
+
+                project_data, _ = migrate_to_latest(project_data)
+                tune_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
+                try:
+                    await tune_manager.save_and_commit_project(project_data, commit_msg)
+                finally:
+                    await tune_manager.close()
                 progress.complete_task(commit_task)
 
                 # Step 4: Reprocess

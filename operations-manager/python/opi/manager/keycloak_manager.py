@@ -835,7 +835,12 @@ class KeycloakManager:
                         logger.info(f"Updating project keycloak host from {keycloak_host} to {keycloak_url}")
                         keycloak_host = keycloak_url
                         kc_config["host"] = keycloak_url
-                        await self.project_manager.save_project_data()
+                        project_data = await self.project_manager.get_contents()
+                        await self.project_manager.save_and_commit_project(
+                            project_data,
+                            f"Update Keycloak host to {keycloak_url} for project {project_name} ({cluster})",
+                            enforce_validation=False,
+                        )
 
                     # Always ensure authentication flow is correctly configured (idempotent)
                     await self._ensure_realm_authentication_flow(realm_name, keycloak_url, config)
@@ -1748,9 +1753,11 @@ class KeycloakManager:
         # Waiting for the end-of-run commit means any later failure in the task
         # orphans the admin user in Keycloak with an unrecoverable password,
         # wedging every re-run on the duplicate-admin guard above.
-        await self.project_manager.save_project_data()
-        git_connector = await self.project_manager.get_git_connector_for_project_files()
-        await git_connector.commit_and_push(f"Persist Keycloak realm credentials for {project_name} ({cluster})")
+        await self.project_manager.save_and_commit_project(
+            project_data,
+            f"Persist Keycloak realm credentials for {project_name} ({cluster})",
+            enforce_validation=False,
+        )
         logger.info(f"Stored and pushed Keycloak config in project file for cluster {cluster}")
 
         return {
