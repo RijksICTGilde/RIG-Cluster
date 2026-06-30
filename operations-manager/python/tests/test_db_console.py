@@ -7,13 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
-from opi.connectors.postgres import create_postgres_connector
 from opi.core.db_console_reaper import DbConsoleReaper
 from opi.core.templates import get_templates
 from opi.generation.manifests import render_template
 from opi.manager.db_console_manager import (
     DbConsoleManager,
-    DbConsoleMode,
     DbConsoleSession,
     DbConsoleTool,
 )
@@ -32,10 +30,6 @@ def test_db_console_naming_helpers():
 
     host = naming.generate_db_console_hostname("My-Proj", "abcd1234", ".sandbox.rijksapp.dev")
     assert host == "dbconsole-my-proj-abcd1234.sandbox.rijksapp.dev"
-
-    role = naming.generate_db_console_ro_role("my-proj", "prod", "abcd1234")
-    assert role == "my_proj_prod_ro_abcd1234"  # underscores, valid SQL identifier
-    assert "-" not in role
 
 
 # ----------------------------------------------------------- auth-wall template
@@ -155,20 +149,17 @@ def _db_secret() -> DatabaseSecret:
     )
 
 
-def test_tool_config_pgweb_readonly_builds_database_url():
-    _image, port, args, secret = DbConsoleManager._tool_config(
-        DbConsoleTool.PGWEB, DbConsoleMode.READ_ONLY, _db_secret(), "ro_user", "ro_pw"
-    )
+def test_tool_config_pgweb_builds_database_url():
+    _image, port, args, secret = DbConsoleManager._tool_config(DbConsoleTool.PGWEB, _db_secret(), "app_user", "app_pw")
     assert port == 8081
-    assert "--readonly" in args
     assert "--lock-session" in args  # pins to the single connection; no host switching
-    assert secret["DATABASE_URL"].startswith("postgresql://ro_user:ro_pw@rig-db-rw:5432/proj_dep")
+    assert secret["DATABASE_URL"].startswith("postgresql://app_user:app_pw@rig-db-rw:5432/proj_dep")
     assert "search_path" in secret["DATABASE_URL"]
 
 
 def test_tool_config_dbgate_single_connection_env():
     _image, port, _args, secret = DbConsoleManager._tool_config(
-        DbConsoleTool.DBGATE, DbConsoleMode.READ_WRITE, _db_secret(), "proj_dep", "secretpw1"
+        DbConsoleTool.DBGATE, _db_secret(), "proj_dep", "secretpw1"
     )
     assert port == 3000
     assert secret["CONNECTIONS"] == "con1"
@@ -176,14 +167,6 @@ def test_tool_config_dbgate_single_connection_env():
     assert secret["USER_con1"] == "proj_dep"
     assert secret["ENGINE_con1"] == "postgres@dbgate-plugin-postgres"
     assert secret["DISABLE_VOLATILE_CONNECTIONS"] == "1"  # no ad-hoc connections
-    assert "READONLY_con1" not in secret  # rw mode
-
-
-def test_tool_config_dbgate_readonly_sets_hint():
-    _, _, _, secret = DbConsoleManager._tool_config(
-        DbConsoleTool.DBGATE, DbConsoleMode.READ_ONLY, _db_secret(), "ro_user", "ro_pw"
-    )
-    assert secret["READONLY_con1"] == "1"
 
 
 # --------------------------------------------------------------- realm parsing
@@ -254,7 +237,6 @@ def test_modal_running_state_renders_through_roos():
         project="proj",
         deployment="dep",
         tool=DbConsoleTool.PGWEB,
-        mode=DbConsoleMode.READ_ONLY,
         opened_by="u@x.nl",
         hostname="dbconsole-abcd1234.example.com",
         url="https://dbconsole-abcd1234.example.com/",
@@ -297,18 +279,7 @@ def test_reaper_expiry_detection():
     assert DbConsoleReaper._is_expired("not-a-date", now) is False
 
 
-# --------------------------------------------------- read-only grant is SELECT-only
-
-
-class _FakeConn:
-    def __init__(self) -> None:
-        self.executed: list[str] = []
-
-    async def execute(self, sql: str, *args) -> None:
-        self.executed.append(sql)
-
-    async def fetchval(self, sql: str, *args) -> int:
-        return 1  # schema + user exist
+# ------------------------------------------------------------- runs registry
 
 
 class _FakePool:
@@ -377,45 +348,68 @@ async def test_runs_service_create_and_end():
 
 
 @pytest.mark.asyncio
-async def test_grant_readonly_is_select_only(monkeypatch):
-    pg = create_postgres_connector("rig-db-rw", "postgres", "AdminPw123")
-    fake = _FakeConn()
+async def test_get_latest_run_queries_newest():
+    from opi.services.runs_service import RunKind, RunsService
 
-    async def _fake_get(_db):
-        return fake
+    row = {"id": "1", "kind": "db-console", "session_id": "abcd1234", "deployment": "dep", "status": "starting"}
+    pool = _FakePool(row)
+    svc = RunsService(pool)  # type: ignore[arg-type]
+    result = await svc.get_latest_run("proj", "dep", RunKind.DB_CONSOLE)
+    assert result["session_id"] == "abcd1234"
+    assert any(kind == "fetchrow" and "ORDER BY started_at DESC" in sql for kind, sql, _ in pool.calls)
 
-    monkeypatch.setattr(pg, "_get_or_create_connection", _fake_get)
 
-    result = await pg.grant_readonly_on_schema("proj_dep", "proj_dep", "proj_dep_ro_abcd1234")
-    assert result["status"] == "granted"
+def test_is_stale_starting():
+    """A pod-less 'starting' run older than the window is reconcilable (so begin() can
+    clear it instead of wedging forever); a fresh one, a terminal one, or None is not."""
+    from opi.manager.run_support import is_stale_starting
 
-    joined = " | ".join(fake.executed)
-    assert "GRANT CONNECT ON DATABASE" in joined
-    assert "GRANT USAGE ON SCHEMA" in joined
-    assert "GRANT SELECT ON ALL TABLES IN SCHEMA" in joined
-    assert "ALTER DEFAULT PRIVILEGES" in joined
-    # The whole point of read-only: never grant write/all.
-    assert "GRANT ALL" not in joined
-    assert "INSERT" not in joined
+    fresh = {"status": "starting", "started_at": datetime.now(UTC).isoformat()}
+    stale = {"status": "starting", "started_at": (datetime.now(UTC) - timedelta(seconds=600)).isoformat()}
+    assert is_stale_starting(fresh) is False
+    assert is_stale_starting(stale) is True
+    assert is_stale_starting({"status": "running", "started_at": stale["started_at"]}) is False
+    assert is_stale_starting(None) is False
 
 
 @pytest.mark.asyncio
-async def test_grant_readonly_raises_when_schema_missing(monkeypatch):
-    """A missing schema/user must raise (not silently produce a no-grant console)."""
-    from opi.connectors.postgres import PostgresExecutionError
+async def test_pending_state_maps_registry(monkeypatch):
+    """The status poll derives starting/failed/stale/none from the runs registry.
 
-    pg = create_postgres_connector("rig-db-rw", "postgres", "AdminPw123")
+    pending_state is the shared run_support helper used by both the db-console and
+    job routers; here it is exercised for the db-console kind.
+    """
+    from opi.manager import run_support as r
+    from opi.services.runs_service import RunKind
 
-    class _NoSchemaConn:
-        async def execute(self, sql: str, *args) -> None: ...
+    class _FakeRuns:
+        def __init__(self, run):
+            self._run = run
 
-        async def fetchval(self, sql: str, *args):
-            return None  # schema / user do not exist
+        async def get_latest_run(self, *a, **k):
+            return self._run
 
-    async def _fake_get(_db):
-        return _NoSchemaConn()
+    async def call():
+        return await r.pending_state("p", "d", RunKind.DB_CONSOLE, "console", None)
 
-    monkeypatch.setattr(pg, "_get_or_create_connection", _fake_get)
+    # in-flight start -> 'starting'
+    monkeypatch.setattr(
+        r, "get_runs_service", lambda: _FakeRuns({"status": "starting", "started_at": datetime.now(UTC).isoformat()})
+    )
+    assert (await call())[0] == "starting"
 
-    with pytest.raises(PostgresExecutionError):
-        await pg.grant_readonly_on_schema("proj_dep", "missing_schema", "role_x")
+    # failed start -> form + the recorded error
+    monkeypatch.setattr(r, "get_runs_service", lambda: _FakeRuns({"status": "failed", "error_message": "boom"}))
+    assert await call() == ("none", "boom")
+
+    # no run -> 'none'
+    monkeypatch.setattr(r, "get_runs_service", lambda: _FakeRuns(None))
+    assert (await call())[0] == "none"
+
+    # stale 'starting' (provisioning died) -> none + time-out message
+    old = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
+    monkeypatch.setattr(r, "get_runs_service", lambda: _FakeRuns({"status": "starting", "started_at": old}))
+    state, err = await call()
+    assert state == "none"
+    assert err is not None
+    assert "time-out" in err

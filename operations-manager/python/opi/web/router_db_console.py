@@ -1,10 +1,11 @@
 """Web routes for the ephemeral database console.
 
-A project member opens a modal from the deployment Acties menu, picks a
-connection (mode + tool), and OPI provisions an auth-walled console. The modal
-polls live pod state (starting -> running) and shows the URL + a stop button.
-All routes are member-gated. Live status comes from the cluster; the runs
-registry records history.
+A project member opens a modal from the deployment Acties menu, picks a tool, and
+OPI provisions an auth-walled console. The start returns immediately: validation
++ registration happen synchronously (begin), the slow provisioning runs in the
+background (provision). The modal polls live state: the pod once it exists, else
+the runs registry ('starting'/'failed' before the pod is up). All routes are
+member-gated.
 """
 
 from __future__ import annotations
@@ -19,11 +20,11 @@ from opi.core.config import settings
 from opi.core.templates import get_templates
 from opi.manager.db_console_manager import (
     DbConsoleError,
-    DbConsoleMode,
     DbConsoleTool,
     get_db_console_manager,
 )
-from opi.services.runs_service import get_runs_service
+from opi.manager.run_support import pending_state, spawn
+from opi.services.runs_service import RunKind, get_runs_service
 from opi.web.router_detail_edit import _require_project_member_access
 
 logger = logging.getLogger(__name__)
@@ -40,25 +41,34 @@ async def _render(
     *,
     error: str | None = None,
     force_state: str | None = None,
+    include_pending: bool = False,
 ) -> HTMLResponse:
-    """Render the modal body for the current console state (none|starting|running)."""
+    """Render the modal body for the current console state (none|starting|running).
+
+    include_pending lets the status poll surface 'starting'/'failed' from the
+    runs registry before the pod exists; the initial modal open keeps it False so
+    a previous failure does not show on a fresh open.
+    """
     manager = get_db_console_manager()
     session = None
     if force_state:
         state = force_state
     else:
         session, ready = await manager.get_console_status(project_name, deployment_name)
-        if session is None:
-            state = "none"
-        elif ready:
-            state = "running"
-            # Reconcile the registry row to running once the pod is ready (best-effort).
-            try:
-                await get_runs_service().mark_running(session.session_id, session.url)
-            except Exception:
-                logger.exception("Failed to mark run running for session %s", session.session_id)
+        if session is not None:
+            if ready:
+                state = "running"
+                # Reconcile the registry row to running once the pod is ready (best-effort).
+                try:
+                    await get_runs_service().mark_running(session.session_id, session.url)
+                except Exception:
+                    logger.exception("Failed to mark run running for session %s", session.session_id)
+            else:
+                state = "starting"
+        elif include_pending:
+            state, error = await pending_state(project_name, deployment_name, RunKind.DB_CONSOLE, "console", error)
         else:
-            state = "starting"
+            state = "none"
 
     templates = get_templates()
     return templates.TemplateResponse(
@@ -89,13 +99,13 @@ async def db_console_modal(request: Request, project_name: str, deployment_name:
 async def db_console_status(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Polled by the modal while a console is starting up."""
     _require_project_member_access(request, project_name)
-    return await _render(request, project_name, deployment_name)
+    return await _render(request, project_name, deployment_name, include_pending=True)
 
 
 @db_console_router.post("/{project_name}/db-console", response_class=HTMLResponse)
 @requires_sso
 async def db_console_start(request: Request, project_name: str) -> HTMLResponse:
-    """Start a console for a deployment; returns the modal body (now monitoring)."""
+    """Start a console: validate + register synchronously, provision in the background."""
     _, user_email = _require_project_member_access(request, project_name)
 
     form = await request.form()
@@ -107,19 +117,13 @@ async def db_console_start(request: Request, project_name: str) -> HTMLResponse:
         return await _render(request, project_name, deployment_name, error="Databaseconsole is uitgeschakeld.")
 
     try:
-        mode = DbConsoleMode(str(form.get("mode", DbConsoleMode.READ_ONLY)))
         tool = DbConsoleTool(str(form.get("tool", DbConsoleTool.PGWEB)))
     except ValueError:
-        return await _render(request, project_name, deployment_name, error="Ongeldige modus of tool.")
+        return await _render(request, project_name, deployment_name, error="Ongeldige tool.")
 
+    manager = get_db_console_manager()
     try:
-        await get_db_console_manager().start(
-            project_name=project_name,
-            deployment_name=deployment_name,
-            mode=mode,
-            tool=tool,
-            opened_by=user_email,
-        )
+        session = await manager.begin(project_name, deployment_name, tool, opened_by=user_email)
     except DbConsoleError as exc:
         return await _render(request, project_name, deployment_name, error=str(exc))
     except Exception:
@@ -128,7 +132,11 @@ async def db_console_start(request: Request, project_name: str) -> HTMLResponse:
             request, project_name, deployment_name, error="Onverwachte fout bij het starten van de console."
         )
 
-    return await _render(request, project_name, deployment_name)
+    # Provision in the background so the click returns immediately; the modal
+    # then polls /status, which shows 'starting' from the registry until the pod
+    # is up (or 'failed' if provisioning errors).
+    spawn(manager.provision(project_name, deployment_name, session.session_id, tool, user_email))
+    return await _render(request, project_name, deployment_name, force_state="starting")
 
 
 @db_console_router.post("/{project_name}/db-console/{session_id}/stop", response_class=HTMLResponse)
