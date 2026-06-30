@@ -95,9 +95,19 @@ spec:
     - host: {{ (hostname | default('', true)) | tojson }}
       http:
         paths:
+{% if passthrough %}
+          {# OpenShift's ingress-to-route controller only creates a passthrough Route
+             when path is empty and pathType is ImplementationSpecific; with path:/ +
+             pathType:Prefix it silently creates nothing (no Route, host falls back to
+             the cluster wildcard cert). #}
+          - path: ""
+            pathType: ImplementationSpecific
+            backend:
+{% else %}
           - path: {{ (path | default('/', true)) | tojson }}
             pathType: Prefix
             backend:
+{% endif %}
               service:
                 name: {{ effective_service_name | tojson }}
                 port:
