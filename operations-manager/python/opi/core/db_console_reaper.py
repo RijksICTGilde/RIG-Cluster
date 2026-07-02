@@ -1,11 +1,13 @@
 """Reaper for ephemeral database consoles.
 
-Every interval this lists the database-console pods on this cluster, tears down
-any whose TTL has expired, and garbage-collects orphaned Keycloak clients whose
-pod is gone. State lives entirely in cluster labels/annotations (and Postgres),
-so the reaper is restart-safe: after an OPI restart it rediscovers and cleans up
-everything by label. The pod's own activeDeadlineSeconds is the hard backstop if
-the reaper is ever down.
+Every interval this tears down any bundle whose TTL has expired and garbage-collects
+orphaned Keycloak clients. It is driven by the Postgres `runs` table, not by scanning
+Kubernetes: a bundle can only exist if a run was started, and the run row is written
+before the k8s resources, so the DB is the authoritative set of namespaces that can
+hold a live bundle. When nothing is running, a sweep is one DB query and zero kubectl
+calls (instead of listing pods in every project namespace). The reaper stays
+restart-safe (the DB survives restarts), and each pod's own activeDeadlineSeconds is
+the hard backstop if the reaper is ever down.
 """
 
 from __future__ import annotations
@@ -17,7 +19,6 @@ from datetime import UTC, datetime
 
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import create_kubectl_connector
-from opi.core.cluster_config import get_namespace_prefix
 from opi.core.config import settings
 from opi.manager.db_console_manager import (
     ANNOT_CLIENT_ID,
@@ -27,8 +28,7 @@ from opi.manager.db_console_manager import (
     get_db_console_manager,
 )
 from opi.manager.run_support import ANNOT_EXPIRES, LABEL_RUN
-from opi.services.project_service import get_project_service
-from opi.services.runs_service import RunStatus
+from opi.services.runs_service import RunStatus, get_runs_service
 from opi.utils.naming import DB_CONSOLE_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -78,22 +78,21 @@ class DbConsoleReaper:
                 logger.exception("Error in database console reaper sweep")
 
     async def _sweep(self) -> None:
+        # A bundle can only exist if a run was started, and its `runs` row is written
+        # before the Kubernetes resources. So the DB is the authoritative list of
+        # namespaces that can hold a live bundle - we only look at those, instead of
+        # scanning every project namespace every cycle. When nothing is running this is
+        # one DB query and zero kubectl calls. (The pod's activeDeadlineSeconds remains
+        # the hard backstop.)
+        active_runs = await get_runs_service().list_active_runs(self._cluster)
+        namespaces = sorted({r["namespace"] for r in active_runs if r.get("namespace")})
+
         kubectl = create_kubectl_connector()
         manager = get_db_console_manager()
         now = datetime.now(UTC)
 
         live_client_ids: set[str] = set()
-        projects = get_project_service().get_all_projects()
-        for project in projects.values():
-            if not project.data:
-                continue
-            name = project.data.get("name", "")
-            if not name:
-                continue
-            if not any(d.get("cluster") == self._cluster for d in project.data.get("deployments", []) or []):
-                continue
-
-            namespace = f"{get_namespace_prefix(self._cluster)}{name}"
+        for namespace in namespaces:
             pods = await kubectl.get_resources_by_label("pod", namespace, LABEL_RUN)
             live_sessions: set[str] = set()
             for pod in pods:
