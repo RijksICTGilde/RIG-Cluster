@@ -133,8 +133,10 @@ class TestFlowDefinitions:
         assert EDIT_FLOW.flow_id == "edit-project"
         assert EDIT_FLOW.show_review is False
         assert EDIT_FLOW.save_per_section is True
-        assert len(EDIT_FLOW.sections) == 10
-        assert "attachments" in [s.section_id for s in EDIT_FLOW.sections]
+        assert len(EDIT_FLOW.sections) == 9
+        # Attachments are edited via a modal/service-edit flow in edit mode,
+        # so the edit wizard has no dedicated attachments section (unlike create).
+        assert "attachments" not in [s.section_id for s in EDIT_FLOW.sections]
 
     def test_create_flow_does_not_include_deployments(self):
         section_ids = [s.section_id for s in CREATE_FLOW.sections]

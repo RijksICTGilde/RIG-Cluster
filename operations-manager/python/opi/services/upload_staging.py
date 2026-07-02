@@ -10,6 +10,7 @@ Files here are short-lived but sensitive (they may be unencrypted private keys),
 so the directory and files use restrictive permissions.
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -115,7 +116,5 @@ def delete_staged(token: str) -> None:
 def _remove(token: str) -> None:
     data_path, meta_path = _paths(token)
     for path in (data_path, meta_path):
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.remove(path)
-        except FileNotFoundError:
-            pass

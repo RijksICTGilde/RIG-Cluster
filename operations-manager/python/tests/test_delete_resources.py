@@ -5,7 +5,7 @@ Verifies that:
 - KeycloakConnector.delete_deployment_client operates in the correct realm
 """
 
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.postgres import PostgresConnector
@@ -96,12 +96,16 @@ class TestDeleteResourcesForDeployment:
             called_names.append(call_args.kwargs["database_name"])
         assert "test_project_pr_123" in called_names
 
-        # Verify delete_user was called with ONLY username
-        mock_connector.delete_user.assert_called_once()
-        call_kwargs = mock_connector.delete_user.call_args
-        assert "host" not in (call_kwargs.kwargs or {})
-        assert "admin_username" not in (call_kwargs.kwargs or {})
-        assert call_kwargs == call(username="test_project_pr_123")
+        # Verify delete_user was called with ONLY username, for BOTH the main
+        # user and its read-only ("_ro") companion role.
+        assert mock_connector.delete_user.call_count == 2
+        deleted_users = []
+        for call_kwargs in mock_connector.delete_user.call_args_list:
+            assert "host" not in (call_kwargs.kwargs or {})
+            assert "admin_username" not in (call_kwargs.kwargs or {})
+            assert set(call_kwargs.kwargs.keys()) == {"username"}
+            deleted_users.append(call_kwargs.kwargs["username"])
+        assert deleted_users == ["test_project_pr_123", "test_project_pr_123_ro"]
 
     @pytest.mark.asyncio
     async def test_uses_bound_connector_not_new_one(self):
@@ -139,7 +143,8 @@ class TestDeleteResourcesForDeployment:
         # Versioned database cleanup scans beyond YAML generation, so there are
         # multiple database_deletion operations plus one database_user_deletion.
         types = [op["type"] for op in result["operations"]]
-        assert types.count("database_user_deletion") == 1
+        # One deletion op for the main user plus one for its read-only "_ro" companion.
+        assert types.count("database_user_deletion") == 2
         assert types.count("database_deletion") >= 1
 
     @pytest.mark.asyncio
