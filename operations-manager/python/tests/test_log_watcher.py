@@ -321,14 +321,21 @@ def test_severity_ranking():
 
 def test_build_logql_filters_by_level_and_excludes_self_logs():
     expr = build_logql(
-        "rig-prd-operations", "operations-manager", "(?i)(warn|error|crit|fatal)", None, exclude=SELF_LOG_EXCLUDE
+        "rig-prd-operations", "operations-manager", "(?i)(error|crit|fatal)", None, exclude=SELF_LOG_EXCLUDE
     )
     # Level filtering uses the detected_level label, not a line regex over the message.
-    assert '| detected_level=~"(?i)(warn|error|crit|fatal)"' in expr
+    assert '| detected_level=~"(?i)(error|crit|fatal)"' in expr
     # Self-exclusion applied as line filters, before the label filter.
     assert '!= "opi.services.log_watcher"' in expr
     assert '!= "opi.core.logwatcher_scheduler"' in expr
     assert expr.index('!= "opi.services.log_watcher"') < expr.index("| detected_level")
+
+
+def test_inline_default_skips_warnings():
+    # The in-app watcher (LogWatchConfig default) queries error+ only - warnings are too noisy.
+    default_level = LogWatchConfig(grafana_url="x", ntfy_topic="y").level
+    assert "warn" not in default_level
+    assert default_level == "(?i)(error|crit|fatal)"
 
 
 def test_severity_prefers_level_field():
