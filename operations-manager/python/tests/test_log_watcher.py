@@ -197,11 +197,21 @@ def test_clean_run_ignores_newly_added_patterns(monkeypatch, captured_ntfy):
         [
             _line("ERROR", "opi.connectors.keycloak", "Failed to assign client scope as realm default: 409: ..."),
             _line("WARNING", "opi.manager.project_manager", "No deployments found in project: jongo-lh2"),
+            _line(
+                "WARNING",
+                "opi.manager.database_manager",
+                "Source schema 'mpfm_w3h_test' exists but contains no tables. Cloning will result in an empty schema.",
+            ),
+            _line(
+                "WARNING",
+                "opi.connectors.postgres",
+                "pg_dump produced very little output (91 bytes) - might be empty dump",
+            ),
         ],
     )
     rc = run_cycle(_cfg(), token="tok", state={})
     assert rc == 0
-    assert captured_ntfy == []  # both match the ignore-list now
+    assert captured_ntfy == []  # all match the ignore-list now
 
 
 def test_human_strips_uuids():
@@ -240,6 +250,48 @@ def test_terminal_git_push_failure_still_alerts(monkeypatch, captured_ntfy):
     )
     assert run_cycle(_cfg(), token="tok", state={}) == 0
     assert len(captured_ntfy) == 1
+
+
+def test_argocd_timeout_cascade_collapses_to_root(monkeypatch, captured_ntfy):
+    # One ArgoCD app-creation timeout is logged at 5 layers; only the root should alert.
+    _inject_rows(
+        monkeypatch,
+        [
+            _line(
+                "ERROR",
+                "opi.core.persistent_task_progress",
+                "Failed task: Deployment processing: mpfm-w3h-pr-120: timed out waiting for application to be created",
+            ),
+            _line(
+                "ERROR",
+                "opi.core.persistent_task_progress",
+                "Failed task: Waiting for ArgoCD deployment sync: Sync failures: mpfm-w3h-pr-120: "
+                "timed out waiting for application to be created",
+            ),
+            _line(
+                "ERROR",
+                "opi.manager.project_manager",
+                "ArgoCD sync completed with 1 failure(s): mpfm-w3h-pr-120: timed out waiting for application to be created",
+            ),
+            _line(
+                "ERROR",
+                "opi.manager.project_manager",
+                "Timed out waiting for ArgoCD application 'mpfm-w3h-pr-120' to be created",
+            ),
+            _line(
+                "ERROR",
+                "opi.manager.argo_manager",
+                "Timeout waiting for ArgoCD application 'mpfm-w3h-pr-120' to be created after 360s",
+            ),
+        ],
+    )
+    run_cycle(_cfg(), token="tok", state={})
+    assert len(captured_ntfy) == 1
+    body = captured_ntfy[0]["body"]
+    assert "after 360s" in body  # the root argo_manager line survives
+    assert "Failed task" not in body
+    assert "sync completed with" not in body
+    assert captured_ntfy[0]["title"] == "OPI log-watch: 1 issue(s)"
 
 
 def test_severity_ranking():
