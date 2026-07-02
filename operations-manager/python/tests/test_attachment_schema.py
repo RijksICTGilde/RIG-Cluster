@@ -189,6 +189,78 @@ def test_distinct_targets_pass() -> None:
     _assert_unique_attachment_targets(uses, "api", None)  # no raise
 
 
+def test_duplicate_reference_rejected() -> None:
+    # The mft-tp9 bug: the same reference coupled twice, the second with an empty path.
+    uses = [
+        {"reference": "ca-root", "provide-as": "file", "path": "/etc/fsc/ca/root.pem"},
+        {"reference": "ca-root", "provide-as": "file", "path": ""},
+    ]
+    with pytest.raises(ValueError, match="meervoudig gekoppeld"):
+        _assert_unique_attachment_targets(uses, "dirmgr", None)
+
+
+def test_empty_file_path_rejected() -> None:
+    uses = [{"reference": "ca-root", "provide-as": "file", "path": ""}]
+    with pytest.raises(ValueError, match="geen pad"):
+        _assert_unique_attachment_targets(uses, "dirmgr", None)
+
+
+def test_missing_env_name_rejected() -> None:
+    uses = [{"reference": "tok", "provide-as": "env-var"}]
+    with pytest.raises(ValueError, match="geen env-var-naam"):
+        _assert_unique_attachment_targets(uses, "api", None)
+
+
+def test_validate_attachment_couplings_flags_base_component_duplicate() -> None:
+    # A base component's services list is not covered by the JSON schema, so this
+    # duplicate-with-empty-path can only be caught by validate_attachment_couplings.
+    project = {
+        "components": [
+            {
+                "name": "dirmgr",
+                "services": [
+                    {
+                        "attachments": {
+                            "config": [
+                                {"reference": "ca-root", "provide-as": "file", "path": "/etc/fsc/ca/root.pem"},
+                                {"reference": "ca-root", "provide-as": "file", "path": ""},
+                            ]
+                        }
+                    }
+                ],
+            }
+        ],
+    }
+    from opi.handlers.project_file_handler import validate_attachment_couplings
+
+    errors = validate_attachment_couplings(project)
+    assert len(errors) == 1
+    assert "meervoudig gekoppeld" in errors[0]
+
+
+def test_validate_attachment_couplings_passes_valid_project() -> None:
+    from opi.handlers.project_file_handler import validate_attachment_couplings
+
+    project = {
+        "components": [
+            {
+                "name": "dirmgr",
+                "services": [
+                    {
+                        "attachments": {
+                            "config": [
+                                {"reference": "ca-root", "provide-as": "file", "path": "/etc/fsc/ca/root.pem"},
+                                {"reference": "dir-cert", "provide-as": "file", "path": "/etc/fsc/cert.pem"},
+                            ]
+                        }
+                    }
+                ],
+            }
+        ],
+    }
+    assert validate_attachment_couplings(project) == []
+
+
 def test_attachment_id_allows_hyphens_rejects_underscores() -> None:
     from opi.forms.editables.validators import AttachmentIdValidator
 
