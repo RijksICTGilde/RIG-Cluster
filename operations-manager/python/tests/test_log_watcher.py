@@ -99,24 +99,28 @@ def test_critical_sets_urgent_priority(monkeypatch, captured_ntfy):
     assert captured_ntfy[0]["priority"] == "urgent"
 
 
-def test_warning_shown_alongside_error(monkeypatch, captured_ntfy):
-    # A warning must appear as its own line, not be demoted into a "+N more" footer.
+def test_only_genuine_error_records_alert(monkeypatch, captured_ntfy):
+    # The crux fix: only a real "- ERROR -" record is an issue. A warning (error-only
+    # mode), a traceback frame, its source f-string, and a prior alert-body echo are
+    # all dropped - so one exception is ONE alert, and the feedback loop can't form.
     _inject_rows(
         monkeypatch,
         [
             _line("ERROR", "opi.manager.project_manager", "Deployment failed for project rig-foo"),
             _line("WARNING", "opi.connectors.kubectl", "Slow response from apiserver"),
+            "    raise RuntimeError(",
+            "    f\"Deployment '{deployment_name}' in project '{project_name}' not fully deleted\"",
+            "\U0001f534 ERR ERR RuntimeError: Deployment 'pr-120' not fully deleted",
         ],
     )
     run_cycle(_cfg(), token="tok", state={})
     body = captured_ntfy[0]["body"]
-    assert "ERR" in body
     assert "project_manager: Deployment failed for project rig-foo" in body
-    assert "WARN" in body
-    assert "kubectl: Slow response from apiserver" in body
-    assert "more" not in body  # no overflow footer for a 2-item batch
-    assert "LOW" not in body  # the fake hardcoded severity is gone
-    assert captured_ntfy[0]["title"] == "OPI log-watch: 2 issue(s)"
+    assert "kubectl" not in body  # warning dropped (error-only)
+    assert "raise RuntimeError" not in body  # traceback frame dropped
+    assert "deployment_name" not in body  # unsubstituted f-string source line dropped
+    assert "ERR ERR" not in body  # our own alert echo dropped -> no feedback loop
+    assert captured_ntfy[0]["title"] == "OPI log-watch: 1 issue(s)"
 
 
 def test_overflow_footer_is_truthful(monkeypatch, captured_ntfy):
@@ -349,24 +353,14 @@ def test_severity_prefers_level_field():
     assert log_watcher.severity("plain warning text", "") == 0
 
 
-def test_json_envelope_level_drives_classification(monkeypatch, captured_ntfy):
-    _inject_rows(
-        monkeypatch,
-        [
-            _envelope("error", "opi.manager.deploy", "ERROR", "rollout failed"),
-            # level=warn, but the message text contains the word ERROR; the field must win -> WARN.
-            _envelope("warn", "opi.connectors.kubectl", "WARNING", "ERROR string appeared in output"),
-        ],
-    )
+def test_json_envelope_error_record_alerts(monkeypatch, captured_ntfy):
+    # A JSON-envelope error record flows through and is classified ERR from the level field.
+    _inject_rows(monkeypatch, [_envelope("error", "opi.manager.deploy", "ERROR", "rollout failed")])
     run_cycle(_cfg(), token="tok", state={})
     note = captured_ntfy[0]
-    segments = note["body"].split("\n\n")
-    err_line = next(s for s in segments if "rollout failed" in s)
-    warn_line = next(s for s in segments if "appeared in output" in s)
-    assert err_line.split()[1] == "ERR"  # emoji, tag, text...
-    assert warn_line.split()[1] == "WARN"  # not ERR, despite "ERROR" in the text
-    assert "kubectl: ERROR string appeared in output" in warn_line
-    # No CRITICAL-level entry present, so priority stays high (not urgent).
+    seg = note["body"].split("\n\n")[0]
+    assert seg.split()[1] == "ERR"
+    assert "deploy: rollout failed" in note["body"]
     assert note["priority"] == "high"
 
 
