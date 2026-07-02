@@ -35,9 +35,13 @@ class TestParseK8sMemoryToMi:
         result = parse_k8s_memory_to_mi("32768Ki")
         assert abs(result - 32.0) < 0.01
 
+    def test_ti_unit(self):
+        # Ti (tebibyte) is a valid k8s binary unit: 1Ti = 1024 * 1024 Mi.
+        assert parse_k8s_memory_to_mi("512Ti") == 512 * 1024.0 * 1024
+
     def test_invalid_unit(self):
         with pytest.raises(ValueError, match="Unknown memory unit"):
-            parse_k8s_memory_to_mi("512Ti")
+            parse_k8s_memory_to_mi("512Xi")
 
     def test_invalid_format(self):
         with pytest.raises(ValueError, match="Cannot parse"):

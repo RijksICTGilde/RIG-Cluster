@@ -166,6 +166,12 @@ CLUSTER_CONFIG = {
                     "external_dns_target": "router.rijks.app",
                 },
                 {
+                    "domain": "rijksapps.nl",
+                    "supports_dots": True,
+                    "issuer": "letsencrypt",
+                    "restricted_subdomains": True,
+                },
+                {
                     "domain": "rijksapp.nl",
                     "supports_dots": True,
                     "issuer": "letsencrypt",
