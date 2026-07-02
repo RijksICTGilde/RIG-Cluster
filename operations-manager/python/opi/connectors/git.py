@@ -819,7 +819,11 @@ class GitConnector:
             if code != 0:
                 # Check if this is a conflict
                 if "CONFLICT" in stderr or "conflict" in stderr.lower():
-                    logger.error(f"Rebase conflict detected: {stderr}")
+                    # A conflict here is a recoverable, expected outcome: we abort cleanly
+                    # and the caller (mutate_and_commit_project) resets to the remote and
+                    # re-applies. Log at WARNING, not ERROR - the caller decides if the
+                    # overall operation ultimately failed.
+                    logger.warning(f"Rebase conflict, aborting to re-apply on latest remote: {stderr}")
                     # Abort the rebase to leave repo in clean state
                     abort_cmd = ["rebase", "--abort"]
                     await self._run_git_command(abort_cmd, cwd=self.__working_dir)

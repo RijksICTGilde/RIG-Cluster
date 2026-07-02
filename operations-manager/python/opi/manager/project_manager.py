@@ -2595,6 +2595,11 @@ class ProjectManager:
             project_name = await self.get_name()
             deployments = await self.get_deployments(cluster_filter=True, deployment_names=targets)
             sync_failures: list[str] = []
+            # Runtime pod-health issues (e.g. CrashLoopBackOff) are the user app crashing,
+            # not a deploy/sync failure: OPI synced the manifests fine. These are logged
+            # as warnings and do NOT fail the task, so a persistently-crashing app doesn't
+            # flood ERRORs (and pages) on every reprocess of the project.
+            health_warnings: list[str] = []
 
             if deployments and project_name:
                 from opi.services.oom_watcher import (
@@ -2893,10 +2898,17 @@ class ProjectManager:
                         names = ", ".join(f.component_name for f in image_pull_failures)
                         sync_failures.append(f"{app_name}: ImagePullBackOff for {names}")
 
-                    # Handle CrashLoopBackOff: report only, no remediation
+                    # CrashLoopBackOff is the user's app crashing at runtime, not a
+                    # deploy/sync failure - report it as a warning, don't fail the task.
                     if crash_loop_failures:
                         names = ", ".join(f.component_name for f in crash_loop_failures)
-                        sync_failures.append(f"{app_name}: CrashLoopBackOff for {names}")
+                        health_warnings.append(f"{app_name}: CrashLoopBackOff for {names}")
+
+            if health_warnings:
+                logger.warning(
+                    "Runtime pod-health issue(s) after sync (app crashing, not a deploy failure): %s",
+                    "; ".join(health_warnings),
+                )
 
             if sync_failures:
                 failure_summary = "; ".join(sync_failures)
@@ -2906,6 +2918,8 @@ class ProjectManager:
                 critical_failures.append(f"ArgoCD sync failures: {failure_summary}")
                 self._processing_error = failure_summary
                 return False
+            elif health_warnings:
+                logger.info("ArgoCD applications synced (%d runtime health warning(s) above)", len(health_warnings))
             else:
                 logger.info("All ArgoCD applications are synced and healthy")
                 if progress_manager and argo_task:
