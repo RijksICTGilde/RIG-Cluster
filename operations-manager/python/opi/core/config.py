@@ -328,6 +328,17 @@ class Settings(BaseSettings):
     GRAFANA_DATASOURCE_UID: str | None = None  # Auto-discovered if not set
     GRAFANA_BILLING_DATASOURCE_UID: str | None = None  # UID of the billing Mimir datasource in Grafana
 
+    # Log watcher: periodic Loki triage of this OPI's production logs, pushing an
+    # ntfy notification for anything unexpected (reuses GRAFANA_URL / GRAFANA_TOKEN).
+    LOGWATCHER_ENABLED: bool = False  # the on/off "start" flag; opt-in (needs a token + ntfy topic)
+    LOGWATCHER_INTERVAL_SECONDS: int = 1800  # one cycle every 30 minutes
+    LOGWATCHER_NTFY_TOPIC: str | None = None  # secret, unguessable ntfy topic (treat like a password)
+    LOGWATCHER_NTFY_SERVER: str = "https://ntfy.sh"
+    LOGWATCHER_NAMESPACE: str = "rig-prd-operations"  # namespace whose OPI logs to scan
+    LOGWATCHER_CONTAINER: str = "operations-manager"  # container name in Loki labels
+    LOGWATCHER_WINDOW: str = "now-35m"  # Loki look-back per run (30m cadence + 5m overlap)
+    LOGWATCHER_DEDUP_HOURS: float = 6.0  # do not re-alert the same signature within this window
+
     # Resource tuning configuration
     RESOURCE_TUNING_WINDOW_HOURS: int = 24  # How far back to look for max usage
     RESOURCE_TUNING_MEMORY_BUFFER_PERCENT: int = 25  # Add 25% above max observed (request)

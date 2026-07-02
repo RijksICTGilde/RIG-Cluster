@@ -2,7 +2,8 @@
 #
 # One Python regex per line (re.search against the log MESSAGE). Lines starting
 # with '#' and blank lines are ignored. Keep this TIGHT: anything not matched
-# here escalates (Claude triage + ntfy), so only add genuinely-understood noise.
+# here escalates (an ntfy notification, plus Claude triage in the standalone CLI),
+# so only add genuinely-understood noise.
 # When a new benign pattern shows up in an alert, add it here.
 
 # --- postgres: idempotent create on re-processing ---
@@ -21,6 +22,11 @@ Error checking application creation status: Permission denied
 
 # --- git: concurrent-write contention, auto-rebases and retries (recovers) ---
 Push rejected .*attempting rebase and retry \(attempt \d+/\d+\)
+# Raw git stderr from a non-fast-forward push that the connector then rebases and
+# retries. Anchored to '^error:' so it matches ONLY git's own line, not the
+# connector's terminal "Failed to push changes ... after N attempts" ERROR, which
+# is unanchored and still escalates when all retries are exhausted.
+^error: failed to push some refs
 
 # --- kubectl: existence probes during create/delete (NotFound is expected) ---
 # Also covers the metrics/OOM/tuning path iterating a project's declared
@@ -38,6 +44,12 @@ Master API key not configured - route .+ is disabled
 
 # --- keycloak: existence check during processing ---
 Client '.+' not found in realm
+
+# --- keycloak: client scope already default on realm re-bootstrap (idempotent 409) ---
+Failed to assign client scope as realm default
+
+# --- project declared but not deployed yet - no Deployment to inspect ---
+No deployments found in project
 
 # --- kubectl: log fetch/stream transients while a pod is starting/rolling ---
 kubectl logs.*Error from server \(BadRequest\)

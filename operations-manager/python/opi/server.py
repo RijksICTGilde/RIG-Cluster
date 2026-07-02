@@ -219,6 +219,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         except Exception as e:
             logger.error("Failed to start database console reaper: %s", e)
 
+    # Start the log watcher scheduler if enabled
+    if settings.LOGWATCHER_ENABLED:
+        try:
+            from opi.core.logwatcher_scheduler import LogwatcherScheduler
+
+            _logwatcher_scheduler = LogwatcherScheduler()
+            await _logwatcher_scheduler.start()
+            app.state.logwatcher_scheduler = _logwatcher_scheduler
+        except Exception as e:
+            logger.error("Failed to start log watcher scheduler: %s", e)
+
     yield
 
     # Begin graceful drain: reject new task creation via API immediately
@@ -240,6 +251,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     db_console_reaper = getattr(app.state, "db_console_reaper", None)
     if db_console_reaper is not None:
         await db_console_reaper.stop()
+
+    # Stop log watcher scheduler
+    logwatcher_scheduler = getattr(app.state, "logwatcher_scheduler", None)
+    if logwatcher_scheduler is not None:
+        await logwatcher_scheduler.stop()
 
     # Stop task worker: stop claiming new tasks, then wait for active tasks to finish
     if _worker_instance is not None:

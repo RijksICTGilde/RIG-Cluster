@@ -4,7 +4,11 @@ Tests for opi.handlers.project_file_handler module.
 Tests for _parse_deepdiff_path, set_deployment_service_generation, and related methods.
 """
 
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.handlers.project_file_handler import (
+    ProjectFileHandler,
+    is_image_pull_disable_reason,
+    is_mutable_image_tag,
+)
 
 
 class TestParseDeepDiffPath:
@@ -209,6 +213,40 @@ class TestExtractComponentSecurity:
         assert handler.extract_component_security(project_data, "web") is None
 
 
+class TestExtractComponentProbe:
+    """Tests for the per-component ``probe`` block extractor."""
+
+    def test_defaults_to_tcp_when_component_missing(self) -> None:
+        handler = ProjectFileHandler()
+        result = handler.extract_component_probe({"components": []}, "missing")
+        assert result == {"scheme": "tcp", "readiness_path": "/", "liveness_path": "/"}
+
+    def test_defaults_to_tcp_when_no_probe_block(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web"}]}
+        result = handler.extract_component_probe(project_data, "web")
+        assert result == {"scheme": "tcp", "readiness_path": "/", "liveness_path": "/"}
+
+    def test_https_with_explicit_paths(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {
+            "components": [
+                {
+                    "name": "web",
+                    "probe": {"scheme": "https", "readiness-path": "/readyz", "liveness-path": "/healthz"},
+                }
+            ]
+        }
+        result = handler.extract_component_probe(project_data, "web")
+        assert result == {"scheme": "https", "readiness_path": "/readyz", "liveness_path": "/healthz"}
+
+    def test_http_scheme_defaults_paths_to_root(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "web", "probe": {"scheme": "http"}}]}
+        result = handler.extract_component_probe(project_data, "web")
+        assert result == {"scheme": "http", "readiness_path": "/", "liveness_path": "/"}
+
+
 class TestExtractComponentCommand:
     """Tests for the hidden per-component ``command`` extractors (component + deployment levels)."""
 
@@ -266,3 +304,157 @@ class TestExtractComponentCommand:
         handler = ProjectFileHandler()
         project_data = {"deployments": []}
         assert handler.extract_deployment_component_command(project_data, "prd", "web") is None
+
+
+class TestImagePullDisableReenable:
+    """Auto-disable records the offending image; a changed image auto-re-enables."""
+
+    def _project(self, image: str = "reg/app:v1") -> dict:
+        return {
+            "deployments": [
+                {
+                    "name": "prd",
+                    "components": [{"reference": "web", "image": image}],
+                }
+            ]
+        }
+
+    def _comp(self, project_data: dict) -> dict:
+        return project_data["deployments"][0]["components"][0]
+
+    def test_is_image_pull_disable_reason(self) -> None:
+        assert is_image_pull_disable_reason("ErrImagePull: manifest unknown (404)")
+        assert is_image_pull_disable_reason("ImagePullBackOff: back-off pulling image")
+        assert is_image_pull_disable_reason("InvalidImageName: bad ref")
+        assert not is_image_pull_disable_reason("OOMKilled detected")
+        assert not is_image_pull_disable_reason("5 restarts (threshold: 3)")
+
+    def test_disable_records_offending_image_for_image_pull(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = self._project("reg/app:broken")
+        handler.set_deployment_component_disabled(
+            project_data, "prd", "web", True, "ErrImagePull: manifest unknown (404)"
+        )
+        comp = self._comp(project_data)
+        assert comp["disabled"] is True
+        assert comp["disabled-image"] == "reg/app:broken"
+
+    def test_disable_does_not_record_image_for_non_image_reason(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = self._project("reg/app:v1")
+        handler.set_deployment_component_disabled(project_data, "prd", "web", True, "OOMKilled detected")
+        comp = self._comp(project_data)
+        assert comp["disabled"] is True
+        assert "disabled-image" not in comp
+
+    def test_enable_clears_reason_and_image(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = self._project("reg/app:broken")
+        handler.set_deployment_component_disabled(project_data, "prd", "web", True, "ErrImagePull: x")
+        handler.set_deployment_component_disabled(project_data, "prd", "web", False, "")
+        comp = self._comp(project_data)
+        assert comp["disabled"] is False
+        assert "disabled-reason" not in comp
+        assert "disabled-image" not in comp
+
+    def test_reenable_when_image_changed(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = self._project("reg/app:broken")
+        handler.set_deployment_component_disabled(project_data, "prd", "web", True, "ErrImagePull: x")
+        # User points the component at a new image.
+        self._comp(project_data)["image"] = "reg/app:fixed"
+
+        reenabled = handler.reenable_components_with_changed_image(project_data)
+
+        assert reenabled == [("prd", "web")]
+        comp = self._comp(project_data)
+        assert comp["disabled"] is False
+        assert "disabled-reason" not in comp
+        assert "disabled-image" not in comp
+
+    def test_no_reenable_when_image_unchanged(self) -> None:
+        """The automated re-process after a disable does not change the image -> no flapping."""
+        handler = ProjectFileHandler()
+        project_data = self._project("reg/app:broken")
+        handler.set_deployment_component_disabled(project_data, "prd", "web", True, "ErrImagePull: x")
+
+        reenabled = handler.reenable_components_with_changed_image(project_data)
+
+        assert reenabled == []
+        assert self._comp(project_data)["disabled"] is True
+
+    def test_no_reenable_for_non_image_disable(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = self._project("reg/app:v1")
+        handler.set_deployment_component_disabled(project_data, "prd", "web", True, "OOMKilled detected")
+        # Even if the image changes, an OOM disable is not an image-pull disable.
+        self._comp(project_data)["image"] = "reg/app:v2"
+
+        reenabled = handler.reenable_components_with_changed_image(project_data)
+
+        assert reenabled == []
+        assert self._comp(project_data)["disabled"] is True
+
+    def test_is_mutable_image_tag(self) -> None:
+        assert is_mutable_image_tag("reg/app:latest")
+        assert is_mutable_image_tag("reg/app")  # no tag -> :latest
+        assert is_mutable_image_tag("reg/app:main")
+        assert is_mutable_image_tag("rcr.rijksapps.nl:5000/app:latest")  # host port not a tag
+        assert not is_mutable_image_tag("reg/app:v1.2.3")
+        assert not is_mutable_image_tag("reg/app:a90bff069766")
+        assert not is_mutable_image_tag("reg/app@sha256:deadbeef")  # digest-pinned
+        assert not is_mutable_image_tag("")
+
+    def test_no_mutable_retry_when_not_allowed(self) -> None:
+        """Automated refresh (allow_mutable_retry=False) must not retry a :latest disable."""
+        handler = ProjectFileHandler()
+        project_data = self._project("reg/app:latest")
+        handler.set_deployment_component_disabled(project_data, "prd", "web", True, "ErrImagePull: x")
+
+        reenabled = handler.reenable_components_with_changed_image(project_data, allow_mutable_retry=False)
+
+        assert reenabled == []
+        assert self._comp(project_data)["disabled"] is True
+
+    def test_mutable_retry_reenables_latest_on_redeploy(self) -> None:
+        """Explicit user redeploy (allow_mutable_retry=True) retries a :latest disable."""
+        handler = ProjectFileHandler()
+        project_data = self._project("reg/app:latest")
+        handler.set_deployment_component_disabled(project_data, "prd", "web", True, "ErrImagePull: x")
+
+        reenabled = handler.reenable_components_with_changed_image(project_data, allow_mutable_retry=True)
+
+        assert reenabled == [("prd", "web")]
+        comp = self._comp(project_data)
+        assert comp["disabled"] is False
+        assert "disabled-image" not in comp
+
+    def test_mutable_retry_does_not_touch_versioned_tag(self) -> None:
+        """Even on redeploy, an unchanged versioned tag is not retried (only string-change)."""
+        handler = ProjectFileHandler()
+        project_data = self._project("reg/app:v1.2.3")
+        handler.set_deployment_component_disabled(project_data, "prd", "web", True, "ErrImagePull: x")
+
+        reenabled = handler.reenable_components_with_changed_image(project_data, allow_mutable_retry=True)
+
+        assert reenabled == []
+        assert self._comp(project_data)["disabled"] is True
+
+    def test_reenable_respects_deployment_filter(self) -> None:
+        handler = ProjectFileHandler()
+        project_data = {
+            "deployments": [
+                {"name": "prd", "components": [{"reference": "web", "image": "reg/app:broken"}]},
+                {"name": "acc", "components": [{"reference": "web", "image": "reg/app:broken"}]},
+            ]
+        }
+        for dep in ("prd", "acc"):
+            handler.set_deployment_component_disabled(project_data, dep, "web", True, "ErrImagePull: x")
+        for dep in project_data["deployments"]:
+            dep["components"][0]["image"] = "reg/app:fixed"
+
+        reenabled = handler.reenable_components_with_changed_image(project_data, deployment_names=["prd"])
+
+        assert reenabled == [("prd", "web")]
+        assert project_data["deployments"][0]["components"][0]["disabled"] is False
+        assert project_data["deployments"][1]["components"][0]["disabled"] is True
