@@ -46,6 +46,16 @@ def _obfuscate_git_command(cmd_str: str) -> str:
     return obfuscated
 
 
+class GitPushConflictError(RuntimeError):
+    """A push could not be landed because the remote moved and the local commit
+    could not be rebased on top of it (conflict, or retries exhausted).
+
+    Callers that own the semantic change (e.g. "remove deployment X") can catch
+    this, reset to the remote via ``reset_to_remote()``, re-apply the change to the
+    fresh state, and retry - instead of surfacing a fatal "manual intervention" error.
+    """
+
+
 class GitConnector:
     """Connector for interacting with Git repositories using GitPython."""
 
@@ -825,6 +835,27 @@ class GitConnector:
             logger.error(f"Failed to rebase on {server_info}: {e}")
             raise
 
+    async def reset_to_remote(self, branch: str | None = None) -> None:
+        """Discard local commits/changes and hard-reset the working tree to origin/<branch>.
+
+        Used to recover a clean, up-to-date base after a push conflict so a semantic
+        change can be re-applied on top of whatever landed on the remote meanwhile.
+        """
+        await self.ensure_repo_cloned()
+        target_branch = branch or self.branch
+
+        fetch_cmd = ["fetch", "origin", target_branch]
+        _, stderr, code = await self._run_git_command(fetch_cmd, cwd=self.__working_dir)
+        self._check_git_command_result(code, stderr, f"fetch origin/{target_branch}")
+
+        reset_cmd = ["reset", "--hard", f"origin/{target_branch}"]
+        _, stderr, code = await self._run_git_command(reset_cmd, cwd=self.__working_dir)
+        self._check_git_command_result(code, stderr, f"reset --hard origin/{target_branch}")
+
+        # Drop any untracked leftovers so the tree exactly matches origin.
+        await self._run_git_command(["clean", "-fd"], cwd=self.__working_dir)
+        logger.info(f"Reset working tree to origin/{target_branch}")
+
     async def file_changed_between_commits(self, file_path: str, old_commit: str, new_commit: str) -> bool:
         """
         Check if a specific file was changed between commits using git diff.
@@ -1381,17 +1412,16 @@ class GitConnector:
                 rebase_success = await self._rebase_on_remote(target_branch)
                 if not rebase_success:
                     server_info = self._get_server_context()
-                    raise RuntimeError(
+                    raise GitPushConflictError(
                         f"Cannot push to {target_branch} on {server_info}: "
-                        f"Remote has conflicting changes that cannot be automatically merged. "
-                        f"Manual intervention required."
+                        f"Remote has conflicting changes that cannot be automatically merged."
                     )
 
                 logger.info("Rebase successful, retrying push...")
             else:
                 # Last attempt failed
                 server_info = self._get_server_context()
-                raise RuntimeError(
+                raise GitPushConflictError(
                     f"Failed to push changes to {target_branch} on {server_info} after {max_retries} attempts: {stderr}"
                 )
 
