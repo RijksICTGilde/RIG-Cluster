@@ -785,12 +785,18 @@ class AttachmentOptionsProvider:
         catalog = extract_attachment_catalog(self._yaml_data)
         if not catalog:
             return [{"value": "", "label": "Geen bijlagen geüpload: upload eerst op de Bijlagen-sectie"}]
+        # Lead with an empty placeholder so a freshly added row does not silently
+        # default to the first catalog entry (an untouched select otherwise submits
+        # the first option, producing a duplicate coupling with an empty path).
         return [
-            {
-                "value": entry["id"],
-                "label": f"{entry['id']} ({entry['filename']})" if entry.get("filename") else entry["id"],
-            }
-            for entry in catalog.values()
+            {"value": "", "label": "-- Kies een bijlage --"},
+            *(
+                {
+                    "value": entry["id"],
+                    "label": f"{entry['id']} ({entry['filename']})" if entry.get("filename") else entry["id"],
+                }
+                for entry in catalog.values()
+            ),
         ]
 
 

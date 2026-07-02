@@ -23,6 +23,39 @@
         window.isEditSubmitting = false;
     }
 
+    // Tracks whether the user has edited anything in an open modal, so a
+    // backdrop click can warn before discarding unsaved changes. Delegated
+    // listeners so content swapped in later (sequence add/remove re-renders)
+    // is covered too; a programmatic innerHTML swap does not fire input/change.
+    if (typeof window.isEditDirty === 'undefined') {
+        window.isEditDirty = false;
+    }
+    function markDirtyIfInModal(e) {
+        if (e.target && e.target.closest && e.target.closest('.edit-section-modal')) {
+            window.isEditDirty = true;
+        }
+    }
+    document.addEventListener('input', markDirtyIfInModal);
+    document.addEventListener('change', markDirtyIfInModal);
+
+    // Preserve the modal's scroll position across htmx swaps. Adding or removing
+    // a sequence row (e.g. an attachment coupling) re-renders the inner content
+    // via htmx, which otherwise resets the scroll container to the top and makes
+    // the user lose their place. htmx's own swap events are the idiomatic hook.
+    var savedModalScroll = null;
+    document.addEventListener('htmx:beforeSwap', function (evt) {
+        var tgt = evt.detail && evt.detail.target;
+        var modal = tgt && tgt.closest && tgt.closest('.edit-section-modal');
+        savedModalScroll = modal ? modal.scrollTop : null;
+    });
+    document.addEventListener('htmx:afterSwap', function (evt) {
+        if (savedModalScroll === null) return;
+        var tgt = evt.detail && evt.detail.target;
+        var modal = tgt && tgt.closest && tgt.closest('.edit-section-modal');
+        if (modal) modal.scrollTop = savedModalScroll;
+        savedModalScroll = null;
+    });
+
     function closeAnyOpenModals() {
         document
             .querySelectorAll('.edit-section-modal.is-open, .edit-section-backdrop.is-open')
@@ -34,6 +67,7 @@
 
     window.closeEditModal = function () {
         window.isEditSubmitting = false;
+        window.isEditDirty = false;
         closeAnyOpenModals();
     };
 
@@ -43,8 +77,18 @@
     };
 
     window.handleEditBackdropClick = function () {
-        if (!window.isEditSubmitting) {
-            window.closeEditModal();
+        // Never dismiss while a task is running, and confirm before discarding
+        // unsaved edits (large component/attachment modals are easy to close by
+        // accident with a stray click outside the dialog).
+        if (window.isEditSubmitting) {
+            return;
         }
+        if (
+            window.isEditDirty &&
+            !window.confirm('Er zijn niet-opgeslagen wijzigingen. Weet je zeker dat je de bewerking wilt sluiten?')
+        ) {
+            return;
+        }
+        window.closeEditModal();
     };
 })();
