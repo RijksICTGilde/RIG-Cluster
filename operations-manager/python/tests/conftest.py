@@ -119,6 +119,9 @@ def mock_settings() -> Any:
         mock_settings.KEYCLOAK_URL = ""
         mock_settings.PROMETHEUS_EXTERNAL_URL = ""
         mock_settings.PROMETHEUS_URL = ""
+        # Real int, not a bare MagicMock: create_app() reads this to wire SessionMiddleware,
+        # and numeric comparisons on it must work even when this mock is in effect.
+        mock_settings.SESSION_MAX_AGE_SECONDS = 28800
         yield mock_settings
 
 
