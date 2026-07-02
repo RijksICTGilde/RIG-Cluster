@@ -3190,19 +3190,32 @@ def _merge_attachment_uses(base: list[dict[str, Any]], override: list[dict[str, 
 def _assert_unique_attachment_targets(
     uses: list[dict[str, Any]], component_name: str, deployment_name: str | None
 ) -> None:
-    """Reject two different references mounting on the same path / the same env-var name."""
+    """Reject an invalid attachment coupling.
+
+    Rejects a reference coupled more than once, a delivery target left empty
+    (``file`` without ``path`` / ``env-var`` without ``env-name``), and two
+    references mounting on the same path or the same env-var name.
+    """
     where = f"component '{component_name}'" + (f" in deployment '{deployment_name}'" if deployment_name else "")
+    seen_refs: set[str] = set()
     paths: dict[str, str] = {}
     env_names: dict[str, str] = {}
     for use in uses:
         ref = use.get("reference", "?")
-        if use.get("provide-as") == "file" and use.get("path"):
-            target = use["path"]
+        if ref in seen_refs:
+            raise ValueError(f"Bijlage '{ref}' is meervoudig gekoppeld op {where}")
+        seen_refs.add(ref)
+        if use.get("provide-as") == "file":
+            target = use.get("path")
+            if not target:
+                raise ValueError(f"Bijlage '{ref}' op {where} heeft geen pad ingesteld")
             if target in paths:
                 raise ValueError(f"Bijlagen '{paths[target]}' en '{ref}' gebruiken hetzelfde pad '{target}' op {where}")
             paths[target] = ref
-        elif use.get("provide-as") == "env-var" and use.get("env-name"):
-            target = use["env-name"]
+        elif use.get("provide-as") == "env-var":
+            target = use.get("env-name")
+            if not target:
+                raise ValueError(f"Bijlage '{ref}' op {where} heeft geen env-var-naam ingesteld")
             if target in env_names:
                 raise ValueError(
                     f"Bijlagen '{env_names[target]}' en '{ref}' gebruiken dezelfde env-var '{target}' op {where}"
@@ -3225,6 +3238,41 @@ def validate_attachment_references(project_data: dict[str, Any]) -> list[str]:
         if reference not in catalog_ids:
             locations = ", ".join(where) if where else "?"
             errors.append(f"Onbekende bijlage-referentie '{reference}' gebruikt door: {locations}")
+    return errors
+
+
+def validate_attachment_couplings(project_data: dict[str, Any]) -> list[str]:
+    """Return error strings for structurally invalid attachment couplings.
+
+    Checks each component's raw coupling list (a base component's, and each
+    deployment-component override's) BEFORE the base<-deployment merge, so a
+    duplicate reference on a base component is caught even though the merge
+    (:func:`_merge_attachment_uses`) would collapse it. Rejects a reference
+    coupled more than once, an empty delivery target, and colliding paths /
+    env-var names -- the base-component ``services`` list is not covered by the
+    JSON schema, so this is the authoritative gate for it.
+    """
+    errors: list[str] = []
+    for component in project_data.get("components", []) or []:
+        if not isinstance(component, dict):
+            continue
+        try:
+            _assert_unique_attachment_targets(
+                extract_component_attachment_uses(component), component.get("name", "?"), None
+            )
+        except ValueError as e:
+            errors.append(str(e))
+    for dep in project_data.get("deployments", []) or []:
+        if not isinstance(dep, dict):
+            continue
+        for ref in dep.get("components", []) or []:
+            if not isinstance(ref, dict) or not ref.get("reference"):
+                continue
+            uses = extract_deployment_component_attachment_uses(project_data, dep.get("name"), ref["reference"])
+            try:
+                _assert_unique_attachment_targets(uses, ref["reference"], dep.get("name"))
+            except ValueError as e:
+                errors.append(str(e))
     return errors
 
 

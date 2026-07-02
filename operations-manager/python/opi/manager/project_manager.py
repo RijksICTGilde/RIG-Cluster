@@ -61,7 +61,9 @@ from opi.handlers.project_file_handler import (
     attachment_is_referenced,
     extract_service_names_from_component,
     find_attachment_data_list,
+    is_image_pull_disable_reason,
     save_project_file,
+    validate_attachment_couplings,
     validate_attachment_references,
 )
 from opi.handlers.sops import SopsHandler
@@ -1387,6 +1389,15 @@ class ProjectManager:
         attachment_errors = validate_attachment_references(project_data)
         if attachment_errors:
             raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(attachment_errors)}")
+
+        # Attachment couplings must be structurally valid: no reference coupled
+        # twice, no empty delivery target, no colliding path/env-var. The base
+        # component 'services' list is not covered by the JSON schema, so this is
+        # the only place a duplicate reference with an empty path is rejected
+        # before it can be committed.
+        coupling_errors = validate_attachment_couplings(project_data)
+        if coupling_errors:
+            raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(coupling_errors)}")
 
     async def save_and_commit_project(
         self,
@@ -4175,21 +4186,39 @@ class ProjectManager:
         )
 
     async def close(self) -> None:
-        """Clean up resources. Safe to call multiple times."""
+        """Clean up resources. Safe to call multiple times.
+
+        Each cleanup step is isolated: a failure to tear down one connector
+        (e.g. a temp-dir removal race) is logged but never propagated, so it
+        cannot mask the outcome of the operation that ran before ``close()``.
+        Callers invoke this in a ``finally``; a raising cleanup would otherwise
+        turn an already-committed change (e.g. an attachment delete that was
+        pushed to Git) into a reported failure.
+        """
         if self._closed:
             return
         self._closed = True
-        await self.close_git_connector_for_project_files()
-        await self.close_git_connector_for_argocd()
-        await self.close_git_connectors_for_deployments()
+        for step in (
+            self.close_git_connector_for_project_files,
+            self.close_git_connector_for_argocd,
+            self.close_git_connectors_for_deployments,
+        ):
+            try:
+                await step()
+            except Exception:
+                logger.exception("Error during ProjectManager cleanup step %s", step.__name__)
         if self._database_manager:
-            await self._database_manager.close()
+            try:
+                await self._database_manager.close()
+            except Exception:
+                logger.exception("Error closing DatabaseManager during ProjectManager cleanup")
 
     async def process_project(
         self,
         deployment_name: str | None = None,
         force_clone: bool = False,
         deployment_names: list[str] | None = None,
+        allow_mutable_tag_retry: bool = True,
     ) -> bool:
         """
         Process the project file and create all required resources.
