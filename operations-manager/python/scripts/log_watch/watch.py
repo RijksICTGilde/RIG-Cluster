@@ -220,7 +220,7 @@ def build_config() -> LogWatchConfig:
         ntfy_server=cfg.NTFY_SERVER,
         namespace=cfg.NAMESPACE,
         container=cfg.CONTAINER,
-        level=cfg.LEVEL,
+        # level intentionally left at the shared default (error+ only, via detected_level).
         window=WINDOW,
         dedup_hours=cfg.DEDUP_HOURS,
         max_lines=cfg.MAX_LINES,
