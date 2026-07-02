@@ -166,6 +166,7 @@ class TestDeploymentUpdate:
     def test_push_with_deployment_update(self, client, mock_project_service, mock_connector, mock_settings):
         mock_pm = MagicMock()
         mock_pm.update_image_and_regenerate = AsyncMock(return_value={})
+        mock_pm.close = AsyncMock()
         with patch("opi.api.image_router.ProjectManager", return_value=mock_pm):
             response = client.post(
                 "/api/v1/projects/test-project/images/push"

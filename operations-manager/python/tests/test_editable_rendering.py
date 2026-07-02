@@ -184,9 +184,10 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 12 children: storage sequences hidden (no storage services),
-        # path (with nested match/rewrite) always visible
-        assert len(first_item.children) == 12
+        # 13 children: storage/attachment sequences hidden (no storage services),
+        # path (with nested match/rewrite) always visible, plus the publish-on-web
+        # TLS field (component enables publish-on-web).
+        assert len(first_item.children) == 13
 
     def test_components_item_has_storage_with_storage_services(self):
         renderer = _create_renderer()
@@ -209,9 +210,10 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 13 children: storage sequence visible (persistent-storage enabled),
-        # path (with nested match/rewrite) always visible
-        assert len(first_item.children) == 13
+        # 14 children: storage sequence visible (persistent-storage enabled),
+        # path (with nested match/rewrite) always visible, plus the publish-on-web
+        # TLS field (component enables publish-on-web).
+        assert len(first_item.children) == 14
 
 
 class TestNestedSequenceRendering:
@@ -255,7 +257,8 @@ class TestNestedSequenceRendering:
         nested_seq = nested_seqs[0]
         first_comp = nested_seq.children[0]
         assert first_comp.widget_type == "sequence_item"
-        assert len(first_comp.children) == 4  # reference, image, pullPolicy, user-env-vars
+        # reference, image, pullPolicy, user-env-vars, per-deployment attachments sequence
+        assert len(first_comp.children) == 5
 
 
 class TestDisplayCardRendering:

@@ -50,7 +50,11 @@ def render_template(template_name: str, variables: dict[str, Any]) -> str:
     # Note: autoescape=False is intentional for YAML template generation
     # Use FileSystemLoader to support {% include %} for sidecar templates
     env = Environment(
-        loader=FileSystemLoader(settings.MANIFESTS_PATH), trim_blocks=True, lstrip_blocks=True, autoescape=False
+        loader=FileSystemLoader(settings.MANIFESTS_PATH),
+        trim_blocks=True,
+        lstrip_blocks=True,
+        keep_trailing_newline=True,  # preserve an included partial's final newline so the next line doesn't merge onto it
+        autoescape=False,
     )
     template = env.from_string(template_content)
 
@@ -94,7 +98,12 @@ class ManifestGenerator:
             # trim_blocks removes newlines after block tags
             # lstrip_blocks removes leading whitespace from line start to block tag
             # Use FileSystemLoader to support {% include %} for sidecar templates
-            env = Environment(loader=FileSystemLoader(settings.MANIFESTS_PATH), trim_blocks=True, lstrip_blocks=True)
+            env = Environment(
+                loader=FileSystemLoader(settings.MANIFESTS_PATH),
+                trim_blocks=True,
+                lstrip_blocks=True,
+                keep_trailing_newline=True,
+            )
             template = env.from_string(manifest_content)
 
             # Render the template with variables
