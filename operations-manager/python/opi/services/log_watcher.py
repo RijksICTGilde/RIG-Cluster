@@ -47,6 +47,13 @@ MAX_BODY_LINES = 10
 # that grows every cycle (its "RESULT: N NEW issue(s)" WARNING lines get re-picked).
 SELF_LOG_EXCLUDE = ("opi.services.log_watcher", "opi.core.logwatcher_scheduler")
 
+# Only a genuine Python-logging record is a distinct "issue". Loki stores each line
+# of a multi-line message (a traceback, or our own multi-line ntfy body) as its own
+# detected_level=error entry, so without this every stack-frame ("raise RuntimeError(",
+# 'File "..."', a bare f-string) and every alert-body echo becomes a separate alert.
+# A real OPI record carries the "... - ERROR - " / "... - CRITICAL - " level delimiter.
+_LOG_RECORD_RE = re.compile(r" - (?:ERROR|CRITICAL) - ")
+
 # A triage function takes the ordered sample lines and returns a plain-text SUMMARY
 # block (empty string if it produced nothing). The standalone CLI wires this to
 # Claude; the in-app scheduler passes None and the deterministic fallback is used.
@@ -319,7 +326,11 @@ def signature(msg: str) -> str:
 
 def send_ntfy(client: httpx.Client, cfg: LogWatchConfig, title: str, body: str, priority: str, tags: str) -> bool:
     server = cfg.ntfy_server.rstrip("/")
-    logger.info("ntfy push [%s] %s\n%s", priority, title, body)
+    # NEVER log the multi-line body: each body line lands in Loki as its own
+    # detected_level=error entry that lacks this module name, so it escapes both the
+    # error-only query and the self-exclusion - and the watcher re-ingests its own
+    # alert next cycle (a growing "ERR ERR ERR" feedback loop). Log a one-line summary.
+    logger.info("ntfy push [%s] %s (%d problem line(s))", priority, title, body.count("\n\n") + 1 if body else 0)
     try:
         client.post(
             f"{server}/{cfg.ntfy_topic}",
@@ -390,6 +401,11 @@ def run_cycle(
         remainder: dict[str, dict] = {}
         for row in rows:
             msg, level = extract_fields(row[2])
+            # Skip traceback frames / continuation lines / our own body echoes: only a
+            # real "- ERROR -"/"- CRITICAL -" record is a standalone issue.
+            if not _LOG_RECORD_RE.search(msg):
+                dropped += 1
+                continue
             if any(p.search(msg) for p in ignore):
                 dropped += 1
                 continue
