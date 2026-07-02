@@ -12,6 +12,7 @@ import logging
 import os
 import secrets
 import shutil
+from collections.abc import Callable  # noqa: TC003 - used in an eagerly-evaluated annotation (no future-annotations)
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -25,6 +26,7 @@ from opi.connectors import create_argo_connector
 from opi.connectors.chisel_connector import ChiselConnector
 from opi.connectors.git import (
     GitConnector,
+    GitPushConflictError,
     create_git_connector_for_argocd,
     create_git_connector_for_project_files,
     create_git_connector_from_repo_config,
@@ -1456,6 +1458,57 @@ class ProjectManager:
                 else f"{project_data.get('name')}.yaml"
             )
             get_project_service().load_project_from_data(project_data, filename)
+
+    async def mutate_and_commit_project(
+        self,
+        mutator: Callable[[dict[str, Any]], dict[str, Any] | None],
+        commit_message: str,
+        *,
+        max_attempts: int = 5,
+        enforce_validation: bool = True,
+    ) -> bool:
+        """Reload the project, apply ``mutator``, and commit+push - retrying on a git
+        push conflict by re-reading the CURRENT remote state and re-applying.
+
+        This is the concurrency-safe way to make a semantic edit (e.g. remove a
+        deployment). If a competing task pushed first, we do not fail with a fatal
+        "manual intervention" error: we hard-reset to the remote (dropping our stale
+        local commit) and re-apply the mutation on top of what actually landed.
+
+        ``mutator`` receives fresh project data (from get_contents, already migrated)
+        and returns the mutated dict, or ``None`` to signal the change is already
+        applied - an idempotent no-op that succeeds without a commit (e.g. deleting a
+        deployment that another task already removed).
+
+        Returns True if a commit was pushed, False if the mutation was already applied.
+        """
+        for attempt in range(max_attempts):
+            if attempt > 0:
+                # Drop our failed local commit and re-sync to the winner's state.
+                git_connector = await self.get_git_connector_for_project_files()
+                await git_connector.reset_to_remote()
+
+            current = await self.get_contents()
+            mutated = mutator(current)
+            if mutated is None:
+                logger.info("Project mutation already applied, nothing to commit: %s", commit_message)
+                return False
+
+            try:
+                await self.save_and_commit_project(mutated, commit_message, enforce_validation=enforce_validation)
+                return True
+            except GitPushConflictError:
+                if attempt < max_attempts - 1:
+                    logger.warning(
+                        "Push conflict on '%s' (attempt %d/%d); re-reading remote and re-applying",
+                        commit_message,
+                        attempt + 1,
+                        max_attempts,
+                    )
+                    continue
+                raise
+
+        return False
 
     async def check_and_create_namespaces(
         self, deployment_name: str | None = None, deployment_names: list[str] | None = None

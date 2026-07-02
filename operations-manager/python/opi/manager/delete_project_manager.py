@@ -1618,19 +1618,23 @@ class DeleteProjectManager:
                     deletion_results["errors"].append(f"Error deleting deployment folder from {repository_name}: {e}")
                     logger.exception("Error deleting deployment folder")
 
-            # Step 8: Remove deployment from project file
+            # Step 8: Remove deployment from project file (idempotent + conflict-safe).
+            # Deleting a deployment that is already gone (e.g. a concurrent delete won
+            # the git race) is success, not an error; on a push conflict we re-read the
+            # remote and re-apply instead of failing with "manual intervention required".
             try:
                 logger.info(f"Removing deployment '{deployment_name}' from project file for project '{project_name}'")
 
-                current_project_data = await self.project_manager.get_contents()
+                def _remove_deployment(project_data: dict[str, Any]) -> dict[str, Any] | None:
+                    deployments = project_data.get("deployments", []) or []
+                    remaining = [dep for dep in deployments if dep.get("name") != deployment_name]
+                    if len(remaining) == len(deployments):
+                        return None  # already absent -> idempotent no-op
+                    project_data["deployments"] = remaining
+                    return project_data
 
-                updated_deployments = [
-                    dep for dep in current_project_data.get("deployments", []) if dep.get("name") != deployment_name
-                ]
-                current_project_data["deployments"] = updated_deployments
-
-                await self.project_manager.save_and_commit_project(
-                    current_project_data,
+                committed = await self.project_manager.mutate_and_commit_project(
+                    _remove_deployment,
                     f"Delete deployment '{deployment_name}' from project {project_name}",
                 )
 
@@ -1638,13 +1642,11 @@ class DeleteProjectManager:
                     {
                         "type": "project_file_update",
                         "target": f"deployment '{deployment_name}'",
-                        "action": "removed_from_project_file",
+                        "action": "removed_from_project_file" if committed else "already_absent",
                         "status": "success",
                     }
                 )
-                logger.info(
-                    f"Successfully removed deployment '{deployment_name}' from project file and committed changes"
-                )
+                logger.info("Deployment '%s' removed from project file (committed=%s)", deployment_name, committed)
 
             except Exception as e:
                 deletion_results["operations"].append(
