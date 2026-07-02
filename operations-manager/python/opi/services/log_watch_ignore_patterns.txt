@@ -10,6 +10,10 @@
 Database .+ already exists on
 Schema .+ already exists in database
 
+# --- clone/dump: empty-but-valid source schema (nothing to copy, not an error) ---
+Source schema '.+' exists but contains no tables
+pg_dump produced very little output \(\d+ bytes\) - might be empty dump
+
 # --- minio mc: bucket already created (backup flow re-creates blindly) ---
 Unable to make bucket .+ already own it
 
@@ -19,6 +23,15 @@ Failed to connect to Kopia repository:.*repository not initialized
 # --- argo: false "permission denied" while an app is mid-creation (auto-retries) ---
 Permission denied accessing application
 Error checking application creation status: Permission denied
+
+# --- argo app-creation timeout: one incident is re-logged by project_manager and
+# persistent_task_progress as it bubbles up. Drop those wrapper re-logs; the ROOT
+# argo_manager line ("Timeout waiting for ArgoCD application ... after Ns") is NOT
+# matched here and still alerts once - so even a genuine never-created app surfaces.
+# Scoped to the timeout phrase, so unrelated task/sync failures still escalate. ---
+Failed task:.*timed out waiting for application to be created
+ArgoCD sync completed with \d+ failure\(s\):.*timed out waiting for application to be created
+Timed out waiting for ArgoCD application .* to be created
 
 # --- git: concurrent-write contention, auto-rebases and retries (recovers) ---
 Push rejected .*attempting rebase and retry \(attempt \d+/\d+\)
