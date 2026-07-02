@@ -131,6 +131,24 @@ class RunsService:
         finally:
             await self._pool.release(conn)
 
+    async def list_active_runs(self, cluster: str) -> list[dict]:
+        """Every active (starting/running) run on a cluster, across all projects.
+
+        The reaper uses this instead of scanning k8s: a bundle can only exist if a run
+        was started, and the row is written before the k8s resources, so this is the
+        authoritative set of namespaces that can hold a live bundle.
+        """
+        conn = await self._pool.acquire()
+        try:
+            rows = await conn.fetch(
+                "SELECT * FROM runs WHERE cluster = $1 AND status IN ('starting', 'running') "
+                "ORDER BY started_at DESC",
+                cluster,
+            )
+            return [r for r in (_row_to_dict(row) for row in rows) if r is not None]
+        finally:
+            await self._pool.release(conn)
+
     async def get_latest_run(self, project: str, deployment: str, kind: RunKind) -> dict | None:
         """Most recent run for a project+deployment of a given kind (any status).
 
