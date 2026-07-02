@@ -9,6 +9,7 @@
 # --- postgres: idempotent create on re-processing ---
 Database .+ already exists on
 Schema .+ already exists in database
+User .+ already exists on
 
 # --- clone/dump: empty-but-valid source schema (nothing to copy, not an error) ---
 Source schema '.+' exists but contains no tables
@@ -64,9 +65,18 @@ Failed to assign client scope as realm default
 # --- project declared but not deployed yet - no Deployment to inspect ---
 No deployments found in project
 
+# --- naming: custom domain not on the approved list, falls back to cluster domain ---
+Domain '.+' with subdomain .+ not approved, falling back to
+
+# --- db-console: RO creds not provisioned yet, falls back to RW (reprocess provisions them) ---
+No read-only database credentials for deployment '.+'; falling back to read-write user
+
 # --- kubectl: log fetch/stream transients while a pod is starting/rolling ---
 kubectl logs.*Error from server \(BadRequest\)
 Failed to get deployment logs.*Error from server \(BadRequest\)
+# Log-stream request against a container that is still starting (user opened logs
+# early); scoped to the websocket log-stream stderr, not the deploy path.
+kubectl stderr:.*Error from server \(BadRequest\).*is waiting to start
 error: unexpected EOF
 
 # --- uvicorn: malformed / probe inbound HTTP on the listener ---
