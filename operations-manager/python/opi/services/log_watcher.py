@@ -12,8 +12,8 @@ The pipeline is synchronous (``httpx.Client``); the async scheduler runs it via
 ``asyncio.to_thread`` so it never blocks the event loop.
 
 One cycle:
-  1. Query Loki (via the Grafana datasource API) for ERROR/WARNING/CRITICAL lines
-     in the OPI container over ``cfg.window``.
+  1. Query Loki (via the Grafana datasource API) for ERROR/CRITICAL lines in the
+     OPI container over ``cfg.window`` (warnings are excluded - too noisy).
   2. Drop every line matching the ignore-list (known noise).
   3. Deduplicate the remainder against ``state`` so an ongoing issue is not
      re-alerted every cycle (within ``cfg.dedup_hours``).
@@ -62,7 +62,7 @@ class LogWatchConfig:
     ntfy_server: str = "https://ntfy.sh"
     namespace: str = "rig-prd-operations"
     container: str = "operations-manager"
-    level: str = "(?i)(warn|error|crit|fatal)"  # regex matched against the detected_level label
+    level: str = "(?i)(error|crit|fatal)"  # detected_level label regex; error+ only (warnings are too noisy)
     window: str = "now-35m"  # look-back per run (35m = 30m cadence + 5m overlap)
     dedup_hours: float = 6.0  # do not re-alert the same signature within this window
     max_lines: int = 5000  # Loki fetch cap per run
