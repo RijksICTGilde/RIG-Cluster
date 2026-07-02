@@ -416,6 +416,16 @@
           "description": "Legacy v1 field — should be migrated to services.",
           "type": "array",
           "items": { "$ref": "#/$defs/storage-entry" }
+        },
+        "probe": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Health-check configuration for the component's first inbound port. scheme=tcp (default when omitted) keeps a plain tcpSocket probe; http/https switch to an httpGet probe so a TLS-serving app completes the handshake instead of logging a failed one every cycle. readiness-path may check dependencies; liveness-path should stay dumb (a failing liveness restarts the pod). startup reuses liveness-path. Paths default to '/' and are ignored when scheme=tcp.",
+          "properties": {
+            "liveness-path": { "type": "string", "pattern": "^/[A-Za-z0-9/_.\\-]*\\Z" },
+            "readiness-path": { "type": "string", "pattern": "^/[A-Za-z0-9/_.\\-]*\\Z" },
+            "scheme": { "type": "string", "enum": ["tcp", "http", "https"] }
+          }
         }
       }
     },
@@ -525,6 +535,7 @@
         },
         "disabled": { "type": "boolean" },
         "disabled-reason": { "type": "string" },
+        "disabled-image": { "type": "string" },
         "auto-tune-resources": { "type": "boolean" }
       }
     },

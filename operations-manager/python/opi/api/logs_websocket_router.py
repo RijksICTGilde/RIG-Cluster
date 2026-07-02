@@ -33,8 +33,8 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from itsdangerous import BadSignature, TimestampSigner
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import get_prefixed_namespace
-from opi.manager.run_support import LABEL_RUN
 from opi.core.config import settings
+from opi.manager.run_support import LABEL_RUN
 from opi.services.project_service import get_project_service
 from opi.services.user_service import get_user_service
 from opi.utils.naming import generate_unique_name

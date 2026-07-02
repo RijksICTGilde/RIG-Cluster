@@ -576,6 +576,8 @@ class ProjectManager:
                     "project_name": project_name,
                     "deployment_name": deployment_name,
                     "force_clone": False,
+                    # Automated retry after a disable: must not re-enable moving-tag disables.
+                    "automated_remediation": True,
                 },
             )
         else:
@@ -2313,6 +2315,7 @@ class ProjectManager:
         force_clone: bool = False,
         argocd_resources_changed: bool = True,
         deployment_names: list[str] | None = None,
+        allow_mutable_tag_retry: bool = True,
     ) -> bool:
         """
         Process a project file from the Git repository.
@@ -2510,7 +2513,9 @@ class ProjectManager:
             # Step 2: Process the project with change context
             logger.info("Step 2: Processing project with change detection")
 
-            process_success = await self.process_project(force_clone=force_clone, deployment_names=targets)
+            process_success = await self.process_project(
+                force_clone=force_clone, deployment_names=targets, allow_mutable_tag_retry=allow_mutable_tag_retry
+            )
             if not process_success:
                 critical_failures.append("Project processing failed - check logs for details")
 
@@ -4252,6 +4257,19 @@ class ProjectManager:
                 )
                 return False
 
+            # Clear stale image-pull auto-disables so a fixed image can deploy again:
+            # when the image reference changed (any edit path), or -- on an explicit
+            # user redeploy (allow_mutable_tag_retry) -- when it uses a moving tag like
+            # :latest whose string cannot reveal a re-push. Done before generating
+            # manifests so the new image is actually deployed. See oom_watcher for the
+            # disable side; the automated post-disable refresh passes the flag as False.
+            reenabled = self._project_file_handler.reenable_components_with_changed_image(
+                project_data, targets, allow_mutable_retry=allow_mutable_tag_retry
+            )
+            if reenabled:
+                reenable_msg = "auto-reenable: image changed for " + ", ".join(f"{d}/{c}" for d, c in reenabled)
+                await self.save_and_commit_project(project_data, reenable_msg, enforce_validation=False)
+
             # # 1.5. Create configuration handler to collect deployment info
             # config_handler = create_configuration_handler(project_name, self.project_data)
 
@@ -4683,6 +4701,11 @@ class ProjectManager:
                 project_data, component_reference, default_port=80
             )
 
+            # Extract health-probe configuration (scheme + readiness/liveness paths).
+            # scheme=tcp keeps the plain tcpSocket probe; http/https switch to httpGet
+            # so a TLS-serving app completes the handshake instead of logging a failed one.
+            probe_config = self._project_file_handler.extract_component_probe(project_data, component_reference)
+
             # Extract publication paths: deployment-level overrides component-level
             component_paths = self._project_file_handler.extract_deployment_component_paths(
                 project_data, deployment, component_reference
@@ -5030,6 +5053,9 @@ class ProjectManager:
                 "imagePullPolicy": image_pull_policy,  # Image pull policy (Always, IfNotPresent, Never)
                 "application_port": application_port,
                 "service_port": application_port,  # Use same port for service by default
+                "probe_scheme": probe_config["scheme"],  # tcp | http | https
+                "probe_readiness_path": probe_config["readiness_path"],
+                "probe_liveness_path": probe_config["liveness_path"],
                 "path": component_path,  # Publication path for ingress routing
                 "storage_configs": processed_storage_configs,
                 "env_vars": env_vars,
@@ -7182,7 +7208,7 @@ class ProjectManager:
         is_disabled, disabled_reason = self._project_file_handler.extract_deployment_component_disabled(
             project_data, deployment_name, component_name
         )
-        if is_disabled and "ImagePullBackOff" in disabled_reason:
+        if is_disabled and is_image_pull_disable_reason(disabled_reason):
             self._project_file_handler.set_deployment_component_disabled(
                 project_data, deployment_name, component_name, False, ""
             )

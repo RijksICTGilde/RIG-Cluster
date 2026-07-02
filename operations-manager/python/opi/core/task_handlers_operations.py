@@ -306,6 +306,10 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
     project_name: str = payload["project_name"]
     deployment_name: str = payload["deployment_name"]
     force_clone: bool = payload.get("force_clone", False)
+    # The automated refresh queued right after an auto-disable must NOT retry
+    # moving-tag (e.g. :latest) disables, or a still-broken component would flap.
+    # User-initiated refreshes (no flag) are an explicit retry request.
+    automated_remediation: bool = payload.get("automated_remediation", False)
 
     if not validate_project_name(project_name):
         error_msg = (
@@ -347,6 +351,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
             task_progress_manager=progress,
             deployment_name=deployment_name,
             force_clone=force_clone,
+            allow_mutable_tag_retry=not automated_remediation,
         )
 
         if processing_result:

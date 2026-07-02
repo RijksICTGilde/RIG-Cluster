@@ -64,7 +64,12 @@ class KeycloakConnector:
     # ==================== Realm Operations ====================
 
     async def create_realm(
-        self, realm_name: str, display_name: str | None = None, add_master_idp: bool = False
+        self,
+        realm_name: str,
+        display_name: str | None = None,
+        add_master_idp: bool = False,
+        sso_session_idle_timeout: int | None = None,
+        sso_session_max_lifespan: int | None = None,
     ) -> dict[str, Any]:
         """
         Create a new realm in Keycloak.
@@ -73,11 +78,23 @@ class KeycloakConnector:
             realm_name: Name of the realm to create
             display_name: Optional display name for the realm
             add_master_idp: Whether to add the master OIDC IDP (default: False)
+            sso_session_idle_timeout: Optional SSO session idle timeout in seconds. When
+                omitted, Keycloak's default (30 min) is kept.
+            sso_session_max_lifespan: Optional SSO session max lifespan in seconds. When
+                omitted, Keycloak's default (10 hours) is kept.
 
         Returns:
             Dictionary containing realm information including client details
         """
         logger.info(f"Creating Keycloak realm: {realm_name}")
+
+        # Only the explicitly provided session settings; used both to seed a new
+        # realm and to update an existing one without touching other fields.
+        session_settings: dict[str, Any] = {}
+        if sso_session_idle_timeout is not None:
+            session_settings["ssoSessionIdleTimeout"] = sso_session_idle_timeout
+        if sso_session_max_lifespan is not None:
+            session_settings["ssoSessionMaxLifespan"] = sso_session_max_lifespan
 
         realm_data = {
             "realm": realm_name,
@@ -98,6 +115,7 @@ class KeycloakConnector:
             "directGrantFlow": "direct grant",
             "clientAuthenticationFlow": "clients",
             "dockerAuthenticationFlow": "docker auth",
+            **session_settings,
         }
 
         try:
@@ -108,6 +126,12 @@ class KeycloakConnector:
             except KeycloakPostError as e:
                 if "409" in str(e) or "Conflict" in str(e):
                     logger.info(f"Realm {realm_name} already exists, using existing realm")
+                    # Apply only the session settings to the existing realm. A full
+                    # realm_data update would reset browserFlow etc. and break the
+                    # custom "External IDP Redirector" flow on the platform realm.
+                    if session_settings:
+                        self.admin.update_realm(realm_name=realm_name, payload=session_settings)
+                        logger.info(f"Updated session settings on existing realm {realm_name}: {session_settings}")
                 else:
                     raise
 

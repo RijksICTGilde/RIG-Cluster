@@ -11,6 +11,11 @@ realms:
     loginWithEmailAllowed: false
     bruteForceProtected: true
     loginTheme: "nl-design-system"
+    # SSO session timeouts (seconds). Without these Keycloak defaults apply
+    # (30 min idle / 10 h max), which forced users to re-login via SSO-Rijk
+    # too often. 8 h idle / 12 h max keeps a working day in one session.
+    ssoSessionIdleTimeout: 28800
+    ssoSessionMaxLifespan: 43200
 
 identityProviders:
   - alias: "sso-rijk"

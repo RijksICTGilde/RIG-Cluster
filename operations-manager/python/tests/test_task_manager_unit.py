@@ -1,6 +1,5 @@
 """Unit tests for opi.core.task_manager module-level functions and TaskProgressManager class."""
 
-
 import pytest
 
 

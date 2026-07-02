@@ -14,6 +14,9 @@
 {% set errors = status.get('errors', []) %}
 {% set has_errors = errors|length > 0 %}
 {% set _id_prefix = _argocd_card_id_prefix | default(deployment.name) %}
+{# Components auto-disabled (replicas 0) by the OOM/image-pull watcher or sanitize pass.
+   The flag is written inline per deployment-component (comp.disabled + comp.disabled-reason). #}
+{% set disabled_components = deployment.components | selectattr('disabled') | list if deployment.components else [] %}
 
 <c-card padding="lg" outline="true" backgroundColor="grijs-050" style="border-left: 4px solid var(--rvo-color-hemelblauw);">
     <c-layout-flow gap="md">
@@ -22,7 +25,36 @@
             <c-icon icon="applicatie" size="md" color="donkerblauw" />
             <c-heading type="h4" textContent="{{ deployment.name }}" />
             <span style="background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">{{ deployment.cluster }}</span>
+            {% if disabled_components %}
+            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: #ffcdd2; color: #b71c1c;">
+                <c-icon icon="foutmelding" size="sm" />Uitgeschakeld
+            </span>
+            {% endif %}
         </c-layout-row>
+
+        {# Auto-disabled components: an error alert per component. The full technical
+           reason (a long ImagePullBackOff dump) is tucked into a collapsible details
+           so the alert stays readable; the image reference is the actionable bit. #}
+        {% if disabled_components %}
+        {% for comp in disabled_components %}
+        {% set reason = comp['disabled-reason'] | default('') %}
+        {% set is_image = 'ImagePull' in reason or 'InvalidImageName' in reason or 'manifest' in reason %}
+        <c-alert kind="error" heading="{{ comp.reference }} is uitgeschakeld{% if is_image %}: image ontbreekt{% endif %}">
+            <c-layout-flow gap="sm">
+                {% if comp.image %}
+                <span class="rvo-text--sm">De container image kon niet worden opgehaald:<br /><code style="word-break: break-all;">{{ comp.image }}</code></span>
+                {% endif %}
+                <span class="rvo-text--sm">Push een geldige image of deploy opnieuw met een bestaande tag om automatisch te heractiveren.</span>
+                {% if reason %}
+                <details>
+                    <summary class="rvo-text--xs rvo-text--subtle" style="cursor: pointer;">Technische details</summary>
+                    <p class="rvo-text--xs rvo-text--subtle" style="margin-top: 4px; word-break: break-word;">{{ reason }}</p>
+                </details>
+                {% endif %}
+            </c-layout-flow>
+        </c-alert>
+        {% endfor %}
+        {% endif %}
 
         {# Check if any component has a container image #}
         {% set has_image = deployment.components | selectattr('image', 'defined') | selectattr('image') | list | length > 0 if deployment.components else false %}

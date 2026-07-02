@@ -147,20 +147,41 @@ spec:
               memory: "{{ resources_limits_memory }}"
               cpu: "{{ resources_limits_cpu }}"
           startupProbe:
+            {% if probe_scheme in ('http', 'https') %}
+            httpGet:
+              port: {{ application_port }}
+              path: {{ probe_liveness_path | default('/') }}
+              scheme: {{ probe_scheme | upper }}
+            {% else %}
             tcpSocket:
               port: {{ application_port }}
+            {% endif %}
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 36  # 5 + (36 × 5) = 185 seconds max startup time
           livenessProbe:
+            {% if probe_scheme in ('http', 'https') %}
+            httpGet:
+              port: {{ application_port }}
+              path: {{ probe_liveness_path | default('/') }}
+              scheme: {{ probe_scheme | upper }}
+            {% else %}
             tcpSocket:
               port: {{ application_port }}
+            {% endif %}
             initialDelaySeconds: 5
             periodSeconds: 30
             failureThreshold: 3
           readinessProbe:
+            {% if probe_scheme in ('http', 'https') %}
+            httpGet:
+              port: {{ application_port }}
+              path: {{ probe_readiness_path | default('/') }}
+              scheme: {{ probe_scheme | upper }}
+            {% else %}
             tcpSocket:
               port: {{ application_port }}
+            {% endif %}
             initialDelaySeconds: 0
             periodSeconds: 5
             failureThreshold: 3
