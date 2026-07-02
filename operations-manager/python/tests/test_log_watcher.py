@@ -207,6 +207,25 @@ def test_clean_run_ignores_newly_added_patterns(monkeypatch, captured_ntfy):
                 "opi.connectors.postgres",
                 "pg_dump produced very little output (91 bytes) - might be empty dump",
             ),
+            _line("WARNING", "opi.connectors.postgres", "User mpfm_w3h_test_ro already exists on rig-db-rw"),
+            _line(
+                "WARNING",
+                "opi.utils.naming",
+                "Domain 'rijksapp.dev' with subdomain 'None' not approved, falling back to "
+                "component-deployment-project on cluster domain",
+            ),
+            _line(
+                "WARNING",
+                "opi.manager.db_console_manager",
+                "No read-only database credentials for deployment 'pr-5'; falling back to read-write user. "
+                "Reprocess the deployment to provision them.",
+            ),
+            _line(
+                "WARNING",
+                "opi.api.logs_websocket_router",
+                'kubectl stderr: Error from server (BadRequest): container "app" in pod '
+                '"pr-5-nmcapi-56f67cd7fd-5xrrl" is waiting to start: ContainerCreating',
+            ),
         ],
     )
     rc = run_cycle(_cfg(), token="tok", state={})
