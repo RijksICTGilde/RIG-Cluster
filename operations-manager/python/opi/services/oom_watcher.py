@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
+from opi.handlers.project_file_handler import IMAGE_PULL_REASONS as _IMAGE_PULL_REASONS
 from opi.services.resource_tuning_service import get_project_data, tune_deployment_resources
 from opi.utils.naming import generate_unique_name
 
@@ -115,19 +116,11 @@ class DeploymentHealthError(Exception):
 
 
 # Container waiting reasons that mean "the image can't be made available, so the
-# container will never start". ErrImageNeverPull happens with imagePullPolicy: Never
-# (e.g. kind/sandbox local images that were never side-loaded) — same user-facing
-# outcome as ImagePullBackOff, and terminal (it never self-heals), so we treat it as
-# an image-pull failure too. Previously omitted, which let bad images in the sandbox
-# sit in "Progressing" until the deploy timed out instead of failing fast.
-_IMAGE_PULL_REASONS = {
-    "ImagePullBackOff",
-    "ErrImagePull",
-    "InvalidImageName",
-    "ErrImageNeverPull",
-    "ImageInspectError",
-    "RegistryUnavailable",
-}
+# container will never start". Canonical set lives in project_file_handler
+# (IMAGE_PULL_REASONS) so this live detector and the re-enable logic there never
+# drift. ErrImageNeverPull happens with imagePullPolicy: Never (e.g. kind/sandbox
+# local images that were never side-loaded) — same user-facing outcome as
+# ImagePullBackOff, and terminal (it never self-heals), so it counts as image-pull.
 _CRASH_LOOP_REASONS = {"CrashLoopBackOff"}
 
 
@@ -524,6 +517,8 @@ async def _queue_refresh_task(project_name: str, deployment_name: str) -> None:
             "project_name": project_name,
             "deployment_name": deployment_name,
             "force_clone": False,
+            # Automated retry after a disable: must not re-enable moving-tag disables.
+            "automated_remediation": True,
         },
     )
     logger.info("Queued refresh task for %s/%s", project_name, deployment_name)

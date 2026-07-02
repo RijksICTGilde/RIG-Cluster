@@ -346,6 +346,8 @@ class KeycloakYamlHandler:
                 realm_name=realm_name,
                 display_name=item.get("displayName", realm_name),
                 add_master_idp=False,
+                sso_session_idle_timeout=item.get("ssoSessionIdleTimeout"),
+                sso_session_max_lifespan=item.get("ssoSessionMaxLifespan"),
             )
 
     async def _process_identity_providers(self, idp_section: Any, variables: dict[str, Any]) -> None:

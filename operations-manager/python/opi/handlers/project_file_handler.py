@@ -28,6 +28,53 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Container "waiting" reasons that mean the image cannot be pulled/made available.
+# Canonical location: oom_watcher imports this for live pod-health detection and
+# the re-enable logic below matches against it, so the two never drift.
+IMAGE_PULL_REASONS = {
+    "ImagePullBackOff",
+    "ErrImagePull",
+    "InvalidImageName",
+    "ErrImageNeverPull",
+    "ImageInspectError",
+    "RegistryUnavailable",
+}
+
+
+def is_image_pull_disable_reason(reason: str) -> bool:
+    """Whether a ``disabled-reason`` string was produced by an image-pull failure.
+
+    The reason is stored as ``f"{waiting_reason}: {message}"`` (see oom_watcher),
+    so match on the leading token.
+    """
+    return any(reason.startswith(r) for r in IMAGE_PULL_REASONS)
+
+
+# Image tags that move: a re-push reuses the same reference string, so a
+# project-file comparison cannot tell whether the underlying image changed. A
+# tagless reference resolves to :latest and is treated the same way.
+_MUTABLE_IMAGE_TAGS = {"latest", "main", "master", "stable", "edge", "dev", "develop", "nightly"}
+
+
+def is_mutable_image_tag(image: str) -> bool:
+    """Whether an image reference uses a moving tag (or no tag, i.e. :latest).
+
+    Digest-pinned refs (``…@sha256:…``) and version/SHA-like tags are immutable.
+    Used to decide whether an image-pull disable should be retried on an explicit
+    user redeploy even when the reference string is unchanged.
+    """
+    if not image:
+        return False
+    if "@" in image:  # digest-pinned -> immutable
+        return False
+    # Strip the registry host[:port] so a host port colon is not read as a tag.
+    ref = image.rsplit("/", 1)[-1]
+    if ":" not in ref:
+        return True  # no tag -> defaults to :latest
+    tag = ref.rsplit(":", 1)[-1]
+    return tag.lower() in _MUTABLE_IMAGE_TAGS
+
+
 # Default resource values for deployment containers
 DEFAULT_RESOURCES: dict[str, str] = {
     "requests_memory": "128Mi",
@@ -624,6 +671,29 @@ class ProjectFileHandler:
             logger.warning(f"No inbound port found for component '{component_name}', using default {default_port}")
 
         return port
+
+    def extract_component_probe(self, project_data: dict[str, Any], component_name: str) -> dict[str, str]:
+        """
+        Extract the health-probe configuration for a component by name.
+
+        Returns a dict with resolved defaults:
+            scheme: "tcp" (default) | "http" | "https"
+            readiness_path: HTTP path for the readiness probe (default "/")
+            liveness_path: HTTP path for the liveness/startup probes (default "/")
+
+        When no probe block is present, or scheme is "tcp", the paths are still
+        returned but are ignored by the template (which renders a tcpSocket probe).
+        """
+        base = f"$.components[?(@.name='{component_name}')].probe"
+        scheme = self.extract_value_by_path(project_data, f"{base}.scheme", "tcp")
+        readiness_path = self.extract_value_by_path(project_data, f"{base}.readiness-path", "/")
+        liveness_path = self.extract_value_by_path(project_data, f"{base}.liveness-path", "/")
+
+        return {
+            "scheme": scheme,
+            "readiness_path": readiness_path,
+            "liveness_path": liveness_path,
+        }
 
     def component_has_ports(self, project_data: dict[str, Any], component_name: str) -> bool:
         """
@@ -1523,8 +1593,16 @@ class ProjectFileHandler:
                 comp["disabled"] = disabled
                 if disabled:
                     comp["disabled-reason"] = reason
-                elif "disabled-reason" in comp:
-                    del comp["disabled-reason"]
+                    # Record the offending image for image-pull disables so the
+                    # disable can be auto-cleared once the image changes, no matter
+                    # which edit path (modal, git, image API) makes the change.
+                    if is_image_pull_disable_reason(reason) and comp.get("image"):
+                        comp["disabled-image"] = comp["image"]
+                    else:
+                        comp.pop("disabled-image", None)
+                else:
+                    comp.pop("disabled-reason", None)
+                    comp.pop("disabled-image", None)
                 logger.info(
                     f"Set component '{component_reference}' in deployment '{deployment_name}' "
                     f"disabled={disabled}" + (f" reason='{reason}'" if disabled else "")
@@ -1534,6 +1612,63 @@ class ProjectFileHandler:
             f"Component '{component_reference}' not found in deployment '{deployment_name}' for disabled state update"
         )
         return False
+
+    def reenable_components_with_changed_image(
+        self,
+        project_data: dict[str, Any],
+        deployment_names: list[str] | None = None,
+        allow_mutable_retry: bool = False,
+    ) -> list[tuple[str, str]]:
+        """Clear stale image-pull auto-disables so a fixed image can deploy again.
+
+        When a component is auto-disabled for an image-pull failure, the offending
+        image is recorded as ``disabled-image``. A disable is cleared here when:
+
+        - the image reference changed since the disable (any edit path) -- the new
+          image deserves a chance; or
+        - ``allow_mutable_retry`` is set and the reference uses a moving tag
+          (e.g. ``:latest``), whose string cannot reveal a re-push. This is only
+          passed on an explicit user (re)deploy, never on the automated refresh
+          queued right after a disable, so a still-broken component cannot flap.
+
+        Modifies project_data in place.
+
+        Args:
+            project_data: The parsed project data (modified in place)
+            deployment_names: Optional set of deployment names to limit to; None = all
+            allow_mutable_retry: Also retry moving-tag disables (explicit redeploy only)
+
+        Returns:
+            List of (deployment_name, component_reference) that were re-enabled.
+        """
+        reenabled: list[tuple[str, str]] = []
+        for deployment in project_data.get("deployments", []):
+            dep_name = deployment.get("name", "")
+            if deployment_names is not None and dep_name not in deployment_names:
+                continue
+            for comp in deployment.get("components", []):
+                if not comp.get("disabled"):
+                    continue
+                disabled_image = comp.get("disabled-image")
+                current_image = comp.get("image")
+                if not (disabled_image and current_image):
+                    continue  # only image-pull disables carry disabled-image
+                changed = current_image != disabled_image
+                mutable_retry = allow_mutable_retry and is_mutable_image_tag(current_image)
+                if not (changed or mutable_retry):
+                    continue
+                comp["disabled"] = False
+                comp.pop("disabled-reason", None)
+                comp.pop("disabled-image", None)
+                reference = comp.get("reference", "")
+                reenabled.append((dep_name, reference))
+                cause = (
+                    f"image changed since auto-disable ({disabled_image} -> {current_image})"
+                    if changed
+                    else f"moving-tag retry on redeploy ({current_image})"
+                )
+                logger.info(f"Re-enabling component '{reference}' in deployment '{dep_name}': {cause}")
+        return reenabled
 
     # ========================================================================
     # Service Config Generation Methods (reference/config pattern)
