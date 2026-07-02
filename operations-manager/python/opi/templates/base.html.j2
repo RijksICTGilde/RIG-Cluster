@@ -9,6 +9,22 @@
 <c-page title="{{ page_title_value }}" lang="nl" bodyClass="rvo-theme rvo-responsive" additionalJs='<script src="/static/js/json-enc.js"></script><script src="/static/js/edit_modal.js"></script>'>
 
     <div class="rvo-demo-page">
+        {# ===================================================================
+           TODO: DELETE ME  -- TODO: DELETE ME  -- TODO: DELETE ME
+           HACK: our ROOS c-alert renders without the flex container styling,
+           so the icon and text stack/misalign. This restores the intended
+           layout globally. Remove this <style> block once the jinja-roos-components
+           c-alert is fixed upstream.
+           TODO: DELETE ME  -- TODO: DELETE ME  -- TODO: DELETE ME
+           =================================================================== #}
+        <style>
+            .rvo-alert__container {
+                align-items: flex-start;
+                display: flex;
+                gap: var(--rvo-alert-gap);
+            }
+        </style>
+
         {# Header #}
         <c-header
             text="Zelfservice voor Applicatie Deployment"
@@ -23,6 +39,13 @@
                 iconPlacement="before"
                 maxWidth="lg"
                 :items="menu_items" />
+
+            {# Vakantie-melding: subtiel, boven de paginatitel, op elke pagina. #}
+            <c-alert
+                kind="info"
+                maxWidth="lg"
+                padding="xs"
+                content="Van vrijdag 3 juli t/m vrijdag 17 juli is er in verband met vakantie uitsluitend ondersteuning bij urgente vragen of bedrijfskritische verstoringen." />
 
             {# Main Content Area #}
             <main>
