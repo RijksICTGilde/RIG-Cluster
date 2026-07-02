@@ -141,8 +141,7 @@ class RunsService:
         conn = await self._pool.acquire()
         try:
             rows = await conn.fetch(
-                "SELECT * FROM runs WHERE cluster = $1 AND status IN ('starting', 'running') "
-                "ORDER BY started_at DESC",
+                "SELECT * FROM runs WHERE cluster = $1 AND status IN ('starting', 'running') ORDER BY started_at DESC",
                 cluster,
             )
             return [r for r in (_row_to_dict(row) for row in rows) if r is not None]
