@@ -343,6 +343,9 @@ class KeyValueConverter:
         result = self._write_as_string(value) if self.write_as == "string" else self._write_as_dict(value)
         if result and self.write_as == "string" and isinstance(result, str):
             result = self._maybe_encrypt(result, context_data)
+        elif result and self.write_as == "dict" and isinstance(result, dict):
+            # Aliases: encrypt each value independently (values may hold secrets).
+            result = {k: self._maybe_encrypt(str(v), context_data) for k, v in result.items()}
         logger.info(
             "[KeyValueConverter.write] result type=%s, result=%r",
             type(result).__name__ if result is not None else "None",
@@ -398,7 +401,13 @@ class KeyValueConverter:
 
     @staticmethod
     def _maybe_decrypt(value: Any, context_data: dict[str, Any] | None) -> Any:
-        """Decrypt AGE-encrypted value using the project's private key."""
+        """Decrypt AGE-encrypted value using the project's private key.
+
+        Aliases are stored as a dict of ``name -> value``; each value may be
+        AGE-encrypted independently, so decrypt them per-entry.
+        """
+        if isinstance(value, dict):
+            return {k: KeyValueConverter._maybe_decrypt(v, context_data) for k, v in value.items()}
         if not isinstance(value, str) or "BEGIN AGE ENCRYPTED FILE" not in value:
             return value
         if not context_data:
@@ -436,7 +445,7 @@ class KeyValueConverter:
                 logger.debug("[KeyValueConverter] No project AGE public key, skipping encryption")
                 return value
             encrypted = encrypt_age_content_sync(value, public_key)
-            logger.debug("[KeyValueConverter] Encrypted user-env-vars with project AGE key")
+            logger.debug("[KeyValueConverter] Encrypted value with project AGE key")
             return LiteralScalarString(encrypted)
         except Exception:
             logger.warning("[KeyValueConverter] AGE encryption failed, returning plain value", exc_info=True)
