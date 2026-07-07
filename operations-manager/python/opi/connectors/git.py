@@ -601,6 +601,12 @@ class GitConnector:
             stdout, stderr, code = await self._run_git_command(clone_cmd, cwd=self.__working_dir)
 
             if code != 0:
+                # Strategy 1 is the clean attempt (correct branch, empty dir), so its
+                # error is the real reason a clone can't happen (DNS, auth, host, ...).
+                # The later fallbacks clone into the now non-empty working dir and only
+                # emit "Cloning into '.'...", so keep strategy 1's message (collapsed to
+                # one line) for the final report instead of the last fallback's noise.
+                primary_error = " ".join(stderr.split()) or f"git clone exited with code {code}"
                 logger.debug(f"Clone with branch '{target_branch}' failed: {stderr}")
 
                 # Strategy 2: If configured branch fails and differs from remote default, try remote default
@@ -645,7 +651,7 @@ class GitConnector:
                     stdout, stderr, code = await self._run_git_command(clone_cmd_no_depth, cwd=self.__working_dir)
 
                     if code != 0:
-                        error_msg = f"Failed to clone repository with all strategies. Last error: {stderr}"
+                        error_msg = f"Failed to clone repository with all strategies: {primary_error}"
                         logger.error(error_msg)
                         raise RuntimeError(error_msg)
 
