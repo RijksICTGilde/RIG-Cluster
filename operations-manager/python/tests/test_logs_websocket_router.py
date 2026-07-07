@@ -843,5 +843,60 @@ class TestClientMessageSizeLimit(unittest.TestCase):
         self.assertGreater(len(oversized_message), MAX_CLIENT_MESSAGE_SIZE)
 
 
+class TestRetrieveDoneTaskExceptions(unittest.IsolatedAsyncioTestCase):
+    """A finished streaming task must not leak 'Future exception was never
+    retrieved': a normal client disconnect stays quiet, a real failure is logged.
+    """
+
+    @staticmethod
+    async def _finished_task(exc: BaseException | None) -> asyncio.Task:
+        async def _run() -> str:
+            if exc is not None:
+                raise exc
+            return "ok"
+
+        task = asyncio.ensure_future(_run())
+        await asyncio.wait({task})  # task is done, but its exception is NOT retrieved
+        return task
+
+    @patch("opi.api.logs_websocket_router.logger")
+    async def test_connection_closed_is_swallowed(self, mock_logger):
+        from opi.api.logs_websocket_router import _retrieve_done_task_exceptions
+        from websockets.exceptions import ConnectionClosed
+
+        task = await self._finished_task(ConnectionClosed(None, None))
+        _retrieve_done_task_exceptions({task})
+
+        mock_logger.error.assert_not_called()
+
+    @patch("opi.api.logs_websocket_router.logger")
+    async def test_websocket_disconnect_is_swallowed(self, mock_logger):
+        from fastapi import WebSocketDisconnect
+        from opi.api.logs_websocket_router import _retrieve_done_task_exceptions
+
+        task = await self._finished_task(WebSocketDisconnect(code=1006))
+        _retrieve_done_task_exceptions({task})
+
+        mock_logger.error.assert_not_called()
+
+    @patch("opi.api.logs_websocket_router.logger")
+    async def test_unexpected_exception_is_logged(self, mock_logger):
+        from opi.api.logs_websocket_router import _retrieve_done_task_exceptions
+
+        task = await self._finished_task(RuntimeError("boom"))
+        _retrieve_done_task_exceptions({task})
+
+        mock_logger.error.assert_called_once()
+
+    @patch("opi.api.logs_websocket_router.logger")
+    async def test_normal_completion_is_ignored(self, mock_logger):
+        from opi.api.logs_websocket_router import _retrieve_done_task_exceptions
+
+        task = await self._finished_task(None)
+        _retrieve_done_task_exceptions({task})
+
+        mock_logger.error.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
