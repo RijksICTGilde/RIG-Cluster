@@ -90,12 +90,12 @@ async def check_and_create_namespaces(project_data: dict[str, Any]) -> bool:
                 # Template variables
                 variables = {"namespace": namespace, "manager": get_argo_namespace(configured_cluster)}
 
-                result = await kubectl.apply_manifest(manifest_path, variables)
+                result, apply_error = await kubectl.apply_manifest(manifest_path, variables)
 
                 if result:
                     logger.info(f"Successfully created namespace: {namespace}")
                 else:
-                    logger.error(f"Failed to create namespace: {namespace}")
+                    logger.error(f"Failed to create namespace {namespace}: {apply_error}")
                     all_succeeded = False
                     continue
 

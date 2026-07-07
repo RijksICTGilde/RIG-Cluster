@@ -43,7 +43,7 @@ data:
             manifest_path = f.name
 
         try:
-            result = await connector.apply_manifest(manifest_path)
+            result, _ = await connector.apply_manifest(manifest_path)
             assert result is True
 
             # Verify the ConfigMap was created
@@ -86,7 +86,7 @@ data:
             manifest_path = f.name
 
         try:
-            result = await connector.apply_manifest(manifest_path, variables)
+            result, _ = await connector.apply_manifest(manifest_path, variables)
             assert result is True
 
             # Verify the ConfigMap was created with correct values
@@ -119,7 +119,7 @@ metadata:
             manifest_path = f.name
 
         try:
-            result = await connector.apply_manifest(manifest_path)
+            result, _ = await connector.apply_manifest(manifest_path)
             assert result is False
         finally:
             Path(manifest_path).unlink(missing_ok=True)

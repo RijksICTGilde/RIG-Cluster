@@ -274,7 +274,8 @@ class ArgoConnector:
                 return False
 
         except Exception as e:
-            logger.error(f"Error during application sync: {e}")
+            reason = str(e) or repr(e)
+            logger.error(f"Error during sync of application '{app_name}': {reason}")
             return False
 
     async def get_application_status(self, app_name: str | None = None) -> dict[str, Any] | None:
@@ -447,7 +448,10 @@ class ArgoConnector:
                 return None
 
         except Exception as e:
-            logger.error(f"Error during application {refresh_type} refresh: {e}")
+            # Some transport errors stringify to "" — fall back to the type name so
+            # the line is never a bare "... refresh:" with no reason.
+            reason = str(e) or repr(e)
+            logger.error(f"Error during {refresh_type} refresh of application '{app_name}': {reason}")
             return None
 
     async def hard_refresh_application(self, app_name: str | None = None) -> str | None:

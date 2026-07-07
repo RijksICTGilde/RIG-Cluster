@@ -118,7 +118,7 @@ class _SpyKubectl:
 
     def __init__(self):
         self.namespace_exists = AsyncMock(return_value=False)
-        self.apply_manifest = AsyncMock(return_value=True)
+        self.apply_manifest = AsyncMock(return_value=(True, ""))
         self.apply_label_to_resource = AsyncMock(return_value=True)
 
 
