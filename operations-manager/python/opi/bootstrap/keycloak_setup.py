@@ -283,7 +283,7 @@ class KeycloakSetup:
                 )
 
                 # Apply the secret using kubectl
-                success = await self.kubectl.apply_manifest(manifest_file_path)
+                success, _ = await self.kubectl.apply_manifest(manifest_file_path)
 
                 if success:
                     logger.info("Successfully updated operations-manager-keycloak secret")

@@ -2603,6 +2603,7 @@ class ProjectManager:
 
             if deployments and project_name:
                 from opi.services.oom_watcher import (
+                    MAIN_CONTAINER_NAME,
                     STALL_NOTICE_SECONDS,
                     DeploymentHealthError,
                     create_health_check_callback,
@@ -2769,7 +2770,11 @@ class ProjectManager:
                             )
                         return {"app_name": app_name, "dep_name": dep_name, "status": "health_error", "error": e}
                     except TimeoutError:
-                        logger.error(f"Timed out waiting for '{app_name}' to sync")
+                        last_state = stall["line"] or "no progress reported"
+                        logger.error(
+                            f"Timed out after 300s waiting for '{app_name}' ({dep_name}) to sync; "
+                            f"last observed state: {last_state}"
+                        )
                         if app_subtask:
                             last = stall["line"] or f"{dep_name}: nog niet gezond"
                             progress_manager.fail_subtask(
@@ -2805,7 +2810,7 @@ class ProjectManager:
                     if outcome["status"] == "ok":
                         continue
                     if outcome["status"] == "timeout":
-                        sync_failures.append(f"{app_name}: timed out waiting for sync")
+                        sync_failures.append(f"{app_name} ({dep_name}): timed out after 300s waiting for sync")
                         continue
                     if outcome["status"] == "error":
                         sync_failures.append(f"{app_name}: {outcome['error']}")
@@ -2834,6 +2839,8 @@ class ProjectManager:
                                 "title": title,
                                 "suggestion": suggestion,
                                 **({"logs": f.logs} if f.logs else {}),
+                                **({"container": f.container_name} if f.container_name else {}),
+                                **({"image": f.image} if f.image else {}),
                             }
                         )
 
@@ -2878,7 +2885,10 @@ class ProjectManager:
                             logger.error("OOM auto-tune failed for %s/%s: %s", project_name, dep_name, tune_err)
                             sync_failures.append(f"{app_name}: OOM detected, auto-tune failed: {tune_err}")
 
-                    # Handle ImagePullBackOff: disable component, queue refresh.
+                    # Handle ImagePullBackOff: disable component, queue refresh. A pod
+                    # never becomes ready while any of its containers (main OR sidecar)
+                    # is stuck pulling, so a sidecar failure disables the component too.
+                    #
                     # Use component_reference (the user-facing YAML reference), not
                     # component_name (the unique deployment-scoped name): disabling looks
                     # the component up by `reference`, so passing the unique name silently
@@ -2895,8 +2905,20 @@ class ProjectManager:
                                 dep_name,
                                 img_err,
                             )
-                        names = ", ".join(f.component_name for f in image_pull_failures)
-                        sync_failures.append(f"{app_name}: ImagePullBackOff for {names}")
+                        # Name the exact container and image, so a sidecar's pull error is
+                        # never mistaken for the component's own image (the reason a bad
+                        # platform sidecar sent us down the wrong path for hours).
+                        for f in image_pull_failures:
+                            if f.container_name and f.container_name != MAIN_CONTAINER_NAME:
+                                target = f"sidecar '{f.container_name}' in component '{f.component_name}'"
+                            else:
+                                target = f"component '{f.component_name}'"
+                            image = f" [image {f.image}]" if f.image else ""
+                            reason = " ".join(f.message.split()) if f.message else ""
+                            detail = f"{target}{image}"
+                            if reason:
+                                detail = f"{detail}: {reason}"
+                            sync_failures.append(f"{app_name}: ImagePullBackOff for {detail}")
 
                     # CrashLoopBackOff is the user's app crashing at runtime, not a
                     # deploy/sync failure - report it as a warning, don't fail the task.

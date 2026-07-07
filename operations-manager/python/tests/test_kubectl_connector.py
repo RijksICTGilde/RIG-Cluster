@@ -75,9 +75,10 @@ async def test_apply_manifest(connector, manifest_file, variables):
     with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
         mock_run_cmd.return_value = ("namespace/test-project created", "", 0)
 
-        result = await connector.apply_manifest(manifest_file, variables)
+        result, error = await connector.apply_manifest(manifest_file, variables)
 
         assert result is True
+        assert error == ""
         mock_run_cmd.assert_called_once()
         args = mock_run_cmd.call_args[0][0]
         assert args[0] == "apply"
@@ -89,9 +90,10 @@ async def test_apply_manifest_failure(connector, manifest_file, variables):
     with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
         mock_run_cmd.return_value = ("", "Error: unable to recognize", 1)
 
-        result = await connector.apply_manifest(manifest_file, variables)
+        result, error = await connector.apply_manifest(manifest_file, variables)
 
         assert result is False
+        assert "unable to recognize" in error
 
 
 if __name__ == "__main__":
