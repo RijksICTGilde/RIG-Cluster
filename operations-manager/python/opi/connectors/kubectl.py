@@ -320,7 +320,7 @@ class KubectlConnector:
 
     async def apply_manifest(
         self, file_path: str, variables: dict[str, Any] | None = None, namespace: str | None = None
-    ) -> bool:
+    ) -> tuple[bool, str]:
         """
         Apply a Kubernetes manifest file with variable substitution.
 
@@ -331,7 +331,9 @@ class KubectlConnector:
                       it will use the namespace specified in the manifest itself.
 
         Returns:
-            True if the apply was successful, False otherwise
+            ``(True, "")`` on success, or ``(False, <reason>)`` on failure. The
+            reason is the collapsed server error so callers can surface *why* the
+            apply failed instead of just that it did.
         """
         logger.debug(f"Applying manifest: {file_path}{' in namespace ' + namespace if namespace else ''}")
 
@@ -351,12 +353,16 @@ class KubectlConnector:
         stdout, stderr, code = await self._run_kubectl_command(args, stdin_input=manifest_content)
 
         if code != 0:
-            error_msg = f"Failed to apply manifest: {stderr}"
-            logger.error(error_msg)
-            return False
+            # Collapse the (often multi-line) server error onto one line and
+            # front-load the manifest + namespace so the reason survives the
+            # log-watcher's length-capping and the key facts are up front.
+            reason = " ".join(stderr.split()) or f"kubectl exited {code} with no stderr"
+            where = f" in namespace {namespace}" if namespace else ""
+            logger.error(f"Failed to apply manifest {file_path}{where}: {reason}")
+            return False, reason
 
         logger.info(f"Successfully applied manifest: {stdout}")
-        return True
+        return True, ""
 
     async def get_secret(self, secret_name: str, namespace: str) -> dict[str, str] | None:
         """

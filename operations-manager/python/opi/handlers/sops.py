@@ -218,14 +218,16 @@ class SopsHandler:
                 "secret_pairs": {"key": full_key_contents},
             }
 
-            result = await self.kubectl.apply_manifest(template_path, variables, namespace)
+            result, apply_error = await self.kubectl.apply_manifest(template_path, variables, namespace)
 
             if result:
                 self.logger.info(f"Successfully stored SOPS key in namespace: {namespace}")
                 self.logger.debug(f"Public key for project: {public_key}")
                 return True
             else:
-                self.logger.error(f"Failed to store SOPS key in namespace: {namespace}")
+                self.logger.error(
+                    f"Failed to store SOPS key (secret sops-age-key) in namespace {namespace}: {apply_error}"
+                )
                 return False
 
         except Exception as e:

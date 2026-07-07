@@ -135,6 +135,64 @@ class TestCheckPodHealth:
         assert result.image_pull_error is not None
         assert "ErrImageNeverPull" in result.image_pull_error
 
+    @staticmethod
+    def _two_container_pod(app_waiting: dict | None, sidecar_waiting: dict | None) -> str:
+        """Pod with the component's own 'app' container plus an injected sidecar."""
+
+        def cs(name: str, image: str, waiting: dict | None) -> dict:
+            return {"name": name, "image": image, "lastState": {}, "state": {"waiting": waiting} if waiting else {}}
+
+        pod = {
+            "metadata": {"name": "prod-api-abc"},
+            "status": {
+                "containerStatuses": [
+                    cs("app", "registry.example/prod-api:1.0", app_waiting),
+                    cs("authorization-wall", "quay.io/oauth2-proxy/oauth2-proxy:v7.7.1", sidecar_waiting),
+                ]
+            },
+        }
+        return json.dumps({"items": [pod]})
+
+    @patch("opi.services.oom_watcher.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_sidecar_image_pull_attributed_to_sidecar_not_main(self, mock_kubectl_cls):
+        # Regression: a sidecar (authorization-wall) that cannot pull its image must
+        # be attributed to that sidecar container and image, NOT the component's own
+        # 'app' image (which is healthy here).
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        mock_kubectl_cls.isConnected = True
+        pods_json = self._two_container_pod(
+            app_waiting=None,
+            sidecar_waiting={"reason": "ImagePullBackOff", "message": "Back-off pulling image"},
+        )
+        mock_kubectl.run_command = AsyncMock(return_value=(pods_json, "", 0))
+
+        result = await check_pod_health("rig-prd-ns", "prod-api")
+
+        assert result.image_pull_error is not None
+        assert result.image_pull_container == "authorization-wall"
+        assert result.image_pull_image == "quay.io/oauth2-proxy/oauth2-proxy:v7.7.1"
+
+    @patch("opi.services.oom_watcher.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_main_container_takes_precedence_over_sidecar(self, mock_kubectl_cls):
+        # When both the main 'app' image and a sidecar fail, the component's own
+        # image wins: it drives auto-disable and is the user's actual problem.
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        mock_kubectl_cls.isConnected = True
+        pods_json = self._two_container_pod(
+            app_waiting={"reason": "ImagePullBackOff", "message": "Back-off pulling image"},
+            sidecar_waiting={"reason": "ImagePullBackOff", "message": "Back-off pulling image"},
+        )
+        mock_kubectl.run_command = AsyncMock(return_value=(pods_json, "", 0))
+
+        result = await check_pod_health("rig-prd-ns", "prod-api")
+
+        assert result.image_pull_container == "app"
+        assert result.image_pull_image == "registry.example/prod-api:1.0"
+
     @patch("opi.services.oom_watcher.KubectlConnector")
     @pytest.mark.asyncio
     async def test_crash_loop_detected(self, mock_kubectl_cls):
