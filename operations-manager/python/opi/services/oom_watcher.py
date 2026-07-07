@@ -89,6 +89,8 @@ class PodHealthResult:
     component_name: str
     oom_detected: bool = False
     image_pull_error: str | None = None
+    image_pull_container: str | None = None  # which container failed (main "app" vs a sidecar)
+    image_pull_image: str | None = None  # the image reference that could not be pulled
     crash_loop_detected: bool = False
     crash_loop_message: str | None = None
 
@@ -103,6 +105,8 @@ class ComponentFailure:
     deployment_name: str = ""  # user-facing deployment name
     component_reference: str = ""  # user-facing component reference
     logs: list[str] | None = None  # last log lines captured before failure
+    container_name: str = ""  # the container that failed: main "app" vs an injected sidecar
+    image: str = ""  # the image reference that failed to pull (image_pull only)
 
 
 class DeploymentHealthError(Exception):
@@ -122,6 +126,12 @@ class DeploymentHealthError(Exception):
 # local images that were never side-loaded) — same user-facing outcome as
 # ImagePullBackOff, and terminal (it never self-heals), so it counts as image-pull.
 _CRASH_LOOP_REASONS = {"CrashLoopBackOff"}
+
+# The component's own container is named "app" in deployment.yaml.jinja; every other
+# container in the pod (authorization-wall, db-console, ...) is an injected sidecar.
+# Used to distinguish "the user's image failed" from "a platform sidecar image failed",
+# which must be reported (and remediated) differently.
+MAIN_CONTAINER_NAME = "app"
 
 
 async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
@@ -199,15 +209,23 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
 
                 if waiting_reason in _IMAGE_PULL_REASONS:
                     message = waiting.get("message", "image pull failed")
+                    image = container_status.get("image", "")
                     logger.info(
-                        "Image pull error for pod %s container %s in %s: %s - %s",
+                        "Image pull error for pod %s container %s (image %s) in %s: %s - %s",
                         pod_name,
                         container_name,
+                        image,
                         namespace,
                         waiting_reason,
                         message,
                     )
-                    result.image_pull_error = f"{waiting_reason}: {message}"
+                    # A pod can have several containers; the main "app" container is the
+                    # user's own image and takes precedence. Never let a sidecar's failure
+                    # overwrite (or masquerade as) the main container's.
+                    if result.image_pull_error is None or container_name == MAIN_CONTAINER_NAME:
+                        result.image_pull_error = f"{waiting_reason}: {message}"
+                        result.image_pull_container = container_name
+                        result.image_pull_image = image
 
                 if waiting_reason in _CRASH_LOOP_REASONS:
                     message = waiting.get("message", "container keeps crashing")
@@ -726,6 +744,8 @@ def create_health_check_callback(
                         message=health.image_pull_error,
                         deployment_name=deployment_name,
                         component_reference=comp_ref,
+                        container_name=health.image_pull_container or "",
+                        image=health.image_pull_image or "",
                     )
                 )
             if health.crash_loop_detected:
