@@ -39,6 +39,7 @@ from opi.services.project_service import get_project_service
 from opi.services.user_service import get_user_service
 from opi.utils.naming import generate_unique_name
 from starlette.websockets import WebSocketState
+from websockets.exceptions import ConnectionClosed
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +273,23 @@ def _sanitize_log_line(line: str) -> str:
     line = "".join(char if char >= " " or char in "\t\n" else "?" for char in line)
 
     return line
+
+
+def _retrieve_done_task_exceptions(done: set[asyncio.Task[Any]]) -> None:
+    """Consume finished tasks' exceptions so asyncio does not later log
+    "Future exception was never retrieved" when the Task is garbage-collected.
+
+    A dropped client socket (e.g. keepalive ping timeout, close code 1011) makes
+    the first task finish with ConnectionClosed / WebSocketDisconnect, which is a
+    normal disconnect. Anything else is a genuine failure and is logged with a
+    traceback.
+    """
+    for task in done:
+        if task.cancelled():
+            continue
+        exc = task.exception()
+        if exc and not isinstance(exc, (WebSocketDisconnect, ConnectionClosed)):
+            logger.error(f"task {task.get_name()} failed: {exc!r}", exc_info=exc)
 
 
 @logs_websocket_router.websocket("/stream/{project_name}")
@@ -848,6 +866,8 @@ async def stream_logs(
 
             done_names = [t.get_name() for t in _done]
             logger.info(f"task completed: {done_names}, cancelling {len(pending)} pending tasks")
+
+            _retrieve_done_task_exceptions(_done)
 
             # Signal all tasks to stop
             running = False
