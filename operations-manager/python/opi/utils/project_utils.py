@@ -167,7 +167,11 @@ async def build_component_config(
         "name": name,
         "type": component_type,
         "ports": {"inbound": inbound_ports, "outbound": [80, 443]},
-        "path": path,
+        # Schema expects an array of component-path objects (see project_v2.json
+        # $defs/component-path and the COMPONENT_PATH editable's [{match}] shape),
+        # not a bare string. Emitting the string here made add-component/creation
+        # produce files their own schema rejects at process time.
+        "path": [{"match": path}],
         "services": services_list,
         "uses-components": [],
     }
