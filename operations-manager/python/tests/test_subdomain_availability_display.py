@@ -27,8 +27,13 @@ async def test_taken_subdomain_raises_fielderror_on_field_with_owner():
             field_path="deployments[1]/subdomain",
         )
 
+    msg = str(exc_info.value)
     assert exc_info.value.field_path == "deployments[1]/subdomain"
-    assert "mozad-dle" in str(exc_info.value)
+    # Subdomain label and domain are named separately, not glued into one host.
+    assert "'moza'" in msg
+    assert "voor domein 'rijksapp.dev'" in msg
+    assert "moza.rijksapp.dev" not in msg
+    assert "mozad-dle" in msg
 
 
 @pytest.mark.asyncio

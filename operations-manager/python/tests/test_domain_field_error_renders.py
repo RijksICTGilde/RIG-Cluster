@@ -24,7 +24,7 @@ async def test_subdomain_field_error_appears_in_rendered_html():
             },
         ],
     }
-    message = "Het subdomein 'moza.rijksapp.dev' is niet beschikbaar, in gebruik door project 'mozad-dle'"
+    message = "Het subdomein 'moza' voor domein 'rijksapp.dev' is niet beschikbaar, in gebruik door project 'mozad-dle'"
 
     html = _render_section_html(
         section,
