@@ -512,7 +512,9 @@ class TestGetSupportedBaseDomains:
 
         domains = get_supported_base_domains("odcn-production")
         assert "rijks.app" in domains
-        assert "rijksapps.nl" in domains
+        assert "rijksapp.dev" in domains
+        # rijksapps.nl is the cluster infra domain, not a selectable app base domain
+        assert "rijksapps.nl" not in domains
 
     def test_all_clusters_domains(self):
         """get_supported_base_domains returns all domains when no cluster specified."""
