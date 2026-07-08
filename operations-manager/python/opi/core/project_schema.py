@@ -72,5 +72,9 @@ def validate_project_schema(project_data: dict[str, Any]) -> None:
         f"Projectbestand '{project_name}' is afgekeurd: het voldoet niet aan het projectschema. "
         f"Veld '{location}': {first.message}"
     )
-    logger.error(message)
+    # Do not log at ERROR here: the message is carried on the exception and the
+    # caller logs it once with context. Self-logging made one rejection surface as
+    # several ERR alerts (validator + orchestrator + task-progress). debug keeps a
+    # breadcrumb without feeding the log-watch.
+    logger.debug(message)
     raise ProjectSchemaError(message)
