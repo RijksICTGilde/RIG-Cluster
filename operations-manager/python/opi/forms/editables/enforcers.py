@@ -322,7 +322,12 @@ class DomainConfigEnforcer:
 
         # Check subdomain availability for nice-URL formats
         if subdomain and actual_domain and "{subdomain}" in template:
-            await self._check_subdomain_availability(subdomain, actual_domain, context)
+            await self._check_subdomain_availability(
+                subdomain,
+                actual_domain,
+                context,
+                field_path=f"deployments[{self.deployment_index}]/subdomain",
+            )
 
         # Validate bare domain component: only valid with custom domains
         bare_domain_component = dep.get("expose-component-on-bare-domain")
@@ -338,11 +343,14 @@ class DomainConfigEnforcer:
         subdomain: str,
         base_domain: str,
         context: dict[str, Any],
+        field_path: str,
     ) -> None:
         """Check if the subdomain + base_domain pair is available.
 
         Skips the check when the current project already owns the registration
-        (edit mode).
+        (edit mode). Raises a FieldError tied to ``field_path`` (the subdomain
+        input) so the message renders at the field instead of on the invisible
+        deployment-group path, and names the project that holds it.
         """
         connector = SubdomainConnector()
         registration = await connector.get_by_subdomain(subdomain.lower(), base_domain.lower())
@@ -355,7 +363,9 @@ class DomainConfigEnforcer:
         if project_name and registration.get("project_name") == project_name:
             return  # Owned by this project
 
-        raise ValueError(f"Het subdomein '{subdomain}.{base_domain}' is niet beschikbaar")
+        owner = registration.get("project_name")
+        owner_suffix = f", in gebruik door project '{owner}'" if owner else ""
+        raise FieldError(field_path, f"Het subdomein '{subdomain}.{base_domain}' is niet beschikbaar{owner_suffix}")
 
     @staticmethod
     async def _check_bare_domain_availability(
