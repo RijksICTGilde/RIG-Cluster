@@ -5277,6 +5277,9 @@ class ProjectManager:
                     output_filename=f"{cookie_secret_name}-secret",
                     use_sops=True,
                 )
+                # Register the generated file so the obsolete-manifest prune keeps it;
+                # its name carries the <deployment>-<component>- prefix the prune targets.
+                created_files.append(f"{cookie_secret_name}-secret.to-sops.yaml")
                 logger.info(f"Created authorization-wall cookie secret: {cookie_secret_name}")
 
             # Configure metrics scraper if enabled
