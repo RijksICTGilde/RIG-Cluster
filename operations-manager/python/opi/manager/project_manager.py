@@ -292,6 +292,31 @@ def _select_obsolete_component_manifests(
     return sorted(selected)
 
 
+# Registry auth/permission failures (missing or expired pull secret, denied robot)
+# are real, actionable errors worth an ERROR log + alert. A not-found / not-yet-built
+# image is expected churn for CI/CD and PR builds and belongs at WARNING, not ERROR
+# ("ERROR" should mean someone must act). We match only unambiguous auth markers;
+# a bare "denied" is left out because some registries (e.g. ghcr) return it for a
+# private-or-missing tag too, which would misclassify a not-built image as an error.
+_IMAGE_PULL_AUTH_MARKERS = (
+    "unauthorized",
+    "authentication required",
+    "authorization failed",
+    "no basic auth credentials",
+    "forbidden",
+    "401",
+    "403",
+)
+
+
+def _is_image_pull_auth_error(message: str | None) -> bool:
+    """True when an image-pull failure is a registry auth/permission problem."""
+    if not message:
+        return False
+    lowered = message.lower()
+    return any(marker in lowered for marker in _IMAGE_PULL_AUTH_MARKERS)
+
+
 @dataclass
 class DeploymentResult:
     """Result information for a processed deployment."""
@@ -2918,7 +2943,14 @@ class ProjectManager:
                             detail = f"{target}{image}"
                             if reason:
                                 detail = f"{detail}: {reason}"
-                            sync_failures.append(f"{app_name}: ImagePullBackOff for {detail}")
+                            msg = f"{app_name}: ImagePullBackOff for {detail}"
+                            # Only a registry auth/permission failure is a real error
+                            # worth failing the task + alerting. A not-found / not-yet-
+                            # built image is expected churn (CI/CD, PR builds) -> warn.
+                            if _is_image_pull_auth_error(f.message):
+                                sync_failures.append(msg)
+                            else:
+                                health_warnings.append(msg)
 
                     # CrashLoopBackOff is the user's app crashing at runtime, not a
                     # deploy/sync failure - report it as a warning, don't fail the task.
