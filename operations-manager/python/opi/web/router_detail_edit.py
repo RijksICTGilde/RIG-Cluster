@@ -435,12 +435,16 @@ def _render_modal_step(
     project_name: str,
     errors: dict[str, list[str]] | None = None,
     global_errors: list[str] | None = None,
+    warnings: dict[str, list[str]] | None = None,
 ) -> str:
     """Render the modal wizard step template and return processed HTML."""
     flow = get_flow(flow_id, **_flow_context_from_state(state, flow_id))
     active_sections = resolve_active_sections(flow, state.step_data)
     section_meta = get_section_metadata(active_sections)
     steps = state.get_steps(section_meta)
+
+    # Flatten the per-field warnings into a plain message list for the banner.
+    warning_messages = [msg for msgs in (warnings or {}).values() for msg in msgs]
 
     templates = get_templates()
     context = {
@@ -453,6 +457,7 @@ def _render_modal_step(
         "wizard_token": wizard_token,
         "errors": errors or {},
         "global_errors": global_errors or [],
+        "warnings": warning_messages,
         "step_base_url": f"/projects/{project_name}/modal-wizard/{flow_id}/step/",
         "step_target": "#edit-section-inner",
         "step_push_url": False,
@@ -859,17 +864,33 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
 
             submitted_yaml["services"] = ServiceAdapter.resolve_service_dependencies(submitted_yaml["services"])
 
-        # Run section-level enforcer (cross-field validation)
+        # Run section-level enforcer (cross-field validation). Capture warnings
+        # too: without a field_warnings dict a FieldWarning (e.g. a subdomain that
+        # is "op aanvraag") is silently swallowed — invisible to the user AND to
+        # the logs, which makes a stuck wizard impossible to diagnose.
         section_global_errors: list[str] = []
+        section_warnings: dict[str, list[str]] = {}
         if not errors and section.enforcer:
             section_global_errors = await processor.enforce_sections(
                 submitted_yaml,
                 [section],
                 enforcer_context=enforcer_ctx,
                 field_errors=errors,
+                field_warnings=section_warnings,
             )
 
-        if errors or section_global_errors:
+        if errors or section_global_errors or section_warnings:
+            # Log why the step did not advance so it is diagnosable from Loki, not
+            # just from the (previously missing) on-screen message.
+            logger.warning(
+                "Wizard step %s/%s/%s did not advance: field_errors=%s global_errors=%s warnings=%s",
+                project_name,
+                flow_id,
+                section_id,
+                errors,
+                section_global_errors,
+                section_warnings,
+            )
             step_html = _render_section_html(section, submitted_yaml, errors=errors, locked_services=None)
             rendered = _render_modal_step(
                 request,
@@ -881,6 +902,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
                 project_name,
                 errors=errors,
                 global_errors=section_global_errors,
+                warnings=section_warnings,
             )
             return HTMLResponse(content=rendered)
 
