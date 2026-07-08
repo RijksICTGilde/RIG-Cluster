@@ -365,7 +365,10 @@ class DomainConfigEnforcer:
 
         owner = registration.get("project_name")
         owner_suffix = f", in gebruik door project '{owner}'" if owner else ""
-        raise FieldError(field_path, f"Het subdomein '{subdomain}.{base_domain}' is niet beschikbaar{owner_suffix}")
+        raise FieldError(
+            field_path,
+            f"Het subdomein '{subdomain}' voor domein '{base_domain}' is niet beschikbaar{owner_suffix}",
+        )
 
     @staticmethod
     async def _check_bare_domain_availability(
