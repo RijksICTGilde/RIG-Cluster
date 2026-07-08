@@ -11,6 +11,14 @@ Database .+ already exists on
 Schema .+ already exists in database
 User .+ already exists on
 
+# --- component add via API: caller re-declares an already-present component
+# (idempotent automation hitting POST /api/projects/{p}/components). The add is
+# rejected in-handler and the project is left unchanged, so ops has nothing to act
+# on. The durable fix returns 409 synchronously from the route (see PR) instead of
+# failing a background task; once that ships this line no longer occurs. Scoped to
+# the "already exists in project" phrase so genuine add failures still escalate. ---
+Failed task: Component .+ already exists in project
+
 # --- clone/dump: empty-but-valid source schema (nothing to copy, not an error) ---
 Source schema '.+' exists but contains no tables
 pg_dump produced very little output \(\d+ bytes\) - might be empty dump
