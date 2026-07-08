@@ -1294,33 +1294,34 @@ def _empty_sequence_item(editable: Any | None) -> Any:
     if not has_complex:
         return ""
 
+    # Use the framework's own path writer so {K} dict-key filters materialise into
+    # lists. The previous hand-walker stripped/ignored {K} and wrote literal keys like
+    # "services{metrics-scraper}", which additionalProperties:false rejects (it broke
+    # the modal add-component flow for any component with services).
+    from opi.forms.editables.path import set_value
+
     seq_path = editable.editable.yaml_path
 
-    def _relative_parts(child_path: str) -> list[str]:
-        # Field path relative to the sequence item: strip the "{seq_path}[*]/" prefix,
-        # so a deeply nested child (e.g. deployments[*]/components[*]/services{attachments}/
-        # config[*]/provide-as) yields just ["provide-as"] rather than the whole prefix.
+    def _relative(child_path: str) -> str:
+        # Path relative to the sequence item: drop the "{seq_path}[*]/" prefix (the
+        # item's own index) but KEEP the {K}/[N] filter segments so set_value
+        # materialises them into lists. Any residual wildcard becomes the first entry.
         rest = child_path.removeprefix(seq_path)
         if "/" in rest:
             rest = rest.split("/", 1)[1]  # drop the leading "[*]"/"[N]" index segment
-        return [p for p in rest.replace("[*]", "").split("/") if p]
+        return rest.replace("[*]", "[0]")
 
     item: dict[str, Any] = {}
     for child in editable.children:
         child_ed = child.editable
+        rel = _relative(child_ed.yaml_path)
+        if not rel:
+            continue
         if str(child.widget) == "sequence" and child_ed.min_items:
             # Seed nested sequences with min_items empty entries
-            parts = _relative_parts(child_ed.yaml_path)
-            current = item
-            for part in parts[:-1]:
-                current = current.setdefault(part, {})
-            current[parts[-1]] = ["" for _ in range(child_ed.min_items)]
+            set_value(item, rel, ["" for _ in range(child_ed.min_items)])
         elif child_ed.default is not None:
-            parts = _relative_parts(child_ed.yaml_path)
-            current = item
-            for part in parts[:-1]:
-                current = current.setdefault(part, {})
-            current[parts[-1]] = child_ed.default
+            set_value(item, rel, child_ed.default)
     return item
 
 
