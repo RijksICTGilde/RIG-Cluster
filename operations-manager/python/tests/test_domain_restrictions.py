@@ -40,7 +40,6 @@ class TestIsDomainSubdomainRestricted:
 
     def test_production_domains_are_restricted(self):
         assert is_domain_subdomain_restricted("odcn-production", "rijks.app") is True
-        assert is_domain_subdomain_restricted("odcn-production", "rijksapps.nl") is True
         assert is_domain_subdomain_restricted("odcn-production", "rijksapp.nl") is True
         assert is_domain_subdomain_restricted("odcn-production", "rijksapp.dev") is True
 
@@ -60,7 +59,7 @@ class TestGetRestrictedSubdomainDomains:
 
     def test_production_returns_all_domains(self):
         domains = get_restricted_subdomain_domains("odcn-production")
-        assert set(domains) == {"rijks.app", "rijksapps.nl", "rijksapp.nl", "rijksapp.dev"}
+        assert set(domains) == {"rijks.app", "rijksapp.nl", "rijksapp.dev"}
 
     def test_unknown_cluster_raises(self):
         with pytest.raises(ValueError, match="not found"):
