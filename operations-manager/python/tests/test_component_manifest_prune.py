@@ -62,6 +62,47 @@ class TestSelectObsoleteComponentManifests:
             ]
         )
 
+    def test_keeps_generated_cookie_secret_of_surviving_component(self, tmp_path):
+        # Regression: the authorization-wall cookie secret is a per-component file named
+        # with the deployment-scoped unique name
+        # (<deployment>-<component>-oauth2-cookie-secret.to-sops.yaml). When a surviving
+        # component generates it, project_manager must register it in created_files so
+        # this prune keeps it. Before the fix it was written but NOT registered, so it was
+        # pruned in the same run and the pod hung on the missing cookie secret. With the
+        # file in generated_files, the prune must leave it alone.
+        directory = str(tmp_path)
+        _write(directory, "fundament-deployment.yaml")
+        _write(directory, "productie-fundament-oauth2-cookie-secret.to-sops.yaml")
+
+        selected = _select_obsolete_component_manifests(
+            directory,
+            component_names={"fundament"},
+            generated_files={
+                "fundament-deployment.yaml",
+                "productie-fundament-oauth2-cookie-secret.to-sops.yaml",
+            },
+            deployment_name="productie",
+        )
+
+        assert selected == []
+
+    def test_prunes_cookie_secret_of_surviving_component_when_not_registered(self, tmp_path):
+        # Documents the exact bug shape: the cookie secret is generated for a surviving
+        # component but absent from generated_files (the missing created_files.append),
+        # so the prune selects the freshly written file for deletion.
+        directory = str(tmp_path)
+        _write(directory, "fundament-deployment.yaml")
+        _write(directory, "productie-fundament-oauth2-cookie-secret.to-sops.yaml")
+
+        selected = _select_obsolete_component_manifests(
+            directory,
+            component_names={"fundament"},
+            generated_files={"fundament-deployment.yaml"},
+            deployment_name="productie",
+        )
+
+        assert selected == ["productie-fundament-oauth2-cookie-secret.to-sops.yaml"]
+
     def test_selects_renamed_file_of_surviving_component(self, tmp_path):
         # The key generalisation: component "backend" stays, but its ingress path
         # changed (/api -> /), so the old "backend-ingress-api.yaml" is no longer
