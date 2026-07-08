@@ -52,22 +52,11 @@ async def login(request: Request) -> Response:
         redirect_uri = str(request.url_for("auth_callback"))
         logger.info(f"Initiating OAuth login with redirect URI: {redirect_uri}")
 
-        # Add detailed logging to debug the DNS resolution issue
-        from opi.core.config import settings
-
-        logger.info("OAuth client configured with:")
-        logger.info(f"  - client_id: {keycloak.client_id}")
-        logger.info(f"  - client_secret: {'***' + keycloak.client_secret[-4:] if keycloak.client_secret else 'None'}")
-        logger.info(f"  - discovery_url from settings: {settings.OIDC_DISCOVERY_URL}")
-        logger.info(f"  - keycloak server metadata URL: {getattr(keycloak, 'server_metadata_url', 'Not available')}")
-
         # Generate the authorization URL and redirect the user
         return await keycloak.authorize_redirect(request, redirect_uri)
 
     except Exception as e:
         logger.error(f"Error initiating OAuth login: {e}")
-        logger.error(f"Exception type: {type(e)}")
-        logger.error(f"Exception details: {e!s}")
 
         # Add more context about what might be causing DNS resolution errors
         if "Name or service not known" in str(e):
@@ -105,30 +94,14 @@ async def auth_callback(request: Request) -> Response:
         oauth = request.app.state.oauth
         keycloak = oauth.keycloak
 
-        # Log the current OAuth client configuration
-        logger.info(f"OAuth callback - client_id: {keycloak.client_id}")
-        logger.info(
-            f"OAuth callback - client_secret: {'***' + keycloak.client_secret[-4:] if keycloak.client_secret else 'None'}"
-        )
-        # Note: server_metadata_url is not accessible from the OAuth client object directly
-
-        # Log the incoming request parameters
-        logger.info(f"OAuth callback - request params: {dict(request.query_params)}")
-        logger.info(f"OAuth callback - request URL: {request.url}")
-
         # Exchange the authorization code for an access token and user info
-        logger.info("OAuth callback - Starting token exchange...")
         token = await keycloak.authorize_access_token(request)
-        logger.info("OAuth callback - Token exchange successful!")
-
-        logger.info(f"Token received with keys: {list(token.keys()) if hasattr(token, 'keys') else type(token)}")
 
         # Get user info from the token response
         user_info = None
 
         if token.get("userinfo"):
             user_info = token["userinfo"]
-            logger.info("Using pre-parsed userinfo from token response")
 
         if not user_info:
             logger.error("No user info could be extracted from token response")
@@ -159,15 +132,12 @@ async def auth_callback(request: Request) -> Response:
         return RedirectResponse(url="/dashboard", status_code=302)
 
     except OAuthError as e:
-        logger.error(f"OAuth error during callback: {e}")
-        logger.error(f"OAuth error type: {type(e)}")
-        logger.error(f"OAuth error attributes: {dir(e)}")
-
+        # A rejected or aborted login (invalid_scope, access_denied, stale callback,
+        # ...) is a handled user-side condition, not a server fault - log one concise
+        # warning and redirect the user to a friendly error page.
         error_description = getattr(e, "description", "Unknown OAuth error")
         error_code = getattr(e, "error", "unknown_error")
-        error_uri = getattr(e, "error_uri", "")
-
-        logger.error(f"OAuth error details - code: {error_code}, description: {error_description}, uri: {error_uri}")
+        logger.warning(f"OAuth callback failed: {error_code} - {error_description}")
 
         # Redirect to login page with error message
         error_param = quote_plus(f"OAuth error: {error_description}")
