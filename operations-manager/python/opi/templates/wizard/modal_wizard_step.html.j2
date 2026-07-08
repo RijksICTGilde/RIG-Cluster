@@ -44,6 +44,16 @@
     </c-alert>
     {% endif %}
 
+    {% if warnings %}
+    <c-alert kind="warning" heading="Let op">
+        <ul>
+            {% for msg in warnings %}
+            <li>{{ msg }}</li>
+            {% endfor %}
+        </ul>
+    </c-alert>
+    {% endif %}
+
     {% set _step_url_prefix = step_base_url if step_base_url else "/projects/" ~ project_name ~ "/modal-wizard/" ~ flow_id ~ "/step/" %}
     {% set _token_qs = "?_wizard_token=" ~ wizard_token if wizard_token else "" %}
     <style>
