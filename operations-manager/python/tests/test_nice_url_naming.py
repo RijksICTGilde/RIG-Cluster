@@ -213,10 +213,11 @@ class TestClusterConfigNiceUrl:
         assert "local" in domains
 
     def test_get_nice_url_supported_domains_production(self):
-        """Production cluster supports rijks.app and rijksapps.nl domains."""
+        """Production cluster supports the app base domains (not the cluster infra domain rijksapps.nl)."""
         domains = get_nice_url_supported_domains("odcn-production")
         assert "rijks.app" in domains
-        assert "rijksapps.nl" in domains
+        assert "rijksapp.dev" in domains
+        assert "rijksapps.nl" not in domains
 
     def test_is_nice_url_domain_supported_true(self):
         """Check if rijks.app is supported on production."""
