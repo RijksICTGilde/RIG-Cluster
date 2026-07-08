@@ -137,7 +137,9 @@ async def file_change_handler(file_path: str, content: dict) -> None:
     try:
         validate_project_schema(content)
     except ProjectSchemaError as e:
-        logger.error(f"Projectbestand {file_path} afgekeurd door schemavalidatie: {e}")
+        # A rejected project file is expected input handling, not an ops-actionable
+        # error: warn (do not feed the ERR log-watch), skip the file, keep polling.
+        logger.warning(f"Projectbestand {file_path} afgekeurd door schemavalidatie: {e}")
         return
 
     # Check if this is a project file with deployments
