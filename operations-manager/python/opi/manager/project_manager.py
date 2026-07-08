@@ -6907,6 +6907,12 @@ class ProjectManager:
                 result["warnings"] = warnings
             return result
 
+        except (ProjectSchemaError, ProjectIntegrityError) as e:
+            # User-input validation failure: expected, surfaced to the caller. Log once
+            # at WARNING (not exception/ERROR) so a bad component request does not page
+            # ops. The validator no longer self-logs, so this is the single log line.
+            logger.warning("Component '%s' rejected by project validation: %s", name, e)
+            return {"success": False, "error": str(e), "error_type": "validation_error"}
         except Exception as e:
             error_msg = f"Error adding component '{name}': {e}"
             logger.exception(error_msg)
