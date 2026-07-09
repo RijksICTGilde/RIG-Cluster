@@ -7,7 +7,6 @@ Tests for _parse_deepdiff_path, set_deployment_service_generation, and related m
 from opi.handlers.project_file_handler import (
     ProjectFileHandler,
     is_image_pull_disable_reason,
-    is_mutable_image_tag,
 )
 
 
@@ -395,50 +394,46 @@ class TestImagePullDisableReenable:
         assert reenabled == []
         assert self._comp(project_data)["disabled"] is True
 
-    def test_is_mutable_image_tag(self) -> None:
-        assert is_mutable_image_tag("reg/app:latest")
-        assert is_mutable_image_tag("reg/app")  # no tag -> :latest
-        assert is_mutable_image_tag("reg/app:main")
-        assert is_mutable_image_tag("rcr.rijksapps.nl:5000/app:latest")  # host port not a tag
-        assert not is_mutable_image_tag("reg/app:v1.2.3")
-        assert not is_mutable_image_tag("reg/app:a90bff069766")
-        assert not is_mutable_image_tag("reg/app@sha256:deadbeef")  # digest-pinned
-        assert not is_mutable_image_tag("")
-
-    def test_no_mutable_retry_when_not_allowed(self) -> None:
-        """Automated refresh (allow_mutable_retry=False) must not retry a :latest disable."""
+    def test_no_reenable_on_automated_refresh(self) -> None:
+        """The automated post-disable refresh (force_reenable=False) must not clear a disable."""
         handler = ProjectFileHandler()
         project_data = self._project("reg/app:latest")
         handler.set_deployment_component_disabled(project_data, "prd", "web", True, "ErrImagePull: x")
 
-        reenabled = handler.reenable_components_with_changed_image(project_data, allow_mutable_retry=False)
+        reenabled = handler.reenable_components_with_changed_image(project_data, force_reenable=False)
 
         assert reenabled == []
         assert self._comp(project_data)["disabled"] is True
 
-    def test_mutable_retry_reenables_latest_on_redeploy(self) -> None:
-        """Explicit user redeploy (allow_mutable_retry=True) retries a :latest disable."""
+    def test_force_reenable_clears_latest_on_user_refresh(self) -> None:
+        """An explicit user (re)process (force_reenable=True) clears a :latest disable."""
         handler = ProjectFileHandler()
         project_data = self._project("reg/app:latest")
         handler.set_deployment_component_disabled(project_data, "prd", "web", True, "ErrImagePull: x")
 
-        reenabled = handler.reenable_components_with_changed_image(project_data, allow_mutable_retry=True)
+        reenabled = handler.reenable_components_with_changed_image(project_data, force_reenable=True)
 
         assert reenabled == [("prd", "web")]
         comp = self._comp(project_data)
         assert comp["disabled"] is False
         assert "disabled-image" not in comp
 
-    def test_mutable_retry_does_not_touch_versioned_tag(self) -> None:
-        """Even on redeploy, an unchanged versioned tag is not retried (only string-change)."""
+    def test_force_reenable_clears_unchanged_versioned_tag(self) -> None:
+        """A user refresh clears the disable even on an unchanged pinned tag.
+
+        This is the transient-registry-error case (e.g. a 5xx that broke and then
+        healed the same tag): a user refresh must give it another chance.
+        """
         handler = ProjectFileHandler()
         project_data = self._project("reg/app:v1.2.3")
         handler.set_deployment_component_disabled(project_data, "prd", "web", True, "ErrImagePull: x")
 
-        reenabled = handler.reenable_components_with_changed_image(project_data, allow_mutable_retry=True)
+        reenabled = handler.reenable_components_with_changed_image(project_data, force_reenable=True)
 
-        assert reenabled == []
-        assert self._comp(project_data)["disabled"] is True
+        assert reenabled == [("prd", "web")]
+        comp = self._comp(project_data)
+        assert comp["disabled"] is False
+        assert "disabled-image" not in comp
 
     def test_reenable_respects_deployment_filter(self) -> None:
         handler = ProjectFileHandler()

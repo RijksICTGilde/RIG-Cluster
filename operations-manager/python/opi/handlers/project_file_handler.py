@@ -50,31 +50,6 @@ def is_image_pull_disable_reason(reason: str) -> bool:
     return any(reason.startswith(r) for r in IMAGE_PULL_REASONS)
 
 
-# Image tags that move: a re-push reuses the same reference string, so a
-# project-file comparison cannot tell whether the underlying image changed. A
-# tagless reference resolves to :latest and is treated the same way.
-_MUTABLE_IMAGE_TAGS = {"latest", "main", "master", "stable", "edge", "dev", "develop", "nightly"}
-
-
-def is_mutable_image_tag(image: str) -> bool:
-    """Whether an image reference uses a moving tag (or no tag, i.e. :latest).
-
-    Digest-pinned refs (``…@sha256:…``) and version/SHA-like tags are immutable.
-    Used to decide whether an image-pull disable should be retried on an explicit
-    user redeploy even when the reference string is unchanged.
-    """
-    if not image:
-        return False
-    if "@" in image:  # digest-pinned -> immutable
-        return False
-    # Strip the registry host[:port] so a host port colon is not read as a tag.
-    ref = image.rsplit("/", 1)[-1]
-    if ":" not in ref:
-        return True  # no tag -> defaults to :latest
-    tag = ref.rsplit(":", 1)[-1]
-    return tag.lower() in _MUTABLE_IMAGE_TAGS
-
-
 # Default resource values for deployment containers
 DEFAULT_RESOURCES: dict[str, str] = {
     "requests_memory": "128Mi",
@@ -1617,7 +1592,7 @@ class ProjectFileHandler:
         self,
         project_data: dict[str, Any],
         deployment_names: list[str] | None = None,
-        allow_mutable_retry: bool = False,
+        force_reenable: bool = False,
     ) -> list[tuple[str, str]]:
         """Clear stale image-pull auto-disables so a fixed image can deploy again.
 
@@ -1626,17 +1601,20 @@ class ProjectFileHandler:
 
         - the image reference changed since the disable (any edit path) -- the new
           image deserves a chance; or
-        - ``allow_mutable_retry`` is set and the reference uses a moving tag
-          (e.g. ``:latest``), whose string cannot reveal a re-push. This is only
-          passed on an explicit user (re)deploy, never on the automated refresh
-          queued right after a disable, so a still-broken component cannot flap.
+        - ``force_reenable`` is set -- an explicit user (re)process asks OPI to try
+          again, even on an unchanged pinned tag (e.g. after a transient registry
+          5xx that left the same tag broken and then healthy). The automated
+          post-disable refresh passes ``force_reenable=False``, so a still-broken
+          component cannot flap on the automated retry loop.
 
         Modifies project_data in place.
 
         Args:
             project_data: The parsed project data (modified in place)
             deployment_names: Optional set of deployment names to limit to; None = all
-            allow_mutable_retry: Also retry moving-tag disables (explicit redeploy only)
+            force_reenable: On an explicit user (re)process, clear the disable of any
+                image-pull-disabled component regardless of whether the image
+                reference changed. Never set on the automated post-disable refresh.
 
         Returns:
             List of (deployment_name, component_reference) that were re-enabled.
@@ -1654,8 +1632,7 @@ class ProjectFileHandler:
                 if not (disabled_image and current_image):
                     continue  # only image-pull disables carry disabled-image
                 changed = current_image != disabled_image
-                mutable_retry = allow_mutable_retry and is_mutable_image_tag(current_image)
-                if not (changed or mutable_retry):
+                if not (changed or force_reenable):
                     continue
                 comp["disabled"] = False
                 comp.pop("disabled-reason", None)
@@ -1665,7 +1642,7 @@ class ProjectFileHandler:
                 cause = (
                     f"image changed since auto-disable ({disabled_image} -> {current_image})"
                     if changed
-                    else f"moving-tag retry on redeploy ({current_image})"
+                    else f"user (re)process retry on unchanged tag ({current_image})"
                 )
                 logger.info(f"Re-enabling component '{reference}' in deployment '{dep_name}': {cause}")
         return reenabled

@@ -2393,7 +2393,7 @@ class ProjectManager:
         force_clone: bool = False,
         argocd_resources_changed: bool = True,
         deployment_names: list[str] | None = None,
-        allow_mutable_tag_retry: bool = True,
+        force_reenable: bool = True,
     ) -> bool:
         """
         Process a project file from the Git repository.
@@ -2592,7 +2592,7 @@ class ProjectManager:
             logger.info("Step 2: Processing project with change detection")
 
             process_success = await self.process_project(
-                force_clone=force_clone, deployment_names=targets, allow_mutable_tag_retry=allow_mutable_tag_retry
+                force_clone=force_clone, deployment_names=targets, force_reenable=force_reenable
             )
             if not process_success:
                 critical_failures.append("Project processing failed - check logs for details")
@@ -4344,7 +4344,7 @@ class ProjectManager:
         deployment_name: str | None = None,
         force_clone: bool = False,
         deployment_names: list[str] | None = None,
-        allow_mutable_tag_retry: bool = True,
+        force_reenable: bool = True,
     ) -> bool:
         """
         Process the project file and create all required resources.
@@ -4378,14 +4378,15 @@ class ProjectManager:
                 )
                 return False
 
-            # Clear stale image-pull auto-disables so a fixed image can deploy again:
+            # Clear stale image-pull auto-disables so a component can deploy again:
             # when the image reference changed (any edit path), or -- on an explicit
-            # user redeploy (allow_mutable_tag_retry) -- when it uses a moving tag like
-            # :latest whose string cannot reveal a re-push. Done before generating
-            # manifests so the new image is actually deployed. See oom_watcher for the
-            # disable side; the automated post-disable refresh passes the flag as False.
+            # user (re)process (force_reenable) -- unconditionally, so a component
+            # disabled by a transient registry error recovers on a user refresh even
+            # on an unchanged pinned tag. Done before generating manifests so the image
+            # is actually deployed. See oom_watcher for the disable side; the automated
+            # post-disable refresh passes force_reenable=False so it cannot flap.
             reenabled = self._project_file_handler.reenable_components_with_changed_image(
-                project_data, targets, allow_mutable_retry=allow_mutable_tag_retry
+                project_data, targets, force_reenable=force_reenable
             )
             if reenabled:
                 reenable_msg = "auto-reenable: image changed for " + ", ".join(f"{d}/{c}" for d, c in reenabled)
