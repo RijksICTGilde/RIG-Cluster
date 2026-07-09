@@ -103,3 +103,19 @@ def load_extensions(cluster_name: str) -> ExtensionPipeline:
         logger.info(f"Loaded extension '{name}' (type: {ext_type})")
 
     return ExtensionPipeline(extensions)
+
+
+_REWRITE_MAPPINGS_CACHE: dict[str, list[dict[str, str]]] = {}
+
+
+def get_registry_rewrite_mappings(cluster_name: str) -> list[dict[str, str]]:
+    """Return the cluster's registry-rewrite mappings (cached), or [] if none configured."""
+    if cluster_name not in _REWRITE_MAPPINGS_CACHE:
+        mappings: list[dict[str, str]] = []
+        for name in get_extensions(cluster_name):
+            definition = _load_extension_definition(name)
+            if definition.get("type") == "registry-rewrite":
+                mappings = definition.get("config", {}).get("mappings", [])
+                break
+        _REWRITE_MAPPINGS_CACHE[cluster_name] = mappings
+    return _REWRITE_MAPPINGS_CACHE[cluster_name]

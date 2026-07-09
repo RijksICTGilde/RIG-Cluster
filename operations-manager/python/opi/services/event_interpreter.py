@@ -40,17 +40,8 @@ class InterpretedEvent:
 _EVENT_TRANSLATIONS: dict[str, tuple[str, str, EventSeverity]] = {
     # (title, suggestion, severity)
     #
-    # Image problems
-    "ErrImagePull": (
-        "Container image kan niet worden opgehaald",
-        "Controleer of de image-naam en tag correct zijn en of de image bestaat in de registry.",
-        EventSeverity.ACTIONABLE,
-    ),
-    "ImagePullBackOff": (
-        "Container image kan niet worden opgehaald",
-        "Controleer of de image-naam en tag correct zijn en of de image bestaat in de registry.",
-        EventSeverity.ACTIONABLE,
-    ),
+    # Image problems (ErrImagePull / ImagePullBackOff get a dynamic suggestion,
+    # see _image_pull_suggestion; only the static ones remain here)
     "InvalidImageName": (
         "Ongeldige image-naam",
         "De opgegeven image-naam is ongeldig. Controleer de naam op typefouten.",
@@ -134,13 +125,8 @@ _NOISE_REASONS: set[str] = {
 
 _MESSAGE_PATTERNS: list[tuple[re.Pattern[str], str, str, EventSeverity]] = [
     # (pattern, title, suggestion, severity)
-    # -- Image problems (must come before generic back-off) --
-    (
-        re.compile(r"ErrImagePull|ImagePullBackOff|back-off.*pulling image|failed to pull", re.IGNORECASE),
-        "Container image kan niet worden opgehaald",
-        "Controleer of de image-naam en tag correct zijn en de het image bestaat in de registry.",
-        EventSeverity.ACTIONABLE,
-    ),
+    # (image-pull failures are handled dynamically before _MESSAGE_PATTERNS, see
+    # _image_pull_suggestion / _IMAGE_PULL_RE)
     (
         re.compile(r"runAsNonRoot", re.IGNORECASE),
         "Container draait als root",
@@ -198,10 +184,47 @@ _MESSAGE_PATTERNS: list[tuple[re.Pattern[str], str, str, EventSeverity]] = [
 ]
 
 
+_IMAGE_PULL_REASONS = {"ErrImagePull", "ImagePullBackOff"}
+_IMAGE_PULL_RE = re.compile(r"ErrImagePull|ImagePullBackOff|back-off.*pulling image|failed to pull", re.IGNORECASE)
+_IMAGE_IN_MSG_RE = re.compile(r'image "([^"]+)"')
+
+
+def _source_image(rewritten: str) -> str:
+    """Show the source-registry image, not the rcr.rijksapps.nl proxy rewrite."""
+    from opi.core.config import settings
+    from opi.extensions.pipeline import get_registry_rewrite_mappings
+    from opi.extensions.registry_rewrite import original_image
+
+    return original_image(rewritten, get_registry_rewrite_mappings(settings.CLUSTER_MANAGER))
+
+
+def _image_pull_suggestion(message: str) -> str:
+    """Short suggestion for an image-pull failure, naming the source-registry image.
+
+    No per-HTTP-status wording: the status is unreliable (a 500 from the proxy can
+    really be an auth problem), so a single check covers the common causes, plus an
+    anonymous ``docker pull`` the user can run to test public access.
+    """
+    match = _IMAGE_IN_MSG_RE.search(message)
+    if not match:
+        return "Controleer of de image publiek toegankelijk is en of de naam en tag kloppen."
+    image = _source_image(match.group(1))
+    return (
+        f"De image {image} kon niet worden opgehaald. Controleer of de image publiek toegankelijk is "
+        f"en of de naam en tag kloppen. Test zonder credentials met: DOCKER_CONFIG=$(mktemp -d) docker pull {image} *\n"
+        "* DOCKER_CONFIG=$(mktemp -d) haalt de image op zonder je config (dus publiek/anoniem) en wijzigt "
+        "niets aan je eigen Docker-configuratie."
+    )
+
+
 def _interpret_by_reason(reason: str, message: str) -> tuple[str, str, EventSeverity] | None:
     """Look up translation by event reason, then fall back to message patterns."""
     if reason in _NOISE_REASONS:
         return None
+
+    # Image-pull failures get a dynamic, solution-oriented suggestion.
+    if reason in _IMAGE_PULL_REASONS or _IMAGE_PULL_RE.search(message):
+        return "Container image kan niet worden opgehaald", _image_pull_suggestion(message), EventSeverity.ACTIONABLE
 
     if reason in _EVENT_TRANSLATIONS:
         return _EVENT_TRANSLATIONS[reason]
@@ -457,6 +480,13 @@ def interpret_argocd_errors(
 def _enrich_argocd_error(error: dict[str, str]) -> dict[str, str]:
     """Enrich an ArgoCD error with pattern-matched translation if possible."""
     message = error.get("message", "")
+    if _IMAGE_PULL_RE.search(message):
+        enriched = dict(error)
+        enriched["message"] = "Container image kan niet worden opgehaald"
+        enriched["suggestion"] = _image_pull_suggestion(message)
+        enriched["severity"] = EventSeverity.ACTIONABLE.value
+        enriched["original_message"] = message
+        return enriched
     for pattern, title, suggestion, severity in _MESSAGE_PATTERNS:
         if pattern.search(message):
             enriched = dict(error)
