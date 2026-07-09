@@ -7,7 +7,7 @@ import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
+from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError, create_kubectl_connector
 
 
 @pytest.fixture(autouse=True)
@@ -75,10 +75,8 @@ async def test_apply_manifest(connector, manifest_file, variables):
     with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
         mock_run_cmd.return_value = ("namespace/test-project created", "", 0)
 
-        result, error = await connector.apply_manifest(manifest_file, variables)
-
-        assert result is True
-        assert error == ""
+        # Success returns None (no raise).
+        assert await connector.apply_manifest(manifest_file, variables) is None
         mock_run_cmd.assert_called_once()
         args = mock_run_cmd.call_args[0][0]
         assert args[0] == "apply"
@@ -86,14 +84,12 @@ async def test_apply_manifest(connector, manifest_file, variables):
 
 
 async def test_apply_manifest_failure(connector, manifest_file, variables):
-    """Test applying a manifest with a failure."""
+    """Test applying a manifest with a failure raises with the reason."""
     with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
         mock_run_cmd.return_value = ("", "Error: unable to recognize", 1)
 
-        result, error = await connector.apply_manifest(manifest_file, variables)
-
-        assert result is False
-        assert "unable to recognize" in error
+        with pytest.raises(KubectlExecutionError, match="unable to recognize"):
+            await connector.apply_manifest(manifest_file, variables)
 
 
 if __name__ == "__main__":

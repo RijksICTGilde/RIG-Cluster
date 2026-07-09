@@ -43,8 +43,7 @@ data:
             manifest_path = f.name
 
         try:
-            result, _ = await connector.apply_manifest(manifest_path)
-            assert result is True
+            await connector.apply_manifest(manifest_path)  # success = no raise
 
             # Verify the ConfigMap was created
             stdout, stderr, code = await connector.run_command(
@@ -86,8 +85,7 @@ data:
             manifest_path = f.name
 
         try:
-            result, _ = await connector.apply_manifest(manifest_path, variables)
-            assert result is True
+            await connector.apply_manifest(manifest_path, variables)  # success = no raise
 
             # Verify the ConfigMap was created with correct values
             stdout, stderr, code = await connector.run_command(
@@ -105,7 +103,9 @@ data:
         self,
         connected_kubectl_connector: Any,
     ) -> None:
-        """Test applying an invalid manifest returns False."""
+        """Test applying an invalid manifest raises."""
+        from opi.connectors.kubectl import KubectlExecutionError
+
         connector = connected_kubectl_connector
 
         manifest_content = """
@@ -119,8 +119,8 @@ metadata:
             manifest_path = f.name
 
         try:
-            result, _ = await connector.apply_manifest(manifest_path)
-            assert result is False
+            with pytest.raises(KubectlExecutionError):
+                await connector.apply_manifest(manifest_path)
         finally:
             Path(manifest_path).unlink(missing_ok=True)
 
