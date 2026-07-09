@@ -71,3 +71,17 @@ class RegistryRewriteExtension(ManifestExtension):
             if secret_name not in existing_names:
                 existing.append({"name": secret_name})
         pod_spec["imagePullSecrets"] = existing
+
+
+def original_image(image: str, mappings: list[dict[str, Any]]) -> str:
+    """Map a rewritten proxy image back to its source registry (inverse of the rewrite).
+
+    Turns e.g. ``rcr.rijksapps.nl/code-overheid-rig/x/app:tag`` back into
+    ``code.overheid.nl/x/app:tag`` so a user sees their own registry, not the proxy.
+    Returns the input unchanged if no mapping target matches.
+    """
+    for mapping in mappings:
+        to_prefix = mapping["to"]
+        if image.startswith(to_prefix + "/") or image == to_prefix:
+            return mapping["from"] + image[len(to_prefix) :]
+    return image
