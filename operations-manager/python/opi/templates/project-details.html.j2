@@ -2003,8 +2003,9 @@
         progressEl.style.display = '';
         actionsEl.style.display = 'none';
 
-        // Attachment delete is a DELETE on the attachments endpoint, which returns an HTML
-        // fragment (not JSON); just reload on success and surface the detail on refusal.
+        // Attachment delete is a plain fetch DELETE (not htmx): on success we ignore the
+        // body and reload; on refusal/error we read the JSON `detail`. The endpoint returns
+        // JSON, so it must not fall back to the app's HTMLResponse default.
         if (dangerActionType === 'attachment') {
             var attUrl = '/projects/' + encodeURIComponent('{{ project.name }}') +
                          '/attachments/' + encodeURIComponent(dangerActionTarget);
