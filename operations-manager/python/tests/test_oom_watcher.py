@@ -32,6 +32,7 @@ def _make_pods_json(
     container_name: str = "app",
     pod_created: str = "",
     oom_finished: str = "",
+    terminating: bool = False,
 ) -> str:
     container_statuses = []
     cs: dict = {"name": container_name, "lastState": {}, "state": {}}
@@ -52,6 +53,8 @@ def _make_pods_json(
     metadata: dict = {"name": pod_name}
     if pod_created:
         metadata["creationTimestamp"] = pod_created
+    if terminating:
+        metadata["deletionTimestamp"] = "2026-07-09T22:00:00Z"
 
     pod = {"metadata": metadata, "status": {"containerStatuses": container_statuses}}
     return json.dumps({"items": [pod]})
@@ -93,6 +96,20 @@ class TestCheckPodHealth:
         assert result.oom_detected is True
         assert result.image_pull_error is None
         assert result.crash_loop_detected is False
+
+    @patch("opi.services.oom_watcher.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_oom_on_terminating_pod_is_ignored(self, mock_kubectl_cls):
+        # A pod being replaced during a rollout carries a stale OOM lastState; it must
+        # not be treated as a live OOM (which would fail the deploy for a phantom).
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        mock_kubectl_cls.isConnected = True
+        mock_kubectl.run_command = AsyncMock(return_value=(_make_pods_json(oom=True, terminating=True), "", 0))
+
+        result = await check_pod_health("rig-prd-ns", "prod-api")
+
+        assert result.oom_detected is False
 
     @patch("opi.services.oom_watcher.KubectlConnector")
     @pytest.mark.asyncio
