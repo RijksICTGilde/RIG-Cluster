@@ -88,9 +88,8 @@ async def _monitor_argocd_and_deployment(
             logger.warning(f"ArgoCD sync wait timed out for project apps: {project_name}")
             task_progress_manager.fail_task(
                 argo_subtask,
-                f"De wachttijd op ArgoCD is verstreken voor '{project_name}'. Dit is een bekende ArgoCD-bug bij "
-                "nieuwe of gewijzigde projecten en betekent niet dat het aanmaken is mislukt, alleen dat we niet "
-                "binnen de wachttijd konden bevestigen dat alles is gesynct. Controleer de status van het project.",
+                f"De wachttijd op ArgoCD is verstreken: niet alle apps van '{project_name}' waren binnen de "
+                "wachttijd gesynct en gezond. Controleer de status van het project.",
             )
 
         task_progress_manager.complete_task(monitor_task)
