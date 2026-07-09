@@ -2605,6 +2605,11 @@ class ProjectManager:
                 for failure in critical_failures:
                     logger.error(f"  - {failure}")
                 logger.warning("Skipping ArgoCD sync due to critical failures")
+                # Surface the real reason(s) so the task shows them instead of a
+                # generic "Project processing failed". Keep a more specific error a
+                # callee may already have recorded.
+                if not self._processing_error:
+                    self._processing_error = "; ".join(critical_failures)
                 return False
 
             logger.info(
@@ -2982,6 +2987,7 @@ class ProjectManager:
                 return True
         except Exception as e:
             logger.exception(f"Error processing project from Git: {e}")
+            self._processing_error = f"Error processing project from Git: {e}"
             return False
         finally:
             await self.close()
