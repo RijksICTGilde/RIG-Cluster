@@ -2888,33 +2888,44 @@ class ProjectManager:
 
                     # Handle OOM: tune resources, queue refresh (existing behavior)
                     if oom_failures:
+                        oom_components = ", ".join(f.component_reference or f.component_name for f in oom_failures)
                         if progress_manager and argo_task:
                             progress_manager.update_task(
                                 argo_task,
-                                f"OOM detected for {app_name}, tuning resources...",
+                                f"OOM detected for {oom_components} in {app_name}, tuning resources...",
                             )
                         try:
                             result = await tune_deployment_resources(project_name, dep_name, skip_reprocessing=True)
                             if result.changes:
                                 logger.info(
-                                    "OOM auto-tune applied %d change(s) for %s/%s, queuing refresh task",
+                                    "OOM auto-tune applied %d change(s) for %s/%s (components: %s), queuing refresh task",
                                     len(result.changes),
                                     project_name,
                                     dep_name,
+                                    oom_components,
                                 )
                                 await self._queue_refresh_task(task_service, project_name, dep_name)
                             else:
                                 logger.warning(
-                                    "OOM auto-tune found no actionable changes for %s/%s",
+                                    "OOM auto-tune found no actionable changes for %s/%s (components: %s)",
                                     project_name,
                                     dep_name,
+                                    oom_components,
                                 )
                                 sync_failures.append(
-                                    f"{app_name}: OOM detected but auto-tune could not determine new limits"
+                                    f"{app_name}: OOM detected for {oom_components} but auto-tune could not determine new limits"
                                 )
                         except Exception as tune_err:
-                            logger.error("OOM auto-tune failed for %s/%s: %s", project_name, dep_name, tune_err)
-                            sync_failures.append(f"{app_name}: OOM detected, auto-tune failed: {tune_err}")
+                            logger.error(
+                                "OOM auto-tune failed for %s/%s (components: %s): %s",
+                                project_name,
+                                dep_name,
+                                oom_components,
+                                tune_err,
+                            )
+                            sync_failures.append(
+                                f"{app_name}: OOM detected for {oom_components}, auto-tune failed: {tune_err}"
+                            )
 
                     # Handle ImagePullBackOff: disable component, queue refresh. A pod
                     # never becomes ready while any of its containers (main OR sidecar)
