@@ -272,3 +272,26 @@ class TestLoadExtensions:
     def test_unknown_extension_file_raises(self) -> None:
         with pytest.raises(FileNotFoundError):
             _load_extension_definition("nonexistent-extension")
+
+
+class TestOriginalImage:
+    """Reverse of the rewrite: show the source registry, not the rcr proxy."""
+
+    _MAPPINGS = [
+        {"from": "code.overheid.nl", "to": "rcr.rijksapps.nl/code-overheid-rig"},
+        {"from": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig"},
+    ]
+
+    def test_reverses_proxy_to_source_registry(self) -> None:
+        from opi.extensions.registry_rewrite import original_image
+
+        assert (
+            original_image("rcr.rijksapps.nl/code-overheid-rig/robbertbos/app:2026.6.30", self._MAPPINGS)
+            == "code.overheid.nl/robbertbos/app:2026.6.30"
+        )
+
+    def test_unmatched_image_is_unchanged(self) -> None:
+        from opi.extensions.registry_rewrite import original_image
+
+        # RIG's own registry has no mirror mapping -> already the real repo.
+        assert original_image("rcr.rijksapps.nl/rig/zad:desa-16", self._MAPPINGS) == "rcr.rijksapps.nl/rig/zad:desa-16"
