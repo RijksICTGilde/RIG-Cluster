@@ -162,6 +162,19 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     deploy_task = progress.add_task("Project deployment")
     progress.update_current_step("Deploying project")
 
+    # Known ArgoCD cache-invalidation bug: creating a new project invalidates
+    # ArgoCD's cache, so its apps can take a few minutes to sync and the sync-wait
+    # may run into its timeout. Warn the user up front that a timeout here does NOT
+    # mean creation failed.
+    if payload.get("is_new_project", False):
+        notice = progress.add_subtask(
+            deploy_task,
+            "Let op: door een bekende bug in ArgoCD kan het aanmaken van een nieuw project een paar minuten duren, "
+            "excuus daarvoor. Een eventuele time-out-melding betekent niet dat het aanmaken is mislukt, alleen dat de "
+            "wachttijd is verstreken; het project wordt vrijwel zeker gewoon aangemaakt.",
+        )
+        progress.complete_task(notice)
+
     try:
         try:
             processing_result = await project_manager.process_project_from_git(
