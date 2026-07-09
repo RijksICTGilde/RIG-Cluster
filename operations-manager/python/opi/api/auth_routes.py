@@ -204,6 +204,9 @@ async def logout(request: Request) -> Response:
         return RedirectResponse(url="/", status_code=302)
 
 
+# TODO: probably remove. Unused manual debug endpoint: returns the session user, has
+# no frontend or code caller, and is only referenced in docs/KEYCLOAK_SETUP.md as a
+# manual SSO/Keycloak-attributes check.
 # response_class=JSONResponse: returns a dict, and auth_router inherits the app's
 # HTMLResponse default, which would try to .encode() the dict and raise a 500.
 @auth_router.get("/user", response_class=JSONResponse)
