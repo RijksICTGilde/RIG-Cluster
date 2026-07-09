@@ -7,6 +7,7 @@ entry; new uploads run through the wizard staging flow (router_wizard_attachment
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from opi.core.auth_decorators import requires_sso
 from opi.web.project_edit_security import require_project_edit_access
@@ -16,7 +17,12 @@ logger = logging.getLogger(__name__)
 attachments_router = APIRouter(prefix="/projects", tags=["attachments"])
 
 
-@attachments_router.delete("/{project_name}/attachments/{attachment_id}")
+# response_class=JSONResponse is required: this endpoint returns a dict, but the app
+# default response class is HTMLResponse, which would try to `.encode()` the dict and
+# raise "'dict' object has no attribute 'encode'" (a 500 even though the delete
+# succeeded). The /api router sets JSONResponse globally; this web router must be
+# explicit per data endpoint.
+@attachments_router.delete("/{project_name}/attachments/{attachment_id}", response_class=JSONResponse)
 @requires_sso
 async def delete_attachment(request: Request, project_name: str, attachment_id: str):
     """Remove an attachment from the catalog, refusing if it is still in use.
