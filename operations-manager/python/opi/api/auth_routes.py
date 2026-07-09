@@ -11,7 +11,7 @@ from urllib.parse import quote_plus
 
 from authlib.integrations.starlette_client import OAuthError
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from opi.services.user_service import get_user_service
 
 if TYPE_CHECKING:
@@ -204,7 +204,9 @@ async def logout(request: Request) -> Response:
         return RedirectResponse(url="/", status_code=302)
 
 
-@auth_router.get("/user")
+# response_class=JSONResponse: returns a dict, and auth_router inherits the app's
+# HTMLResponse default, which would try to .encode() the dict and raise a 500.
+@auth_router.get("/user", response_class=JSONResponse)
 async def get_current_user_info(request: Request) -> dict:
     """
     Get information about the currently authenticated user.

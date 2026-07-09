@@ -16,3 +16,15 @@ def test_delete_attachment_route_uses_json_response():
 
     response_class = getattr(routes[0].response_class, "value", routes[0].response_class)
     assert response_class is JSONResponse
+
+
+def test_auth_user_route_uses_json_response():
+    # GET /auth/user returns a dict from the session; auth_router inherits the app's
+    # HTMLResponse default, so the route must pin JSONResponse to avoid a 500.
+    from opi.api.auth_routes import auth_router
+
+    routes = [r for r in auth_router.routes if getattr(r, "path", "").endswith("/user")]
+    assert routes, "auth /user route not found"
+
+    response_class = getattr(routes[0].response_class, "value", routes[0].response_class)
+    assert response_class is JSONResponse
