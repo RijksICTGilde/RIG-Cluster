@@ -1621,7 +1621,8 @@ class ProjectManager:
             namespace: Full namespace name (with cluster prefix already applied)
 
         Raises:
-            RuntimeError: If namespace creation fails
+            KubectlExecutionError: If applying the namespace manifest fails.
+            RuntimeError: If Capsule does not assign the tenant label in time.
         """
         logger.info(f"Creating namespace '{namespace}'")
 

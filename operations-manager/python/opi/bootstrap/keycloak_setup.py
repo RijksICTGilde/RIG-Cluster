@@ -282,29 +282,25 @@ class KeycloakSetup:
                     use_sops=False,
                 )
 
-                # Apply the secret using kubectl
-                success, _ = await self.kubectl.apply_manifest(manifest_file_path)
+                # Apply the secret using kubectl. On failure this raises, which the
+                # surrounding try/except logs and turns into a False return.
+                await self.kubectl.apply_manifest(manifest_file_path)
+                logger.info("Successfully updated operations-manager-keycloak secret")
 
-                if success:
-                    logger.info("Successfully updated operations-manager-keycloak secret")
+                # Update the current settings if they're not already set
+                if not settings.OIDC_CLIENT_ID:
+                    settings.OIDC_CLIENT_ID = client_info["client_id"]
+                    logger.info(f"Updated settings.OIDC_CLIENT_ID: {client_info['client_id']}")
 
-                    # Update the current settings if they're not already set
-                    if not settings.OIDC_CLIENT_ID:
-                        settings.OIDC_CLIENT_ID = client_info["client_id"]
-                        logger.info(f"Updated settings.OIDC_CLIENT_ID: {client_info['client_id']}")
+                if not settings.OIDC_CLIENT_SECRET:
+                    settings.OIDC_CLIENT_SECRET = client_info["client_secret"]
+                    logger.info("Updated settings.OIDC_CLIENT_SECRET")
 
-                    if not settings.OIDC_CLIENT_SECRET:
-                        settings.OIDC_CLIENT_SECRET = client_info["client_secret"]
-                        logger.info("Updated settings.OIDC_CLIENT_SECRET")
+                if not settings.OIDC_DISCOVERY_URL:
+                    settings.OIDC_DISCOVERY_URL = client_info["discovery_url"]
+                    logger.info(f"Updated settings.OIDC_DISCOVERY_URL: {client_info['discovery_url']}")
 
-                    if not settings.OIDC_DISCOVERY_URL:
-                        settings.OIDC_DISCOVERY_URL = client_info["discovery_url"]
-                        logger.info(f"Updated settings.OIDC_DISCOVERY_URL: {client_info['discovery_url']}")
-
-                    return True
-                else:
-                    logger.error("Failed to apply operations-manager-keycloak secret")
-                    return False
+                return True
 
         except Exception as e:
             logger.error(f"Error updating operations secret: {e}")

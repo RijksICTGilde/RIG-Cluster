@@ -11,7 +11,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from opi.connectors.git import start_monitoring_task
-from opi.connectors.kubectl import create_kubectl_connector
+from opi.connectors.kubectl import KubectlExecutionError, create_kubectl_connector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.project_schema import ProjectSchemaError, validate_project_schema
@@ -90,11 +90,10 @@ async def check_and_create_namespaces(project_data: dict[str, Any]) -> bool:
                 # Template variables
                 variables = {"namespace": namespace, "manager": get_argo_namespace(configured_cluster)}
 
-                result, apply_error = await kubectl.apply_manifest(manifest_path, variables)
-
-                if result:
+                try:
+                    await kubectl.apply_manifest(manifest_path, variables)
                     logger.info(f"Successfully created namespace: {namespace}")
-                else:
+                except KubectlExecutionError as apply_error:
                     logger.error(f"Failed to create namespace {namespace}: {apply_error}")
                     all_succeeded = False
                     continue
