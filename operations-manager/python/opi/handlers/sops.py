@@ -21,6 +21,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# A freshly created namespace's Capsule tenant RBAC (the binding that grants our
+# service account admin in the namespace) takes ~1s to propagate; the first secret
+# apply then fails with a transient Forbidden. Retry on that race before treating a
+# failure as a real, alert-worthy error.
+_SOPS_STORE_MAX_ATTEMPTS = 4
+_SOPS_STORE_RETRY_DELAY_SECONDS = 1.5
+
 
 # TODO: maybe this handler has to go.. it conflicts with the utils/sops.py
 class SopsHandler:
@@ -218,17 +225,33 @@ class SopsHandler:
                 "secret_pairs": {"key": full_key_contents},
             }
 
-            result, apply_error = await self.kubectl.apply_manifest(template_path, variables, namespace)
+            # Retry the apply on the transient Capsule-RBAC race and only log an
+            # error once we have genuinely given up, so a failure that self-heals
+            # within a second does not raise a false alarm.
+            from opi.connectors.kubectl import KubectlExecutionError
 
-            if result:
-                self.logger.info(f"Successfully stored SOPS key in namespace: {namespace}")
-                self.logger.debug(f"Public key for project: {public_key}")
-                return True
-            else:
-                self.logger.error(
-                    f"Failed to store SOPS key (secret sops-age-key) in namespace {namespace}: {apply_error}"
-                )
-                return False
+            last_error = ""
+            for attempt in range(1, _SOPS_STORE_MAX_ATTEMPTS + 1):
+                try:
+                    await self.kubectl.apply_manifest(template_path, variables, namespace)
+                    self.logger.info(f"Successfully stored SOPS key in namespace: {namespace}")
+                    self.logger.debug(f"Public key for project: {public_key}")
+                    return True
+                except KubectlExecutionError as apply_error:
+                    last_error = str(apply_error)
+                    is_transient = "forbidden" in last_error.lower()
+                    if attempt < _SOPS_STORE_MAX_ATTEMPTS and is_transient:
+                        self.logger.warning(
+                            f"SOPS key not stored yet in namespace {namespace} (Capsule RBAC still "
+                            f"propagating), attempt {attempt}/{_SOPS_STORE_MAX_ATTEMPTS}, retrying in "
+                            f"{_SOPS_STORE_RETRY_DELAY_SECONDS}s"
+                        )
+                        await asyncio.sleep(_SOPS_STORE_RETRY_DELAY_SECONDS)
+                        continue
+                    break
+
+            self.logger.error(f"Failed to store SOPS key (secret sops-age-key) in namespace {namespace}: {last_error}")
+            return False
 
         except Exception as e:
             self.logger.error(f"Error storing SOPS key in namespace {namespace}: {e}")

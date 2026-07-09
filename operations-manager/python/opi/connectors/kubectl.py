@@ -320,7 +320,7 @@ class KubectlConnector:
 
     async def apply_manifest(
         self, file_path: str, variables: dict[str, Any] | None = None, namespace: str | None = None
-    ) -> tuple[bool, str]:
+    ) -> None:
         """
         Apply a Kubernetes manifest file with variable substitution.
 
@@ -330,10 +330,13 @@ class KubectlConnector:
             namespace: Optional namespace to apply the manifest to. If not provided,
                       it will use the namespace specified in the manifest itself.
 
-        Returns:
-            ``(True, "")`` on success, or ``(False, <reason>)`` on failure. The
-            reason is the collapsed server error so callers can surface *why* the
-            apply failed instead of just that it did.
+        Raises:
+            KubectlExecutionError: If the apply fails. The message front-loads the
+                manifest + namespace and collapses the (often multi-line) server
+                error onto one line. The connector does NOT log the failure itself:
+                the caller decides whether a failure is really an error (e.g. a
+                caller that retries on a transient Capsule RBAC race logs only once
+                it has genuinely given up).
         """
         logger.debug(f"Applying manifest: {file_path}{' in namespace ' + namespace if namespace else ''}")
 
@@ -353,16 +356,11 @@ class KubectlConnector:
         stdout, stderr, code = await self._run_kubectl_command(args, stdin_input=manifest_content)
 
         if code != 0:
-            # Collapse the (often multi-line) server error onto one line and
-            # front-load the manifest + namespace so the reason survives the
-            # log-watcher's length-capping and the key facts are up front.
             reason = " ".join(stderr.split()) or f"kubectl exited {code} with no stderr"
             where = f" in namespace {namespace}" if namespace else ""
-            logger.error(f"Failed to apply manifest {file_path}{where}: {reason}")
-            return False, reason
+            raise KubectlExecutionError(f"Failed to apply manifest {file_path}{where}: {reason}")
 
         logger.info(f"Successfully applied manifest: {stdout}")
-        return True, ""
 
     async def get_secret(self, secret_name: str, namespace: str) -> dict[str, str] | None:
         """
