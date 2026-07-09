@@ -351,7 +351,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
             task_progress_manager=progress,
             deployment_name=deployment_name,
             force_clone=force_clone,
-            allow_mutable_tag_retry=not automated_remediation,
+            force_reenable=not automated_remediation,
         )
 
         if processing_result:
