@@ -172,8 +172,17 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
 
         pods_data = json.loads(stdout)
         for pod in pods_data.get("items", []):
-            pod_name = pod.get("metadata", {}).get("name", "unknown")
-            pod_created = pod.get("metadata", {}).get("creationTimestamp", "")
+            metadata = pod.get("metadata", {})
+            pod_name = metadata.get("name", "unknown")
+            pod_created = metadata.get("creationTimestamp", "")
+
+            # Skip pods that are being replaced (terminating). During a rollout the old
+            # ReplicaSet's pods linger with a stale lastState (e.g. an OOM from an earlier
+            # lifecycle) while the new pods are healthy. Reading them produces a phantom
+            # OOM/CrashLoop that fails the deploy for a problem that no longer exists.
+            if metadata.get("deletionTimestamp"):
+                logger.debug("Skipping terminating pod %s for health check in %s", pod_name, namespace)
+                continue
 
             for container_status in pod.get("status", {}).get("containerStatuses", []):
                 container_name = container_status.get("name", "unknown")
