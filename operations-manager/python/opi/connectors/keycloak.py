@@ -20,6 +20,11 @@ from opi.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Alias of the custom first-broker-login flow that auto-links a brokered SSO identity to a
+# pre-existing local account matched by username/email, replacing the stock flow's
+# confirm-link + verify-by-email/re-authentication steps. See features/keycloak-auto-link.md.
+AUTO_LINK_FIRST_BROKER_LOGIN_FLOW = "first broker login auto-link"
+
 
 class RealmType(Enum):
     """Type of Keycloak realm for determining mapper configuration."""
@@ -864,6 +869,7 @@ class KeycloakConnector:
         authenticate_by_default: bool = True,
         update_profile_first_login: str = "off",
         config_overrides: dict[str, Any] | None = None,
+        first_broker_login_flow_alias: str = "first broker login",
     ) -> dict[str, Any]:
         """
         Add an OIDC identity provider to a realm.
@@ -923,7 +929,7 @@ class KeycloakConnector:
             "addReadTokenRoleOnCreate": True,
             "authenticateByDefault": authenticate_by_default,
             "linkOnly": False,
-            "firstBrokerLoginFlowAlias": "first broker login",
+            "firstBrokerLoginFlowAlias": first_broker_login_flow_alias,
             "config": provider_config,
         }
 
@@ -945,13 +951,18 @@ class KeycloakConnector:
                         if current_config.get(key) != desired:
                             changed_keys.append(key)
                     display_name_differs = current_provider.get("displayName") != provider_data["displayName"]
+                    first_broker_flow_differs = (
+                        current_provider.get("firstBrokerLoginFlowAlias") != provider_data["firstBrokerLoginFlowAlias"]
+                    )
 
-                    if changed_keys or display_name_differs:
+                    if changed_keys or display_name_differs or first_broker_flow_differs:
                         logger.info(
                             f"Identity provider {provider_alias} in realm {realm_name} needs update: "
-                            f"changed_keys={changed_keys}, displayName_differs={display_name_differs}"
+                            f"changed_keys={changed_keys}, displayName_differs={display_name_differs}, "
+                            f"firstBrokerLoginFlow_differs={first_broker_flow_differs}"
                         )
                         current_provider["displayName"] = provider_data["displayName"]
+                        current_provider["firstBrokerLoginFlowAlias"] = provider_data["firstBrokerLoginFlowAlias"]
                         current_provider["config"] = {**current_config, **provider_config}
                         self.admin.update_idp(idp_alias=provider_alias, payload=current_provider)
                         logger.info(f"Updated identity provider {provider_alias} in realm {realm_name}")
@@ -997,6 +1008,7 @@ class KeycloakConnector:
         enabled: bool = True,
         update_profile_first_login: str = "off",
         config_overrides: dict[str, Any] | None = None,
+        first_broker_login_flow_alias: str = "first broker login",
     ) -> dict[str, Any]:
         """
         Add a SAML identity provider to a realm.
@@ -1076,7 +1088,7 @@ class KeycloakConnector:
             "addReadTokenRoleOnCreate": False,
             "authenticateByDefault": authenticate_by_default,
             "linkOnly": False,
-            "firstBrokerLoginFlowAlias": "first broker login",
+            "firstBrokerLoginFlowAlias": first_broker_login_flow_alias,
             "config": provider_config,
         }
 
@@ -1099,15 +1111,19 @@ class KeycloakConnector:
                             changed_keys.append(key)
                     display_name_differs = current_provider.get("displayName") != provider_data["displayName"]
                     enabled_differs = current_provider.get("enabled") != provider_data["enabled"]
+                    first_broker_flow_differs = (
+                        current_provider.get("firstBrokerLoginFlowAlias") != provider_data["firstBrokerLoginFlowAlias"]
+                    )
 
-                    if changed_keys or display_name_differs or enabled_differs:
+                    if changed_keys or display_name_differs or enabled_differs or first_broker_flow_differs:
                         logger.info(
                             f"SAML identity provider {provider_alias} in realm {realm_name} needs update: "
                             f"changed_keys={changed_keys}, displayName_differs={display_name_differs}, "
-                            f"enabled_differs={enabled_differs}"
+                            f"enabled_differs={enabled_differs}, firstBrokerLoginFlow_differs={first_broker_flow_differs}"
                         )
                         current_provider["displayName"] = provider_data["displayName"]
                         current_provider["enabled"] = provider_data["enabled"]
+                        current_provider["firstBrokerLoginFlowAlias"] = provider_data["firstBrokerLoginFlowAlias"]
                         current_provider["config"] = {**current_config, **provider_config}
                         self.admin.update_idp(idp_alias=provider_alias, payload=current_provider)
                         logger.info(f"Updated SAML identity provider {provider_alias} in realm {realm_name}")
@@ -2589,6 +2605,241 @@ class KeycloakConnector:
             logger.error(f"Failed to set flow override for client '{client_id}': {e}")
             self.admin.change_current_realm("master")
             raise
+
+    async def ensure_auto_link_first_broker_login_flow(
+        self,
+        realm_name: str,
+        require_confirmation: bool = False,
+        flow_alias: str = AUTO_LINK_FIRST_BROKER_LOGIN_FLOW,
+    ) -> None:
+        """
+        Create (idempotently) a first-broker-login flow that auto-links a brokered SSO identity
+        to a pre-existing local account matched by username/email.
+
+        The stock "first broker login" flow routes an existing-but-unlinked account through
+        "Confirm Link Existing Account" + "Verify Existing Account By Email/Re-authentication",
+        which needs an email round-trip or a password a pre-created account does not have. This
+        flow replaces that with Keycloak's built-in idp-auto-link authenticator, so the link
+        happens silently (require_confirmation=False) or after a single confirmation screen
+        (require_confirmation=True). No email or password step either way.
+
+        Structure created:
+            <flow_alias>                                 (top-level, basic-flow)
+            |-- idp-review-profile                       DISABLED
+            +-- <flow_alias> user creation or linking    REQUIRED    (subflow)
+                |-- idp-create-user-if-unique            ALTERNATIVE
+                +-- <flow_alias> handle existing account ALTERNATIVE (subflow)
+                    |-- idp-confirm-link                 REQUIRED    (only if require_confirmation)
+                    +-- idp-auto-link                    REQUIRED
+
+        Only the "an account with this email already exists" branch differs from the stock
+        flow; brand-new users and already-linked users are unaffected. Matching a pre-created
+        account requires the realm's duplicateEmailsAllowed=false (set by the SSO setup).
+
+        Args:
+            realm_name: Name of the realm
+            require_confirmation: Show the single idp-confirm-link screen before linking
+            flow_alias: Alias for the top-level flow
+        """
+        logger.info(
+            f"Ensuring auto-link first-broker-login flow '{flow_alias}' in realm '{realm_name}' "
+            f"(require_confirmation={require_confirmation})"
+        )
+
+        uco_alias = f"{flow_alias} user creation or linking"
+        hea_alias = f"{flow_alias} handle existing account"
+
+        try:
+            self.admin.change_current_realm(realm_name)
+
+            # Step 1: top-level flow
+            flow_data = {
+                "alias": flow_alias,
+                "description": "Auto-link a brokered SSO identity to a pre-existing local account",
+                "providerId": "basic-flow",
+                "topLevel": True,
+                "builtIn": False,
+            }
+            try:
+                self.admin.create_authentication_flow(payload=flow_data)
+                logger.debug(f"Created first-broker-login flow '{flow_alias}'")
+            except KeycloakPostError as e:
+                if "409" in str(e) or "Conflict" in str(e):
+                    logger.debug(f"Flow '{flow_alias}' already exists, will reuse it")
+                else:
+                    raise
+
+            # Step 2: skip the profile-review page
+            await self._ensure_execution_in_flow(
+                flow_alias=flow_alias, provider="idp-review-profile", requirement="DISABLED", priority=10
+            )
+
+            # Step 3: "user creation or linking" subflow. idp-create-user-if-unique must precede
+            # the handle-existing subflow so the existing-user lookup runs and stashes the match.
+            # The explicit priority=10 on idp-create-user-if-unique (created before the subflow)
+            # makes the subflow land at getNextPriority=11, giving a deterministic order.
+            await self._ensure_subflow(
+                parent_alias=flow_alias,
+                subflow_alias=uco_alias,
+                requirement="REQUIRED",
+                description="Create the brokered user, or link to an existing account",
+            )
+            await self._ensure_execution_in_flow(
+                flow_alias=uco_alias, provider="idp-create-user-if-unique", requirement="ALTERNATIVE", priority=10
+            )
+
+            # Step 4: "handle existing account" subflow with idp-auto-link
+            await self._ensure_subflow(
+                parent_alias=uco_alias,
+                subflow_alias=hea_alias,
+                requirement="ALTERNATIVE",
+                description="Automatically link the brokered identity to the existing account",
+            )
+            await self._ensure_handle_existing_account_executions(
+                subflow_alias=hea_alias, require_confirmation=require_confirmation
+            )
+
+            self.admin.change_current_realm("master")
+            logger.info(
+                f"Successfully ensured auto-link first-broker-login flow '{flow_alias}' in realm '{realm_name}'"
+            )
+
+        except KeycloakError as e:
+            logger.error(
+                f"Failed to ensure auto-link first-broker-login flow '{flow_alias}' in realm '{realm_name}': {e}"
+            )
+            self.admin.change_current_realm("master")
+            raise
+
+    async def _ensure_subflow(self, parent_alias: str, subflow_alias: str, requirement: str, description: str) -> None:
+        """
+        Create a basic-flow subflow under a parent (sub)flow and set its requirement (idempotent).
+
+        Args:
+            parent_alias: Alias of the parent flow or subflow
+            subflow_alias: Alias for the subflow (must be unique within the realm)
+            requirement: Requirement level for the subflow (REQUIRED, ALTERNATIVE, ...)
+            description: Human-readable description
+        """
+        subflow_data = {
+            "alias": subflow_alias,
+            "type": "basic-flow",
+            "provider": "registration-page-form",
+            "description": description,
+        }
+        try:
+            self.admin.create_authentication_flow_subflow(
+                payload=subflow_data, flow_alias=parent_alias, skip_exists=True
+            )
+            logger.debug(f"Created subflow '{subflow_alias}' under '{parent_alias}'")
+        except KeycloakPostError as e:
+            if "409" not in str(e) and "Conflict" not in str(e):
+                raise
+
+        executions = self.admin.get_authentication_flow_executions(flow_alias=parent_alias)
+        subflow_execution = None
+        for execution in executions:
+            if execution.get("displayName") == subflow_alias:
+                subflow_execution = execution
+                break
+
+        if not subflow_execution:
+            raise KeycloakError(f"Could not find subflow '{subflow_alias}' under '{parent_alias}' after creation")
+
+        if subflow_execution.get("requirement") == requirement:
+            return
+
+        # Pass the full fetched object back with only the requirement changed, so the PUT keeps
+        # the subflow's priority (a partial payload resets it to 0 and breaks the ordering).
+        subflow_execution["requirement"] = requirement
+        self.admin.update_authentication_flow_executions(payload=subflow_execution, flow_alias=parent_alias)
+        logger.debug(f"Set subflow '{subflow_alias}' to {requirement}")
+
+    async def _ensure_execution_in_flow(
+        self, flow_alias: str, provider: str, requirement: str, priority: int | None = None
+    ) -> None:
+        """
+        Add an execution (by provider id) to a flow OR subflow and set its requirement (idempotent).
+
+        Unlike _add_execution_with_requirement this also works for subflows: it looks the flow up
+        via get_authentication_flow_executions rather than get_authentication_flows (top-level only).
+
+        An explicit `priority` is passed in the create body. Keycloak >= 25 honors it; without it
+        every execution defaults to priority 0, so siblings tie and the order becomes
+        non-deterministic (keycloak#43016) and cannot be fixed afterwards (raise-priority is a
+        no-op on equal priorities; PUT ignores index/priority per keycloak#8726). Setting explicit,
+        gapped priorities is what keycloak-config-cli does and is the reliable ordering mechanism.
+
+        Args:
+            flow_alias: Alias of the flow or subflow
+            provider: Provider ID for the execution
+            requirement: Requirement level (ALTERNATIVE, REQUIRED, DISABLED)
+            priority: Explicit priority for deterministic ordering (Keycloak >= 25)
+        """
+        executions = self.admin.get_authentication_flow_executions(flow_alias=flow_alias)
+        target = None
+        for execution in executions:
+            if execution.get("providerId") == provider:
+                target = execution
+                break
+
+        if not target:
+            payload: dict[str, Any] = {"provider": provider}
+            if priority is not None:
+                payload["priority"] = priority
+            try:
+                self.admin.create_authentication_flow_execution(payload=payload, flow_alias=flow_alias)
+            except KeycloakPostError as e:
+                if "409" not in str(e) and "Conflict" not in str(e):
+                    raise
+            executions = self.admin.get_authentication_flow_executions(flow_alias=flow_alias)
+            for execution in reversed(executions):
+                if execution.get("providerId") == provider:
+                    target = execution
+                    break
+
+        if not target:
+            raise KeycloakError(f"Could not find execution '{provider}' in flow '{flow_alias}' after creation")
+
+        if target.get("requirement") == requirement:
+            return
+
+        # Pass the full fetched object back with only the requirement changed. A partial payload
+        # would drop "priority" and the PUT resets it to 0, undoing the explicit ordering.
+        target["requirement"] = requirement
+        self.admin.update_authentication_flow_executions(payload=target, flow_alias=flow_alias)
+        logger.debug(f"Set execution '{provider}' to {requirement} in flow '{flow_alias}'")
+
+    async def _ensure_handle_existing_account_executions(self, subflow_alias: str, require_confirmation: bool) -> None:
+        """
+        Ensure the "handle existing account" subflow contains exactly idp-auto-link (and
+        idp-confirm-link before it when require_confirmation is True), both REQUIRED and in
+        order. Rebuilds the subflow contents when the set or order drifts, which also removes a
+        stale idp-confirm-link when a realm switches from 'confirm' to 'automatic'.
+
+        Args:
+            subflow_alias: Alias of the "handle existing account" subflow
+            require_confirmation: Include idp-confirm-link before idp-auto-link
+        """
+        link_providers = ("idp-confirm-link", "idp-auto-link")
+        desired = ["idp-confirm-link", "idp-auto-link"] if require_confirmation else ["idp-auto-link"]
+
+        executions = self.admin.get_authentication_flow_executions(flow_alias=subflow_alias)
+        current = [e for e in executions if e.get("providerId") in link_providers]
+        current_providers = [e.get("providerId") for e in current]
+
+        if current_providers != desired:
+            # Drift (missing, extra, or wrong order): delete then re-add in the desired order.
+            for execution in current:
+                self.admin.delete_authentication_flow_execution(execution.get("id"))
+                logger.debug(f"Removed execution '{execution.get('providerId')}' from '{subflow_alias}'")
+
+        # Explicit priorities keep idp-confirm-link before idp-auto-link deterministically.
+        priorities = {"idp-confirm-link": 10, "idp-auto-link": 20}
+        for provider in desired:
+            await self._ensure_execution_in_flow(
+                flow_alias=subflow_alias, provider=provider, requirement="REQUIRED", priority=priorities[provider]
+            )
 
     async def create_post_broker_login_flow(
         self,
