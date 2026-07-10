@@ -157,6 +157,15 @@ Always specify the correct namespace when debugging. Do not assume `rig-system` 
 - **No emojis** in code, comments, or log messages
 - **Frontend**: Jinja2 + jinja-roos-components. Check `references/jinja_roos_copied.md`
 
+## Utility Scripts
+
+Standalone operational tools (Keycloak, Grafana/Loki, diagnostics, project-file maintenance) live
+in `operations-manager/python/scripts/` — see `scripts/README.md` there for the full index. Run
+them from `operations-manager/python` with `uv run python scripts/<tool>.py`. Prefer an existing
+tool over ad-hoc `kubectl exec`; e.g. `keycloak_flow_tool.py` for auth-flow inspect/repair,
+`grafana_loki_logs.py` for production logs older than ~3h. (The repo-root `/scripts` folder holds
+a few shell utilities only.)
+
 ## Dependencies
 
 - **Framework**: FastAPI, Uvicorn, Starlette

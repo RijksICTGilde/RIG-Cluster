@@ -67,56 +67,56 @@ identityProviders:
       - name: "email-mapper"
         identityProviderMapper: "oidc-user-attribute-idp-mapper"
         config:
-          syncMode: "INHERIT"
+          syncMode: "FORCE"
           claim: "email"
           user.attribute: "email"
 
       - name: "first-name-mapper"
         identityProviderMapper: "oidc-user-attribute-idp-mapper"
         config:
-          syncMode: "INHERIT"
+          syncMode: "FORCE"
           claim: "given_name"
           user.attribute: "firstName"
 
       - name: "last-name-mapper"
         identityProviderMapper: "oidc-user-attribute-idp-mapper"
         config:
-          syncMode: "INHERIT"
+          syncMode: "FORCE"
           claim: "family_name"
           user.attribute: "lastName"
 
       - name: "full-name-mapper"
         identityProviderMapper: "oidc-user-attribute-idp-mapper"
         config:
-          syncMode: "INHERIT"
+          syncMode: "FORCE"
           claim: "name"
           user.attribute: "displayName"
 
       - name: "organization-number-mapper"
         identityProviderMapper: "oidc-user-attribute-idp-mapper"
         config:
-          syncMode: "INHERIT"
+          syncMode: "FORCE"
           claim: "organization.number"
           user.attribute: "organization.number"
 
       - name: "organization-name-mapper"
         identityProviderMapper: "oidc-user-attribute-idp-mapper"
         config:
-          syncMode: "INHERIT"
+          syncMode: "FORCE"
           claim: "organization.name"
           user.attribute: "organization.name"
 
       - name: "sso-rijk-userid-mapper"
         identityProviderMapper: "oidc-user-attribute-idp-mapper"
         config:
-          syncMode: "INHERIT"
+          syncMode: "FORCE"
           claim: "sso-rijk-userid"
           user.attribute: "sso-rijk-userid"
 
       - name: "sso-rijk-userid-lowercase-mapper"
         identityProviderMapper: "oidc-user-attribute-idp-mapper"
         config:
-          syncMode: "INHERIT"
+          syncMode: "FORCE"
           claim: "sso-rijk-userid-lowercase"
           user.attribute: "sso-rijk-userid-lowercase"
 
