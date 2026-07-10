@@ -11,7 +11,7 @@ from typing import Any
 
 from ruamel.yaml import YAML
 
-from opi.connectors.keycloak import KeycloakConnector, RealmType
+from opi.connectors.keycloak import AUTO_LINK_FIRST_BROKER_LOGIN_FLOW, KeycloakConnector, RealmType
 
 logger = logging.getLogger(__name__)
 
@@ -368,6 +368,23 @@ class KeycloakYamlHandler:
             logger.warning("No realm_name in context for identity providers, skipping")
             return
 
+        # Per-realm account-link mode (project realms only; the platform realm never sets it):
+        #   automatic -> silently link a brokered SSO identity to a pre-existing account
+        #   confirm   -> same, after one confirmation screen
+        #   verify (default / unset) -> Keycloak's stock flow: the user proves ownership of the
+        #                               existing account by email link or re-authentication
+        # For automatic/confirm, ensure the custom first-broker-login flow exists (the IdPs below
+        # reference it by alias) and point the IdPs at it; otherwise keep the stock flow. Switching
+        # modes on an existing realm is picked up on reconcile: the flow is reconciled in place and
+        # the IdP's firstBrokerLoginFlowAlias is re-pointed via the connector's 409-diff-update.
+        account_link = variables.get("account_link")
+        first_broker_login_flow_alias = "first broker login"
+        if account_link in ("automatic", "confirm"):
+            await self.keycloak.ensure_auto_link_first_broker_login_flow(
+                realm_name, require_confirmation=(account_link == "confirm")
+            )
+            first_broker_login_flow_alias = AUTO_LINK_FIRST_BROKER_LOGIN_FLOW
+
         items = self._expand_list(idp_section, variables)
         for item in items:
             alias = item.get("alias")
@@ -419,6 +436,7 @@ class KeycloakYamlHandler:
                     enabled=item.get("enabled", True),
                     update_profile_first_login=item.get("updateProfileFirstLogin", "off"),
                     config_overrides=saml_overrides,
+                    first_broker_login_flow_alias=first_broker_login_flow_alias,
                 )
             else:
                 oidc_overrides = {k: v for k, v in config.items() if k not in oidc_named_keys}
@@ -433,6 +451,7 @@ class KeycloakYamlHandler:
                     authenticate_by_default=item.get("authenticateByDefault", True),
                     update_profile_first_login=item.get("updateProfileFirstLogin", "off"),
                     config_overrides=oidc_overrides,
+                    first_broker_login_flow_alias=first_broker_login_flow_alias,
                 )
 
             # Process mappers if present

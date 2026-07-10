@@ -80,6 +80,36 @@ class TestKeycloakConfigExtraction:
         assert config["template"] == "sso-only"
         assert config["variables"] == {}
 
+    def test_account_link_defaults_to_none_when_omitted(self):
+        """account-link omitted -> None (treated as stock 'verify' flow, opt-in)."""
+        project_data = {"name": "test-project", "services": [{"keycloak": {"config": {"template": "sso-only"}}}]}
+
+        config = self.keycloak_manager._get_keycloak_service_config(project_data)
+
+        assert config["account_link"] is None
+
+    @pytest.mark.parametrize("mode", ["automatic", "confirm", "verify"])
+    def test_account_link_accepts_valid_modes(self, mode):
+        """account-link accepts the three valid modes."""
+        project_data = {
+            "name": "test-project",
+            "services": [{"keycloak": {"config": {"template": "sso-only", "account-link": mode}}}],
+        }
+
+        config = self.keycloak_manager._get_keycloak_service_config(project_data)
+
+        assert config["account_link"] == mode
+
+    def test_account_link_rejects_invalid_mode(self):
+        """An unknown account-link value is rejected."""
+        project_data = {
+            "name": "test-project",
+            "services": [{"keycloak": {"config": {"template": "sso-only", "account-link": "silent"}}}],
+        }
+
+        with pytest.raises(ValueError, match="account-link must be"):
+            self.keycloak_manager._get_keycloak_service_config(project_data)
+
 
 class TestKeycloakConfigValidation:
     """Test configuration validation and error cases."""
