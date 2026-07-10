@@ -417,6 +417,7 @@ class KeycloakManager:
             "additional_clients": [],
             "realm_roles": [],
             "restrict_access": None,
+            "account_link": None,  # None = keep Keycloak's stock first-broker-login flow (opt-in)
         }
 
         project_services = project_data.get("services", [])
@@ -562,6 +563,18 @@ class KeycloakManager:
                     raise ValueError(f"realm-roles[{i}].name is required")
             merged_config["realm_roles"] = realm_roles
             logger.info(f"Found {len(realm_roles)} realm roles to create")
+
+        # Extract and validate account-link (per-realm SSO account-linking mode):
+        #   automatic -> link a brokered SSO identity to a pre-existing account silently
+        #   confirm   -> same, after one confirmation screen
+        #   verify    -> Keycloak's stock flow (prove ownership by email/password); the default
+        #                when account-link is omitted
+        if "account-link" in user_config:
+            account_link = user_config["account-link"]
+            if account_link not in ("automatic", "confirm", "verify"):
+                raise ValueError(f"account-link must be 'automatic', 'confirm' or 'verify', got {account_link!r}")
+            merged_config["account_link"] = account_link
+            logger.info(f"Account-link mode configured: {account_link}")
 
         # For external keycloak, copy the external config fields and skip template validation
         if merged_config["type"] == "external":
@@ -1414,6 +1427,7 @@ class KeycloakManager:
             "platform_client_id": platform_client_id,
             "realm_name": realm_name,
             "realm_display_name": f"{project_name} ({cluster})",
+            "account_link": config.get("account_link"),  # None = stock flow (opt-in)
         }
 
         user_variables = config.get("variables", {})
@@ -1649,6 +1663,8 @@ class KeycloakManager:
             # Operations manager domain and client ID for invite flow
             "operations_manager_domain": operations_manager_domain,
             "invite_client_id": settings.INVITE_CLIENT_ID,
+            # Per-realm SSO account-linking mode (automatic | confirm | verify; None/verify -> stock)
+            "account_link": config.get("account_link"),
         }
 
         # Add redirect URIs from component ingress hosts if provided
