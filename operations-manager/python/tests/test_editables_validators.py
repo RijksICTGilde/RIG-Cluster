@@ -202,21 +202,26 @@ class TestComponentNameValidator:
     def test_valid_with_digits(self):
         assert ComponentNameValidator().validate("app2") == []
 
-    def test_max_length_12(self):
-        assert ComponentNameValidator().validate("abcdefghijkl") == []  # 12 chars
+    def test_valid_max_length_40(self):
+        assert ComponentNameValidator().validate("a" + "b" * 39) == []  # 40 chars
 
     def test_too_long(self):
-        errors = ComponentNameValidator().validate("abcdefghijklm")  # 13 chars
+        errors = ComponentNameValidator().validate("a" + "b" * 40)  # 41 chars
         assert len(errors) == 1
-        assert "12" in errors[0]
+        assert "40" in errors[0]
 
     def test_no_underscores(self):
         errors = ComponentNameValidator().validate("my_app")
         assert len(errors) == 1
 
-    def test_no_hyphens(self):
-        errors = ComponentNameValidator().validate("my-app")
-        assert len(errors) == 1
+    def test_hyphens_allowed(self):
+        assert ComponentNameValidator().validate("my-app") == []
+
+    def test_no_trailing_hyphen(self):
+        assert len(ComponentNameValidator().validate("myapp-")) == 1
+
+    def test_no_leading_hyphen(self):
+        assert len(ComponentNameValidator().validate("-myapp")) == 1
 
     def test_no_spaces(self):
         errors = ComponentNameValidator().validate("my app")

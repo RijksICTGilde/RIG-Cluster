@@ -83,9 +83,10 @@ class RangeValidator:
 
 class ComponentNameValidator:
     """
-    Validates component names: lowercase letters and digits only, max 12 chars.
-
-    Pattern: ^[a-z][a-z0-9]{0,11}$
+    Validates component names, aligned with the project schema. A component name must
+    also be usable as a ``reference`` (schema pattern ``^[a-z]([a-z0-9-]*[a-z0-9])?``,
+    max 40), so: start with a lowercase letter, then lowercase letters, digits and
+    hyphens, end alphanumeric (no leading or trailing hyphen), max 40 chars.
 
     When called with context containing ``existing_component_names``,
     also checks uniqueness.
@@ -95,10 +96,13 @@ class ComponentNameValidator:
         if not value:
             return []
         value_str = str(value)
-        if len(value_str) > 12:
-            return ["Componentnaam mag maximaal 12 tekens bevatten"]
-        if not re.match(r"^[a-z][a-z0-9]*$", value_str):
-            return ["Moet beginnen met een kleine letter en mag alleen kleine letters en cijfers bevatten"]
+        if len(value_str) > 40:
+            return ["Componentnaam mag maximaal 40 tekens bevatten"]
+        if not re.match(r"^[a-z]([a-z0-9-]*[a-z0-9])?$", value_str):
+            return [
+                "Moet beginnen met een kleine letter, mag kleine letters, cijfers en streepjes "
+                "bevatten, en moet eindigen op een letter of cijfer"
+            ]
         if context and value_str in context.get("existing_component_names", []):
             return [f"Er bestaat al een component met de naam '{value_str}'"]
         return []
