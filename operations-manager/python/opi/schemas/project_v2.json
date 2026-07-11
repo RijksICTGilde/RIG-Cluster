@@ -354,7 +354,7 @@
       "required": ["name"],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
+        "name": { "type": "string", "pattern": "^[a-z]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
         "type": { "type": "string" },
         "image": { "type": "string", "pattern": "^([A-Za-z0-9][A-Za-z0-9._:/@-]*)?\\Z" },
         "ports": {
