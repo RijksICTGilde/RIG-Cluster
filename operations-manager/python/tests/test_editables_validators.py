@@ -202,13 +202,13 @@ class TestComponentNameValidator:
     def test_valid_with_digits(self):
         assert ComponentNameValidator().validate("app2") == []
 
-    def test_valid_max_length_40(self):
-        assert ComponentNameValidator().validate("a" + "b" * 39) == []  # 40 chars
+    def test_valid_max_length_63(self):
+        assert ComponentNameValidator().validate("a" + "b" * 62) == []  # 63 chars
 
     def test_too_long(self):
-        errors = ComponentNameValidator().validate("a" + "b" * 40)  # 41 chars
+        errors = ComponentNameValidator().validate("a" + "b" * 63)  # 64 chars
         assert len(errors) == 1
-        assert "40" in errors[0]
+        assert "63" in errors[0]
 
     def test_no_underscores(self):
         errors = ComponentNameValidator().validate("my_app")
