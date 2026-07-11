@@ -83,10 +83,12 @@ class RangeValidator:
 
 class ComponentNameValidator:
     """
-    Validates component names, aligned with the project schema. A component name must
-    also be usable as a ``reference`` (schema pattern ``^[a-z]([a-z0-9-]*[a-z0-9])?``,
-    max 40), so: start with a lowercase letter, then lowercase letters, digits and
-    hyphens, end alphanumeric (no leading or trailing hyphen), max 40 chars.
+    Validates component names, identical to deployment names (``KubernetesNameValidator``)
+    and the ``component.name`` schema: start with a lowercase letter, then lowercase
+    letters, digits and hyphens, end alphanumeric (no leading or trailing hyphen, no
+    uppercase), max 63 chars. A leading letter is required because Kubernetes RFC 1035
+    names (e.g. Services) must start with a letter and an all-digit name would parse
+    as a YAML integer.
 
     When called with context containing ``existing_component_names``,
     also checks uniqueness.
@@ -96,9 +98,9 @@ class ComponentNameValidator:
         if not value:
             return []
         value_str = str(value)
-        if len(value_str) > 40:
-            return ["Componentnaam mag maximaal 40 tekens bevatten"]
-        if not re.match(r"^[a-z]([a-z0-9-]*[a-z0-9])?$", value_str):
+        if len(value_str) > 63:
+            return ["Componentnaam mag maximaal 63 tekens bevatten"]
+        if not re.match(r"^[a-z]([-a-z0-9]*[a-z0-9])?$", value_str):
             return [
                 "Moet beginnen met een kleine letter, mag kleine letters, cijfers en streepjes "
                 "bevatten, en moet eindigen op een letter of cijfer"
