@@ -89,7 +89,7 @@ class TestValidateField:
 
     def test_component_name_too_long(self):
         editable = Editable(yaml_path="x", validator=ComponentNameValidator())
-        errors = validate_field(editable, "abcdefghijklm")  # 13 chars
+        errors = validate_field(editable, "a" + "b" * 40)  # 41 chars
         assert len(errors) == 1
 
 
