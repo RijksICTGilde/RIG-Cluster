@@ -6987,6 +6987,94 @@ class ProjectManager:
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
+    async def update_component(
+        self,
+        name: str,
+        image: str | None = None,
+        port: int | None = None,
+        ports: list[int] | None = None,
+        path: str | None = None,
+        services: list[str] | None = None,
+        cpu_limit: str | None = None,
+        memory_limit: str | None = None,
+    ) -> dict[str, Any]:
+        """Update fields of an existing component (partial update).
+
+        Only the provided (non-None) fields are changed; the rest are left as-is. Mirrors
+        delete_component's read-mutate-save-commit lifecycle so the change goes through the
+        single ProjectManager path (fresh contents from Git, schema + structural validation
+        in save_and_commit_project, commit+push). No cache in the mutate-commit path.
+        """
+        try:
+            project_data = await self.get_contents()
+            project_name = await self.get_name()
+
+            components = project_data.get("components", []) or []
+            component = next((c for c in components if isinstance(c, dict) and c.get("name") == name), None)
+            if component is None:
+                return {
+                    "success": False,
+                    "error": f"Component '{name}' niet gevonden",
+                    "error_type": "not_found",
+                }
+
+            warnings: list[str] = []
+
+            if image is not None:
+                normalized_image, was_normalized = normalize_container_image(image)
+                if was_normalized:
+                    warnings.append(f"Image was normalized to lowercase: '{image}' -> '{normalized_image}'")
+                component["image"] = normalized_image
+
+            # `ports` (array) takes precedence over the single-port `port` alias; either one
+            # replaces the component's inbound ports wholesale.
+            if ports is not None or port is not None:
+                inbound = ports or ([port] if port else [])
+                port_block = component.setdefault("ports", {})
+                port_block["inbound"] = inbound
+                port_block.setdefault("outbound", [80, 443])
+
+            if path is not None:
+                component["path"] = [{"match": path}]
+
+            if services is not None:
+                project_service_names = set(
+                    ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", []))
+                )
+                invalid_services = [s for s in services if s not in project_service_names]
+                if invalid_services:
+                    return {
+                        "success": False,
+                        "error": f"Services not defined on project: {invalid_services}. Available services: {sorted(project_service_names) if project_service_names else 'none'}",
+                        "error_type": "invalid_services",
+                    }
+                component["services"] = ServiceAdapter.build_component_service_entries(services)
+
+            if cpu_limit is not None or memory_limit is not None:
+                resources = component.setdefault("resources", {})
+                if cpu_limit is not None:
+                    resources["cpu"] = cpu_limit
+                if memory_limit is not None:
+                    resources["memory"] = memory_limit
+
+            await self.save_and_commit_project(
+                project_data, f"Update component '{name}' in project '{project_name}'"
+            )
+
+            logger.info(f"Successfully updated component '{name}' in project '{project_name}'")
+            result: dict[str, Any] = {"success": True, "component": component}
+            if warnings:
+                result["warnings"] = warnings
+            return result
+
+        except (ProjectSchemaError, ProjectIntegrityError) as e:
+            logger.warning("Component '%s' update rejected by project validation: %s", name, e)
+            return {"success": False, "error": str(e), "error_type": "validation_error"}
+        except Exception as e:
+            error_msg = f"Error updating component '{name}': {e}"
+            logger.exception(error_msg)
+            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+
     async def remove_attachment(self, attachment_id: str) -> dict[str, Any]:
         """Remove an attachment from the project's catalog.
 

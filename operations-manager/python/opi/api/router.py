@@ -1177,6 +1177,26 @@ async def upsert_deployment(
             await project_manager.close()
 
 
+class UpdateComponentRequest(BaseModel):
+    """Partial update of an existing component. Only provided fields are changed."""
+
+    image: str | None = Field(None, max_length=512, description="Container image URL")
+    port: int | None = Field(
+        None,
+        ge=1,
+        le=65535,
+        description="Single inbound port (alias; use 'ports' for multiple, which takes precedence).",
+    )
+    ports: list[Annotated[int, Field(ge=1, le=65535)]] | None = Field(
+        None,
+        description="Inbound ports as an array; replaces the component's inbound ports. First port is the ingress target.",
+    )
+    path: str | None = Field(None, max_length=256, description="Ingress path (only relevant with publish-on-web).")
+    services: list[str] | None = Field(None, description="Component services list (replaces the existing list).")
+    cpu_limit: str | None = Field(None, max_length=16, description="CPU limit, e.g. '500m'.")
+    memory_limit: str | None = Field(None, max_length=16, description="Memory limit, e.g. '512Mi'.")
+
+
 @api_router.post(
     "/projects/{project_name}/components",
     responses={
@@ -1348,6 +1368,96 @@ async def add_component(
         raise
     except Exception as e:
         logger.error(f"Error adding component: {e!s}")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+
+@api_router.patch(
+    "/projects/{project_name}/components/{component_name}",
+    responses={
+        200: {"description": "Component updated successfully"},
+    },
+)
+@validate_api_token
+async def update_component(
+    request: Request,
+    project_name: str,
+    component_name: str,
+    component_data: UpdateComponentRequest = Body(...),
+) -> JSONResponse:
+    """
+    Update fields of an existing component (partial update).
+
+    Only the fields present in the body are changed; the rest are left as-is. The change
+    goes through the same validated save path as the UI (schema + structural validation,
+    then commit+push), after which the project is reprocessed so the new manifests are
+    generated. Use `ports` to expose multiple inbound ports (each becomes a Service port).
+    """
+    logger.info(f"Updating component '{sanitize_for_log(component_name)}' in project: {sanitize_for_log(project_name)}")
+
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+        )
+
+    project_manager = None
+    try:
+        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+        result = await project_manager.update_component(
+            name=component_name,
+            image=component_data.image,
+            port=component_data.port,
+            ports=component_data.ports,
+            path=component_data.path,
+            services=component_data.services,
+            cpu_limit=component_data.cpu_limit,
+            memory_limit=component_data.memory_limit,
+        )
+
+        if result["success"]:
+            processing_success = await project_manager.process_project_from_git(f"projects/{project_name}.yaml")
+            if not processing_success:
+                logger.error(f"Project processing failed for project '{sanitize_for_log(project_name)}'")
+
+            content: dict[str, Any] = {
+                "status": "success",
+                "message": f"Component '{component_name}' updated successfully",
+                "component": result["component"],
+                "processing": {
+                    "status": "completed" if processing_success else "failed",
+                    **(
+                        {"error": project_manager.get_processing_error()}
+                        if not processing_success and project_manager.get_processing_error()
+                        else {}
+                    ),
+                },
+            }
+            if result.get("warnings"):
+                content["warnings"] = result["warnings"]
+            return JSONResponse(content=content, status_code=200)
+        else:
+            error_status_codes = {
+                "not_found": 404,
+                "invalid_services": 400,
+                "validation_error": 400,
+                "internal_error": 500,
+            }
+            status_code = error_status_codes.get(result.get("error_type"), 400)
+            content = {
+                "status": "failed",
+                "message": f"Failed to update component '{component_name}'",
+                "error": result["error"],
+                "error_type": result["error_type"],
+            }
+            return JSONResponse(content=content, status_code=status_code)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating component: {e!s}")
         raise HTTPException(status_code=500, detail="An internal error occurred")
     finally:
         if project_manager:
