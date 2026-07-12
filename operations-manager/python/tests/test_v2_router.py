@@ -108,6 +108,41 @@ def _assert_accepted(response: Any, expected_task_type: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+class TestV2ComponentPorts:
+    """V2 multi-port: add forwards ports[], and PATCH is async and forwards ports[]."""
+
+    def test_add_forwards_ports_in_payload(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="add_component")
+
+        v2_client.post(
+            "/api/v2/projects/test-project/components",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "name": "mgr",
+                "image": "example.com/mgr:v1",
+                "ports": [8443, 9443, 9444],
+                "deployment_names": ["main"],
+            },
+        )
+
+        call_kwargs = mock_task_service.create_task.call_args[1]
+        assert call_kwargs["task_type"] == "add_component"
+        assert call_kwargs["payload"]["ports"] == [8443, 9443, 9444]
+
+    def test_patch_returns_202_and_forwards_ports(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="update_component")
+
+        response = v2_client.patch(
+            "/api/v2/projects/test-project/components/mgr",
+            headers={"X-API-Key": API_KEY},
+            json={"ports": [8443, 9443, 9444]},
+        )
+
+        _assert_accepted(response, "update_component")
+        call_kwargs = mock_task_service.create_task.call_args[1]
+        assert call_kwargs["payload"]["ports"] == [8443, 9443, 9444]
+
+
 class TestV2UpsertDeployment:
     """Tests for POST /api/v2/projects/{project_name}/:upsert-deployment."""
 
