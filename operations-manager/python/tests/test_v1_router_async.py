@@ -163,6 +163,44 @@ class TestV1AsyncUpdateImage:
         _assert_accepted(response, "update_image")
 
 
+class TestV1AsyncUpdateComponent:
+    """V1 PATCH component with async mode (default)."""
+
+    def test_returns_202_with_task_id(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="update_component")
+
+        response = client.patch(
+            "/api/projects/test-project/components/mgr",
+            headers={"X-API-Key": API_KEY},
+            json={"ports": [8443, 9443, 9444]},
+        )
+
+        _assert_accepted(response, "update_component")
+
+    def test_forwards_ports_in_payload(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="update_component")
+
+        client.patch(
+            "/api/projects/test-project/components/mgr",
+            headers={"X-API-Key": API_KEY},
+            json={"ports": [8443, 9443, 9444]},
+        )
+
+        call_kwargs = mock_task_service.create_task.call_args[1]
+        assert call_kwargs["task_type"] == "update_component"
+        assert call_kwargs["payload"]["name"] == "mgr"
+        assert call_kwargs["payload"]["ports"] == [8443, 9443, 9444]
+
+    def test_rejects_port_and_ports_together(self, client: TestClient) -> None:
+        response = client.patch(
+            "/api/projects/test-project/components/mgr",
+            headers={"X-API-Key": API_KEY},
+            json={"port": 8443, "ports": [8443, 9443]},
+        )
+        # Pydantic model_validator (mutual exclusion) -> 422
+        assert response.status_code == 422
+
+
 class TestV1AsyncDeleteDeployment:
     """V1 delete deployment with async mode (default)."""
 
