@@ -4837,14 +4837,24 @@ class ProjectManager:
                 logger.debug(f"Updated component {component_name} deployment name to {deployment_resource_name}")
 
             # Extract the application port from the component definition using the file handler
-            application_port = self._project_file_handler.extract_component_port(
-                project_data, component_reference, default_port=80
+            # A component may declare no inbound port (background worker). Read the real
+            # list with no default fallback: no ports -> no Service, no probe, no
+            # containerPort. application_port is None in that case.
+            inbound_ports = self._project_file_handler.extract_component_inbound_ports(
+                project_data, component_reference
             )
+            has_inbound_port = bool(inbound_ports)
+            application_port = inbound_ports[0] if has_inbound_port else None
 
             # Extract health-probe configuration (scheme + readiness/liveness paths).
             # scheme=tcp keeps the plain tcpSocket probe; http/https switch to httpGet
             # so a TLS-serving app completes the handshake instead of logging a failed one.
             probe_config = self._project_file_handler.extract_component_probe(project_data, component_reference)
+
+            # A component without an inbound port cannot be probed by the kubelet; force
+            # scheme=none so no startup/liveness/readiness probe is rendered.
+            if not has_inbound_port:
+                probe_config = {**probe_config, "scheme": "none"}
 
             # Extract publication paths: deployment-level overrides component-level
             component_paths = self._project_file_handler.extract_deployment_component_paths(
@@ -5192,16 +5202,10 @@ class ProjectManager:
                 "imageURL": image_url,
                 "imagePullPolicy": image_pull_policy,  # Image pull policy (Always, IfNotPresent, Never)
                 "application_port": application_port,
-                "service_port": application_port,  # Use same port for service by default
-                # Extra inbound ports (beyond the primary) become additional Service ports so they
-                # are reachable cluster-internally; the primary port keeps the ingress.
-                "extra_service_ports": [
-                    p
-                    for p in self._project_file_handler.extract_component_inbound_ports(
-                        project_data, component_reference
-                    )
-                    if p != application_port
-                ],
+                "service_port": application_port,  # Service's primary port; overridden to 4180 when an auth wall fronts it
+                # The full inbound-port list. Both the Deployment (containerPorts) and the
+                # Service render every port; the first is the primary (ingress + probe).
+                "inbound_ports": inbound_ports,
                 "probe_scheme": probe_config["scheme"],  # tcp | http | https
                 "probe_readiness_path": probe_config["readiness_path"],
                 "probe_liveness_path": probe_config["liveness_path"],
@@ -5394,10 +5398,10 @@ class ProjectManager:
             # component loop completes (see _emit_tenant_baseline_policy
             # call below). Emitting per-component caused file collisions and
             # last-write-wins behaviour for multi-component deployments.
-            manifests = [
-                "deployment.yaml.jinja",
-                "service.yaml.jinja",
-            ]
+            manifests = ["deployment.yaml.jinja"]
+            # A component with no inbound port gets no Service (nothing to expose).
+            if has_inbound_port:
+                manifests.append("service.yaml.jinja")
 
             # Add ingress manifest only if publish-on-web is enabled for this component
             if publish_on_web:
@@ -7026,11 +7030,20 @@ class ProjectManager:
                     warnings.append(f"Image was normalized to lowercase: '{image}' -> '{normalized_image}'")
                 component["image"] = normalized_image
 
-            # `ports` (array) takes precedence over the single-port `port` alias; either one
-            # replaces the component's inbound ports wholesale.
-            if ports is not None or port is not None:
-                inbound = ports or ([port] if port else [])
+            # ports (array) replaces the inbound list wholesale, including [] to clear it
+            # (no default fallback). port (singular) only sets the primary/first port and
+            # keeps any extra ports. They are mutually exclusive (enforced by the request model).
+            if ports is not None:
                 port_block = component.setdefault("ports", {})
+                port_block["inbound"] = ports
+                port_block.setdefault("outbound", [80, 443])
+            elif port is not None:
+                port_block = component.setdefault("ports", {})
+                inbound = list(port_block.get("inbound") or [])
+                if inbound:
+                    inbound[0] = port
+                else:
+                    inbound = [port]
                 port_block["inbound"] = inbound
                 port_block.setdefault("outbound", [80, 443])
 
@@ -7057,9 +7070,7 @@ class ProjectManager:
                 if memory_limit is not None:
                     resources["memory"] = memory_limit
 
-            await self.save_and_commit_project(
-                project_data, f"Update component '{name}' in project '{project_name}'"
-            )
+            await self.save_and_commit_project(project_data, f"Update component '{name}' in project '{project_name}'")
 
             logger.info(f"Successfully updated component '{name}' in project '{project_name}'")
             result: dict[str, Any] = {"success": True, "component": component}
