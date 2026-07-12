@@ -55,6 +55,35 @@ class TestRenderRealTemplates:
         # service_port defaults to 80 via Jinja2 default filter
         assert doc["spec"]["ports"][0]["port"] == 80
 
+    def test_service_template_extra_ports(self):
+        result = render_template(
+            "service.yaml.jinja",
+            {
+                "name": "test-mgzmgr",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "service_port": 8443,
+                "application_port": 8443,
+                "extra_service_ports": [9443, 9444],
+            },
+        )
+        ports = YAML().load(result)["spec"]["ports"]
+        # Primary (ingress) port plus one Service port per extra inbound port, all 1-to-1 and named.
+        assert [(p["port"], p["targetPort"], p["name"]) for p in ports] == [
+            (8443, 8443, "http"),
+            (9443, 9443, "p9443"),
+            (9444, 9444, "p9444"),
+        ]
+
+    def test_service_template_single_port_unchanged(self):
+        result = render_template(
+            "service.yaml.jinja",
+            {"name": "api", "namespace": "rig-proj", "project": {"name": "myproj"}, "application_port": 80},
+        )
+        ports = YAML().load(result)["spec"]["ports"]
+        assert len(ports) == 1
+        assert ports[0]["name"] == "http"
+
     def test_deployment_template_local_cluster(self):
         result = render_template(
             "deployment.yaml.jinja",
@@ -100,6 +129,52 @@ class TestRenderRealTemplates:
         # Non-local cluster should NOT have explicit runAsUser (OpenShift SCCs assign it)
         assert "runAsUser" not in pod_sec
         assert pod_sec["runAsNonRoot"] is True
+
+    def test_deployment_template_probe_none_omits_all_probes(self):
+        """scheme=none renders no startup/liveness/readiness probes at all."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 8443,
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "production",
+                "probe_scheme": "none",
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        container = doc["spec"]["template"]["spec"]["containers"][0]
+        assert "startupProbe" not in container
+        assert "livenessProbe" not in container
+        assert "readinessProbe" not in container
+
+    def test_deployment_template_probe_default_is_tcp(self):
+        """No probe_scheme (default) still renders tcpSocket probes on the app port."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 3000,
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "production",
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        container = doc["spec"]["template"]["spec"]["containers"][0]
+        assert container["startupProbe"]["tcpSocket"]["port"] == 3000
+        assert container["readinessProbe"]["tcpSocket"]["port"] == 3000
 
     def test_deployment_template_sandbox_respects_security_override(self):
         """Per-component ``security`` block overrides 1001 defaults on sandbox/local."""
