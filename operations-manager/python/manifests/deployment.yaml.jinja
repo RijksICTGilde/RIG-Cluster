@@ -73,9 +73,13 @@ spec:
             - {{ c | tojson }}
           {% endfor %}
           {% endif %}
+          {% if inbound_ports %}
           ports:
-            - containerPort: {{ application_port }}
-              name: http
+          {% for p in inbound_ports %}
+            - containerPort: {{ p }}
+              name: {{ 'http' if loop.first else 'p' ~ p }}
+          {% endfor %}
+          {% endif %}
           # Container-level security context (OpenShift compatible)
           securityContext:
             allowPrivilegeEscalation: false
