@@ -69,6 +69,7 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
             image=payload["image"],
             deployment_names=deployment_names,
             port=payload.get("port"),
+            ports=payload.get("ports"),
             path=payload.get("path", "/"),
             services=payload.get("services"),
             cpu_limit=payload.get("cpu_limit"),

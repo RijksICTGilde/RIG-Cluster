@@ -136,6 +136,7 @@ async def build_component_config(
     aliases: str | None = None,
     public_key: str | None = None,
     default_port: int | None = None,
+    ports: list[int] | None = None,
 ) -> dict[str, Any]:
     """
     Build a complete component config dict.
@@ -155,11 +156,14 @@ async def build_component_config(
         aliases: YAML string of alias definitions
         public_key: AGE public key for encrypting env vars
         default_port: Default port if none specified (e.g., 8080 for project creation)
+        ports: Inbound ports as a list (takes precedence over the single-port `port`)
 
     Returns:
         Component configuration dictionary
     """
-    inbound_ports = [port] if port else ([default_port] if default_port else [])
+    # `ports` (array) takes precedence over the single-port `port` alias; fall back
+    # to default_port (e.g. project creation) when neither is given.
+    inbound_ports = ports or ([port] if port else ([default_port] if default_port else []))
     # Build services list in v2 format (mixed string/dict)
     services_list = ServiceAdapter.build_component_service_entries(services)
 

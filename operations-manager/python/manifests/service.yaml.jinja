@@ -18,4 +18,10 @@ spec:
       targetPort: {{ service_port | default(application_port) }}
       protocol: TCP
       name: http
+{% for p in extra_service_ports | default([]) %}
+    - port: {{ p }}
+      targetPort: {{ p }}
+      protocol: TCP
+      name: p{{ p }}
+{% endfor %}
   type: ClusterIP

@@ -647,6 +647,14 @@ class ProjectFileHandler:
 
         return port
 
+    def extract_component_inbound_ports(self, project_data: dict[str, Any], component_name: str) -> list[int]:
+        """Return all inbound ports of a component in declared order, or [] if none."""
+        for component in project_data.get("components", []) or []:
+            if isinstance(component, dict) and component.get("name") == component_name:
+                inbound = (component.get("ports") or {}).get("inbound") or []
+                return [p for p in inbound if isinstance(p, int)]
+        return []
+
     def extract_component_probe(self, project_data: dict[str, Any], component_name: str) -> dict[str, str]:
         """
         Extract the health-probe configuration for a component by name.

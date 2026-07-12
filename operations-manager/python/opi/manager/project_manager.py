@@ -5193,6 +5193,15 @@ class ProjectManager:
                 "imagePullPolicy": image_pull_policy,  # Image pull policy (Always, IfNotPresent, Never)
                 "application_port": application_port,
                 "service_port": application_port,  # Use same port for service by default
+                # Extra inbound ports (beyond the primary) become additional Service ports so they
+                # are reachable cluster-internally; the primary port keeps the ingress.
+                "extra_service_ports": [
+                    p
+                    for p in self._project_file_handler.extract_component_inbound_ports(
+                        project_data, component_reference
+                    )
+                    if p != application_port
+                ],
                 "probe_scheme": probe_config["scheme"],  # tcp | http | https
                 "probe_readiness_path": probe_config["readiness_path"],
                 "probe_liveness_path": probe_config["liveness_path"],
@@ -5295,6 +5304,9 @@ class ProjectManager:
                         "banner": banner_text,
                     }
                     variables["sidecars"] = ["authorization-wall"]
+                    # The ingress goes through the auth proxy on 4180; the app's own primary port
+                    # stays behind it. The extra inbound ports are separate (not fronted by the
+                    # proxy), so they keep their Service entries for cluster-internal reachability.
                     variables["service_port"] = 4180
                     logger.info(f"Authorization wall enabled for component '{component_name}'")
                 else:
@@ -6755,6 +6767,7 @@ class ProjectManager:
         deployment_names: list[str],
         component_type: str = "single",
         port: int | None = None,
+        ports: list[int] | None = None,
         path: str = "/",
         services: list[str] | None = None,
         cpu_limit: str | None = None,
@@ -6877,6 +6890,7 @@ class ProjectManager:
                     name=name,
                     component_type=component_type,
                     port=port,
+                    ports=ports,
                     path=path,
                     services=services or [],
                     cpu_limit=cpu_limit,
