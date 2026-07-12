@@ -225,6 +225,7 @@ TASK_RESULT_MODELS: dict[TaskType, type[BaseModel]] = {
     TaskType.REFRESH_PROJECT: RefreshProjectResult,
     TaskType.REFRESH_DEPLOYMENT: RefreshDeploymentResult,
     TaskType.ADD_COMPONENT: AddComponentResult,
+    TaskType.UPDATE_COMPONENT: AddComponentResult,
     TaskType.ADD_COMPONENT_TO_DEPLOYMENT: AddComponentToDeploymentResult,
     TaskType.ADD_SERVICE: AddServiceResult,
 }
