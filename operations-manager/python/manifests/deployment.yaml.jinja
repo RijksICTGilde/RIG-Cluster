@@ -146,6 +146,7 @@ spec:
             limits:
               memory: "{{ resources_limits_memory }}"
               cpu: "{{ resources_limits_cpu }}"
+          {% if probe_scheme != 'none' %}
           startupProbe:
             {% if probe_scheme in ('http', 'https') %}
             httpGet:
@@ -185,6 +186,7 @@ spec:
             initialDelaySeconds: 0
             periodSeconds: 5
             failureThreshold: 3
+          {% endif %}
 {% if sidecars is defined and sidecars %}
 {% for sidecar in sidecars %}
 {% set section = 'container' %}

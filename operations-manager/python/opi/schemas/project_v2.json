@@ -420,11 +420,11 @@
         "probe": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Health-check configuration for the component's first inbound port. scheme=tcp (default when omitted) keeps a plain tcpSocket probe; http/https switch to an httpGet probe so a TLS-serving app completes the handshake instead of logging a failed one every cycle. readiness-path may check dependencies; liveness-path should stay dumb (a failing liveness restarts the pod). startup reuses liveness-path. Paths default to '/' and are ignored when scheme=tcp.",
+          "description": "Health-check configuration for the component's first inbound port. scheme=tcp (default when omitted) keeps a plain tcpSocket probe; http/https switch to an httpGet probe so a TLS-serving app completes the handshake instead of logging a failed one every cycle. readiness-path may check dependencies; liveness-path should stay dumb (a failing liveness restarts the pod). startup reuses liveness-path. Paths default to '/' and are ignored when scheme=tcp. scheme=none disables all probes (no startup/liveness/readiness), for apps that expose no probeable port such as mTLS-only ports or components that register before they listen.",
           "properties": {
             "liveness-path": { "type": "string", "pattern": "^/[A-Za-z0-9/_.\\-]*\\Z" },
             "readiness-path": { "type": "string", "pattern": "^/[A-Za-z0-9/_.\\-]*\\Z" },
-            "scheme": { "type": "string", "enum": ["tcp", "http", "https"] }
+            "scheme": { "type": "string", "enum": ["none", "tcp", "http", "https"] }
           }
         }
       }

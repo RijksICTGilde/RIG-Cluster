@@ -2,7 +2,7 @@ import logging
 import threading
 import time
 from collections import defaultdict
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -868,7 +868,16 @@ class AddComponentRequest(BaseModel):
     name: str = Field(..., max_length=63, description="Component name (must be K8s-compliant)")
     type: str = Field("single", max_length=32, description="Component type (e.g. 'single', 'frontend', 'backend')")
     image: str = Field(..., max_length=512, description="Container image URL")
-    port: int | None = Field(None, ge=1, le=65535, description="Inbound port (omit for background workers)")
+    port: int | None = Field(
+        None,
+        ge=1,
+        le=65535,
+        description="Single inbound port (convenience alias; omit for background workers). Use 'ports' for multiple; 'ports' takes precedence.",
+    )
+    ports: list[Annotated[int, Field(ge=1, le=65535)]] | None = Field(
+        None,
+        description="Inbound ports as an array, e.g. [8443, 9443]. Takes precedence over 'port'. The first port is used for the ingress.",
+    )
     path: str = Field("/", max_length=256, description="Ingress path (only relevant with publish-on-web service)")
     services: list[str] | None = Field(
         None, description="Component services list (e.g. ['postgresql-database']). NOT inherited from project."
@@ -1243,6 +1252,7 @@ async def add_component(
                 "image": component_data.image,
                 "deployment_names": component_data.deployment_names,
                 "port": component_data.port,
+                "ports": component_data.ports,
                 "path": component_data.path,
                 "services": component_data.services,
                 "cpu_limit": component_data.cpu_limit,
@@ -1272,6 +1282,7 @@ async def add_component(
             image=component_data.image,
             deployment_names=component_data.deployment_names,
             port=component_data.port,
+            ports=component_data.ports,
             path=component_data.path,
             services=component_data.services,
             cpu_limit=component_data.cpu_limit,

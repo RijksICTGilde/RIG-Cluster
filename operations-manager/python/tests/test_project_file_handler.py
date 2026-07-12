@@ -10,6 +10,29 @@ from opi.handlers.project_file_handler import (
 )
 
 
+class TestExtractComponentInboundPorts:
+    """Tests for extract_component_inbound_ports (multi-port support)."""
+
+    def test_returns_all_inbound_ports_in_order(self):
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "mgr", "ports": {"inbound": [8443, 9443, 9444]}}]}
+        assert handler.extract_component_inbound_ports(project_data, "mgr") == [8443, 9443, 9444]
+
+    def test_single_port(self):
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "api", "ports": {"inbound": [8080]}}]}
+        assert handler.extract_component_inbound_ports(project_data, "api") == [8080]
+
+    def test_no_ports_returns_empty(self):
+        handler = ProjectFileHandler()
+        assert handler.extract_component_inbound_ports({"components": [{"name": "worker"}]}, "worker") == []
+
+    def test_unknown_component_returns_empty(self):
+        handler = ProjectFileHandler()
+        project_data = {"components": [{"name": "api", "ports": {"inbound": [8080]}}]}
+        assert handler.extract_component_inbound_ports(project_data, "nope") == []
+
+
 class TestParseDeepDiffPath:
     """Tests for _parse_deepdiff_path."""
 
