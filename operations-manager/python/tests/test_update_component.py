@@ -80,3 +80,37 @@ async def test_update_only_changes_provided_fields() -> None:
     assert comp["image"] == "example.com/mgr:v2"
     # ports left untouched because they were not part of the update
     assert comp["ports"]["inbound"] == [8443]
+
+
+async def test_update_port_only_changes_first_port() -> None:
+    data = _project_with_component()
+    data["components"][0]["ports"]["inbound"] = [8443, 9443, 9444]
+    pm = _pm(data)
+
+    result = await ProjectManager.update_component(pm, name="mgr", port=8080)
+
+    assert result["success"] is True
+    # the single-port `port` only touches the primary port and keeps the extras
+    assert data["components"][0]["ports"]["inbound"] == [8080, 9443, 9444]
+
+
+async def test_update_ports_empty_clears_inbound() -> None:
+    data = _project_with_component()
+    pm = _pm(data)
+
+    result = await ProjectManager.update_component(pm, name="mgr", ports=[])
+
+    assert result["success"] is True
+    # an explicit empty array clears the ports; no default fallback
+    assert data["components"][0]["ports"]["inbound"] == []
+
+
+def test_request_rejects_port_and_ports_together() -> None:
+    import pytest
+    from opi.api.router import AddComponentRequest, UpdateComponentRequest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        UpdateComponentRequest(port=8443, ports=[8443, 9443])
+    with pytest.raises(ValidationError):
+        AddComponentRequest(name="x", image="img", deployment_names=["d"], port=8443, ports=[8443])

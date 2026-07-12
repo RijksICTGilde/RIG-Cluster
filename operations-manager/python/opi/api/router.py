@@ -30,7 +30,7 @@ from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.project_service import get_project_service
 from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
 from opi.utils.project_utils import generate_self_service_project_yaml, normalize_container_image, validate_project_name
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -876,7 +876,7 @@ class AddComponentRequest(BaseModel):
     )
     ports: list[Annotated[int, Field(ge=1, le=65535)]] | None = Field(
         None,
-        description="Inbound ports as an array, e.g. [8443, 9443]. Takes precedence over 'port'. The first port is used for the ingress.",
+        description="Inbound ports as an array, e.g. [8443, 9443]. Use either 'port' or 'ports', not both. The first port is used for the ingress.",
     )
     path: str = Field("/", max_length=256, description="Ingress path (only relevant with publish-on-web service)")
     services: list[str] | None = Field(
@@ -898,6 +898,12 @@ class AddComponentRequest(BaseModel):
     deployment_names: list[str] = Field(
         ..., min_length=1, description="Deployments to add this component to (must already exist)"
     )
+
+    @model_validator(mode="after")
+    def _ports_mutually_exclusive(self) -> AddComponentRequest:
+        if self.port is not None and self.ports is not None:
+            raise ValueError("Provide either 'port' or 'ports', not both")
+        return self
 
 
 class AddComponentToDeploymentRequest(BaseModel):
@@ -1189,12 +1195,18 @@ class UpdateComponentRequest(BaseModel):
     )
     ports: list[Annotated[int, Field(ge=1, le=65535)]] | None = Field(
         None,
-        description="Inbound ports as an array; replaces the component's inbound ports. First port is the ingress target.",
+        description="Inbound ports as an array; replaces the component's inbound ports (use [] to clear). Use either 'port' or 'ports', not both.",
     )
     path: str | None = Field(None, max_length=256, description="Ingress path (only relevant with publish-on-web).")
     services: list[str] | None = Field(None, description="Component services list (replaces the existing list).")
     cpu_limit: str | None = Field(None, max_length=16, description="CPU limit, e.g. '500m'.")
     memory_limit: str | None = Field(None, max_length=16, description="Memory limit, e.g. '512Mi'.")
+
+    @model_validator(mode="after")
+    def _ports_mutually_exclusive(self) -> UpdateComponentRequest:
+        if self.port is not None and self.ports is not None:
+            raise ValueError("Provide either 'port' or 'ports', not both")
+        return self
 
 
 @api_router.post(

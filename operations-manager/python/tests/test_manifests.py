@@ -64,7 +64,7 @@ class TestRenderRealTemplates:
                 "project": {"name": "myproj"},
                 "service_port": 8443,
                 "application_port": 8443,
-                "extra_service_ports": [9443, 9444],
+                "inbound_ports": [8443, 9443, 9444],
             },
         )
         ports = YAML().load(result)["spec"]["ports"]
@@ -175,6 +175,54 @@ class TestRenderRealTemplates:
         container = doc["spec"]["template"]["spec"]["containers"][0]
         assert container["startupProbe"]["tcpSocket"]["port"] == 3000
         assert container["readinessProbe"]["tcpSocket"]["port"] == 3000
+
+    def test_deployment_template_container_ports_lists_all_inbound(self):
+        """The Deployment declares a containerPort for every inbound port (first named http)."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "mgr",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 8443,
+                "inbound_ports": [8443, 9443, 9444],
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "production",
+            },
+        )
+        container = YAML().load(result)["spec"]["template"]["spec"]["containers"][0]
+        assert [(p["containerPort"], p["name"]) for p in container["ports"]] == [
+            (8443, "http"),
+            (9443, "p9443"),
+            (9444, "p9444"),
+        ]
+
+    def test_deployment_template_no_inbound_ports_omits_ports_and_probes(self):
+        """A port-less component gets no containerPort block and no probes."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "worker",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": None,
+                "inbound_ports": [],
+                "probe_scheme": "none",
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "production",
+            },
+        )
+        container = YAML().load(result)["spec"]["template"]["spec"]["containers"][0]
+        assert "ports" not in container
+        assert "startupProbe" not in container
+        assert "livenessProbe" not in container
+        assert "readinessProbe" not in container
 
     def test_deployment_template_sandbox_respects_security_override(self):
         """Per-component ``security`` block overrides 1001 defaults on sandbox/local."""
@@ -711,13 +759,16 @@ class TestRenderRealTemplates:
                 "project": {"name": "myproj"},
                 "application_port": 8080,
                 "service_port": 4180,
+                "inbound_ports": [8080, 9090],
             },
         )
         yaml = YAML()
         doc = yaml.load(result)
-        port = doc["spec"]["ports"][0]
-        assert port["port"] == 4180
-        assert port["targetPort"] == 4180
+        ports = doc["spec"]["ports"]
+        # The auth wall fronts the primary port (4180 -> sidecar); extra inbound ports stay direct.
+        assert ports[0]["port"] == 4180
+        assert ports[0]["targetPort"] == 4180
+        assert [(p["port"], p["name"]) for p in ports if p["name"] != "http"] == [(9090, "p9090")]
 
 
 class TestCollectManifestFiles:
