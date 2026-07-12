@@ -26,6 +26,7 @@ class TaskType(StrEnum):
     CREATE_PROJECT = "create_project"
     ADD_COMPONENT = "add_component"
     ADD_COMPONENT_TO_DEPLOYMENT = "add_component_to_deployment"
+    UPDATE_COMPONENT = "update_component"
     ADD_SERVICE = "add_service"
     BACKUP = "backup"
     RESTORE = "restore"

@@ -19,6 +19,7 @@ from opi.api.router import (  # noqa: TC002 — Pydantic models must be runtime 
     AddServiceRequest,
     CloneBucketFromExternalRequest,
     CloneDatabaseFromExternalRequest,
+    UpdateComponentRequest,
     UpdateImageRequest,
     UpsertDeploymentRequest,
 )
@@ -840,6 +841,7 @@ async def add_component_v2(
             "image": component_data.image,
             "deployment_names": component_data.deployment_names,
             "port": component_data.port,
+            "ports": component_data.ports,
             "path": component_data.path,
             "services": component_data.services,
             "cpu_limit": component_data.cpu_limit,
@@ -850,6 +852,57 @@ async def add_component_v2(
         },
     )
     return _accepted_response(task, "add_component")
+
+
+@v2_router.patch(
+    "/projects/{project_name}/components/{component_name}",
+    tags=["v2", "components"],
+    responses={
+        200: {"model": TaskResponse[AddComponentResult], "description": "Task completed (when polled)"},
+        202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+    },
+)
+@validate_api_token
+async def update_component_v2(
+    request: Request,
+    project_name: str,
+    component_name: str,
+    component_data: UpdateComponentRequest = Body(...),
+) -> JSONResponse:
+    """Update fields of an existing component (async, partial update).
+
+    Only the fields present in the body change; the rest stay as-is. Returns immediately
+    with a task ID. Poll /api/tasks/{task_id} for status. Use `ports` to expose multiple
+    inbound ports (each becomes a Service port).
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    logger.info("V2 update component '%s' in project: %s", component_name, project_name)
+
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+        )
+
+    task = await create_async_task(
+        request=request,
+        task_type="update_component",
+        project_name=project_name,
+        payload={
+            "project_name": project_name,
+            "name": component_name,
+            "image": component_data.image,
+            "port": component_data.port,
+            "ports": component_data.ports,
+            "path": component_data.path,
+            "services": component_data.services,
+            "cpu_limit": component_data.cpu_limit,
+            "memory_limit": component_data.memory_limit,
+        },
+    )
+    return _accepted_response(task, "update_component")
 
 
 @v2_router.post(

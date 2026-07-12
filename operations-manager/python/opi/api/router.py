@@ -1398,6 +1398,7 @@ async def update_component(
     project_name: str,
     component_name: str,
     component_data: UpdateComponentRequest = Body(...),
+    sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
     """
     Update fields of an existing component (partial update).
@@ -1415,6 +1416,32 @@ async def update_component(
             detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
         )
 
+    # Async path (default): create a task and return 202. Use ?sync=true to block.
+    if not sync:
+        task = await create_async_task(
+            request=request,
+            task_type="update_component",
+            project_name=project_name,
+            payload={
+                "project_name": project_name,
+                "name": component_name,
+                "image": component_data.image,
+                "port": component_data.port,
+                "ports": component_data.ports,
+                "path": component_data.path,
+                "services": component_data.services,
+                "cpu_limit": component_data.cpu_limit,
+                "memory_limit": component_data.memory_limit,
+            },
+        )
+        task_id = str(task["task_id"])
+        return JSONResponse(
+            content=build_accepted_response(task_id, "update_component"),
+            status_code=202,
+            headers={"Location": f"/api/tasks/{task_id}"},
+        )
+
+    # Sync path (via ?sync=true)
     project_manager = None
     try:
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
