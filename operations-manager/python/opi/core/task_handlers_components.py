@@ -161,6 +161,107 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
             await project_manager.close()
 
 
+async def handle_update_component(payload: dict, progress: Any) -> dict:
+    """Handle async update-component task.
+
+    Applies a partial update to an existing component and reprocesses the project so the
+    new manifests are generated. Mirrors handle_add_component's shape.
+    """
+    from opi.manager.project_manager import ProjectManager
+    from opi.utils.project_utils import validate_project_name
+
+    project_name: str = payload["project_name"]
+    component_name: str = payload["name"]
+    project_manager: ProjectManager | None = None
+
+    try:
+        validate_task = progress.add_task("Component validatie")
+        progress.update_current_step("Validating project name")
+        if not validate_project_name(project_name):
+            error_msg = (
+                "Invalid project name format. Must start with lowercase letter, "
+                "then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters"
+            )
+            progress.fail_task(validate_task, error_msg)
+            progress.fail_project(error_msg)
+            return {"component_name": component_name, "status": "failed", "error": error_msg}
+        progress.complete_task(validate_task)
+
+        update_task = progress.add_task("Component bijwerken")
+        progress.update_current_step(f"Updating component '{component_name}'")
+        project_file_relative_path = f"projects/{project_name}.yaml"
+        project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
+
+        result = await project_manager.update_component(
+            name=component_name,
+            image=payload.get("image"),
+            port=payload.get("port"),
+            ports=payload.get("ports"),
+            path=payload.get("path"),
+            services=payload.get("services"),
+            cpu_limit=payload.get("cpu_limit"),
+            memory_limit=payload.get("memory_limit"),
+        )
+
+        if not result["success"]:
+            error_msg = result.get("error", "Unknown error updating component")
+            progress.fail_task(update_task, error_msg)
+            progress.fail_project(error_msg)
+            return {
+                "component_name": component_name,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": result.get("error_type", "unknown"),
+            }
+        progress.complete_task(update_task)
+
+        deploy_task = progress.add_task("Project processing")
+        progress.update_current_step("Processing project to regenerate K8s resources")
+        processing_success = await project_manager.process_project_from_git(
+            project_file_relative_path,
+            task_progress_manager=progress,
+        )
+
+        if processing_success:
+            progress.complete_task(deploy_task)
+        else:
+            processing_error = project_manager.get_processing_error() or "Project processing failed"
+            progress.fail_task(deploy_task, processing_error)
+            progress.fail_project(processing_error)
+
+        succeeded = bool(processing_success)
+        response: dict[str, Any] = {
+            "status": "success" if succeeded else "failed",
+            "message": (
+                f"Component '{component_name}' updated successfully"
+                if succeeded
+                else (project_manager.get_processing_error() or f"Component '{component_name}' processing failed")
+            ),
+            "component": result.get("component"),
+            "processing": {
+                "status": "completed" if succeeded else "failed",
+                **(
+                    {"error": project_manager.get_processing_error()}
+                    if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
+                **({"component_failures": cf} if (cf := project_manager.get_component_failures()) else {}),
+            },
+        }
+        if result.get("warnings"):
+            response["warnings"] = result["warnings"]
+        return response
+
+    except Exception as exc:
+        error_msg = f"Error updating component: {exc}"
+        logger.error(error_msg)
+        progress.fail_project(error_msg)
+        return {"component_name": component_name, "status": "failed", "error": error_msg}
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+
 async def handle_add_component_to_deployment(payload: dict, progress: Any) -> dict:
     """Handle async add-component-to-deployment task.
 
