@@ -1807,7 +1807,13 @@ async def create_git_connector_for_argocd(project_name: str) -> GitConnector:
     return await create_git_connector_from_repo_config(gitops_repo_config)
 
 
-async def create_git_connector_for_project_files(project_name: str, full_history: bool = False) -> GitConnector:
+async def create_git_connector_for_project_files(project_name: str, full_history: bool = True) -> GitConnector:
+    # full_history defaults to True: ANY project-files connector can end up feeding
+    # analyze_project_changes (the file-scoped diff that detects removed components/
+    # deployments), and a --depth 1 clone has no previous commit so that diff silently
+    # finds nothing and prune never runs. The projects repo is shared across all
+    # projects, so the "previous" commit for a file is rarely HEAD~1; we need real
+    # history. Blobless (--filter=blob:none) keeps commits+trees, lazy-fetches blobs.
     projects_repo_config = {
         "url": settings.GIT_PROJECTS_SERVER_URL,
         "branch": settings.GIT_PROJECTS_SERVER_BRANCH,

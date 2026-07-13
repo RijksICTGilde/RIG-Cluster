@@ -640,12 +640,10 @@ class ProjectManager:
 
     async def get_git_connector_for_project_files(self) -> GitConnector:
         if self.__git_connector_for_project_files is None:
-            # full_history=True: this connector runs the file-scoped diff (removed-component
-            # detection) in analyze_project_changes, so it needs commit history. Blobless
-            # clone keeps that cheap. Other project-files connectors stay shallow.
-            self.__git_connector_for_project_files = await create_git_connector_for_project_files(
-                "", full_history=True
-            )
+            # This connector runs the file-scoped diff (removed-component detection) in
+            # analyze_project_changes, so it needs commit history. That is now the default
+            # for project-files connectors (blobless clone); see create_git_connector_for_project_files.
+            self.__git_connector_for_project_files = await create_git_connector_for_project_files("")
             await self.__git_connector_for_project_files.ensure_repo_cloned()
         return self.__git_connector_for_project_files
 
