@@ -70,6 +70,7 @@ class GitConnector:
         username: str | None = None,
         project_name: str | None = None,
         name: str | None = None,
+        full_history: bool = False,
     ):
         """
         Initialize the Git connector.
@@ -91,6 +92,9 @@ class GitConnector:
         self.username = username
         self.project_name = project_name
         self.name = name
+        # When True, clone with full commit history (blobless partial clone) so file-scoped
+        # diffs work (removed-component detection). Default keeps the cheap --depth 1 clone.
+        self._full_history = full_history
 
         # Decrypt password immediately in constructor if provided
         if password:
@@ -586,14 +590,24 @@ class GitConnector:
                     f"Detected remote default branch '{remote_default_branch}', configured branch is '{self.branch}'"
                 )
 
+            # Blobless partial clone (--filter=blob:none) when the caller needs history for
+            # file-scoped diffs (removed-component detection): full commit+tree history,
+            # lazy blobs. Falls back to a full clone (strategy 4) if the server lacks
+            # partial-clone support (e.g. older Forgejo).
+            history_args = ["--filter=blob:none"] if self._full_history else ["--depth", "1"]
+            logger.info(
+                "Cloning repo %r as %s",
+                self.name or self.repo_url,
+                "full history (--filter=blob:none)" if self._full_history else "shallow (--depth 1)",
+            )
+
             # Strategy 1: Try cloning with the configured branch
             clone_cmd = [
                 "clone",
                 "--single-branch",
                 "--branch",
                 target_branch,
-                "--depth",
-                "1",
+                *history_args,
                 self.repo_url_with_path,
                 ".",  # Clone to current working directory
             ]
@@ -618,8 +632,7 @@ class GitConnector:
                         "--single-branch",
                         "--branch",
                         remote_default_branch,
-                        "--depth",
-                        "1",
+                        *history_args,
                         self.repo_url_with_path,
                         ".",
                     ]
@@ -638,7 +651,7 @@ class GitConnector:
                 # Strategy 3: If specific branch cloning fails, try cloning without branch specification
                 logger.debug("Trying clone without branch specification")
 
-                clone_cmd_no_branch = ["clone", "--depth", "1", self.repo_url_with_path, "."]
+                clone_cmd_no_branch = ["clone", *history_args, self.repo_url_with_path, "."]
 
                 stdout, stderr, code = await self._run_git_command(clone_cmd_no_branch, cwd=self.__working_dir)
 
@@ -1470,47 +1483,59 @@ class GitConnector:
 
     async def get_previous_file_content(self, file_path: str, commits_back: int = 1) -> str | None:
         """
-        Get the content of a file from a previous commit.
+        Get the content of a file from a previous commit that changed THAT file.
+
+        File-scoped, not branch-scoped: uses ``git log -- <file>`` to find the commit that
+        previously changed this specific file, so it is correct regardless of how many
+        unrelated commits (other projects) landed in between. Branch-scoped ``HEAD~N`` was
+        wrong for the multi-project projects repo (an intervening commit for another project
+        made ``HEAD~1`` not the previous version of this file).
+
+        Requires the clone to carry history (GitConnector(full_history=True), i.e. a blobless
+        ``--filter=blob:none`` clone). On a ``--depth 1`` clone ``git log`` sees only one
+        commit and this returns None.
+
+        TODO: this reconstructs from git what we already knew at mutation time. The robust
+        approach is to pass the pre-change project state from the mutation (add/delete/update
+        component, wizard save) into generation instead of diffing git history. Tracked in
+        #161; this git-diff path stays while changes still arrive via raw git.
 
         Args:
             file_path: Path to the file within the repository
-            commits_back: Number of commits to go back (default: 1 for HEAD~1)
+            commits_back: How many file-touching commits back (default 1 = the previous version)
 
         Returns:
-            File content as string, or None if file doesn't exist in previous commit
+            File content as string, or None if there is no such previous version
         """
         try:
-            # Ensure repository is cloned
             await self.ensure_repo_cloned()
-
-            # Check if there are enough commits
-            stdout, stderr, returncode = await self._run_git_command(
-                ["rev-list", "--count", "HEAD"], cwd=self.__working_dir
-            )
-
-            if returncode != 0:
-                logger.debug(f"Failed to get commit count: {stderr}")
-                return None
-
-            commit_count = int(stdout.strip())
-            if commit_count <= commits_back:
-                logger.debug(f"Not enough commits to go back {commits_back} - only {commit_count} commit(s)")
-                return None
-
-            # Get the file content from the specified previous commit
-            commit_ref = f"HEAD~{commits_back}"
             clean_file_path = file_path.lstrip("/")
 
+            # The last (commits_back + 1) commits that TOUCHED this file, newest first.
             stdout, stderr, returncode = await self._run_git_command(
-                ["show", f"{commit_ref}:{clean_file_path}"], cwd=self.__working_dir
+                ["log", f"-n{commits_back + 1}", "--format=%H", "--", clean_file_path],
+                cwd=self.__working_dir,
             )
-
-            if returncode == 0:
-                logger.debug(f"Successfully retrieved previous version of {file_path} from {commit_ref}")
-                return stdout
-            else:
-                logger.debug(f"File {file_path} does not exist in {commit_ref}: {stderr}")
+            if returncode != 0:
+                logger.debug(f"git log failed for {file_path}: {stderr}")
                 return None
+
+            hashes = [h for h in stdout.strip().splitlines() if h]
+            if len(hashes) <= commits_back:
+                logger.debug(
+                    f"No commit {commits_back} back that changed {file_path} (only {len(hashes)} in file history)"
+                )
+                return None
+            prev_commit = hashes[commits_back]
+
+            stdout, stderr, returncode = await self._run_git_command(
+                ["show", f"{prev_commit}:{clean_file_path}"], cwd=self.__working_dir
+            )
+            if returncode == 0:
+                logger.debug(f"Retrieved previous version of {file_path} from {prev_commit}")
+                return stdout
+            logger.debug(f"File {file_path} does not exist in {prev_commit}: {stderr}")
+            return None
 
         except Exception as e:
             logger.warning(f"Error retrieving previous file content for {file_path}: {e}")
@@ -1746,7 +1771,9 @@ async def start_monitoring_task(
 
 
 # TODO: replace factory method with direct calls to the GitConnector?
-async def create_git_connector_from_repo_config(repo_config: dict[str, Any]) -> GitConnector:
+async def create_git_connector_from_repo_config(
+    repo_config: dict[str, Any], full_history: bool = False
+) -> GitConnector:
     connector = GitConnector(
         repo_url=repo_config["url"],
         repo_path=repo_config.get("path"),
@@ -1756,6 +1783,7 @@ async def create_git_connector_from_repo_config(repo_config: dict[str, Any]) -> 
         ssh_key_path=repo_config.get("ssh_key_path"),
         project_name=repo_config.get("project_name"),
         name=repo_config.get("name"),
+        full_history=full_history,
     )
     return connector
 
@@ -1779,7 +1807,7 @@ async def create_git_connector_for_argocd(project_name: str) -> GitConnector:
     return await create_git_connector_from_repo_config(gitops_repo_config)
 
 
-async def create_git_connector_for_project_files(project_name: str) -> GitConnector:
+async def create_git_connector_for_project_files(project_name: str, full_history: bool = False) -> GitConnector:
     projects_repo_config = {
         "url": settings.GIT_PROJECTS_SERVER_URL,
         "branch": settings.GIT_PROJECTS_SERVER_BRANCH,
@@ -1789,4 +1817,4 @@ async def create_git_connector_for_project_files(project_name: str) -> GitConnec
         "project_name": project_name,
         "name": "projects",
     }
-    return await create_git_connector_from_repo_config(projects_repo_config)
+    return await create_git_connector_from_repo_config(projects_repo_config, full_history=full_history)
