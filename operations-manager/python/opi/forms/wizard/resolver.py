@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from opi.forms.wizard.services_merge import merge_service_lists
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -61,20 +63,19 @@ def _is_visible(section: FormSection, data: dict[str, Any]) -> bool:
 def _merge_step_data(step_data: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """Merge per-step data dicts into a single flat dict.
 
-    For list values shared across sections (e.g. ``deployments``), items
-    are merged by index so fields from different sections combine.
-
-    The "services" section is merged last so its ``services`` key
-    (the authoritative list of selected services) is not overwritten
-    by config sections that share the same top-level key (e.g.
-    keycloak-config stores its data under ``{"services": [...]}}``
-    because its editables' yaml_paths start with ``services/``).
+    For list values shared across sections (e.g. ``deployments``) items are merged
+    by index so fields from different sections combine. The ``services`` list is a
+    selection set keyed by service name, so it is merged by name (see services_merge),
+    not by index: a section still carrying the pre-edit list must not index-swap or
+    duplicate services.
     """
     import copy
 
     def _merge_into(target: dict[str, Any], source: dict[str, Any]) -> None:
         for key, value in source.items():
-            if key in target and isinstance(target[key], list) and isinstance(value, list):
+            if key == "services" and isinstance(target.get(key), list) and isinstance(value, list):
+                target[key] = merge_service_lists(target[key], value)
+            elif key in target and isinstance(target[key], list) and isinstance(value, list):
                 tgt_list = target[key]
                 for i, src_item in enumerate(value):
                     if i < len(tgt_list):
@@ -88,12 +89,6 @@ def _merge_step_data(step_data: dict[str, dict[str, Any]]) -> dict[str, Any]:
                 target[key] = copy.deepcopy(value)
 
     merged: dict[str, Any] = {}
-    services_data: dict[str, Any] | None = None
-    for section_id, section_data in step_data.items():
-        if section_id == "services":
-            services_data = section_data
-            continue
+    for section_data in step_data.values():
         _merge_into(merged, section_data)
-    if services_data is not None:
-        _merge_into(merged, services_data)
     return merged

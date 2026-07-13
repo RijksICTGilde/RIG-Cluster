@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from opi.forms.wizard.services_merge import merge_service_lists
+
 CLEARED_FIELD = "__wizard-field-cleared__"
 """Tombstone marker for fields the user cleared in a wizard step.
 
@@ -195,10 +197,15 @@ class WizardState:
             if section_id not in self.step_data:
                 continue
             for key, value in self.step_data[section_id].items():
-                if key in merged and isinstance(merged[key], list) and isinstance(value, list):
-                    # Selection lists (all-scalar, e.g. services) replace entirely.
-                    # Structural lists (contain dicts, e.g. deployments) merge by index
-                    # so that sections sharing a key combine their fields.
+                if key == "services" and isinstance(merged.get(key), list) and isinstance(value, list):
+                    # Services is a selection set keyed by service name, not positional.
+                    # Merge by name so a section still carrying the pre-edit list cannot
+                    # index-swap or duplicate services (see services_merge).
+                    merged[key] = merge_service_lists(merged[key], value)
+                elif key in merged and isinstance(merged[key], list) and isinstance(value, list):
+                    # Selection lists (all-scalar) replace entirely. Structural lists
+                    # (contain dicts, e.g. deployments) merge by index so that sections
+                    # sharing a key combine their fields.
                     if all(not isinstance(item, dict) for item in value):
                         merged[key] = copy.deepcopy(value)
                     else:
