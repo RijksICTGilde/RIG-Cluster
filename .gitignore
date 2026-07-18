@@ -53,3 +53,4 @@ secrets-overview-*.yaml
 # E2E test screenshots (generated artifacts)
 /operations-manager/python/tests/e2e/screenshots/
 /operations-manager/docs/
+/operations-manager/python/tests/e2e/artifacts/

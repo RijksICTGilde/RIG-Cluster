@@ -11,6 +11,7 @@ code changes needed.
 """
 
 import base64
+import contextlib
 import json
 import os
 import socket
@@ -22,6 +23,7 @@ from urllib.parse import urlparse
 import pytest
 import uvicorn
 from itsdangerous import TimestampSigner
+from tests.e2e.helpers.forgejo import ForgejoClient
 from tests.e2e.testserver import SECRET_KEY, create_test_app
 
 if TYPE_CHECKING:
@@ -35,6 +37,17 @@ E2E_BASE_URL = os.environ.get("E2E_BASE_URL", "")
 # must match what that cluster uses. The default is only useful when no
 # sandbox tests are actually run.
 E2E_SECRET_KEY = os.environ.get("E2E_SECRET_KEY", "sandbox-e2e-test-secret-key-min32chars")
+
+# Forgejo (zad-projects repo) - the primary "did it work?" verification source.
+# Defaults match the sandbox cluster configmap.
+FORGEJO_URL = os.environ.get("FORGEJO_URL", "https://forgejo.sandbox.rijksapp.dev")
+FORGEJO_USER = os.environ.get("FORGEJO_USER", "rig-admin")
+FORGEJO_PASSWORD = os.environ.get("FORGEJO_PASSWORD", "admin1234")
+FORGEJO_PROJECTS_REPO = os.environ.get("FORGEJO_PROJECTS_REPO", "rig-admin/zad-projects")
+FORGEJO_VERIFY_SSL = os.environ.get("FORGEJO_VERIFY_SSL", "true").lower() not in ("0", "false", "no")
+
+# Playwright tracing / screenshots of events. Trace defaults on for sandbox runs.
+E2E_TRACE = os.environ.get("E2E_TRACE", "1").lower() not in ("0", "false", "no")
 
 TEST_USER = {
     "sub": "e2e-user",
@@ -140,7 +153,36 @@ def screenshot_dir() -> Path:
     return path
 
 
+@pytest.fixture(scope="session")
+def artifact_dir() -> Path:
+    """Directory for saving traces and event screenshots (E2E_ARTIFACT_DIR)."""
+    env_dir = os.environ.get("E2E_ARTIFACT_DIR")
+    path = Path(env_dir) if env_dir else Path(__file__).parent / "artifacts"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Expose each phase's result on the item so fixtures can react to failures."""
+    outcome = yield
+    rep = outcome.get_result()
+    setattr(item, f"rep_{rep.when}", rep)
+
+
 # --- Sandbox fixtures ---
+
+
+@pytest.fixture(scope="session")
+def forgejo() -> ForgejoClient:
+    """Read-only Forgejo client for verifying project files in zad-projects."""
+    return ForgejoClient(
+        base_url=FORGEJO_URL,
+        username=FORGEJO_USER,
+        password=FORGEJO_PASSWORD,
+        repo=FORGEJO_PROJECTS_REPO,
+        verify_ssl=FORGEJO_VERIFY_SSL,
+    )
 
 
 @pytest.fixture(scope="session")
@@ -153,7 +195,11 @@ def sandbox_url() -> str:
 
 @pytest.fixture(scope="session")
 def sandbox_context(browser: BrowserContext, sandbox_url: str) -> Generator[BrowserContext]:
-    """Authenticated browser context for sandbox cluster tests."""
+    """Authenticated browser context for sandbox cluster tests.
+
+    When E2E_TRACE is enabled, tracing is started once on the context; per-test
+    trace chunks are produced by the sandbox_page fixture.
+    """
     context = browser.new_context(ignore_https_errors=True)
     signed = _sign_session({"user": SANDBOX_TEST_USER}, secret=E2E_SECRET_KEY)
     parsed = urlparse(sandbox_url)
@@ -167,13 +213,51 @@ def sandbox_context(browser: BrowserContext, sandbox_url: str) -> Generator[Brow
             }
         ]
     )
+    if E2E_TRACE:
+        context.tracing.start(screenshots=True, snapshots=True, sources=True)
     yield context
+    if E2E_TRACE:
+        context.tracing.stop()
     context.close()
 
 
 @pytest.fixture
-def sandbox_page(sandbox_context: BrowserContext) -> Generator[Page]:
-    """New page from the sandbox-authenticated browser context."""
+def sandbox_page(
+    request: pytest.FixtureRequest,
+    sandbox_context: BrowserContext,
+    artifact_dir: Path,
+) -> Generator[Page]:
+    """New page from the sandbox-authenticated browser context.
+
+    Records a per-test Playwright trace chunk (screenshots of every action) and,
+    on test failure, saves a full-page screenshot - both into artifact_dir.
+    """
+    safe_name = request.node.name.replace("/", "_").replace("::", "_")
+    if E2E_TRACE:
+        sandbox_context.tracing.start_chunk(title=request.node.name)
     page = sandbox_context.new_page()
-    yield page
-    page.close()
+    try:
+        yield page
+    finally:
+        if getattr(request.node, "rep_call", None) is not None and request.node.rep_call.failed:
+            with contextlib.suppress(Exception):
+                page.screenshot(path=str(artifact_dir / f"FAILED-{safe_name}.png"), full_page=True)
+        if E2E_TRACE:
+            sandbox_context.tracing.stop_chunk(path=str(artifact_dir / f"trace-{safe_name}.zip"))
+        page.close()
+
+
+@pytest.fixture
+def capture(artifact_dir: Path, request: pytest.FixtureRequest):
+    """Return a helper to save a named full-page screenshot at a specific event.
+
+    Usage: capture(page, "before-submit")
+    """
+    safe_name = request.node.name.replace("/", "_").replace("::", "_")
+
+    def _capture(page: Page, label: str) -> Path:
+        path = artifact_dir / f"{safe_name}-{label}.png"
+        page.screenshot(path=str(path), full_page=True)
+        return path
+
+    return _capture
