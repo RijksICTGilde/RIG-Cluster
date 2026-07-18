@@ -1810,6 +1810,12 @@ tasks:
       - uv run playwright install chromium --with-deps
       - >-
         E2E_BASE_URL=${E2E_BASE_URL:-https://zad.sandbox.rijksapp.dev}
+        E2E_SECRET_KEY=${E2E_SECRET_KEY:-sandbox-dev-secret-key-fixed-for-stable-sessions-32min}
+        FORGEJO_URL=${FORGEJO_URL:-https://forgejo.sandbox.rijksapp.dev}
+        FORGEJO_USER=${FORGEJO_USER:-rig-admin}
+        FORGEJO_PASSWORD=${FORGEJO_PASSWORD:-admin1234}
+        E2E_ARTIFACT_DIR=${E2E_ARTIFACT_DIR:-tests/e2e/artifacts}
+        E2E_TRACE=${E2E_TRACE:-1}
         uv run pytest tests/e2e/ -m "e2e and sandbox" -v --timeout=300
     silent: false
 

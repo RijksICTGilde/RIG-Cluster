@@ -1,0 +1,155 @@
+"""
+Sandbox API helpers: read a project's API key from the UI and drive the
+component-add REST endpoint.
+
+The component-add endpoint (`POST /api/v2/projects/{name}/components`) is
+authenticated with the project's own `X-API-Key`. That key is generated at
+project creation and is only exposed decrypted on the project-details page, so
+we scrape it from there, then use it for the async API call.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import time
+from typing import TYPE_CHECKING
+
+import httpx
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Page
+
+
+def read_api_key(page: Page, base_url: str, project_name: str) -> str:
+    """Scrape the decrypted project API key from the project-details page.
+
+    The details page renders the key inside a ROOS `c-secret-field`; the plaintext
+    is present in the DOM as the text of `.roos-secret-field__value` (CSS-hidden by
+    default). We scope to the "API Key" config-item to avoid the AGE-key fields.
+    """
+    page.goto(f"{base_url.rstrip('/')}/projects/details/{project_name}")
+    page.wait_for_load_state("networkidle")
+    value = page.locator(".config-item:has(strong:text-is('API Key')) .roos-secret-field__value").first
+    value.wait_for(state="attached", timeout=10000)
+    api_key = (value.text_content() or "").strip()
+    if not api_key:
+        raise AssertionError(f"Could not read API key for project '{project_name}' from details page")
+    return api_key
+
+
+def add_component(
+    base_url: str,
+    project_name: str,
+    api_key: str,
+    *,
+    component_name: str,
+    image: str,
+    deployment_names: list[str],
+    verify_ssl: bool = True,
+    timeout: float = 180.0,
+) -> dict:
+    """Add one component via the v2 async API and wait for the task to finish.
+
+    Returns the terminal task response dict. Raises AssertionError if the task
+    does not reach 'completed'.
+    """
+    base = base_url.rstrip("/")
+    headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
+    body = {
+        "name": component_name,
+        "image": image,
+        "deployment_names": deployment_names,
+    }
+    with httpx.Client(verify=verify_ssl, timeout=30.0) as client:
+        response = client.post(
+            f"{base}/api/v2/projects/{project_name}/components",
+            json=body,
+            headers=headers,
+        )
+        assert response.status_code == 202, (
+            f"Expected 202 from component-add, got {response.status_code}: {response.text}"
+        )
+        location = response.headers.get("Location")
+        task_id = location.rsplit("/", 1)[-1] if location else response.json().get("task_id")
+        assert task_id, f"No task id returned from component-add: {response.text}"
+
+        return _wait_for_task(client, base, task_id, headers, timeout=timeout)
+
+
+def delete_project_via_api(
+    base_url: str,
+    project_name: str,
+    api_key: str,
+    *,
+    force: bool = True,
+    verify_ssl: bool = True,
+    timeout: float = 180.0,
+) -> None:
+    """Safety-net deletion via the v1 API (DELETE /api/projects/{name}).
+
+    Best-effort: swallows connection errors so it never breaks fixture teardown.
+    Waits for the async delete task to finish when a task id is returned.
+    """
+    base = base_url.rstrip("/")
+    headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
+    body = {"confirmDeletion": True, "force": force}
+    with contextlib.suppress(httpx.HTTPError), httpx.Client(verify=verify_ssl, timeout=30.0) as client:
+        response = client.request(
+            "DELETE",
+            f"{base}/api/projects/{project_name}",
+            json=body,
+            headers=headers,
+        )
+        if response.status_code == 202:
+            location = response.headers.get("Location")
+            task_id = location.rsplit("/", 1)[-1] if location else None
+            if task_id:
+                with contextlib.suppress(AssertionError):
+                    _wait_for_task(client, base, task_id, headers, timeout=timeout)
+
+
+def _wait_for_task(
+    client: httpx.Client,
+    base: str,
+    task_id: str,
+    headers: dict,
+    *,
+    timeout: float,
+    interval: float = 3.0,
+) -> dict:
+    """Poll GET /api/tasks/{task_id} until terminal (200), then assert real success.
+
+    The task envelope reports status 'completed' even when the underlying operation
+    failed - the actual outcome is in `result.status` and in the subtasks. We inspect
+    both so a failed operation surfaces its real error instead of a vague downstream
+    assertion.
+    """
+    deadline = time.monotonic() + timeout
+    last: dict = {}
+    while time.monotonic() < deadline:
+        resp = client.get(f"{base}/api/tasks/{task_id}", headers=headers)
+        # 202 = still running, 200 = terminal (completed/failed/cancelled)
+        if resp.status_code == 200:
+            last = resp.json()
+            status = last.get("status")
+            assert status == "completed", f"Task {task_id} ended with status '{status}': {last}"
+            _assert_no_subtask_failure(task_id, last)
+            return last
+        if resp.status_code not in (200, 202):
+            raise AssertionError(f"Unexpected task poll status {resp.status_code}: {resp.text}")
+        last = resp.json()
+        time.sleep(interval)
+    raise AssertionError(f"Task {task_id} did not complete within {timeout}s (last: {last})")
+
+
+def _assert_no_subtask_failure(task_id: str, task: dict) -> None:
+    """Raise with the real error if the task's result or any subtask failed."""
+    result = task.get("result") or {}
+    if result.get("status") == "failed":
+        error = task.get("error_message") or result.get("error") or "unknown error"
+        raise AssertionError(f"Task {task_id} operation failed: {error} (result={result})")
+    for sub in task.get("subtasks") or []:
+        if sub.get("status") == "failed":
+            raise AssertionError(
+                f"Task {task_id} subtask '{sub.get('name')}' failed: {sub.get('error') or 'unknown error'}"
+            )
