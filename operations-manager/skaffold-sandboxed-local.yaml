@@ -21,6 +21,11 @@ build:
       - src: 'operations-manager/python/opi/**/*.py'
         dest: /app/opi
         strip: 'operations-manager/python/opi/'
+      # Live-synced version metadata (see `task version:generate` / `version:watch`)
+      # so /version and the footer reflect the running commit/branch/dirty state.
+      - src: 'operations-manager/python/opi/version.json'
+        dest: /app/opi
+        strip: 'operations-manager/python/opi/'
       - src: 'operations-manager/python/opi/templates/**/*'
         dest: /app/opi/templates
         strip: 'operations-manager/python/opi/templates/'
