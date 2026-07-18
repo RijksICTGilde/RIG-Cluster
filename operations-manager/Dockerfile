@@ -92,6 +92,18 @@ RUN uv sync --frozen --no-install-project --no-dev --no-group test && \
 # Stage 3: Application (changes frequently)
 FROM dependencies AS application
 
+# Bake version metadata for the /version endpoint and footer. CI passes these as
+# build-args (immutable image tag / git SHA); plain builds get harmless fallbacks.
+# In skaffold dev these are superseded by a hot-synced opi/version.json.
+ARG ZAD_VERSION=0.1.0
+ARG ZAD_GIT_COMMIT=""
+ARG ZAD_GIT_BRANCH=""
+ARG ZAD_BUILD_DATE=""
+ENV ZAD_VERSION=${ZAD_VERSION} \
+    ZAD_GIT_COMMIT=${ZAD_GIT_COMMIT} \
+    ZAD_GIT_BRANCH=${ZAD_GIT_BRANCH} \
+    ZAD_BUILD_DATE=${ZAD_BUILD_DATE}
+
 # Create non-root user for OpenShift compatibility
 RUN groupadd -g 1001 appuser && \
     useradd -r -u 1001 -g appuser appuser

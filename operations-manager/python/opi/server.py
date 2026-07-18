@@ -485,6 +485,14 @@ def create_app() -> FastAPI:
         """Liveness probe for Kubernetes - always returns OK."""
         return {"status": "ok"}
 
+    # Version info - public, so anyone (and the E2E suite) can see which build is running.
+    @app.get("/version", include_in_schema=True, response_class=JSONResponse)
+    async def version_info():
+        """Return the running build's version metadata (version, commit, branch, ...)."""
+        from opi.core.version import get_version_info
+
+        return get_version_info()
+
     # Readiness probe - only OK when all services are up
     @app.get("/readyz", include_in_schema=False, response_class=JSONResponse)
     async def readiness_check():

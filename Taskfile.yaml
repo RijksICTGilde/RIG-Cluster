@@ -2784,10 +2784,23 @@ tasks:
       - echo "Operations manager updated successfully"
     silent: true
 
+  version:generate:
+    desc: "Write opi/version.json from git (feeds the /version endpoint and footer)"
+    dir: operations-manager/python
+    cmds:
+      - uv run python scripts/write_version_file.py
+
+  version:watch:
+    desc: "Continuously regenerate opi/version.json so skaffold hot-syncs the running commit/dirty state"
+    dir: operations-manager/python
+    cmds:
+      - while true; do uv run python scripts/write_version_file.py; sleep 5; done
+
   sandbox:skaffold-dev:
     desc: "Start Skaffold with hot-reload for sandbox development"
     cmds:
       - echo "Starting Skaffold in hot-reload mode (sandboxed-local)..."
+      - task: version:generate
       - SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" skaffold dev --port-forward -f operations-manager/skaffold-sandboxed-local.yaml
 
   sandbox:skaffold-debug:
