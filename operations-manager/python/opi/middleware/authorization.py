@@ -30,6 +30,7 @@ SKIP_AUTH_EXACT = ("/metrics",)
 SKIP_AUTH_PREFIXES = (
     "/health",
     "/ready",
+    "/version",
     "/static/",
 )
 

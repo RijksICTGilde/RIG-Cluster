@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Paths that bypass the maintenance page
-BYPASS_PATHS = {"/health", "/healthz", "/readyz", "/metrics"}
+BYPASS_PATHS = {"/health", "/healthz", "/readyz", "/metrics", "/version"}
 
 
 class MaintenanceMiddleware(BaseHTTPMiddleware):
