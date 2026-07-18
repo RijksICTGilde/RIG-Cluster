@@ -2060,8 +2060,22 @@ tasks:
         CERT_DIR="security/tls/sandbox-wildcard"
         KEY_FILE="security/developer-key.txt"
 
-        # Skip if plaintext certs already exist
+        # Plaintext already present: keep it, but detect a stale encrypted source.
+        # (The encrypted .age is the committed source of truth; if a renewed cert was
+        # dropped in as plaintext without re-encrypting, the .age silently goes stale.)
         if [ -f "$CERT_DIR/fullchain.pem" ] && [ -f "$CERT_DIR/privkey.pem" ]; then
+          if [ -f "$KEY_FILE" ] && [ -f "$CERT_DIR/fullchain.pem.age" ]; then
+            PLAIN_END=$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -enddate 2>/dev/null)
+            AGE_TMP=$(mktemp)
+            if age --decrypt -i "$KEY_FILE" -o "$AGE_TMP" "$CERT_DIR/fullchain.pem.age" 2>/dev/null; then
+              AGE_END=$(openssl x509 -in "$AGE_TMP" -noout -enddate 2>/dev/null)
+              if [ "$PLAIN_END" != "$AGE_END" ]; then
+                echo "WARNING: plaintext and encrypted wildcard cert differ (plaintext notAfter: ${PLAIN_END#notAfter=}, encrypted notAfter: ${AGE_END#notAfter=})."
+                echo "WARNING: the encrypted source may be stale. Run 'task sandbox:encrypt-wildcard-cert' to refresh the .age files."
+              fi
+            fi
+            rm -f "$AGE_TMP"
+          fi
           echo "Wildcard TLS certificates already decrypted"
           exit 0
         fi
@@ -2096,6 +2110,34 @@ tasks:
         age --decrypt -i "$KEY_FILE" -o "$CERT_DIR/fullchain.pem" "$CERT_DIR/fullchain.pem.age"
         age --decrypt -i "$KEY_FILE" -o "$CERT_DIR/privkey.pem" "$CERT_DIR/privkey.pem.age"
         echo "Wildcard TLS certificates decrypted"
+    silent: true
+
+  sandbox:encrypt-wildcard-cert:
+    desc: "Re-encrypt the wildcard TLS cert PEMs to AGE after renewal"
+    cmds:
+      - |
+        CERT_DIR="security/tls/sandbox-wildcard"
+        KEY_FILE="security/developer-key.txt"
+
+        # Check plaintext files exist
+        if [ ! -f "$CERT_DIR/fullchain.pem" ] || [ ! -f "$CERT_DIR/privkey.pem" ]; then
+          echo "Plaintext certificate files not found in $CERT_DIR/"
+          echo "Expected files: fullchain.pem, privkey.pem"
+          exit 1
+        fi
+
+        # Developer key needed to derive the AGE recipient
+        if [ ! -f "$KEY_FILE" ]; then
+          echo "Developer key not found at $KEY_FILE"
+          echo "Run 'task sandbox:decrypt-wildcard-cert' first, or ask the ZAD developers."
+          exit 1
+        fi
+
+        RECIPIENT=$(age-keygen -y "$KEY_FILE")
+        echo "Re-encrypting wildcard TLS certificates to AGE for $RECIPIENT..."
+        age -r "$RECIPIENT" -o "$CERT_DIR/fullchain.pem.age" "$CERT_DIR/fullchain.pem"
+        age -r "$RECIPIENT" -o "$CERT_DIR/privkey.pem.age" "$CERT_DIR/privkey.pem"
+        echo "Wildcard TLS certificates re-encrypted"
     silent: true
 
   sandbox:ask-build-mode:
