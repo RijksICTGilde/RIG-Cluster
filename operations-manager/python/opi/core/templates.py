@@ -17,6 +17,7 @@ from jinja_roos_components.extension import ComponentExtension
 from opi.core.config import BUILD_DATE, VERSION
 from opi.core.i18n import get_current_translation, get_requested_language
 from opi.core.rrule_utils import format_rrule
+from opi.core.version import get_version_info
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -158,6 +159,9 @@ setup_components(
 templates.env.globals["roos_assets_base_url"] = "/static/roos/dist/"
 templates.env.globals["version"] = VERSION
 templates.env.globals["build_date"] = BUILD_DATE
+# Live version metadata (reads opi/version.json each call, so hot-synced dev builds
+# are reflected without a restart). See opi/core/version.py.
+templates.env.globals["version_info"] = get_version_info
 
 # Register custom filters
 templates.env.filters["service_name"] = get_service_name

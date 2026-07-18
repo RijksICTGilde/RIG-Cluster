@@ -13,6 +13,8 @@ __pycache__/
 /operations-manager/python/scripts/.env.*
 /operations-manager/python/log*
 /operations-manager/python/.env.local
+# Generated at build/dev time by `task version:generate` (see opi/core/version.py)
+/operations-manager/python/opi/version.json
 /operations-manager/python/.env.secrets
 /operations-manager/python/.env.*.secrets
 /.env-taskfile-current
