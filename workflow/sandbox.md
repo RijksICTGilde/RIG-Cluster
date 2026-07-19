@@ -130,3 +130,36 @@ Tests do not perform a Keycloak login. They forge a pre-signed Starlette session
 - `test_delete_project_via_ui` — delete via the danger-zone modal, then assert the Forgejo file **disappears**.
 
 The pattern to copy: drive the change through the real UI or API, then read back the authoritative project YAML from Forgejo (`ForgejoClient`) rather than trusting the HTTP response alone.
+
+## Deploying your PR to the shared sandbox (dclaude sessions on the dev server)
+
+On the shared dev server the sandbox is a **single** Kind cluster used by **one PR at a time**. When your task genuinely needs real end-to-end validation, you build your PR's image, put it on the cluster, and check `/version` — with two baked commands. Only do this when you actually need to test against the sandbox (it is a scarce, shared, locked resource).
+
+### The two commands
+
+```bash
+sandbox-deploy      # claim the lock → build operations-manager from THIS repo
+                    # → load into Kind → roll out → verify /version
+# ... run your E2E against https://zad.sandbox.rijksapp.dev ...
+sandbox-release     # free the lock for the next PR — ALWAYS run when done
+```
+
+- `sandbox-deploy` **holds** the lock so you can iterate: change code, run `sandbox-deploy` again to redeploy. It runs `task version:generate` first so `/version` reflects your commit, builds with `--network=host` (DNS), `kind load`s the image, rolls it out, and confirms the running `GET /version` matches what you built.
+- `sandbox-release` frees the lock. The lease auto-expires if you forget, but always release so others aren't blocked.
+- `orch sandbox status` shows who holds the sandbox and who is queued.
+
+### The locking rule
+
+Exactly one PR deploys at a time. `sandbox-deploy` calls `orch sandbox claim`; if another PR holds it you get a clear "busy" message — wait and retry, never force it. This stops the single cluster thrashing between different PR versions.
+
+### Verifying the right version is live
+
+`/version` reads `opi/version.json` first (baked from git), then falls back to the `ZAD_VERSION` env — so a build that didn't regenerate `version.json` shows a stale commit. `sandbox-deploy` handles this; to check by hand:
+
+```bash
+curl -sk https://zad.sandbox.rijksapp.dev/version    # compare against: git rev-parse --short HEAD
+```
+
+### Then run the E2E suite
+
+With the sandbox on your commit, point the tests at it: `E2E_BASE_URL=https://zad.sandbox.rijksapp.dev` (+ `E2E_SECRET_KEY`) then `task test-e2e-sandbox`. `test_version_endpoint` confirms the build metadata end-to-end.
