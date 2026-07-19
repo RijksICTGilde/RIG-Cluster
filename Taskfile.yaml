@@ -1899,7 +1899,12 @@ tasks:
         cat banner.txt
         cat docs/sandbox-prerequisites.md
         echo ""
-        read -p "Press Enter to continue or Ctrl+C to cancel... "
+        # SANDBOX_NONINTERACTIVE=true skips this confirmation (unattended installs)
+        if [ "${SANDBOX_NONINTERACTIVE:-}" = "true" ]; then
+          echo "(non-interactive: continuing)"
+        else
+          read -p "Press Enter to continue or Ctrl+C to cancel... "
+        fi
       - |
         echo "========================================="
         echo "Setting up Sandboxed Local Environment"
@@ -1966,10 +1971,17 @@ tasks:
           echo "Cluster rig-sandbox already exists"
           exit 0
         fi
-        read -p "HTTP port for ingress [80]: " http_port
-        export KIND_HTTP_PORT="${http_port:-80}"
-        read -p "HTTPS port for ingress [443]: " https_port
-        export KIND_HTTPS_PORT="${https_port:-443}"
+        # KIND_HTTP_PORT / KIND_HTTPS_PORT from the env (e.g. .env-taskfile-current
+        # or the shell) skip the prompt — needed for unattended installs and for
+        # hosts where 80/443 are taken (e.g. the dev server behind Caddy → 8880/8843).
+        if [ -z "${KIND_HTTP_PORT:-}" ]; then
+          read -p "HTTP port for ingress [80]: " http_port
+          export KIND_HTTP_PORT="${http_port:-80}"
+        fi
+        if [ -z "${KIND_HTTPS_PORT:-}" ]; then
+          read -p "HTTPS port for ingress [443]: " https_port
+          export KIND_HTTPS_PORT="${https_port:-443}"
+        fi
         envsubst < sandboxed-local/kind-config.yaml | kind create cluster --name rig-sandbox --config -
         echo "Cluster rig-sandbox created successfully (HTTP port: ${KIND_HTTP_PORT}, HTTPS port: ${KIND_HTTPS_PORT})"
     silent: true
@@ -2367,8 +2379,14 @@ tasks:
         echo "Without SSO, the sandbox still works using a local Keycloak admin user."
         echo "Applications deployed in the sandbox will use Keycloak but cannot use SSO."
         echo ""
-        printf "Do you want to configure SSO? [y/N]: "
-        read -r CONFIGURE_SSO
+        # SANDBOX_SSO from the env answers this non-interactively (e.g. SANDBOX_SSO=no)
+        if [ -n "${SANDBOX_SSO:-}" ]; then
+          CONFIGURE_SSO="$SANDBOX_SSO"
+          echo "Do you want to configure SSO? [y/N]: ${CONFIGURE_SSO} (from SANDBOX_SSO)"
+        else
+          printf "Do you want to configure SSO? [y/N]: "
+          read -r CONFIGURE_SSO
+        fi
 
         if [ "$CONFIGURE_SSO" != "y" ] && [ "$CONFIGURE_SSO" != "Y" ]; then
           echo "no" > .sandbox-sso
