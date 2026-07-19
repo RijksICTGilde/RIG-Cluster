@@ -15,7 +15,11 @@ Every project on the platform is defined by a single YAML file stored in the `za
 
 ### Schema
 
-The canonical schema is defined as Pydantic models in `opi/forms/models/project_file.py`:
+The schema exists in two places that must stay in sync:
+- **Pydantic models** in `opi/forms/models/project_file.py` — used for form validation and typed access
+- **JSON schema** in `opi/schemas/project_v2.json` — used by `validate_project_schema` at save/process time
+
+The Pydantic models are the canonical typed view:
 
 | Model | Purpose |
 |---|---|
@@ -217,7 +221,7 @@ config:
 Declarative Kustomize manifests that bootstrap the cluster itself — PostgreSQL, Keycloak, MinIO, Forgejo, Prometheus, Redis, ArgoCD, cert-manager, ingress-nginx, and more. Each component follows `base/` + `overlays/{local,sandboxed-local,odcn-production}/`. Secrets are SOPS+AGE encrypted. All operations via Taskfile (100+ tasks, no shell scripts).
 
 ### Application (OPI)
-A Python 3.13 FastAPI app with a web UI (Jinja2 + ROOS design system) and a REST API. Handles the full lifecycle: project creation, database provisioning, Keycloak realm setup, MinIO buckets, manifest generation, ArgoCD management, backup/restore, resource tuning, user admin.
+A Python 3.14 FastAPI app with a web UI (Jinja2 + ROOS design system) and a REST API. Handles the full lifecycle: project creation, database provisioning, Keycloak realm setup, MinIO buckets, manifest generation, ArgoCD management, backup/restore, resource tuning, user admin.
 
 ## Where To Find Things
 
@@ -229,11 +233,11 @@ A Python 3.13 FastAPI app with a web UI (Jinja2 + ROOS design system) and a REST
 | Change business orchestration (multi-step flows) | `opi/manager/` — `project_manager.py` is the primary orchestrator |
 | Change business logic (data, analysis, CRUD) | `opi/services/` |
 | Change form behavior (wizard, editing) | `opi/forms/` (editables, visualizers, wizard state) |
-| Modify generated K8s manifests | `operations-manager/python/manifests/*.yaml.jinja` (28 Jinja2 templates) |
+| Modify generated K8s manifests | `operations-manager/python/manifests/*.yaml.jinja` (33 Jinja2 templates) |
 | Change infrastructure components | `infrastructure/bootstrap/infrastructure/{component}/` |
 | Change OPI's own K8s deployment | `bootstrap/rig-system/kustomize/` |
 | Write or read tests | `operations-manager/python/tests/` |
-| Understand a feature | `features/` (68 docs) or `features/futures/` (22 planned) |
+| Understand a feature | `features/` (87 docs) or `features/futures/` (41 planned) |
 | Run any operation | `Taskfile.yaml` at repo root |
 
 ## Architecture Patterns That Matter
@@ -248,33 +252,43 @@ A Python 3.13 FastAPI app with a web UI (Jinja2 + ROOS design system) and a REST
 
 ### Rules
 - **Only run tests for changed files** — never run the full suite blindly
-- **90% coverage minimum** is enforced
-- Default pytest config excludes `requires_infra` and `e2e` markers automatically
+- **90% coverage minimum** is enforced (`fail_under = 90` in `pyproject.toml`)
+- Default pytest config excludes `requires_infra` and `e2e` markers automatically (`addopts = "... -m 'not requires_infra and not e2e'"`)
 - Post-dev validation is mandatory: `ruff check . --fix`, `ruff format .`, `pyright`
 
 ### Commands (all from `operations-manager/python/`)
 ```bash
 uv run pytest tests/test_specific_file.py -x -q --tb=short   # targeted test
 uv run pytest tests/forms/ -q                                  # form tests
-uv run pytest tests/e2e/ -q                                    # Playwright E2E
+uv run pytest tests/e2e/ -m "e2e and not sandbox" -q           # Playwright E2E (local test server)
+task test-e2e-sandbox                                          # Playwright E2E against a live sandbox cluster
 uv run python functional_tests/run_all.py                      # integration (needs infra)
 ```
 
 ### Test Layout
-- `tests/test_*.py` — ~149 unit tests (root level)
-- `tests/forms/test_*.py` — ~11 form-specific tests
-- `tests/integration/` — 7 integration tests (API, auth, kubectl)
-- `tests/e2e/` — 12 Playwright browser tests
+- `tests/test_*.py` — ~234 unit tests (root level)
+- `tests/forms/test_*.py` — 17 form-specific tests
+- `tests/integration/` — 7 integration tests (API endpoints, auth, kubectl)
+- `tests/e2e/` — 17 Playwright browser tests (16 local + 1 live-sandbox lifecycle)
 - `tests/conftest.py` — 20+ fixtures mocking connectors, services, settings
-- `tests/e2e/conftest.py` — Playwright fixtures, test server setup, session signing
+- `tests/e2e/conftest.py` — Playwright fixtures: local test server (`app_server`) and live-sandbox (`sandbox_page`) modes, session-cookie signing
+- `tests/e2e/helpers/` — `WizardHelper`, `EditModalHelper`, `ForgejoClient`, `ProjectCleanup`, sandbox API helpers
+
+### API endpoint surface
+The REST API is large and evolving, so **do not maintain a hand-written endpoint list**. The authoritative, always-current surface is the OpenAPI spec served by a running instance:
+```
+https://zad.sandbox.rijksapp.dev/openapi.json     # live sandbox (see workflow/sandbox.md)
+http://localhost:9595/openapi.json                # skaffold hot-reload dev
+```
+Fetch it to see every path, method, and auth scheme when reviewing endpoint coverage. Router source lives in `opi/api/` (REST) and `opi/web/` (UI routes); routers are registered in `opi/server.py`.
 
 ### Playwright E2E Specifics
 - Uses **Python Playwright** (not Node.js) for browser-based UI testing
 - Starts a real FastAPI server on a free TCP port with mocked startup dependencies
 - Auth is handled by pre-signing session cookies with a known `SECRET_KEY` — no need to touch production auth code
-- Can run against a live sandbox via `E2E_BASE_URL` env var
-- Reusable helpers in `tests/e2e/helpers/` for wizard interaction, edit modals, and cleanup
-- Covers: wizard create/edit/validation, self-service portal, detail pages, navigation, ROOS rendering, user admin
+- Can run against a live sandbox via `E2E_BASE_URL` env var (see `workflow/sandbox.md`) — `test_sandbox_flows.py` drives the create/add-component/delete lifecycle through the UI and API, then verifies the resulting project YAML in the Forgejo `zad-projects` repo via `ForgejoClient`
+- Reusable helpers in `tests/e2e/helpers/` for wizard interaction, edit modals, cleanup, and Forgejo project-file verification
+- Covers: wizard create/edit/validation, edit modals (identity/team/services/backup), self-service portal, detail pages, navigation, ROOS rendering, user admin
 
 ### Pytest Markers
 `@pytest.mark.slow`, `@pytest.mark.enable_auth`, `@pytest.mark.requires_infra`, `@pytest.mark.e2e`, `@pytest.mark.sandbox`
