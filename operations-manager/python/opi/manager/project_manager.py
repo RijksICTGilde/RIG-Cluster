@@ -26,9 +26,7 @@ from opi.connectors import create_argo_connector
 from opi.connectors.chisel_connector import ChiselConnector
 from opi.connectors.git import (
     GitConnector,
-    GitPushConflictError,
     create_git_connector_for_argocd,
-    create_git_connector_for_project_files,
     create_git_connector_from_repo_config,
 )
 from opi.connectors.kubectl import KubectlConnector
@@ -65,8 +63,6 @@ from opi.handlers.project_file_handler import (
     find_attachment_data_list,
     is_image_pull_disable_reason,
     save_project_file,
-    validate_attachment_couplings,
-    validate_attachment_references,
 )
 from opi.handlers.sops import SopsHandler
 from opi.manager.project_validation import validate_component_references, validate_project_structure
@@ -74,6 +70,7 @@ from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
 from opi.services.project_service import ProjectUser, get_project_service
+from opi.services.project_store import get_project_store
 from opi.utils.age import (
     decrypt_age_content,
     decrypt_password_smart,
@@ -641,11 +638,14 @@ class ProjectManager:
 
     async def get_git_connector_for_project_files(self) -> GitConnector:
         if self.__git_connector_for_project_files is None:
-            # This connector runs the file-scoped diff (removed-component detection) in
-            # analyze_project_changes, so it needs commit history. That is now the default
-            # for project-files connectors (blobless clone); see create_git_connector_for_project_files.
-            self.__git_connector_for_project_files = await create_git_connector_for_project_files("")
-            await self.__git_connector_for_project_files.ensure_repo_cloned()
+            # Use the ProjectStore's warm, long-lived working copy instead of cloning
+            # the projects repo per request. It is cloned once per process with full
+            # history (blobless), so the file-scoped diff that detects removed
+            # components/deployments still works, but an edit no longer pays for a
+            # clone. The store owns this connector: we must never close it (close()
+            # rmtree's the working directory), hence owns=False below.
+            self.__git_connector_for_project_files = await get_project_store().get_connector()
+            self.__owns_git_connector_for_project_files = False
         return self.__git_connector_for_project_files
 
     async def set_git_connector_for_project_files(self, git_connector: GitConnector) -> None:
@@ -1364,32 +1364,24 @@ class ProjectManager:
         leave on-disk and live state out of sync). It never introduces a
         less-validated write path: the same checks run either way.
         """
-        try:
-            validate_project_schema(project_data)
-            await self._validate_structural_integrity(project_data)
-        except (ProjectSchemaError, ProjectIntegrityError) as e:
-            if enforce_validation:
-                raise
-            logger.warning(
-                "Persisting project '%s' despite a validation failure (enforce_validation=False); "
-                "the project file has pre-existing drift that should be repaired: %s",
-                project_data.get("name", "(onbekend)"),
-                e,
-            )
+        filename = (
+            os.path.basename(self._project_file_relative_path)
+            if self._project_file_relative_path
+            else f"{project_data.get('name')}.yaml"
+        )
 
-        project_full_file_path = await self.get_project_full_file_path()
-        save_yaml_to_path(project_full_file_path, project_data)
-
-        git_connector = await self.get_git_connector_for_project_files()
-        await git_connector.commit_and_push(commit_message)
-
-        if refresh_cache:
-            filename = (
-                os.path.basename(self._project_file_relative_path)
-                if self._project_file_relative_path
-                else f"{project_data.get('name')}.yaml"
-            )
-            get_project_service().load_project_from_data(project_data, filename)
+        # Routed through the ProjectStore so this write is serialized against every
+        # other project-file writer in the process, validated on the final state,
+        # rolled back cleanly on push failure, and written through to the cache.
+        await get_project_store().save(
+            str(project_data.get("name")),
+            project_data,
+            message=commit_message,
+            actor="operations-manager",
+            enforce_validation=enforce_validation,
+            filename=filename,
+            refresh_cache=refresh_cache,
+        )
 
     async def mutate_and_commit_project(
         self,
@@ -1413,34 +1405,27 @@ class ProjectManager:
         deployment that another task already removed).
 
         Returns True if a commit was pushed, False if the mutation was already applied.
+
+        Delegates to ProjectStore.mutate, which is the mutation-as-function
+        primitive: it holds the per-repo lock for the whole read-modify-write, so
+        in-process writers serialize (each waiter re-reads the previous winner's
+        result) instead of racing, and only falls back to the optimistic
+        fetch/re-apply/retry loop for writes that landed from outside this process.
+        ``max_attempts`` is kept for caller compatibility; the store applies its
+        own bounded retry budget.
         """
-        for attempt in range(max_attempts):
-            if attempt > 0:
-                # Drop our failed local commit and re-sync to the winner's state.
-                git_connector = await self.get_git_connector_for_project_files()
-                await git_connector.reset_to_remote()
+        name = await self.get_name()
+        filename = os.path.basename(self._project_file_relative_path) if self._project_file_relative_path else None
 
-            current = await self.get_contents()
-            mutated = mutator(current)
-            if mutated is None:
-                logger.info("Project mutation already applied, nothing to commit: %s", commit_message)
-                return False
-
-            try:
-                await self.save_and_commit_project(mutated, commit_message, enforce_validation=enforce_validation)
-                return True
-            except GitPushConflictError:
-                if attempt < max_attempts - 1:
-                    logger.warning(
-                        "Push conflict on '%s' (attempt %d/%d); re-reading remote and re-applying",
-                        commit_message,
-                        attempt + 1,
-                        max_attempts,
-                    )
-                    continue
-                raise
-
-        return False
+        result = await get_project_store().mutate(
+            name,
+            mutator,
+            message=commit_message,
+            actor="operations-manager",
+            enforce_validation=enforce_validation,
+            filename=filename,
+        )
+        return result.committed
 
     async def check_and_create_namespaces(
         self, deployment_name: str | None = None, deployment_names: list[str] | None = None

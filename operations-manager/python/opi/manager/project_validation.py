@@ -21,9 +21,7 @@ from opi.utils.project_utils import ComponentValidationError, validate_component
 logger = logging.getLogger(__name__)
 
 
-def validate_component_references(
-    project_data: dict, components: list, context: str = "deployment"
-) -> dict[str, Any]:
+def validate_component_references(project_data: dict, components: list, context: str = "deployment") -> dict[str, Any]:
     """
     Validate that all component references exist in the project.
 

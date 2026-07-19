@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from opi.manager.project_manager import ProjectManager
+from opi.services.project_store import GitProjectStore
 
 # Directories whose handlers must route every project-file write through
 # ProjectManager.save_and_commit_project (the central validated save).
@@ -69,7 +70,7 @@ def test_no_direct_project_file_commits_outside_central_save() -> None:
 
 
 @pytest.mark.asyncio
-async def test_central_save_refreshes_cache_with_new_state() -> None:
+async def test_central_save_refreshes_cache_with_new_state(tmp_path) -> None:
     """After a successful save, the read-only cache reflects the committed state."""
     from opi.services.project_service import get_project_service
 
@@ -95,12 +96,23 @@ async def test_central_save_refreshes_cache_with_new_state() -> None:
         ],
     }
 
+    # The persist path runs inside GitProjectStore now, so drive a real store with
+    # a fake git connector; the cache write-through under test is the store's.
     git = AsyncMock()
+    git.show_file_at = AsyncMock(return_value=None)
+    git.get_local_commit_hash = AsyncMock(return_value="deadbeef")
+
+    store = GitProjectStore(working_dir=str(tmp_path))
+
+    async def _get_connector():
+        return git
+
+    store.get_connector = _get_connector
+
     with (
-        patch.object(ProjectManager, "_validate_structural_integrity", new=AsyncMock()),
-        patch.object(ProjectManager, "get_project_full_file_path", new=AsyncMock(return_value="/tmp/x.yaml")),
-        patch.object(ProjectManager, "get_git_connector_for_project_files", new=AsyncMock(return_value=git)),
-        patch("opi.manager.project_manager.save_yaml_to_path"),
+        patch("opi.services.project_store.validate_project_structure", new=AsyncMock()),
+        patch("opi.manager.project_manager.get_project_store", return_value=store),
+        patch("opi.services.project_store.save_yaml_to_path"),
     ):
         await pm.save_and_commit_project(project_data, "Add component")
 

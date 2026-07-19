@@ -1541,6 +1541,66 @@ class GitConnector:
             logger.warning(f"Error retrieving previous file content for {file_path}: {e}")
             return None
 
+    async def show_file_at(self, ref: str, file_path: str) -> str | None:
+        """Return the content of a file as of ``ref``, or None if absent there.
+
+        Local-only (``git show``), so it is cheap on a warm clone that carries
+        history. Used by ProjectStore.read_at to reconstruct a past version.
+        """
+        await self.ensure_repo_cloned()
+        clean_file_path = self._get_full_path(file_path)
+
+        stdout, stderr, code = await self._run_git_command(["show", f"{ref}:{clean_file_path}"])
+        if code == 0:
+            return stdout
+        logger.debug(f"File {clean_file_path} not present at {ref}: {stderr}")
+        return None
+
+    async def list_file_revisions(self, file_path: str, limit: int = 50) -> list[dict[str, str]]:
+        """Return the commits that touched ``file_path``, newest first.
+
+        File-scoped (``git log -- <file>``), so unrelated commits for other
+        projects in the shared repo are not reported as revisions of this file.
+        Each entry has: ref, author, timestamp (ISO 8601), message.
+        """
+        await self.ensure_repo_cloned()
+        clean_file_path = self._get_full_path(file_path)
+
+        # Unit separator between fields, record separator between commits, so a
+        # multi-line commit message cannot be misparsed as another revision.
+        stdout, stderr, code = await self._run_git_command(
+            ["log", f"-n{limit}", "--format=%H%x1f%an%x1f%aI%x1f%s%x1e", "--", clean_file_path]
+        )
+        if code != 0:
+            logger.debug(f"git log failed for {clean_file_path}: {stderr}")
+            return []
+
+        revisions: list[dict[str, str]] = []
+        for record in stdout.split("\x1e"):
+            record = record.strip()
+            if not record:
+                continue
+            parts = record.split("\x1f")
+            if len(parts) != 4:
+                continue
+            revisions.append({"ref": parts[0], "author": parts[1], "timestamp": parts[2], "message": parts[3]})
+        return revisions
+
+    async def list_changed_files(self, old_commit: str, new_commit: str) -> list[str]:
+        """Return repo-relative paths changed between two commits.
+
+        Drives the incremental reconcile: only the files that actually changed
+        are re-read, instead of re-reading every project file.
+        """
+        await self.ensure_repo_cloned()
+
+        stdout, stderr, code = await self._run_git_command(["diff", "--name-only", old_commit, new_commit])
+        if code != 0:
+            logger.warning(f"git diff --name-only {old_commit}..{new_commit} failed: {stderr}")
+            return []
+
+        return [line.strip() for line in stdout.splitlines() if line.strip()]
+
     async def close(self) -> None:
         """Clean up resources. Safe to call multiple times."""
         if self._closed:
@@ -1772,7 +1832,7 @@ async def start_monitoring_task(
 
 # TODO: replace factory method with direct calls to the GitConnector?
 async def create_git_connector_from_repo_config(
-    repo_config: dict[str, Any], full_history: bool = False
+    repo_config: dict[str, Any], full_history: bool = False, working_dir: str | None = None
 ) -> GitConnector:
     connector = GitConnector(
         repo_url=repo_config["url"],
@@ -1784,6 +1844,7 @@ async def create_git_connector_from_repo_config(
         project_name=repo_config.get("project_name"),
         name=repo_config.get("name"),
         full_history=full_history,
+        working_dir=working_dir,
     )
     return connector
 
@@ -1807,7 +1868,9 @@ async def create_git_connector_for_argocd(project_name: str) -> GitConnector:
     return await create_git_connector_from_repo_config(gitops_repo_config)
 
 
-async def create_git_connector_for_project_files(project_name: str, full_history: bool = True) -> GitConnector:
+async def create_git_connector_for_project_files(
+    project_name: str, full_history: bool = True, working_dir: str | None = None
+) -> GitConnector:
     # full_history defaults to True: ANY project-files connector can end up feeding
     # analyze_project_changes (the file-scoped diff that detects removed components/
     # deployments), and a --depth 1 clone has no previous commit so that diff silently
@@ -1823,4 +1886,6 @@ async def create_git_connector_for_project_files(project_name: str, full_history
         "project_name": project_name,
         "name": "projects",
     }
-    return await create_git_connector_from_repo_config(projects_repo_config, full_history=full_history)
+    return await create_git_connector_from_repo_config(
+        projects_repo_config, full_history=full_history, working_dir=working_dir
+    )
