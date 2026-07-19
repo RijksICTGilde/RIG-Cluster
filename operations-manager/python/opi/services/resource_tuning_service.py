@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from opi.connectors.git import GitConnector, create_git_connector_for_project_files
+from opi.connectors.git import GitConnector
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.prometheus import get_metrics_connector
 from opi.connectors.vpa import parse_k8s_cpu_to_m
@@ -29,6 +29,7 @@ from opi.core.config import settings
 from opi.handlers.project_file_handler import ProjectFileHandler, ResourceFloor
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
 from opi.services.resource_analyzer import (
     _k8s_memory_to_mb,
     _mb_to_k8s_memory,
@@ -84,12 +85,14 @@ async def get_project_data_from_git(project_name: str) -> tuple[dict[str, Any], 
     """
     Read the latest project data directly from git.
 
-    Unlike ``get_project_data`` (which reads from the in-memory cache),
-    this clones the projects repository and parses the YAML file on disk.
-    This prevents stale cache data from silently overwriting fields that
-    were added or changed since the last project processing run.
+    Unlike ``get_project_data`` (which reads from the in-memory cache), this
+    parses the YAML file on disk in the ProjectStore's warm working copy. This
+    prevents stale cache data from silently overwriting fields that were added
+    or changed since the last project processing run.
 
-    The caller is responsible for closing the returned GitConnector.
+    The returned GitConnector is the store's shared warm copy: it is owned by the
+    store and must NOT be closed by the caller (closing deletes the directory
+    every other caller is using).
 
     Returns:
         Tuple of (project_data, filename, git_connector)
@@ -104,14 +107,15 @@ async def get_project_data_from_git(project_name: str) -> tuple[dict[str, Any], 
         raise ValueError(f"Project '{project_name}' not found")
 
     filename = project.filename
-    git_connector = await create_git_connector_for_project_files(project_name)
+    # The ProjectStore's warm working copy: no per-call clone, and owned by the
+    # store, so neither this function nor its callers may close it.
+    git_connector = await get_project_store().get_connector()
 
     file_path = f"projects/{filename}"
     content = await git_connector.read_file_content(file_path)
     project_data = load_yaml_from_string(content)
 
     if not project_data:
-        await git_connector.close()
         raise ValueError(f"Failed to parse YAML for project '{project_name}' from git")
 
     # Migrate to the latest schema so the dict is safe to validate and commit.
@@ -524,169 +528,168 @@ async def tune_deployment_resources(
     )
 
     try:
-        try:
-            connector = await get_metrics_connector()
-        except Exception as e:
-            raise RuntimeError(f"Metrics backend unavailable: {e}") from e
+        connector = await get_metrics_connector()
+    except Exception as e:
+        raise RuntimeError(f"Metrics backend unavailable: {e}") from e
 
-        kubectl = KubectlConnector()
-        changes: list[dict[str, str]] = []
-        unchanged: list[str] = []
+    kubectl = KubectlConnector()
+    changes: list[dict[str, str]] = []
+    unchanged: list[str] = []
 
-        deployments = project_data.get("deployments", [])
-        for dep in deployments:
-            dep_name = dep.get("name", "")
-            if deployment_name and dep_name != deployment_name:
+    deployments = project_data.get("deployments", [])
+    for dep in deployments:
+        dep_name = dep.get("name", "")
+        if deployment_name and dep_name != deployment_name:
+            continue
+
+        base_namespace = dep.get("namespace")
+        cluster = dep.get("cluster")
+        if not base_namespace or not cluster:
+            logger.warning(f"Deployment '{dep_name}' missing namespace or cluster, skipping")
+            continue
+
+        namespace = get_prefixed_namespace(cluster, base_namespace)
+
+        components = dep.get("components", [])
+        for comp in components:
+            component_ref = comp.get("reference", "")
+            if not component_ref:
                 continue
 
-            base_namespace = dep.get("namespace")
-            cluster = dep.get("cluster")
-            if not base_namespace or not cluster:
-                logger.warning(f"Deployment '{dep_name}' missing namespace or cluster, skipping")
+            analysis = await _analyze_component_resources(
+                connector,
+                file_handler,
+                project_data,
+                dep_name,
+                component_ref,
+                namespace,
+                cluster,
+                kubectl=kubectl,
+            )
+            if analysis is None:
+                unchanged.append(component_ref)
                 continue
 
-            namespace = get_prefixed_namespace(cluster, base_namespace)
-
-            components = dep.get("components", [])
-            for comp in components:
-                component_ref = comp.get("reference", "")
-                if not component_ref:
-                    continue
-
-                analysis = await _analyze_component_resources(
-                    connector,
-                    file_handler,
-                    project_data,
-                    dep_name,
-                    component_ref,
-                    namespace,
-                    cluster,
-                    kubectl=kubectl,
+            # Determine what actually changed (memory and/or CPU).
+            mem_changed = (
+                analysis.new_limit != analysis.current_resources["limits_memory"]
+                or analysis.new_request != analysis.current_resources["requests_memory"]
+            )
+            # A None CPU recommendation means "leave CPU untouched"; the
+            # is-not-None guard also narrows the values to str for downstream use.
+            cpu_changed = False
+            cpu_new_limit = ""
+            cpu_new_request = ""
+            if (
+                analysis.new_cpu_limit is not None
+                and analysis.new_cpu_request is not None
+                and (
+                    analysis.new_cpu_limit != analysis.current_resources["limits_cpu"]
+                    or analysis.new_cpu_request != analysis.current_resources["requests_cpu"]
                 )
-                if analysis is None:
-                    unchanged.append(component_ref)
-                    continue
+            ):
+                cpu_changed = True
+                cpu_new_limit = analysis.new_cpu_limit
+                cpu_new_request = analysis.new_cpu_request
+            if not mem_changed and not cpu_changed:
+                logger.info(f"Skipping {component_ref} in {dep_name}: recommendation matches current")
+                unchanged.append(component_ref)
+                continue
 
-                # Determine what actually changed (memory and/or CPU).
-                mem_changed = (
-                    analysis.new_limit != analysis.current_resources["limits_memory"]
-                    or analysis.new_request != analysis.current_resources["requests_memory"]
-                )
-                # A None CPU recommendation means "leave CPU untouched"; the
-                # is-not-None guard also narrows the values to str for downstream use.
-                cpu_changed = False
-                cpu_new_limit = ""
-                cpu_new_request = ""
-                if (
-                    analysis.new_cpu_limit is not None
-                    and analysis.new_cpu_request is not None
-                    and (
-                        analysis.new_cpu_limit != analysis.current_resources["limits_cpu"]
-                        or analysis.new_cpu_request != analysis.current_resources["requests_cpu"]
-                    )
-                ):
-                    cpu_changed = True
-                    cpu_new_limit = analysis.new_cpu_limit
-                    cpu_new_request = analysis.new_cpu_request
-                if not mem_changed and not cpu_changed:
-                    logger.info(f"Skipping {component_ref} in {dep_name}: recommendation matches current")
-                    unchanged.append(component_ref)
-                    continue
+            # Collect only the resource keys that changed.
+            resource_update: dict[str, str] = {}
+            if mem_changed:
+                resource_update["limits_memory"] = analysis.new_limit
+                resource_update["requests_memory"] = analysis.new_request
+            if cpu_changed:
+                resource_update["limits_cpu"] = cpu_new_limit
+                resource_update["requests_cpu"] = cpu_new_request
 
-                # Collect only the resource keys that changed.
-                resource_update: dict[str, str] = {}
-                if mem_changed:
-                    resource_update["limits_memory"] = analysis.new_limit
-                    resource_update["requests_memory"] = analysis.new_request
-                if cpu_changed:
-                    resource_update["limits_cpu"] = cpu_new_limit
-                    resource_update["requests_cpu"] = cpu_new_request
+            # Apply the change at deployment-component level
+            file_handler.set_deployment_component_resources(project_data, dep_name, component_ref, resource_update)
 
-                # Apply the change at deployment-component level
-                file_handler.set_deployment_component_resources(project_data, dep_name, component_ref, resource_update)
+            # Update base component definition so new deployments inherit
+            # a realistic starting point. The OOM watcher will bump up any
+            # deployment that actually needs more memory.
+            base_resources = file_handler.extract_component_resources(project_data, component_ref)
+            base_update: dict[str, str] = {}
+            if mem_changed and (
+                analysis.new_request != base_resources["requests_memory"]
+                or analysis.new_limit != base_resources["limits_memory"]
+            ):
+                base_update["requests_memory"] = analysis.new_request
+                base_update["limits_memory"] = analysis.new_limit
+            if cpu_changed and (
+                cpu_new_request != base_resources["requests_cpu"] or cpu_new_limit != base_resources["limits_cpu"]
+            ):
+                base_update["requests_cpu"] = cpu_new_request
+                base_update["limits_cpu"] = cpu_new_limit
+            if base_update:
+                file_handler.set_component_resources(project_data, component_ref, base_update)
 
-                # Update base component definition so new deployments inherit
-                # a realistic starting point. The OOM watcher will bump up any
-                # deployment that actually needs more memory.
-                base_resources = file_handler.extract_component_resources(project_data, component_ref)
-                base_update: dict[str, str] = {}
-                if mem_changed and (
-                    analysis.new_request != base_resources["requests_memory"]
-                    or analysis.new_limit != base_resources["limits_memory"]
-                ):
-                    base_update["requests_memory"] = analysis.new_request
-                    base_update["limits_memory"] = analysis.new_limit
-                if cpu_changed and (
-                    cpu_new_request != base_resources["requests_cpu"] or cpu_new_limit != base_resources["limits_cpu"]
-                ):
-                    base_update["requests_cpu"] = cpu_new_request
-                    base_update["limits_cpu"] = cpu_new_limit
-                if base_update:
-                    file_handler.set_component_resources(project_data, component_ref, base_update)
+            # Write resource history at both levels (memory and/or CPU limits)
+            source = "oom-watcher" if analysis.has_oom_kills else "auto-tune"
+            now = datetime.now(UTC).isoformat()
+            history_limits: dict[str, str] = {}
+            if mem_changed:
+                history_limits["memory"] = analysis.new_limit
+            if cpu_changed:
+                history_limits["cpu"] = cpu_new_limit
+            history_reason = analysis.reason
+            if cpu_changed and analysis.cpu_reason:
+                history_reason = f"{analysis.reason} {analysis.cpu_reason}"
+            deployment_history_entry: dict[str, Any] = {
+                "timestamp": now,
+                "limits": history_limits,
+                "source": source,
+                "reason": history_reason,
+            }
+            file_handler.append_deployment_component_resource_history(
+                project_data, dep_name, component_ref, deployment_history_entry
+            )
+            component_history_entry: dict[str, Any] = {
+                "timestamp": now,
+                "limits": history_limits,
+                "source": source,
+                "deployment": dep_name,
+                "reason": history_reason,
+            }
+            file_handler.append_component_resource_history(project_data, component_ref, component_history_entry)
 
-                # Write resource history at both levels (memory and/or CPU limits)
-                source = "oom-watcher" if analysis.has_oom_kills else "auto-tune"
-                now = datetime.now(UTC).isoformat()
-                history_limits: dict[str, str] = {}
-                if mem_changed:
-                    history_limits["memory"] = analysis.new_limit
-                if cpu_changed:
-                    history_limits["cpu"] = cpu_new_limit
-                history_reason = analysis.reason
-                if cpu_changed and analysis.cpu_reason:
-                    history_reason = f"{analysis.reason} {analysis.cpu_reason}"
-                deployment_history_entry: dict[str, Any] = {
-                    "timestamp": now,
-                    "limits": history_limits,
-                    "source": source,
-                    "reason": history_reason,
-                }
-                file_handler.append_deployment_component_resource_history(
-                    project_data, dep_name, component_ref, deployment_history_entry
-                )
-                component_history_entry: dict[str, Any] = {
-                    "timestamp": now,
-                    "limits": history_limits,
-                    "source": source,
-                    "deployment": dep_name,
-                    "reason": history_reason,
-                }
-                file_handler.append_component_resource_history(project_data, component_ref, component_history_entry)
+            change_record: dict[str, str] = {
+                "component": component_ref,
+                "deployment": dep_name,
+                "source": analysis.source,
+                "previous_limits_memory": analysis.current_resources["limits_memory"],
+                "new_limits_memory": analysis.new_limit,
+                "previous_requests_memory": analysis.current_resources["requests_memory"],
+                "new_requests_memory": analysis.new_request,
+                "max_observed_memory_mb": f"{analysis.max_observed_mb:.0f}",
+                "avg_observed_memory_mb": f"{analysis.avg_observed_mb:.0f}",
+                "has_oom_kills": str(analysis.has_oom_kills),
+                "reason": analysis.reason,
+            }
+            if cpu_changed:
+                change_record["previous_limits_cpu"] = analysis.current_resources["limits_cpu"]
+                change_record["new_limits_cpu"] = cpu_new_limit
+                change_record["previous_requests_cpu"] = analysis.current_resources["requests_cpu"]
+                change_record["new_requests_cpu"] = cpu_new_request
+                change_record["cpu_reason"] = analysis.cpu_reason or ""
+            changes.append(change_record)
 
-                change_record: dict[str, str] = {
-                    "component": component_ref,
-                    "deployment": dep_name,
-                    "source": analysis.source,
-                    "previous_limits_memory": analysis.current_resources["limits_memory"],
-                    "new_limits_memory": analysis.new_limit,
-                    "previous_requests_memory": analysis.current_resources["requests_memory"],
-                    "new_requests_memory": analysis.new_request,
-                    "max_observed_memory_mb": f"{analysis.max_observed_mb:.0f}",
-                    "avg_observed_memory_mb": f"{analysis.avg_observed_mb:.0f}",
-                    "has_oom_kills": str(analysis.has_oom_kills),
-                    "reason": analysis.reason,
-                }
-                if cpu_changed:
-                    change_record["previous_limits_cpu"] = analysis.current_resources["limits_cpu"]
-                    change_record["new_limits_cpu"] = cpu_new_limit
-                    change_record["previous_requests_cpu"] = analysis.current_resources["requests_cpu"]
-                    change_record["new_requests_cpu"] = cpu_new_request
-                    change_record["cpu_reason"] = analysis.cpu_reason or ""
-                changes.append(change_record)
+    # If changes were made, commit and optionally reprocess
+    deployment_refresh_triggered = False
+    if changes:
+        component_names = [c["component"] for c in changes]
+        commit_msg = f"auto-tune: adjust resources for {', '.join(component_names)} in {project_name}"
 
-        # If changes were made, commit and optionally reprocess
-        deployment_refresh_triggered = False
-        if changes:
-            component_names = [c["component"] for c in changes]
-            commit_msg = f"auto-tune: adjust resources for {', '.join(component_names)} in {project_name}"
-
-            await project_manager.save_and_commit_project(project_data, commit_msg, enforce_validation=False)
-            if not skip_reprocessing:
-                deployment_refresh_triggered = await trigger_reprocessing(
-                    project_name, filename, deployment_name, argocd_resources_changed=False
-                )
-    finally:
-        await git_connector.close()
+        await project_manager.save_and_commit_project(project_data, commit_msg, enforce_validation=False)
+        if not skip_reprocessing:
+            deployment_refresh_triggered = await trigger_reprocessing(
+                project_name, filename, deployment_name, argocd_resources_changed=False
+            )
+    # No close: git_connector is the ProjectStore's warm working copy, shared by
+    # every caller for the lifetime of the process.
 
     return TuneResult(
         changes=changes,

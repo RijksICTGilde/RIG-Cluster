@@ -29,9 +29,6 @@ from tenacity import (
 )
 
 from opi.bootstrap.keycloak_setup import setup_keycloak
-from opi.connectors.git import (
-    create_git_connector_for_project_files,
-)
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.minio_mc import create_minio_connector
 from opi.connectors.prometheus import get_metrics_connector
@@ -41,6 +38,7 @@ from opi.core.database_pools import initialize_database_pools
 from opi.core.keycloak_client_startup import ensure_keycloak_credentials
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.project_service import Project, ProjectUser, get_project_service, initialize_project_service
+from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
@@ -310,8 +308,12 @@ async def ensure_projects_fresh() -> None:
             logger.debug("Project data was refreshed while waiting for lock")
             return
 
-        logger.info("Project data is stale, refreshing from Git")
-        await refresh_projects_from_git()
+        logger.info("Project data is stale, reconciling with Git")
+        # Incremental: fetch, diff the changed paths, re-read only those files.
+        # Replaces the old full re-clone + re-read of every project on every TTL
+        # expiry. ZAD's own writes are already write-through via the store, so
+        # this normally finds nothing and costs one fetch.
+        await get_project_store().reconcile()
         state.mark_refreshed()
 
 
@@ -332,80 +334,73 @@ async def refresh_projects_from_git() -> int:
 
     project_service = get_project_service()
 
-    # Create a shared Git connector that will be reused across all ProjectManagers
-    shared_git_connector = None
+    # The ProjectStore's warm working copy is shared across all ProjectManagers:
+    # already cloned, kept current by reconcile. It is owned by the store, so it
+    # is never closed here (closing would delete the working directory).
     try:
-        shared_git_connector = await create_git_connector_for_project_files("refresh projects from git")
+        shared_git_connector = await get_project_store().get_connector()
         projects_repo_root_dir = await shared_git_connector.get_working_dir()
         project_files = await get_project_files(projects_repo_root_dir)
     except Exception as e:
         logger.error(f"Failed to get project files from Git: {e}")
-        if shared_git_connector:
-            await shared_git_connector.close()
         raise
 
-    try:
-        # Build new project dict first, then swap atomically to avoid
-        # a window where the cache is empty or partially populated (causes 401s).
-        new_projects: dict[str, Project] = {}
-        loaded_count = 0
-        for project_file in project_files:
-            # Each ProjectManager shares the git connector for project files
-            # The connector ownership tracking ensures it won't be closed by individual managers
-            project_manager = ProjectManager(
-                project_file_relative_path=project_file,
-                git_connector_for_project_files=shared_git_connector,
+    # Build new project dict first, then swap atomically to avoid
+    # a window where the cache is empty or partially populated (causes 401s).
+    new_projects: dict[str, Project] = {}
+    loaded_count = 0
+    for project_file in project_files:
+        # Each ProjectManager shares the git connector for project files
+        # The connector ownership tracking ensures it won't be closed by individual managers
+        project_manager = ProjectManager(
+            project_file_relative_path=project_file,
+            git_connector_for_project_files=shared_git_connector,
+        )
+        try:
+            project_file_base_name = os.path.basename(project_file)
+            logger.debug(f"Refreshing project file: {project_file_base_name}")
+
+            # Load project data
+            api_key = await project_manager.get_api_key()
+            project_name = await project_manager.get_name()
+            project_data = await project_manager.get_contents()
+
+            # Build Project object for the new dict
+            users_data = project_data.get("users", [])
+            users = None
+            if users_data and isinstance(users_data, list):
+                users = [
+                    ProjectUser(email=u["email"], role=u["role"])
+                    for u in users_data
+                    if isinstance(u, dict) and "email" in u and "role" in u
+                ]
+
+            new_projects[project_name] = Project(
+                name=project_name,
+                api_key=api_key,
+                filename=project_file_base_name,
+                users=users or None,
+                data=project_data,
             )
-            try:
-                project_file_base_name = os.path.basename(project_file)
-                logger.debug(f"Refreshing project file: {project_file_base_name}")
 
-                # Load project data
-                api_key = await project_manager.get_api_key()
-                project_name = await project_manager.get_name()
-                project_data = await project_manager.get_contents()
+            # Add project users to allowed emails list
+            if users_data:
+                user_service = get_user_service()
+                project_user_emails = [u.get("email") for u in users_data if u.get("email")]
+                if project_user_emails:
+                    user_service.add_allowed_emails(project_user_emails)
 
-                # Build Project object for the new dict
-                users_data = project_data.get("users", [])
-                users = None
-                if users_data and isinstance(users_data, list):
-                    users = [
-                        ProjectUser(email=u["email"], role=u["role"])
-                        for u in users_data
-                        if isinstance(u, dict) and "email" in u and "role" in u
-                    ]
+            loaded_count += 1
+        except Exception as e:
+            logger.error(f"Error refreshing project file {project_file}: {e}")
+        finally:
+            await project_manager.close()
 
-                new_projects[project_name] = Project(
-                    name=project_name,
-                    api_key=api_key,
-                    filename=project_file_base_name,
-                    users=users or None,
-                    data=project_data,
-                )
+    # Atomic swap: concurrent requests always see a complete project set
+    project_service.replace_all_projects(new_projects)
 
-                # Add project users to allowed emails list
-                if users_data:
-                    user_service = get_user_service()
-                    project_user_emails = [u.get("email") for u in users_data if u.get("email")]
-                    if project_user_emails:
-                        user_service.add_allowed_emails(project_user_emails)
-
-                loaded_count += 1
-            except Exception as e:
-                logger.error(f"Error refreshing project file {project_file}: {e}")
-            finally:
-                await project_manager.close()
-
-        # Atomic swap: concurrent requests always see a complete project set
-        project_service.replace_all_projects(new_projects)
-
-        logger.info(f"Refreshed {loaded_count} projects from Git")
-        return loaded_count
-    finally:
-        # Close the shared git connector now that all project managers are done
-        if shared_git_connector:
-            await shared_git_connector.close()
-            logger.debug("Shared git connector for project files closed")
+    logger.info(f"Refreshed {loaded_count} projects from Git")
+    return loaded_count
 
 
 async def ensure_project_sops_secrets(project_data: Any, kubectl: KubectlConnector) -> bool:
@@ -659,50 +654,48 @@ async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: 
             if env_admin_emails:
                 project_service.add_admin_emails(env_admin_emails)
 
-        shared_git_connector = None
-        try:
-            shared_git_connector = await create_git_connector_for_project_files("startup project files")
-            projects_repo_root_dir = await shared_git_connector.get_working_dir()
-            project_files = await get_project_files(projects_repo_root_dir)
+        shared_git_connector = await get_project_store().get_connector()
+        projects_repo_root_dir = await shared_git_connector.get_working_dir()
+        project_files = await get_project_files(projects_repo_root_dir)
 
-            for project_file in project_files:
-                project_manager = ProjectManager(
-                    project_file_relative_path=project_file,
-                    git_connector_for_project_files=shared_git_connector,
+        for project_file in project_files:
+            project_manager = ProjectManager(
+                project_file_relative_path=project_file,
+                git_connector_for_project_files=shared_git_connector,
+            )
+            try:
+                project_file_base_name = os.path.basename(project_file)
+                logger.info(f"Processing project file: {project_file_base_name}")
+
+                if not skip_checks:
+                    await project_manager.check_and_create_namespaces()
+                    await project_manager.check_and_create_sops_secrets_in_namespaces()
+
+                api_key = await project_manager.get_api_key()
+                project_name = await project_manager.get_name()
+                project_data = await project_manager.get_contents()
+
+                project_service.register(
+                    project_name, api_key, project_file_base_name, project_data.get("users", []), project_data
                 )
-                try:
-                    project_file_base_name = os.path.basename(project_file)
-                    logger.info(f"Processing project file: {project_file_base_name}")
 
-                    if not skip_checks:
-                        await project_manager.check_and_create_namespaces()
-                        await project_manager.check_and_create_sops_secrets_in_namespaces()
+                project_users = project_data.get("users", [])
+                if project_users:
+                    project_user_emails = [u.get("email") for u in project_users if u.get("email")]
+                    if project_user_emails:
+                        user_service.add_allowed_emails(project_user_emails)
+            except Exception as e:
+                logger.error(f"Error processing project file {project_file}: {e}")
+            finally:
+                await project_manager.close()
 
-                    api_key = await project_manager.get_api_key()
-                    project_name = await project_manager.get_name()
-                    project_data = await project_manager.get_contents()
+        all_allowed_emails = user_service.get_allowed_emails()
+        if all_allowed_emails:
+            logger.info(f"Allowed user emails ({len(all_allowed_emails)}): {', '.join(sorted(all_allowed_emails))}")
 
-                    project_service.register(
-                        project_name, api_key, project_file_base_name, project_data.get("users", []), project_data
-                    )
-
-                    project_users = project_data.get("users", [])
-                    if project_users:
-                        project_user_emails = [u.get("email") for u in project_users if u.get("email")]
-                        if project_user_emails:
-                            user_service.add_allowed_emails(project_user_emails)
-                except Exception as e:
-                    logger.error(f"Error processing project file {project_file}: {e}")
-                finally:
-                    await project_manager.close()
-
-            all_allowed_emails = user_service.get_allowed_emails()
-            if all_allowed_emails:
-                logger.info(f"Allowed user emails ({len(all_allowed_emails)}): {', '.join(sorted(all_allowed_emails))}")
-
-        finally:
-            if shared_git_connector:
-                await shared_git_connector.close()
+        # The connector is the ProjectStore's warm working copy and is owned by
+        # the store: closing it would delete the working directory that every
+        # later request reuses. It deliberately outlives this function.
 
         readiness.projects.mark_ready()
         return True

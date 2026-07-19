@@ -37,6 +37,22 @@ _FORBIDDEN_PATTERNS = (
 # NOT live mutation paths. Keep this list empty of live handlers.
 _ALLOWLIST: dict[str, str] = {}
 
+# Direct access to the zad-projects repo. Every project-file read/write must go
+# through the ProjectStore, which owns the single warm working copy: a new
+# per-request clone here reintroduces the two-clones-per-edit cost and, worse,
+# writes outside the store's lock (no serialization, no validated final state).
+_FORBIDDEN_GIT_ACCESS = "create_git_connector_for_project_files("
+
+_GIT_ACCESS_ALLOWLIST: dict[str, str] = {
+    # The store IS the owner of the projects-repo connector.
+    "opi/services/project_store.py": "owns the warm working copy",
+    # Not yet swept: three read-only restore paths still open their own clone.
+    # They are correct but pay for a clone; routing them onto the store is
+    # tracked as follow-up work and needs the surrounding `async with` blocks
+    # restructured (the warm connector must never be closed).
+    "opi/api/restore_router.py": "pending sweep onto the store (read-only restore paths)",
+}
+
 
 def _scan_for_direct_project_commits() -> list[str]:
     violations: list[str] = []
@@ -67,6 +83,35 @@ def test_no_direct_project_file_commits_outside_central_save() -> None:
     assert not violations, "Direct project-file commits found (must use save_and_commit_project):\n" + "\n".join(
         violations
     )
+
+
+def _scan_for_direct_projects_repo_access() -> list[str]:
+    violations: list[str] = []
+    for rel_dir in _SCANNED_DIRS:
+        for py_file in (_PYTHON_ROOT / rel_dir).rglob("*.py"):
+            rel_path = py_file.relative_to(_PYTHON_ROOT).as_posix()
+            if rel_path in _GIT_ACCESS_ALLOWLIST:
+                continue
+            lines = py_file.read_text(encoding="utf-8").splitlines()
+            violations.extend(
+                f"{rel_path}:{lineno}: {line.strip()}"
+                for lineno, line in enumerate(lines, 1)
+                if _FORBIDDEN_GIT_ACCESS in line
+            )
+    return violations
+
+
+def test_no_direct_projects_repo_clones_outside_the_store() -> None:
+    """Project-file git access belongs to the ProjectStore alone.
+
+    A new direct clone of zad-projects means a write that bypasses the store's
+    per-repo lock and its validate-on-final-state guarantee, and re-adds the
+    per-request clone cost the store exists to remove. Route it through
+    ProjectStore (store.get/mutate/save, or store.get_connector() when a raw
+    connector is genuinely needed) instead of adding an entry to the allowlist.
+    """
+    violations = _scan_for_direct_projects_repo_access()
+    assert not violations, "Direct zad-projects clones found (must go through ProjectStore):\n" + "\n".join(violations)
 
 
 @pytest.mark.asyncio
