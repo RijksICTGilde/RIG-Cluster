@@ -39,6 +39,17 @@ uv run pytest tests/e2e/test_public_pages.py -x -q --tb=short
 
 This starts a FastAPI test server with mocked dependencies and runs Playwright against it. No cluster or external services needed.
 
+## Live-Sandbox E2E Tests (optional)
+
+The E2E suite can also run against a live sandbox cluster (a local Kind cluster reachable at `https://zad.sandbox.rijksapp.dev` — see `workflow/sandbox.md`). These verify the real UI, API, and project-file writes end to end.
+
+```bash
+task sandbox:setup          # if no sandbox is running yet (~5-10 min)
+task test-e2e-sandbox       # runs tests/e2e/ with -m "e2e and sandbox"
+```
+
+Without a running sandbox (`E2E_BASE_URL` unset), all `@pytest.mark.sandbox` tests skip automatically. The local E2E suite (`-m "e2e and not sandbox"`) needs no cluster.
+
 ## What You Do NOT Need for Unit/E2E Tests
 
 - No running Kubernetes cluster
