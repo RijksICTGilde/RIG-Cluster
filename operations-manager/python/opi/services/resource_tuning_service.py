@@ -11,7 +11,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from opi.connectors.git import GitConnector
+from opi.connectors.git import (
+    GitConnector,  # noqa: TC001 - used in an eagerly-evaluated annotation (no future-annotations)
+)
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.prometheus import get_metrics_connector
 from opi.connectors.vpa import parse_k8s_cpu_to_m
