@@ -240,7 +240,6 @@ class ProjectFileHandler:
         """Initialize the ProjectFileHandler."""
         logger.debug("Initializing ProjectFileHandler")
         self._project_data: dict[str, str | list | dict[str, str]] | None = None
-        self._full_file_path: str | None = None
         self._was_migrated: bool = False
         # Deployments whose component extraction was already logged; the helper
         # is called many times per deployment in one run and would spam DEBUG.
@@ -339,57 +338,16 @@ class ProjectFileHandler:
             logger.debug("Decrypted content is not valid YAML, returning as string")
             return decrypted_value
 
-    async def read_project_file(self, full_file_path: str) -> dict[str, str | list | dict[str, str]]:
-        """
-        Read and parse a project YAML file. Keeps it in memory for future use.
-
-        Args:
-            full_file_path: Path to the project YAML file
-
-        Returns:
-            Dictionary containing the parsed project data
-
-        Raises:
-            Exception: If file cannot be read or parsed
-        """
-        if self._full_file_path and self._full_file_path != full_file_path:
-            raise Exception("Can only initialize one project file per class")
-
-        if not self._project_data:
-            raw_data = await self._parse_project_file(full_file_path)
-            migrated_data, self._was_migrated = migrate_to_latest(raw_data)
-            self._project_data = migrated_data
-            self._full_file_path = full_file_path
-        return self._project_data
+    # read_project_file() was removed together with its last caller. It read a
+    # project file straight off the filesystem, which for the shared warm working
+    # copy races ProjectStore.reconcile()'s `reset --hard` + `clean -fd`. Change
+    # detection now uses read_committed_project_file(), which reads the committed
+    # object and cannot tear. Nothing should read a project file from a path again.
 
     @property
     def was_migrated(self) -> bool:
-        """Whether the last read_project_file call required schema migration."""
+        """Whether the last committed-file read required schema migration."""
         return self._was_migrated
-
-    async def _parse_project_file(self, file_path: str) -> dict[str, str | list | dict[str, str]]:
-        """
-        Parse a project YAML file.
-
-        Args:
-            file_path: Path to the project YAML file
-
-        Returns:
-            Dictionary containing the parsed project data
-        """
-        logger.debug(f"Parsing project file: {file_path}")
-        # TODO add schema and do schema validation
-        # TODO check if yaml references are valid
-        try:
-            yaml = YAML()
-            with open(file_path) as f:
-                project_data = yaml.load(f)
-            logger.debug(f"Successfully parsed project file: {file_path}")
-            return project_data
-        except Exception as e:
-            # TODO: do not log and re-raise
-            logger.exception(f"Error parsing project file: {e}")
-            raise
 
     # TODO: should this method be here or moved?
     async def get_previous_yaml_content(self, git_connector: GitConnector, file_path: str) -> dict[str, Any] | None:

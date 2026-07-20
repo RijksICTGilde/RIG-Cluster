@@ -226,6 +226,36 @@ def test_no_direct_projects_repo_clones_outside_the_store() -> None:
     assert not violations, "Direct zad-projects clones found (must go through ProjectStore):\n" + "\n".join(violations)
 
 
+def test_no_project_file_is_read_from_a_filesystem_path() -> None:
+    """Project files are read from git objects, never off the warm working copy.
+
+    The warm copy is shared, and ProjectStore.reconcile() does `reset --hard` plus
+    `clean -fd` on it under a lock that a reader on a plain filesystem path does not
+    hold -- so such a read can observe a half-rewritten or missing file. Both readers
+    that used to do this (ProjectFileHandler.read_project_file and
+    ProjectManager.get_project_full_file_path) were removed with their callers.
+
+    Use store.get() / store.read_path() / store.read_at(), or
+    ProjectFileHandler.read_committed_project_file(), all of which read committed
+    objects and cannot tear.
+    """
+    forbidden = ("read_project_file(", "get_project_full_file_path(")
+    violations: list[str] = []
+
+    for path in sorted((_PYTHON_ROOT / "opi").rglob("*.py")):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            stripped = line.strip()
+            if stripped.startswith("#") or stripped.startswith('"'):
+                continue
+            for pattern in forbidden:
+                if pattern in stripped and "def " not in stripped:
+                    violations.append(f"{path.relative_to(_PYTHON_ROOT)}:{lineno}: {stripped[:90]}")
+
+    assert not violations, "Project file read from a filesystem path (must read committed objects):\n" + "\n".join(
+        violations
+    )
+
+
 @pytest.mark.asyncio
 async def test_central_save_refreshes_cache_with_new_state(tmp_path) -> None:
     """After a successful save, the read-only cache reflects the committed state."""
