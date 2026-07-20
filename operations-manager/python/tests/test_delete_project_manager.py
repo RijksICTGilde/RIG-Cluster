@@ -56,7 +56,6 @@ def _make_project_manager_mock() -> MagicMock:
     mock_pm.get_contents = AsyncMock()
     mock_pm.get_deployment_by_name = AsyncMock()
     mock_pm.get_deployments = AsyncMock()
-    mock_pm.save_project_data = AsyncMock()
     mock_pm._get_project_keycloak_config_for_cluster = AsyncMock(return_value=None)
 
     return mock_pm

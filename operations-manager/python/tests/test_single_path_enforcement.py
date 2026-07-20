@@ -245,11 +245,13 @@ def test_no_project_file_is_read_from_a_filesystem_path() -> None:
     for path in sorted((_PYTHON_ROOT / "opi").rglob("*.py")):
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             stripped = line.strip()
-            if stripped.startswith("#") or stripped.startswith('"'):
+            if stripped.startswith(("#", '"')):
                 continue
-            for pattern in forbidden:
-                if pattern in stripped and "def " not in stripped:
-                    violations.append(f"{path.relative_to(_PYTHON_ROOT)}:{lineno}: {stripped[:90]}")
+            violations.extend(
+                f"{path.relative_to(_PYTHON_ROOT)}:{lineno}: {stripped[:90]}"
+                for pattern in forbidden
+                if pattern in stripped and "def " not in stripped
+            )
 
     assert not violations, "Project file read from a filesystem path (must read committed objects):\n" + "\n".join(
         violations

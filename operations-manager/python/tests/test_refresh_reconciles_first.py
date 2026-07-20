@@ -53,9 +53,11 @@ async def test_refresh_reconciles_before_looking_up_the_project() -> None:
     order: list[str] = []
     store = _store_recording_calls(order, project=None)
 
-    with patch("opi.core.task_handlers_operations.get_project_store", return_value=store):
-        with pytest.raises(ValueError, match="not found"):
-            await handle_refresh_project({"project_name": "demo"}, _Progress())
+    with (
+        patch("opi.core.task_handlers_operations.get_project_store", return_value=store),
+        pytest.raises(ValueError, match="not found"),
+    ):
+        await handle_refresh_project({"project_name": "demo"}, _Progress())
 
     assert "reconcile" in order, "refresh did not fetch from git at all"
     assert order.index("reconcile") < order.index("get"), (
@@ -68,8 +70,10 @@ async def test_refresh_rejects_an_invalid_name_without_touching_git() -> None:
     order: list[str] = []
     store = _store_recording_calls(order)
 
-    with patch("opi.core.task_handlers_operations.get_project_store", return_value=store):
-        with pytest.raises(ValueError, match="Invalid project name"):
-            await handle_refresh_project({"project_name": "Not A Valid Name!"}, _Progress())
+    with (
+        patch("opi.core.task_handlers_operations.get_project_store", return_value=store),
+        pytest.raises(ValueError, match="Invalid project name"),
+    ):
+        await handle_refresh_project({"project_name": "Not A Valid Name!"}, _Progress())
 
     assert order == [], "an invalid name still triggered git work"
