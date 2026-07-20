@@ -13,23 +13,43 @@
 
 <c-layout-flow gap="sm">
 
+    {% if reason == 'email-not-verified' %}
     <c-heading type="h1"
-               textContent="Geen Toegang tot het Self Service Portal"/>
+               textContent="Geen Toegang: e-mailadres niet geverifieerd"/>
 
     <c-heading type="h2" textContent="Wat betekent dit?"/>
 
-    <p>Je bent succesvol ingelogd via Single Sign-On (SSO), maar je e-mailadres staat niet op de lijst van
+    <p>Je bent ingelogd, maar je e-mailadres is niet geverifieerd. Om
+        veiligheidsredenen krijg je alleen toegang met een geverifieerd
+        e-mailadres.</p>
+
+    <c-heading type="h3" textContent="Hoe krijg ik toegang?"/>
+
+    <c-ul bulletType="icon" bulletIcon="option-1">
+        <c-li>Zorg dat je e-mailadres geverifieerd is</c-li>
+        <c-li>Denk je dat dit onterecht is? Neem contact op met de <c-link
+            href="mailto:robbert.uittenbroek@rijksoverheid.nl"
+            content="platformbeheerder"/></c-li>
+    </c-ul>
+    {% else %}
+    <c-heading type="h1"
+               textContent="Geen Toegang tot ZAD"/>
+
+    <c-heading type="h2" textContent="Wat betekent dit?"/>
+
+    <p>Je bent succesvol ingelogd, maar je e-mailadres staat niet op de lijst van
         geautoriseerde gebruikers voor dit platform.</p>
 
     <c-heading type="h3" textContent="Hoe krijg ik toegang?"/>
 
     <c-ul bulletType="icon" bulletIcon="option-1">
-        <c-li>Neem contact op met je team lead of de platformbeheerder</c-li>
-        <c-li>Vraag om toegang tot het Self Service Portal</c-li>
-        <c-li>Zorg ervoor dat je e-mailadres&nbsp;<strong>{{ user.email if user else 'onbekend' }}</strong>&nbsp;wordt
-            toegevoegd aan de toegangslijst
-        </c-li>
+        <c-li>Neem contact op met een collega die al een project in ZAD heeft of de <c-link
+            href="mailto:robbert.uittenbroek@rijksoverheid.nl"
+            showIcon="before"
+            icon="info"
+            content="platformbeheerder"/></c-li>
     </c-ul>
+    {% endif %}
 
     {% if user and user.organization %}
         <c-heading type="h3" textContent="Je Organisatie Informatie"/>

@@ -110,6 +110,18 @@ async def auth_callback(request: Request) -> Response:
         logger.info(f"OAuth callback successful for user: {user_info.get('email', 'unknown')}")
         logger.debug(f"User info received: {list(user_info.keys())}")
 
+        # Authorization keys entirely on the email claim (allowlist + admin gating), so an
+        # unverified email must never establish a session. Accepting one would let a login
+        # whose email is not authoritatively verified impersonate any allowed or admin user.
+        # BZK-federated users are trustEmail=true, so they carry email_verified=true and are
+        # unaffected; this refuses any account whose email is not verified.
+        if user_info.get("email_verified") is not True:
+            logger.warning(f"Refusing login: email_verified is not true for {user_info.get('email', 'unknown')}")
+            # Pass the denial reason server-side as a one-shot flash, not via a URL query param.
+            # No "user" is stored, so this does not grant access; it only tells the denied page why.
+            request.session["denied_reason"] = "email-not-verified"
+            return RedirectResponse(url="/permission-denied", status_code=302)
+
         # Store user information in the session
         request.session["user"] = {
             "sub": user_info.get("sub"),

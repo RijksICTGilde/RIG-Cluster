@@ -84,6 +84,9 @@ async def permission_denied(request: Request) -> HTMLResponse:
     # Get user from session if available
     user = request.session.get("user") if hasattr(request, "session") else None
 
+    # One-shot denial reason set by the login callback (server-side flash, not a URL param).
+    denied_reason = request.session.pop("denied_reason", None) if hasattr(request, "session") else None
+
     # Log the permission denied access
     user_email = user.get("email", "unknown") if user else "anonymous"
     logger.warning(f"Permission denied page accessed by: {user_email}")
@@ -95,6 +98,7 @@ async def permission_denied(request: Request) -> HTMLResponse:
         {
             "request": request,
             "user": user,
+            "reason": denied_reason,
             "menu_items": get_menu_items(user),  # Same menu as other pages
         },
     )
