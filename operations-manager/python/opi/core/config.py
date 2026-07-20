@@ -483,7 +483,7 @@ def parse_sops_age_key_content(content: str) -> tuple[str | None, str | None]:
         if public_key:
             logger.debug(f"Public key: {public_key[:10]}...")
         if private_key:
-            logger.debug(f"Private key: {private_key[:20]}...")
+            logger.debug(f"Private key: {private_key[:2]}...{private_key[-2:]}")
 
         return public_key, private_key
 
@@ -554,9 +554,6 @@ def _get_settings() -> Settings:
     if os.environ.get("SOPS_AGE_KEY_CONTENT"):
         content_length = len(os.environ.get("SOPS_AGE_KEY_CONTENT", ""))
         logger.info(f"SOPS_AGE_KEY_CONTENT length: {content_length} characters")
-        logger.debug(
-            f"SOPS_AGE_KEY_CONTENT preview (first 100 chars): {os.environ.get('SOPS_AGE_KEY_CONTENT', '')[:100]}..."
-        )
 
     logger.info(f"Settings SOPS_AGE_KEY_CONTENT: {'SET' if settings.SOPS_AGE_KEY_CONTENT else 'NOT SET'}")
     logger.info(f"Settings SOPS_AGE_PUBLIC_KEY: {'SET' if settings.SOPS_AGE_PUBLIC_KEY else 'NOT SET'}")
@@ -572,9 +569,7 @@ def _get_settings() -> Settings:
             logger.info(f"Parsed public key: {public_key}")
         if private_key and not settings.SOPS_AGE_PRIVATE_KEY:
             settings.SOPS_AGE_PRIVATE_KEY = private_key
-            logger.info(
-                f"Parsed private key: {private_key[:25]}...{private_key[-10:] if len(private_key) > 35 else ''}"
-            )
+            logger.info(f"Parsed private key: {private_key[:2]}...{private_key[-2:]}")
 
         logger.info("Successfully parsed SOPS age keys from content")
     elif settings.SOPS_AGE_KEY_CONTENT:
@@ -597,9 +592,7 @@ def _get_settings() -> Settings:
                 logger.info(f"Parsed public key: {public_key}")
             if private_key and not settings.SOPS_AGE_PRIVATE_KEY:
                 settings.SOPS_AGE_PRIVATE_KEY = private_key
-                logger.info(
-                    f"Parsed private key: {private_key[:25]}...{private_key[-10:] if len(private_key) > 35 else ''}"
-                )
+                logger.info(f"Parsed private key: {private_key[:2]}...{private_key[-2:]}")
 
             logger.info("Successfully parsed SOPS age keys from local file content")
 
