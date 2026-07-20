@@ -90,7 +90,7 @@ class TestTuneDeploymentResources:
             ],
         }
         mock_git_connector = AsyncMock()
-        mock_get_from_git.return_value = (project_data, "my-project.yaml", mock_git_connector)
+        mock_get_from_git.return_value = (project_data, "my-project.yaml")
         # The tune path persists via ProjectManager.save_and_commit_project; mock the
         # constructed manager so no real validation/git runs.
         mock_pm_cls.return_value = AsyncMock()
@@ -132,7 +132,7 @@ class TestTuneDeploymentResources:
             ],
         }
         mock_git_connector = AsyncMock()
-        mock_get_from_git.return_value = (project_data, "my-project.yaml", mock_git_connector)
+        mock_get_from_git.return_value = (project_data, "my-project.yaml")
 
         mock_connector = AsyncMock()
         mock_connector.custom_query.return_value = []
@@ -166,8 +166,7 @@ class TestTuneDeploymentResources:
                 "opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock
             ) as mock_get_connector,
         ):
-            mock_git_connector = AsyncMock()
-            mock_get_from_git.return_value = ({"deployments": []}, "test.yaml", mock_git_connector)
+            mock_get_from_git.return_value = ({"deployments": []}, "test.yaml")
 
             mock_get_connector.side_effect = RuntimeError("Connection refused")
 

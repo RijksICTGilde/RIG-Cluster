@@ -2748,8 +2748,7 @@ async def validate_clone_configuration(request: Request, project_name: str, depl
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
         # Read project data
-        project_full_file_path = await project_manager.get_project_full_file_path()
-        project_data = await project_manager._project_file_handler.read_project_file(project_full_file_path)
+        project_data = await project_manager.get_contents()
 
         # Execute validation (no actual cloning)
         validation_result = await project_manager._clone_manager.validate_clone_readiness(

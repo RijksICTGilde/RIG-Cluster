@@ -346,7 +346,7 @@ class TestTuneBaseComponentUpdate:
         """When tune raises limits, base component definition should also be raised."""
         data = _make_project_data(component_limits="128Mi", component_requests="64Mi")
         mock_git_connector = AsyncMock()
-        mock_git_data.return_value = (data, "test.yaml", mock_git_connector)
+        mock_git_data.return_value = (data, "test.yaml")
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0, has_oom=True)
         mock_reprocess.return_value = True
 
@@ -374,7 +374,7 @@ class TestTuneBaseComponentUpdate:
         """Tune should write history entries at both deployment and component level."""
         data = _make_project_data(component_limits="128Mi", component_requests="64Mi")
         mock_git_connector = AsyncMock()
-        mock_git_data.return_value = (data, "test.yaml", mock_git_connector)
+        mock_git_data.return_value = (data, "test.yaml")
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0, has_oom=True)
         mock_reprocess.return_value = True
 
@@ -424,7 +424,7 @@ class TestTuneBaseComponentUpdate:
             deployment_history=oom_history,
         )
         mock_git_connector = AsyncMock()
-        mock_git_data.return_value = (data, "test.yaml", mock_git_connector)
+        mock_git_data.return_value = (data, "test.yaml")
         # Low usage - tuner would normally recommend ~150Mi
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=100, avg_mb=80)
         mock_reprocess.return_value = True
@@ -470,7 +470,7 @@ class TestTuneBaseComponentUpdate:
             deployment_history=oom_history,
         )
         mock_git_connector = AsyncMock()
-        mock_git_data.return_value = (data, "test.yaml", mock_git_connector)
+        mock_git_data.return_value = (data, "test.yaml")
         # Stable low usage, far below the floor (100 < 50% of 512)
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=100, avg_mb=80)
         mock_reprocess.return_value = True

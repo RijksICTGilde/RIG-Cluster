@@ -1442,8 +1442,6 @@ class ProjectManager:
             True if all namespaces were checked/created successfully
         """
 
-        await self.get_project_full_file_path()
-
         project_data: dict[str, str | list | dict[str, str]] = await self.get_contents()
         logger.info(f"Checking namespaces for project: {project_data['name']}")
 
@@ -6205,9 +6203,17 @@ class ProjectManager:
         Convenience method to get the contents of the project file.
         :return: Contents of the project file
         """
-        full_path = await self.get_project_full_file_path()
+        # Read through the store, not off the working copy. Same committed state and
+        # the same schema migration, but ProjectManager no longer needs a working
+        # directory of its own -- which is what let callers read and write around the
+        # store in the first place.
         self.__has_contents = True
-        return await self._project_file_handler.read_project_file(full_path)
+        if self._project_file_relative_path is None:
+            raise ValueError("Project file relative path is not set")
+        data = await get_project_store().read_path(str(self._project_file_relative_path))
+        if data is None:
+            raise ValueError(f"Project file not found: {self._project_file_relative_path}")
+        return data
 
     async def get_decrypted_view(self) -> dict[str, Any]:
         """

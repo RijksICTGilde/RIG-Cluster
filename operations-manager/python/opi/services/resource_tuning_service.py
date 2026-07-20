@@ -11,9 +11,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from opi.connectors.git import (
-    GitConnector,  # noqa: TC001 - used in an eagerly-evaluated annotation (no future-annotations)
-)
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.prometheus import get_metrics_connector
 from opi.connectors.vpa import parse_k8s_cpu_to_m
@@ -39,9 +36,7 @@ from opi.services.resource_analyzer import (
     compute_memory_recommendation,
     passes_deviation_gate,
 )
-from opi.services.schema_migration import migrate_to_latest
 from opi.utils.naming import generate_unique_name
-from opi.utils.yaml_util import load_yaml_from_string
 
 logger = logging.getLogger(__name__)
 
@@ -83,47 +78,37 @@ def get_project_data(project_name: str) -> tuple[dict[str, Any], str]:
     return copy.deepcopy(project.data), project.filename
 
 
-async def get_project_data_from_git(project_name: str) -> tuple[dict[str, Any], str, GitConnector]:
+async def get_project_data_from_git(project_name: str) -> tuple[dict[str, Any], str]:
     """
-    Read the latest project data directly from git.
+    Read the committed project data, bypassing the in-memory cache.
 
-    Unlike ``get_project_data`` (which reads from the in-memory cache), this
-    parses the YAML file on disk in the ProjectStore's warm working copy. This
-    prevents stale cache data from silently overwriting fields that were added
-    or changed since the last project processing run.
-
-    The returned GitConnector is the store's shared warm copy: it is owned by the
-    store and must NOT be closed by the caller (closing deletes the directory
-    every other caller is using).
+    Unlike ``get_project_data`` (which reads the cache), this reads the state as
+    committed in git. That prevents a stale cache from silently overwriting fields
+    added or changed since the last processing run -- for example by another cluster
+    pushing to the shared zad-projects repo.
 
     Returns:
-        Tuple of (project_data, filename, git_connector)
+        Tuple of (project_data, filename)
 
     Raises:
         ValueError: If project not found or YAML file missing/invalid
     """
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
+    store = get_project_store()
+    project = store.get(project_name)
 
     if not project:
         raise ValueError(f"Project '{project_name}' not found")
 
-    filename = project.filename
-    # The ProjectStore's warm working copy: no per-call clone, and owned by the
-    # store, so neither this function nor its callers may close it.
-    git_connector = await get_project_store().get_connector()
-
-    file_path = f"projects/{filename}"
-    content = await git_connector.read_file_content(file_path)
-    project_data = load_yaml_from_string(content)
+    # Read the committed state through the store rather than off the warm working
+    # copy. Same authoritative source, but the caller never touches a connector --
+    # and therefore cannot close one, which is what broke the shared working copy
+    # before. read_at() also applies the schema migration.
+    project_data = await store.read_at(project_name, "HEAD")
 
     if not project_data:
         raise ValueError(f"Failed to parse YAML for project '{project_name}' from git")
 
-    # Migrate to the latest schema so the dict is safe to validate and commit.
-    project_data, _ = migrate_to_latest(project_data)
-
-    return project_data, filename, git_connector
+    return project_data, project.filename
 
 
 async def trigger_reprocessing(
@@ -522,12 +507,11 @@ async def tune_deployment_resources(
     """
     # Read fresh from git to avoid overwriting fields that changed since
     # the in-memory cache was last populated.
-    project_data, filename, git_connector = await get_project_data_from_git(project_name)
+    project_data, filename = await get_project_data_from_git(project_name)
     file_handler = ProjectFileHandler()
-    project_manager = ProjectManager(
-        project_file_relative_path=f"projects/{filename}",
-        git_connector_for_project_files=git_connector,
-    )
+    # No connector is threaded in: ProjectManager takes the warm one from the store
+    # itself, so no caller can hold -- or close -- it.
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
 
     try:
         connector = await get_metrics_connector()
@@ -690,9 +674,6 @@ async def tune_deployment_resources(
             deployment_refresh_triggered = await trigger_reprocessing(
                 project_name, filename, deployment_name, argocd_resources_changed=False
             )
-    # No close: git_connector is the ProjectStore's warm working copy, shared by
-    # every caller for the lifetime of the process.
-
     return TuneResult(
         changes=changes,
         unchanged=unchanged,

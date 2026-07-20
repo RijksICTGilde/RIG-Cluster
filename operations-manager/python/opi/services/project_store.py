@@ -618,6 +618,18 @@ class GitProjectStore(ProjectStore):
         connector = await self.get_connector()
         return await self._read_committed(connector, self._relative_path(name), ref=ref)
 
+    async def read_path(self, relative_path: str, ref: str = "HEAD") -> dict[str, Any] | None:
+        """Read a project file by its repo-relative path (``projects/<file>.yaml``).
+
+        For callers that hold a path rather than a project name -- notably
+        ProjectManager, which is constructed from a file path and may run before the
+        project exists in the cache. Same authoritative source and schema migration as
+        ``read_at``; it exists so those callers never need a working directory of their
+        own, which is what let them read and write around the store.
+        """
+        connector = await self.get_connector()
+        return await self._read_committed(connector, relative_path, ref=ref)
+
     async def previous(self, name: str) -> dict[str, Any] | None:
         """The last version of THIS file before HEAD.
 
