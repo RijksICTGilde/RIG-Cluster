@@ -120,12 +120,57 @@ callers that still build the dict themselves (it gains the lock, validation, rol
 write-through, but not the read-modify-write guarantee) — prefer `mutate` for anything that
 reads then writes.
 
+### Saving a pre-built dict: the compare-and-swap base
+
+`store.save(...)` takes an optional `base` — the state the caller read before it built `data`. With
+it, the save becomes a compare-and-swap: if the committed file no longer matches `base`, someone
+wrote in between, and publishing `data` as-is would drop their change. The store then re-applies
+the caller's change (`base` → `data`) on top of what actually landed, re-validates, and raises
+`ConflictError` when that cannot be resolved.
+
+`ProjectManager` supplies this automatically: `get_contents()` records what it handed out and
+`save_and_commit_project()` passes it along, so the ~33 existing call sites gain compare-and-swap
+without being touched.
+
+One subtlety worth knowing before you add a helper to `ProjectManager`: projection helpers
+(`get_name`, `get_deployments`, `get_components`, ...) read the project file too, and they run
+*between* a caller's read and its save. They therefore read with `get_contents(record_base=False)`.
+A projection that recorded would move the base to a state NEWER than the one the caller's dict was
+built on, and the change re-applied against that newer base would revert a concurrent write instead
+of merging with it — silently, because the result still validates. **If you add a helper that reads
+the project file for its own use, pass `record_base=False`.**
+
+### What the structural merge can and cannot resolve
+
+The re-apply is a structural (parsed) merge, not a text merge, so two writers each appending a
+component both survive — something `git merge-file`, `cherry-pick` and `rebase` all fail at, because
+the two additions land on adjacent lines. It fails closed in these cases, raising `ConflictError`
+rather than guessing:
+
+| Situation | Outcome |
+|---|---|
+| Both changed the same existing field | conflict |
+| We edited a field the other writer deleted | conflict |
+| Both created the same previously-absent key with *different* values | conflict |
+| Both created the same key with the *same* value | merges (agreement, not collision) |
+| A concurrent removal earlier in a list | conflict, even when the edits are unrelated — deltas address list entries by index |
+| Unrelated fields, or two appends | merges |
+
+The third row needs its own check: deltas verify the previous value only for fields that already
+existed, so a newly added key would otherwise be applied unconditionally and resolve silently to
+whoever pushed second. See `_conflicting_added_keys`.
+
 ## Freshness
 
 - `store.bootstrap()` — startup: clone the warm copy and load every project into the cache.
-- `store.reconcile()` — fetch, diff the changed paths, re-read only the changed files. Called by
-  `ensure_projects_fresh()` when the 30s TTL expires. Because ZAD's own writes are write-through,
-  this normally finds nothing and costs one fetch.
+- `store.reconcile()` — fetch, diff the changed paths, re-read only the changed files. Called
+  explicitly by the refresh action; it starts with an `ls-remote` check, so it costs nothing when
+  the remote has not moved. Because ZAD's own writes are write-through, it normally finds nothing.
+- There is no polling loop. The 30-second `ensure_projects_fresh()` TTL was removed: it tied
+  freshness to how recently someone had opened a page (API-only consumers got none at all) and
+  guaranteed nothing in particular. An edit made outside ZAD is an event, not something to
+  rediscover on every render. It is picked up by an explicit refresh, or by a rejected push, which
+  resyncs the whole tree and reloads every changed project into the cache.
 
 ## Validation
 
