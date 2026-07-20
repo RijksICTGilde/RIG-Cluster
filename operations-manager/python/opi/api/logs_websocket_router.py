@@ -374,13 +374,12 @@ async def stream_logs(
         kubectl = KubectlConnector()
         current_cluster = settings.CLUSTER_MANAGER
 
-        all_projects = get_project_store().get_all()
-        if project_name not in all_projects:
+        project_info = get_project_store().get(project_name)
+        if project_info is None:
             await send_message(websocket, "error", message="Resource not found")
             await websocket.close(code=4004)
             return
 
-        project_info = all_projects[project_name]
         project_data = project_info.data or {}
         deployments_list = project_data.get("deployments", [])
 
@@ -727,13 +726,12 @@ async def stream_logs(
                             continue
                         if new_component and new_component != current_component:
                             # Re-fetch project data to get current components
-                            fresh_projects = get_project_store().get_all()
-                            if project_name not in fresh_projects:
+                            fresh_project = get_project_store().get(project_name)
+                            if fresh_project is None:
                                 await send_message(websocket, "error", message="Project no longer exists")
                                 running = False
                                 break
 
-                            fresh_project = fresh_projects[project_name]
                             fresh_data = fresh_project.data or {}
                             fresh_deployments = fresh_data.get("deployments", [])
 

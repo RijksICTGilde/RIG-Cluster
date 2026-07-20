@@ -62,14 +62,14 @@ async def get_deployment_logs(
         current_cluster = settings.CLUSTER_MANAGER
         kubectl = KubectlConnector()
 
-        all_projects = get_project_store().get_all()
         results: list[dict] = []
 
-        # Check if project exists
-        if project_name not in all_projects:
+        # Single lookup, not a scan of every project: the store already keys its
+        # cache by name, so get() is the O(1) path.
+        project_info = get_project_store().get(project_name)
+        if project_info is None:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 
-        project_info = all_projects[project_name]
         project_data = project_info.data or {}
         deployments = project_data.get("deployments", [])
 

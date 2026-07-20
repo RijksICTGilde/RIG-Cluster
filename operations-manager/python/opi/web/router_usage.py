@@ -113,7 +113,7 @@ def _get_available_namespaces(cluster_name: str) -> list[str]:
     """Get available project namespaces from the project service."""
     prefix = get_namespace_prefix(cluster_name)
     projects = get_project_store().get_all()
-    namespaces = sorted({f"{prefix}{name}" for name in projects})
+    namespaces = sorted({f"{prefix}{project.name}" for project in projects})
     opi_namespace = get_cluster_config(cluster_name).get("namespace")
     if opi_namespace and opi_namespace not in namespaces:
         namespaces.insert(0, opi_namespace)
