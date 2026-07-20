@@ -26,6 +26,14 @@ realms:
     loginWithEmailAllowed: false
     bruteForceProtected: true
     loginTheme: "nl-design-system"
+    # Audit events: persist user events (incl. UPDATE_PROFILE/UPDATE_EMAIL) and admin
+    # events so identity changes are traceable afterwards (see docs/post-mortems/
+    # user-impersonation-oidc-email-claim.md). Expiration covers user events only;
+    # Keycloak 25 has no expiration for admin events.
+    eventsEnabled: true
+    eventsExpiration: 7776000  # 90 days
+    adminEventsEnabled: true
+    adminEventsDetailsEnabled: true
 
 identityProviders:
   # OIDC connection to production RIG Platform Keycloak
