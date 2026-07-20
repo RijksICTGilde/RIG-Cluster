@@ -446,7 +446,7 @@ class ProjectManager:
         from opi.services import ServiceType
         from opi.utils.naming import generate_postgres_superuser_secret_name
 
-        project_data = await self.get_contents()
+        project_data = await self.get_contents(record_base=False)
         project_name = project_data.get("name")
         project_services = project_data.get("services", [])
 
@@ -497,7 +497,7 @@ class ProjectManager:
         return self._database_manager
 
     async def get_name(self) -> str:
-        contents = await self.get_contents()
+        contents = await self.get_contents(record_base=False)
         return contents["name"]
 
     async def get_deployments(
@@ -526,7 +526,7 @@ class ProjectManager:
             ValueError: If a deployment declares a namespace that does not
                 match the project name. See ``enforce_namespace_pin``.
         """
-        project_data = await self.get_contents()
+        project_data = await self.get_contents(record_base=False)
 
         # Tenant-isolation guard: pin every deployment namespace to the
         # project name before anything reads it. Shared with the git-monitor
@@ -627,7 +627,7 @@ class ProjectManager:
         Returns:
             List of repository configurations
         """
-        project_data = await self.get_contents()
+        project_data = await self.get_contents(record_base=False)
         return project_data.get("repositories", [])
 
     async def get_components(self) -> list[dict[str, Any]]:
@@ -637,7 +637,7 @@ class ProjectManager:
         Returns:
             List of component configurations
         """
-        project_data = await self.get_contents()
+        project_data = await self.get_contents(record_base=False)
         return project_data.get("components", [])
 
     async def get_git_connector_for_project_files(self) -> GitConnector:
@@ -1001,7 +1001,7 @@ class ProjectManager:
         logger.debug(f"Collecting aliases for deployment: {deployment_name}")
 
         # Get project data
-        project_data = await self.get_contents()
+        project_data = await self.get_contents(record_base=False)
 
         # Find the deployment in project data
         deployments = project_data.get("deployments", [])
@@ -1149,7 +1149,7 @@ class ProjectManager:
             Keycloak config entry with host/realm/username/password or None if not found
         """
 
-        project_data = await self.get_contents()
+        project_data = await self.get_contents(record_base=False)
         keycloak_list = project_data.get("config", {}).get("keycloak", [])
         if not keycloak_list:
             return None
@@ -6215,9 +6215,14 @@ class ProjectManager:
 
         return result
 
-    async def get_contents(self) -> dict[str, Any]:
+    async def get_contents(self, *, record_base: bool = True) -> dict[str, Any]:
         """
         Convenience method to get the contents of the project file.
+
+        :param record_base: whether this read becomes the compare-and-swap base for a
+            later save. True for a caller that is going to mutate and save what it
+            gets back; False for an internal projection that reads the file, takes one
+            value out of it and discards the rest.
         :return: Contents of the project file
         """
         # Read through the store, not off the working copy. Same committed state and
@@ -6235,7 +6240,21 @@ class ProjectManager:
         # as the compare-and-swap base. Nearly every write goes read-here/write-later
         # through this one class, so recording it here covers those call sites without
         # touching any of them. A copy, because callers mutate the dict they get back.
-        self.__contents_as_read = copy.deepcopy(data)
+        #
+        # record_base=False exists because this method is not called only by the caller
+        # that saves. Projection helpers (get_name, get_deployments, ...) read the file
+        # too, and they run BETWEEN a caller's read and its save -- in almost every
+        # write method, on the very next line:
+        #
+        #     project_data = await self.get_contents()   # the dict we will save
+        #     project_name = await self.get_name()       # reads the file again
+        #
+        # Were that second read to record as well, the base would end up NEWER than the
+        # state project_data was built on. The store would then re-apply our change
+        # against the newer base and *revert* the concurrent write instead of merging
+        # with it -- and the result validates fine, so nothing downstream catches it.
+        if record_base:
+            self.__contents_as_read = copy.deepcopy(data)
         return data
 
     async def get_decrypted_view(self) -> dict[str, Any]:
@@ -6246,7 +6265,7 @@ class ProjectManager:
         """
         import copy
 
-        project_data = await self.get_contents()
+        project_data = await self.get_contents(record_base=False)
         view = copy.deepcopy(project_data)
 
         try:
@@ -6293,7 +6312,7 @@ class ProjectManager:
         Returns:
             The value found at the JSONPath, or None if not found
         """
-        project_data = await self.get_contents()
+        project_data = await self.get_contents(record_base=False)
 
         try:
             jsonpath_expr = jsonpath_parse(json_path)
@@ -6313,7 +6332,7 @@ class ProjectManager:
         encrypted_api_key = await self._get_by_json_path("$.config.api-key")
         if not encrypted_api_key:
             raise ValueError(f"No api key found in project config for {project_name}")
-        private_key = await get_decoded_project_private_key(await self.get_contents())
+        private_key = await get_decoded_project_private_key(await self.get_contents(record_base=False))
         decrypted_api_key = await decrypt_age_content(str(encrypted_api_key), private_key)
         logger.debug(f"Successfully decrypted API key for project: {project_name}")
         return decrypted_api_key
