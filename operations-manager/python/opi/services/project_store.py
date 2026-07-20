@@ -837,6 +837,13 @@ class GitProjectStore(ProjectStore):
         the cache. Answers "can we commit and end up not up to date?": no, provided
         the changes that arrived alongside are picked up, which is what this does.
         """
+        # Callers are the push-conflict retry paths in create/save/mutate/delete,
+        # which all hold the lock. Asserted rather than assumed: this hard-resets the
+        # shared working copy and rewrites cache entries, so running it concurrently
+        # with a writer would reintroduce exactly the class of race the store exists
+        # to remove.
+        assert self._lock.locked(), "_resync_after_conflict must be called while holding the store lock"
+
         old_head = await connector.get_local_commit_hash()
         await connector.reset_to_remote()
         new_head = await connector.get_local_commit_hash()
