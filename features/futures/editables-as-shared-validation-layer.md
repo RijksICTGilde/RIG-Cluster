@@ -11,7 +11,7 @@ The form layer and API layer duplicate validation and transformation logic for p
 
 | Field | Form validator | API validation |
 |-------|---------------|----------------|
-| Component name | `ComponentNameValidator` (lowercase, max 12 chars) | `sanitize_kubernetes_name()` (different rules, no max length) |
+| Component name | `ComponentNameValidator` (lowercase, digits, hyphens, max 63 chars) | `sanitize_kubernetes_name()` (different rules, no max length) |
 | Container image | `ContainerImageValidator` (lowercase, no spaces) | Only normalizes at write time, no early validation |
 | Path | `PathValidator` (starts with `/`, no spaces) | No validation (only `max_length=256`) |
 | Env vars | `KeyValueValidator` | No validation (only `max_length=65536`) |

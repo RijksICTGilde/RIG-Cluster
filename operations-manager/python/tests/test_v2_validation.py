@@ -285,6 +285,13 @@ INVALID_COMPONENT_NAMES = [
     pytest.param("123startsnum", id="starts-with-digit"),
 ]
 
+VALID_COMPONENT_NAMES = [
+    pytest.param("web", id="simple"),
+    pytest.param("my-web-frontend", id="hyphens-allowed"),
+    pytest.param("a" * 40, id="long-40-chars"),
+    pytest.param("a" * 63, id="max-length-63"),
+]
+
 VALID_ADD_COMPONENT_BODY = {
     "name": "web",
     "image": "nginx:latest",
@@ -314,6 +321,16 @@ class TestAddComponentValidation:
             json=body,
         )
         assert response.status_code == 202
+
+    @pytest.mark.parametrize("name", VALID_COMPONENT_NAMES)
+    def test_valid_component_name_is_accepted(self, v2_client: TestClient, name: str) -> None:
+        body = {**VALID_ADD_COMPONENT_BODY, "name": name}
+        response = v2_client.post(
+            "/api/v2/projects/test-project/components",
+            headers=HEADERS,
+            json=body,
+        )
+        assert response.status_code not in (400, 422)
 
     @pytest.mark.parametrize(
         "image",
@@ -424,6 +441,15 @@ class TestAddComponentToDeploymentValidation:
             json={"component_name": name, "image": "nginx:latest"},
         )
         assert response.status_code in (400, 422)
+
+    @pytest.mark.parametrize("name", VALID_COMPONENT_NAMES)
+    def test_valid_component_name_is_accepted(self, v2_client: TestClient, name: str) -> None:
+        response = v2_client.post(
+            "/api/v2/projects/test-project/deployments/main/components",
+            headers=HEADERS,
+            json={"component_name": name, "image": "nginx:latest"},
+        )
+        assert response.status_code not in (400, 422)
 
     @pytest.mark.parametrize(
         "image",

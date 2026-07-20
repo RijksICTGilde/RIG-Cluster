@@ -45,7 +45,10 @@ COMPONENT_NAME = EditableVisualizer(
     editable=COMPONENT_NAME_EDITABLE,
     widget=WidgetType.TEXT,
     label="Componentnaam",
-    description="Alleen kleine letters en cijfers, maximaal 12 tekens.",
+    description=(
+        "Alleen kleine letters, cijfers en koppeltekens, maximaal 63 tekens. "
+        "Begint met een letter en eindigt niet op een koppelteken."
+    ),
     help_text="Voorbeeld: frontend, api, worker.",
     readonly_on_edit=True,
 )
