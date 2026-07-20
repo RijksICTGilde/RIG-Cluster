@@ -21,7 +21,9 @@
 {% if authorization_wall.banner %}
             - {{ ("--banner=" ~ authorization_wall.banner) | tojson }}
 {% endif %}
-            - --insecure-oidc-allow-unverified-email=true
+            # Require a verified email address: reject any token whose email_verified is not true.
+            # Explicit (this is oauth2-proxy's default, but the security intent must be visible).
+            - --insecure-oidc-allow-unverified-email=false
             - --scope=openid profile email
           env:
             - name: OAUTH2_PROXY_CLIENT_SECRET
