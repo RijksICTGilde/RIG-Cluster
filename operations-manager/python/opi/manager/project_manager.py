@@ -68,7 +68,6 @@ from opi.manager.project_validation import validate_component_references, valida
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
-from opi.services.project_service import ProjectUser, get_project_service
 from opi.services.project_store import get_project_store
 from opi.utils.age import (
     decrypt_age_content,
@@ -4438,36 +4437,14 @@ class ProjectManager:
                 if deployment.get("cluster") == settings.CLUSTER_MANAGER:
                     await self._bootstrap_manager.execute_bootstrap_for_deployment(project_data, deployment)
 
-            # Register the project with the original (encrypted) data.
-            # The web UI does its own decryption for display via deepcopy.
-            api_key = await self.get_api_key()
-            project_name = await self.get_name()
-            project_service = get_project_service()
-            filename = (
-                os.path.basename(self._project_file_relative_path)
-                if self._project_file_relative_path
-                else f"{project_name}.yaml"
-            )
-
-            project_data_with_configs = await self.get_contents()
-
-            # Extract users from project data
-            users_data = project_data_with_configs.get("users", [])
-            users = []
-            if users_data and isinstance(users_data, list):
-                users.extend(
-                    ProjectUser(email=user_data["email"], role=user_data["role"])
-                    for user_data in users_data
-                    if isinstance(user_data, dict) and "email" in user_data and "role" in user_data
-                )
-
-            project_service.register(
-                project_name,
-                api_key,
-                filename,
-                users=users or None,
-                data=project_data_with_configs,
-            )
+            # The read cache is not touched here. save_and_commit_project above already
+            # wrote through to it, from what actually landed in git -- which is the only
+            # version readers may see. Registering again from in-memory state would let
+            # the cache drift ahead of the repository.
+            #
+            # If a step between the save and this point ever starts mutating project_data
+            # (the bootstrap actions above do not today), that mutation must be persisted
+            # with save_and_commit_project as well, not pushed into the cache directly.
 
             if progress_manager and creation_task:
                 self.get_progress_manager().complete_task(creation_task)

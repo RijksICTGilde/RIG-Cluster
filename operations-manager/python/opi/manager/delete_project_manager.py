@@ -866,11 +866,14 @@ class DeleteProjectManager:
                 logger.warning(error_msg)
                 # Don't fail the deletion for subdomain cleanup errors
 
-            # Final step: Remove project from in-memory database if deletion was successful
+            # Final step: confirm the project is gone from the read cache.
+            #
+            # store.delete() already evicted it as part of the deletion, so this only
+            # reports the outcome. Evicting from the cache directly would be a cache
+            # mutation outside the store, which is how the cache and git drift apart.
             if deletion_results["success"]:
                 try:
-                    project_service = get_project_service()
-                    removed = project_service.remove_project(project_name)
+                    removed = get_project_store().get(project_name) is None
                     if removed:
                         deletion_results["operations"].append(
                             {

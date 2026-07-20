@@ -37,7 +37,7 @@ from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
 from opi.core.keycloak_client_startup import ensure_keycloak_credentials
 from opi.manager.project_manager import ProjectManager, create_project_manager
-from opi.services.project_service import Project, ProjectUser, get_project_service, initialize_project_service
+from opi.services.project_service import get_project_service, initialize_project_service
 from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
 
@@ -236,22 +236,6 @@ Git Monitoring: {os.environ.get("ENABLE_GIT_MONITOR", "false")}
             logger.info(line)
 
 
-async def get_project_files(repo_root_folder: str) -> list[str]:
-    repo_root_folder = os.path.join(repo_root_folder, "projects")
-    project_files: list[str] = []
-
-    if not os.path.exists(repo_root_folder):
-        logger.warning(f"Projects directory not found: {repo_root_folder}")
-        return project_files
-
-    project_files.extend(
-        os.path.join("projects", file) for file in os.listdir(repo_root_folder) if file.endswith((".yaml", ".yml"))
-    )
-
-    logger.info(f"Found {len(project_files)} project files to process")
-    return project_files
-
-
 class ProjectRefreshState:
     """
     Global state manager for project refresh operations.
@@ -315,92 +299,6 @@ async def ensure_projects_fresh() -> None:
         # this normally finds nothing and costs one fetch.
         await get_project_store().reconcile()
         state.mark_refreshed()
-
-
-async def refresh_projects_from_git() -> int:
-    """
-    Refresh the project cache by fetching the latest from Git and reloading all project files.
-
-    This function:
-    1. Creates a new Git connector and fetches the latest changes
-    2. Clears the existing project cache
-    3. Reloads all project files from the Git repository
-    4. Registers each project in the ProjectService
-
-    Returns:
-        Number of projects successfully loaded
-    """
-    logger.info("Refreshing projects from Git...")
-
-    project_service = get_project_service()
-
-    # The ProjectStore's warm working copy is shared across all ProjectManagers:
-    # already cloned, kept current by reconcile. It is owned by the store, so it
-    # is never closed here (closing would delete the working directory).
-    try:
-        shared_git_connector = await get_project_store().get_connector()
-        projects_repo_root_dir = await shared_git_connector.get_working_dir()
-        project_files = await get_project_files(projects_repo_root_dir)
-    except Exception as e:
-        logger.error(f"Failed to get project files from Git: {e}")
-        raise
-
-    # Build new project dict first, then swap atomically to avoid
-    # a window where the cache is empty or partially populated (causes 401s).
-    new_projects: dict[str, Project] = {}
-    loaded_count = 0
-    for project_file in project_files:
-        # Each ProjectManager shares the git connector for project files
-        # The connector ownership tracking ensures it won't be closed by individual managers
-        project_manager = ProjectManager(
-            project_file_relative_path=project_file,
-            git_connector_for_project_files=shared_git_connector,
-        )
-        try:
-            project_file_base_name = os.path.basename(project_file)
-            logger.debug(f"Refreshing project file: {project_file_base_name}")
-
-            # Load project data
-            api_key = await project_manager.get_api_key()
-            project_name = await project_manager.get_name()
-            project_data = await project_manager.get_contents()
-
-            # Build Project object for the new dict
-            users_data = project_data.get("users", [])
-            users = None
-            if users_data and isinstance(users_data, list):
-                users = [
-                    ProjectUser(email=u["email"], role=u["role"])
-                    for u in users_data
-                    if isinstance(u, dict) and "email" in u and "role" in u
-                ]
-
-            new_projects[project_name] = Project(
-                name=project_name,
-                api_key=api_key,
-                filename=project_file_base_name,
-                users=users or None,
-                data=project_data,
-            )
-
-            # Add project users to allowed emails list
-            if users_data:
-                user_service = get_user_service()
-                project_user_emails = [u.get("email") for u in users_data if u.get("email")]
-                if project_user_emails:
-                    user_service.add_allowed_emails(project_user_emails)
-
-            loaded_count += 1
-        except Exception as e:
-            logger.error(f"Error refreshing project file {project_file}: {e}")
-        finally:
-            await project_manager.close()
-
-    # Atomic swap: concurrent requests always see a complete project set
-    project_service.replace_all_projects(new_projects)
-
-    logger.info(f"Refreshed {loaded_count} projects from Git")
-    return loaded_count
 
 
 async def ensure_project_sops_secrets(project_data: Any, kubectl: KubectlConnector) -> bool:
@@ -654,40 +552,27 @@ async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: 
             if env_admin_emails:
                 project_service.add_admin_emails(env_admin_emails)
 
-        shared_git_connector = await get_project_store().get_connector()
-        projects_repo_root_dir = await shared_git_connector.get_working_dir()
-        project_files = await get_project_files(projects_repo_root_dir)
+        # Loading every project into the cache is the store's job, and only the store's.
+        # This used to be a second, parallel loader here (walk the working copy, build a
+        # ProjectManager per file, call project_service.register) alongside
+        # refresh_projects_from_git doing the same thing a third way. Three loaders meant
+        # three chances for the cache to disagree with git.
+        store = get_project_store()
+        await store.bootstrap()
 
-        for project_file in project_files:
-            project_manager = ProjectManager(
-                project_file_relative_path=project_file,
-                git_connector_for_project_files=shared_git_connector,
-            )
-            try:
-                project_file_base_name = os.path.basename(project_file)
-                logger.info(f"Processing project file: {project_file_base_name}")
-
-                if not skip_checks:
+        # Provisioning is a separate concern from loading: it needs the project list, not
+        # the file walk, so it now runs off the cache the store just populated.
+        if not skip_checks:
+            for project in store.get_all():
+                project_manager = ProjectManager(project_file_relative_path=f"projects/{project.filename}")
+                try:
+                    logger.info(f"Checking namespaces and secrets for project: {project.filename}")
                     await project_manager.check_and_create_namespaces()
                     await project_manager.check_and_create_sops_secrets_in_namespaces()
-
-                api_key = await project_manager.get_api_key()
-                project_name = await project_manager.get_name()
-                project_data = await project_manager.get_contents()
-
-                project_service.register(
-                    project_name, api_key, project_file_base_name, project_data.get("users", []), project_data
-                )
-
-                project_users = project_data.get("users", [])
-                if project_users:
-                    project_user_emails = [u.get("email") for u in project_users if u.get("email")]
-                    if project_user_emails:
-                        user_service.add_allowed_emails(project_user_emails)
-            except Exception as e:
-                logger.error(f"Error processing project file {project_file}: {e}")
-            finally:
-                await project_manager.close()
+                except Exception as e:
+                    logger.error(f"Error checking project {project.filename}: {e}")
+                finally:
+                    await project_manager.close()
 
         all_allowed_emails = user_service.get_allowed_emails()
         if all_allowed_emails:
