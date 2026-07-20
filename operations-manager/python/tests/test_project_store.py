@@ -88,6 +88,11 @@ class FakeGitConnector:
         self.base_ref = remote.head
         self.local_head = remote.head
         self.pending_message: str | None = None
+        # Commits built but not yet published, keyed by their ref. Mirrors real plumbing:
+        # build_commit produces an object, set_branch_ref points the branch at it, and only
+        # push publishes it.
+        self._built: dict[str, tuple[dict[str, str], str]] = {}
+        self._staged_commit: str | None = None
         # Test hooks
         self.fail_push_with: Exception | None = None
         self.on_before_push = None
@@ -150,6 +155,53 @@ class FakeGitConnector:
         self.base_ref = ref
         self.local_head = ref
 
+    # -- plumbing write path -------------------------------------------------
+    # The store no longer writes into the working tree. It builds a commit from
+    # objects, points the branch at it, pushes, and only then syncs the checkout.
+
+    async def build_commit(self, changes: dict[str, str | None], message: str, parent: str | None = None) -> str | None:
+        new_tree = dict(self.tree)
+        for path, content in changes.items():
+            if content is None:
+                new_tree.pop(path, None)
+            else:
+                new_tree[path] = content
+        if new_tree == self.tree:
+            return None
+        ref = f"built-{len(self._built)}-{self.local_head}"
+        self._built[ref] = (new_tree, message)
+        return ref
+
+    async def set_branch_ref(self, commit: str, branch: str | None = None) -> None:
+        self._staged_commit = commit
+        if commit not in self._built:
+            # Rolling back to an already-published commit.
+            self.local_head = commit
+            self._staged_commit = None
+
+    async def push_changes(self, branch: str | None = None, max_retries: int = 5, allow_rebase: bool = True) -> None:
+        if self.on_before_push is not None:
+            hook, self.on_before_push = self.on_before_push, None
+            hook()
+        if self.fail_push_with is not None:
+            error, self.fail_push_with = self.fail_push_with, None
+            raise error
+        if self.base_ref != self.remote.head:
+            from opi.connectors.git import GitPushConflictError
+
+            raise GitPushConflictError("non-fast-forward: remote has moved")
+        assert self._staged_commit is not None, "push without a staged commit"
+        tree, message = self._built[self._staged_commit]
+        ref = self.remote.commit(message, tree)
+        self._built[ref] = (tree, message)
+        self._staged_commit = ref
+        self.base_ref = ref
+        self.local_head = ref
+
+    async def sync_worktree_to_head(self) -> None:
+        if self._staged_commit is not None and self._staged_commit in self._built:
+            self.tree = dict(self._built[self._staged_commit][0])
+
     async def reset_to_remote(self, branch: str | None = None) -> None:
         self.reset_count += 1
         self.tree = dict(self.remote.files)
@@ -158,10 +210,11 @@ class FakeGitConnector:
 
 
 class StoreHarness:
-    """A GitProjectStore wired to a FakeGitConnector, with file writes intercepted.
+    """A GitProjectStore wired to a FakeGitConnector.
 
-    The store writes YAML with save_yaml_to_path onto the real filesystem; here we
-    redirect that into the fake connector's tree so no temp dirs are needed.
+    The store builds commits from git objects rather than writing into a working tree,
+    so nothing needs intercepting on the filesystem: the fake connector's ``tree`` is
+    the committed state, and ``build_commit`` derives the next one from it.
     """
 
     def __init__(self, store: GitProjectStore, connector: FakeGitConnector, remote: FakeRemote) -> None:
@@ -185,15 +238,6 @@ def harness(monkeypatch: pytest.MonkeyPatch, tmp_path) -> StoreHarness:
         return connector
 
     monkeypatch.setattr(store, "get_connector", _get_connector)
-
-    # Redirect the store's on-disk write into the fake tree, so the working tree
-    # the fake connector commits from is the one the store wrote to.
-    def _save(full_path: str, data: dict[str, Any]) -> bool:
-        relative = full_path.removeprefix(f"{working_dir}/")
-        connector.tree[relative] = dump_yaml_to_string(data)
-        return True
-
-    monkeypatch.setattr("opi.services.project_store.save_yaml_to_path", _save)
 
     async def _list_project_files(_connector: Any) -> list[str]:
         return sorted(
@@ -416,14 +460,21 @@ async def test_exhausted_retries_raise_concurrency_error(harness: StoreHarness) 
 
 
 async def test_push_failure_rolls_back_local_commit(harness: StoreHarness) -> None:
-    """A non-conflict push failure resets the warm copy so no local commit lingers."""
+    """A non-conflict push failure leaves no trace: the branch ref goes back to HEAD.
+
+    Rollback is exact because the write never touched the working tree. The commit is
+    built from git objects, so undoing it is just moving the ref back -- there is no
+    half-applied file to reset away, and the unreferenced objects are collected later.
+    """
+    head_before = harness.connector.local_head
     harness.connector.fail_push_with = RuntimeError("remote unreachable")
 
     with pytest.raises(RuntimeError, match="remote unreachable"):
         await harness.store.mutate(PROJECT_NAME, _add_deployment("mine"), message="add mine", actor="tester")
 
-    assert harness.connector.reset_count == 1, "the failed local commit must be discarded"
+    assert harness.connector.local_head == head_before, "the branch must not stay on the unpushed commit"
     assert _current(harness)["deployments"] == [], "nothing may be persisted on a failed push"
+    assert harness.connector.tree == dict(harness.remote.files), "the working copy must still mirror the remote"
 
 
 # ----------------------------------------------------------------------------

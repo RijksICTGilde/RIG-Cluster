@@ -34,19 +34,33 @@ def _await_call_lines(func: ast.AST, attr_name: str) -> list[int]:
     ]
 
 
-def test_process_project_saves_before_committing_project_file() -> None:
+def test_process_project_persists_in_memory_state_with_the_project_file_commit() -> None:
+    """The clone-status/generation updates must be committed, in one locked operation.
+
+    This used to be two steps -- save_project_data() to write the file, then
+    commit_and_push() -- and the guard checked their order. That pair had a silent-loss
+    window of its own: the write sat uncommitted in the shared warm working copy across
+    the awaits in between, where a concurrent reconcile (`reset --hard` + `git clean -fd`,
+    on a 30s TTL) discarded it; the commit then found nothing to commit and still
+    reported success.
+
+    Both steps are now a single save_and_commit_project() call, so the guard is that the
+    call exists and is fed the current in-memory state.
+    """
     func = _process_project_node()
 
-    save_lines = _await_call_lines(func, "save_project_data")
-    commit_lines = _await_call_lines(func, "commit_and_push")
+    save_lines = _await_call_lines(func, "save_and_commit_project")
+    assert save_lines, (
+        "process_project must call save_and_commit_project() to persist the in-memory "
+        "clone-from.status/generation updates; without it every reconcile re-reads "
+        "completed=false / generation=None and re-clones"
+    )
 
-    assert save_lines, "process_project must call save_project_data() to persist clone-status/generation updates"
-    assert commit_lines, "expected a commit_and_push() in process_project"
+    # It must be fed the live project data, not a stale dict captured earlier.
+    contents_lines = _await_call_lines(func, "get_contents")
+    assert contents_lines, "save_and_commit_project() must be given the current get_contents() state"
 
-    # The persist must happen before the project-file commit, otherwise the
-    # in-memory clone-status/generation mutations never reach the committed file.
-    assert min(save_lines) < max(commit_lines), (
-        "save_project_data() must run before commit_and_push() in process_project; "
-        "otherwise clone-from.status/generation updates are committed-less and every "
-        "reconcile re-clones"
+    # And the project file must no longer be committed straight through a raw connector.
+    assert not _await_call_lines(func, "commit_and_push"), (
+        "process_project must not commit the project file directly; that bypasses the store's lock and validation"
     )

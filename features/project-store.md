@@ -20,12 +20,34 @@ window.
 | Concern | Behaviour |
 |---|---|
 | Reads | Served from the in-memory parsed cache (backed by `ProjectService`). No I/O. |
-| Working copy | One warm, long-lived clone per process, full history (blobless). Never deleted. |
+| Working copy | One warm, long-lived clone per process, full history (blobless). Never deleted. Used for **reads and history only**. |
+| Writes | Built directly from git objects (`hash-object` -> private index -> `write-tree` -> `commit-tree`), never through the working tree. |
 | Write serialization | A per-repo `asyncio.Lock`. Same-project writers queue; each re-reads the previous winner's result. |
 | Mutations | A *change function* applied to freshly-read state, validated on the FINAL state, then committed and pushed. |
-| External writes | A non-fast-forward push means HEAD moved: reset to remote, re-read, re-apply, re-validate, retry (bounded). |
-| Durability | The push is the ack. The cache is updated only after a successful push. |
-| Rollback | A failed push hard-resets the warm copy, so no local commit lingers. |
+| External writes | A non-fast-forward push means HEAD moved: reset to remote, re-read, re-apply, re-validate, retry (bounded). Pushes use `allow_rebase=False` so divergence always reaches the store. |
+| Durability | The push is the ack. The cache is updated only after a successful push, from what actually landed. |
+| Rollback | A failed push moves the branch ref back. Nothing was written to disk, so there is nothing to clean up. |
+
+### Why writes bypass the working tree
+
+Writing into the shared warm copy and running `git add -A` was the source of four proven
+data-loss paths, each verified on a live cluster against a real Forgejo:
+
+- a commit for one project could carry another writer's half-written file, or a pending
+  deletion, to the remote (`git add -A` stages everything in a *shared* tree);
+- an uncommitted write could be silently discarded by a concurrent `reconcile()`
+  (`reset --hard` + `git clean -fd` on a 30s TTL), after which the commit found nothing to
+  commit and still reported success;
+- a failed `delete()` left the removal staged, so the next unrelated commit published it;
+- `push_changes` rebased internally and pushed the *merged* result unvalidated, so two
+  individually-valid edits could merge into an invalid project file (a duplicated
+  component), which then locked the project: every later edit failed validation.
+
+Building the commit from objects with a per-operation index makes the first three
+structurally impossible -- a commit cannot contain a path the store did not name -- and
+`allow_rebase=False` hands divergence back to `mutate`, which re-applies and re-validates
+before publishing. A genuine semantic conflict now surfaces as a clear domain error
+("component 'web' is meervoudig gedefinieerd") instead of a corrupted file.
 
 The interface is backend-agnostic: nothing git-specific leaks out (`ref` is an opaque string, not a
 commit SHA), so a `DatabaseProjectStore` could replace `GitProjectStore` without touching callers.
@@ -102,11 +124,18 @@ not block a recovery write. It is not a less-validated path.
   interface does not change.
 - **Never close the warm connector.** `GitConnector.close()` deletes the working directory.
   `store.get_connector()` returns a shared connector that must outlive its callers.
-  `ProjectManager` marks it not-owned so it is never closed.
+  `ProjectManager` marks it not-owned so it is never closed. This is enforced by a test, not
+  only documented: the invariant was written down here and broken anyway, when
+  `get_project_data_from_git` changed from handing out a per-call clone to handing out the
+  shared copy and one of its two callers was not updated.
 
-A CI guard (`tests/test_single_path_enforcement.py::test_no_direct_projects_repo_clones_outside_the_store`)
-fails the build if a new direct clone of `zad-projects` is added under `opi/api`, `opi/web`,
-`opi/core` or `opi/services`.
+Two CI guards in `tests/test_single_path_enforcement.py` fail the build on a regression:
+
+- `test_no_direct_projects_repo_clones_outside_the_store` -- a new direct clone of `zad-projects`
+  under `opi/api`, `opi/web`, `opi/core` or `opi/services`.
+- `test_no_one_closes_the_stores_warm_connector` -- code closing a connector obtained from the
+  store. Scoped per variable name, so a connector a module builds itself with `GitConnector(...)`
+  may still be closed.
 
 ## Not yet done
 
@@ -122,5 +151,7 @@ fails the build if a new direct clone of `zad-projects` is added under `opi/api`
 
 - `opi/services/project_store.py` — interface, dataclasses, `GitProjectStore`
 - `opi/manager/project_validation.py` — shared schema/structural validation
-- `opi/connectors/git.py` — `show_file_at`, `list_file_revisions`, `list_changed_files`
+- `opi/connectors/git.py` — `show_file_at`, `list_file_revisions`, `list_changed_files`,
+  `build_commit`/`set_branch_ref`/`sync_worktree_to_head` (the plumbing write path),
+  `push_changes(allow_rebase=...)`
 - `tests/test_project_store.py` — concurrency, validation, rollback, retry, reconcile, history

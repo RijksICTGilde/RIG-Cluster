@@ -62,7 +62,6 @@ from opi.handlers.project_file_handler import (
     extract_service_names_from_component,
     find_attachment_data_list,
     is_image_pull_disable_reason,
-    save_project_file,
 )
 from opi.handlers.sops import SopsHandler
 from opi.manager.project_validation import validate_component_references, validate_project_structure
@@ -128,7 +127,6 @@ from opi.utils.secrets import (
 from opi.utils.sops import encrypt_to_sops_files_or_fail
 from opi.utils.yaml_util import (
     find_value_by_jsonpath,
-    save_yaml_to_path,
 )
 
 if TYPE_CHECKING:
@@ -1321,9 +1319,12 @@ class ProjectManager:
         git_working_dir = await git_connector_for_project_files.get_working_dir()
         return os.path.join(git_working_dir, str(self._project_file_relative_path))
 
-    async def save_project_data(self) -> None:
-        project_full_file_path = await self.get_project_full_file_path()
-        save_yaml_to_path(project_full_file_path, await self.get_contents())
+    # save_project_data() was removed deliberately. It wrote the project file straight
+    # into the shared warm working copy without committing, leaving the change to be
+    # picked up by whichever unrelated operation ran `git add -A` next -- or discarded by
+    # a concurrent reconcile before that happened, after which the eventual commit found
+    # nothing to commit and reported success anyway. Use save_and_commit_project(), which
+    # writes and commits as one locked, validated operation.
 
     async def _validate_structural_integrity(self, project_data: dict[str, Any]) -> None:
         """Validate cross-field structural integrity of a complete project dict.
@@ -1348,8 +1349,8 @@ class ProjectManager:
         Order (fails closed -- steps 1-2 happen before any disk write or commit):
             1. validate_project_schema       -- JSON schema, raises ProjectSchemaError
             2. _validate_structural_integrity -- refs/uniqueness/paths/domain, raises ProjectIntegrityError
-            3. save_yaml_to_path              -- canonical dumper only
-            4. commit_and_push                -- single commit + push
+            3. store.save                     -- canonical dumper, commit built from git
+                                                 objects (no working-tree write) + push
             5. load_project_from_data         -- refresh read-only cache (when refresh_cache)
 
         The input dict must already be migrated to the latest schema -- callers
@@ -2370,9 +2371,14 @@ class ProjectManager:
             if self._project_file_handler.was_migrated:
                 project_name = current_yaml.get("name", relative_project_file_path)
                 logger.info(f"Schema migration applied for project '{project_name}', committing changes")
-                save_project_file(project_full_file_path, current_yaml)
-                await git_connector_for_project_files.commit_and_push(
-                    f"auto-migrate {project_name} to schema v{current_yaml.get('schema-version', '?')}"
+                # Central save: one locked write+commit. The previous write-then-commit
+                # pair left the migrated file uncommitted in the shared warm copy in
+                # between, where a concurrent reconcile could discard it -- after which
+                # the commit found nothing to commit and still reported success.
+                await self.save_and_commit_project(
+                    current_yaml,
+                    f"auto-migrate {project_name} to schema v{current_yaml.get('schema-version', '?')}",
+                    enforce_validation=False,
                 )
 
             previous_yaml = analysis["previous_yaml"]
@@ -4403,17 +4409,26 @@ class ProjectManager:
             # Clear clones tracking after all deployments processed
             self.clear_clones_performed()
 
-            # Persist the in-memory project data before committing. The loop above
-            # set clone-from.status.completed=True, and the clone itself recorded
-            # the database generation -- both mutate project_data in memory only.
-            # Without this save those mutations never reach the file, so every
-            # reconcile re-reads completed=false / generation=None and re-clones,
-            # creating a fresh full copy each pass. Mirrors every other write flow.
-            await self.save_project_data()
-
+            # Persist the in-memory project data. The loop above set
+            # clone-from.status.completed=True, and the clone itself recorded the database
+            # generation -- both mutate project_data in memory only. Without this save
+            # those mutations never reach the file, so every reconcile re-reads
+            # completed=false / generation=None and re-clones, creating a fresh full copy
+            # each pass.
+            #
+            # This used to be save_project_data() (a bare write into the shared warm
+            # working copy) followed by commit_and_push. That pair had a silent-loss
+            # window: the write sat uncommitted on disk across the awaits above, and a
+            # concurrent reconcile (30s TTL, triggered by any request) does
+            # `reset --hard` + `git clean -fd`, which discarded it. The subsequent
+            # commit_and_push then found nothing to commit and still reported success.
+            # Routing through the central save makes the write and the commit one
+            # atomic, locked operation.
             scope = f" (deployment: {deployment_name})" if deployment_name else ""
-            await (await self.get_git_connector_for_project_files()).commit_and_push(
-                f"Process project {project_name}{scope}"
+            await self.save_and_commit_project(
+                await self.get_contents(),
+                f"Process project {project_name}{scope}",
+                enforce_validation=False,
             )
 
             await self._argo_manager.create_argocd_resources(deployment_names=targets)

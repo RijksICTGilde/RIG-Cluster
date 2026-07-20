@@ -14,6 +14,7 @@ central save.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -101,6 +102,82 @@ def _scan_for_direct_projects_repo_access() -> list[str]:
     return violations
 
 
+_STORE_CONNECTOR_SOURCES = ("get_connector()", "get_git_connector_for_project_files()", "get_project_data_from_git(")
+
+# Assignment of a name from one of the store sources, including tuple unpacking
+# (get_project_data_from_git returns ``data, filename, connector``).
+_STORE_ASSIGN = re.compile(
+    r"^\s*(?P<lhs>[\w.,\s]+?)\s*=\s*await\s+.*(?:{})".format("|".join(re.escape(s) for s in _STORE_CONNECTOR_SOURCES))
+)
+# A name the module constructs itself, and therefore genuinely owns.
+_OWN_ASSIGN = re.compile(r"^\s*(\w+)\s*=\s*(?:await\s+)?GitConnector\(")
+
+
+def _scan_for_warm_connector_closes() -> list[str]:
+    """Find code that closes a connector obtained from the ProjectStore.
+
+    GitConnector.close() rmtree's the working directory unconditionally, so closing the
+    store's shared warm copy deletes it out from under every other project-file operation
+    in the process -- unrecoverable short of a restart, because the store caches the
+    connector and ensure_repo_cloned() short-circuits on its _repo_cloned flag.
+
+    Scoped per variable name: a name the module builds itself with ``GitConnector(...)``
+    is genuinely owned and may be closed, so it never counts as a violation.
+    """
+    violations: list[str] = []
+    for rel_dir in [*_SCANNED_DIRS, "opi/manager"]:
+        for py_file in (_PYTHON_ROOT / rel_dir).rglob("*.py"):
+            rel_path = py_file.relative_to(_PYTHON_ROOT).as_posix()
+            if rel_path == "opi/services/project_store.py":
+                continue
+            lines = [
+                line for line in py_file.read_text(encoding="utf-8").splitlines() if not line.strip().startswith("#")
+            ]
+
+            # Only plain local names. An attribute (self.__git_connector_for_project_files)
+            # is the sanctioned way to hold a connector that may or may not be owned --
+            # ProjectManager guards its close with an explicit ownership flag -- so those
+            # are not violations.
+            from_store = {
+                m.group("lhs").split(",")[-1].strip()
+                for line in lines
+                if (m := _STORE_ASSIGN.match(line)) and "." not in m.group("lhs")
+            }
+            self_owned = {m.group(1) for line in lines if (m := _OWN_ASSIGN.match(line))}
+            borrowed = {name for name in from_store - self_owned if name.isidentifier()}
+            if not borrowed:
+                continue
+
+            # Word-boundary match: `self.__git_connector_for_project_files.close()` must not
+            # be mistaken for the local `git_connector_for_project_files.close()`.
+            close_patterns = [re.compile(rf"(?<![\w.]){re.escape(name)}\.close\(\)") for name in borrowed]
+            violations.extend(
+                f"{rel_path}:{lineno}: {line.strip()}"
+                for lineno, line in enumerate(py_file.read_text(encoding="utf-8").splitlines(), 1)
+                if not line.strip().startswith("#") and any(p.search(line) for p in close_patterns)
+            )
+    return violations
+
+
+def test_no_one_closes_the_stores_warm_connector() -> None:
+    """Closing the store's warm connector deletes the shared working copy.
+
+    This is not hypothetical: oom_watcher did exactly this after the connector's
+    ownership contract was inverted (get_project_data_from_git went from handing out a
+    per-call clone the caller owned, to handing out the shared warm copy), and the
+    documented "never close the warm connector" invariant did not stop it. A comment
+    cannot enforce an invariant; this test can.
+
+    If you genuinely own a connector you created yourself, close it via a differently
+    named variable, or close the owning ProjectManager (which respects the not-owned flag).
+    """
+    violations = _scan_for_warm_connector_closes()
+    assert not violations, (
+        "Code closing a ProjectStore-owned git connector (this rmtree's the shared warm "
+        "working copy):\n" + "\n".join(violations)
+    )
+
+
 def test_no_direct_projects_repo_clones_outside_the_store() -> None:
     """Project-file git access belongs to the ProjectStore alone.
 
@@ -157,7 +234,6 @@ async def test_central_save_refreshes_cache_with_new_state(tmp_path) -> None:
     with (
         patch("opi.services.project_store.validate_project_structure", new=AsyncMock()),
         patch("opi.manager.project_manager.get_project_store", return_value=store),
-        patch("opi.services.project_store.save_yaml_to_path"),
     ):
         await pm.save_and_commit_project(project_data, "Add component")
 

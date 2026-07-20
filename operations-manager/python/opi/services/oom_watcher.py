@@ -395,7 +395,13 @@ async def disable_components_for_image_pull(
         commit_msg = f"auto-disable: image pull errors for {', '.join(names)} in {project_name}/{deployment_name}"
         await project_manager.save_and_commit_project(project_data, commit_msg, enforce_validation=False)
     finally:
-        await git_connector.close()
+        # Never close git_connector here: get_project_data_from_git returns the
+        # ProjectStore's shared warm working copy, and GitConnector.close() rmtree's the
+        # working directory unconditionally. Closing it would delete the copy every other
+        # project-file operation in this process depends on, with no way back short of a
+        # restart. ProjectManager.close() is safe -- it treats an injected connector as
+        # not-owned.
+        await project_manager.close()
 
     logger.info(
         "Disabled %d component(s) with image pull errors in %s/%s: %s",

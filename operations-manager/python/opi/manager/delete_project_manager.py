@@ -15,6 +15,7 @@ from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
 
 if TYPE_CHECKING:
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
@@ -330,7 +331,16 @@ class DeleteProjectManager:
 
                 if updated_list != keycloak_list:
                     project_data["config"]["keycloak"] = updated_list
-                    await self.project_manager.save_project_data()
+                    # Central save: writes and commits as one locked operation. This used
+                    # to be save_project_data(), which wrote the file into the shared warm
+                    # working copy and never committed it -- leaving it to be swept up by
+                    # whichever unrelated operation ran `git add -A` next, or discarded by
+                    # a concurrent reconcile before that happened.
+                    await self.project_manager.save_and_commit_project(
+                        project_data,
+                        f"Remove keycloak config for realm {realm_name}",
+                        enforce_validation=False,
+                    )
                     logger.info(f"Removed keycloak config for realm {realm_name} from project.yaml")
                     deletion_results["operations"].append(
                         {
@@ -913,8 +923,6 @@ class DeleteProjectManager:
         result = {"success": True, "operations": [], "errors": []}
 
         try:
-            git_connector = await self.project_manager.get_git_connector_for_project_files()
-
             # Look up actual filename from project service (filename may differ from project name)
             project = get_project_service().get_project(project_name)
             if not project:
@@ -923,38 +931,23 @@ class DeleteProjectManager:
                 return result
             project_file_path = f"projects/{project.filename}"
 
-            await git_connector.ensure_repo_cloned()
-            project_file_exists = await git_connector.file_exists(project_file_path)
+            # Delete through the store rather than `git rm` + commit on the shared warm
+            # copy. `git rm` stages the removal immediately, so if the commit or push then
+            # failed the deletion stayed staged and the next commit for an unrelated
+            # project carried it to the remote -- silently deleting this project file under
+            # someone else's commit message. The store builds the deletion as its own
+            # commit and rolls the ref back if the push fails.
+            await get_project_store().delete(project_name, message=commit_message, actor="delete-project")
 
-            if project_file_exists:
-                await git_connector.delete_file(project_file_path)
-                commit_result = await git_connector.commit_and_push_changes(commit_message)
-
-                if commit_result:
-                    result["operations"].append(
-                        {
-                            "type": "project_file_deletion",
-                            "target": project_file_path,
-                            "status": "success",
-                            "message": commit_message,
-                        }
-                    )
-                    logger.info(f"Successfully deleted project file: {project_file_path}")
-                else:
-                    result["operations"].append(
-                        {
-                            "type": "project_file_commit",
-                            "status": "failed",
-                            "error": "Failed to commit project file deletion",
-                        }
-                    )
-                    result["errors"].append("Failed to commit project file deletion")
-                    result["success"] = False
-            else:
-                result["operations"].append(
-                    {"type": "project_file_deletion", "target": project_file_path, "status": "not_found"}
-                )
-                logger.info(f"Project file {project_file_path} not found (may have been already deleted)")
+            result["operations"].append(
+                {
+                    "type": "project_file_deletion",
+                    "target": project_file_path,
+                    "status": "success",
+                    "message": commit_message,
+                }
+            )
+            logger.info(f"Successfully deleted project file: {project_file_path}")
 
         except Exception as e:
             error_msg = f"Error deleting project file: {e}"

@@ -56,7 +56,7 @@ from opi.manager.project_validation import validate_project_structure
 from opi.services.project_service import Project, ProjectUser, get_project_service
 from opi.services.schema_migration import migrate_to_latest
 from opi.utils.age import decrypt_age_content, get_decoded_project_private_key
-from opi.utils.yaml_util import load_yaml_from_string, save_yaml_to_path
+from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
 
 logger = logging.getLogger(__name__)
 
@@ -307,13 +307,32 @@ class GitProjectStore(ProjectStore):
         """Create a new project file. Fails if the project already exists."""
         async with self._lock:
             connector = await self.get_connector()
-            relative_path = f"{PROJECTS_SUBDIR}/{name}.yaml"
-
-            if await connector.file_exists(relative_path):
-                raise ProjectStoreError(f"Project '{name}' already exists")
+            relative_path = f"{PROJECTS_SUBDIR}/{os.path.basename(name)}.yaml"
+            last_error: Exception | None = None
 
             await self._validate(data, enforce=True)
-            await self._persist(connector, relative_path, data, message, actor)
+
+            for attempt in range(MAX_MUTATION_ATTEMPTS):
+                # Re-checked every attempt: a competing create may have landed remotely
+                # while we were pushing.
+                if await self._read_committed(connector, relative_path) is not None:
+                    raise ProjectStoreError(f"Project '{name}' already exists")
+                try:
+                    await self._persist(connector, relative_path, data, message, actor)
+                    break
+                except GitPushConflictError as e:
+                    last_error = e
+                    logger.warning(
+                        "Push conflict on create of '%s' (attempt %d/%d); re-syncing and retrying",
+                        name,
+                        attempt + 1,
+                        MAX_MUTATION_ATTEMPTS,
+                    )
+                    await connector.reset_to_remote()
+            else:
+                raise ConcurrencyError(
+                    f"Could not create project '{name}' after {MAX_MUTATION_ATTEMPTS} attempts: {last_error}"
+                ) from last_error
 
         project = self._refresh_cache(name, data, os.path.basename(relative_path))
         logger.info("Created project '%s' (actor=%s)", name, actor)
@@ -336,21 +355,43 @@ class GitProjectStore(ProjectStore):
         dict themselves before saving. It gains the store's lock, validation,
         rollback and write-through cache, but NOT the read-modify-write
         guarantee: the dict was built from state read earlier, so two concurrent
-        savers can still lose an update. Prefer ``mutate`` for anything that
-        reads-then-writes -- it re-reads under the lock and re-applies.
+        savers can still lose an update *on this file*. Prefer ``mutate`` for
+        anything that reads-then-writes -- it re-reads under the lock and re-applies.
+
+        On a push conflict the same dict is re-published on top of whatever landed. That
+        is last-writer-wins for this project file, but it can no longer clobber *other*
+        projects: the commit only ever contains this one path.
         """
         async with self._lock:
             connector = await self.get_connector()
             relative_path = self._relative_path(name, filename)
-            before = await self._read_committed(connector, relative_path)
+            last_error: Exception | None = None
 
             await self._validate(data, enforce=enforce_validation)
-            await self._persist(connector, relative_path, data, message, actor)
 
-            ref = await connector.get_local_commit_hash()
-            if refresh_cache:
-                self._refresh_cache(name, data, os.path.basename(relative_path))
-            return MutationResult(before=before, after=data, ref=ref)
+            for attempt in range(MAX_MUTATION_ATTEMPTS):
+                before = await self._read_committed(connector, relative_path)
+                try:
+                    ref = await self._persist(connector, relative_path, data, message, actor)
+                except GitPushConflictError as e:
+                    last_error = e
+                    logger.warning(
+                        "Push conflict on save '%s' (attempt %d/%d); re-syncing and retrying",
+                        message,
+                        attempt + 1,
+                        MAX_MUTATION_ATTEMPTS,
+                    )
+                    await connector.reset_to_remote()
+                    continue
+
+                landed = await self._read_committed(connector, relative_path) or data
+                if refresh_cache:
+                    self._refresh_cache(name, landed, os.path.basename(relative_path))
+                return MutationResult(before=before, after=landed, ref=ref)
+
+            raise ConcurrencyError(
+                f"Could not save project '{name}' after {MAX_MUTATION_ATTEMPTS} attempts: {last_error}"
+            ) from last_error
 
     async def mutate(
         self,
@@ -398,11 +439,15 @@ class GitProjectStore(ProjectStore):
                 await self._validate(mutated, enforce=enforce_validation)
 
                 try:
-                    await self._persist(connector, relative_path, mutated, message, actor)
+                    ref = await self._persist(connector, relative_path, mutated, message, actor)
                 except GitPushConflictError as e:
                     last_error = e
-                    # HEAD moved under us. Drop our local commit, re-sync to the
-                    # winner's state and re-apply the change function on top.
+                    # HEAD moved under us. Re-sync to whatever actually landed and re-apply
+                    # the change function on top of it, so the next attempt validates the
+                    # real combined state. Never a blind text merge: if the two changes are
+                    # genuinely incompatible (say both add the same component), validation
+                    # rejects it on the retry and the caller gets a clear domain error
+                    # instead of an invalid file reaching git.
                     logger.warning(
                         "Push conflict on '%s' (attempt %d/%d); re-reading remote and re-applying",
                         message,
@@ -412,26 +457,52 @@ class GitProjectStore(ProjectStore):
                     await connector.reset_to_remote()
                     continue
 
-                # Write-through under the lock: the next waiter reads this result.
-                ref = await connector.get_local_commit_hash()
-                self._refresh_cache(name, mutated, os.path.basename(relative_path))
-                return MutationResult(before=current, after=mutated, ref=ref)
+                # Write-through under the lock, from what actually landed rather than from
+                # our local dict, so the cache can never drift from git.
+                landed = await self._read_committed(connector, relative_path)
+                if landed is None:
+                    landed = mutated
+                self._refresh_cache(name, landed, os.path.basename(relative_path))
+                return MutationResult(before=current, after=landed, ref=ref)
 
             raise ConcurrencyError(
                 f"Could not apply mutation to project '{name}' after {MAX_MUTATION_ATTEMPTS} attempts: {last_error}"
             ) from last_error
 
     async def delete(self, name: str, *, message: str, actor: str) -> None:
-        """Remove a project file and evict it from the cache."""
+        """Remove a project file and evict it from the cache.
+
+        Goes through the same publish path as every other mutation, so a failed push
+        rolls back cleanly. The previous implementation called ``git rm`` directly, which
+        staged the removal in the shared index straight away: if the push then failed the
+        deletion stayed staged, and the next commit for an unrelated project carried it to
+        the remote -- silently deleting a project file under someone else's commit message.
+        """
         async with self._lock:
             connector = await self.get_connector()
             relative_path = self._relative_path(name)
+            last_error: Exception | None = None
 
-            if not await connector.file_exists(relative_path):
-                logger.info("Project '%s' already absent, nothing to delete", name)
+            for attempt in range(MAX_MUTATION_ATTEMPTS):
+                if await self._read_committed(connector, relative_path) is None:
+                    logger.info("Project '%s' already absent, nothing to delete", name)
+                    break
+                try:
+                    await self._commit_and_publish(connector, {relative_path: None}, message)
+                    break
+                except GitPushConflictError as e:
+                    last_error = e
+                    logger.warning(
+                        "Push conflict on delete of '%s' (attempt %d/%d); re-syncing and retrying",
+                        name,
+                        attempt + 1,
+                        MAX_MUTATION_ATTEMPTS,
+                    )
+                    await connector.reset_to_remote()
             else:
-                await connector.delete_file(relative_path)
-                await connector.commit_and_push(message)
+                raise ConcurrencyError(
+                    f"Could not delete project '{name}' after {MAX_MUTATION_ATTEMPTS} attempts: {last_error}"
+                ) from last_error
 
         get_project_service().remove_project(name)
         logger.info("Deleted project '%s' (actor=%s)", name, actor)
@@ -459,28 +530,55 @@ class GitProjectStore(ProjectStore):
 
     async def _persist(
         self, connector: GitConnector, relative_path: str, data: dict[str, Any], message: str, actor: str
-    ) -> None:
-        """Write the file, commit and push. Rolls back the local commit on failure.
+    ) -> str:
+        """Commit and push a single project file. Returns the resulting commit ref.
 
-        The push is the durability ack: nothing is reflected in the cache until
-        it succeeds. On any failure the warm copy is hard-reset to the remote so
-        a half-applied local commit cannot leak into the next mutation.
+        The push is the durability ack: nothing is reflected in the cache until it
+        succeeds.
         """
-        working_dir = await connector.get_working_dir()
-        full_path = os.path.join(working_dir, relative_path)
-        os.makedirs(os.path.dirname(full_path), exist_ok=True)
-        save_yaml_to_path(full_path, data)
-
         logger.debug("Persisting %s for actor=%s: %s", relative_path, actor, message)
+        return await self._commit_and_publish(connector, {relative_path: dump_yaml_to_string(data)}, message)
+
+    async def _commit_and_publish(self, connector: GitConnector, changes: dict[str, str | None], message: str) -> str:
+        """Build a commit for exactly these paths, publish it, and roll back cleanly on failure.
+
+        Two properties matter here, and both come from building the commit from git objects
+        instead of from the working tree:
+
+        * **Only the named paths are committed.** The previous path wrote the file into the
+          shared warm copy and ran ``git add -A``, which stages everything -- so one
+          project's commit could carry another writer's half-written file, or a pending
+          deletion, to the remote. Here the commit cannot contain anything we did not name.
+        * **Rollback is exact.** Nothing is written to disk, so undoing a failed push is just
+          moving the branch ref back. There is no half-applied state to reset away, and no
+          window in which a concurrent reconcile could discard uncommitted work.
+
+        Args:
+            changes: repo-relative path -> new content, or None to delete the path
+            message: commit message
+
+        Returns:
+            The published commit ref, or the unchanged HEAD when there was nothing to commit.
+        """
+        old_head = await connector.get_local_commit_hash()
+
+        commit = await connector.build_commit(changes, message)
+        if commit is None:
+            logger.debug("Nothing to commit for %s", list(changes))
+            return old_head
+
+        await connector.set_branch_ref(commit)
         try:
-            await connector.commit_and_push(message)
-        except GitPushConflictError:
+            # allow_rebase=False: divergence must reach the caller so it can re-read,
+            # re-apply and re-validate. A silent rebase would publish an unvalidated merge.
+            await connector.push_changes(allow_rebase=False)
+        except BaseException:
+            await connector.set_branch_ref(old_head)
             raise
-        except RuntimeError, OSError:
-            # Clean rollback: discard the local commit so the warm copy stays
-            # usable, then surface the failure.
-            await connector.reset_to_remote()
-            raise
+
+        # The checkout is stale now that the ref moved; keep the warm copy mirroring HEAD.
+        await connector.sync_worktree_to_head()
+        return commit
 
     def _refresh_cache(self, name: str, data: dict[str, Any], filename: str) -> Project:
         """Write-through cache update. Called only after a successful push."""

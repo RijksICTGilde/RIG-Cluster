@@ -21,6 +21,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Identity used for every commit this connector creates. Kept as constants so the
+# working-tree path (git config) and the plumbing path (commit-tree env) cannot drift.
+GIT_COMMIT_AUTHOR_NAME = "Operations Manager"
+GIT_COMMIT_AUTHOR_EMAIL = "operations-manager@example.com"
+
 
 def _obfuscate_git_command(cmd_str: str) -> str:
     """
@@ -315,12 +320,12 @@ class GitConnector:
             return
 
         # Configure git user identity for commits
-        config_name_cmd = ["config", "user.name", "Operations Manager"]
+        config_name_cmd = ["config", "user.name", GIT_COMMIT_AUTHOR_NAME]
         stdout, stderr, code = await self._run_git_command(config_name_cmd, cwd=self.__working_dir)
         if code != 0:
             logger.warning(f"Failed to configure git user name: {stderr}")
 
-        config_email_cmd = ["config", "user.email", "operations-manager@example.com"]
+        config_email_cmd = ["config", "user.email", GIT_COMMIT_AUTHOR_EMAIL]
         stdout, stderr, code = await self._run_git_command(config_email_cmd, cwd=self.__working_dir)
         if code != 0:
             logger.warning(f"Failed to configure git user email: {stderr}")
@@ -329,7 +334,7 @@ class GitConnector:
         logger.debug("Git user identity configured successfully")
 
     async def _run_git_command(
-        self, args: list[str], env: dict[str, str] | None = None, cwd: str | None = None
+        self, args: list[str], env: dict[str, str] | None = None, cwd: str | None = None, stdin: str | None = None
     ) -> tuple[str, str, int]:
         """
         Run a Git command directly with subprocess.
@@ -340,6 +345,7 @@ class GitConnector:
             args: List of Git command arguments
             env: Optional environment variables
             cwd: Optional working directory
+            stdin: Optional text piped to the command's stdin (used by ``hash-object --stdin``)
 
         Returns:
             Tuple of (stdout, stderr, return_code)
@@ -378,12 +384,17 @@ class GitConnector:
         from opi.core.metrics import track_subprocess_memory
 
         process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=cmd_env, cwd=working_dir
+            *cmd,
+            stdin=asyncio.subprocess.PIPE if stdin is not None else None,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=cmd_env,
+            cwd=working_dir,
         )
 
         # Wait for command to complete, tracking memory delta
         async with track_subprocess_memory("git"):
-            stdout, stderr = await process.communicate()
+            stdout, stderr = await process.communicate(stdin.encode("utf-8") if stdin is not None else None)
         stdout_str = stdout.decode("utf-8").strip()
         stderr_str = stderr.decode("utf-8").strip()
 
@@ -1387,7 +1398,7 @@ class GitConnector:
         logger.debug(f"Successfully committed changes: {message}")
 
     # TODO: update push changes to handle rebase, and if rebase fails, commit and push to temporary branch
-    async def push_changes(self, branch: str | None = None, max_retries: int = 5) -> None:
+    async def push_changes(self, branch: str | None = None, max_retries: int = 5, allow_rebase: bool = True) -> None:
         """
         Push committed changes to remote repository.
 
@@ -1397,9 +1408,20 @@ class GitConnector:
         Args:
             branch: Branch to push to (defaults to configured branch)
             max_retries: Maximum number of push attempts after rebase (default: 5)
+            allow_rebase: When False, a non-fast-forward push raises GitPushConflictError
+                immediately instead of rebasing and retrying.
 
         Raises:
             RuntimeError: If push fails after all retries or if rebase has conflicts
+
+        Note on ``allow_rebase=False``:
+            The internal rebase silently text-merges the remote's version with ours and
+            pushes the *merged* result, which was never validated -- two edits that are each
+            valid can merge into an invalid project file (e.g. a duplicated component). It
+            also makes the caller's post-push state diverge from git, because the caller
+            still holds its pre-merge version. ProjectStore therefore pushes with
+            allow_rebase=False so divergence surfaces as GitPushConflictError, and it
+            re-reads, re-applies and re-validates before pushing again.
         """
         await self.ensure_repo_cloned()
 
@@ -1424,6 +1446,15 @@ class GitConnector:
             if not is_non_fast_forward:
                 # Some other error, fail immediately
                 self._check_git_command_result(code, stderr, f"push changes to {target_branch}")
+
+            if not allow_rebase:
+                # Hand the divergence to the caller instead of resolving it with a blind
+                # text merge. The caller re-reads, re-applies and re-validates.
+                server_info = self._get_server_context()
+                raise GitPushConflictError(
+                    f"Cannot push to {target_branch} on {server_info}: remote has moved "
+                    f"(non-fast-forward). Caller must re-read and re-apply."
+                )
 
             # Non-fast-forward error - try to rebase and retry
             if attempt < max_retries - 1:
@@ -1600,6 +1631,124 @@ class GitConnector:
             return []
 
         return [line.strip() for line in stdout.splitlines() if line.strip()]
+
+    async def build_commit(self, changes: dict[str, str | None], message: str, parent: str | None = None) -> str | None:
+        """Build a commit object directly, without touching the working tree or shared index.
+
+        Uses git's low-level object commands so a write never materialises a file in the
+        shared working copy. Every operation gets its OWN index (``GIT_INDEX_FILE``), so
+        two concurrent writers can never see each other's staged state, and a failure
+        leaves nothing behind: the temporary index is simply discarded.
+
+        This deliberately replaces the ``write file`` + ``git add -A`` + ``commit`` path for
+        project files. ``git add -A`` stages *everything* in the working tree, which on a
+        shared warm copy means one writer's commit can carry another writer's half-written
+        file -- or a pending deletion -- to the remote.
+
+        Args:
+            changes: repo-relative path -> new content, or None to delete that path
+            message: commit message
+            parent: parent commit (defaults to current HEAD; None-and-no-HEAD makes a root commit)
+
+        Returns:
+            The new commit sha, or None when the resulting tree is identical to the parent's
+            (nothing to commit). The branch ref is NOT moved -- call ``set_branch_ref``.
+        """
+        await self.ensure_repo_cloned()
+
+        if parent is None:
+            stdout, _, code = await self._run_git_command(["rev-parse", "HEAD"], cwd=self.__working_dir)
+            parent = stdout.strip() if code == 0 else None
+
+        index_fd, index_path = tempfile.mkstemp(prefix="git-index-", dir=settings.TEMP_DIR)
+        os.close(index_fd)
+        os.unlink(index_path)  # git wants to create it itself
+        index_env = {"GIT_INDEX_FILE": index_path}
+
+        try:
+            if parent:
+                _, stderr, code = await self._run_git_command(
+                    ["read-tree", parent], env=index_env, cwd=self.__working_dir
+                )
+                self._check_git_command_result(code, stderr, f"read-tree {parent}")
+
+            for file_path, content in changes.items():
+                clean_path = self._get_full_path(file_path)
+                if content is None:
+                    _, stderr, code = await self._run_git_command(
+                        ["update-index", "--force-remove", clean_path], env=index_env, cwd=self.__working_dir
+                    )
+                    self._check_git_command_result(code, stderr, f"update-index --force-remove {clean_path}")
+                    continue
+
+                blob, stderr, code = await self._run_git_command(
+                    ["hash-object", "-w", "--stdin"], cwd=self.__working_dir, stdin=content
+                )
+                self._check_git_command_result(code, stderr, f"hash-object for {clean_path}")
+
+                _, stderr, code = await self._run_git_command(
+                    ["update-index", "--add", "--cacheinfo", f"100644,{blob.strip()},{clean_path}"],
+                    env=index_env,
+                    cwd=self.__working_dir,
+                )
+                self._check_git_command_result(code, stderr, f"update-index --add {clean_path}")
+
+            tree, stderr, code = await self._run_git_command(["write-tree"], env=index_env, cwd=self.__working_dir)
+            self._check_git_command_result(code, stderr, "write-tree")
+            tree = tree.strip()
+
+            if parent:
+                parent_tree, _, code = await self._run_git_command(
+                    ["rev-parse", f"{parent}^{{tree}}"], cwd=self.__working_dir
+                )
+                if code == 0 and parent_tree.strip() == tree:
+                    logger.debug("build_commit: tree unchanged, nothing to commit")
+                    return None
+
+            # commit-tree reads the identity from the environment first, and this container
+            # can have GIT_AUTHOR_NAME set to an empty string, which git rejects. Pass it
+            # explicitly so the commit never depends on ambient environment.
+            identity = {
+                "GIT_AUTHOR_NAME": GIT_COMMIT_AUTHOR_NAME,
+                "GIT_AUTHOR_EMAIL": GIT_COMMIT_AUTHOR_EMAIL,
+                "GIT_COMMITTER_NAME": GIT_COMMIT_AUTHOR_NAME,
+                "GIT_COMMITTER_EMAIL": GIT_COMMIT_AUTHOR_EMAIL,
+            }
+            commit_args = ["commit-tree", tree]
+            if parent:
+                commit_args += ["-p", parent]
+            commit_args += ["-m", message]
+            commit, stderr, code = await self._run_git_command(commit_args, env=identity, cwd=self.__working_dir)
+            self._check_git_command_result(code, stderr, "commit-tree")
+
+            logger.debug(f"Built commit {commit.strip()} for {len(changes)} path(s) without a working tree")
+            return commit.strip()
+        finally:
+            if os.path.exists(index_path):
+                os.unlink(index_path)
+
+    async def set_branch_ref(self, commit: str, branch: str | None = None) -> None:
+        """Point the local branch at ``commit``.
+
+        Separated from ``build_commit`` on purpose: the caller moves the ref only when it
+        intends to publish, and rolling back after a failed push is just moving it back --
+        no working tree to clean up.
+        """
+        target_branch = branch or self.branch
+        _, stderr, code = await self._run_git_command(
+            ["update-ref", f"refs/heads/{target_branch}", commit], cwd=self.__working_dir
+        )
+        self._check_git_command_result(code, stderr, f"update-ref refs/heads/{target_branch}")
+
+    async def sync_worktree_to_head(self) -> None:
+        """Make the working copy match HEAD again after a plumbing commit.
+
+        Writes bypass the working tree, so after moving the ref the checkout is stale.
+        Keeping it in step preserves the invariant that the warm copy mirrors HEAD, which
+        the read paths and any leftover working-tree reader rely on.
+        """
+        _, stderr, code = await self._run_git_command(["reset", "--hard", "HEAD"], cwd=self.__working_dir)
+        self._check_git_command_result(code, stderr, "reset --hard HEAD")
 
     async def close(self) -> None:
         """Clean up resources. Safe to call multiple times."""

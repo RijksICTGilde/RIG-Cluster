@@ -217,6 +217,9 @@ class TestSaveAndCommitProjectValidation:
         # No prior committed version: `before` is None and nothing is migrated.
         git.show_file_at = AsyncMock(return_value=None)
         git.get_local_commit_hash = AsyncMock(return_value="deadbeef")
+        # The store builds a commit from git objects instead of writing into a working
+        # tree, so build_commit is the thing that must (not) happen.
+        git.build_commit = AsyncMock(return_value="newcommit")
         return git
 
     @pytest.mark.asyncio
@@ -235,14 +238,13 @@ class TestSaveAndCommitProjectValidation:
 
         with (
             patch("opi.manager.project_manager.get_project_store", return_value=self._store_with(git, tmp_path)),
-            patch("opi.services.project_store.save_yaml_to_path") as save_mock,
             patch("opi.services.project_store.get_project_service") as svc_mock,
             pytest.raises(ProjectSchemaError),
         ):
             await pm.save_and_commit_project(invalid, "msg")
 
-        save_mock.assert_not_called()
-        git.commit_and_push.assert_not_called()
+        git.build_commit.assert_not_awaited()
+        git.push_changes.assert_not_awaited()
         svc_mock.return_value.load_project_from_data.assert_not_called()
 
     @pytest.mark.asyncio
@@ -283,18 +285,23 @@ class TestSaveAndCommitProjectValidation:
         with (
             patch("opi.services.project_store.validate_project_structure", new=AsyncMock()),
             patch("opi.manager.project_manager.get_project_store", return_value=self._store_with(git, tmp_path)),
-            patch("opi.services.project_store.save_yaml_to_path") as save_mock,
             patch("opi.services.project_store.get_project_service") as svc_mock,
         ):
             await pm.save_and_commit_project(valid, "Add component")
 
-        save_mock.assert_called_once()
-        git.commit_and_push.assert_awaited_once_with("Add component")
+        git.build_commit.assert_awaited_once()
+        assert git.build_commit.await_args.args[1] == "Add component"
+        git.push_changes.assert_awaited_once()
         svc_mock.return_value.load_project_from_data.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_write_happens_before_commit(self, tmp_path):
-        """Ordering guard: the file must be on disk before the commit is made."""
+    async def test_validation_happens_before_the_commit_is_built(self, tmp_path):
+        """Ordering guard: nothing is committed until validation has passed.
+
+        The write and the commit are one operation now (the content goes straight into a
+        git object), so the ordering that still carries meaning is validate -> build ->
+        push: an invalid project must never reach an object, let alone the remote.
+        """
         from unittest.mock import AsyncMock, patch
 
         pm = ProjectManager.__new__(ProjectManager)
@@ -302,18 +309,21 @@ class TestSaveAndCommitProjectValidation:
 
         order: list[str] = []
         git = self._fake_git()
-        git.commit_and_push = AsyncMock(side_effect=lambda *a, **k: order.append("commit"))
+        git.build_commit = AsyncMock(side_effect=lambda *a, **k: (order.append("build"), "newcommit")[1])
+        git.push_changes = AsyncMock(side_effect=lambda *a, **k: order.append("push"))
         valid = _valid_project_for_save()
 
         with (
-            patch("opi.services.project_store.validate_project_structure", new=AsyncMock()),
+            patch(
+                "opi.services.project_store.validate_project_structure",
+                new=AsyncMock(side_effect=lambda *a, **k: order.append("validate")),
+            ),
             patch("opi.manager.project_manager.get_project_store", return_value=self._store_with(git, tmp_path)),
-            patch("opi.services.project_store.save_yaml_to_path", side_effect=lambda *a, **k: order.append("write")),
             patch("opi.services.project_store.get_project_service"),
         ):
             await pm.save_and_commit_project(valid, "Add component")
 
-        assert order == ["write", "commit"]
+        assert order == ["validate", "build", "push"]
 
     @pytest.mark.asyncio
     async def test_refresh_cache_false_skips_cache_load(self, tmp_path):
@@ -329,12 +339,11 @@ class TestSaveAndCommitProjectValidation:
         with (
             patch("opi.services.project_store.validate_project_structure", new=AsyncMock()),
             patch("opi.manager.project_manager.get_project_store", return_value=self._store_with(git, tmp_path)),
-            patch("opi.services.project_store.save_yaml_to_path"),
             patch("opi.services.project_store.get_project_service") as svc_mock,
         ):
             await pm.save_and_commit_project(valid, "Add component", refresh_cache=False)
 
-        git.commit_and_push.assert_awaited_once()
+        git.build_commit.assert_awaited_once()
         svc_mock.return_value.load_project_from_data.assert_not_called()
 
     @pytest.mark.asyncio
@@ -357,13 +366,12 @@ class TestSaveAndCommitProjectValidation:
                 new=AsyncMock(side_effect=ProjectIntegrityError("pre-existing drift")),
             ),
             patch("opi.manager.project_manager.get_project_store", return_value=self._store_with(git, tmp_path)),
-            patch("opi.services.project_store.save_yaml_to_path") as save_mock,
             patch("opi.services.project_store.get_project_service"),
         ):
             await pm.save_and_commit_project(valid, "auto-tune", enforce_validation=False)
 
-        save_mock.assert_called_once()
-        git.commit_and_push.assert_awaited_once()
+        git.build_commit.assert_awaited_once()
+        git.push_changes.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_enforce_validation_true_aborts_on_structural_failure(self, tmp_path):
@@ -384,11 +392,10 @@ class TestSaveAndCommitProjectValidation:
                 new=AsyncMock(side_effect=ProjectIntegrityError("introduced drift")),
             ),
             patch("opi.manager.project_manager.get_project_store", return_value=self._store_with(git, tmp_path)),
-            patch("opi.services.project_store.save_yaml_to_path") as save_mock,
             patch("opi.services.project_store.get_project_service"),
             pytest.raises(ProjectIntegrityError),
         ):
             await pm.save_and_commit_project(valid, "user edit")
 
-        save_mock.assert_not_called()
-        git.commit_and_push.assert_not_awaited()
+        git.build_commit.assert_not_awaited()
+        git.push_changes.assert_not_awaited()
