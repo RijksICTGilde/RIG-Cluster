@@ -327,6 +327,12 @@ class DeploymentResult:
 class ProjectManager:
     """Manager for project resources and deployments."""
 
+    # Class-level default: the state get_contents() last returned, used as the
+    # compare-and-swap base on save. Declared here so instances that bypass
+    # __init__ (tests calling the unbound methods with a stand-in self) still
+    # resolve it, and so the attribute has one documented home.
+    __contents_as_read: dict[str, Any] | None = None
+
     def __init__(
         self,
         *,
@@ -334,6 +340,7 @@ class ProjectManager:
         git_connector_for_project_files: GitConnector | None = None,
     ) -> None:
         self.__has_contents = False
+        self.__contents_as_read: dict[str, Any] | None = None
         logger.debug("Initializing ProjectManager")
         self._project_file_relative_path = project_file_relative_path
         self._kubectl_connector = KubectlConnector()
@@ -1372,6 +1379,12 @@ class ProjectManager:
         # Routed through the ProjectStore so this write is serialized against every
         # other project-file writer in the process, validated on the final state,
         # rolled back cleanly on push failure, and written through to the cache.
+        #
+        # base is what get_contents() last handed out. It turns this into a
+        # compare-and-swap: if someone else wrote in between, the store merges and
+        # re-validates rather than silently publishing over their change. None when
+        # the caller built project_data without reading first (create), which is the
+        # one case where there is nothing to lose.
         await get_project_store().save(
             str(project_data.get("name")),
             project_data,
@@ -1380,7 +1393,13 @@ class ProjectManager:
             enforce_validation=enforce_validation,
             filename=filename,
             refresh_cache=refresh_cache,
+            base=self.__contents_as_read,
         )
+
+        # This manager now knows the current state, so a second save from the same
+        # instance compares against what it just wrote instead of against the older
+        # read -- which would otherwise look like a concurrent change.
+        self.__contents_as_read = copy.deepcopy(project_data)
 
     async def mutate_and_commit_project(
         self,
@@ -6211,6 +6230,12 @@ class ProjectManager:
         data = await get_project_store().read_path(str(self._project_file_relative_path))
         if data is None:
             raise ValueError(f"Project file not found: {self._project_file_relative_path}")
+
+        # Remember what was read so save_and_commit_project() can hand it to the store
+        # as the compare-and-swap base. Nearly every write goes read-here/write-later
+        # through this one class, so recording it here covers those call sites without
+        # touching any of them. A copy, because callers mutate the dict they get back.
+        self.__contents_as_read = copy.deepcopy(data)
         return data
 
     async def get_decrypted_view(self) -> dict[str, Any]:

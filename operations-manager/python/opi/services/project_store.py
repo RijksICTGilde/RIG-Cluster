@@ -49,6 +49,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from deepdiff import DeepDiff, Delta
+from deepdiff.delta import DeltaError
+
 from opi.connectors.git import GitConnector, GitPushConflictError, create_git_connector_for_project_files
 from opi.core.config import settings
 from opi.core.project_schema import (
@@ -84,6 +87,15 @@ class ConcurrencyError(ProjectStoreError):
 
 class ProjectNotFoundError(ProjectStoreError):
     """The requested project does not exist in the store."""
+
+
+class ConflictError(ProjectStoreError):
+    """The project file changed after the caller read it, and the two changes
+    could not be combined automatically.
+
+    Retryable: the caller should re-read and re-apply. Raised instead of silently
+    publishing the caller's version, which would drop the other writer's change.
+    """
 
 
 @dataclass(frozen=True)
@@ -354,24 +366,38 @@ class GitProjectStore(ProjectStore):
         enforce_validation: bool = True,
         filename: str | None = None,
         refresh_cache: bool = True,
+        base: dict[str, Any] | None = None,
     ) -> MutationResult:
         """Persist a pre-built project dict (create or update).
 
-        This is the compatibility path for callers that still build the full
-        dict themselves before saving. It gains the store's lock, validation,
-        rollback and write-through cache, but NOT the read-modify-write
-        guarantee: the dict was built from state read earlier, so two concurrent
-        savers can still lose an update *on this file*. Prefer ``mutate`` for
-        anything that reads-then-writes -- it re-reads under the lock and re-applies.
+        This is the compatibility path for callers that build the full dict
+        themselves before saving. It gains the store's lock, validation, rollback
+        and write-through cache.
 
-        On a push conflict the same dict is re-published on top of whatever landed. That
-        is last-writer-wins for this project file, but it can no longer clobber *other*
-        projects: the commit only ever contains this one path.
+        ``base`` is the state the caller read before building ``data``. Pass it and
+        the save becomes a compare-and-swap: if the committed file no longer matches
+        ``base``, someone wrote in between, and silently publishing ``data`` would
+        drop their change. The store then three-way merges and re-validates, and
+        raises ConflictError when that cannot be resolved -- a visible failure
+        instead of a silent lost update.
+
+        Without ``base`` the behaviour is the old last-writer-wins, kept so call
+        sites can adopt this incrementally. It still cannot clobber *other* projects:
+        the commit only ever contains this one path.
+
+        Note this is still weaker than ``mutate``, which re-runs the caller's change
+        function on fresh state and therefore resolves the case a text merge cannot:
+        two edits to the same YAML list, e.g. both adding a component.
         """
         async with self._lock:
             connector = await self.get_connector()
             relative_path = self._relative_path(name, filename)
             last_error: Exception | None = None
+
+            if base is not None:
+                data = await self._reconcile_with_concurrent_write(
+                    connector, relative_path, name=name, base=base, data=data
+                )
 
             await self._validate(data, enforce=enforce_validation)
 
@@ -512,6 +538,57 @@ class GitProjectStore(ProjectStore):
 
         get_project_service().remove_project(name)
         logger.info("Deleted project '%s' (actor=%s)", name, actor)
+
+    async def _reconcile_with_concurrent_write(
+        self,
+        connector: GitConnector,
+        relative_path: str,
+        *,
+        name: str,
+        base: dict[str, Any],
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Compare-and-swap for a pre-built dict, with a three-way merge fallback.
+
+        Called under the lock. ``base`` is what the caller read; if the committed
+        file still matches it, nothing happened in between and ``data`` is published
+        as-is. If it does not, another writer landed first and publishing ``data``
+        would silently drop their work -- the exact lost update this exists to stop.
+
+        The merge is the same one a git rebase would have produced, except the result
+        is validated before it can be published. That ordering is the whole point:
+        the old code rebased and pushed unvalidated text, which is how two valid
+        edits became a project file with a duplicated component.
+
+        Raises ConflictError when the merge conflicts or the merged result does not
+        validate, so the caller can surface a retryable error instead of losing data.
+        """
+        current = await self._read_committed(connector, relative_path)
+        if current is None or current == base:
+            return data
+
+        logger.info("Project '%s' changed since it was read; re-applying our change on top of it", name)
+
+        merged = _apply_our_change_to(base=base, ours=data, theirs=current)
+        if merged is None:
+            raise ConflictError(
+                f"Project '{name}' is gewijzigd sinds u begon met bewerken, en die wijziging raakt "
+                f"hetzelfde onderdeel als de uwe. Haal de laatste versie op en voer uw wijziging opnieuw uit."
+            )
+
+        # Fails closed: a merge is only accepted when the RESULT is valid, never on
+        # the grounds that both inputs were.
+        try:
+            validate_project_schema(merged)
+            await validate_project_structure(merged)
+        except (ProjectSchemaError, ProjectIntegrityError) as e:
+            raise ConflictError(
+                f"Project '{name}' is gewijzigd sinds u begon met bewerken en de samengevoegde "
+                f"versie is ongeldig ({e}). Haal de laatste versie op en probeer opnieuw."
+            ) from e
+
+        logger.info("Three-way merge for '%s' applied and validated; both changes preserved", name)
+        return merged
 
     async def _validate(self, data: dict[str, Any], *, enforce: bool) -> None:
         """Schema + structural validation of the FINAL state, before any write.
@@ -800,6 +877,44 @@ class GitProjectStore(ProjectStore):
             logger.info("ProjectStore bootstrap loaded %d project(s)", len(loaded))
 
 
+def _apply_our_change_to(
+    *, base: dict[str, Any], ours: dict[str, Any], theirs: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Re-apply our change (base -> ours) on top of ``theirs``. None on conflict.
+
+    This is the git model -- replay the change onto what is there now -- but on the
+    parsed structure rather than on lines of text. That distinction is the whole
+    reason this is not a git merge: measured, ``git merge-file``, ``cherry-pick`` and
+    ``rebase`` all conflict when two writers each append a component, because the two
+    additions land on adjacent lines. Structurally they do not collide at all, and
+    both changes survive.
+
+    Conservative by construction: the delta records the value each edit started from
+    and refuses to apply when that value has changed underneath, so a genuine
+    same-field collision is reported rather than silently overwritten.
+
+    Known limitation: deltas address list entries by index, so a concurrent
+    *removal* earlier in a list shifts the positions of later entries and is reported
+    as a conflict even when the two edits are semantically unrelated. That fails
+    closed -- an error, never a lost update -- and matching entries by their name key
+    would refine it.
+    """
+    try:
+        # log_errors=False: a conflict is an expected outcome here, not a fault. Left on,
+        # deepdiff logs it at ERROR and every ordinary concurrent edit would page the
+        # log watch. The caller gets a ConflictError and logs it once, with context.
+        delta = Delta(DeepDiff(base, ours), raise_errors=True, bidirectional=True, log_errors=False)
+        return copy.deepcopy(theirs) + delta
+    except DeltaError as e:
+        logger.info("Could not re-apply our change on top of the newer version: %s", e)
+        return None
+    except (TypeError, ValueError, KeyError, IndexError) as e:
+        # A malformed or unrepresentable delta must not take the write down; treat it
+        # as a conflict so the caller re-reads instead.
+        logger.warning("Structural merge failed unexpectedly, treating as a conflict: %s", e)
+        return None
+
+
 def _users_from_data(data: dict[str, Any]) -> list[ProjectUser] | None:
     """Members declared in a project file, for the degraded _refresh_cache path."""
     users_data = data.get("users", [])
@@ -832,6 +947,7 @@ def reset_project_store() -> None:
 
 __all__ = [
     "ConcurrencyError",
+    "ConflictError",
     "GitProjectStore",
     "MutationResult",
     "ProjectNotFoundError",
