@@ -75,6 +75,10 @@ class KeycloakConnector:
         add_master_idp: bool = False,
         sso_session_idle_timeout: int | None = None,
         sso_session_max_lifespan: int | None = None,
+        events_enabled: bool | None = None,
+        events_expiration: int | None = None,
+        admin_events_enabled: bool | None = None,
+        admin_events_details_enabled: bool | None = None,
     ) -> dict[str, Any]:
         """
         Create a new realm in Keycloak.
@@ -87,6 +91,10 @@ class KeycloakConnector:
                 omitted, Keycloak's default (30 min) is kept.
             sso_session_max_lifespan: Optional SSO session max lifespan in seconds. When
                 omitted, Keycloak's default (10 hours) is kept.
+            events_enabled: Optional; store user events (login, UPDATE_PROFILE, ...).
+            events_expiration: Optional user-event retention in seconds.
+            admin_events_enabled: Optional; store admin events.
+            admin_events_details_enabled: Optional; include representations in admin events.
 
         Returns:
             Dictionary containing realm information including client details
@@ -100,6 +108,19 @@ class KeycloakConnector:
             session_settings["ssoSessionIdleTimeout"] = sso_session_idle_timeout
         if sso_session_max_lifespan is not None:
             session_settings["ssoSessionMaxLifespan"] = sso_session_max_lifespan
+
+        # Audit-event settings from the realm blueprint; like the session settings these
+        # are applied both on create and on replay, so existing realms are brought in
+        # line on reconcile.
+        event_settings: dict[str, Any] = {}
+        if events_enabled is not None:
+            event_settings["eventsEnabled"] = events_enabled
+        if events_expiration is not None:
+            event_settings["eventsExpiration"] = events_expiration
+        if admin_events_enabled is not None:
+            event_settings["adminEventsEnabled"] = admin_events_enabled
+        if admin_events_details_enabled is not None:
+            event_settings["adminEventsDetailsEnabled"] = admin_events_details_enabled
 
         realm_data = {
             "realm": realm_name,
@@ -121,6 +142,7 @@ class KeycloakConnector:
             "clientAuthenticationFlow": "clients",
             "dockerAuthenticationFlow": "docker auth",
             **session_settings,
+            **event_settings,
         }
 
         try:
@@ -131,17 +153,21 @@ class KeycloakConnector:
             except KeycloakPostError as e:
                 if "409" in str(e) or "Conflict" in str(e):
                     logger.info(f"Realm {realm_name} already exists, using existing realm")
-                    # Apply only the session settings to the existing realm. A full
-                    # realm_data update would reset browserFlow etc. and break the
-                    # custom "External IDP Redirector" flow on the platform realm.
-                    if session_settings:
-                        self.admin.update_realm(realm_name=realm_name, payload=session_settings)
-                        logger.info(f"Updated session settings on existing realm {realm_name}: {session_settings}")
+                    # Apply only the session and audit-event settings to the existing
+                    # realm. A full realm_data update would reset browserFlow etc. and
+                    # break the custom "External IDP Redirector" flow on the platform realm.
+                    replay_settings = {**session_settings, **event_settings}
+                    if replay_settings:
+                        self.admin.update_realm(realm_name=realm_name, payload=replay_settings)
+                        logger.info(f"Updated settings on existing realm {realm_name}: {replay_settings}")
                 else:
                     raise
 
             # Get the realm details
             realm_info = self.admin.get_realm(realm_name=realm_name)
+
+            # Make identity fields read-only for end users (impersonation hardening).
+            await self._lock_identity_fields(realm_name)
 
             # Optionally add master OIDC identity provider
             if add_master_idp:
@@ -178,6 +204,36 @@ class KeycloakConnector:
         except KeycloakError as e:
             logger.error(f"Failed to create realm {realm_name}: {e}")
             raise
+
+    # Identity fields that downstream authorization trusts (OPI and app allowlists key on the
+    # email claim). They are authoritatively provided by the SSO-Rijk IdP via FORCE mappers, so
+    # a user must not be able to self-edit them in the account console and become someone else.
+    _IMMUTABLE_USER_PROFILE_FIELDS = frozenset({"email", "firstName", "lastName"})
+
+    async def _lock_identity_fields(self, realm_name: str) -> None:
+        """Restrict edit of identity fields to admins in the realm's declarative user profile.
+
+        Setting edit permission to admin-only makes email/firstName/lastName read-only in the
+        account console; IdP mappers and admin writes are unaffected. Best-effort: a user-profile
+        API failure is logged but does not abort realm provisioning.
+        """
+        try:
+            self.admin.change_current_realm(realm_name)
+            profile = self.admin.get_realm_users_profile()
+            changed = False
+            for attr in profile.get("attributes", []):
+                if attr.get("name") in self._IMMUTABLE_USER_PROFILE_FIELDS:
+                    permissions = attr.setdefault("permissions", {})
+                    if permissions.get("edit") != ["admin"]:
+                        permissions["edit"] = ["admin"]
+                        changed = True
+            if changed:
+                self.admin.update_realm_users_profile(payload=profile)
+                logger.info(f"Locked identity fields (edit=admin) in user profile for realm {realm_name}")
+        except KeycloakError as e:
+            logger.error(f"Could not lock identity fields in user profile for realm {realm_name}: {e}")
+        finally:
+            self.admin.change_current_realm("master")
 
     async def delete_realm(self, realm_name: str) -> bool:
         """
@@ -1000,8 +1056,8 @@ class KeycloakConnector:
         principal_type: str = "SUBJECT",
         signing_certificate: str | None = None,
         sp_entity_id: str | None = None,
-        validate_signature: bool = False,
-        want_assertions_signed: bool = False,
+        validate_signature: bool = True,
+        want_assertions_signed: bool = True,
         want_assertions_encrypted: bool = False,
         authenticate_by_default: bool = True,
         sync_mode: str = "FORCE",
@@ -1036,6 +1092,15 @@ class KeycloakConnector:
             Dictionary containing provider information
         """
         logger.info(f"Adding SAML identity provider {provider_alias} to realm {realm_name}")
+
+        # Fail closed: signature validation without a pinned certificate cannot verify
+        # anything. Refuse rather than silently create an IdP that accepts forged assertions.
+        if validate_signature and not signing_certificate:
+            raise ValueError(
+                f"SAML identity provider {provider_alias}: validate_signature is enabled but no "
+                "signing_certificate was provided; refusing to create an IdP that cannot verify "
+                "assertion signatures"
+            )
 
         # Build SAML configuration
         provider_config = {
