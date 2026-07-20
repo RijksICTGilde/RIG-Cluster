@@ -51,7 +51,12 @@ from typing import Any
 
 from opi.connectors.git import GitConnector, GitPushConflictError, create_git_connector_for_project_files
 from opi.core.config import settings
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
+from opi.core.project_schema import (
+    ProjectIntegrityError,
+    ProjectSchemaError,
+    find_plaintext_secret_violations,
+    validate_project_schema,
+)
 from opi.manager.project_validation import validate_project_structure
 from opi.services.project_service import Project, ProjectUser, get_project_service
 from opi.services.schema_migration import migrate_to_latest
@@ -522,6 +527,16 @@ class GitProjectStore(ProjectStore):
         except (ProjectSchemaError, ProjectIntegrityError) as e:
             if enforce:
                 raise
+            # enforce=False tolerates pre-existing drift, never a decrypted secret.
+            # Writing back a get_decrypted() view would otherwise land plaintext
+            # credentials in git through one of the 11 non-enforcing call sites.
+            leaked = find_plaintext_secret_violations(data)
+            if leaked:
+                raise ProjectSchemaError(
+                    f"Projectbestand '{data.get('name', '(onbekend)')}' is geweigerd: "
+                    f"de volgende velden moeten AGE-versleuteld zijn maar bevatten platte tekst: "
+                    f"{', '.join(leaked)}. Dit wordt ook met enforce_validation=False geweigerd."
+                ) from e
             logger.warning(
                 "Persisting project '%s' despite a validation failure (enforce_validation=False); "
                 "the project file has pre-existing drift that should be repaired: %s",
