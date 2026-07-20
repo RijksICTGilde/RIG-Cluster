@@ -55,6 +55,7 @@ from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, v
 from opi.manager.project_validation import validate_project_structure
 from opi.services.project_service import Project, ProjectUser, get_project_service
 from opi.services.schema_migration import migrate_to_latest
+from opi.services.user_service import get_user_service
 from opi.utils.age import decrypt_age_content, get_decoded_project_private_key
 from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
 
@@ -560,6 +561,20 @@ class GitProjectStore(ProjectStore):
         Returns:
             The published commit ref, or the unchanged HEAD when there was nothing to commit.
         """
+        # Self-heal before building on top of local state. The rollback below is itself
+        # an await, so a teardown that interrupts it (double cancel, loop shutdown) can
+        # leave the branch on a commit that was never acknowledged by a push. Building
+        # the next commit on that parent would publish it silently, under an unrelated
+        # message. Local-only check, no network on the happy path.
+        unpushed = await connector.count_unpushed_commits()
+        if unpushed:
+            logger.warning(
+                "Warm copy has %d unpushed commit(s) -- discarding them before publishing. "
+                "This means an earlier rollback did not complete.",
+                unpushed,
+            )
+            await connector.reset_to_remote()
+
         old_head = await connector.get_local_commit_hash()
 
         commit = await connector.build_commit(changes, message)
@@ -582,14 +597,20 @@ class GitProjectStore(ProjectStore):
 
     def _refresh_cache(self, name: str, data: dict[str, Any], filename: str) -> Project:
         """Write-through cache update. Called only after a successful push."""
-        get_project_service().load_project_from_data(data, filename)
-        project = get_project_service().get_project(name)
+        service = get_project_service()
+        service.load_project_from_data(data, filename)
+        project = service.get_project(name)
         if project is None:
             # load_project_from_data rejected the data (e.g. missing api-key).
-            # The write is already durable, so build a minimal entry rather than
-            # leaving readers with a stale version.
-            project = Project(name=name, api_key="", filename=filename, users=None, data=data)
-            get_project_service().register(name, "", filename, None, data)
+            # The write is already durable, so register a minimal entry rather than
+            # leaving readers with a stale version -- but carry the members over, or
+            # every team member of this project silently loses portal access until
+            # the next restart.
+            users = _users_from_data(data)
+            service.register(name, "", filename, users, data)
+            project = service.get_project(name) or Project(
+                name=name, api_key="", filename=filename, users=users, data=data
+            )
         return project
 
     async def _read_committed(
@@ -626,9 +647,33 @@ class GitProjectStore(ProjectStore):
         project exists in the cache. Same authoritative source and schema migration as
         ``read_at``; it exists so those callers never need a working directory of their
         own, which is what let them read and write around the store.
+
+        At HEAD this is served from the in-memory cache. ``get_contents()`` has ~54 call
+        sites, and going to git each time forks a subprocess per call (~5ms against
+        ~0.1ms for the previous working-tree read) -- which would make the store's one
+        remaining read path its slowest, right after the rest of the app was moved onto
+        the instant cached one. The cache is the same write-through state ``get()``
+        serves to every other reader, so this is no weaker a guarantee than the rest of
+        the read path; a non-HEAD ref still goes to git.
         """
+        if ref == "HEAD":
+            cached = self._cached_by_filename(os.path.basename(relative_path))
+            if cached is not None:
+                return copy.deepcopy(cached)
+
         connector = await self.get_connector()
         return await self._read_committed(connector, relative_path, ref=ref)
+
+    def _cached_by_filename(self, filename: str) -> dict[str, Any] | None:
+        """Cached project data for a project file, by its basename.
+
+        Returns None when the project is not cached, so the caller falls back to
+        git -- ProjectManager can run before a project reaches the cache.
+        """
+        for project in self.get_all():
+            if project.filename == filename and project.data is not None:
+                return project.data
+        return None
 
     async def previous(self, name: str) -> dict[str, Any] | None:
         """The last version of THIS file before HEAD.
@@ -704,41 +749,44 @@ class GitProjectStore(ProjectStore):
 
         Starts from the remote state (reset --hard origin) because only pushed
         writes were ever acknowledged, so discarding local-only state is safe.
+
+        One pass, through the same parser every other load uses, so entries land
+        fully formed -- api-key already decrypted. An earlier version registered
+        the raw ciphertext and decrypted in a second pass outside the lock, which
+        left a window where API-key authentication compared against ciphertext.
         """
         async with self._lock:
             connector = await self.get_connector()
+            service = get_project_service()
 
             loaded: dict[str, Project] = {}
+            member_emails: list[str] = []
             for filename in await self._list_project_files(connector):
                 data = await self._read_committed(connector, f"{PROJECTS_SUBDIR}/{filename}")
                 if data is None:
                     logger.warning("Could not read project file %s", filename)
                     continue
-                name = data.get("name")
-                if not name:
-                    logger.warning("Project file %s has no 'name', skipping", filename)
+                project = service.build_project_from_data(data, filename)
+                if project is None:
+                    logger.warning("Could not load project file %s into the cache", filename)
                     continue
-                loaded[str(name)] = Project(
-                    name=str(name),
-                    api_key=str((data.get("config") or {}).get("api-key", "")),
-                    filename=filename,
-                    users=_users_from_data(data),
-                    data=data,
-                )
+                loaded[project.name] = project
+                member_emails.extend(user.email for user in project.users or [])
 
             # Build the full set first, then swap, so concurrent readers never
             # observe an empty or half-populated cache.
-            get_project_service().replace_all_projects(loaded)
-            logger.info("ProjectStore bootstrap loaded %d project(s)", len(loaded))
+            service.replace_all_projects(loaded)
 
-        # Re-register through the normal path so API keys are decrypted and
-        # member emails reach the access allowlist.
-        for project in list(loaded.values()):
-            if project.data is not None:
-                get_project_service().load_project_from_data(project.data, project.filename)
+            # replace_all_projects bypasses register(), which is what normally keeps
+            # the access allowlist in sync, so feed it here.
+            if member_emails:
+                get_user_service().add_allowed_emails(member_emails)
+
+            logger.info("ProjectStore bootstrap loaded %d project(s)", len(loaded))
 
 
 def _users_from_data(data: dict[str, Any]) -> list[ProjectUser] | None:
+    """Members declared in a project file, for the degraded _refresh_cache path."""
     users_data = data.get("users", [])
     if not isinstance(users_data, list):
         return None

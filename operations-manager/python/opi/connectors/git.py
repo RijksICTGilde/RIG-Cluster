@@ -1750,6 +1750,27 @@ class GitConnector:
         _, stderr, code = await self._run_git_command(["reset", "--hard", "HEAD"], cwd=self.__working_dir)
         self._check_git_command_result(code, stderr, "reset --hard HEAD")
 
+    async def count_unpushed_commits(self, branch: str | None = None) -> int:
+        """How many commits the local branch has that origin/<branch> does not.
+
+        Local-only (no fetch), because the case this exists for is a local commit
+        that was built and ref'd but never acknowledged by a push -- for instance
+        when a rollback could not complete. Returns 0 when the remote-tracking ref
+        is unknown, so a fresh clone does not read as diverged.
+        """
+        target_branch = branch or self.branch
+
+        stdout, stderr, code = await self._run_git_command(
+            ["rev-list", "--count", f"origin/{target_branch}..HEAD"], cwd=self.__working_dir
+        )
+        if code != 0:
+            logger.debug(f"Could not count unpushed commits for {target_branch}: {stderr}")
+            return 0
+        try:
+            return int(stdout.strip())
+        except ValueError:
+            return 0
+
     async def close(self) -> None:
         """Clean up resources. Safe to call multiple times."""
         if self._closed:

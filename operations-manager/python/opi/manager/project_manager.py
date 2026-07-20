@@ -1311,12 +1311,11 @@ class ProjectManager:
         current_cluster_deployments = await self.get_deployments(cluster_filter=True)
         return bool(current_cluster_deployments)
 
-    async def get_project_full_file_path(self):
-        if self._project_file_relative_path is None:
-            raise ValueError("Project file relative path is not set")
-        git_connector_for_project_files = await self.get_git_connector_for_project_files()
-        git_working_dir = await git_connector_for_project_files.get_working_dir()
-        return os.path.join(git_working_dir, str(self._project_file_relative_path))
+    # get_project_full_file_path() was removed with its last caller. It handed out a
+    # path into the shared warm working copy, and reading that path raced
+    # ProjectStore.reconcile(), which does `reset --hard` + `clean -fd` on the same
+    # directory under a lock this code never held. Change detection now reads the
+    # committed object via git show, which cannot tear.
 
     # save_project_data() was removed deliberately. It wrote the project file straight
     # into the shared warm working copy without committing, leaving the change to be
@@ -2346,13 +2345,12 @@ class ProjectManager:
         logger.info(f"Processing project from Git: {relative_project_file_path}")
 
         try:
-            project_full_file_path = await self.get_project_full_file_path()
             git_connector_for_project_files = await self.get_git_connector_for_project_files()
 
             # Use the file handler to analyze changes
             # TODO: change detection may turn out too difficult or unpredictable, so perhaps we should use API calls instead for partial changes
             analysis = await self._project_file_handler.analyze_project_changes(
-                git_connector_for_project_files, project_full_file_path, relative_project_file_path
+                git_connector_for_project_files, relative_project_file_path
             )
 
             current_yaml = analysis["current_yaml"]

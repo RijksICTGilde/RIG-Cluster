@@ -368,7 +368,6 @@ async def delete_deployment_web(request: Request, project_name: str, deployment_
             f"Web deployment deletion request for '{deployment_name}' in '{project_name}' by user: {user_email}"
         )
 
-
         if not is_user_authorized_for_project(project_name, user_email):
             return JSONResponse(content={"error": "Geen toegang tot dit project"}, status_code=403)
 
@@ -419,12 +418,10 @@ async def delete_component_web(request: Request, project_name: str, component_na
     try:
         from fastapi.responses import JSONResponse
 
-
         user = get_current_user(request)
         user_email = user.get("email", "").lower()
 
         logger.info(f"Web component deletion request for '{component_name}' in '{project_name}' by user: {user_email}")
-
 
         if not is_user_authorized_for_project(project_name, user_email):
             return JSONResponse(content={"error": "Geen toegang tot dit project"}, status_code=403)
@@ -490,7 +487,6 @@ async def refresh_project_web(request: Request, project_name: str) -> HTMLRespon
 
     logger.info(f"Web project refresh request for '{project_name}' by user: {user_email}")
 
-
     if not is_user_authorized_for_project(project_name, user_email):
         raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
 
@@ -524,7 +520,6 @@ async def refresh_deployment_web(request: Request, project_name: str, deployment
     user_email = user.get("email", "").lower()
 
     logger.info(f"Web deployment refresh request for '{project_name}/{deployment_name}' by user: {user_email}")
-
 
     if not is_user_authorized_for_project(project_name, user_email):
         raise HTTPException(status_code=403, detail="Geen toegang tot dit project")

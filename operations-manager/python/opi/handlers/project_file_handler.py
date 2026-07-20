@@ -20,7 +20,7 @@ from opi.services.resource_analyzer import _k8s_memory_to_mb
 from opi.services.schema_migration import migrate_to_latest
 from opi.utils.age import decrypt_age_block_to_bytes, decrypt_password_smart_sync, get_decoded_project_private_key
 from opi.utils.env_vars import validate_and_parse_env_vars
-from opi.utils.yaml_util import save_yaml_to_path
+from opi.utils.yaml_util import load_yaml_from_string, save_yaml_to_path
 
 if TYPE_CHECKING:
     from opi.connectors.git import GitConnector
@@ -536,16 +536,39 @@ class ProjectFileHandler:
                     return None
         return current
 
-    async def analyze_project_changes(
-        self, git_connector: GitConnector, full_file_path: str, relative_file_path: str
-    ) -> dict[str, Any]:
+    async def read_committed_project_file(
+        self, git_connector: GitConnector, relative_file_path: str
+    ) -> dict[str, str | list | dict[str, str]]:
+        """Read and parse the COMMITTED project file, straight from git objects.
+
+        Deliberately not a working-tree read. The warm working copy is shared, and
+        ``ProjectStore.reconcile()`` does ``reset --hard`` plus ``clean -fd`` on it
+        under the store's lock -- which this code path does not hold. Reading the
+        file from disk therefore races a routine reconcile (30s TTL, triggered by
+        ordinary page loads) and can observe a half-rewritten or missing file.
+        ``git show`` reads immutable objects, so it cannot tear.
+
+        Sets ``was_migrated`` exactly like read_project_file does, so the caller's
+        auto-migration commit keeps working.
+        """
+        if not self._project_data:
+            content = await git_connector.show_file_at("HEAD", relative_file_path)
+            if content is None:
+                raise ValueError(f"Project file not found at HEAD: {relative_file_path}")
+            raw_data = load_yaml_from_string(content)
+            if raw_data is None:
+                raise ValueError(f"Project file is empty or invalid YAML: {relative_file_path}")
+            migrated_data, self._was_migrated = migrate_to_latest(raw_data)
+            self._project_data = migrated_data
+        return self._project_data
+
+    async def analyze_project_changes(self, git_connector: GitConnector, relative_file_path: str) -> dict[str, Any]:
         """
         Analyze changes between current and previous versions of a project file.
 
         Args:
             git_connector: GitConnector to access the repository
             relative_file_path: Relative path to the YAML file within the repository
-            full_file_path: Full path to the YAML file on the OS
 
         Returns:
             Dictionary containing:
@@ -554,8 +577,8 @@ class ProjectFileHandler:
             - diff: DeepDiff result
             - changes: Structured changes with added/changed/deleted items
         """
-        # Read current YAML content
-        current_yaml = await self.read_project_file(full_file_path)
+        # Read current YAML content from the committed object, not the shared worktree
+        current_yaml = await self.read_committed_project_file(git_connector, relative_file_path)
 
         # Get previous YAML content from git history
         previous_yaml = await self.get_previous_yaml_content(git_connector, relative_file_path)

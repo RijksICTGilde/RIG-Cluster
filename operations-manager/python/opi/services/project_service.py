@@ -212,16 +212,16 @@ class ProjectService:
         )
         return api_key
 
-    def load_project_from_data(self, project_data: dict[str, Any], filename: str) -> bool:
-        """
-        Load project from a project data dictionary.
+    def build_project_from_data(self, project_data: dict[str, Any], filename: str) -> Project | None:
+        """Parse project data into a Project WITHOUT registering it.
 
-        Args:
-            project_data: Project configuration data
-            filename: The project configuration filename
+        Split out so a caller that needs the whole set before swapping it in
+        (ProjectStore.bootstrap) builds fully-formed entries -- in particular
+        with the api-key already decrypted. Registering the raw ciphertext and
+        decrypting in a second pass leaves a window in which API-key
+        authentication compares against the ciphertext.
 
-        Returns:
-            True if project was loaded successfully, False otherwise
+        Returns None when the data cannot be loaded (no name, no api-key).
         """
         try:
             project_data, _ = migrate_to_latest(project_data)
@@ -229,7 +229,7 @@ class ProjectService:
             project_name = project_data.get("name")
             if not project_name:
                 logger.warning("Project data missing 'name' field")
-                return False
+                return None
 
             # Extract API key from config section
             config = project_data.get("config", {})
@@ -237,7 +237,7 @@ class ProjectService:
 
             if not api_key:
                 logger.warning(f"No API key found in project config for: {project_name}")
-                return False
+                return None
 
             # Project files store api-key AGE-encrypted, but every API-layer
             # comparison runs against the registered value as plaintext.
@@ -256,18 +256,40 @@ class ProjectService:
                     if isinstance(user_data, dict) and "email" in user_data and "role" in user_data
                 )
 
-            success = self.register(project_name, str(api_key), filename, users or None, data=project_data)
-
-            if success:
-                logger.debug(f"Loaded project from project data: {project_name} (file: {filename})")
-                return success
-            else:
-                logger.error(f"Failed to register project: {project_name}")
-                return False
-
+            return Project(
+                name=str(project_name),
+                api_key=str(api_key),
+                filename=filename,
+                users=users or None,
+                data=project_data,
+            )
         except Exception:
-            logger.exception("Error loading project from project data")
+            logger.exception("Error building project from project data")
+            return None
+
+    def load_project_from_data(self, project_data: dict[str, Any], filename: str) -> bool:
+        """
+        Load project from a project data dictionary.
+
+        Args:
+            project_data: Project configuration data
+            filename: The project configuration filename
+
+        Returns:
+            True if project was loaded successfully, False otherwise
+        """
+        project = self.build_project_from_data(project_data, filename)
+        if project is None:
             return False
+
+        success = self.register(project.name, project.api_key, project.filename, project.users, data=project.data)
+
+        if success:
+            logger.debug(f"Loaded project from project data: {project.name} (file: {filename})")
+            return success
+
+        logger.error(f"Failed to register project: {project.name}")
+        return False
 
 
 def get_project_service() -> ProjectService:

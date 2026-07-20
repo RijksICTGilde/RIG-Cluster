@@ -159,25 +159,46 @@ class FakeGitConnector:
     # The store no longer writes into the working tree. It builds a commit from
     # objects, points the branch at it, pushes, and only then syncs the checkout.
 
+    def _tree_at(self, ref: str) -> dict[str, str]:
+        """The committed tree at a ref -- NOT the working tree."""
+        if ref in self._built:
+            return dict(self._built[ref][0])
+        return next((dict(c["files"]) for c in self.remote.commits if c["ref"] == ref), {})
+
     async def build_commit(self, changes: dict[str, str | None], message: str, parent: str | None = None) -> str | None:
-        new_tree = dict(self.tree)
+        # Built from the PARENT COMMIT's tree, never from self.tree. Real plumbing
+        # does read-tree <parent> into a private index and applies only the named
+        # paths, so a dirty working copy cannot leak into the commit. Deriving this
+        # from self.tree would reproduce the `git add -A` behaviour the store was
+        # rewritten to eliminate, and no test would notice.
+        parent_ref = parent or self.local_head
+        parent_tree = self._tree_at(parent_ref)
+
+        new_tree = dict(parent_tree)
         for path, content in changes.items():
             if content is None:
                 new_tree.pop(path, None)
             else:
                 new_tree[path] = content
-        if new_tree == self.tree:
+        if new_tree == parent_tree:
             return None
         ref = f"built-{len(self._built)}-{self.local_head}"
         self._built[ref] = (new_tree, message)
         return ref
 
     async def set_branch_ref(self, commit: str, branch: str | None = None) -> None:
-        self._staged_commit = commit
-        if commit not in self._built:
-            # Rolling back to an already-published commit.
-            self.local_head = commit
-            self._staged_commit = None
+        # Moves the branch unconditionally, like `git update-ref`. Leaving local_head
+        # alone for a freshly built commit would make the rollback assertions vacuous:
+        # HEAD would never have moved, so they would hold whether or not the store
+        # rolled back.
+        self.local_head = commit
+        self._staged_commit = commit if commit in self._built else None
+
+    async def count_unpushed_commits(self, branch: str | None = None) -> int:
+        if not self.remote.commits:
+            return 0
+        published = {c["ref"] for c in self.remote.commits}
+        return 0 if self.local_head in published else 1
 
     async def push_changes(self, branch: str | None = None, max_retries: int = 5, allow_rebase: bool = True) -> None:
         if self.on_before_push is not None:
