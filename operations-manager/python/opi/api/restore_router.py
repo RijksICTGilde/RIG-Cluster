@@ -28,7 +28,6 @@ from opi.manager.backup import (
 )
 from opi.manager.project_manager import ProjectManager
 from opi.services import ServiceType
-from opi.services.project_service import get_project_service
 from opi.services.project_store import get_project_store
 from opi.utils.naming import (
     generate_bucket_name,
@@ -675,8 +674,7 @@ async def restore_project_pvc(
         )
 
         # 1. Get project info
-        project_service = get_project_service()
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 
@@ -727,9 +725,7 @@ async def restore_project_pvc(
         # Get the base component for storage definitions
         base_component = base_components.get(body.component_name)
         if not base_component:
-            raise HTTPException(
-                status_code=404, detail=f"Base component '{body.component_name}' not found in project"
-            )
+            raise HTTPException(status_code=404, detail=f"Base component '{body.component_name}' not found in project")
 
         # 5. Find storage configuration from BASE component
         from opi.handlers.project_file_handler import extract_storage_from_component_services
@@ -1197,8 +1193,7 @@ async def restore_backup_run(
         logger.info(f"Backup run restore: project={project_name}, deployment={deployment_name}, run={backup_run_id}")
 
         # Get project and validate
-        project_service = get_project_service()
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
         if not project or not project.data:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found or has no data")
 
@@ -1627,8 +1622,7 @@ async def restore_deployment_resource(
             )
 
         # 1. Get project info
-        project_service = get_project_service()
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 

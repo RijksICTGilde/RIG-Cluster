@@ -101,8 +101,8 @@ def mock_project_service() -> Any:
     # Patch in both locations: endpoint_util (for auth) and logs_router (for usage)
     mock_service = MockProjectService()
     with (
-        patch("opi.api.endpoint_util.get_project_service", return_value=mock_service),
-        patch("opi.api.logs_router.get_project_service", return_value=mock_service),
+        patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+        patch("opi.api.logs_router.get_project_store", return_value=mock_service),
     ):
         yield mock_service
 

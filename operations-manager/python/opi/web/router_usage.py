@@ -14,7 +14,8 @@ from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.cluster_config import get_cluster_config, get_namespace_prefix
 from opi.core.config import settings
 from opi.core.templates import get_templates
-from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
+from opi.services.user_service import get_user_service
 from opi.web.menu import get_menu_items
 
 logger = logging.getLogger(__name__)
@@ -76,8 +77,7 @@ def _require_admin(request: Request) -> dict[str, Any]:
     if not user:
         raise HTTPException(status_code=401, detail="Niet ingelogd")
     email = user.get("email", "").lower()
-    project_service = get_project_service()
-    if not project_service.is_admin(email):
+    if not get_user_service().is_platform_admin(email):
         raise HTTPException(status_code=403, detail="Alleen beheerders hebben toegang")
     return user
 
@@ -112,8 +112,7 @@ def _get_namespace_filter(namespace: str | None, cluster_name: str) -> str:
 def _get_available_namespaces(cluster_name: str) -> list[str]:
     """Get available project namespaces from the project service."""
     prefix = get_namespace_prefix(cluster_name)
-    project_service = get_project_service()
-    projects = project_service.get_all_projects()
+    projects = get_project_store().get_all()
     namespaces = sorted({f"{prefix}{name}" for name in projects})
     opi_namespace = get_cluster_config(cluster_name).get("namespace")
     if opi_namespace and opi_namespace not in namespaces:

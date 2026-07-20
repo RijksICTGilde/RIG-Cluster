@@ -35,7 +35,10 @@ from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.manager.run_support import LABEL_RUN
-from opi.services.project_service import get_project_service
+from opi.services.project_authorization import (
+    is_user_authorized_for_project,
+)
+from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
 from opi.utils.naming import generate_unique_name
 from starlette.websockets import WebSocketState
@@ -347,10 +350,9 @@ async def stream_logs(
             return
 
         # === AUTHORIZATION ===
-        project_service = get_project_service()
 
         # Check if user has access to this project
-        if not project_service.is_user_authorized_for_project(project_name, user_email):
+        if not is_user_authorized_for_project(project_name, user_email):
             # Generic error to prevent project enumeration
             logger.warning(f"WebSocket auth failed: user {user_email} not authorized for {project_name}")
             await websocket.close(code=4003, reason="Access denied")
@@ -372,7 +374,7 @@ async def stream_logs(
         kubectl = KubectlConnector()
         current_cluster = settings.CLUSTER_MANAGER
 
-        all_projects = project_service.get_all_projects()
+        all_projects = get_project_store().get_all()
         if project_name not in all_projects:
             await send_message(websocket, "error", message="Resource not found")
             await websocket.close(code=4004)
@@ -725,7 +727,7 @@ async def stream_logs(
                             continue
                         if new_component and new_component != current_component:
                             # Re-fetch project data to get current components
-                            fresh_projects = project_service.get_all_projects()
+                            fresh_projects = get_project_store().get_all()
                             if project_name not in fresh_projects:
                                 await send_message(websocket, "error", message="Project no longer exists")
                                 running = False

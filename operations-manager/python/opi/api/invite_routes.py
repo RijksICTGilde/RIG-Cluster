@@ -27,7 +27,7 @@ from opi.manager.invite_manager import (
     InviteManager,
     UserExistsError,
 )
-from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
 from opi.utils.naming import generate_project_realm_name
 
 if TYPE_CHECKING:
@@ -199,13 +199,13 @@ async def _find_project_by_invite_key(key: str) -> tuple[str, dict[str, Any], di
 
     await ensure_projects_fresh()
 
-    project_service = get_project_service()
     handler = ProjectFileHandler()
 
     # Search all projects in memory
-    all_projects = project_service.get_all_projects()
+    all_projects = get_project_store().get_all()
 
-    for project_name, project in all_projects.items():
+    for project in all_projects:
+        project_name = project.name
         project_data = project.data
         if not project_data:
             continue

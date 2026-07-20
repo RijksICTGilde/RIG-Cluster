@@ -37,6 +37,10 @@ from opi.forms.wizard.session import (
     init_modal_state_tokenized,
     save_modal_state_by_token,
 )
+from opi.services.project_authorization import (
+    is_user_authorized_for_project,
+)
+from opi.services.project_store import get_project_store
 from opi.utils.csrf import reject_misfired_form_get
 from opi.web.project_edit_security import (
     apply_form_data_to_project,
@@ -158,17 +162,15 @@ def _render_section_html(
 
 def _require_project_member_access(request: Request, project_name: str):
     """Check auth for project member access (any role). Returns (project, user_email)."""
-    from opi.services.project_service import get_project_service
 
     user = get_current_user(request)
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
+    project = get_project_store().get(project_name)
 
     if not project:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
 
     user_email = user.get("email", "").lower()
-    if not project_service.is_user_authorized_for_project(project_name, user_email):
+    if not is_user_authorized_for_project(project_name, user_email):
         raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
 
     return project, user_email
@@ -1160,7 +1162,6 @@ async def _modal_do_submit(
     flow_id: str,
 ) -> HTMLResponse:
     """Execute the final modal wizard submission."""
-    from opi.services.project_service import get_project_service
 
     # TOCTOU recheck on the mutating request. Backup/restore has its own
     # member-level gate further down.
@@ -1210,8 +1211,7 @@ async def _modal_do_submit(
         merged_data.pop(key, None)
 
     # Merge with existing project data (preserve system-managed fields)
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
+    project = get_project_store().get(project_name)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
 

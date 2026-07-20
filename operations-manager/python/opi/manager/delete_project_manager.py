@@ -14,7 +14,6 @@ from opi.connectors.subdomain import SubdomainConnector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.services import ServiceAdapter, ServiceType
-from opi.services.project_service import get_project_service
 from opi.services.project_store import get_project_store
 
 if TYPE_CHECKING:
@@ -680,7 +679,7 @@ class DeleteProjectManager:
             logger.info(f"Force mode enabled for project deletion: {project_name}")
 
         # Look up actual filename from project service (filename may differ from project name)
-        project = get_project_service().get_project(project_name)
+        project = get_project_store().get(project_name)
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found in project service")
         self.project_manager._project_file_relative_path = f"projects/{project.filename}"
@@ -927,7 +926,7 @@ class DeleteProjectManager:
 
         try:
             # Look up actual filename from project service (filename may differ from project name)
-            project = get_project_service().get_project(project_name)
+            project = get_project_store().get(project_name)
             if not project:
                 result["errors"].append(f"Project '{project_name}' not found in project service")
                 result["success"] = False
@@ -1001,7 +1000,7 @@ class DeleteProjectManager:
             logger.info(f"Force mode enabled for deployment deletion: {project_name}/{deployment_name}")
 
         # Look up actual filename from project service (filename may differ from project name)
-        project = get_project_service().get_project(project_name)
+        project = get_project_store().get(project_name)
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found in project service")
         self.project_manager._project_file_relative_path = f"projects/{project.filename}"

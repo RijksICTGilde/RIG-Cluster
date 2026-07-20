@@ -51,6 +51,29 @@ before publishing. A genuine semantic conflict now surfaces as a clear domain er
 
 The interface is backend-agnostic: nothing git-specific leaks out (`ref` is an opaque string, not a
 commit SHA), so a `DatabaseProjectStore` could replace `GitProjectStore` without touching callers.
+Every read and every write goes through it -- there is no second door.
+
+### One way in, for reads as well as writes
+
+Reads used to go straight to `ProjectService` in 64 places, four of which also *wrote* to the
+cache. A direct cache write is how the cache and git drift apart: readers then see a version
+that is not in `zad-projects`. Startup made this worse by having two more loaders of its own.
+
+That is all gone:
+
+| Was | Is |
+|---|---|
+| `get_project_service().get_project(name)` | `get_project_store().get(name)` |
+| `get_project_service().get_all_projects()` (dict) | `get_project_store().get_all()` (list) |
+| `project_service.register/remove_project/replace_all_projects` | internal to the store |
+| startup's own file walk + `refresh_projects_from_git` | `store.bootstrap()` + `store.reconcile()` |
+| `ProjectManager.get_contents()` reading the working copy | `store.read_path()` |
+| restore handlers cloning `zad-projects` themselves | `store.read_at()` |
+
+`ProjectService` was three jobs in one class. The project cache stayed (now reached only through
+the store), authorization moved to `opi/services/project_authorization.py` -- which reads through
+the store like everything else -- and the platform-admin allowlist moved to `UserService`, next to
+the email allowlist it already owned.
 
 **Scope: the store owns `zad-projects` only.** The `zad-deployments` and `zad-argo-user-applications`
 repos keep using their own `ProjectManager` git connectors and are explicitly out of scope.
@@ -129,18 +152,19 @@ not block a recovery write. It is not a less-validated path.
   `get_project_data_from_git` changed from handing out a per-call clone to handing out the
   shared copy and one of its two callers was not updated.
 
-Two CI guards in `tests/test_single_path_enforcement.py` fail the build on a regression:
+Three CI guards in `tests/test_single_path_enforcement.py` fail the build on a regression:
 
-- `test_no_direct_projects_repo_clones_outside_the_store` -- a new direct clone of `zad-projects`
-  under `opi/api`, `opi/web`, `opi/core` or `opi/services`.
+- `test_project_cache_is_reached_only_through_the_store` -- any `get_project_service()` outside
+  the store. Need project data? `get_project_store()`. Need to know whether a user may touch a
+  project? `opi.services.project_authorization`. Need the admin allowlist? `UserService`.
+- `test_no_direct_projects_repo_clones_outside_the_store` -- a new direct clone of `zad-projects`.
+  The allowlist is empty: the store is the only code that clones that repo.
 - `test_no_one_closes_the_stores_warm_connector` -- code closing a connector obtained from the
   store. Scoped per variable name, so a connector a module builds itself with `GitConnector(...)`
   may still be closed.
 
 ## Not yet done
 
-- `opi/api/restore_router.py` still opens its own clone in three read-only restore paths
-  (allowlisted in the CI guard, with the reason).
 - Piece A of the design (diffing against the last *successfully processed* version instead of the
   previous commit) is not implemented. Change detection still uses the previous-commit baseline via
   `get_previous_file_content`. `store.read_at` and `MutationResult.ref` are the enablers for it.

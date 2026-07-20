@@ -271,7 +271,7 @@ class TestGetResourceHistoryFloor:
 
 
 class TestGetProjectDataDeepCopy:
-    @patch("opi.services.resource_tuning_service.get_project_service")
+    @patch("opi.services.resource_tuning_service.get_project_store")
     def test_returns_deep_copy(self, mock_get_service):
         """Mutations to returned data must not affect the cached project.data."""
         original_data = {"name": "test", "components": [{"name": "api", "resources": {}}]}
@@ -279,7 +279,7 @@ class TestGetProjectDataDeepCopy:
         mock_project.data = original_data
         mock_project.filename = "test.yaml"
         mock_service = MagicMock()
-        mock_service.get_project.return_value = mock_project
+        mock_service.get.return_value = mock_project
         mock_get_service.return_value = mock_service
 
         data, _ = get_project_data("test")
@@ -290,7 +290,7 @@ class TestGetProjectDataDeepCopy:
         # Original should be unaffected
         assert "history" not in original_data["components"][0]["resources"]
 
-    @patch("opi.services.resource_tuning_service.get_project_service")
+    @patch("opi.services.resource_tuning_service.get_project_store")
     def test_decrypted_fields_not_leaked(self, mock_get_service):
         """If project.data somehow has decrypted fields, they are on the copy, not the source."""
         original_data = {"name": "test", "deployments": [{"name": "prod"}]}
@@ -298,7 +298,7 @@ class TestGetProjectDataDeepCopy:
         mock_project.data = original_data
         mock_project.filename = "test.yaml"
         mock_service = MagicMock()
-        mock_service.get_project.return_value = mock_project
+        mock_service.get.return_value = mock_project
         mock_get_service.return_value = mock_service
 
         data, _ = get_project_data("test")

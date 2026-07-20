@@ -37,7 +37,7 @@ from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
 from opi.core.keycloak_client_startup import ensure_keycloak_credentials
 from opi.manager.project_manager import ProjectManager, create_project_manager
-from opi.services.project_service import get_project_service, initialize_project_service
+from opi.services.project_service import initialize_project_service
 from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
 
@@ -541,16 +541,15 @@ async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: 
         except Exception as e:
             logger.warning(f"Could not load platform users from database: {e}")
 
-        project_service = get_project_service()
         default_admin_emails = [
             "robbert.uittenbroek@rijksoverheid.nl",
         ]
-        project_service.add_admin_emails(default_admin_emails)
+        get_user_service().add_platform_admins(default_admin_emails)
 
         if settings.ADMIN_EMAILS:
             env_admin_emails = [email.strip() for email in settings.ADMIN_EMAILS.split(",") if email.strip()]
             if env_admin_emails:
-                project_service.add_admin_emails(env_admin_emails)
+                get_user_service().add_platform_admins(env_admin_emails)
 
         # Loading every project into the cache is the store's job, and only the store's.
         # This used to be a second, parallel loader here (walk the working copy, build a

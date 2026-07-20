@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_master_api_key
 from opi.api.task_models import TaskResponse, task_response_from_dict
-from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -67,8 +67,7 @@ def _validate_task_api_key(request: Request, task: dict) -> None:
     if not project_name:
         raise HTTPException(status_code=401, detail="Task has no associated project")
 
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
+    project = get_project_store().get(project_name)
     if not project or not secrets.compare_digest(project.api_key, api_key):
         raise HTTPException(status_code=401, detail="Invalid API key")
 
@@ -161,8 +160,7 @@ async def list_tasks(
     api_key = request.headers.get("X-API-Key")
     if not api_key:
         raise HTTPException(status_code=401, detail="Authentication required - provide X-API-Key header")
-    project_service_inst = get_project_service()
-    project = project_service_inst.get_project(project_name)
+    project = get_project_store().get(project_name)
     if not project or not secrets.compare_digest(project.api_key, api_key):
         raise HTTPException(status_code=401, detail="Invalid API key")
 

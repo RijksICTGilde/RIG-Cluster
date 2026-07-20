@@ -27,7 +27,7 @@ from opi.connectors.subdomain import (
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.manager.project_manager import ProjectManager, create_project_manager
-from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
 from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
 from opi.utils.project_utils import generate_self_service_project_yaml, normalize_container_image, validate_project_name
 from pydantic import BaseModel, Field, model_validator
@@ -2014,8 +2014,7 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
             )
 
         # Get project information from project service
-        project_service = get_project_service()
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
 
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found in project registry")
@@ -2135,8 +2134,7 @@ async def refresh_deployment(
     # Sync path (backward compatibility)
     project_manager = None
     try:
-        project_service = get_project_service()
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
 
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found in project registry")

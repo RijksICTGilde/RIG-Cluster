@@ -27,7 +27,6 @@ from opi.core.cluster_config import (
 from opi.core.config import settings
 from opi.handlers.project_file_handler import ProjectFileHandler, ResourceFloor
 from opi.manager.project_manager import ProjectManager, create_project_manager
-from opi.services.project_service import get_project_service
 from opi.services.project_store import get_project_store
 from opi.services.resource_analyzer import (
     _k8s_memory_to_mb,
@@ -66,8 +65,7 @@ def get_project_data(project_name: str) -> tuple[dict[str, Any], str]:
     """
     import copy
 
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
+    project = get_project_store().get(project_name)
 
     if not project:
         raise ValueError(f"Project '{project_name}' not found")

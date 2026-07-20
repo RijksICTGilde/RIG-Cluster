@@ -359,11 +359,11 @@ class TestDeleteDeploymentSeparation:
         mock_project.filename = "test-project.yaml"
 
         mock_project_service = MagicMock()
-        mock_project_service.get_project = MagicMock(return_value=mock_project)
+        mock_project_service.get = MagicMock(return_value=mock_project)
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
-            patch("opi.manager.delete_project_manager.get_project_service", return_value=mock_project_service),
+            patch("opi.manager.delete_project_manager.get_project_store", return_value=mock_project_service),
             patch("os.path.exists", return_value=False),
         ):
             result = await manager.delete_deployment("test-project", "pr-42")
@@ -392,11 +392,11 @@ class TestDeleteDeploymentSeparation:
         mock_project = MagicMock()
         mock_project.filename = "test-project.yaml"
         mock_project_service = MagicMock()
-        mock_project_service.get_project = MagicMock(return_value=mock_project)
+        mock_project_service.get = MagicMock(return_value=mock_project)
 
         with (
             patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
-            patch("opi.manager.delete_project_manager.get_project_service", return_value=mock_project_service),
+            patch("opi.manager.delete_project_manager.get_project_store", return_value=mock_project_service),
             patch("os.path.exists", return_value=False),
         ):
             result = await manager.delete_deployment("test-project", "pr-42")
@@ -438,7 +438,7 @@ class TestDeleteProjectOrchestration:
         mock_project = MagicMock()
         mock_project.filename = "test-project.yaml"
         mock_project_service = MagicMock()
-        mock_project_service.get_project = MagicMock(return_value=mock_project)
+        mock_project_service.get = MagicMock(return_value=mock_project)
         mock_project_service.remove_project = MagicMock(return_value=True)
 
         manager = DeleteProjectManager(mock_pm)
@@ -449,7 +449,7 @@ class TestDeleteProjectOrchestration:
             patch.object(manager, "_cleanup_project_keycloak_realm", new_callable=AsyncMock) as mock_realm_cleanup,
             patch.object(manager, "_delete_project_file", new_callable=AsyncMock) as mock_delete_file,
             patch(
-                "opi.manager.delete_project_manager.get_project_service",
+                "opi.manager.delete_project_manager.get_project_store",
                 return_value=mock_project_service,
             ),
             patch("opi.manager.delete_project_manager.settings") as mock_settings,
@@ -491,7 +491,7 @@ class TestDeleteProjectOrchestration:
         mock_project = MagicMock()
         mock_project.filename = "test-project.yaml"
         mock_project_service = MagicMock()
-        mock_project_service.get_project = MagicMock(return_value=mock_project)
+        mock_project_service.get = MagicMock(return_value=mock_project)
         mock_project_service.remove_project = MagicMock(return_value=True)
 
         manager = DeleteProjectManager(mock_pm)
@@ -502,7 +502,7 @@ class TestDeleteProjectOrchestration:
             patch.object(manager, "_cleanup_project_keycloak_realm", new_callable=AsyncMock) as mock_realm_cleanup,
             patch.object(manager, "_delete_project_file", new_callable=AsyncMock) as mock_delete_file,
             patch(
-                "opi.manager.delete_project_manager.get_project_service",
+                "opi.manager.delete_project_manager.get_project_store",
                 return_value=mock_project_service,
             ),
             patch("opi.manager.delete_project_manager.settings") as mock_settings,
@@ -535,7 +535,7 @@ class TestDeleteProjectOrchestration:
         mock_project = MagicMock()
         mock_project.filename = "test-project.yaml"
         mock_project_service = MagicMock()
-        mock_project_service.get_project = MagicMock(return_value=mock_project)
+        mock_project_service.get = MagicMock(return_value=mock_project)
         mock_project_service.remove_project = MagicMock(return_value=True)
 
         manager = DeleteProjectManager(mock_pm)
@@ -546,7 +546,7 @@ class TestDeleteProjectOrchestration:
             patch.object(manager, "_cleanup_project_keycloak_realm", new_callable=AsyncMock) as mock_realm_cleanup,
             patch.object(manager, "_delete_project_file", new_callable=AsyncMock) as mock_delete_file,
             patch(
-                "opi.manager.delete_project_manager.get_project_service",
+                "opi.manager.delete_project_manager.get_project_store",
                 return_value=mock_project_service,
             ),
             patch("opi.manager.delete_project_manager.settings") as mock_settings,
@@ -576,7 +576,7 @@ class TestDeleteProjectOrchestration:
         mock_project = MagicMock()
         mock_project.filename = "test-project.yaml"
         mock_project_service = MagicMock()
-        mock_project_service.get_project = MagicMock(return_value=mock_project)
+        mock_project_service.get = MagicMock(return_value=mock_project)
 
         manager = DeleteProjectManager(mock_pm)
 
@@ -585,7 +585,7 @@ class TestDeleteProjectOrchestration:
             patch.object(manager, "_cleanup_project_infrastructure", new_callable=AsyncMock) as mock_infra_cleanup,
             patch.object(manager, "_cleanup_project_keycloak_realm", new_callable=AsyncMock) as mock_realm_cleanup,
             patch(
-                "opi.manager.delete_project_manager.get_project_service",
+                "opi.manager.delete_project_manager.get_project_store",
                 return_value=mock_project_service,
             ),
             patch("opi.manager.delete_project_manager.settings") as mock_settings,
@@ -622,7 +622,7 @@ class TestDeleteProjectOrchestration:
         mock_project = MagicMock()
         mock_project.filename = "test-project.yaml"
         mock_project_service = MagicMock()
-        mock_project_service.get_project = MagicMock(return_value=mock_project)
+        mock_project_service.get = MagicMock(return_value=mock_project)
         mock_project_service.remove_project = MagicMock(return_value=True)
 
         manager = DeleteProjectManager(mock_pm)
@@ -633,7 +633,7 @@ class TestDeleteProjectOrchestration:
             patch.object(manager, "_cleanup_project_keycloak_realm", new_callable=AsyncMock),
             patch.object(manager, "_delete_project_file", new_callable=AsyncMock) as mock_delete_file,
             patch(
-                "opi.manager.delete_project_manager.get_project_service",
+                "opi.manager.delete_project_manager.get_project_store",
                 return_value=mock_project_service,
             ),
             patch("opi.manager.delete_project_manager.settings") as mock_settings,
@@ -667,7 +667,7 @@ class TestDeleteProjectOrchestration:
         mock_project = MagicMock()
         mock_project.filename = "test-project.yaml"
         mock_project_service = MagicMock()
-        mock_project_service.get_project = MagicMock(return_value=mock_project)
+        mock_project_service.get = MagicMock(return_value=mock_project)
         mock_project_service.remove_project = MagicMock(return_value=True)
 
         manager = DeleteProjectManager(mock_pm)
@@ -678,7 +678,7 @@ class TestDeleteProjectOrchestration:
             patch.object(manager, "_cleanup_orphaned_argocd_resources", new_callable=AsyncMock),
             patch.object(manager, "_delete_project_file", new_callable=AsyncMock) as mock_delete_file,
             patch(
-                "opi.manager.delete_project_manager.get_project_service",
+                "opi.manager.delete_project_manager.get_project_store",
                 return_value=mock_project_service,
             ),
             patch("opi.manager.delete_project_manager.settings") as mock_settings,

@@ -47,11 +47,6 @@ _FORBIDDEN_GIT_ACCESS = "create_git_connector_for_project_files("
 _GIT_ACCESS_ALLOWLIST: dict[str, str] = {
     # The store IS the owner of the projects-repo connector.
     "opi/services/project_store.py": "owns the warm working copy",
-    # Not yet swept: three read-only restore paths still open their own clone.
-    # They are correct but pay for a clone; routing them onto the store is
-    # tracked as follow-up work and needs the surrounding `async with` blocks
-    # restructured (the warm connector must never be closed).
-    "opi/api/restore_router.py": "pending sweep onto the store (read-only restore paths)",
 }
 
 
@@ -176,6 +171,46 @@ def test_no_one_closes_the_stores_warm_connector() -> None:
         "Code closing a ProjectStore-owned git connector (this rmtree's the shared warm "
         "working copy):\n" + "\n".join(violations)
     )
+
+
+def _scan_for_direct_cache_access() -> list[str]:
+    """Find code reaching the project cache without going through ProjectStore.
+
+    ProjectService is the in-memory project cache. Reading or writing it directly is
+    a second door into project files: it skips the store's freshness handling, and a
+    direct write can leave the cache disagreeing with what is actually in git.
+    """
+    violations: list[str] = []
+    for rel_dir in [*_SCANNED_DIRS, "opi/manager", "opi/web", "opi/handlers", "opi/middleware", "opi/forms"]:
+        directory = _PYTHON_ROOT / rel_dir
+        if not directory.exists():
+            continue
+        for py_file in directory.rglob("*.py"):
+            rel_path = py_file.relative_to(_PYTHON_ROOT).as_posix()
+            if rel_path in ("opi/services/project_store.py", "opi/services/project_service.py"):
+                continue
+            violations.extend(
+                f"{rel_path}:{lineno}: {line.strip()}"
+                for lineno, line in enumerate(py_file.read_text(encoding="utf-8").splitlines(), 1)
+                if "get_project_service()" in line and not line.strip().startswith("#")
+            )
+    return violations
+
+
+def test_project_cache_is_reached_only_through_the_store() -> None:
+    """ProjectStore is the only door to project files, for reads as well as writes.
+
+    Reads used to go straight to ProjectService in 64 places, and four of those wrote
+    to the cache directly -- which is how the cache and git drift apart. Everything now
+    goes through ProjectStore.get/get_all/get_by_api_key, so there is one place that
+    decides what a project file says.
+
+    Need project data? Use get_project_store(). Need to know whether a user may touch a
+    project? opi.services.project_authorization. Need the platform-admin allowlist?
+    UserService.
+    """
+    violations = _scan_for_direct_cache_access()
+    assert not violations, "Direct project-cache access found (must go through ProjectStore):\n" + "\n".join(violations)
 
 
 def test_no_direct_projects_repo_clones_outside_the_store() -> None:

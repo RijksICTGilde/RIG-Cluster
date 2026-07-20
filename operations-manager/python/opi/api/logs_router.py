@@ -13,7 +13,7 @@ from opi.api.endpoint_util import validate_api_token
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
-from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
 from opi.utils.naming import generate_unique_name
 
 logger = logging.getLogger(__name__)
@@ -60,10 +60,9 @@ async def get_deployment_logs(
     """
     try:
         current_cluster = settings.CLUSTER_MANAGER
-        project_service = get_project_service()
         kubectl = KubectlConnector()
 
-        all_projects = project_service.get_all_projects()
+        all_projects = get_project_store().get_all()
         results: list[dict] = []
 
         # Check if project exists

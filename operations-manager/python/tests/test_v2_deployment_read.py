@@ -12,7 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from opi.services.project_service import Project, ProjectService, ProjectUser
+from opi.services.project_service import Project, ProjectUser
+from opi.services.project_store import GitProjectStore
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -96,7 +97,7 @@ ARGO_STATUS_STAGING: dict[str, Any] = {
 @pytest.fixture
 def mock_project_service() -> Any:
     """Mock project service with project data for read endpoints."""
-    mock_service = MagicMock(spec=ProjectService)
+    mock_service = MagicMock(spec=GitProjectStore)
     test_project = Project(
         name="test-project",
         api_key=API_KEY,
@@ -110,11 +111,11 @@ def mock_project_service() -> Any:
             return test_project
         return None
 
-    mock_service.get_project = get_project
+    mock_service.get = get_project
 
     with (
-        patch("opi.api.endpoint_util.get_project_service", return_value=mock_service),
-        patch("opi.api.v2.router.get_project_service", return_value=mock_service),
+        patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+        patch("opi.api.v2.router.get_project_store", return_value=mock_service),
     ):
         yield mock_service
 

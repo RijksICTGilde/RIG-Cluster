@@ -17,6 +17,11 @@ from datetime import UTC
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates import get_templates
+from opi.services.project_authorization import (
+    get_user_role_for_project,
+    is_user_authorized_for_project,
+)
+from opi.services.project_store import get_project_store
 from opi.utils.age import decrypt_password_smart, get_global_private_key
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.yaml_util import load_yaml_from_string
@@ -274,7 +279,6 @@ async def delete_project_web(request: Request, project_name: str):
         from fastapi.responses import JSONResponse
 
         from opi.manager.project_manager import create_project_manager
-        from opi.services.project_service import get_project_service
 
         # Get current user from SSO
         user = get_current_user(request)
@@ -283,15 +287,14 @@ async def delete_project_web(request: Request, project_name: str):
         logger.info(f"Web project deletion request for '{project_name}' by user: {user_email}")
 
         # Get project service to validate authorization
-        project_service = get_project_service()
 
         # Check if project exists and user has access
-        if not project_service.is_user_authorized_for_project(project_name, user_email):
+        if not is_user_authorized_for_project(project_name, user_email):
             logger.warning(f"User {user_email} not authorized to access project: {project_name}")
             return JSONResponse(content={"error": "You are not authorized to access this project"}, status_code=403)
 
         # Check if user has admin or owner role for deletion
-        user_role = project_service.get_user_role_for_project(project_name, user_email)
+        user_role = get_user_role_for_project(project_name, user_email)
         if user_role not in ["admin", "owner"]:
             logger.warning(f"User {user_email} with role '{user_role}' cannot delete project: {project_name}")
             return JSONResponse(
@@ -357,7 +360,6 @@ async def delete_deployment_web(request: Request, project_name: str, deployment_
         from fastapi.responses import JSONResponse
 
         from opi.manager.project_manager import create_project_manager
-        from opi.services.project_service import get_project_service
 
         user = get_current_user(request)
         user_email = user.get("email", "").lower()
@@ -366,12 +368,11 @@ async def delete_deployment_web(request: Request, project_name: str, deployment_
             f"Web deployment deletion request for '{deployment_name}' in '{project_name}' by user: {user_email}"
         )
 
-        project_service = get_project_service()
 
-        if not project_service.is_user_authorized_for_project(project_name, user_email):
+        if not is_user_authorized_for_project(project_name, user_email):
             return JSONResponse(content={"error": "Geen toegang tot dit project"}, status_code=403)
 
-        user_role = project_service.get_user_role_for_project(project_name, user_email)
+        user_role = get_user_role_for_project(project_name, user_email)
         if user_role not in ["admin", "owner"]:
             return JSONResponse(
                 content={"error": f"Alleen admin of owner rollen kunnen deployments verwijderen. Uw rol: {user_role}"},
@@ -418,26 +419,24 @@ async def delete_component_web(request: Request, project_name: str, component_na
     try:
         from fastapi.responses import JSONResponse
 
-        from opi.services.project_service import get_project_service
 
         user = get_current_user(request)
         user_email = user.get("email", "").lower()
 
         logger.info(f"Web component deletion request for '{component_name}' in '{project_name}' by user: {user_email}")
 
-        project_service = get_project_service()
 
-        if not project_service.is_user_authorized_for_project(project_name, user_email):
+        if not is_user_authorized_for_project(project_name, user_email):
             return JSONResponse(content={"error": "Geen toegang tot dit project"}, status_code=403)
 
-        user_role = project_service.get_user_role_for_project(project_name, user_email)
+        user_role = get_user_role_for_project(project_name, user_email)
         if user_role not in ["admin", "owner"]:
             return JSONResponse(
                 content={"error": f"Alleen admin of owner rollen kunnen components verwijderen. Uw rol: {user_role}"},
                 status_code=403,
             )
 
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
         if not project:
             return JSONResponse(content={"error": "Project niet gevonden"}, status_code=404)
 
@@ -485,26 +484,24 @@ async def delete_component_web(request: Request, project_name: str, component_na
 @requires_sso
 async def refresh_project_web(request: Request, project_name: str) -> HTMLResponse:
     """Reprocess a project from Git via web interface."""
-    from opi.services.project_service import get_project_service
 
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
 
     logger.info(f"Web project refresh request for '{project_name}' by user: {user_email}")
 
-    project_service = get_project_service()
 
-    if not project_service.is_user_authorized_for_project(project_name, user_email):
+    if not is_user_authorized_for_project(project_name, user_email):
         raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
 
-    user_role = project_service.get_user_role_for_project(project_name, user_email)
+    user_role = get_user_role_for_project(project_name, user_email)
     if user_role not in ["admin", "owner"]:
         raise HTTPException(
             status_code=403,
             detail=f"Alleen admin of owner rollen kunnen een project herverwerken. Uw rol: {user_role}",
         )
 
-    project = project_service.get_project(project_name)
+    project = get_project_store().get(project_name)
     if not project:
         raise HTTPException(status_code=404, detail="Project niet gevonden")
 
@@ -522,26 +519,24 @@ async def refresh_project_web(request: Request, project_name: str) -> HTMLRespon
 @requires_sso
 async def refresh_deployment_web(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Reprocess a single deployment from Git via web interface."""
-    from opi.services.project_service import get_project_service
 
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
 
     logger.info(f"Web deployment refresh request for '{project_name}/{deployment_name}' by user: {user_email}")
 
-    project_service = get_project_service()
 
-    if not project_service.is_user_authorized_for_project(project_name, user_email):
+    if not is_user_authorized_for_project(project_name, user_email):
         raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
 
-    user_role = project_service.get_user_role_for_project(project_name, user_email)
+    user_role = get_user_role_for_project(project_name, user_email)
     if user_role not in ["admin", "owner"]:
         raise HTTPException(
             status_code=403,
             detail=f"Alleen admin of owner rollen kunnen een deployment herverwerken. Uw rol: {user_role}",
         )
 
-    project = project_service.get_project(project_name)
+    project = get_project_store().get(project_name)
     if not project:
         raise HTTPException(status_code=404, detail="Project niet gevonden")
 
@@ -636,7 +631,6 @@ async def dashboard(request: Request):
         from datetime import UTC, datetime
 
         from opi.core.startup import ensure_projects_fresh
-        from opi.services.project_service import get_project_service
 
         templates = get_templates()
         user = get_current_user(request)
@@ -644,16 +638,16 @@ async def dashboard(request: Request):
 
         # --- Load user's projects ---
         await ensure_projects_fresh()
-        project_service = get_project_service()
-        all_projects = project_service.get_all_projects()
+        all_projects = get_project_store().get_all()
 
         user_projects: list[dict] = []
         all_namespaces: list[str] = []
         total_deployments = 0
         unique_users: set[str] = set()
 
-        for project_name, project in all_projects.items():
-            if not project_service.is_user_authorized_for_project(project_name, user_email):
+        for project in all_projects:
+            project_name = project.name
+            if not is_user_authorized_for_project(project_name, user_email):
                 continue
             project_data = project.data or {}
             deployments = project_data.get("deployments", [])
@@ -982,7 +976,6 @@ async def project_details(request: Request, project_name: str):
     """
     try:
         from opi.core.startup import ensure_projects_fresh
-        from opi.services.project_service import get_project_service
         from opi.services.services import ServiceAdapter
 
         templates = get_templates()
@@ -998,20 +991,19 @@ async def project_details(request: Request, project_name: str):
         await ensure_projects_fresh()
 
         # Get project service to validate access
-        project_service = get_project_service()
 
         # Check if user has access to this project
-        if not project_service.is_user_authorized_for_project(project_name, user_email):
+        if not is_user_authorized_for_project(project_name, user_email):
             logger.warning(f"User {user_email} not authorized to view project: {project_name}")
             raise HTTPException(status_code=403, detail="You are not authorized to view this project")
 
         # Get project details
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 
         # Get user's role for this project
-        user_role = project_service.get_user_role_for_project(project_name, user_email)
+        user_role = get_user_role_for_project(project_name, user_email)
 
         # Use project data from memory if available
         project_data = project.data or {}
@@ -1554,7 +1546,6 @@ async def argocd_status_fragment(
     from opi.connectors.kubectl import create_kubectl_connector
     from opi.core.config import settings
     from opi.core.startup import ensure_projects_fresh
-    from opi.services.project_service import get_project_service
     from opi.utils.naming import generate_argocd_application_name
 
     user = get_current_user(request)
@@ -1562,11 +1553,10 @@ async def argocd_status_fragment(
 
     await ensure_projects_fresh()
 
-    project_service = get_project_service()
-    if not project_service.is_user_authorized_for_project(project_name, user_email):
+    if not is_user_authorized_for_project(project_name, user_email):
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    project = project_service.get_project(project_name)
+    project = get_project_store().get(project_name)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -1606,7 +1596,6 @@ async def deployment_metrics_fragment(
     """Return metrics HTML fragment for a single deployment (HTMX lazy-load)."""
 
     from opi.core.startup import ensure_projects_fresh
-    from opi.services.project_service import get_project_service
 
     # Validate and compute step interval based on duration
     allowed_durations = {60, 120, 360, 720, 1440}
@@ -1628,11 +1617,10 @@ async def deployment_metrics_fragment(
 
     await ensure_projects_fresh()
 
-    project_service = get_project_service()
-    if not project_service.is_user_authorized_for_project(project_name, user_email):
+    if not is_user_authorized_for_project(project_name, user_email):
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    project = project_service.get_project(project_name)
+    project = get_project_store().get(project_name)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -1748,7 +1736,6 @@ async def get_deployment_domain_settings(request: Request, project_name: str, de
     from fastapi.responses import JSONResponse
 
     from opi.api.router import DeploymentDomainSettingsResponse
-    from opi.services.project_service import get_project_service
     from opi.web.router_self_service import get_cluster_base_domains_for_template
 
     try:
@@ -1756,15 +1743,14 @@ async def get_deployment_domain_settings(request: Request, project_name: str, de
         user_email = user.get("email", "").lower()
 
         # Get project service to validate access
-        project_service = get_project_service()
 
         # Check if user has access to this project
-        if not project_service.is_user_authorized_for_project(project_name, user_email):
+        if not is_user_authorized_for_project(project_name, user_email):
             logger.warning(f"User {user_email} not authorized to access project: {project_name}")
             raise HTTPException(status_code=403, detail="You are not authorized to access this project")
 
         # Get project details
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 
@@ -2050,7 +2036,6 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
         validate_subdomain,
     )
     from opi.manager.project_manager import ProjectManager
-    from opi.services.project_service import get_project_service
 
     # Track state for rollback
     original_data: dict[str, Any] | None = None
@@ -2069,15 +2054,14 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
         user_email = user.get("email", "").lower()
 
         # Get project service to validate access
-        project_service = get_project_service()
 
         # Check if user has access to this project
-        if not project_service.is_user_authorized_for_project(project_name, user_email):
+        if not is_user_authorized_for_project(project_name, user_email):
             logger.warning(f"User {user_email} not authorized to access project: {project_name}")
             raise HTTPException(status_code=403, detail="You are not authorized to access this project")
 
         # Check if user has admin or owner role
-        user_role = project_service.get_user_role_for_project(project_name, user_email)
+        user_role = get_user_role_for_project(project_name, user_email)
         if user_role not in ["admin", "owner"]:
             logger.warning(f"User {user_email} with role '{user_role}' cannot edit domain settings: {project_name}")
             raise HTTPException(
@@ -2096,7 +2080,7 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
             raise HTTPException(status_code=400, detail=f"Invalid domain mode. Valid modes: {', '.join(valid_modes)}")
 
         # Get project details
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 
@@ -2421,7 +2405,6 @@ async def projects_overview(request: Request):
     """
     try:
         from opi.core.startup import ensure_projects_fresh
-        from opi.services.project_service import get_project_service
 
         templates = get_templates()
         user = get_current_user(request)
@@ -2431,18 +2414,18 @@ async def projects_overview(request: Request):
         await ensure_projects_fresh()
 
         # Get project service to filter by user access
-        project_service = get_project_service()
 
         # Get all projects and filter by user access
         user_projects = []
-        all_projects = project_service.get_all_projects()
+        all_projects = get_project_store().get_all()
 
-        for project_name, project in all_projects.items():
+        for project in all_projects:
+            project_name = project.name
             # Check if user has access to this project
-            if project_service.is_user_authorized_for_project(project_name, user_email):
+            if is_user_authorized_for_project(project_name, user_email):
                 try:
                     # Get user's role for this project
-                    user_role = project_service.get_user_role_for_project(project_name, user_email)
+                    user_role = get_user_role_for_project(project_name, user_email)
 
                     # Use project data from memory if available
                     project_data = project.data or {}

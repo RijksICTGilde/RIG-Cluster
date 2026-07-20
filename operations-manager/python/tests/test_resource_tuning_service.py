@@ -13,33 +13,33 @@ from opi.services.resource_tuning_service import (
 class TestGetProjectData:
     """Tests for the service-level get_project_data (raises ValueError, not HTTPException)."""
 
-    @patch("opi.services.resource_tuning_service.get_project_service")
+    @patch("opi.services.resource_tuning_service.get_project_store")
     def test_project_not_found(self, mock_get_service):
         mock_service = MagicMock()
-        mock_service.get_project.return_value = None
+        mock_service.get.return_value = None
         mock_get_service.return_value = mock_service
 
         with pytest.raises(ValueError, match="not found"):
             get_project_data("nonexistent")
 
-    @patch("opi.services.resource_tuning_service.get_project_service")
+    @patch("opi.services.resource_tuning_service.get_project_store")
     def test_project_no_data(self, mock_get_service):
         mock_project = MagicMock()
         mock_project.data = None
         mock_service = MagicMock()
-        mock_service.get_project.return_value = mock_project
+        mock_service.get.return_value = mock_project
         mock_get_service.return_value = mock_service
 
         with pytest.raises(ValueError, match="no data"):
             get_project_data("my-project")
 
-    @patch("opi.services.resource_tuning_service.get_project_service")
+    @patch("opi.services.resource_tuning_service.get_project_store")
     def test_project_found(self, mock_get_service):
         mock_project = MagicMock()
         mock_project.data = {"name": "my-project"}
         mock_project.filename = "my-project.yaml"
         mock_service = MagicMock()
-        mock_service.get_project.return_value = mock_project
+        mock_service.get.return_value = mock_project
         mock_get_service.return_value = mock_service
 
         data, filename = get_project_data("my-project")
@@ -147,9 +147,9 @@ class TestTuneDeploymentResources:
     @pytest.mark.asyncio
     async def test_project_not_found_raises_value_error(self):
         """Should raise ValueError when project doesn't exist."""
-        with patch("opi.services.resource_tuning_service.get_project_service") as mock_get_service:
+        with patch("opi.services.resource_tuning_service.get_project_store") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.get_project.return_value = None
+            mock_service.get.return_value = None
             mock_get_service.return_value = mock_service
 
             with pytest.raises(ValueError, match="not found"):
