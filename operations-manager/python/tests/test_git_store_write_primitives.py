@@ -103,6 +103,36 @@ async def test_build_commit_removes_a_path_when_content_is_none(tmp_path: Path) 
     assert "projects/bravo.yaml" not in tracked
 
 
+async def test_build_commit_uses_an_explicit_parent_over_head(tmp_path: Path) -> None:
+    """The push-conflict path: re-apply a change onto a parent that is not HEAD.
+
+    After a rejected push the store rebuilds its commit on the moved remote tip,
+    which it passes explicitly. If ``parent`` were ignored in favour of HEAD, the
+    rebuilt commit would hang off the stale local tip and drop whatever the other
+    writer had already pushed.
+    """
+    repo = _make_repo(tmp_path)
+    conn = _connector_on(repo)
+
+    first = _git(repo, "rev-parse", "HEAD")
+
+    # Move HEAD on, so "explicit parent" and "current HEAD" are distinguishable.
+    (repo / "projects" / "bravo.yaml").write_text("name: bravo\nsecond: true\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "second")
+    head = _git(repo, "rev-parse", "HEAD")
+    assert head != first
+
+    commit = await conn.build_commit({"projects/alpha.yaml": "name: alpha\nx: 1\n"}, "onto first", parent=first)
+    assert commit is not None
+
+    assert _git(repo, "rev-parse", f"{commit}^") == first, "explicit parent was ignored"
+    assert _git(repo, "rev-parse", f"{commit}^") != head
+
+    # The tree really came from the named parent, not from HEAD.
+    assert "second: true" not in _git(repo, "show", f"{commit}:projects/bravo.yaml")
+
+
 async def test_build_commit_returns_none_when_tree_is_unchanged(tmp_path: Path) -> None:
     """No-op writes must not produce empty commits."""
     repo = _make_repo(tmp_path)
