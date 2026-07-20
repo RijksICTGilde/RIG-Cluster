@@ -8,7 +8,6 @@ setting up shared SOPS keys, and other initialization tasks.
 import asyncio
 import logging
 import os
-import time
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -236,69 +235,19 @@ Git Monitoring: {os.environ.get("ENABLE_GIT_MONITOR", "false")}
             logger.info(line)
 
 
-class ProjectRefreshState:
-    """
-    Global state manager for project refresh operations.
-
-    Ensures that:
-    - Projects are refreshed from Git at most once every REFRESH_TTL_SECONDS
-    - Concurrent refresh requests wait for an in-progress refresh instead of triggering multiple
-    """
-
-    REFRESH_TTL_SECONDS = 30
-
-    _instance: ProjectRefreshState | None = None
-
-    def __init__(self) -> None:
-        self.last_refresh_time: float = 0.0
-        self.refresh_lock = asyncio.Lock()
-
-    @classmethod
-    def get_instance(cls) -> ProjectRefreshState:
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-
-    def is_stale(self) -> bool:
-        return (time.time() - self.last_refresh_time) > self.REFRESH_TTL_SECONDS
-
-    def mark_refreshed(self) -> None:
-        self.last_refresh_time = time.time()
-
-
-def get_project_refresh_state() -> ProjectRefreshState:
-    return ProjectRefreshState.get_instance()
-
-
-async def ensure_projects_fresh() -> None:
-    """
-    Ensure project data is fresh, refreshing from Git if stale.
-
-    This function:
-    - Returns immediately if data was refreshed within the last 30 seconds
-    - Acquires a lock to prevent concurrent refresh operations
-    - Refreshes from Git if data is stale
-    - Other concurrent requests wait for the refresh to complete
-    """
-    state = get_project_refresh_state()
-
-    if not state.is_stale():
-        logger.debug("Project data is fresh, skipping refresh")
-        return
-
-    async with state.refresh_lock:
-        # Double-check after acquiring lock (another request may have refreshed)
-        if not state.is_stale():
-            logger.debug("Project data was refreshed while waiting for lock")
-            return
-
-        logger.info("Project data is stale, reconciling with Git")
-        # Incremental: fetch, diff the changed paths, re-read only those files.
-        # Replaces the old full re-clone + re-read of every project on every TTL
-        # expiry. ZAD's own writes are already write-through via the store, so
-        # this normally finds nothing and costs one fetch.
-        await get_project_store().reconcile()
-        state.mark_refreshed()
+# ProjectRefreshState and ensure_projects_fresh() were removed.
+#
+# They made every web page render potentially trigger a git fetch, on a 30-second
+# TTL, so data freshness depended on how recently someone had opened a page --
+# API-only consumers got no freshness at all, and the TTL guaranteed nothing in
+# particular. Reads come from the ProjectStore, and the store's cache is
+# write-through for everything ZAD writes, so no polling is needed to stay correct
+# for ZAD's own changes.
+#
+# What genuinely needs detecting is an edit made outside ZAD (by hand, or from
+# another cluster). That is an event, not something to rediscover on every render:
+# store.reconcile() is now called explicitly by the refresh action, and it starts
+# with an ls-remote check so it costs nothing when the remote has not moved.
 
 
 async def ensure_project_sops_secrets(project_data: Any, kubectl: KubectlConnector) -> bool:

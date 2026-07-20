@@ -460,6 +460,11 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
         lookup_task = progress.add_task("Looking up project")
         logger.info("Project refresh request for: %s (force_clone=%s)", project_name, force_clone)
 
+        # Pick up anything committed outside ZAD before reprocessing, so "refresh"
+        # actually means "use what is in git right now". Costs one ls-remote when
+        # nothing changed; a fetch and a targeted re-read when it did.
+        await get_project_store().reconcile()
+
         project = get_project_store().get(project_name)
 
         if not project:

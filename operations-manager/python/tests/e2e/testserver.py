@@ -187,7 +187,6 @@ def create_test_app():
             patch("opi.core.startup.run_startup_tasks", new_callable=AsyncMock),
             patch("opi.core.config.settings.SECRET_KEY", SECRET_KEY),
             patch("opi.core.config.settings.ENABLE_GIT_MONITOR", False),
-            patch("opi.core.startup.ensure_projects_fresh", new_callable=AsyncMock),
             patch(
                 "opi.connectors.subdomain.SubdomainConnector.get_by_subdomain",
                 new_callable=AsyncMock,

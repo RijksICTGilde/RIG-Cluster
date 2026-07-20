@@ -195,9 +195,6 @@ async def _find_project_by_invite_key(key: str) -> tuple[str, dict[str, Any], di
         Tuple of (project_name, project_data, invite, cluster) or None if not found
     """
     # Ensure project data is fresh before searching
-    from opi.core.startup import ensure_projects_fresh
-
-    await ensure_projects_fresh()
 
     handler = ProjectFileHandler()
 

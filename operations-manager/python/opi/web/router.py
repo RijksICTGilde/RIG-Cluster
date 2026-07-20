@@ -625,14 +625,11 @@ async def dashboard(request: Request):
     try:
         from datetime import UTC, datetime
 
-        from opi.core.startup import ensure_projects_fresh
-
         templates = get_templates()
         user = get_current_user(request)
         user_email = user.get("email", "").lower()
 
         # --- Load user's projects ---
-        await ensure_projects_fresh()
         all_projects = get_project_store().get_all()
 
         user_projects: list[dict] = []
@@ -970,7 +967,6 @@ async def project_details(request: Request, project_name: str):
         HTML response with detailed project information
     """
     try:
-        from opi.core.startup import ensure_projects_fresh
         from opi.services.services import ServiceAdapter
 
         templates = get_templates()
@@ -983,7 +979,6 @@ async def project_details(request: Request, project_name: str):
         user_email = user.get("email", "").lower()
 
         # Ensure project data is fresh (refreshes from Git if stale)
-        await ensure_projects_fresh()
 
         # Get project service to validate access
 
@@ -1540,13 +1535,10 @@ async def argocd_status_fragment(
     from opi.connectors.argo import create_argo_connector
     from opi.connectors.kubectl import create_kubectl_connector
     from opi.core.config import settings
-    from opi.core.startup import ensure_projects_fresh
     from opi.utils.naming import generate_argocd_application_name
 
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
-
-    await ensure_projects_fresh()
 
     if not is_user_authorized_for_project(project_name, user_email):
         raise HTTPException(status_code=403, detail="Not authorized")
@@ -1590,8 +1582,6 @@ async def deployment_metrics_fragment(
 ) -> HTMLResponse:
     """Return metrics HTML fragment for a single deployment (HTMX lazy-load)."""
 
-    from opi.core.startup import ensure_projects_fresh
-
     # Validate and compute step interval based on duration
     allowed_durations = {60, 120, 360, 720, 1440}
     if duration not in allowed_durations:
@@ -1609,8 +1599,6 @@ async def deployment_metrics_fragment(
     templates = get_templates()
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
-
-    await ensure_projects_fresh()
 
     if not is_user_authorized_for_project(project_name, user_email):
         raise HTTPException(status_code=403, detail="Not authorized")
@@ -2399,14 +2387,11 @@ async def projects_overview(request: Request):
         HTML response with a table showing user's projects and their status
     """
     try:
-        from opi.core.startup import ensure_projects_fresh
-
         templates = get_templates()
         user = get_current_user(request)
         user_email = user.get("email", "").lower()
 
         # Ensure project data is fresh (refreshes from Git if stale)
-        await ensure_projects_fresh()
 
         # Get project service to filter by user access
 

@@ -194,6 +194,10 @@ class FakeGitConnector:
         self.local_head = commit
         self._staged_commit = commit if commit in self._built else None
 
+    async def get_remote_commit_hash(self, branch: str | None = None) -> str | None:
+        """What ls-remote would report: the remote's tip, without transferring objects."""
+        return self.remote.head
+
     async def count_unpushed_commits(self, branch: str | None = None) -> int:
         if not self.remote.commits:
             return 0
@@ -581,3 +585,31 @@ async def test_reconcile_without_new_commits_is_a_noop(harness: StoreHarness) ->
     await harness.store.reconcile()
 
     assert harness.remote.head == head_before
+
+
+async def test_reconcile_does_no_work_when_the_remote_has_not_moved(harness: StoreHarness) -> None:
+    """The ls-remote check must short-circuit before the expensive part.
+
+    Without it, every reconcile fetches and hard-resets the shared working copy
+    while holding the write lock, for the overwhelmingly common case where the
+    remote is exactly where we left it.
+    """
+    await harness.store.bootstrap()
+    resets_before = harness.connector.reset_count
+
+    await harness.store.reconcile()
+
+    assert harness.connector.reset_count == resets_before, "reconcile reset the working copy for nothing"
+
+
+async def test_reconcile_still_syncs_when_the_remote_moved(harness: StoreHarness) -> None:
+    """And it must not short-circuit when there genuinely is something to pick up."""
+    await harness.store.bootstrap()
+    resets_before = harness.connector.reset_count
+
+    changed = _project()
+    changed["display-name"] = "handmatig gewijzigd"
+    harness.remote.commit("external edit", {RELATIVE_PATH: dump_yaml_to_string(changed)})
+    await harness.store.reconcile()
+
+    assert harness.connector.reset_count > resets_before, "reconcile skipped a real remote change"

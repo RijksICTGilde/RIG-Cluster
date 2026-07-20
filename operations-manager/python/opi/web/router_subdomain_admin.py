@@ -197,14 +197,12 @@ def _collect_all_projects_approval_data() -> list[dict[str, Any]]:
 @requires_sso
 async def list_subdomains(request: Request) -> HTMLResponse:
     """List all domain/subdomain requests across all projects."""
-    from opi.core.startup import ensure_projects_fresh
 
     user = _require_admin(request)
 
     # Pull the latest project data from git so an entry added externally
     # (manual yaml edit + push, or a request created elsewhere) shows up
     # on the admin overview instead of returning a stale in-memory cache.
-    await ensure_projects_fresh()
 
     projects_data = _collect_all_projects_approval_data()
 

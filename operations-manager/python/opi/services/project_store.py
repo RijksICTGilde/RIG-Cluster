@@ -346,7 +346,7 @@ class GitProjectStore(ProjectStore):
                         attempt + 1,
                         MAX_MUTATION_ATTEMPTS,
                     )
-                    await connector.reset_to_remote()
+                    await self._resync_after_conflict(connector)
             else:
                 raise ConcurrencyError(
                     f"Could not create project '{name}' after {MAX_MUTATION_ATTEMPTS} attempts: {last_error}"
@@ -394,29 +394,36 @@ class GitProjectStore(ProjectStore):
             relative_path = self._relative_path(name, filename)
             last_error: Exception | None = None
 
-            if base is not None:
-                data = await self._reconcile_with_concurrent_write(
-                    connector, relative_path, name=name, base=base, data=data
-                )
-
-            await self._validate(data, enforce=enforce_validation)
-
             for attempt in range(MAX_MUTATION_ATTEMPTS):
+                # Re-applied EVERY attempt, against the caller's original dict. The
+                # lock only covers writers in this process; a change pushed straight
+                # to git is invisible to the warm copy until the push is rejected and
+                # reset_to_remote() fetches it. Merging once before the loop would
+                # therefore republish the caller's version over whatever was just
+                # fetched -- the same lost update, arriving by the other route.
+                attempt_data = data
+                if base is not None:
+                    attempt_data = await self._reconcile_with_concurrent_write(
+                        connector, relative_path, name=name, base=base, data=data
+                    )
+
+                await self._validate(attempt_data, enforce=enforce_validation)
+
                 before = await self._read_committed(connector, relative_path)
                 try:
-                    ref = await self._persist(connector, relative_path, data, message, actor)
+                    ref = await self._persist(connector, relative_path, attempt_data, message, actor)
                 except GitPushConflictError as e:
                     last_error = e
                     logger.warning(
-                        "Push conflict on save '%s' (attempt %d/%d); re-syncing and retrying",
+                        "Push conflict on save '%s' (attempt %d/%d); re-syncing and re-applying",
                         message,
                         attempt + 1,
                         MAX_MUTATION_ATTEMPTS,
                     )
-                    await connector.reset_to_remote()
+                    await self._resync_after_conflict(connector)
                     continue
 
-                landed = await self._read_committed(connector, relative_path) or data
+                landed = await self._read_committed(connector, relative_path) or attempt_data
                 if refresh_cache:
                     self._refresh_cache(name, landed, os.path.basename(relative_path))
                 return MutationResult(before=before, after=landed, ref=ref)
@@ -486,7 +493,7 @@ class GitProjectStore(ProjectStore):
                         attempt + 1,
                         MAX_MUTATION_ATTEMPTS,
                     )
-                    await connector.reset_to_remote()
+                    await self._resync_after_conflict(connector)
                     continue
 
                 # Write-through under the lock, from what actually landed rather than from
@@ -530,7 +537,7 @@ class GitProjectStore(ProjectStore):
                         attempt + 1,
                         MAX_MUTATION_ATTEMPTS,
                     )
-                    await connector.reset_to_remote()
+                    await self._resync_after_conflict(connector)
             else:
                 raise ConcurrencyError(
                     f"Could not delete project '{name}' after {MAX_MUTATION_ATTEMPTS} attempts: {last_error}"
@@ -789,15 +796,28 @@ class GitProjectStore(ProjectStore):
     # ------------------------------------------------------------------
 
     async def reconcile(self) -> None:
-        """Pull external edits into the cache, incrementally.
+        """Pull edits made outside ZAD into the cache, incrementally.
 
-        Fetches, diffs the old and new HEAD for changed paths, and re-reads only
-        the project files that actually changed. Replaces the old 30-second
-        full re-clone. Because ZAD's own writes are write-through, this usually
-        finds nothing.
+        Only needed for changes that did not come through the store: someone
+        editing the repo by hand, or another cluster pushing. ZAD's own writes are
+        write-through, so the cache is already correct for them.
+
+        Asks the remote for its branch tip first (``ls-remote``, no object
+        transfer, ~60ms). When it matches what we already have there is nothing to
+        do, and the expensive part -- fetch, hard reset, re-read -- is skipped
+        entirely. Otherwise it diffs the old and new HEAD and re-reads only the
+        project files that actually changed.
         """
+        connector = await self.get_connector()
+
+        # Cheap check outside the lock: no divergence means no work, and no reason
+        # to make readers queue behind a write that can hold the lock for seconds.
+        remote_head = await connector.get_remote_commit_hash()
+        if remote_head is not None and remote_head == await connector.get_local_commit_hash():
+            logger.debug("Reconcile: remote is unchanged, nothing to do")
+            return
+
         async with self._lock:
-            connector = await self.get_connector()
             old_head = await connector.get_local_commit_hash()
             await connector.reset_to_remote()
             new_head = await connector.get_local_commit_hash()
@@ -806,24 +826,52 @@ class GitProjectStore(ProjectStore):
                 logger.debug("Reconcile: no new commits")
                 return
 
-            changed = await connector.list_changed_files(old_head, new_head)
-            project_files = [
-                p for p in changed if p.startswith(f"{PROJECTS_SUBDIR}/") and p.endswith((".yaml", ".yml"))
-            ]
-            logger.info("Reconcile: %d changed project file(s) between %s..%s", len(project_files), old_head, new_head)
+            await self._reload_changed_into_cache(connector, old_head, new_head)
 
-            for relative_path in project_files:
-                data = await self._read_committed(connector, relative_path)
-                filename = os.path.basename(relative_path)
-                if data is None:
-                    # Deleted externally: evict by filename.
-                    removed = [p.name for p in self.get_all() if p.filename == filename]
-                    for name in removed:
-                        get_project_service().remove_project(name)
-                        logger.info("Reconcile: evicted externally deleted project '%s'", name)
-                    continue
-                get_project_service().load_project_from_data(data, filename)
-                logger.info("Reconcile: reloaded '%s'", filename)
+    async def _resync_after_conflict(self, connector: GitConnector) -> None:
+        """Fetch the remote after a rejected push, and take the whole tree with us.
+
+        A non-fast-forward push means someone else's commit landed first. Resolving
+        it fetches and hard-resets, which updates every project file, not only the
+        one being written -- so this also loads any other project that changed into
+        the cache. Answers "can we commit and end up not up to date?": no, provided
+        the changes that arrived alongside are picked up, which is what this does.
+        """
+        old_head = await connector.get_local_commit_hash()
+        await connector.reset_to_remote()
+        new_head = await connector.get_local_commit_hash()
+        if old_head != new_head:
+            await self._reload_changed_into_cache(connector, old_head, new_head)
+
+    async def _reload_changed_into_cache(self, connector: GitConnector, old_head: str, new_head: str) -> None:
+        """Re-read the project files that changed between two commits into the cache.
+
+        Shared by reconcile and by the push-conflict retry path. A rejected push is
+        resolved with fetch + hard reset, which brings the WHOLE repo up to date, not
+        just the file being written -- so any other project that changed comes along
+        on disk. Without this the cache would keep serving the old version of those
+        projects until someone triggered a reconcile, which since the removal of the
+        30-second poll may be a long time. The fetch is already paid for here.
+        """
+        changed = await connector.list_changed_files(old_head, new_head)
+        project_files = [p for p in changed if p.startswith(f"{PROJECTS_SUBDIR}/") and p.endswith((".yaml", ".yml"))]
+        if not project_files:
+            return
+
+        logger.info("Reloading %d changed project file(s) between %s..%s", len(project_files), old_head, new_head)
+
+        for relative_path in project_files:
+            data = await self._read_committed(connector, relative_path)
+            filename = os.path.basename(relative_path)
+            if data is None:
+                # Deleted externally: evict by filename.
+                removed = [p.name for p in self.get_all() if p.filename == filename]
+                for name in removed:
+                    get_project_service().remove_project(name)
+                    logger.info("Evicted externally deleted project '%s'", name)
+                continue
+            get_project_service().load_project_from_data(data, filename)
+            logger.info("Reloaded '%s' from git", filename)
 
     async def _list_project_files(self, connector: GitConnector) -> list[str]:
         """Filenames of the project files present in the warm working copy."""
