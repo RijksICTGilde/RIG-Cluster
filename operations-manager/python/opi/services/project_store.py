@@ -51,6 +51,7 @@ from typing import Any
 
 from deepdiff import DeepDiff, Delta
 from deepdiff.delta import DeltaError
+from deepdiff.path import extract
 
 from opi.connectors.git import GitConnector, GitPushConflictError, create_git_connector_for_project_files
 from opi.core.config import settings
@@ -838,11 +839,15 @@ class GitProjectStore(ProjectStore):
         the changes that arrived alongside are picked up, which is what this does.
         """
         # Callers are the push-conflict retry paths in create/save/mutate/delete,
-        # which all hold the lock. Asserted rather than assumed: this hard-resets the
+        # which all hold the lock. Checked rather than assumed: this hard-resets the
         # shared working copy and rewrites cache entries, so running it concurrently
         # with a writer would reintroduce exactly the class of race the store exists
         # to remove.
-        assert self._lock.locked(), "_resync_after_conflict must be called while holding the store lock"
+        #
+        # A real check, not an assert: `python -O` strips asserts, and a guard that
+        # disappears under an optimisation flag is not a guard.
+        if not self._lock.locked():
+            raise ProjectStoreError("_resync_after_conflict must be called while holding the store lock")
 
         old_head = await connector.get_local_commit_hash()
         await connector.reset_to_remote()
@@ -944,9 +949,16 @@ def _apply_our_change_to(
     additions land on adjacent lines. Structurally they do not collide at all, and
     both changes survive.
 
-    Conservative by construction: the delta records the value each edit started from
-    and refuses to apply when that value has changed underneath, so a genuine
-    same-field collision is reported rather than silently overwritten.
+    Conservative by construction: for a field that already existed, the delta records
+    the value the edit started from and refuses to apply when that value has changed
+    underneath, so a same-field collision is reported rather than silently overwritten.
+
+    A newly *added* key needs a separate check. deepdiff represents it as
+    ``dictionary_item_added`` and applies it unconditionally -- it verifies the old
+    value only for keys that were already there -- so two writers each adding the same
+    previously-absent key (a config block, an alias, a component's first ``resources``)
+    would silently resolve to ours. ``_conflicting_added_keys`` catches exactly that
+    and turns it into a conflict.
 
     Known limitation: deltas address list entries by index, so a concurrent
     *removal* earlier in a list shifts the positions of later entries and is reported
@@ -955,10 +967,20 @@ def _apply_our_change_to(
     would refine it.
     """
     try:
+        diff = DeepDiff(base, ours)
+
+        collisions = _conflicting_added_keys(diff, ours=ours, theirs=theirs)
+        if collisions:
+            logger.info(
+                "Both versions added the same field(s) with different values, treating as a conflict: %s",
+                ", ".join(collisions),
+            )
+            return None
+
         # log_errors=False: a conflict is an expected outcome here, not a fault. Left on,
         # deepdiff logs it at ERROR and every ordinary concurrent edit would page the
         # log watch. The caller gets a ConflictError and logs it once, with context.
-        delta = Delta(DeepDiff(base, ours), raise_errors=True, bidirectional=True, log_errors=False)
+        delta = Delta(diff, raise_errors=True, bidirectional=True, log_errors=False)
         return copy.deepcopy(theirs) + delta
     except DeltaError as e:
         logger.info("Could not re-apply our change on top of the newer version: %s", e)
@@ -968,6 +990,34 @@ def _apply_our_change_to(
         # as a conflict so the caller re-reads instead.
         logger.warning("Structural merge failed unexpectedly, treating as a conflict: %s", e)
         return None
+
+
+def _conflicting_added_keys(diff: DeepDiff, *, ours: dict[str, Any], theirs: dict[str, Any]) -> list[str]:
+    """Paths that BOTH sides added since ``base``, with different values.
+
+    Exists because a delta applies ``dictionary_item_added`` without checking whether
+    the key is already present in the target: bidirectional deltas verify the previous
+    value only where there was one. Without this check, two writers each setting a
+    previously-absent field resolve silently to whoever pushed second, which is the
+    lost update the compare-and-swap exists to prevent.
+
+    Only a *differing* value is a conflict. Both sides adding the same key with the
+    same value is agreement, not collision, and must not block the write.
+    """
+    conflicts: list[str] = []
+    for path in diff.get("dictionary_item_added", []):
+        try:
+            their_value = extract(theirs, path)
+        except KeyError, IndexError, TypeError:
+            # Not present on their side: only we added it, so there is nothing to lose.
+            continue
+        try:
+            our_value = extract(ours, path)
+        except KeyError, IndexError, TypeError:
+            continue
+        if their_value != our_value:
+            conflicts.append(path)
+    return sorted(conflicts)
 
 
 def _users_from_data(data: dict[str, Any]) -> list[ProjectUser] | None:
