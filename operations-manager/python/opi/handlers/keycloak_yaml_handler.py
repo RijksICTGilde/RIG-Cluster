@@ -348,6 +348,10 @@ class KeycloakYamlHandler:
                 add_master_idp=False,
                 sso_session_idle_timeout=item.get("ssoSessionIdleTimeout"),
                 sso_session_max_lifespan=item.get("ssoSessionMaxLifespan"),
+                events_enabled=item.get("eventsEnabled"),
+                events_expiration=item.get("eventsExpiration"),
+                admin_events_enabled=item.get("adminEventsEnabled"),
+                admin_events_details_enabled=item.get("adminEventsDetailsEnabled"),
             )
 
     async def _process_identity_providers(self, idp_section: Any, variables: dict[str, Any]) -> None:
@@ -428,8 +432,8 @@ class KeycloakYamlHandler:
                     principal_type=config.get("principalType", "SUBJECT"),
                     signing_certificate=config.get("signingCertificate"),
                     sp_entity_id=config.get("entityId"),
-                    validate_signature=config.get("validateSignature", False),
-                    want_assertions_signed=config.get("wantAssertionsSigned", False),
+                    validate_signature=config.get("validateSignature", True),
+                    want_assertions_signed=config.get("wantAssertionsSigned", True),
                     want_assertions_encrypted=config.get("wantAssertionsEncrypted", False),
                     authenticate_by_default=item.get("authenticateByDefault", False),
                     sync_mode=config.get("syncMode", "FORCE"),
