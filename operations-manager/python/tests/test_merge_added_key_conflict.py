@@ -21,13 +21,20 @@ for no reason.
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from opi.services.project_store import _apply_our_change_to
+from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
 
 
 def _merge(base: dict[str, Any], ours: dict[str, Any], theirs: dict[str, Any]) -> dict[str, Any] | None:
     return _apply_our_change_to(base=base, ours=ours, theirs=theirs)
+
+
+def _as_loaded(data: dict[str, Any]) -> Any:
+    """Round-trip through the YAML loader, so the test sees production's real types."""
+    return load_yaml_from_string(dump_yaml_to_string(data))
 
 
 class TestBothSidesAddedTheSameKey:
@@ -118,3 +125,59 @@ class TestUnrelatedEditsStillMerge:
         )
 
         assert merged is None
+
+
+class TestTheTypesProductionActuallyUses:
+    """The merge runs on YAML-loaded values, not on plain dicts.
+
+    ``_read_committed`` parses with ruamel, so base/ours/theirs are CommentedMap and
+    CommentedSeq. DeepDiff compares types: a plain ``dict`` next to a ``CommentedMap``
+    is a *root-level type change*, and the delta then tries to replace the whole
+    document, which fails the bidirectional check and surfaces as a conflict. Every
+    concurrent save would collide, for a reason that has nothing to do with what
+    either writer changed.
+
+    Nothing in production mixes the two today -- the cache is populated from the same
+    parser -- but the failure mode is invisible in a test suite that only ever passes
+    plain dicts, so pin the real types here.
+    """
+
+    def test_unrelated_edits_merge_when_loaded_from_yaml(self) -> None:
+        base = _as_loaded({"name": "p", "display-name": "original", "description": "original"})
+
+        theirs = copy.deepcopy(base)
+        theirs["display-name"] = "changed by them"
+
+        ours = copy.deepcopy(base)
+        ours["description"] = "changed by us"
+
+        merged = _merge(base, ours, theirs)
+
+        assert merged is not None
+        assert merged["display-name"] == "changed by them"
+        assert merged["description"] == "changed by us"
+
+    def test_two_appended_components_merge_when_loaded_from_yaml(self) -> None:
+        base = _as_loaded({"name": "p", "components": [{"name": "alpha"}]})
+
+        theirs = copy.deepcopy(base)
+        theirs["components"].append({"name": "bravo"})
+
+        ours = copy.deepcopy(base)
+        ours["components"].append({"name": "charlie"})
+
+        merged = _merge(base, ours, theirs)
+
+        assert merged is not None
+        assert sorted(c["name"] for c in merged["components"]) == ["alpha", "bravo", "charlie"]
+
+    def test_same_added_key_still_conflicts_when_loaded_from_yaml(self) -> None:
+        base = _as_loaded({"name": "p"})
+
+        theirs = copy.deepcopy(base)
+        theirs["registries"] = [{"name": "reg", "url": "theirs.example"}]
+
+        ours = copy.deepcopy(base)
+        ours["registries"] = [{"name": "reg", "url": "ours.example"}]
+
+        assert _merge(base, ours, theirs) is None
