@@ -1050,6 +1050,51 @@ def reset_project_store() -> None:
     _store = None
 
 
+_reconcile_poll_task: asyncio.Task[None] | None = None
+
+
+async def _reconcile_poll_loop(interval_seconds: int) -> None:
+    """Periodically pull out-of-band edits into the cache.
+
+    ZAD's own writes are write-through, so this poll exists for changes made
+    outside ZAD: a member removed or an invite key revoked by pushing straight to
+    ``zad-projects`` must stop working within a bounded window, not only after an
+    explicit refresh or a restart. reconcile() starts with an ls-remote check
+    (~60ms, no object transfer), so an idle tick costs next to nothing.
+    """
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            await get_project_store().reconcile()
+        except Exception as e:
+            # Broad on purpose: this loop is the revocation bound. A transient
+            # git/network error must not end it, or out-of-band revocations
+            # silently stop propagating until restart.
+            logger.error(f"Error in project-store reconcile poll: {e}")
+
+
+def start_reconcile_poll() -> None:
+    """Start the fallback reconcile poll. Safe to call multiple times."""
+    global _reconcile_poll_task
+    interval = settings.PROJECT_STORE_RECONCILE_INTERVAL_SECONDS
+    if interval <= 0:
+        logger.info("Project-store reconcile poll disabled (interval <= 0)")
+        return
+    if _reconcile_poll_task and not _reconcile_poll_task.done():
+        return
+    _reconcile_poll_task = asyncio.create_task(_reconcile_poll_loop(interval))
+    logger.info(f"Started project-store reconcile poll (every {interval}s)")
+
+
+def stop_reconcile_poll() -> None:
+    """Stop the fallback reconcile poll."""
+    global _reconcile_poll_task
+    if _reconcile_poll_task and not _reconcile_poll_task.done():
+        _reconcile_poll_task.cancel()
+        logger.info("Stopped project-store reconcile poll")
+    _reconcile_poll_task = None
+
+
 __all__ = [
     "ConcurrencyError",
     "ConflictError",
@@ -1061,4 +1106,6 @@ __all__ = [
     "Revision",
     "get_project_store",
     "reset_project_store",
+    "start_reconcile_poll",
+    "stop_reconcile_poll",
 ]

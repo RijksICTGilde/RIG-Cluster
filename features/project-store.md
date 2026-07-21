@@ -166,11 +166,17 @@ whoever pushed second. See `_conflicting_added_keys`.
 - `store.reconcile()` — fetch, diff the changed paths, re-read only the changed files. Called
   explicitly by the refresh action; it starts with an `ls-remote` check, so it costs nothing when
   the remote has not moved. Because ZAD's own writes are write-through, it normally finds nothing.
-- There is no polling loop. The 30-second `ensure_projects_fresh()` TTL was removed: it tied
+- The 30-second `ensure_projects_fresh()` TTL was removed: it tied
   freshness to how recently someone had opened a page (API-only consumers got none at all) and
   guaranteed nothing in particular. An edit made outside ZAD is an event, not something to
   rediscover on every render. It is picked up by an explicit refresh, or by a rejected push, which
   resyncs the whole tree and reloads every changed project into the cache.
+- A slow fallback poll (`start_reconcile_poll`, every `PROJECT_STORE_RECONCILE_INTERVAL_SECONDS`,
+  default 300s, `0` disables) calls `reconcile()` in the background. This bounds how long an
+  out-of-band **revocation** — a member removed or an invite key revoked by pushing straight to
+  `zad-projects` — can keep working on this instance. Explicit refresh and push conflicts only
+  fire when someone acts; revocation must propagate even when nobody does. An idle tick is one
+  `ls-remote` (~60ms, no object transfer). A transient error does not end the loop.
 
 ## Validation
 

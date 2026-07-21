@@ -245,9 +245,11 @@ Git Monitoring: {os.environ.get("ENABLE_GIT_MONITOR", "false")}
 # for ZAD's own changes.
 #
 # What genuinely needs detecting is an edit made outside ZAD (by hand, or from
-# another cluster). That is an event, not something to rediscover on every render:
-# store.reconcile() is now called explicitly by the refresh action, and it starts
-# with an ls-remote check so it costs nothing when the remote has not moved.
+# another cluster). store.reconcile() is called explicitly by the refresh action,
+# and a slow fallback poll (start_reconcile_poll in project_store, every
+# PROJECT_STORE_RECONCILE_INTERVAL_SECONDS) bounds how long such an edit --
+# notably an out-of-band revocation of a member or invite key -- can go unseen.
+# Both start with an ls-remote check so an idle tick costs nothing.
 
 
 async def ensure_project_sops_secrets(project_data: Any, kubectl: KubectlConnector) -> bool:
