@@ -16,10 +16,15 @@ Two confirmed cross-tenant vulnerabilities are covered here:
    another tenant's project name and silently take over that project.
 """
 
-from unittest.mock import AsyncMock
+from typing import ClassVar
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException
+from opi.api.restore_router import _require_namespace_owned_by_project
 from opi.core import git_monitor
+from opi.core.cluster_config import get_prefixed_namespace
+from opi.manager.backup import RestoreResult
 from opi.manager.project_manager import ProjectManager
 
 
@@ -361,3 +366,128 @@ class TestHandleCreateProjectExistenceCheck:
         # single validated save path rather than a raw create_or_update_file commit.
         assert len(saved_calls) == 1
         assert saved_calls[0][0].get("name") == "existing-project"
+
+
+# ---------------------------------------------------------------------------
+# VULN (review augmentation): restore snapshot-listing endpoints trusted the
+# namespace from the URL path instead of the authenticated project.
+#
+# The /api/v1/restore/snapshots/{cluster}/{namespace} endpoints validate the
+# API key against a caller-supplied project_name but took cluster/namespace
+# from the path. The Kopia repository key is derived server-side from that
+# namespace, so a tenant holding any valid project key could pass another
+# tenant's namespace and enumerate its backup metadata when a shared (single)
+# backup bucket is configured. _require_namespace_owned_by_project pins the
+# only addressable namespace to get_prefixed_namespace(cluster, project_name).
+# ---------------------------------------------------------------------------
+
+
+class TestRestoreNamespaceOwnership:
+    """The endpoint-level guard for path-supplied namespaces."""
+
+    def test_owned_namespace_passes(self) -> None:
+        """A project may address its own prefixed namespace."""
+        expected = get_prefixed_namespace("local", "my-project")
+        # Must not raise.
+        _require_namespace_owned_by_project("my-project", "local", expected)
+
+    def test_foreign_namespace_is_rejected(self) -> None:
+        """A caller passing another tenant's namespace is rejected with 403."""
+        victim_namespace = get_prefixed_namespace("local", "victim-project")
+        with pytest.raises(HTTPException) as exc:
+            _require_namespace_owned_by_project("attacker-project", "local", victim_namespace)
+        assert exc.value.status_code == 403
+
+    def test_unprefixed_namespace_is_rejected(self) -> None:
+        """The bare project name (missing cluster prefix) must not match."""
+        with pytest.raises(HTTPException) as exc:
+            _require_namespace_owned_by_project("my-project", "local", "my-project")
+        assert exc.value.status_code == 403
+
+    def test_unknown_cluster_is_rejected(self) -> None:
+        """An unknown cluster resolves no prefix and is rejected with 400."""
+        with pytest.raises(HTTPException) as exc:
+            _require_namespace_owned_by_project("my-project", "does-not-exist", "anything")
+        assert exc.value.status_code == 400
+
+
+class TestRestoreEndpointsEnforceOwnership:
+    """The POST restore endpoints require project_name and enforce namespace ownership.
+
+    Before the fix these endpoints had no ``project_name`` parameter at all, so
+    ``validate_api_token`` rejected every call with 401 ("Missing project_name
+    parameter") -- they were unusable. Now they authenticate like the listing
+    endpoints and apply the same namespace-ownership guard, so a valid tenant
+    key cannot restore another tenant's backups.
+    """
+
+    AUTH: ClassVar[dict[str, str]] = {"X-API-Key": "test-api-key-12345"}
+
+    def test_restore_pvc_foreign_namespace_is_rejected(self, test_client, mock_project_service) -> None:
+        """A valid key for test-project may not restore from another tenant's namespace."""
+        victim_namespace = get_prefixed_namespace("local", "victim-project")
+        response = test_client.post(
+            f"/api/v1/restore/pvc/local/{victim_namespace}/app-data?project_name=test-project",
+            headers=self.AUTH,
+        )
+        assert response.status_code == 403
+
+    def test_restore_pvc_missing_project_name_is_unauthorized(self, test_client, mock_project_service) -> None:
+        """Without project_name the API key cannot be validated: 401."""
+        namespace = get_prefixed_namespace("local", "test-project")
+        response = test_client.post(
+            f"/api/v1/restore/pvc/local/{namespace}/app-data",
+            headers=self.AUTH,
+        )
+        assert response.status_code == 401
+
+    def test_restore_pvc_owned_namespace_reaches_manager(self, test_client, mock_project_service, monkeypatch) -> None:
+        """With a valid key and the project's own namespace the restore is executed."""
+        namespace = get_prefixed_namespace("local", "test-project")
+        manager = MagicMock()
+        manager.restore_pvc = AsyncMock(
+            return_value=RestoreResult(
+                namespace=namespace,
+                pvc_name="app-data",
+                success=True,
+                target_pvc_name="app-data-restored",
+            )
+        )
+        monkeypatch.setattr("opi.api.restore_router.create_backup_manager", lambda: manager)
+
+        response = test_client.post(
+            f"/api/v1/restore/pvc/local/{namespace}/app-data?project_name=test-project",
+            headers=self.AUTH,
+        )
+        assert response.status_code == 200
+        manager.restore_pvc.assert_awaited_once()
+
+    def test_restore_database_foreign_namespace_is_rejected(self, test_client, mock_project_service) -> None:
+        """Database restore into another tenant's namespace is rejected with 403."""
+        victim_namespace = get_prefixed_namespace("local", "victim-project")
+        response = test_client.post(
+            f"/api/v1/restore/database/local/{victim_namespace}/mydb?project_name=test-project",
+            headers=self.AUTH,
+            json={
+                "target_database_host": "postgresql.svc",
+                "target_database_name": "db",
+                "target_database_user": "user",
+                "target_database_password": "pw",
+            },
+        )
+        assert response.status_code == 403
+
+    def test_restore_bucket_foreign_namespace_is_rejected(self, test_client, mock_project_service) -> None:
+        """Bucket restore into another tenant's namespace is rejected with 403."""
+        victim_namespace = get_prefixed_namespace("local", "victim-project")
+        response = test_client.post(
+            f"/api/v1/restore/bucket/local/{victim_namespace}/mybucket?project_name=test-project",
+            headers=self.AUTH,
+            json={
+                "target_minio_endpoint": "http://minio.svc:9000",
+                "target_bucket_name": "bucket",
+                "target_access_key": "ak",
+                "target_secret_key": "sk",
+            },
+        )
+        assert response.status_code == 403

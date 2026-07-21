@@ -5,6 +5,7 @@ Provides a UI to select a monitored service, discover its available metrics,
 and view them in the Prometheus graph UI via an iframe.
 """
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Request
@@ -111,7 +112,9 @@ async def get_service_metrics(request: Request, service_id: str):
         from opi.connectors.prometheus import PrometheusConnector
 
         prom = PrometheusConnector()
-        metric_names = prom.discover_metric_names(service["match"])
+        # discover_metric_names does a blocking requests.get; run it off the event loop
+        # so this async route does not stall other requests for up to the 10s HTTP timeout.
+        metric_names = await asyncio.to_thread(prom.discover_metric_names, service["match"])
         return JSONResponse(content={"metrics": metric_names, "count": len(metric_names)})
 
     except Exception as e:
