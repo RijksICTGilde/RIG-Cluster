@@ -19,7 +19,10 @@ Two confirmed cross-tenant vulnerabilities are covered here:
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
+from opi.api.restore_router import _require_namespace_owned_by_project
 from opi.core import git_monitor
+from opi.core.cluster_config import get_prefixed_namespace
 from opi.manager.project_manager import ProjectManager
 
 
@@ -361,3 +364,46 @@ class TestHandleCreateProjectExistenceCheck:
         # single validated save path rather than a raw create_or_update_file commit.
         assert len(saved_calls) == 1
         assert saved_calls[0][0].get("name") == "existing-project"
+
+
+# ---------------------------------------------------------------------------
+# VULN (review augmentation): restore snapshot-listing endpoints trusted the
+# namespace from the URL path instead of the authenticated project.
+#
+# The /api/v1/restore/snapshots/{cluster}/{namespace} endpoints validate the
+# API key against a caller-supplied project_name but took cluster/namespace
+# from the path. The Kopia repository key is derived server-side from that
+# namespace, so a tenant holding any valid project key could pass another
+# tenant's namespace and enumerate its backup metadata when a shared (single)
+# backup bucket is configured. _require_namespace_owned_by_project pins the
+# only addressable namespace to get_prefixed_namespace(cluster, project_name).
+# ---------------------------------------------------------------------------
+
+
+class TestRestoreNamespaceOwnership:
+    """The endpoint-level guard for path-supplied namespaces."""
+
+    def test_owned_namespace_passes(self) -> None:
+        """A project may address its own prefixed namespace."""
+        expected = get_prefixed_namespace("local", "my-project")
+        # Must not raise.
+        _require_namespace_owned_by_project("my-project", "local", expected)
+
+    def test_foreign_namespace_is_rejected(self) -> None:
+        """A caller passing another tenant's namespace is rejected with 403."""
+        victim_namespace = get_prefixed_namespace("local", "victim-project")
+        with pytest.raises(HTTPException) as exc:
+            _require_namespace_owned_by_project("attacker-project", "local", victim_namespace)
+        assert exc.value.status_code == 403
+
+    def test_unprefixed_namespace_is_rejected(self) -> None:
+        """The bare project name (missing cluster prefix) must not match."""
+        with pytest.raises(HTTPException) as exc:
+            _require_namespace_owned_by_project("my-project", "local", "my-project")
+        assert exc.value.status_code == 403
+
+    def test_unknown_cluster_is_rejected(self) -> None:
+        """An unknown cluster resolves no prefix and is rejected with 400."""
+        with pytest.raises(HTTPException) as exc:
+            _require_namespace_owned_by_project("my-project", "does-not-exist", "anything")
+        assert exc.value.status_code == 400

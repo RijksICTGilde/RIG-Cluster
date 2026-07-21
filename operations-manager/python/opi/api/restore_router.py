@@ -44,6 +44,33 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 
+def _require_namespace_owned_by_project(project_name: str, cluster: str, namespace: str) -> None:
+    """Reject a request whose path namespace does not belong to the authenticated project.
+
+    The platform pins every deployment namespace to the project name (see
+    ``ProjectFileHandler.extract_deployment_namespace`` / ``enforce_namespace_pin``), so the only
+    namespace a project may address on a given cluster is
+    ``get_prefixed_namespace(cluster, project_name)``. The snapshot-listing endpoints derive the
+    Kopia repository key server-side from the supplied namespace, so without this check a caller
+    holding any valid project key could pass another tenant's namespace and enumerate that tenant's
+    backup metadata whenever a shared (single) backup bucket is configured.
+    """
+    try:
+        expected_namespace = get_prefixed_namespace(cluster, project_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Unknown cluster '{cluster}'") from e
+
+    if namespace != expected_namespace:
+        logger.warning(
+            "Namespace ownership check failed: project '%s' may only access namespace '%s' on cluster '%s', not '%s'",
+            project_name,
+            expected_namespace,
+            cluster,
+            namespace,
+        )
+        raise HTTPException(status_code=403, detail="Namespace does not belong to the authenticated project")
+
+
 # Request/Response Models
 
 
@@ -433,6 +460,10 @@ async def list_snapshots(
       -H "X-API-Key: your-api-key"
     ```
     """
+    # Enforce namespace ownership before the try block: HTTPException is a subclass of Exception
+    # and would otherwise be swallowed by the generic 500 handler below.
+    _require_namespace_owned_by_project(project_name, cluster, namespace)
+
     try:
         logger.info(f"Listing snapshots for {cluster}/{namespace} (project={project_name})")
 
@@ -470,6 +501,10 @@ async def list_pvc_snapshots(
       -H "X-API-Key: your-api-key"
     ```
     """
+    # Enforce namespace ownership before the try block: HTTPException is a subclass of Exception
+    # and would otherwise be swallowed by the generic 500 handler below.
+    _require_namespace_owned_by_project(project_name, cluster, namespace)
+
     try:
         logger.info(f"Listing snapshots for {cluster}/{namespace}/{pvc_name} (project={project_name})")
 
