@@ -18,16 +18,19 @@ or:
 from __future__ import annotations
 
 import logging
-import time
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import httpx
 import pytest
 from tests.e2e.conftest import FORGEJO_VERIFY_SSL, SANDBOX_TEST_USER
 from tests.e2e.helpers import sandbox_api
+from tests.e2e.helpers.lifecycle import (
+    RUNNABLE_IMAGE,
+    CreatedProject,
+    create_project_via_wizard,
+)
 from tests.e2e.helpers.project_actions import delete_project_via_ui
-from tests.e2e.helpers.wizard import WizardHelper, _unique_project_name
+from tests.e2e.helpers.wizard import _unique_project_name
 
 logger = logging.getLogger(__name__)
 
@@ -43,11 +46,7 @@ pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
 # Sandbox uses a real certificate; API calls verify SSL like the Forgejo client.
 _API_VERIFY_SSL = FORGEJO_VERIFY_SSL
 
-# The wizard component gets inbound port 8080 by default. Use an image that actually
-# listens on 8080 and runs as non-root so the deployment becomes healthy (nginx:latest
-# serves on 80 as root and CrashLoopBackOffs under non-root enforcement, which makes the
-# non-force UI delete drag on ArgoCD teardown).
-_RUNNABLE_IMAGE = "nginxinc/nginx-unprivileged:stable-alpine"
+_RUNNABLE_IMAGE = RUNNABLE_IMAGE
 
 
 def test_version_endpoint(sandbox_url: str) -> None:
@@ -59,66 +58,6 @@ def test_version_endpoint(sandbox_url: str) -> None:
     for key in ("name", "version", "commit", "branch", "build_date", "dirty"):
         assert key in info, f"missing '{key}' in /version response: {info}"
     logger.info("Sandbox is running build: %s", info)
-
-
-@dataclass
-class CreatedProject:
-    name: str  # technical name, e.g. "e2e97-llv" (derived from display name, random postfix)
-    display_name: str  # what was typed in the wizard, e.g. "e2e-97838-jdwm"
-    api_key: str
-    deployment_name: str
-
-
-_REVIEW_SUBMIT_SELECTOR = "button:has-text('Project aanmaken'), button:has-text('Indienen')"
-
-
-def _on_review(page: Page) -> bool:
-    """The review page is reached when the final submit button is present."""
-    return page.locator(_REVIEW_SUBMIT_SELECTOR).count() > 0
-
-
-def _walk_create_wizard(page: Page, base_url: str, project_name: str) -> None:
-    """Drive the create-project wizard through to the review page.
-
-    Fills the required fields (identity, team, component) as their steps appear,
-    then advances with defaults through the remaining steps (services, deployment,
-    domains) until the review page is reached. The step count varies with the
-    selected services, so we loop until the final submit button appears rather
-    than hard-coding the number of steps.
-    """
-    wizard = WizardHelper(page, base_url)
-    wizard.open_create_wizard()
-
-    wizard.fill_identity(display_name=project_name, description=f"E2E lifecycle {project_name}")
-    wizard.click_next()  # identity -> services
-    wizard.click_next()  # services (none selected) -> team
-    wizard.fill_team(email=SANDBOX_TEST_USER["email"])
-    wizard.click_next()  # team -> components
-    wizard.fill_component(name="web", image=_RUNNABLE_IMAGE)
-
-    # Advance through the remaining default steps (deployment, domains, ...) until review.
-    for _ in range(8):
-        if _on_review(page):
-            break
-        wizard.click_next()
-    assert _on_review(page), f"Did not reach the review page (stuck at {page.url})"
-
-    body_text = page.text_content("body") or ""
-    assert project_name in body_text, f"Project '{project_name}' not visible on review page"
-    wizard.submit_wizard()
-    page.wait_for_load_state("networkidle")
-
-
-def _read_api_key_with_retry(page: Page, base_url: str, project_name: str, *, attempts: int = 20) -> str:
-    """Read the API key from the details page, retrying while the project loads into memory."""
-    last_error: Exception | None = None
-    for _ in range(attempts):
-        try:
-            return sandbox_api.read_api_key(page, base_url, project_name)
-        except Exception as exc:
-            last_error = exc
-            time.sleep(3.0)
-    raise AssertionError(f"Could not read API key for '{project_name}': {last_error}")
 
 
 @pytest.fixture(scope="module")
@@ -137,17 +76,14 @@ def lifecycle_project(
     page = sandbox_context.new_page()
     created: CreatedProject | None = None
     try:
-        before = forgejo.list_project_names()
-        _walk_create_wizard(page, sandbox_url, display_name)
+        created = create_project_via_wizard(
+            page,
+            sandbox_url,
+            forgejo,
+            display_name,
+            user_email=SANDBOX_TEST_USER["email"],
+        )
         page.screenshot(path=str(artifact_dir / f"lifecycle-{display_name}-after-create.png"), full_page=True)
-
-        # The technical name has a random postfix, so discover it by diffing the repo.
-        name = forgejo.wait_for_new_project(before, timeout=180)
-        assert name, f"No new project file appeared in Forgejo for display-name '{display_name}'"
-
-        deployment_name = forgejo.get_first_deployment_name(name)
-        api_key = _read_api_key_with_retry(page, sandbox_url, name)
-        created = CreatedProject(name=name, display_name=display_name, api_key=api_key, deployment_name=deployment_name)
         yield created
     finally:
         page.close()

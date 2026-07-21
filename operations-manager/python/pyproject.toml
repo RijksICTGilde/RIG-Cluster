@@ -74,6 +74,7 @@ test = [
     "freezegun>=1.5.2",
     "vcrpy>=7.0.0",
     "pytest-minio-mock>=0.4.17",
+    "pytest-timeout>=2.3.1",
 ]
 dev = [
     "ruff>=0.11.11",
@@ -210,7 +211,8 @@ markers = [
    "enable_auth: marks tests that require authentication",
    "requires_infra: marks tests that require external infrastructure (database, keycloak, etc.)",
    "e2e: marks end-to-end browser tests (require playwright and chromium)",
-   "sandbox: marks tests that require a running sandbox cluster"
+   "sandbox: marks tests that require a running sandbox cluster",
+   "reallife: long-running real-life sandbox suite (5 projects, semi-concurrent UI+API mutations); excluded from the standard sandbox run"
 ]
 pythonpath = "."
 

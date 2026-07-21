@@ -137,6 +137,29 @@ class ForgejoClient:
             time.sleep(interval)
         return not self.project_file_exists(project_name)
 
+    def wait_for_condition(
+        self,
+        project_name: str,
+        predicate,
+        *,
+        timeout: float = 120.0,
+        interval: float = 3.0,
+    ) -> dict | None:
+        """Poll the parsed project YAML until predicate(data) is truthy.
+
+        Returns the YAML data that satisfied the predicate, or None on timeout.
+        The predicate receives the parsed dict (never None). Commits land
+        asynchronously after UI/API mutations, hence the polling.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            data = self.get_project_yaml(project_name)
+            if data is not None and predicate(data):
+                return data
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(interval)
+
     def wait_for_component(
         self, project_name: str, component_name: str, *, timeout: float = 120.0, interval: float = 3.0
     ) -> bool:

@@ -126,8 +126,24 @@ class EditModalHelper:
             select_locator.select_option(value)
         self.page.wait_for_load_state("networkidle", timeout=timeout)
 
+    def sequence_add(self, path: str, timeout: float = 10000) -> None:
+        """Add an item to a sequence field (e.g. 'users', 'components') in the modal.
+
+        Calls the page's own sequenceAdd() handler, which submits the form with a
+        _seq_action so the server re-renders the step with an extra blank item.
+        """
+        self._do_and_wait(lambda: self.page.evaluate(f"sequenceAdd('{path}')"), timeout=timeout)
+
+    def sequence_remove(self, path: str, index: int, timeout: float = 10000) -> None:
+        """Remove item `index` from a sequence field in the modal."""
+        self._do_and_wait(lambda: self.page.evaluate(f"sequenceRemove('{path}', {index})"), timeout=timeout)
+
     def _click_and_wait(self, locator, timeout: float = 10000) -> None:
-        """Click a button and wait for the HTMX swap to complete.
+        """Click a button and wait for the HTMX swap to complete."""
+        self._do_and_wait(locator.click, timeout=timeout)
+
+    def _do_and_wait(self, action, timeout: float = 10000) -> None:
+        """Run an action that triggers an HTMX form submit and wait for the swap.
 
         Uses the data-stale marker pattern on #modal-wizard-step-inner.
         """
@@ -135,7 +151,7 @@ class EditModalHelper:
         if inner.count() > 0:
             inner.evaluate("el => el.setAttribute('data-stale', '1')")
 
-        locator.click()
+        action()
         self.page.wait_for_load_state("networkidle", timeout=timeout)
 
         self.page.wait_for_function(
