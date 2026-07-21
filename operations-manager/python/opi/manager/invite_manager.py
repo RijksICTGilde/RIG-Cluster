@@ -343,6 +343,17 @@ class InviteManager:
         if not email:
             raise InviteError("SSO user info missing email", "missing_email")
 
+        # NOTE: Intentionally no email_verified check here, unlike the platform login flow
+        # (auth_routes.py). That flow gates access to OPI itself, so an unverified email must be
+        # rejected. This flow only provisions the user into the *project's own* Keycloak realm and
+        # assigns the invite's realm roles/groups -- it grants no OPI platform access. A Keycloak
+        # account (even with roles) is not application access: the application behind the realm is
+        # the resource server and remains responsible for enforcing email_verified before trusting
+        # the identity. This contract matters because get_user_by_email() below binds an incoming
+        # SSO login onto any existing realm user with the same email, so an unverified email could
+        # otherwise collide onto an existing account. Domain restriction is the only guard applied
+        # at this layer by design.
+
         # Validate email domain
         self.validate_email_domain(email, invite)
 
