@@ -4,9 +4,9 @@ FROM python:3.14-slim AS base-system
 
 # Pin tool versions for deterministic builds and optimal layer caching.
 # Bump these ARGs when you need a newer version.
-ARG SOPS_VERSION=v3.12.1
-ARG KOPIA_VERSION=0.22.3
-ARG CHISEL_VERSION=1.11.3
+ARG SOPS_VERSION=v3.13.2
+ARG KOPIA_VERSION=0.23.1
+ARG CHISEL_VERSION=1.11.8
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \

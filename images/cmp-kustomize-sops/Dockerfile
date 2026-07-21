@@ -20,7 +20,7 @@ RUN KUSTOMIZE_VERSION="5.8.1" && \
     chmod +x kustomize
 
 # Download sops
-RUN curl -Lo sops "https://github.com/getsops/sops/releases/download/v3.9.2/sops-v3.9.2.linux.${TARGETARCH}" && \
+RUN curl -Lo sops "https://github.com/getsops/sops/releases/download/v3.13.2/sops-v3.13.2.linux.${TARGETARCH}" && \
     chmod +x sops
 
 # Download yq
@@ -28,13 +28,13 @@ RUN curl -Lo yq "https://github.com/mikefarah/yq/releases/latest/download/yq_lin
     chmod +x yq
 
 # Download helm
-RUN curl -fsSL "https://get.helm.sh/helm-v3.19.4-linux-${TARGETARCH}.tar.gz" | tar xz && \
+RUN curl -fsSL "https://get.helm.sh/helm-v3.21.3-linux-${TARGETARCH}.tar.gz" | tar xz && \
     mv linux-${TARGETARCH}/helm . && \
     rm -rf linux-${TARGETARCH} && \
     chmod +x helm
 
 # Download helmfile
-RUN curl -fsSL "https://github.com/helmfile/helmfile/releases/download/v0.169.2/helmfile_0.169.2_linux_${TARGETARCH}.tar.gz" | tar xz && \
+RUN curl -fsSL "https://github.com/helmfile/helmfile/releases/download/v1.7.1/helmfile_1.7.1_linux_${TARGETARCH}.tar.gz" | tar xz && \
     chmod +x helmfile
 
 # Install helm-diff plugin (required by helmfile)
@@ -42,14 +42,14 @@ RUN curl -fsSL "https://github.com/helmfile/helmfile/releases/download/v0.169.2/
 # The tarball extracts to diff/, so we extract to plugins/ and rename
 ENV HELM_DATA_HOME=/tools/helm-data
 RUN mkdir -p $HELM_DATA_HOME/plugins && \
-    curl -fsSL "https://github.com/databus23/helm-diff/releases/download/v3.9.12/helm-diff-linux-${TARGETARCH}.tgz" | \
+    curl -fsSL "https://github.com/databus23/helm-diff/releases/download/v3.15.10/helm-diff-linux-${TARGETARCH}.tgz" | \
     tar xz -C $HELM_DATA_HOME/plugins && \
     mv $HELM_DATA_HOME/plugins/diff $HELM_DATA_HOME/plugins/helm-diff && \
     ls -la $HELM_DATA_HOME/plugins/helm-diff/
 
-# Download KSOPS plugin - pinned to v4.3.2 for stability
+# Download KSOPS plugin - pinned to v4.5.1 for stability
 # KSOPS uses x86_64 instead of amd64 in release filenames
-RUN KSOPS_VERSION="4.3.2" && \
+RUN KSOPS_VERSION="4.5.1" && \
     KSOPS_ARCH="${TARGETARCH}" && \
     if [ "$KSOPS_ARCH" = "amd64" ]; then KSOPS_ARCH="x86_64"; fi && \
     echo "Downloading KSOPS v${KSOPS_VERSION} for ${KSOPS_ARCH}..." && \
@@ -79,13 +79,14 @@ RUN echo "=== Downloaded tools verification ===" && \
     echo "=== Downloader verification complete ==="
 
 # Final image based on ArgoCD
-FROM quay.io/argoproj/argocd:v2.8.4
+FROM quay.io/argoproj/argocd:v2.14.21
 
 # Switch to root to install packages and setup tools
 USER root
 
-# Install additional runtime dependencies
-RUN apt-get update && apt-get install -y \
+# Install additional runtime dependencies and pick up Ubuntu security patches
+# newer than the ArgoCD base image
+RUN apt-get update && apt-get upgrade -y && apt-get install -y \
     jq \
     file \
     && rm -rf /var/lib/apt/lists/*
