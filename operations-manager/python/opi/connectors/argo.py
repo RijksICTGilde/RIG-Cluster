@@ -15,7 +15,6 @@ from typing import Any
 import aiohttp
 import requests
 
-from opi.core.task_supersede import raise_if_superseded
 from opi.utils.logging_redact import redact_sensitive_headers
 
 logger = logging.getLogger(__name__)
@@ -598,9 +597,6 @@ class ArgoConnector:
             return (await kubectl_connector.argocd_application_exists(app_name, namespace)) is False
 
         for attempt in range(max_retries):
-            # Outside the try: a supersede is a deliberate hand-over, not an error to
-            # be caught and retried by the fallbacks below.
-            await raise_if_superseded(f"waiting for ArgoCD application '{app_name}' to be deleted")
             try:
                 exists = await self.application_exists(app_name)
                 # ArgoCD reports the app gone. A clean 404 is fairly reliable, but since

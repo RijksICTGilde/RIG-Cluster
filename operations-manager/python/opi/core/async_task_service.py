@@ -726,52 +726,6 @@ class AsyncTaskService:
         finally:
             await self._pool.release(conn)
 
-    async def find_superseding_task(
-        self,
-        task_id: str,
-        project_name: str,
-        deployment_name: str | None = None,
-    ) -> dict | None:
-        """Find a newer queued/running task that makes this one's remaining work pointless.
-
-        A task keeps ArgoCD in sync with the project file it just committed. If a
-        newer task for the same project has arrived, that task will reprocess the
-        project from the committed state anyway, so waiting out the current sync
-        only delays it. This is the query a long ArgoCD wait uses to notice.
-
-        A newer task supersedes when it touches the same ground:
-          - it is project-wide (no deployment), so it affects every deployment, or
-          - it targets the same deployment, or
-          - this task is itself project-wide, so anything newer overlaps it.
-
-        Returns the superseding task, or None.
-        """
-        conn = await self._pool.acquire()
-        try:
-            row = await conn.fetchrow(
-                """
-                SELECT id, task_type, project_name, deployment_name, status, created_at
-                FROM async_tasks
-                WHERE status IN ('pending', 'claimed', 'running')
-                  AND project_name = $1
-                  AND id != $2
-                  AND created_at > (SELECT created_at FROM async_tasks WHERE id = $2)
-                  AND (
-                        deployment_name IS NULL
-                        OR $3::text IS NULL
-                        OR deployment_name = $3
-                      )
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                project_name,
-                uuid.UUID(task_id),
-                deployment_name,
-            )
-            return _row_to_dict(row) if row is not None else None
-        finally:
-            await self._pool.release(conn)
-
     async def get_last_completed_task(
         self,
         task_type: str,

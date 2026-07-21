@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
-from opi.core.task_supersede import raise_if_superseded
 from opi.utils.age import decrypt_password_smart
 from opi.utils.naming import (
     generate_argocd_application_name,
@@ -801,9 +800,6 @@ class ArgoManager:
 
         elapsed_time = 0
         while elapsed_time < timeout:
-            # A newer task for this project will reprocess it from the committed
-            # state anyway, so sitting out this timeout only delays that task.
-            await raise_if_superseded(f"waiting for ArgoCD application '{app_name}' to be created")
             try:
                 # Check if application exists
                 if await argo_connector.application_exists(app_name):

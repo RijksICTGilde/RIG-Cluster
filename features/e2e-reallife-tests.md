@@ -106,6 +106,19 @@ ook als een test faalde.
 - Componentnamen mogen alleen kleine letters en cijfers bevatten - vandaar `web`, `alpha`, `beta`,
   `gamma`.
 
+## Wat de eerste volledige run opleverde
+
+Draaien tegen build `fa13306` (5 projecten, 8 rondes):
+
+- **De project-store hield stand.** Alle commits landden: bij vijf gelijktijdige component-adds
+  kwamen `alpha` en `beta` allebei correct in dezelfde file, en ook de latere patches, de
+  identity-wijziging en de extra deployment zijn gecommit. Geen lost update waargenomen.
+- **Een echte bug gevonden**, deterministisch in 5 van de 5 projecten: `update_component` schrijft
+  `memory_limit` naar `resources.memory`, terwijl de manifest-resolver
+  (`project_file_handler._resolve_resources`) uitsluitend `resources.requests` en `resources.limits`
+  leest. De opgegeven limiet wordt dus genegeerd en de container krijgt de default van 512Mi.
+  Het JSON-schema staat `resources.memory` toe als legacy-vorm, dus de commit slaagt gewoon.
+
 ## Zie ook
 
 - `features/e2e-sandbox-tests.md` - de fixtures waar deze suite op staat.
