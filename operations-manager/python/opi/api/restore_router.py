@@ -12,6 +12,7 @@ from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_m
 from opi.core.config import settings
 from opi.handlers.project_file_handler import (
     create_project_file_handler,
+    extract_storage_from_component_services,
 )
 
 if TYPE_CHECKING:
@@ -689,14 +690,16 @@ async def restore_project_pvc(
                 status_code=404, detail=f"Deployment '{body.deployment_name}' not found or has no cluster configured"
             )
 
-        # 3. Clone project files repo to read/modify project file
-        # Read the committed project file through the store: no clone, no working
-        # directory, and no connector for this handler to hold or close.
-
-        # Read project file
-        project_data = await get_project_store().read_at(project_name, "HEAD")
-        if not project_data:
-            raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}")
+        # 3. Read the committed project file through the store: no clone, no working
+        # directory, and no connector for this handler to hold or close. Reading via
+        # the manager that later saves records the compare-and-swap base, so the
+        # commit after a long restore merges with anything that landed in between
+        # instead of overwriting it.
+        restore_project_manager = ProjectManager(project_file_relative_path=f"projects/{project.filename}")
+        try:
+            project_data = await restore_project_manager.get_contents()
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}") from e
 
         # 4. Find the deployment and component reference
         deployments = project_data.get("deployments", [])
@@ -728,8 +731,6 @@ async def restore_project_pvc(
             raise HTTPException(status_code=404, detail=f"Base component '{body.component_name}' not found in project")
 
         # 5. Find storage configuration from BASE component
-        from opi.handlers.project_file_handler import extract_storage_from_component_services
-
         storage_list = extract_storage_from_component_services(base_component)
         target_storage = None
 
@@ -752,9 +753,13 @@ async def restore_project_pvc(
                 detail=f"Storage '{body.storage_name}' not found in component '{body.component_name}'",
             )
 
-        # 6. Get current generation and calculate next
-        current_generation = project_file_handler.get_storage_generation(
-            project_data, body.deployment_name, body.component_name, body.storage_name
+        # 6. Get current generation and calculate next. None means the storage has
+        # never been restored before (no generation recorded yet): generation 0.
+        current_generation = (
+            project_file_handler.get_storage_generation(
+                project_data, body.deployment_name, body.component_name, body.storage_name
+            )
+            or 0
         )
         next_generation = current_generation + 1
 
@@ -817,10 +822,6 @@ async def restore_project_pvc(
             f"Component: {body.component_name}\n"
             f"Storage: {body.storage_name}\n"
             f"Generation: {current_generation} -> {next_generation}"
-        )
-        restore_project_manager = ProjectManager(
-            project_file_relative_path=f"projects/{project.filename}",
-            git_connector_for_project_files=git_connector,
         )
         await restore_project_manager.save_and_commit_project(project_data, commit_message)
         logger.info("Project file committed and pushed")
@@ -977,8 +978,6 @@ async def _restore_pvc(
     # Get storage config from component
     base_components = {c.get("name"): c for c in project_data.get("components", [])}
     base_component = base_components.get(component_name, {})
-    from opi.handlers.project_file_handler import extract_storage_from_component_services
-
     storage_list = extract_storage_from_component_services(base_component) if isinstance(base_component, dict) else []
     target_storage = next((s for s in storage_list if s.get("name") == storage_name), None)
 
@@ -1218,12 +1217,16 @@ async def restore_backup_run(
 
         logger.info(f"Found {len(run_snapshots)} snapshot(s) in backup run {backup_run_id}")
 
-        # Clone project files repo
         # Read the committed project file through the store: no clone, no working
-        # directory, and no connector for this handler to hold or close.
-        project_data = await get_project_store().read_at(project_name, "HEAD")
-        if not project_data:
-            raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}")
+        # directory, and no connector for this handler to hold or close. Reading via
+        # the manager that later saves records the compare-and-swap base, so the
+        # commit after a long restore merges with anything that landed in between
+        # instead of overwriting it.
+        restore_project_manager = ProjectManager(project_file_relative_path=f"projects/{project.filename}")
+        try:
+            project_data = await restore_project_manager.get_contents()
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}") from e
 
         # Restore each snapshot
         restore_details: list[PVCRestoreDetail] = []
@@ -1258,10 +1261,6 @@ async def restore_backup_run(
                 f"Project: {project_name}\n"
                 f"Deployment: {deployment_name}\n"
                 f"Resources restored: {', '.join(restored_names)}"
-            )
-            restore_project_manager = ProjectManager(
-                project_file_relative_path=f"projects/{project.filename}",
-                git_connector_for_project_files=git_connector,
             )
             await restore_project_manager.save_and_commit_project(project_data, commit_message)
             logger.info("Project file committed and pushed")
@@ -1640,14 +1639,16 @@ async def restore_deployment_resource(
         raw_namespace = project_file_handler.extract_deployment_namespace(project.data, deployment_name)
         namespace = get_prefixed_namespace(deployment_cluster, raw_namespace or project_name)
 
-        # 3. Clone project files repo to read/modify project file
-        # Read the committed project file through the store: no clone, no working
-        # directory, and no connector for this handler to hold or close.
-
-        # Read project file
-        project_data = await get_project_store().read_at(project_name, "HEAD")
-        if not project_data:
-            raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}")
+        # 3. Read the committed project file through the store: no clone, no working
+        # directory, and no connector for this handler to hold or close. Reading via
+        # the manager that later saves records the compare-and-swap base, so the
+        # commit after a long restore merges with anything that landed in between
+        # instead of overwriting it.
+        restore_project_manager = ProjectManager(project_file_relative_path=f"projects/{project.filename}")
+        try:
+            project_data = await restore_project_manager.get_contents()
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}") from e
 
         # Route to appropriate handler based on resource type
         if body.resource_type == "pvc":
@@ -1742,10 +1743,6 @@ async def restore_deployment_resource(
             f"Resource: {body.reference_name}\n"
             f"Generation: {result['old_generation']} -> {result['new_generation']}\n"
             f"Snapshot: {body.snapshot_id}"
-        )
-        restore_project_manager = ProjectManager(
-            project_file_relative_path=f"projects/{project.filename}",
-            git_connector_for_project_files=git_connector,
         )
         await restore_project_manager.save_and_commit_project(project_data, commit_message)
         logger.info("Project file committed and pushed")
