@@ -50,10 +50,10 @@ def _require_namespace_owned_by_project(project_name: str, cluster: str, namespa
     The platform pins every deployment namespace to the project name (see
     ``ProjectFileHandler.extract_deployment_namespace`` / ``enforce_namespace_pin``), so the only
     namespace a project may address on a given cluster is
-    ``get_prefixed_namespace(cluster, project_name)``. The snapshot-listing endpoints derive the
-    Kopia repository key server-side from the supplied namespace, so without this check a caller
-    holding any valid project key could pass another tenant's namespace and enumerate that tenant's
-    backup metadata whenever a shared (single) backup bucket is configured.
+    ``get_prefixed_namespace(cluster, project_name)``. The snapshot-listing and restore endpoints
+    derive the Kopia repository key server-side from the supplied namespace, so without this check
+    a caller holding any valid project key could pass another tenant's namespace and enumerate or
+    restore that tenant's backup data whenever a shared (single) backup bucket is configured.
     """
     try:
         expected_namespace = get_prefixed_namespace(cluster, project_name)
@@ -452,11 +452,11 @@ async def list_snapshots(
     Args:
         cluster: Cluster name (e.g., "local", "odcn-production")
         namespace: Namespace name
-        project_name: Optional project name for per-project bucket resolution
+        project_name: Project name matching the API key (required)
 
     Example:
     ```bash
-    curl -X GET "http://localhost:9595/api/v1/restore/snapshots/local/project-alpha?project_name=myproject" \\
+    curl -X GET "http://localhost:9595/api/v1/restore/snapshots/local/rig-project-alpha?project_name=project-alpha" \\
       -H "X-API-Key: your-api-key"
     ```
     """
@@ -493,11 +493,11 @@ async def list_pvc_snapshots(
         cluster: Cluster name
         namespace: Namespace name
         pvc_name: PVC name to filter by
-        project_name: Optional project name for per-project bucket resolution
+        project_name: Project name matching the API key (required)
 
     Example:
     ```bash
-    curl -X GET "http://localhost:9595/api/v1/restore/snapshots/local/project-alpha/app-data?project_name=myproject" \\
+    curl -X GET "http://localhost:9595/api/v1/restore/snapshots/local/rig-project-alpha/app-data?project_name=project-alpha" \\
       -H "X-API-Key: your-api-key"
     ```
     """
@@ -530,6 +530,7 @@ async def restore_pvc(
     namespace: str,
     pvc_name: str,
     body: RestoreRequest | None = None,
+    project_name: str | None = None,
 ) -> JSONResponse:
     """
     Restore a PVC from a Kopia backup.
@@ -546,9 +547,10 @@ async def restore_pvc(
 
     Args:
         cluster: Cluster name where backup was made
-        namespace: Namespace for the restore
+        namespace: Namespace for the restore (must be the authenticated project's own namespace)
         pvc_name: Original PVC name (to find the backup)
         body: Optional restore parameters
+        project_name: Project name matching the API key (required)
 
     Headers:
         X-API-Key: The API key (required)
@@ -556,11 +558,11 @@ async def restore_pvc(
     Example:
     ```bash
     # Restore to new PVC with default settings
-    curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/project-alpha/app-data" \\
+    curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/rig-project-alpha/app-data?project_name=project-alpha" \\
       -H "X-API-Key: your-api-key"
 
     # Restore specific snapshot to named PVC
-    curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/project-alpha/app-data" \\
+    curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/rig-project-alpha/app-data?project_name=project-alpha" \\
       -H "X-API-Key: your-api-key" \\
       -H "Content-Type: application/json" \\
       -d '{
@@ -570,7 +572,7 @@ async def restore_pvc(
       }'
 
     # Restore to existing PVC (overwrite)
-    curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/project-alpha/app-data" \\
+    curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/rig-project-alpha/app-data?project_name=project-alpha" \\
       -H "X-API-Key: your-api-key" \\
       -H "Content-Type: application/json" \\
       -d '{
@@ -579,6 +581,10 @@ async def restore_pvc(
       }'
     ```
     """
+    # Enforce namespace ownership before the try block: HTTPException is a subclass of Exception
+    # and would otherwise be swallowed by the generic 500 handler below.
+    _require_namespace_owned_by_project(project_name, cluster, namespace)
+
     try:
         logger.info(f"Restore request for {cluster}/{namespace}/{pvc_name}")
 
@@ -1331,6 +1337,7 @@ async def restore_database(
     namespace: str,
     reference_name: str,
     body: DatabaseRestoreRequest,
+    project_name: str | None = None,
 ) -> JSONResponse:
     """
     Restore a PostgreSQL database from a Kopia backup.
@@ -1351,9 +1358,10 @@ async def restore_database(
 
     Args:
         cluster: Cluster name where backup was made
-        namespace: Kubernetes namespace for the restore pod
+        namespace: Kubernetes namespace for the restore pod (must be the authenticated project's own namespace)
         reference_name: Logical name of the database backup to restore
         body: Target database connection parameters
+        project_name: Project name matching the API key (required)
 
     Headers:
         X-API-Key: The API key (required)
@@ -1361,7 +1369,7 @@ async def restore_database(
     Example:
     ```bash
     # Restore latest snapshot
-    curl -X POST "http://localhost:9595/api/v1/restore/database/local/my-namespace/mydb" \\
+    curl -X POST "http://localhost:9595/api/v1/restore/database/local/rig-my-project/mydb?project_name=my-project" \\
       -H "X-API-Key: your-api-key" \\
       -H "Content-Type: application/json" \\
       -d '{
@@ -1373,7 +1381,7 @@ async def restore_database(
       }'
 
     # Restore specific snapshot
-    curl -X POST "http://localhost:9595/api/v1/restore/database/local/my-namespace/mydb" \\
+    curl -X POST "http://localhost:9595/api/v1/restore/database/local/rig-my-project/mydb?project_name=my-project" \\
       -H "X-API-Key: your-api-key" \\
       -H "Content-Type: application/json" \\
       -d '{
@@ -1385,6 +1393,10 @@ async def restore_database(
       }'
     ```
     """
+    # Enforce namespace ownership before the try block: HTTPException is a subclass of Exception
+    # and would otherwise be swallowed by the generic 500 handler below.
+    _require_namespace_owned_by_project(project_name, cluster, namespace)
+
     try:
         logger.info(f"Database restore request for {cluster}/{namespace}/{reference_name}")
 
@@ -1399,6 +1411,7 @@ async def restore_database(
             target_database_user=body.target_database_user,
             target_database_password=body.target_database_password,
             snapshot_id=body.snapshot_id,
+            project_name=project_name,
         )
 
         status = "success" if result.success else "failed"
@@ -1438,6 +1451,7 @@ async def restore_bucket(
     namespace: str,
     reference_name: str,
     body: BucketRestoreRequest,
+    project_name: str | None = None,
 ) -> JSONResponse:
     """
     Restore a MinIO bucket from a Kopia backup.
@@ -1457,9 +1471,10 @@ async def restore_bucket(
 
     Args:
         cluster: Cluster name where backup was made
-        namespace: Kubernetes namespace for the restore pod
+        namespace: Kubernetes namespace for the restore pod (must be the authenticated project's own namespace)
         reference_name: Logical name of the bucket backup to restore
         body: Target MinIO connection parameters
+        project_name: Project name matching the API key (required)
 
     Headers:
         X-API-Key: The API key (required)
@@ -1467,7 +1482,7 @@ async def restore_bucket(
     Example:
     ```bash
     # Restore latest snapshot
-    curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/my-namespace/mybucket" \\
+    curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/rig-my-project/mybucket?project_name=my-project" \\
       -H "X-API-Key: your-api-key" \\
       -H "Content-Type: application/json" \\
       -d '{
@@ -1478,7 +1493,7 @@ async def restore_bucket(
       }'
 
     # Restore specific snapshot with clear target
-    curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/my-namespace/mybucket" \\
+    curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/rig-my-project/mybucket?project_name=my-project" \\
       -H "X-API-Key: your-api-key" \\
       -H "Content-Type: application/json" \\
       -d '{
@@ -1491,6 +1506,10 @@ async def restore_bucket(
       }'
     ```
     """
+    # Enforce namespace ownership before the try block: HTTPException is a subclass of Exception
+    # and would otherwise be swallowed by the generic 500 handler below.
+    _require_namespace_owned_by_project(project_name, cluster, namespace)
+
     try:
         logger.info(f"Bucket restore request for {cluster}/{namespace}/{reference_name}")
 
@@ -1505,6 +1524,7 @@ async def restore_bucket(
             target_secret_key=body.target_secret_key,
             snapshot_id=body.snapshot_id,
             clear_target=body.clear_target,
+            project_name=project_name,
         )
 
         status = "success" if result.success else "failed"
