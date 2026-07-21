@@ -4322,6 +4322,14 @@ class ProjectManager:
                 reenable_msg = "auto-reenable: image changed for " + ", ".join(f"{d}/{c}" for d, c in reenabled)
                 await self.save_and_commit_project(project_data, reenable_msg, enforce_validation=False)
 
+            # Snapshot the compare-and-swap base for the end-of-run save. Right now it
+            # is exactly the state project_data was built on: the read above, plus the
+            # reenable save when one happened. The provisioning steps below read and
+            # even save through this same manager (Keycloak realm creation persists
+            # its generated admin credentials mid-run), and each of those moves the
+            # recorded base forward -- past project_data's lineage.
+            process_base = self.__contents_as_read
+
             # # 1.5. Create configuration handler to collect deployment info
             # config_handler = create_configuration_handler(project_name, self.project_data)
 
@@ -4438,9 +4446,19 @@ class ProjectManager:
             # commit_and_push then found nothing to commit and still reported success.
             # Routing through the central save makes the write and the commit one
             # atomic, locked operation.
+            #
+            # It must save project_data itself: a fresh get_contents() read is a
+            # deepcopy of the committed state and does not carry the in-memory
+            # mutations this save exists to persist. And it must compare against
+            # the base project_data was built on, not the newer one a mid-run read
+            # or save recorded: against a newer base the store sees everything
+            # committed since (the Keycloak credentials, an external edit) as
+            # deleted by us and publishes right over it. Against the true base it
+            # three-way merges our mutations with whatever landed in between.
+            self.__contents_as_read = process_base
             scope = f" (deployment: {deployment_name})" if deployment_name else ""
             await self.save_and_commit_project(
-                await self.get_contents(),
+                project_data,
                 f"Process project {project_name}{scope}",
                 enforce_validation=False,
             )
