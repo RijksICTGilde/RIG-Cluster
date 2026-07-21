@@ -140,11 +140,11 @@ Before restoring, you need to know what backups exist. Use the snapshot listing 
 
 ```bash
 # List all snapshots for a namespace
-curl -X GET "http://localhost:9595/api/v1/restore/snapshots/local/my-project" \
+curl -X GET "http://localhost:9595/api/v1/restore/snapshots/local/rig-my-project?project_name=my-project" \
   -H "X-API-Key: your-api-key"
 
 # List snapshots for a specific PVC
-curl -X GET "http://localhost:9595/api/v1/restore/snapshots/local/my-project/app-data" \
+curl -X GET "http://localhost:9595/api/v1/restore/snapshots/local/rig-my-project/app-data?project_name=my-project" \
   -H "X-API-Key: your-api-key"
 ```
 
@@ -211,11 +211,11 @@ This will:
 
 ```bash
 # Restore latest backup to new PVC
-curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/my-project/app-data" \
+curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/rig-my-project/app-data?project_name=my-project" \
   -H "X-API-Key: your-api-key"
 
 # Restore with custom settings
-curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/my-project/app-data" \
+curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/rig-my-project/app-data?project_name=my-project" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -224,7 +224,7 @@ curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/my-project/app-data
   }'
 
 # Restore to existing PVC (requires explicit overwrite)
-curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/my-project/app-data" \
+curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/rig-my-project/app-data?project_name=my-project" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -233,7 +233,7 @@ curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/my-project/app-data
   }'
 
 # Restore a specific snapshot
-curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/my-project/app-data" \
+curl -X POST "http://localhost:9595/api/v1/restore/pvc/local/rig-my-project/app-data?project_name=my-project" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -265,6 +265,11 @@ resource the deployment owns — PVCs, databases, MinIO buckets — in one run.
 | `POST` | `/api/v1/restore/pvc/{cluster}/{namespace}/{pvc_name}` | Manual PVC restore to new or existing PVC |
 | `POST` | `/api/v1/restore/database/{cluster}/{namespace}/{reference_name}` | Restore a PostgreSQL database |
 | `POST` | `/api/v1/restore/bucket/{cluster}/{namespace}/{reference_name}` | Restore a MinIO bucket |
+
+All `{cluster}/{namespace}` endpoints require a `project_name` query parameter matching the
+`X-API-Key`, and `{namespace}` must be that project's own prefixed namespace
+(`rig-{project}` in sandbox, `rig-prd-{project}` in production). Any other namespace is
+rejected with `403` — a project can only list or restore its own backups.
 
 ### Request body
 
@@ -571,7 +576,7 @@ on the caller's side.
 
 ```bash
 # Restore latest snapshot
-curl -X POST "http://localhost:9595/api/v1/restore/database/local/my-namespace/mydb" \
+curl -X POST "http://localhost:9595/api/v1/restore/database/local/rig-my-project/mydb?project_name=my-project" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -583,7 +588,7 @@ curl -X POST "http://localhost:9595/api/v1/restore/database/local/my-namespace/m
   }'
 
 # Restore a specific snapshot
-curl -X POST "http://localhost:9595/api/v1/restore/database/local/my-namespace/mydb" \
+curl -X POST "http://localhost:9595/api/v1/restore/database/local/rig-my-project/mydb?project_name=my-project" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -640,7 +645,7 @@ S3 credentials alone can't decrypt them.
 
 ```bash
 # Restore latest snapshot
-curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/my-namespace/mybucket" \
+curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/rig-my-project/mybucket?project_name=my-project" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -651,7 +656,7 @@ curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/my-namespace/myb
   }'
 
 # Restore with clear target (remove existing files first)
-curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/my-namespace/mybucket" \
+curl -X POST "http://localhost:9595/api/v1/restore/bucket/local/rig-my-project/mybucket?project_name=my-project" \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
