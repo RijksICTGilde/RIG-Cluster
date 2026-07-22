@@ -613,6 +613,48 @@
         color: var(--rvo-color-grijs-700);
     }
 
+    /* ArgoCD status skeleton (lazy-load placeholder) */
+    .argocd-skeleton {
+        display: flex;
+        flex-direction: column;
+        gap: var(--rvo-space-md);
+        padding: var(--rvo-space-lg);
+        background: var(--rvo-color-grijs-050);
+        border: 1px solid var(--rvo-color-grijs-200);
+        border-left: 4px solid var(--rvo-color-grijs-300);
+        border-radius: 8px;
+    }
+
+    .argocd-skeleton__row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .argocd-skeleton__bone {
+        display: inline-block;
+        border-radius: 4px;
+        background: linear-gradient(
+            90deg,
+            var(--rvo-color-grijs-200) 25%,
+            var(--rvo-color-grijs-100) 50%,
+            var(--rvo-color-grijs-200) 75%
+        );
+        background-size: 200% 100%;
+        animation: argocd-skeleton-shimmer 1.4s ease-in-out infinite;
+    }
+
+    @keyframes argocd-skeleton-shimmer {
+        from { background-position: 200% 0; }
+        to { background-position: -200% 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .argocd-skeleton__bone {
+            animation: none;
+        }
+    }
+
     /* Responsive Design */
     @media (max-width: 768px) {
         .overview-grid {
