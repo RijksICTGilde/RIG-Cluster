@@ -1,4 +1,5 @@
 import os
+from typing import ClassVar
 
 import pytest
 import yaml
@@ -277,7 +278,7 @@ class TestLoadExtensions:
 class TestOriginalImage:
     """Reverse of the rewrite: show the source registry, not the rcr proxy."""
 
-    _MAPPINGS = [
+    _MAPPINGS: ClassVar[list[dict[str, str]]] = [
         {"from": "code.overheid.nl", "to": "rcr.rijksapps.nl/code-overheid-rig"},
         {"from": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig"},
     ]

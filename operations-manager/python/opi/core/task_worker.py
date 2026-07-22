@@ -10,6 +10,13 @@ from typing import TYPE_CHECKING
 
 from opi.core.config import settings
 from opi.core.flow_id import set_flow_id
+from opi.core.task_supersede import (
+    RunningTask,
+    TaskSuperseded,
+    reset_current_task,
+    scope_of,
+    set_current_task,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -179,6 +186,19 @@ class TaskWorker:
                 task_service=self._task_service,
             )
 
+            # Bind this task's identity and deployment scope so the ArgoCD waits
+            # deep in the call chain can give way to a newer task that will redo
+            # this task's work. Scope is computed from the real work (payload for
+            # add_component), not the deployment_name column alone.
+            supersede_token = set_current_task(
+                RunningTask(
+                    task_id=task_id,
+                    project_name=project_name,
+                    scope=scope_of(task_type, deployment_name, task.get("payload")),
+                    task_service=self._task_service,
+                )
+            )
+
             try:
                 # Call the handler with a global timeout to prevent zombie tasks
                 result = await asyncio.wait_for(
@@ -211,6 +231,19 @@ class TaskWorker:
                     progress.mark_legacy_completed()
                     logger.info("Task %s completed successfully in %.1fs", task_id, time.monotonic() - started)
 
+            except TaskSuperseded as superseded:
+                # Not a failure: the project file was already committed, and a newer
+                # task whose scope covers this one will reprocess from that state.
+                # Completing (rather than failing) keeps retries and alerts off a
+                # deliberate hand-over.
+                await progress.close()
+                await self._task_service.complete_task(
+                    task_id,
+                    {"status": "superseded", "message": str(superseded)},
+                )
+                progress.mark_legacy_completed()
+                logger.info("Task %s superseded after %.1fs: %s", task_id, time.monotonic() - started, superseded)
+
             except TimeoutError:
                 error_msg = f"Task exceeded maximum duration of {settings.TASK_WORKER_MAX_DURATION}s"
                 logger.error("Task %s timed out after %.1fs: %s", task_id, time.monotonic() - started, error_msg)
@@ -223,6 +256,9 @@ class TaskWorker:
                 await progress.close()
                 progress.mark_legacy_failed(f"{type(exc).__name__}: {exc}")
                 raise
+
+            finally:
+                reset_current_task(supersede_token)
 
         except Exception as e:
             logger.exception("Task %s failed after %.1fs: %s", task_id, time.monotonic() - started, e)

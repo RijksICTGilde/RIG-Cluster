@@ -373,10 +373,10 @@ class TestTaskRouterFederationProxy:
         mock_project.api_key = "test-api-key"
         mock_project.name = "test-project"
         mock_project_service = MagicMock()
-        mock_project_service.get_project.return_value = mock_project
+        mock_project_service.get.return_value = mock_project
 
         transport = ASGITransport(app=app)
-        with patch("opi.api.task_router.get_project_service", return_value=mock_project_service):
+        with patch("opi.api.task_router.get_project_store", return_value=mock_project_service):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 # Use a valid UUID with API key
                 resp = await client.get(

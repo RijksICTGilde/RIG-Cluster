@@ -214,8 +214,10 @@ class KeycloakConnector:
         """Restrict edit of identity fields to admins in the realm's declarative user profile.
 
         Setting edit permission to admin-only makes email/firstName/lastName read-only in the
-        account console; IdP mappers and admin writes are unaffected. Best-effort: a user-profile
-        API failure is logged but does not abort realm provisioning.
+        account console; IdP mappers and admin writes are unaffected. Fails closed: a realm
+        whose identity fields cannot be locked is provisioned in the vulnerable configuration
+        (self-editable email was the impersonation post-mortem's root cause), so a user-profile
+        API failure aborts realm provisioning rather than being logged and forgotten.
         """
         try:
             self.admin.change_current_realm(realm_name)
@@ -232,6 +234,7 @@ class KeycloakConnector:
                 logger.info(f"Locked identity fields (edit=admin) in user profile for realm {realm_name}")
         except KeycloakError as e:
             logger.error(f"Could not lock identity fields in user profile for realm {realm_name}: {e}")
+            raise
         finally:
             self.admin.change_current_realm("master")
 

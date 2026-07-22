@@ -57,7 +57,6 @@ class ProjectService:
             # In-memory storage for project mappings
             # In the future, this will be replaced with database tables
             self._projects: dict[str, Project] = {}
-            self._admin_emails: set[str] = set()
             ProjectService._initialized = True
             logger.debug("ProjectService singleton initialized")
         else:
@@ -141,24 +140,6 @@ class ProjectService:
             logger.debug(f"No project found: {project_name}")
         return project
 
-    def get_api_key_for_project(self, project_name: str) -> str | None:
-        """
-        Get API key for a specific project.
-
-        Args:
-            project_name: The project identifier
-
-        Returns:
-            API key if found, None otherwise
-        """
-        project = self._projects.get(project_name)
-        if project:
-            logger.debug(f"Retrieved API key for project: {project_name}")
-            return project.api_key
-        else:
-            logger.debug(f"No project found: {project_name}")
-            return None
-
     def remove_project(self, project_name: str) -> bool:
         """
         Remove project mapping.
@@ -200,16 +181,6 @@ class ProjectService:
         self._projects.clear()
         logger.debug("Cleared all project mappings")
 
-    def add_admin_emails(self, emails: list[str]) -> None:
-        """Add emails that have admin access to all projects."""
-        for email in emails:
-            self._admin_emails.add(email.lower())
-        logger.info(f"Added {len(emails)} admin emails")
-
-    def is_admin(self, email: str) -> bool:
-        """Check if an email has admin access to all projects."""
-        return email.lower() in self._admin_emails
-
     def _resolve_plaintext_api_key(self, project_name: str, api_key: str, config: dict[str, Any]) -> str:
         """Return the plaintext API key for in-memory registration.
 
@@ -241,16 +212,16 @@ class ProjectService:
         )
         return api_key
 
-    def load_project_from_data(self, project_data: dict[str, Any], filename: str) -> bool:
-        """
-        Load project from a project data dictionary.
+    def build_project_from_data(self, project_data: dict[str, Any], filename: str) -> Project | None:
+        """Parse project data into a Project WITHOUT registering it.
 
-        Args:
-            project_data: Project configuration data
-            filename: The project configuration filename
+        Split out so a caller that needs the whole set before swapping it in
+        (ProjectStore.bootstrap) builds fully-formed entries -- in particular
+        with the api-key already decrypted. Registering the raw ciphertext and
+        decrypting in a second pass leaves a window in which API-key
+        authentication compares against the ciphertext.
 
-        Returns:
-            True if project was loaded successfully, False otherwise
+        Returns None when the data cannot be loaded (no name, no api-key).
         """
         try:
             project_data, _ = migrate_to_latest(project_data)
@@ -258,7 +229,7 @@ class ProjectService:
             project_name = project_data.get("name")
             if not project_name:
                 logger.warning("Project data missing 'name' field")
-                return False
+                return None
 
             # Extract API key from config section
             config = project_data.get("config", {})
@@ -266,7 +237,7 @@ class ProjectService:
 
             if not api_key:
                 logger.warning(f"No API key found in project config for: {project_name}")
-                return False
+                return None
 
             # Project files store api-key AGE-encrypted, but every API-layer
             # comparison runs against the registered value as plaintext.
@@ -285,94 +256,40 @@ class ProjectService:
                     if isinstance(user_data, dict) and "email" in user_data and "role" in user_data
                 )
 
-            success = self.register(project_name, str(api_key), filename, users or None, data=project_data)
-
-            if success:
-                logger.debug(f"Loaded project from project data: {project_name} (file: {filename})")
-                return success
-            else:
-                logger.error(f"Failed to register project: {project_name}")
-                return False
-
+            return Project(
+                name=str(project_name),
+                api_key=str(api_key),
+                filename=filename,
+                users=users or None,
+                data=project_data,
+            )
         except Exception:
-            logger.exception("Error loading project from project data")
-            return False
-
-    def get_project_users(self, project_name: str) -> list[ProjectUser] | None:
-        """
-        Get users for a specific project.
-
-        Args:
-            project_name: The project identifier
-
-        Returns:
-            List of project users if found, None otherwise
-        """
-        project = self._projects.get(project_name)
-        if project:
-            logger.debug(f"Retrieved {len(project.users) if project.users else 0} users for project: {project_name}")
-            return project.users
-        else:
-            logger.debug(f"No project found: {project_name}")
+            logger.exception("Error building project from project data")
             return None
 
-    def is_user_authorized_for_project(self, project_name: str, user_email: str) -> bool:
+    def load_project_from_data(self, project_data: dict[str, Any], filename: str) -> bool:
         """
-        Check if a user is authorized to access a specific project.
-
-        Admin users are always authorized for all projects.
+        Load project from a project data dictionary.
 
         Args:
-            project_name: The project identifier
-            user_email: The user's email address
+            project_data: Project configuration data
+            filename: The project configuration filename
 
         Returns:
-            True if user is authorized, False otherwise
+            True if project was loaded successfully, False otherwise
         """
-        if self.is_admin(user_email):
-            logger.debug(f"User {user_email} authorized for project {project_name} (admin)")
-            return True
-
-        users = self.get_project_users(project_name)
-        if not users:
-            logger.debug(f"No users found for project: {project_name}")
+        project = self.build_project_from_data(project_data, filename)
+        if project is None:
             return False
 
-        for user in users:
-            if user.email.lower() == user_email.lower():
-                logger.debug(f"User {user_email} authorized for project {project_name} with role: {user.role}")
-                return True
+        success = self.register(project.name, project.api_key, project.filename, project.users, data=project.data)
 
-        logger.debug(f"User {user_email} not authorized for project: {project_name}")
+        if success:
+            logger.debug(f"Loaded project from project data: {project.name} (file: {filename})")
+            return success
+
+        logger.error(f"Failed to register project: {project.name}")
         return False
-
-    def get_user_role_for_project(self, project_name: str, user_email: str) -> str | None:
-        """
-        Get a user's role for a specific project.
-
-        Global admin users always get the "admin" role.
-
-        Args:
-            project_name: The project identifier
-            user_email: The user's email address
-
-        Returns:
-            User's role if found, None otherwise
-        """
-        if self.is_admin(user_email):
-            return "admin"
-
-        users = self.get_project_users(project_name)
-        if not users:
-            return None
-
-        for user in users:
-            if user.email.lower() == user_email.lower():
-                logger.debug(f"Found role {user.role} for user {user_email} in project: {project_name}")
-                return user.role
-
-        logger.debug(f"No role found for user {user_email} in project: {project_name}")
-        return None
 
 
 def get_project_service() -> ProjectService:

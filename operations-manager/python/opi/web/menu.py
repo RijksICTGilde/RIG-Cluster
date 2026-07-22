@@ -8,7 +8,7 @@ that are used across different web routes.
 import logging
 from typing import Any
 
-from opi.services.project_service import get_project_service
+from opi.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +49,7 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
     is_admin = False
     if user and user.get("email"):
         try:
-            project_service = get_project_service()
-            is_admin = project_service.is_admin(user["email"].lower())
+            is_admin = get_user_service().is_platform_admin(user["email"].lower())
         except Exception:
             logger.debug("Could not check admin status for menu", exc_info=True)
 

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from opi.connectors.opi import OpiConnector, OpiConnectorError
 from opi.core.config import settings
-from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
 
 if TYPE_CHECKING:
     from opi.core.federation_config import FederationRegistry, PeerConfig
@@ -182,7 +182,7 @@ class FederationService:
             handler = ProjectFileHandler()
 
             # Primary: in-memory cache (no clone).
-            cached = get_project_service().get_project(project_name)
+            cached = get_project_store().get(project_name)
             if cached is not None and cached.data is not None:
                 cluster = handler.extract_deployment_cluster(cached.data, deployment_name)
                 if cluster:

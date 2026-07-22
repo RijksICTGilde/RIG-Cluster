@@ -11,10 +11,10 @@ from opi.services.resource_tuning_service import TuneResult
 class TestGetProjectData:
     """Tests for the _get_project_data helper."""
 
-    @patch("opi.api.resource_router.get_project_service")
+    @patch("opi.api.resource_router.get_project_store")
     def test_project_not_found(self, mock_get_service):
         mock_service = MagicMock()
-        mock_service.get_project.return_value = None
+        mock_service.get.return_value = None
         mock_get_service.return_value = mock_service
 
         from fastapi import HTTPException
@@ -23,12 +23,12 @@ class TestGetProjectData:
             _get_project_data("nonexistent")
         assert exc_info.value.status_code == 404
 
-    @patch("opi.api.resource_router.get_project_service")
+    @patch("opi.api.resource_router.get_project_store")
     def test_project_no_data(self, mock_get_service):
         mock_project = MagicMock()
         mock_project.data = None
         mock_service = MagicMock()
-        mock_service.get_project.return_value = mock_project
+        mock_service.get.return_value = mock_project
         mock_get_service.return_value = mock_service
 
         from fastapi import HTTPException
@@ -37,13 +37,13 @@ class TestGetProjectData:
             _get_project_data("my-project")
         assert exc_info.value.status_code == 404
 
-    @patch("opi.api.resource_router.get_project_service")
+    @patch("opi.api.resource_router.get_project_store")
     def test_project_found(self, mock_get_service):
         mock_project = MagicMock()
         mock_project.data = {"name": "my-project", "components": []}
         mock_project.filename = "my-project.yaml"
         mock_service = MagicMock()
-        mock_service.get_project.return_value = mock_project
+        mock_service.get.return_value = mock_project
         mock_get_service.return_value = mock_service
 
         data, filename = _get_project_data("my-project")

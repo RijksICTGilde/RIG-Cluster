@@ -412,8 +412,8 @@ class TestCheckAndSchedule:
             key = p.data.get("name", f"p{i}") if p.data else f"p{i}"
             projects_dict[key] = p
         _stub_snapshots(scheduler, [])  # no prior snapshots → due
-        with patch("opi.services.project_service.get_project_service") as mock_get:
-            mock_get.return_value.get_all_projects.return_value = projects_dict
+        with patch("opi.core.backup_scheduler.get_project_store") as mock_get:
+            mock_get.return_value.get_all.return_value = list(projects_dict.values())
             asyncio.run(scheduler._check_and_schedule())
 
     def test_skips_project_without_backup_enabled(self) -> None:

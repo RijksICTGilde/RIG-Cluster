@@ -125,7 +125,7 @@ def _wire(projects: dict, snapshots: list[SnapshotInfo]):
     )
 
     patches = [
-        patch("opi.services.project_service.get_project_service", return_value=project_service),
+        patch("opi.services.project_store.get_project_service", return_value=project_service),
         patch("opi.manager.backup.create_backup_manager", return_value=backup_manager),
         patch("opi.core.backup_retention_sweep.get_prefixed_namespace", side_effect=lambda c, ns: f"rig-prd-{ns}"),
     ]
@@ -220,7 +220,7 @@ class TestBackupRetentionSweep:
         )
 
         with (
-            patch("opi.services.project_service.get_project_service", return_value=project_service),
+            patch("opi.services.project_store.get_project_service", return_value=project_service),
             patch("opi.manager.backup.create_backup_manager", return_value=backup_manager),
             patch("opi.core.backup_retention_sweep.get_prefixed_namespace", side_effect=lambda c, ns: f"rig-prd-{ns}"),
             patch("opi.core.backup_retention_sweep.settings") as mock_settings,

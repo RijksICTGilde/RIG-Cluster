@@ -16,7 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from opi.services.project_service import Project, ProjectService, ProjectUser
+from opi.services.project_service import Project, ProjectUser
+from opi.services.project_store import GitProjectStore
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -48,8 +49,8 @@ def mock_task_service() -> AsyncMock:
 
 @pytest.fixture
 def mock_auth_project_service() -> Any:
-    with patch("opi.api.endpoint_util.get_project_service") as mock_get_service:
-        mock_service = MagicMock(spec=ProjectService)
+    with patch("opi.api.endpoint_util.get_project_store") as mock_get_service:
+        mock_service = MagicMock(spec=GitProjectStore)
         test_project = Project(
             name="test-project",
             api_key=API_KEY,
@@ -62,7 +63,7 @@ def mock_auth_project_service() -> Any:
                 return test_project
             return None
 
-        mock_service.get_project = get_project
+        mock_service.get = get_project
         mock_get_service.return_value = mock_service
         yield mock_service
 
@@ -70,15 +71,15 @@ def mock_auth_project_service() -> Any:
 @pytest.fixture
 def mock_router_project_service() -> Any:
     """Mock project service at the router import location (for refresh endpoint)."""
-    with patch("opi.api.router.get_project_service") as mock_get_service:
-        mock_service = MagicMock(spec=ProjectService)
+    with patch("opi.api.router.get_project_store") as mock_get_service:
+        mock_service = MagicMock(spec=GitProjectStore)
         test_project = Project(
             name="test-project",
             api_key=API_KEY,
             filename="test-project.yaml",
             users=[ProjectUser(email="user@example.com", role="Developer")],
         )
-        mock_service.get_project.return_value = test_project
+        mock_service.get.return_value = test_project
         mock_get_service.return_value = mock_service
         yield mock_service
 

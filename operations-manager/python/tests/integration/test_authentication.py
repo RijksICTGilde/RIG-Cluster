@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from opi.services.project_service import Project, ProjectService, ProjectUser
+from opi.services.project_service import Project, ProjectUser
+from opi.services.project_store import GitProjectStore
 
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient
@@ -21,8 +22,8 @@ if TYPE_CHECKING:
 @pytest.fixture
 def mock_project_service_with_projects() -> Any:
     """Mock project service with test projects registered."""
-    with patch("opi.api.endpoint_util.get_project_service") as mock_get_service:
-        mock_service = MagicMock(spec=ProjectService)
+    with patch("opi.api.endpoint_util.get_project_store") as mock_get_service:
+        mock_service = MagicMock(spec=GitProjectStore)
 
         # Create test projects
         project_a = Project(
@@ -42,7 +43,7 @@ def mock_project_service_with_projects() -> Any:
             projects = {"project-a": project_a, "project-b": project_b}
             return projects.get(name)
 
-        mock_service.get_project = get_project
+        mock_service.get = get_project
         mock_get_service.return_value = mock_service
         yield mock_service
 

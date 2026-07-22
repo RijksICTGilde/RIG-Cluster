@@ -120,10 +120,10 @@ class TestValidateApiToken:
         mock_project.name = "test-project"
 
         mock_service = MagicMock()
-        mock_service.get_project.return_value = mock_project
+        mock_service.get.return_value = mock_project
 
         with (
-            patch("opi.api.endpoint_util.get_project_service", return_value=mock_service),
+            patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
             pytest.raises(HTTPException) as exc_info,
         ):
             await dummy_route(request=mock_request, project_name="test-project")
@@ -146,9 +146,9 @@ class TestValidateApiToken:
         mock_project.name = "test-project"
 
         mock_service = MagicMock()
-        mock_service.get_project.return_value = mock_project
+        mock_service.get.return_value = mock_project
 
-        with patch("opi.api.endpoint_util.get_project_service", return_value=mock_service):
+        with patch("opi.api.endpoint_util.get_project_store", return_value=mock_service):
             result = await dummy_route(request=mock_request, project_name="test-project")
 
         assert result == {"project": "test-project"}
@@ -165,10 +165,10 @@ class TestValidateApiToken:
         mock_request.headers = {"X-API-Key": "some-key"}
 
         mock_service = MagicMock()
-        mock_service.get_project.return_value = None
+        mock_service.get.return_value = None
 
         with (
-            patch("opi.api.endpoint_util.get_project_service", return_value=mock_service),
+            patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
             pytest.raises(HTTPException) as exc_info,
         ):
             await dummy_route(request=mock_request, project_name="nonexistent")

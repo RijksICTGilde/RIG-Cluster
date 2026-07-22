@@ -37,6 +37,89 @@ def read_api_key(page: Page, base_url: str, project_name: str) -> str:
     return api_key
 
 
+def start_task(
+    base_url: str,
+    method: str,
+    path: str,
+    api_key: str,
+    body: dict,
+    *,
+    verify_ssl: bool = True,
+) -> str:
+    """Fire an async v1/v2 API request and return its task id WITHOUT waiting.
+
+    Used by the real-life suite to start mutations on several projects at once;
+    the server processes the tasks concurrently while the test continues (e.g.
+    driving UI edits on other projects). Pair with wait_for_task().
+    """
+    base = base_url.rstrip("/")
+    headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
+    with httpx.Client(verify=verify_ssl, timeout=30.0) as client:
+        response = client.request(method, f"{base}{path}", json=body, headers=headers)
+        assert response.status_code == 202, (
+            f"Expected 202 from {method} {path}, got {response.status_code}: {response.text}"
+        )
+        location = response.headers.get("Location")
+        task_id = location.rsplit("/", 1)[-1] if location else response.json().get("task_id")
+        assert task_id, f"No task id returned from {method} {path}: {response.text}"
+        return task_id
+
+
+def wait_for_task(
+    base_url: str,
+    task_id: str,
+    api_key: str,
+    *,
+    verify_ssl: bool = True,
+    timeout: float = 180.0,
+) -> dict:
+    """Poll a task started with start_task() until it completes successfully."""
+    base = base_url.rstrip("/")
+    headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
+    with httpx.Client(verify=verify_ssl, timeout=30.0) as client:
+        return _wait_for_task(client, base, task_id, headers, timeout=timeout)
+
+
+def task_outcome(
+    base_url: str,
+    task_id: str,
+    api_key: str,
+    *,
+    verify_ssl: bool = True,
+    timeout: float = 180.0,
+) -> tuple[str, str | None]:
+    """Poll a task and report its outcome without asserting.
+
+    Returns ("completed", None), ("superseded", None), ("failed", reason) or
+    ("running", None) when the task has not reached a terminal state before the
+    timeout. "superseded" is a benign outcome: a newer task whose scope covers
+    this one took over, so this task's ArgoCD wait was abandoned by design. It is
+    recorded as a completed task carrying result.status == "superseded".
+    """
+    base = base_url.rstrip("/")
+    headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
+    deadline = time.monotonic() + timeout
+    with httpx.Client(verify=verify_ssl, timeout=30.0) as client:
+        while time.monotonic() < deadline:
+            response = client.get(f"{base}/api/tasks/{task_id}", headers=headers)
+            if response.status_code == 200:
+                task = response.json()
+                status = task.get("status")
+                if status != "completed":
+                    return "failed", f"task status '{status}': {task}"
+                if (task.get("result") or {}).get("status") == "superseded":
+                    return "superseded", None
+                try:
+                    _assert_no_subtask_failure(task_id, task)
+                except AssertionError as exc:
+                    return "failed", str(exc)
+                return "completed", None
+            if response.status_code != 202:
+                return "failed", f"unexpected task poll status {response.status_code}: {response.text}"
+            time.sleep(3.0)
+    return "running", None
+
+
 def add_component(
     base_url: str,
     project_name: str,

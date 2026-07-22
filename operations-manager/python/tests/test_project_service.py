@@ -5,6 +5,7 @@ case-insensitive email matching, singleton behavior, and defensive copy semantic
 """
 
 import pytest
+from opi.services.project_authorization import get_project_users
 from opi.services.project_service import (
     ProjectService,
     ProjectUser,
@@ -74,7 +75,7 @@ class TestLoadProjectFromData:
             ],
         }
         service.load_project_from_data(data, "f.yaml")
-        users = service.get_project_users("proj")
+        users = get_project_users("proj")
         assert len(users) == 2
         assert users[0].email == "a@b.com"
         assert users[1].role == "viewer"
@@ -101,7 +102,7 @@ class TestLoadProjectFromData:
             ],
         }
         service.load_project_from_data(data, "f.yaml")
-        users = service.get_project_users("proj")
+        users = get_project_users("proj")
         assert len(users) == 1
         assert users[0].email == "valid@x.com"
 
@@ -122,65 +123,6 @@ class TestLoadProjectFromData:
         project = service.get_project("proj")
         assert project.data is not None, "Project.data should contain the original project data"
         assert project.data["deployments"][0]["cluster"] == "local"
-
-
-class TestCaseInsensitiveEmailMatching:
-    """Authorization checks must be case-insensitive - Keycloak emails can differ in casing."""
-
-    def test_is_user_authorized_case_insensitive(self, service):
-        users = [ProjectUser(email="Alice@Example.COM", role="admin")]
-        service.register("proj", "k", "f.yaml", users=users)
-        assert service.is_user_authorized_for_project("proj", "alice@example.com") is True
-        assert service.is_user_authorized_for_project("proj", "ALICE@EXAMPLE.COM") is True
-
-    def test_get_user_role_case_insensitive(self, service):
-        users = [ProjectUser(email="Alice@Example.COM", role="dev")]
-        service.register("proj", "k", "f.yaml", users=users)
-        assert service.get_user_role_for_project("proj", "alice@example.com") == "dev"
-
-    def test_no_users_returns_not_authorized(self, service):
-        """Project without users should deny access, not crash."""
-        service.register("proj", "k", "f.yaml")
-        assert service.is_user_authorized_for_project("proj", "a@b.com") is False
-        assert service.get_user_role_for_project("proj", "a@b.com") is None
-
-
-class TestAdminEmails:
-    """Admin users bypass per-project user lists and can view all projects."""
-
-    def test_admin_authorized_for_any_project(self, service):
-        service.add_admin_emails(["admin@example.com"])
-        service.register("proj", "k", "f.yaml", users=[ProjectUser(email="other@x.com", role="dev")])
-        assert service.is_user_authorized_for_project("proj", "admin@example.com") is True
-
-    def test_admin_authorized_even_without_users(self, service):
-        service.add_admin_emails(["admin@example.com"])
-        service.register("proj", "k", "f.yaml")
-        assert service.is_user_authorized_for_project("proj", "admin@example.com") is True
-
-    def test_admin_check_is_case_insensitive(self, service):
-        service.add_admin_emails(["Admin@Example.COM"])
-        service.register("proj", "k", "f.yaml")
-        assert service.is_admin("admin@example.com") is True
-        assert service.is_user_authorized_for_project("proj", "ADMIN@EXAMPLE.COM") is True
-
-    def test_non_admin_still_denied(self, service):
-        service.add_admin_emails(["admin@example.com"])
-        service.register("proj", "k", "f.yaml", users=[ProjectUser(email="other@x.com", role="dev")])
-        assert service.is_user_authorized_for_project("proj", "nobody@x.com") is False
-
-    def test_is_admin_returns_false_for_unknown(self, service):
-        assert service.is_admin("unknown@x.com") is False
-
-    def test_admin_gets_admin_role_for_any_project(self, service):
-        service.add_admin_emails(["admin@example.com"])
-        service.register("proj", "k", "f.yaml", users=[ProjectUser(email="other@x.com", role="dev")])
-        assert service.get_user_role_for_project("proj", "admin@example.com") == "admin"
-
-    def test_admin_gets_admin_role_even_without_users(self, service):
-        service.add_admin_emails(["admin@example.com"])
-        service.register("proj", "k", "f.yaml")
-        assert service.get_user_role_for_project("proj", "admin@example.com") == "admin"
 
 
 AGE_API_KEY = "-----BEGIN AGE ENCRYPTED FILE-----\nciphertext-api-key\n-----END AGE ENCRYPTED FILE-----"

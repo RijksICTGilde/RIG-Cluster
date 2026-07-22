@@ -78,3 +78,36 @@ def validate_project_schema(project_data: dict[str, Any]) -> None:
     # breadcrumb without feeding the log-watch.
     logger.debug(message)
     raise ProjectSchemaError(message)
+
+
+# The marker of the schema's age-encrypted $defs pattern. Detection is derived from
+# the schema rather than from a hand-written field list, so it cannot drift when a
+# new secret field is added.
+_AGE_PATTERN_MARKER = "BEGIN AGE ENCRYPTED FILE"
+
+
+def _walk_errors(errors: Any) -> Any:
+    """Yield validation errors depth-first, including anyOf/oneOf sub-errors."""
+    for error in errors:
+        yield error
+        yield from _walk_errors(error.context or [])
+
+
+def find_plaintext_secret_violations(project_data: dict[str, Any]) -> list[str]:
+    """Field paths that must hold an AGE-encrypted value but do not.
+
+    Separate from ``validate_project_schema`` because this specific class of
+    violation must fail closed on EVERY write path. ``enforce_validation=False``
+    exists so a recovery write is not blocked by pre-existing structural drift --
+    it is not a licence to commit a decrypted secret, which is what writing back a
+    ``get_decrypted()`` view would do.
+
+    Returns the offending field paths, empty when there are none.
+    """
+    validator = _get_validator()
+    violations: list[str] = []
+    for error in _walk_errors(validator.iter_errors(project_data)):
+        schema = error.schema if isinstance(error.schema, dict) else {}
+        if _AGE_PATTERN_MARKER in str(schema.get("pattern", "")):
+            violations.append("/".join(str(part) for part in error.absolute_path) or "(root)")
+    return sorted(set(violations))

@@ -86,23 +86,32 @@ def mock_project_service() -> Any:
                 ]
             }
 
-    class MockProjectService:
+    class MockProjectStore:
+        """Mirrors the ProjectStore read interface.
+
+        Deliberately does NOT expose the old ProjectService methods
+        (get_project/get_all_projects). This fixture patches get_project_store,
+        so offering both interfaces would let production drift onto one of them
+        while the tests keep passing against the other -- which is exactly how
+        the logs endpoints ended up broken behind a green suite.
+        """
+
         def __init__(self) -> None:
             self._projects = {
                 "test-project": MockProjectInfo("test-project", "test-api-key-12345"),
             }
 
-        def get_all_projects(self) -> dict[str, MockProjectInfo]:
-            return self._projects
-
-        def get_project(self, project_name: str) -> MockProjectInfo | None:
+        def get(self, project_name: str) -> MockProjectInfo | None:
             return self._projects.get(project_name)
 
+        def get_all(self) -> list[MockProjectInfo]:
+            return list(self._projects.values())
+
     # Patch in both locations: endpoint_util (for auth) and logs_router (for usage)
-    mock_service = MockProjectService()
+    mock_service = MockProjectStore()
     with (
-        patch("opi.api.endpoint_util.get_project_service", return_value=mock_service),
-        patch("opi.api.logs_router.get_project_service", return_value=mock_service),
+        patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+        patch("opi.api.logs_router.get_project_store", return_value=mock_service),
     ):
         yield mock_service
 

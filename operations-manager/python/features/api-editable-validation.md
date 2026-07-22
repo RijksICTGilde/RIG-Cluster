@@ -55,7 +55,7 @@ Validation is applied in both v1 (`/api/`) and v2 (`/api/v2/`) routers:
 
 | Field | Pydantic | Editable Validator |
 |-------|----------|-------------------|
-| Component name | max_length=63 | Max 12 chars, lowercase letters + digits only, starts with letter |
+| Component name | max_length=63 | Max 63 chars, lowercase letters + digits + hyphens, starts with a letter, does not end with a hyphen |
 | Image URL | max_length=512 | Must be fully lowercase, no spaces |
 | Path | max_length=256 | Must start with `/`, no spaces |
 | CPU limit | max_length=16 | Must be one of `500m`, `1` |

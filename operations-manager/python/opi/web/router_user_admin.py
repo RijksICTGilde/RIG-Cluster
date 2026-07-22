@@ -18,7 +18,6 @@ from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.user_editables import USER_SECTION
-from opi.services.project_service import get_project_service
 from opi.services.user_admin_service import UserAdminService
 from opi.services.user_service import get_user_service
 from opi.utils.csrf import ensure_csrf_token
@@ -45,8 +44,7 @@ def _require_admin(request: Request) -> dict:
     if not user:
         raise HTTPException(status_code=401, detail="Niet ingelogd")
     email = user.get("email", "").lower()
-    project_service = get_project_service()
-    if not project_service.is_admin(email):
+    if not get_user_service().is_platform_admin(email):
         raise HTTPException(status_code=403, detail="Alleen beheerders hebben toegang")
     return user
 
