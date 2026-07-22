@@ -272,19 +272,14 @@ class TestHandleCreateProjectExistenceCheck:
     async def test_create_project_blocked_when_file_already_exists(self, monkeypatch) -> None:
         from opi.core import task_handlers_project
 
-        # GitConnector instance whose file_exists returns True for any path.
-        fake_connector = AsyncMock()
-        fake_connector.file_exists = AsyncMock(return_value=True)
-        fake_connector.create_or_update_file = AsyncMock()
+        # The existence check asks the ProjectStore, which owns the projects repo.
+        # A store that already has the file must stop the create.
+        fake_store = AsyncMock()
+        fake_store.reconcile = AsyncMock()
+        fake_store.read_path = AsyncMock(return_value={"name": "victim-project"})
+        fake_store.save = AsyncMock()
 
-        class _FakeGitConnector:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            def __new__(cls, *args, **kwargs):
-                return fake_connector
-
-        monkeypatch.setattr("opi.connectors.git.GitConnector", _FakeGitConnector)
+        monkeypatch.setattr("opi.services.project_store.get_project_store", lambda: fake_store)
 
         # Stub the small helpers used before the file_exists check.
         monkeypatch.setattr("opi.utils.project_utils.validate_project_name", lambda name: True)
@@ -306,8 +301,8 @@ class TestHandleCreateProjectExistenceCheck:
 
         assert result["status"] == "failed"
         assert "bestaat al" in result["error"]
-        # The destructive call must not have been made.
-        fake_connector.create_or_update_file.assert_not_called()
+        # Nothing was written: the store's save was never reached.
+        fake_store.save.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_edit_flow_overwrites_existing_file(self, monkeypatch) -> None:
