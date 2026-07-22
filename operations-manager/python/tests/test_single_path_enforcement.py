@@ -44,6 +44,17 @@ _ALLOWLIST: dict[str, str] = {}
 # writes outside the store's lock (no serialization, no validated final state).
 _FORBIDDEN_GIT_ACCESS = "create_git_connector_for_project_files("
 
+# The factory is not the only way in: a module can build the same connector by
+# hand with GitConnector(repo_url=settings.GIT_PROJECTS_SERVER_URL, ...). That is
+# how the create-project handlers ended up reading a clone taken BEFORE the store
+# wrote and pushed the new file ("Project file not found at HEAD"), while every
+# test stayed green -- the scan below only looked for the factory call.
+#
+# Scoped to the projects repo on purpose. Connectors for zad-deployments and
+# zad-argo-user-applications are built by hand all over ProjectManager and are
+# explicitly outside the store's scope.
+_PROJECTS_REPO_SETTING = "GIT_PROJECTS_SERVER_URL"
+
 _GIT_ACCESS_ALLOWLIST: dict[str, str] = {
     # The store IS the owner of the projects-repo connector.
     "opi/services/project_store.py": "owns the warm working copy",
@@ -88,12 +99,39 @@ def _scan_for_direct_projects_repo_access() -> list[str]:
             rel_path = py_file.relative_to(_PYTHON_ROOT).as_posix()
             if rel_path in _GIT_ACCESS_ALLOWLIST:
                 continue
-            lines = py_file.read_text(encoding="utf-8").splitlines()
+            source = py_file.read_text(encoding="utf-8")
+            lines = source.splitlines()
             violations.extend(
                 f"{rel_path}:{lineno}: {line.strip()}"
                 for lineno, line in enumerate(lines, 1)
                 if _FORBIDDEN_GIT_ACCESS in line
             )
+            violations.extend(_scan_for_handbuilt_projects_connector(rel_path, source))
+    return violations
+
+
+def _scan_for_handbuilt_projects_connector(rel_path: str, source: str) -> list[str]:
+    """Find ``GitConnector(...)`` calls that point at the zad-projects repo.
+
+    Matched on the constructor plus its argument list rather than on a helper name,
+    because the way around the store was never the helper: it was building the same
+    connector inline. Only the projects repo counts -- deployments and argo
+    connectors are built this way legitimately.
+    """
+    violations: list[str] = []
+    for match in re.finditer(r"GitConnector\(", source):
+        depth, end = 0, len(source)
+        for pos in range(match.end() - 1, len(source)):
+            if source[pos] == "(":
+                depth += 1
+            elif source[pos] == ")":
+                depth -= 1
+                if depth == 0:
+                    end = pos
+                    break
+        if _PROJECTS_REPO_SETTING in source[match.end() : end]:
+            lineno = source.count("\n", 0, match.start()) + 1
+            violations.append(f"{rel_path}:{lineno}: GitConnector(...) built against the projects repo")
     return violations
 
 
@@ -224,6 +262,32 @@ def test_no_direct_projects_repo_clones_outside_the_store() -> None:
     """
     violations = _scan_for_direct_projects_repo_access()
     assert not violations, "Direct zad-projects clones found (must go through ProjectStore):\n" + "\n".join(violations)
+
+
+def test_no_one_injects_a_projects_connector_into_project_manager() -> None:
+    """ProjectManager must resolve the projects connector itself, from the store.
+
+    Injecting one wins over the store: get_git_connector_for_project_files() only
+    falls back to the warm copy when nothing was passed in. Both create-project
+    handlers used to inject a connector cloned before their own write, so the
+    processing step that followed read a HEAD without the new file and every
+    create failed with "Project file not found at HEAD".
+    """
+    violations: list[str] = []
+    for rel_dir in [*_SCANNED_DIRS, "opi/manager", "opi/handlers"]:
+        for py_file in (_PYTHON_ROOT / rel_dir).rglob("*.py"):
+            rel_path = py_file.relative_to(_PYTHON_ROOT).as_posix()
+            if rel_path == "opi/manager/project_manager.py":
+                continue  # declares the parameter and holds it as an attribute
+            violations.extend(
+                f"{rel_path}:{lineno}: {line.strip()}"
+                for lineno, line in enumerate(py_file.read_text(encoding="utf-8").splitlines(), 1)
+                if "git_connector_for_project_files=" in line and not line.strip().startswith("#")
+            )
+    assert not violations, (
+        "A projects-repo connector is injected into ProjectManager (it must come from the store):\n"
+        + "\n".join(violations)
+    )
 
 
 def test_no_project_file_is_read_from_a_filesystem_path() -> None:
