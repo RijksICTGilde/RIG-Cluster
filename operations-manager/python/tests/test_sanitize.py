@@ -11,7 +11,7 @@ class TestSanitizeUnhealthyPods:
     @patch("opi.api.resource_router.trigger_reprocessing", new_callable=AsyncMock)
     @patch("opi.api.resource_router.ProjectManager")
     @patch("opi.api.resource_router.KubectlConnector")
-    @patch("opi.api.resource_router.get_project_service")
+    @patch("opi.api.resource_router.get_project_store")
     @patch("opi.api.resource_router.get_metrics_connector", new_callable=AsyncMock)
     @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
     @pytest.mark.asyncio
@@ -34,7 +34,7 @@ class TestSanitizeUnhealthyPods:
         mock_project.data = project_data
         mock_project.filename = "my-project.yaml"
         mock_service = MagicMock()
-        mock_service.get_project.return_value = mock_project
+        mock_service.get.return_value = mock_project
         mock_get_service.return_value = mock_service
 
         mock_pm = MagicMock()
@@ -74,7 +74,7 @@ class TestSanitizeUnhealthyPods:
 
     @patch("opi.api.resource_router.ProjectManager")
     @patch("opi.api.resource_router.KubectlConnector")
-    @patch("opi.api.resource_router.get_project_service")
+    @patch("opi.api.resource_router.get_project_store")
     @patch("opi.api.resource_router.get_metrics_connector")
     @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
     @pytest.mark.asyncio
@@ -97,7 +97,7 @@ class TestSanitizeUnhealthyPods:
         mock_project.data = project_data
         mock_project.filename = "my-project.yaml"
         mock_service = MagicMock()
-        mock_service.get_project.return_value = mock_project
+        mock_service.get.return_value = mock_project
         mock_get_service.return_value = mock_service
 
         mock_pm = MagicMock()
@@ -135,7 +135,7 @@ class TestSanitizeUnhealthyPods:
 
     @patch("opi.api.resource_router.ProjectManager")
     @patch("opi.api.resource_router.KubectlConnector")
-    @patch("opi.api.resource_router.get_project_service")
+    @patch("opi.api.resource_router.get_project_store")
     @patch("opi.api.resource_router.get_metrics_connector")
     @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
     @pytest.mark.asyncio
@@ -158,7 +158,7 @@ class TestSanitizeUnhealthyPods:
         mock_project.data = project_data
         mock_project.filename = "my-project.yaml"
         mock_service = MagicMock()
-        mock_service.get_project.return_value = mock_project
+        mock_service.get.return_value = mock_project
         mock_get_service.return_value = mock_service
 
         mock_pm = MagicMock()
@@ -188,7 +188,7 @@ class TestSanitizeUnhealthyPods:
     @patch("opi.api.resource_router.trigger_reprocessing", new_callable=AsyncMock)
     @patch("opi.api.resource_router.ProjectManager")
     @patch("opi.api.resource_router.KubectlConnector")
-    @patch("opi.api.resource_router.get_project_service")
+    @patch("opi.api.resource_router.get_project_store")
     @patch("opi.api.resource_router.get_metrics_connector", new_callable=AsyncMock)
     @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
     @pytest.mark.asyncio
@@ -211,7 +211,7 @@ class TestSanitizeUnhealthyPods:
         mock_project.data = project_data
         mock_project.filename = "my-project.yaml"
         mock_service = MagicMock()
-        mock_service.get_project.return_value = mock_project
+        mock_service.get.return_value = mock_project
         mock_get_service.return_value = mock_service
 
         mock_pm = MagicMock()
@@ -254,7 +254,7 @@ class TestSanitizeUnhealthyPods:
 
     @patch("opi.api.resource_router.ProjectManager")
     @patch("opi.api.resource_router.KubectlConnector")
-    @patch("opi.api.resource_router.get_project_service")
+    @patch("opi.api.resource_router.get_project_store")
     @patch("opi.api.resource_router.get_metrics_connector", new_callable=AsyncMock)
     @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
     @pytest.mark.asyncio
@@ -277,7 +277,7 @@ class TestSanitizeUnhealthyPods:
         mock_project.data = project_data
         mock_project.filename = "my-project.yaml"
         mock_service = MagicMock()
-        mock_service.get_project.return_value = mock_project
+        mock_service.get.return_value = mock_project
         mock_get_service.return_value = mock_service
 
         mock_pm = MagicMock()

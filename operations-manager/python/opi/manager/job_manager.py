@@ -32,7 +32,7 @@ from opi.manager.run_support import (
     parse_expires,
     resolve_image,
 )
-from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
 from opi.services.runs_service import RunKind, RunStatus, get_runs_service
 from opi.utils.naming import generate_job_name
 from opi.utils.secrets import DatabaseSecret
@@ -77,7 +77,6 @@ class JobManager:
 
     def __init__(self) -> None:
         self._kubectl = create_kubectl_connector()
-        self._project_service = get_project_service()
 
     def _job_selector(self, deployment_name: str) -> str:
         return f"{LABEL_RUN_DEPLOYMENT}={deployment_name},{LABEL_RUN_KIND}={RunKind.JOB}"
@@ -95,7 +94,7 @@ class JobManager:
         # Command is optional: empty means run the image's default entrypoint/cmd.
         command = command.strip()
 
-        project = self._project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
         if not project or not project.data:
             raise JobError(f"Project '{project_name}' niet gevonden")
         deployment = find_deployment(project.data, deployment_name)

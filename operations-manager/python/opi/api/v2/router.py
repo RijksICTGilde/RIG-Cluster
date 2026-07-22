@@ -58,7 +58,7 @@ from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
-from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
 from opi.utils.naming import (
     HostnameFormat,
     generate_argocd_application_name,
@@ -387,8 +387,7 @@ async def list_deployments_v2(
     Headers:
         X-API-Key: The API key for the project (required)
     """
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
+    project = get_project_store().get(project_name)
     if not project or not project.data:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 
@@ -433,8 +432,7 @@ async def get_deployment_v2(
     Headers:
         X-API-Key: The API key for the project (required)
     """
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
+    project = get_project_store().get(project_name)
     if not project or not project.data:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 

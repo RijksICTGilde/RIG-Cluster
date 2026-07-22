@@ -58,7 +58,7 @@ def _mock_project_service():
     mock_project.api_key = SAMPLE_API_KEY
     mock_project.name = SAMPLE_PROJECT
     mock_service = MagicMock()
-    mock_service.get_project.return_value = mock_project
+    mock_service.get.return_value = mock_project
     return mock_service
 
 
@@ -109,7 +109,7 @@ class TestGetTask:
         """A task with status 'running' should return HTTP 202."""
         mock_task_service.get_task.return_value = _make_task(status="running")
 
-        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
             response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
 
         assert response.status_code == 202
@@ -131,7 +131,7 @@ class TestGetTask:
             started_at=None,
         )
 
-        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
             response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
 
         assert response.status_code == 202
@@ -151,7 +151,7 @@ class TestGetTask:
             result={"deployment_name": "my-app", "web_addresses": ["https://my-app.example.com"]},
         )
 
-        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
             response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
 
         assert response.status_code == 200
@@ -175,7 +175,7 @@ class TestGetTask:
             completed_at="2026-03-01T10:03:00+00:00",
         )
 
-        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
             response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
 
         assert response.status_code == 200
@@ -226,7 +226,7 @@ class TestGetTask:
         """Requesting a task with wrong API key should return HTTP 401."""
         mock_task_service.get_task.return_value = _make_task(status="running")
 
-        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
             response = test_client_with_task_service.get(
                 f"/api/tasks/{SAMPLE_TASK_ID}", headers={"X-API-Key": "wrong-key"}
             )
@@ -250,7 +250,7 @@ class TestListTasks:
             "total": 2,
         }
 
-        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
             response = test_client_with_task_service.get(
                 f"/api/tasks?project_name={SAMPLE_PROJECT}", headers=AUTH_HEADERS
             )
@@ -270,7 +270,7 @@ class TestListTasks:
         """Listing tasks when none exist should return an empty list."""
         mock_task_service.list_tasks.return_value = {"tasks": [], "total": 0}
 
-        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
             response = test_client_with_task_service.get(
                 f"/api/tasks?project_name={SAMPLE_PROJECT}", headers=AUTH_HEADERS
             )
@@ -288,7 +288,7 @@ class TestListTasks:
         """Query parameters should be forwarded to the task service."""
         mock_task_service.list_tasks.return_value = {"tasks": [], "total": 0}
 
-        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
             response = test_client_with_task_service.get(
                 f"/api/tasks?project_name={SAMPLE_PROJECT}&deployment_name=bar&status=running&limit=10&offset=5",
                 headers=AUTH_HEADERS,
@@ -330,7 +330,7 @@ class TestCancelTask:
             started_at=None,
         )
 
-        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
             response = test_client_with_task_service.post(f"/api/tasks/{SAMPLE_TASK_ID}/:cancel", headers=AUTH_HEADERS)
 
         assert response.status_code == 200
@@ -347,7 +347,7 @@ class TestCancelTask:
         """Cancelling a running task should return HTTP 409."""
         mock_task_service.get_task.return_value = _make_task(status="running")
 
-        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
             response = test_client_with_task_service.post(f"/api/tasks/{SAMPLE_TASK_ID}/:cancel", headers=AUTH_HEADERS)
 
         assert response.status_code == 409
@@ -365,7 +365,7 @@ class TestCancelTask:
             completed_at="2026-03-01T10:05:00+00:00",
         )
 
-        with patch("opi.api.task_router.get_project_service", return_value=_mock_project_service()):
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
             response = test_client_with_task_service.post(f"/api/tasks/{SAMPLE_TASK_ID}/:cancel", headers=AUTH_HEADERS)
 
         assert response.status_code == 409

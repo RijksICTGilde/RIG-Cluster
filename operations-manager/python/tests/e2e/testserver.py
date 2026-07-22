@@ -127,6 +127,33 @@ def _mock_get_service() -> InMemoryUserAdminService:
     return get_in_memory_user_service()
 
 
+async def _fake_store_save(
+    self,
+    name: str,
+    data: dict,
+    *,
+    message: str,
+    actor: str,
+    enforce_validation: bool = True,
+    filename: str | None = None,
+    refresh_cache: bool = True,
+    base: dict | None = None,
+):
+    """In-memory stand-in for GitProjectStore.save.
+
+    Every project-file write goes through the store, which clones the real
+    zad-projects repo - unavailable here. This keeps the store's write-through
+    cache update (so save-then-read round trips behave like production) and
+    skips only the git commit/push.
+    """
+    from opi.services.project_store import MutationResult
+
+    resolved = os.path.basename(filename or f"{name}.yaml")
+    if refresh_cache:
+        self._refresh_cache(name, data, resolved)
+    return MutationResult(before=None, after=data, ref="e2e-testserver")
+
+
 def _load_fixture_projects() -> list[dict]:
     """Load all YAML project files from the fixtures directory."""
     projects = []
@@ -152,9 +179,8 @@ def _seed_projects(projects: list[dict]) -> None:
     project_service = get_project_service()
     user_service = get_user_service()
 
-    # Add test user to allowlist and grant admin access
-    user_service.add_allowed_emails([TEST_USER_EMAIL])
-    project_service.add_admin_emails([TEST_USER_EMAIL])
+    # Add test user to allowlist and grant platform-admin access
+    user_service.add_platform_admins([TEST_USER_EMAIL])
 
     for project_data in projects:
         project_name = project_data["name"]
@@ -187,7 +213,6 @@ def create_test_app():
             patch("opi.core.startup.run_startup_tasks", new_callable=AsyncMock),
             patch("opi.core.config.settings.SECRET_KEY", SECRET_KEY),
             patch("opi.core.config.settings.ENABLE_GIT_MONITOR", False),
-            patch("opi.core.startup.ensure_projects_fresh", new_callable=AsyncMock),
             patch(
                 "opi.connectors.subdomain.SubdomainConnector.get_by_subdomain",
                 new_callable=AsyncMock,
@@ -203,6 +228,7 @@ def create_test_app():
                 return_value=MagicMock(auth_token=None),
             ),
             patch("opi.handlers.project_file_handler.save_project_file"),
+            patch("opi.services.project_store.GitProjectStore.save", _fake_store_save),
             patch("opi.web.router_user_admin._get_service", _mock_get_service),
             patch(
                 "opi.manager.backup.BackupManager",

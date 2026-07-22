@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from opi.services.project_service import Project, ProjectService, ProjectUser
+from opi.services.project_service import Project, ProjectUser
+from opi.services.project_store import GitProjectStore
 
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient
@@ -23,8 +24,8 @@ if TYPE_CHECKING:
 @pytest.fixture
 def mock_auth_project_service() -> Any:
     """Mock project service for authentication."""
-    with patch("opi.api.endpoint_util.get_project_service") as mock_get_service:
-        mock_service = MagicMock(spec=ProjectService)
+    with patch("opi.api.endpoint_util.get_project_store") as mock_get_service:
+        mock_service = MagicMock(spec=GitProjectStore)
 
         test_project = Project(
             name="test-project",
@@ -38,7 +39,7 @@ def mock_auth_project_service() -> Any:
                 return test_project
             return None
 
-        mock_service.get_project = get_project
+        mock_service.get = get_project
         mock_get_service.return_value = mock_service
         yield mock_service
 
@@ -46,8 +47,8 @@ def mock_auth_project_service() -> Any:
 @pytest.fixture
 def mock_router_project_service() -> Any:
     """Mock project service for router operations (separate patch location)."""
-    with patch("opi.api.router.get_project_service") as mock_get_service:
-        mock_service = MagicMock(spec=ProjectService)
+    with patch("opi.api.router.get_project_store") as mock_get_service:
+        mock_service = MagicMock(spec=GitProjectStore)
 
         test_project = Project(
             name="test-project",
@@ -56,7 +57,7 @@ def mock_router_project_service() -> Any:
             users=[ProjectUser(email="user@example.com", role="Developer")],
         )
 
-        mock_service.get_project.return_value = test_project
+        mock_service.get.return_value = test_project
         mock_get_service.return_value = mock_service
         yield mock_service
 
@@ -725,18 +726,13 @@ class TestValidateCloneEndpoint:
         """Test successful clone validation."""
         mock_pm = MagicMock()
 
-        async def mock_get_path() -> str:
-            return "/path/to/project.yaml"
-
-        mock_pm.get_project_full_file_path = mock_get_path
-
-        mock_file_handler = MagicMock()
-
-        async def mock_read(*args: Any) -> dict[str, Any]:
+        # Mock what the route actually calls. Mocking get_contents' internals
+        # (get_project_full_file_path + _project_file_handler) coupled this test
+        # to an implementation that now reads through the ProjectStore instead.
+        async def mock_get_contents() -> dict[str, Any]:
             return {"name": "test-project", "deployments": []}
 
-        mock_file_handler.read_project_file = mock_read
-        mock_pm._project_file_handler = mock_file_handler
+        mock_pm.get_contents = mock_get_contents
 
         mock_clone_manager = MagicMock()
 
@@ -769,18 +765,13 @@ class TestValidateCloneEndpoint:
         """Test clone validation failure."""
         mock_pm = MagicMock()
 
-        async def mock_get_path() -> str:
-            return "/path/to/project.yaml"
-
-        mock_pm.get_project_full_file_path = mock_get_path
-
-        mock_file_handler = MagicMock()
-
-        async def mock_read(*args: Any) -> dict[str, Any]:
+        # Mock what the route actually calls. Mocking get_contents' internals
+        # (get_project_full_file_path + _project_file_handler) coupled this test
+        # to an implementation that now reads through the ProjectStore instead.
+        async def mock_get_contents() -> dict[str, Any]:
             return {"name": "test-project", "deployments": []}
 
-        mock_file_handler.read_project_file = mock_read
-        mock_pm._project_file_handler = mock_file_handler
+        mock_pm.get_contents = mock_get_contents
 
         mock_clone_manager = MagicMock()
 

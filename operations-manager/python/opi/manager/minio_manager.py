@@ -2003,14 +2003,16 @@ class MinioManager:
             if deployment_name in self.project_manager._secrets_to_create:
                 logger.info(f"External clone updated secrets for {deployment_name}, syncing to Git for ArgoCD")
                 try:
-                    # Regenerate manifests for this deployment to write secrets to Git
+                    # Regenerate manifests for this deployment to write secrets to Git.
+                    # This commits and pushes the manifests to the deployments repo itself.
+                    #
+                    # There used to be an extra commit_and_push here on the *project files*
+                    # connector, which was wrong twice over: the manifests do not live in
+                    # that repo, so it committed nothing of its own, and because that
+                    # connector is now the shared warm working copy, its `git add -A` would
+                    # sweep whatever unrelated state happened to be dirty there into a
+                    # commit labelled "Update MinIO credentials".
                     await self.project_manager._process_application_manifests(deployment_name)
-
-                    # Commit and push the updated secret manifests to Git
-                    git_connector = await self.project_manager.get_git_connector_for_project_files()
-                    await git_connector.commit_and_push(
-                        f"Update MinIO credentials for {project_name}/{deployment_name} after external clone"
-                    )
 
                     result["operations"].append(
                         {

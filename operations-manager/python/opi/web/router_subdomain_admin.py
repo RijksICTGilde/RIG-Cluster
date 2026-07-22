@@ -28,7 +28,8 @@ from opi.forms.wizard.session import (
     init_modal_state_tokenized,
     save_modal_state_by_token,
 )
-from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
+from opi.services.user_service import get_user_service
 from opi.web.menu import get_menu_items
 from opi.web.router_wizard import _apply_literal_scalars
 
@@ -50,8 +51,7 @@ def _require_admin(request: Request) -> dict:
     if not user:
         raise HTTPException(status_code=401, detail="Niet ingelogd")
     email = user.get("email", "").lower()
-    project_service = get_project_service()
-    if not project_service.is_admin(email):
+    if not get_user_service().is_platform_admin(email):
         raise HTTPException(status_code=403, detail="Alleen beheerders hebben toegang")
     return user
 
@@ -171,11 +171,11 @@ def _collect_approval_items(project_data: dict[str, Any]) -> list[dict[str, Any]
 
 def _collect_all_projects_approval_data() -> list[dict[str, Any]]:
     """Collect domain/subdomain data across all projects for the listing page."""
-    project_service = get_project_service()
-    all_projects = project_service.get_all_projects()
+    all_projects = get_project_store().get_all()
 
     result: list[dict[str, Any]] = []
-    for project_name, project in sorted(all_projects.items()):
+    for project in sorted(all_projects, key=lambda p: p.name):
+        project_name = project.name
         project_data = project.data or {}
         items = _collect_approval_items(project_data)
         if items:
@@ -197,14 +197,12 @@ def _collect_all_projects_approval_data() -> list[dict[str, Any]]:
 @requires_sso
 async def list_subdomains(request: Request) -> HTMLResponse:
     """List all domain/subdomain requests across all projects."""
-    from opi.core.startup import ensure_projects_fresh
 
     user = _require_admin(request)
 
     # Pull the latest project data from git so an entry added externally
     # (manual yaml edit + push, or a request created elsewhere) shows up
     # on the admin overview instead of returning a stale in-memory cache.
-    await ensure_projects_fresh()
 
     projects_data = _collect_all_projects_approval_data()
 
@@ -229,8 +227,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     if flow_id != FLOW_ID:
         raise HTTPException(status_code=404, detail="Onbekende flow")
 
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
+    project = get_project_store().get(project_name)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
 
@@ -321,8 +318,7 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
     merged_data["_admin_email"] = user.get("email", "")
 
     # Merge with existing project data
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
+    project = get_project_store().get(project_name)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
 

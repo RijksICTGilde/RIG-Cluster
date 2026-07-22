@@ -364,7 +364,7 @@ class TestHandleRefreshDeployment:
                 return_value=True,
             ),
             patch(
-                "opi.services.project_service.get_project_service",
+                "opi.services.project_store.get_project_service",
                 return_value=mock_project_service,
             ),
             patch(CREATE_PM_PATH, return_value=mock_pm),
@@ -405,7 +405,7 @@ class TestHandleRefreshDeployment:
                 return_value=True,
             ),
             patch(
-                "opi.services.project_service.get_project_service",
+                "opi.services.project_store.get_project_service",
                 return_value=mock_project_service,
             ),
             pytest.raises(ValueError, match="not found"),
@@ -438,7 +438,7 @@ class TestHandleRefreshDeployment:
                 return_value=True,
             ),
             patch(
-                "opi.services.project_service.get_project_service",
+                "opi.services.project_store.get_project_service",
                 return_value=mock_project_service,
             ),
             patch(CREATE_PM_PATH, return_value=mock_pm),

@@ -378,11 +378,10 @@ async def disable_components_for_image_pull(
     from opi.manager.project_manager import ProjectManager
     from opi.services.resource_tuning_service import get_project_data_from_git
 
-    project_data, filename, git_connector = await get_project_data_from_git(project_name)
-    project_manager = ProjectManager(
-        project_file_relative_path=f"projects/{filename}",
-        git_connector_for_project_files=git_connector,
-    )
+    project_data, filename = await get_project_data_from_git(project_name)
+    # No connector is threaded in: ProjectManager takes the warm one from the store
+    # itself, so no caller can hold -- or close -- it.
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
     try:
         file_handler = ProjectFileHandler()
         names = []
@@ -395,7 +394,7 @@ async def disable_components_for_image_pull(
         commit_msg = f"auto-disable: image pull errors for {', '.join(names)} in {project_name}/{deployment_name}"
         await project_manager.save_and_commit_project(project_data, commit_msg, enforce_validation=False)
     finally:
-        await git_connector.close()
+        await project_manager.close()
 
     logger.info(
         "Disabled %d component(s) with image pull errors in %s/%s: %s",

@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from opi.core.config import settings
+from opi.services.project_store import get_project_store
 
 logger = logging.getLogger(__name__)
 
@@ -93,12 +94,11 @@ class ResourceTuningScheduler:
 
     async def _sweep(self) -> None:
         """Tune every project on this cluster; the deadband decides what changes."""
-        from opi.services.project_service import get_project_service
         from opi.services.resource_tuning_service import tune_deployment_resources
 
-        projects = get_project_service().get_all_projects()
+        projects = get_project_store().get_all()
         names: list[str] = []
-        for project in projects.values():
+        for project in projects:
             if not project.data:
                 continue
             name = project.data.get("name", "")

@@ -8,22 +8,34 @@ HEAD~1 (branch-scoped) logic broke exactly here.
 
 from __future__ import annotations
 
+import os
 import subprocess
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from opi.connectors.git import GitConnector
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+# An explicit identity, so the commits below do not depend on ambient git config
+# or on GIT_AUTHOR_* happening to be set in the environment.
+_GIT_ENV = {
+    **os.environ,
+    "GIT_AUTHOR_NAME": "test",
+    "GIT_AUTHOR_EMAIL": "test@example.com",
+    "GIT_COMMITTER_NAME": "test",
+    "GIT_COMMITTER_EMAIL": "test@example.com",
+}
+
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, env=_GIT_ENV)
 
 
 def _make_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q")
-    _git(repo, "config", "user.email", "t@example.com")
-    _git(repo, "config", "user.name", "t")
     (repo / "projects").mkdir()
     return repo
 
