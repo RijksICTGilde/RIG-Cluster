@@ -46,18 +46,35 @@
         {% endfor %}
     </c-layout-flow>
 
+    <style>
+        /* htmx toggles .htmx-request on the hx-indicator target for the request's duration. */
+        .wizard-review__submitting { display: none; }
+        .wizard-review__submitting.htmx-request {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--rvo-space-xs);
+            color: var(--rvo-color-grijs-700);
+        }
+    </style>
     <div class="wizard-step__actions">
         <c-button kind="secondary" label="Terug"
                   showIcon="before" icon="terug"
                   hx-get="/forms/wizard/{{ flow_id }}/step/{{ steps.last }}"
                   hx-target="#wizard-step-content"
-                  hx-swap="innerHTML" />
+                  hx-swap="innerHTML"
+                  hx-disabled-elt="this" />
 
-        <c-button kind="primary" label="Project aanmaken"
+        <span id="wizard-review-submitting" class="wizard-review__submitting" aria-hidden="true">
+            <c-icon icon="refresh" size="sm" />Project wordt aangemaakt&hellip;
+        </span>
+
+        <c-button id="wizard-review-submit" kind="primary" label="Project aanmaken"
                   showIcon="before" icon="publicatie"
                   hx-post="/forms/wizard/{{ flow_id }}/submit"
                   hx-headers="{&quot;X-CSRF-Token&quot;: &quot;{{ request.state.csrf_token }}&quot;}"
                   hx-target="#wizard-step-content"
-                  hx-swap="innerHTML" />
+                  hx-swap="innerHTML"
+                  hx-disabled-elt="this"
+                  hx-indicator="#wizard-review-submitting" />
     </div>
 </div>
