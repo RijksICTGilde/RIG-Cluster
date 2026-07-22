@@ -40,10 +40,12 @@ not change.
 """
 
 import asyncio
+import contextlib
 import copy
 import logging
 import os
 import shutil
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -72,6 +74,13 @@ logger = logging.getLogger(__name__)
 
 PROJECTS_SUBDIR = "projects"
 MAX_MUTATION_ATTEMPTS = 5
+
+# A single process-wide lock serializes every project-file write, so one slow
+# write delays the next. Above these thresholds the timing is logged at WARNING
+# rather than DEBUG/INFO, so an operator sees contention without turning on debug
+# logging. Tune from what the logs actually show.
+_LOCK_WAIT_WARN_SECONDS = 2.0
+_PERSIST_WARN_SECONDS = 3.0
 AGE_HEADER = "-----BEGIN AGE ENCRYPTED FILE-----"
 
 
@@ -233,6 +242,36 @@ class GitProjectStore(ProjectStore):
         logger.info("ProjectStore warm working copy ready at %s", self._working_dir)
         return connector
 
+    @contextlib.asynccontextmanager
+    async def _locked(self, operation: str, name: str):
+        """Acquire the store lock, timing the wait and the hold.
+
+        The single process-wide lock serializes every project-file write, so its
+        wait time is the queueing delay one writer imposes on the next. Logging
+        wait and hold separately tells "the store is busy" (long waits) apart from
+        "one write is slow" (long holds) - which have different fixes. A slow hold
+        is dominated by the git push; see _persist for the push timing itself.
+        """
+        requested = time.monotonic()
+        await self._lock.acquire()
+        waited = time.monotonic() - requested
+        held_start = time.monotonic()
+        log = logger.warning if waited >= _LOCK_WAIT_WARN_SECONDS else logger.debug
+        log("store-lock %s '%s': waited %.2fs for the lock", operation, name, waited)
+        try:
+            yield
+        finally:
+            held = time.monotonic() - held_start
+            log_held = logger.warning if held >= _PERSIST_WARN_SECONDS else logger.info
+            log_held(
+                "store-lock %s '%s': held %.2fs (waited %.2fs)",
+                operation,
+                name,
+                held,
+                waited,
+            )
+            self._lock.release()
+
     def _relative_path(self, name: str, filename: str | None = None) -> str:
         """Repo-relative path of a project file.
 
@@ -324,7 +363,7 @@ class GitProjectStore(ProjectStore):
 
     async def create(self, name: str, data: dict[str, Any], *, message: str, actor: str) -> Project:
         """Create a new project file. Fails if the project already exists."""
-        async with self._lock:
+        async with self._locked("create", name):
             connector = await self.get_connector()
             relative_path = f"{PROJECTS_SUBDIR}/{os.path.basename(name)}.yaml"
             last_error: Exception | None = None
@@ -390,7 +429,7 @@ class GitProjectStore(ProjectStore):
         function on fresh state and therefore resolves the case a text merge cannot:
         two edits to the same YAML list, e.g. both adding a component.
         """
-        async with self._lock:
+        async with self._locked("save", name):
             connector = await self.get_connector()
             relative_path = self._relative_path(name, filename)
             last_error: Exception | None = None
@@ -456,7 +495,7 @@ class GitProjectStore(ProjectStore):
         resolved, the local commit is discarded (reset --hard) so the warm copy
         is left clean.
         """
-        async with self._lock:
+        async with self._locked("mutate", name):
             connector = await self.get_connector()
             relative_path = self._relative_path(name, filename)
             last_error: Exception | None = None
@@ -518,7 +557,7 @@ class GitProjectStore(ProjectStore):
         deletion stayed staged, and the next commit for an unrelated project carried it to
         the remote -- silently deleting a project file under someone else's commit message.
         """
-        async with self._lock:
+        async with self._locked("delete", name):
             connector = await self.get_connector()
             relative_path = self._relative_path(name)
             last_error: Exception | None = None
@@ -638,7 +677,12 @@ class GitProjectStore(ProjectStore):
         succeeds.
         """
         logger.debug("Persisting %s for actor=%s: %s", relative_path, actor, message)
-        return await self._commit_and_publish(connector, {relative_path: dump_yaml_to_string(data)}, message)
+        started = time.monotonic()
+        ref = await self._commit_and_publish(connector, {relative_path: dump_yaml_to_string(data)}, message)
+        elapsed = time.monotonic() - started
+        log = logger.warning if elapsed >= _PERSIST_WARN_SECONDS else logger.info
+        log("store-persist %s: commit+push took %.2fs (actor=%s)", relative_path, elapsed, actor)
+        return ref
 
     async def _commit_and_publish(self, connector: GitConnector, changes: dict[str, str | None], message: str) -> str:
         """Build a commit for exactly these paths, publish it, and roll back cleanly on failure.
@@ -686,7 +730,9 @@ class GitProjectStore(ProjectStore):
         try:
             # allow_rebase=False: divergence must reach the caller so it can re-read,
             # re-apply and re-validate. A silent rebase would publish an unvalidated merge.
+            push_started = time.monotonic()
             await connector.push_changes(allow_rebase=False)
+            logger.info("store-push %s: push took %.2fs", list(changes), time.monotonic() - push_started)
         except BaseException:
             await connector.set_branch_ref(old_head)
             raise
@@ -818,7 +864,7 @@ class GitProjectStore(ProjectStore):
             logger.debug("Reconcile: remote is unchanged, nothing to do")
             return
 
-        async with self._lock:
+        async with self._locked("reconcile", "*"):
             old_head = await connector.get_local_commit_hash()
             await connector.reset_to_remote()
             new_head = await connector.get_local_commit_hash()

@@ -613,3 +613,27 @@ async def test_reconcile_still_syncs_when_the_remote_moved(harness: StoreHarness
     await harness.store.reconcile()
 
     assert harness.connector.reset_count > resets_before, "reconcile skipped a real remote change"
+
+
+# ----------------------------------------------------------------------------
+# timing observability: lock wait, hold and push duration are logged
+# ----------------------------------------------------------------------------
+
+
+async def test_mutation_logs_lock_and_persist_timing(harness: StoreHarness, caplog) -> None:
+    """A successful mutation emits the wait/hold and push timing lines.
+
+    These logs are how an operator sees whether throughput is limited by writes
+    queueing on the single lock (wait) or by a slow git push (push). The exact
+    durations are environment-dependent, so the test pins that the lines are
+    emitted with the operation label, not their values.
+    """
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="opi.services.project_store"):
+        await harness.store.mutate(PROJECT_NAME, _add_deployment("dep-timing"), message="timed", actor="tester")
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(m.startswith("store-lock mutate 'demo': held") for m in messages), messages
+    assert any(m.startswith("store-push") and "push took" in m for m in messages), messages
+    assert any(m.startswith("store-persist") and "commit+push took" in m for m in messages), messages
