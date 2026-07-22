@@ -140,10 +140,15 @@ class TestAddComponentProfile:
         assert result == payload
 
     async def test_component_name_too_long(self):
-        payload = {"name": "abcdefghijklm", "image": "nginx:latest"}
+        payload = {"name": "a" * 64, "image": "nginx:latest"}
         with pytest.raises(HTTPException) as exc_info:
             await validate_api_payload(payload, ADD_COMPONENT_VALIDATORS)
         assert exc_info.value.status_code == 422
+
+    async def test_component_name_at_max_length_ok(self):
+        payload = {"name": "a" * 63, "image": "nginx:latest"}
+        result = await validate_api_payload(payload, ADD_COMPONENT_VALIDATORS)
+        assert result == payload
 
 
 # ---------------------------------------------------------------------------
