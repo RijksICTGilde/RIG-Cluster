@@ -211,12 +211,18 @@ def _settle_tasks(base_url: str, tasks: list[tuple[CreatedProject, str]]) -> Non
     pattern across projects that tells you whether something is racy.
     """
     failures: list[str] = []
+    superseded = 0
     for project, task_id in tasks:
         state, reason = sandbox_api.task_outcome(
             base_url, task_id, project.api_key, verify_ssl=_VERIFY_SSL, timeout=TASK_TIMEOUT
         )
         if state == "failed":
             failures.append(f"{project.name}: {reason}")
+        elif state == "superseded":
+            # Benign: a newer covering task took over this one's ArgoCD wait. The
+            # project file was already verified; the newer task re-syncs the rest.
+            superseded += 1
+            logger.info("Task %s for '%s' was superseded by a newer task (expected under load)", task_id, project.name)
         elif state == "running":
             logger.warning(
                 "Task %s for '%s' still running after %.0fs; the project file was already verified",
@@ -224,6 +230,8 @@ def _settle_tasks(base_url: str, tasks: list[tuple[CreatedProject, str]]) -> Non
                 project.name,
                 TASK_TIMEOUT,
             )
+    if superseded:
+        logger.info("%d/%d tasks were superseded this round", superseded, len(tasks))
     assert not failures, "API tasks failed:\n" + "\n".join(failures)
 
 

@@ -90,10 +90,11 @@ def task_outcome(
 ) -> tuple[str, str | None]:
     """Poll a task and report its outcome without asserting.
 
-    Returns ("completed", None), ("failed", reason) or ("running", None) when the
-    task has not reached a terminal state before the timeout. Callers that only
-    care whether a mutation was rejected can then distinguish a real failure from
-    a task still churning through downstream reconciliation.
+    Returns ("completed", None), ("superseded", None), ("failed", reason) or
+    ("running", None) when the task has not reached a terminal state before the
+    timeout. "superseded" is a benign outcome: a newer task whose scope covers
+    this one took over, so this task's ArgoCD wait was abandoned by design. It is
+    recorded as a completed task carrying result.status == "superseded".
     """
     base = base_url.rstrip("/")
     headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
@@ -106,6 +107,8 @@ def task_outcome(
                 status = task.get("status")
                 if status != "completed":
                     return "failed", f"task status '{status}': {task}"
+                if (task.get("result") or {}).get("status") == "superseded":
+                    return "superseded", None
                 try:
                     _assert_no_subtask_failure(task_id, task)
                 except AssertionError as exc:
