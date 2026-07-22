@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import time
 from datetime import UTC, datetime
 
 from opi.connectors.keycloak import create_keycloak_connector
@@ -46,16 +45,14 @@ class DbConsoleReaper:
         self._cluster = cluster
         self._running = False
         self._task: asyncio.Task | None = None
-        self._last_client_gc: float = 0.0
 
     async def start(self) -> None:
         self._running = True
         self._task = asyncio.create_task(self._run())
         logger.info(
-            "Database console reaper started (cluster=%s, pod sweep every %ds, orphan-client GC every %ds)",
+            "Database console reaper started (cluster=%s, every %ds)",
             self._cluster,
             settings.DB_CONSOLE_REAP_INTERVAL_SECONDS,
-            settings.DB_CONSOLE_CLIENT_GC_INTERVAL_SECONDS,
         )
 
     async def stop(self) -> None:
@@ -92,7 +89,7 @@ class DbConsoleReaper:
 
         if not namespaces:
             logger.debug("Reaper sweep: no active runs, nothing to inspect")
-            await self._gc_orphan_clients_if_due(set())
+            await self._gc_orphan_clients(set())
             return
 
         logger.debug(
@@ -125,22 +122,6 @@ class DbConsoleReaper:
 
             await self._reap_orphans(kubectl, manager, namespace, live_sessions, now)
 
-        await self._gc_orphan_clients_if_due(live_client_ids)
-
-    async def _gc_orphan_clients_if_due(self, live_client_ids: set[str]) -> None:
-        """Run the Keycloak orphan-client GC on its own, slower schedule.
-
-        It always calls Keycloak, also when no console has ever run: an orphan is by
-        definition something the database no longer knows about, so it cannot be
-        derived from our own bookkeeping. That made it the one part of the sweep with
-        a fixed per-minute cost. On its own interval that cost drops by an order of
-        magnitude while a leftover client still disappears well within the hour.
-        """
-        interval = settings.DB_CONSOLE_CLIENT_GC_INTERVAL_SECONDS
-        elapsed = time.monotonic() - self._last_client_gc
-        if self._last_client_gc and elapsed < interval:
-            return
-        self._last_client_gc = time.monotonic()
         await self._gc_orphan_clients(live_client_ids)
 
     async def _reap_orphans(
