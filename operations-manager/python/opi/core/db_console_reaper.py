@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from datetime import UTC, datetime
 
 from opi.connectors.keycloak import create_keycloak_connector
@@ -45,14 +46,16 @@ class DbConsoleReaper:
         self._cluster = cluster
         self._running = False
         self._task: asyncio.Task | None = None
+        self._last_client_gc: float = 0.0
 
     async def start(self) -> None:
         self._running = True
         self._task = asyncio.create_task(self._run())
         logger.info(
-            "Database console reaper started (cluster=%s, every %ds)",
+            "Database console reaper started (cluster=%s, pod sweep every %ds, orphan-client GC every %ds)",
             self._cluster,
             settings.DB_CONSOLE_REAP_INTERVAL_SECONDS,
+            settings.DB_CONSOLE_CLIENT_GC_INTERVAL_SECONDS,
         )
 
     async def stop(self) -> None:
@@ -87,6 +90,18 @@ class DbConsoleReaper:
         active_runs = await get_runs_service().list_active_runs(self._cluster)
         namespaces = sorted({r["namespace"] for r in active_runs if r.get("namespace")})
 
+        if not namespaces:
+            logger.debug("Reaper sweep: no active runs, nothing to inspect")
+            await self._gc_orphan_clients_if_due(set())
+            return
+
+        logger.debug(
+            "Reaper sweep: %d active run(s) across %d namespace(s): %s",
+            len(active_runs),
+            len(namespaces),
+            ", ".join(namespaces),
+        )
+
         kubectl = create_kubectl_connector()
         manager = get_db_console_manager()
         now = datetime.now(UTC)
@@ -110,6 +125,22 @@ class DbConsoleReaper:
 
             await self._reap_orphans(kubectl, manager, namespace, live_sessions, now)
 
+        await self._gc_orphan_clients_if_due(live_client_ids)
+
+    async def _gc_orphan_clients_if_due(self, live_client_ids: set[str]) -> None:
+        """Run the Keycloak orphan-client GC on its own, slower schedule.
+
+        It always calls Keycloak, also when no console has ever run: an orphan is by
+        definition something the database no longer knows about, so it cannot be
+        derived from our own bookkeeping. That made it the one part of the sweep with
+        a fixed per-minute cost. On its own interval that cost drops by an order of
+        magnitude while a leftover client still disappears well within the hour.
+        """
+        interval = settings.DB_CONSOLE_CLIENT_GC_INTERVAL_SECONDS
+        elapsed = time.monotonic() - self._last_client_gc
+        if self._last_client_gc and elapsed < interval:
+            return
+        self._last_client_gc = time.monotonic()
         await self._gc_orphan_clients(live_client_ids)
 
     async def _reap_orphans(
@@ -200,6 +231,13 @@ class DbConsoleReaper:
         try:
             keycloak = await create_keycloak_connector()
             client_ids = await keycloak.list_client_ids_by_prefix(realm, f"{DB_CONSOLE_PREFIX}-")
+            logger.debug(
+                "Orphan-client GC: %d '%s-' client(s) in realm '%s', %d with a live pod",
+                len(client_ids),
+                DB_CONSOLE_PREFIX,
+                realm,
+                len(live_client_ids),
+            )
             for client_id in client_ids:
                 if client_id in live_client_ids:
                     continue
