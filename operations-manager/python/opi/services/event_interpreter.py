@@ -121,12 +121,24 @@ _NOISE_REASONS: set[str] = {
     "LeaderElection",
 }
 
+# A pod waiting on a still-provisioning volume: not a resource shortage, so this
+# must win from both the FailedScheduling reason and the "0/N nodes" pattern
+# (the scheduler message contains both).
+_UNBOUND_PVC_RE = re.compile(r"unbound (?:immediate )?PersistentVolumeClaims?", re.IGNORECASE)
+_UNBOUND_PVC_TRANSLATION = (
+    "Wacht op opslagvolume",
+    "Het opslagvolume wordt nog aangemaakt; de pod start zodra het klaar is. "
+    "Dit lost zich meestal binnen enkele minuten vanzelf op.",
+    EventSeverity.INFORMATIONAL,
+)
+
 # --- Pattern-based translations for ArgoCD health messages ---
 
 _MESSAGE_PATTERNS: list[tuple[re.Pattern[str], str, str, EventSeverity]] = [
     # (pattern, title, suggestion, severity)
     # (image-pull failures are handled dynamically before _MESSAGE_PATTERNS, see
     # _image_pull_suggestion / _IMAGE_PULL_RE)
+    (_UNBOUND_PVC_RE, *_UNBOUND_PVC_TRANSLATION),
     (
         re.compile(r"runAsNonRoot", re.IGNORECASE),
         "Container draait als root",
@@ -225,6 +237,11 @@ def _interpret_by_reason(reason: str, message: str) -> tuple[str, str, EventSeve
     # Image-pull failures get a dynamic, solution-oriented suggestion.
     if reason in _IMAGE_PULL_REASONS or _IMAGE_PULL_RE.search(message):
         return "Container image kan niet worden opgehaald", _image_pull_suggestion(message), EventSeverity.ACTIONABLE
+
+    # Checked before the reason table: a FailedScheduling on an unbound PVC would
+    # otherwise be mistranslated as a cluster resource shortage.
+    if _UNBOUND_PVC_RE.search(message):
+        return _UNBOUND_PVC_TRANSLATION
 
     if reason in _EVENT_TRANSLATIONS:
         return _EVENT_TRANSLATIONS[reason]

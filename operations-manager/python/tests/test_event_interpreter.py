@@ -81,6 +81,37 @@ class TestInterpretEvents:
         result = interpret_events(events)
         assert len(result) == 2
 
+    def test_failed_scheduling_unbound_pvc_is_storage_wait_not_resource_shortage(self):
+        events = [
+            {
+                "reason": "FailedScheduling",
+                "message": (
+                    "0/12 nodes are available: pod has unbound immediate PersistentVolumeClaims. "
+                    "preemption: 0/12 nodes are available: 12 Preemption is not helpful for scheduling."
+                ),
+                "object": "pr-483-frontend-74d86df447-jgs9n",
+                "time": "",
+            }
+        ]
+        result = interpret_events(events)
+        assert len(result) == 1
+        assert result[0].title == "Wacht op opslagvolume"
+        assert result[0].severity == EventSeverity.INFORMATIONAL
+        assert "onvoldoende" not in result[0].suggestion.lower()
+
+    def test_failed_scheduling_without_pvc_keeps_generic_translation(self):
+        events = [
+            {
+                "reason": "FailedScheduling",
+                "message": "0/12 nodes are available: 12 Insufficient cpu.",
+                "object": "myapp-abc123-xyz12",
+                "time": "",
+            }
+        ]
+        result = interpret_events(events)
+        assert len(result) == 1
+        assert result[0].title == "Pod kan niet worden ingepland"
+
     def test_falls_back_to_message_pattern(self):
         events = [
             {
@@ -174,6 +205,18 @@ class TestInterpretArgocdErrors:
         assert "root" in result[0]["message"].lower()
         assert result[0].get("suggestion")
         assert result[0].get("original_message")
+
+    def test_argocd_error_unbound_pvc_wins_from_no_nodes_pattern(self):
+        errors = [
+            {
+                "resource": "Pod/prod-frontend-74d86df447-jgs9n",
+                "message": "0/12 nodes are available: pod has unbound immediate PersistentVolumeClaims.",
+            }
+        ]
+        result = interpret_argocd_errors(errors)
+        assert len(result) == 1
+        assert result[0]["message"] == "Wacht op opslagvolume"
+        assert result[0]["severity"] == "informational"
 
     def test_preserves_timestamps(self):
         errors = [

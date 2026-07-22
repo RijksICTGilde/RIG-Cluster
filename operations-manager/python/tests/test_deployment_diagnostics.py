@@ -186,6 +186,157 @@ class TestGatherDeploymentErrors:
         kubectl.get_namespace_events.assert_called_once()
         assert any(e["resource"].startswith("Event/") for e in errors)
 
+    async def test_pod_event_dropped_when_pod_now_healthy(self) -> None:
+        events = [
+            {
+                "object": "prod-frontend-abc",
+                "kind": "Pod",
+                "reason": "FailedScheduling",
+                "message": "0/12 nodes are available: pod has unbound immediate PersistentVolumeClaims.",
+                "time": "T1",
+            },
+        ]
+        tree = [{"kind": "Pod", "name": "prod-frontend-abc", "health": {"status": "Healthy"}}]
+        status_data = {"status": {"health": {"status": "Degraded"}}}
+        with patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="ns"):
+            errors = await gather_deployment_errors(
+                argo=_argo_mock(tree_nodes=tree),
+                kubectl=_kubectl_mock(events=events),
+                app_name="my-app",
+                base_namespace="ns",
+                cluster="local",
+                deployment_name="prod",
+                status_data=status_data,
+            )
+        assert not any(e["resource"].startswith("Event/") for e in errors)
+
+    async def test_pod_event_dropped_when_pod_gone(self) -> None:
+        events = [
+            {"object": "prod-frontend-old", "kind": "Pod", "reason": "BackOff", "message": "crash", "time": "T1"},
+        ]
+        tree = [{"kind": "Pod", "name": "prod-frontend-new", "health": {"status": "Degraded", "message": "x"}}]
+        status_data = {"status": {"health": {"status": "Degraded"}}}
+        with patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="ns"):
+            errors = await gather_deployment_errors(
+                argo=_argo_mock(tree_nodes=tree),
+                kubectl=_kubectl_mock(events=events),
+                app_name="my-app",
+                base_namespace="ns",
+                cluster="local",
+                deployment_name="prod",
+                status_data=status_data,
+            )
+        assert not any(e["resource"] == "Event/prod-frontend-old" for e in errors)
+
+    async def test_pod_event_kept_when_pod_still_unhealthy(self) -> None:
+        events = [
+            {"object": "prod-frontend-abc", "kind": "Pod", "reason": "BackOff", "message": "crash", "time": "T1"},
+        ]
+        tree = [{"kind": "Pod", "name": "prod-frontend-abc", "health": {"status": "Degraded", "message": "x"}}]
+        status_data = {"status": {"health": {"status": "Degraded"}}}
+        with patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="ns"):
+            errors = await gather_deployment_errors(
+                argo=_argo_mock(tree_nodes=tree),
+                kubectl=_kubectl_mock(events=events),
+                app_name="my-app",
+                base_namespace="ns",
+                cluster="local",
+                deployment_name="prod",
+                status_data=status_data,
+            )
+        assert any(e["resource"] == "Event/prod-frontend-abc" for e in errors)
+
+    async def test_pod_event_kept_when_tree_fetch_failed(self) -> None:
+        events = [
+            {"object": "prod-frontend-abc", "kind": "Pod", "reason": "BackOff", "message": "crash", "time": "T1"},
+        ]
+        status_data = {"status": {"health": {"status": "Degraded"}}}
+        with patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="ns"):
+            errors = await gather_deployment_errors(
+                argo=_argo_mock(raises=True),
+                kubectl=_kubectl_mock(events=events),
+                app_name="my-app",
+                base_namespace="ns",
+                cluster="local",
+                deployment_name="prod",
+                status_data=status_data,
+            )
+        assert any(e["resource"] == "Event/prod-frontend-abc" for e in errors)
+
+    async def test_non_pod_event_not_verified_against_tree(self) -> None:
+        events = [
+            {
+                "object": "prod-frontend",
+                "kind": "ReplicaSet",
+                "reason": "FailedCreate",
+                "message": "quota",
+                "time": "T1",
+            },
+        ]
+        tree = [{"kind": "Pod", "name": "prod-frontend-abc", "health": {"status": "Healthy"}}]
+        status_data = {"status": {"health": {"status": "Degraded"}}}
+        with patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="ns"):
+            errors = await gather_deployment_errors(
+                argo=_argo_mock(tree_nodes=tree),
+                kubectl=_kubectl_mock(events=events),
+                app_name="my-app",
+                base_namespace="ns",
+                cluster="local",
+                deployment_name="prod",
+                status_data=status_data,
+            )
+        assert any(e["resource"] == "Event/prod-frontend" for e in errors)
+
+    async def test_pvc_event_dropped_when_pvc_now_bound(self) -> None:
+        events = [
+            {
+                "object": "prod-frontend-data-pvc",
+                "kind": "PersistentVolumeClaim",
+                "reason": "ProvisioningFailed",
+                "message": "failed to provision volume",
+                "time": "T1",
+            },
+        ]
+        tree = [{"kind": "PersistentVolumeClaim", "name": "prod-frontend-data-pvc", "health": {"status": "Healthy"}}]
+        status_data = {"status": {"health": {"status": "Degraded"}}}
+        with patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="ns"):
+            errors = await gather_deployment_errors(
+                argo=_argo_mock(tree_nodes=tree),
+                kubectl=_kubectl_mock(events=events),
+                app_name="my-app",
+                base_namespace="ns",
+                cluster="local",
+                deployment_name="prod",
+                status_data=status_data,
+            )
+        assert not any(e["resource"].startswith("Event/") for e in errors)
+
+    async def test_pvc_event_kept_when_pvc_still_pending(self) -> None:
+        events = [
+            {
+                "object": "prod-frontend-data-pvc",
+                "kind": "PersistentVolumeClaim",
+                "reason": "ProvisioningFailed",
+                "message": "failed to provision volume",
+                "time": "T1",
+            },
+        ]
+        tree = [
+            {"kind": "PersistentVolumeClaim", "name": "prod-frontend-data-pvc", "health": {"status": "Progressing"}}
+        ]
+        status_data = {"status": {"health": {"status": "Degraded"}}}
+        with patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="ns"):
+            errors = await gather_deployment_errors(
+                argo=_argo_mock(tree_nodes=tree),
+                kubectl=_kubectl_mock(events=events),
+                app_name="my-app",
+                base_namespace="ns",
+                cluster="local",
+                deployment_name="prod",
+                status_data=status_data,
+            )
+        assert any(e["resource"] == "Event/prod-frontend-data-pvc" for e in errors)
+
     async def test_namespace_events_fetch_failure_is_swallowed(self) -> None:
         status_data = {"status": {"health": {"status": "Degraded"}}}
         with patch("opi.services.deployment_diagnostics.get_prefixed_namespace", return_value="ns"):

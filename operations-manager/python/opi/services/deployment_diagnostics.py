@@ -22,6 +22,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Event kinds whose Argo tree health is a reliable "is it resolved" signal:
+# a Healthy pod runs, a Healthy PVC is Bound. Events on these objects are
+# dropped once the object is healthy again (or gone).
+_TREE_VERIFIED_EVENT_KINDS = frozenset({"Pod", "PersistentVolumeClaim"})
+
 
 _CATEGORY_EXPLANATIONS: dict[ErrorCategory, str] = {
     ErrorCategory.ImagePull: (
@@ -95,6 +100,13 @@ async def gather_deployment_errors(
       6. namespace events (kubectl): only when the application is already
          Degraded or other sources have produced errors
 
+    Events are history, not state: pod and PVC events are verified against
+    the resource tree (the current ground truth) and dropped when their
+    object is now Healthy (pod running, PVC Bound) or no longer exists, so
+    resolved hiccups (e.g. a FailedScheduling or ProvisioningFailed while a
+    volume was still provisioning) are not shown as live errors. When the
+    tree fetch failed, events pass unverified.
+
     Each entry: ``{"resource": str, "message": str, "timestamp": str?}``.
     All sub-fetches are best-effort: failures log at debug, never raise.
     """
@@ -116,11 +128,13 @@ async def gather_deployment_errors(
         elif health_status == "Progressing" and health_msg:
             errors.append({"resource": resource_label, "message": health_msg})
 
+    tree_available = True
     try:
         tree_nodes = await argo.get_application_resource_tree(app_name)
     except Exception as exc:
         logger.debug("Could not fetch resource tree for %s: %s", app_name, exc)
         tree_nodes = []
+        tree_available = False
 
     for node in tree_nodes:
         node_kind = node.get("kind", "")
@@ -148,10 +162,21 @@ async def gather_deployment_errors(
             logger.debug("Could not fetch namespace events for %s: %s", deployment_name, exc)
             raw_events = []
 
+        tree_health: dict[tuple[str, str], str] = {
+            (node.get("kind", ""), node.get("name", "")): (node.get("health", {}) or {}).get("status") or ""
+            for node in tree_nodes
+            if node.get("kind") in _TREE_VERIFIED_EVENT_KINDS
+        }
+
         for event in raw_events:
             obj = event.get("object", "unknown")
             if obj != deployment_name and not obj.startswith(f"{deployment_name}-"):
                 continue
+            kind = event.get("kind", "")
+            if tree_available and kind in _TREE_VERIFIED_EVENT_KINDS:
+                current_health = tree_health.get((kind, obj))
+                if current_health is None or current_health == "Healthy":
+                    continue
             msg = event.get("message", "")
             if not msg:
                 continue

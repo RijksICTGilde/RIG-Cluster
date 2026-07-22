@@ -21,9 +21,7 @@ def _handler_with(apply_side_effect):
 
 @pytest.mark.asyncio
 async def test_transient_forbidden_then_success_does_not_error():
-    handler, kubectl = _handler_with(
-        [KubectlExecutionError("... secrets is forbidden: cannot get resource ..."), None]
-    )
+    handler, kubectl = _handler_with([KubectlExecutionError("... secrets is forbidden: cannot get resource ..."), None])
     with (
         patch("opi.handlers.sops.asyncio.sleep", new=AsyncMock()) as sleep,
         patch.object(handler, "logger") as log,

@@ -918,7 +918,7 @@ class KubectlConnector:
             max_age_hours: Only return events younger than this (default: 2)
 
         Returns:
-            List of event dictionaries with keys: type, reason, object, message, time
+            List of event dictionaries with keys: type, reason, object, kind, message, time
         """
         from datetime import datetime
 
@@ -962,6 +962,7 @@ class KubectlConnector:
                         "type": event.get("type", ""),
                         "reason": reason,
                         "object": obj_name,
+                        "kind": event.get("involvedObject", {}).get("kind", ""),
                         "message": event.get("message", ""),
                         "time": timestamp,
                     }

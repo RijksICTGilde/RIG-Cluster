@@ -1,3 +1,8 @@
+# Hooks that rewrite files run at pre-commit only. At pre-push pre-commit
+# stashes the working tree, so an auto-fix there conflicts with the stash and
+# aborts the push ("Stashed changes conflicted with hook auto-fixes").
+default_stages: [pre-commit]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -41,7 +46,7 @@ repos:
       # unit subset is ~45s locally and catches the failures we saw today.
       - id: pytest
         name: pytest (unit tests)
-        entry: uv run --directory operations-manager/python pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q --tb=line -m "not slow and not e2e and not requires_infra and not sandbox"
+        entry: uv run --directory operations-manager/python pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q --tb=line -o log_cli=false -m "not slow and not e2e and not requires_infra and not sandbox"
         language: system
         files: ^operations-manager/python/.*\.py$
         pass_filenames: false
