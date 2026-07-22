@@ -107,6 +107,7 @@ from opi.utils.naming import (
 )
 from opi.utils.project_utils import (
     ComponentValidationError,
+    apply_resource_limits,
     build_component_config,
     normalize_container_image,
     validate_component_paths,
@@ -7015,10 +7016,7 @@ class ProjectManager:
 
             if cpu_limit is not None or memory_limit is not None:
                 resources = component.setdefault("resources", {})
-                if cpu_limit is not None:
-                    resources["cpu"] = cpu_limit
-                if memory_limit is not None:
-                    resources["memory"] = memory_limit
+                apply_resource_limits(resources, cpu_limit=cpu_limit, memory_limit=memory_limit)
 
             await self.save_and_commit_project(project_data, f"Update component '{name}' in project '{project_name}'")
 

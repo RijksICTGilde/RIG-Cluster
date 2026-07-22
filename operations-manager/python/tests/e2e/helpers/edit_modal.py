@@ -19,10 +19,16 @@ if TYPE_CHECKING:
 class EditModalHelper:
     """Page object for modal edit wizard flows on the detail page."""
 
-    def __init__(self, page: Page, base_url: str, project_name: str) -> None:
+    # Default wait for an HTMX step swap after a submit. Fine against the local
+    # mocked server; the live sandbox under concurrent load (store lock contention
+    # + ~2.5s push) needs more, so callers can raise it per instance.
+    DEFAULT_ACTION_TIMEOUT_MS = 10000
+
+    def __init__(self, page: Page, base_url: str, project_name: str, *, action_timeout_ms: int | None = None) -> None:
         self.page = page
         self.base_url = base_url.rstrip("/")
         self.project_name = project_name
+        self.action_timeout_ms = action_timeout_ms or self.DEFAULT_ACTION_TIMEOUT_MS
 
     @property
     def detail_url(self) -> str:
@@ -67,13 +73,13 @@ class EditModalHelper:
         """Return text content of the modal inner area."""
         return self.page.locator("#edit-section-inner").text_content() or ""
 
-    def wait_for_success(self, timeout: float = 10000) -> None:
+    def wait_for_success(self, timeout: float | None = None) -> None:
         """Wait for the success screen to appear (save_only flows)."""
-        self.page.locator(".edit-section-success").wait_for(state="visible", timeout=timeout)
+        self.page.locator(".edit-section-success").wait_for(state="visible", timeout=timeout or self.action_timeout_ms)
 
-    def wait_for_review(self, timeout: float = 10000) -> None:
+    def wait_for_review(self, timeout: float | None = None) -> None:
         """Wait for the review screen to appear (multi-step flows)."""
-        self.page.locator(".wizard-review").wait_for(state="visible", timeout=timeout)
+        self.page.locator(".wizard-review").wait_for(state="visible", timeout=timeout or self.action_timeout_ms)
 
     def confirm_review(self) -> None:
         """Click the confirm button on the review page and wait for result."""
@@ -126,7 +132,7 @@ class EditModalHelper:
             select_locator.select_option(value)
         self.page.wait_for_load_state("networkidle", timeout=timeout)
 
-    def sequence_add(self, path: str, timeout: float = 10000) -> None:
+    def sequence_add(self, path: str, timeout: float | None = None) -> None:
         """Add an item to a sequence field (e.g. 'users', 'components') in the modal.
 
         Calls the page's own sequenceAdd() handler, which submits the form with a
@@ -134,19 +140,20 @@ class EditModalHelper:
         """
         self._do_and_wait(lambda: self.page.evaluate(f"sequenceAdd('{path}')"), timeout=timeout)
 
-    def sequence_remove(self, path: str, index: int, timeout: float = 10000) -> None:
+    def sequence_remove(self, path: str, index: int, timeout: float | None = None) -> None:
         """Remove item `index` from a sequence field in the modal."""
         self._do_and_wait(lambda: self.page.evaluate(f"sequenceRemove('{path}', {index})"), timeout=timeout)
 
-    def _click_and_wait(self, locator, timeout: float = 10000) -> None:
+    def _click_and_wait(self, locator, timeout: float | None = None) -> None:
         """Click a button and wait for the HTMX swap to complete."""
         self._do_and_wait(locator.click, timeout=timeout)
 
-    def _do_and_wait(self, action, timeout: float = 10000) -> None:
+    def _do_and_wait(self, action, timeout: float | None = None) -> None:
         """Run an action that triggers an HTMX form submit and wait for the swap.
 
         Uses the data-stale marker pattern on #modal-wizard-step-inner.
         """
+        timeout = timeout or self.action_timeout_ms
         inner = self.page.locator("#modal-wizard-step-inner")
         if inner.count() > 0:
             inner.evaluate("el => el.setAttribute('data-stale', '1')")

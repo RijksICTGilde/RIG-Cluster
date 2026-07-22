@@ -89,6 +89,9 @@ AGE_ARMOR = "-----BEGIN AGE ENCRYPTED FILE-----"
 TASK_TIMEOUT = 600.0
 GIT_TIMEOUT = 300.0
 UI_PROGRESS_TIMEOUT_MS = 300_000.0
+# Modal HTMX-swap wait. The default 10s is fine locally; the live sandbox under
+# concurrent load (store-lock contention + ~2.5s push) needs much more headroom.
+MODAL_ACTION_TIMEOUT_MS = 60_000
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +245,7 @@ def _settle_tasks(base_url: str, tasks: list[tuple[CreatedProject, str]]) -> Non
 
 def _edit_description_via_ui(page: Page, base_url: str, project_name: str, description: str) -> None:
     """Change the project description through the identity edit modal (save_only)."""
-    modal = EditModalHelper(page, base_url, project_name)
+    modal = EditModalHelper(page, base_url, project_name, action_timeout_ms=MODAL_ACTION_TIMEOUT_MS)
     modal.open_detail_page()
     modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
     modal.fill_field("description", description)
@@ -252,7 +255,7 @@ def _edit_description_via_ui(page: Page, base_url: str, project_name: str, descr
 
 def _add_team_member_via_ui(page: Page, base_url: str, project_name: str, email: str) -> None:
     """Add a team member through the team edit modal (save_only)."""
-    modal = EditModalHelper(page, base_url, project_name)
+    modal = EditModalHelper(page, base_url, project_name, action_timeout_ms=MODAL_ACTION_TIMEOUT_MS)
     modal.open_detail_page()
     modal.open_edit_modal("modal-edit-team", "Projectleden beheren")
     modal.sequence_add("users")
@@ -273,7 +276,7 @@ def _component_index_in_modal(page: Page, component_name: str) -> int:
 
 
 def _open_components_modal(page: Page, base_url: str, project_name: str) -> EditModalHelper:
-    modal = EditModalHelper(page, base_url, project_name)
+    modal = EditModalHelper(page, base_url, project_name, action_timeout_ms=MODAL_ACTION_TIMEOUT_MS)
     modal.open_detail_page()
     modal.open_edit_modal("modal-edit-components", "Components beheren")
     return modal
