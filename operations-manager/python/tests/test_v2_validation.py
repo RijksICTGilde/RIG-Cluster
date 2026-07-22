@@ -277,9 +277,10 @@ class TestUpdateImageValidation:
 
 INVALID_COMPONENT_NAMES = [
     pytest.param("UPPERCASE", id="uppercase"),
-    pytest.param("has-hyphen", id="hyphen-not-allowed"),
+    pytest.param("-leading-hyphen", id="leading-hyphen"),
+    pytest.param("trailing-hyphen-", id="trailing-hyphen"),
     pytest.param("special!name", id="special-chars"),
-    pytest.param("a" * 13, id="too-long-13-chars"),
+    pytest.param("a" * 64, id="too-long-64-chars"),
     pytest.param("123startsnum", id="starts-with-digit"),
 ]
 
@@ -303,6 +304,15 @@ class TestAddComponentValidation:
         )
         # 400 from sanitize check, 422 from validator - both acceptable
         assert response.status_code in (400, 422)
+
+    def test_interior_hyphen_is_accepted(self, v2_client: TestClient) -> None:
+        body = {**VALID_ADD_COMPONENT_BODY, "name": "has-hyphen"}
+        response = v2_client.post(
+            "/api/v2/projects/test-project/components",
+            headers=HEADERS,
+            json=body,
+        )
+        assert response.status_code == 202
 
     @pytest.mark.parametrize(
         "image",
