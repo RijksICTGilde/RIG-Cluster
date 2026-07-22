@@ -1207,5 +1207,9 @@ def create_kubectl_connector() -> KubectlConnector:
     Returns:
         KubectlConnector instance
     """
-    logger.debug("Creating KubectlConnector")
+    # Deliberately not logged: KubectlConnector is a singleton, so this returns the
+    # one existing instance and creates nothing. Logging "Creating ..." here put a
+    # line in the log for every caller, with no work behind it -- the real creation
+    # is logged once by __init__. Every periodic job calls this, so the noise was
+    # continuous.
     return KubectlConnector()
