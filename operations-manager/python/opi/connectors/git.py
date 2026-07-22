@@ -21,6 +21,33 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# One push-lock per (repo, branch), process-wide. Concurrent tasks that process the
+# same project each build their own manifests and push them to the SHARED repos
+# (zad-deployments, zad-argo-user-applications). Those pushes are not otherwise
+# serialized -- unlike zad-projects, which the ProjectStore serializes -- so under
+# load they collided on the ref update and exhausted the rebase-retry loop
+# ("remote rejected ... non-fast-forward ... after N attempts"). Serializing the
+# whole push attempt (fetch+rebase+push) per ref means a waiter rebases onto the
+# winner and pushes without a concurrent competitor invalidating it again.
+#
+# Intra-process only, consistent with the ProjectStore's own asyncio.Lock and the
+# single-replica-per-cluster model. Keyed on a credential-stripped URL so the key
+# is stable across a repo's per-operation connectors and never holds a secret.
+_push_locks: dict[str, asyncio.Lock] = {}
+
+
+def _push_lock_for(repo_url: str, branch: str) -> asyncio.Lock:
+    """Return the shared push lock for a (repo, branch), creating it once."""
+    sanitized = re.sub(r"//[^/@]*@", "//", repo_url)  # https://user:pass@host -> https://host
+    sanitized = re.sub(r"^[^@/]+@", "", sanitized)  # git@host:path -> host:path
+    key = f"{sanitized}#{branch}"
+    lock = _push_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _push_locks[key] = lock
+    return lock
+
+
 # Identity used for every commit this connector creates. Kept as constants so the
 # working-tree path (git config) and the plumbing path (commit-tree env) cannot drift.
 GIT_COMMIT_AUTHOR_NAME = "Operations Manager"
@@ -1427,57 +1454,61 @@ class GitConnector:
 
         target_branch = branch or self.branch
 
-        for attempt in range(max_retries):
-            push_cmd = ["push", "origin", target_branch]
-            stdout, stderr, code = await self._run_git_command(push_cmd, cwd=self.__working_dir)
+        # Serialize the whole attempt (fetch+rebase+push) against every other pusher
+        # to this ref in the process, so a waiter rebases onto the winner and pushes
+        # without a concurrent competitor invalidating it. See _push_locks.
+        async with _push_lock_for(self.repo_url, target_branch):
+            for attempt in range(max_retries):
+                push_cmd = ["push", "origin", target_branch]
+                stdout, stderr, code = await self._run_git_command(push_cmd, cwd=self.__working_dir)
 
-            if code == 0:
-                logger.debug(f"Successfully pushed changes to {target_branch}")
-                return
+                if code == 0:
+                    logger.debug(f"Successfully pushed changes to {target_branch}")
+                    return
 
-            # Check if this is a non-fast-forward error (remote has newer commits)
-            is_non_fast_forward = (
-                "non-fast-forward" in stderr.lower()
-                or "failed to push some refs" in stderr.lower()
-                or "fetch first" in stderr.lower()
-                or "git pull" in stderr.lower()
-            )
-
-            if not is_non_fast_forward:
-                # Some other error, fail immediately
-                self._check_git_command_result(code, stderr, f"push changes to {target_branch}")
-
-            if not allow_rebase:
-                # Hand the divergence to the caller instead of resolving it with a blind
-                # text merge. The caller re-reads, re-applies and re-validates.
-                server_info = self._get_server_context()
-                raise GitPushConflictError(
-                    f"Cannot push to {target_branch} on {server_info}: remote has moved "
-                    f"(non-fast-forward). Caller must re-read and re-apply."
+                # Check if this is a non-fast-forward error (remote has newer commits)
+                is_non_fast_forward = (
+                    "non-fast-forward" in stderr.lower()
+                    or "failed to push some refs" in stderr.lower()
+                    or "fetch first" in stderr.lower()
+                    or "git pull" in stderr.lower()
                 )
 
-            # Non-fast-forward error - try to rebase and retry
-            if attempt < max_retries - 1:
-                logger.warning(
-                    f"Push rejected (non-fast-forward), attempting rebase and retry "
-                    f"(attempt {attempt + 1}/{max_retries})"
-                )
+                if not is_non_fast_forward:
+                    # Some other error, fail immediately
+                    self._check_git_command_result(code, stderr, f"push changes to {target_branch}")
 
-                rebase_success = await self._rebase_on_remote(target_branch)
-                if not rebase_success:
+                if not allow_rebase:
+                    # Hand the divergence to the caller instead of resolving it with a blind
+                    # text merge. The caller re-reads, re-applies and re-validates.
                     server_info = self._get_server_context()
                     raise GitPushConflictError(
-                        f"Cannot push to {target_branch} on {server_info}: "
-                        f"Remote has conflicting changes that cannot be automatically merged."
+                        f"Cannot push to {target_branch} on {server_info}: remote has moved "
+                        f"(non-fast-forward). Caller must re-read and re-apply."
                     )
 
-                logger.info("Rebase successful, retrying push...")
-            else:
-                # Last attempt failed
-                server_info = self._get_server_context()
-                raise GitPushConflictError(
-                    f"Failed to push changes to {target_branch} on {server_info} after {max_retries} attempts: {stderr}"
-                )
+                # Non-fast-forward error - try to rebase and retry
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Push rejected (non-fast-forward), attempting rebase and retry "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+
+                    rebase_success = await self._rebase_on_remote(target_branch)
+                    if not rebase_success:
+                        server_info = self._get_server_context()
+                        raise GitPushConflictError(
+                            f"Cannot push to {target_branch} on {server_info}: "
+                            f"Remote has conflicting changes that cannot be automatically merged."
+                        )
+
+                    logger.info("Rebase successful, retrying push...")
+                else:
+                    # Last attempt failed
+                    server_info = self._get_server_context()
+                    raise GitPushConflictError(
+                        f"Failed to push changes to {target_branch} on {server_info} after {max_retries} attempts: {stderr}"
+                    )
 
     async def commit_and_push_changes(
         self, message: str, files_or_paths: list[str] | None = None, branch: str | None = None
