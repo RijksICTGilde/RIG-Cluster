@@ -964,6 +964,7 @@ tasks:
 
       # Optional parameters (with defaults)
       IMAGE_TAG: '{{.IMAGE_TAG | default "latest"}}'
+      EXTRA_TAG: '{{.EXTRA_TAG | default ""}}'
       PLATFORMS: '{{.PLATFORMS | default "linux/amd64"}}'
       BUILD_TARGET: '{{.BUILD_TARGET | default ""}}'
       CACHE_IMAGE: '{{.CACHE_IMAGE | default ""}}'
@@ -985,6 +986,7 @@ tasks:
 
           Optional parameters:
             IMAGE_TAG        - Image tag (default: "latest")
+            EXTRA_TAG        - Additional tag for the same build, e.g. "latest" (default: none)
             DOCKERFILE_PATH  - Dockerfile path relative to BUILD_CONTEXT (default: "Dockerfile")
             PLATFORMS        - Target platforms (default: "linux/amd64")
             BUILD_TARGET     - Docker build target stage (default: none)
@@ -1075,6 +1077,10 @@ tasks:
         if [[ -n "{{.CACHE_IMAGE}}" ]]; then
           CACHE_FLAGS="--cache-from type=registry,ref={{.CACHE_IMAGE}} --cache-to type=registry,ref={{.CACHE_IMAGE}},mode=max"
         fi
+        EXTRA_TAG_FLAG=""
+        if [[ -n "{{.EXTRA_TAG}}" ]]; then
+          EXTRA_TAG_FLAG="-t {{.FULL_REGISTRY_IMAGE}}:{{.EXTRA_TAG}}"
+        fi
 
         # Disable provenance and SBOM to avoid unknown/unknown platform entries in GHCR
         # See: https://github.com/orgs/community/discussions/45969
@@ -1086,10 +1092,14 @@ tasks:
           $CACHE_FLAGS \
           -f {{.BUILD_CONTEXT}}/{{.DOCKERFILE_PATH}} \
           -t {{.FULL_REGISTRY_IMAGE}}:{{.IMAGE_TAG}} \
+          $EXTRA_TAG_FLAG \
           --push \
           {{.BUILD_CONTEXT}}
 
         echo "✅ Image published successfully to {{.FULL_REGISTRY_IMAGE}}:{{.IMAGE_TAG}}"
+        if [[ -n "{{.EXTRA_TAG}}" ]]; then
+          echo "✅ Also tagged as {{.FULL_REGISTRY_IMAGE}}:{{.EXTRA_TAG}}"
+        fi
 
       # Step 5: Cleanup
       - |
@@ -1146,21 +1156,78 @@ tasks:
     #   SKIP_VALIDATION  - Skip local build validation (default: "false")
     #   BUILDER_NAME     - Buildx builder name (default: "buildx-builder")
 
-  publish-operations-manager:
-    desc: "Build and publish the operations-manager to GitHub Container Registry"
-    deps: [requirements-check, generate-env-secrets-for-operations-manager]
+  image-version:
+    desc: "Print the CalVer image tag for the current checkout ({YYYY}.{MM}.{DD}.{HHMM}-{short sha})"
     cmds:
+      - echo "{{.IMAGE_VERSION}}"
+    vars:
+      IMAGE_VERSION:
+        sh: |
+          DIRTY=""
+          [ -n "$(git status --porcelain)" ] && DIRTY="-dirty"
+          printf '%s-%s%s' "$(date +%Y.%m.%d.%H%M)" "$(git rev-parse --short=8 HEAD)" "$DIRTY"
+    silent: true
+
+  publish-operations-manager:
+    desc: "Build and publish the operations-manager to GitHub Container Registry (CalVer tag + latest)"
+    deps: [requirements-check, generate-env-secrets-for-operations-manager]
+    vars:
+      IMAGE_VERSION:
+        sh: |
+          DIRTY=""
+          [ -n "$(git status --porcelain)" ] && DIRTY="-dirty"
+          printf '%s-%s%s' "$(date +%Y.%m.%d.%H%M)" "$(git rev-parse --short=8 HEAD)" "$DIRTY"
+    cmds:
+      - |
+        echo "Image version: {{.IMAGE_VERSION}}"
+        case "{{.IMAGE_VERSION}}" in
+          *-dirty)
+            echo "⚠️  Working tree has uncommitted changes, so the commit hash in this tag"
+            echo "    does not describe what is being published. Commit first to get a"
+            echo "    tag you can trace back."
+            ;;
+        esac
       - task: docker-build-and-push
         vars:
           BUILD_CONTEXT: .
           DOCKERFILE_PATH: operations-manager/Dockerfile
           IMAGE_NAME: operations-manager
           REGISTRY_IMAGE: ghcr.io/minbzk/base-images/operations-manager
+          IMAGE_TAG: '{{.IMAGE_VERSION}}'
+          EXTRA_TAG: latest
           BUILD_TARGET: application
           CACHE_IMAGE: ghcr.io/minbzk/base-images/operations-manager:cache
           BUILDER_NAME: operations-manager-builder
           PLATFORMS: linux/amd64,linux/arm64
           SKIP_VALIDATION: "true"
+      - task: pin-operations-manager-image
+        vars:
+          IMAGE_TAG: '{{.IMAGE_VERSION}}'
+
+  pin-operations-manager-image:
+    desc: "Pin the odcn-production overlay to a published operations-manager tag"
+    vars:
+      IMAGE_TAG: '{{.IMAGE_TAG | default ""}}'
+      PATCH_FILE: bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/patches/deployment.yaml
+    preconditions:
+      - sh: '[ -n "{{.IMAGE_TAG}}" ]'
+        msg: |
+          IMAGE_TAG is required, for example:
+            task pin-operations-manager-image IMAGE_TAG=2026.07.22.1432-7ccad61d
+    cmds:
+      - |
+        sed -i.bak -E 's|(image: rcr\.rijksapps\.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager):.*|\1:{{.IMAGE_TAG}}|' {{.PATCH_FILE}}
+        rm -f {{.PATCH_FILE}}.bak
+        echo ""
+        echo "✅ odcn-production pinned to {{.IMAGE_TAG}}"
+        grep -n 'image:' {{.PATCH_FILE}}
+        echo ""
+        echo "Commit this pin, then deploy:"
+        echo "  git add {{.PATCH_FILE}} && git commit -m 'deploy: operations-manager {{.IMAGE_TAG}}'"
+        echo "  task deploy-operations-manager CLUSTER_TYPE=odcn-production"
+        echo ""
+        echo "To roll back, pin an earlier tag from the git history of that file."
+    silent: true
 
   update-cmp-kustomize-sops:
     desc: "Build and deploy the cmp-kustomize-sops image to the local kind cluster"
