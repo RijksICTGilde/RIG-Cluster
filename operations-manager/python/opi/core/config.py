@@ -439,11 +439,11 @@ class Settings(BaseSettings):
     # the TTL and a per-pod activeDeadlineSeconds is the hard backstop.
     DB_CONSOLE_ENABLED: bool = True
     DB_CONSOLE_TTL_SECONDS: int = 3600  # Session lifetime (default 1 hour)
-    DB_CONSOLE_REAP_INTERVAL_SECONDS: int = 60  # How often the reaper sweeps for expired sessions
-    # Orphaned OIDC clients are a leftover, not a running cost: cleaning them up a
-    # few minutes later changes nothing. Kept separate from the pod sweep because
-    # this one always calls Keycloak, even when no console has ever been started.
-    DB_CONSOLE_CLIENT_GC_INTERVAL_SECONDS: int = 900
+    # The pod's own activeDeadlineSeconds is what ends an expired session, so the
+    # sweep only clears leftovers (Secret, ConfigMap, Service, Ingress, OIDC client).
+    # Doing that within a minute instead of within a quarter buys nothing, and the
+    # orphan-client GC calls Keycloak on every pass.
+    DB_CONSOLE_REAP_INTERVAL_SECONDS: int = 900
     # Tool images. Defaults are docker.io refs for local/dev; production overlays
     # MUST override these with a mirror reachable on the cluster (e.g. rcr.rijksapps.nl),
     # since docker.io/ghcr are blocked on ODCN.
