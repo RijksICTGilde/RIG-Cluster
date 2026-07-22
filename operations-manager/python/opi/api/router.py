@@ -15,7 +15,6 @@ from opi.api.validation import (
     UPSERT_DEPLOYMENT_VALIDATORS,
     validate_api_payload,
 )
-from opi.connectors.git import GitConnector
 from opi.connectors.subdomain import (
     BaseDomainValidationError,
     SubdomainNotAvailableError,
@@ -2934,28 +2933,27 @@ async def create_self_service_project(
         # Generate YAML content from self-service form data
         yaml_content = await generate_self_service_project_yaml(project_data)
 
-        # Create Git connector for projects repository
-        git_connector_for_project_files = GitConnector(
-            repo_url=settings.GIT_PROJECTS_SERVER_URL,
-            username=settings.GIT_PROJECTS_SERVER_USERNAME,
-            password=settings.GIT_PROJECTS_SERVER_PASSWORD,
-            branch=settings.GIT_PROJECTS_SERVER_BRANCH,
-            repo_path=settings.GIT_PROJECTS_SERVER_REPO_PATH,
-        )
-
-        # Create project file in Git repository
+        # Overwrite guard through the store, which owns the projects repo. reconcile()
+        # first so a project created by another cluster is seen; it costs one
+        # ls-remote when nothing changed.
         project_file_path = f"projects/{project_data.project_name}.yaml"
-        await git_connector_for_project_files.check_overwrite_project_file(project_file_path)
+        store = get_project_store()
+        await store.reconcile()
+        if await store.read_path(project_file_path) is not None and not settings.ALLOW_PROJECTFILES_OVERWRITE:
+            raise RuntimeError(
+                f"Project '{project_data.project_name}' already exists. "
+                f"Set ALLOW_PROJECTFILES_OVERWRITE=True to allow overwriting existing projects."
+            )
 
         # Persist through the single validated save path so the self-service API
         # uses the same chokepoint as the UI and the other API endpoints: schema +
         # structural validation before the commit, canonical dumper, cache refresh.
         from opi.utils.yaml_util import load_yaml_from_string
 
-        project_manager = ProjectManager(
-            project_file_relative_path=project_file_path,
-            git_connector_for_project_files=git_connector_for_project_files,
-        )
+        # No connector injected: ProjectManager then reads through the store's warm
+        # copy, which has the commit this handler is about to make. An injected
+        # clone predates that write and made process_project_from_git fail.
+        project_manager = ProjectManager(project_file_relative_path=project_file_path)
         project_dict = load_yaml_from_string(yaml_content)
         if not project_dict:
             raise HTTPException(
