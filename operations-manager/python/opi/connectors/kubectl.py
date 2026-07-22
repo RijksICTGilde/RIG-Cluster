@@ -16,6 +16,8 @@ from jinja2 import Template
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from opi.connectors.vpa import VpaContainerRecommendation, parse_vpa_status
+from opi.core.cluster_config import get_argo_namespace
+from opi.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -493,7 +495,7 @@ class KubectlConnector:
             logger.error(f"Failed to delete namespace {namespace}: {stderr}")
             return False
 
-    async def remove_argocd_application_finalizers(self, app_name: str, namespace: str = "rig-prd-operations") -> bool:
+    async def remove_argocd_application_finalizers(self, app_name: str, namespace: str | None = None) -> bool:
         """
         Remove all finalizers from an ArgoCD Application resource.
 
@@ -503,11 +505,12 @@ class KubectlConnector:
 
         Args:
             app_name: The name of the ArgoCD Application
-            namespace: The namespace where the Application exists (default: rig-prd-operations)
+            namespace: Namespace holding the Application CR; defaults to this instance's cluster
 
         Returns:
             True if finalizers were successfully removed or app doesn't exist, False on error
         """
+        namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
         logger.info(f"Removing finalizers from ArgoCD Application '{app_name}' in namespace '{namespace}'")
 
         # Use merge patch to set finalizers to empty array - this won't fail if finalizers don't exist
@@ -536,7 +539,7 @@ class KubectlConnector:
             logger.error(f"Failed to remove finalizers from ArgoCD Application '{app_name}': {stderr}")
             return False
 
-    async def delete_argocd_application(self, app_name: str, namespace: str = "rig-prd-operations") -> bool:
+    async def delete_argocd_application(self, app_name: str, namespace: str | None = None) -> bool:
         """
         Delete an ArgoCD Application directly using kubectl.
 
@@ -544,11 +547,12 @@ class KubectlConnector:
 
         Args:
             app_name: The name of the ArgoCD Application
-            namespace: The namespace where the Application exists (default: rig-prd-operations)
+            namespace: Namespace holding the Application CR; defaults to this instance's cluster
 
         Returns:
             True if successfully deleted or app doesn't exist, False on error
         """
+        namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
         logger.info(f"Deleting ArgoCD Application '{app_name}' in namespace '{namespace}'")
 
         delete_args = ["delete", "application", app_name, "-n", namespace, "--ignore-not-found=true"]
@@ -562,7 +566,7 @@ class KubectlConnector:
             logger.error(f"Failed to delete ArgoCD Application '{app_name}': {stderr}")
             return False
 
-    async def argocd_application_exists(self, app_name: str, namespace: str = "rig-prd-operations") -> bool | None:
+    async def argocd_application_exists(self, app_name: str, namespace: str | None = None) -> bool | None:
         """
         Ground-truth existence check for an ArgoCD Application CR via the Kubernetes API.
 
@@ -574,7 +578,7 @@ class KubectlConnector:
 
         Args:
             app_name: The name of the ArgoCD Application
-            namespace: The namespace where the Application exists (default: rig-prd-operations)
+            namespace: Namespace holding the Application CR; defaults to this instance's cluster
 
         Returns:
             True  - the Application CR exists
@@ -582,6 +586,7 @@ class KubectlConnector:
             None  - the check itself failed; existence is unknown, so the caller must
                     not conclude the application is gone
         """
+        namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
         stdout, stderr, code = await self._run_kubectl_command(
             ["get", "application", app_name, "-n", namespace, "-o", "name"]
         )

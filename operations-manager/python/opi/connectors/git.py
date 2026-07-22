@@ -21,6 +21,38 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# One push-lock per (repo, branch), process-wide. Concurrent tasks that process the
+# same project each build their own manifests and push them to the SHARED repos
+# (zad-deployments, zad-argo-user-applications). Those pushes are not otherwise
+# serialized -- unlike zad-projects, which the ProjectStore serializes -- so under
+# load they collided on the ref update and exhausted the rebase-retry loop
+# ("remote rejected ... non-fast-forward ... after N attempts"). Serializing the
+# whole push attempt (fetch+rebase+push) per ref means a waiter rebases onto the
+# winner and pushes without a concurrent competitor invalidating it again.
+#
+# Intra-process only, consistent with the ProjectStore's own asyncio.Lock and the
+# single-replica-per-cluster model. Keyed on a credential-stripped URL so the key
+# is stable across a repo's per-operation connectors and never holds a secret.
+_push_locks: dict[str, asyncio.Lock] = {}
+
+
+def _push_lock_for(repo_url: str, branch: str) -> asyncio.Lock:
+    """Return the shared push lock for a (repo, branch), creating it once."""
+    sanitized = re.sub(r"//[^/@]*@", "//", repo_url)  # https://user:pass@host -> https://host
+    sanitized = re.sub(r"^[^@/]+@", "", sanitized)  # git@host:path -> host:path
+    key = f"{sanitized}#{branch}"
+    lock = _push_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _push_locks[key] = lock
+    return lock
+
+
+# Identity used for every commit this connector creates. Kept as constants so the
+# working-tree path (git config) and the plumbing path (commit-tree env) cannot drift.
+GIT_COMMIT_AUTHOR_NAME = "Operations Manager"
+GIT_COMMIT_AUTHOR_EMAIL = "operations-manager@example.com"
+
 
 def _obfuscate_git_command(cmd_str: str) -> str:
     """
@@ -315,12 +347,12 @@ class GitConnector:
             return
 
         # Configure git user identity for commits
-        config_name_cmd = ["config", "user.name", "Operations Manager"]
+        config_name_cmd = ["config", "user.name", GIT_COMMIT_AUTHOR_NAME]
         stdout, stderr, code = await self._run_git_command(config_name_cmd, cwd=self.__working_dir)
         if code != 0:
             logger.warning(f"Failed to configure git user name: {stderr}")
 
-        config_email_cmd = ["config", "user.email", "operations-manager@example.com"]
+        config_email_cmd = ["config", "user.email", GIT_COMMIT_AUTHOR_EMAIL]
         stdout, stderr, code = await self._run_git_command(config_email_cmd, cwd=self.__working_dir)
         if code != 0:
             logger.warning(f"Failed to configure git user email: {stderr}")
@@ -329,7 +361,7 @@ class GitConnector:
         logger.debug("Git user identity configured successfully")
 
     async def _run_git_command(
-        self, args: list[str], env: dict[str, str] | None = None, cwd: str | None = None
+        self, args: list[str], env: dict[str, str] | None = None, cwd: str | None = None, stdin: str | None = None
     ) -> tuple[str, str, int]:
         """
         Run a Git command directly with subprocess.
@@ -340,6 +372,7 @@ class GitConnector:
             args: List of Git command arguments
             env: Optional environment variables
             cwd: Optional working directory
+            stdin: Optional text piped to the command's stdin (used by ``hash-object --stdin``)
 
         Returns:
             Tuple of (stdout, stderr, return_code)
@@ -378,12 +411,17 @@ class GitConnector:
         from opi.core.metrics import track_subprocess_memory
 
         process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=cmd_env, cwd=working_dir
+            *cmd,
+            stdin=asyncio.subprocess.PIPE if stdin is not None else None,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=cmd_env,
+            cwd=working_dir,
         )
 
         # Wait for command to complete, tracking memory delta
         async with track_subprocess_memory("git"):
-            stdout, stderr = await process.communicate()
+            stdout, stderr = await process.communicate(stdin.encode("utf-8") if stdin is not None else None)
         stdout_str = stdout.decode("utf-8").strip()
         stderr_str = stderr.decode("utf-8").strip()
 
@@ -1387,7 +1425,7 @@ class GitConnector:
         logger.debug(f"Successfully committed changes: {message}")
 
     # TODO: update push changes to handle rebase, and if rebase fails, commit and push to temporary branch
-    async def push_changes(self, branch: str | None = None, max_retries: int = 5) -> None:
+    async def push_changes(self, branch: str | None = None, max_retries: int = 5, allow_rebase: bool = True) -> None:
         """
         Push committed changes to remote repository.
 
@@ -1397,56 +1435,80 @@ class GitConnector:
         Args:
             branch: Branch to push to (defaults to configured branch)
             max_retries: Maximum number of push attempts after rebase (default: 5)
+            allow_rebase: When False, a non-fast-forward push raises GitPushConflictError
+                immediately instead of rebasing and retrying.
 
         Raises:
             RuntimeError: If push fails after all retries or if rebase has conflicts
+
+        Note on ``allow_rebase=False``:
+            The internal rebase silently text-merges the remote's version with ours and
+            pushes the *merged* result, which was never validated -- two edits that are each
+            valid can merge into an invalid project file (e.g. a duplicated component). It
+            also makes the caller's post-push state diverge from git, because the caller
+            still holds its pre-merge version. ProjectStore therefore pushes with
+            allow_rebase=False so divergence surfaces as GitPushConflictError, and it
+            re-reads, re-applies and re-validates before pushing again.
         """
         await self.ensure_repo_cloned()
 
         target_branch = branch or self.branch
 
-        for attempt in range(max_retries):
-            push_cmd = ["push", "origin", target_branch]
-            stdout, stderr, code = await self._run_git_command(push_cmd, cwd=self.__working_dir)
+        # Serialize the whole attempt (fetch+rebase+push) against every other pusher
+        # to this ref in the process, so a waiter rebases onto the winner and pushes
+        # without a concurrent competitor invalidating it. See _push_locks.
+        async with _push_lock_for(self.repo_url, target_branch):
+            for attempt in range(max_retries):
+                push_cmd = ["push", "origin", target_branch]
+                stdout, stderr, code = await self._run_git_command(push_cmd, cwd=self.__working_dir)
 
-            if code == 0:
-                logger.debug(f"Successfully pushed changes to {target_branch}")
-                return
+                if code == 0:
+                    logger.debug(f"Successfully pushed changes to {target_branch}")
+                    return
 
-            # Check if this is a non-fast-forward error (remote has newer commits)
-            is_non_fast_forward = (
-                "non-fast-forward" in stderr.lower()
-                or "failed to push some refs" in stderr.lower()
-                or "fetch first" in stderr.lower()
-                or "git pull" in stderr.lower()
-            )
-
-            if not is_non_fast_forward:
-                # Some other error, fail immediately
-                self._check_git_command_result(code, stderr, f"push changes to {target_branch}")
-
-            # Non-fast-forward error - try to rebase and retry
-            if attempt < max_retries - 1:
-                logger.warning(
-                    f"Push rejected (non-fast-forward), attempting rebase and retry "
-                    f"(attempt {attempt + 1}/{max_retries})"
+                # Check if this is a non-fast-forward error (remote has newer commits)
+                is_non_fast_forward = (
+                    "non-fast-forward" in stderr.lower()
+                    or "failed to push some refs" in stderr.lower()
+                    or "fetch first" in stderr.lower()
+                    or "git pull" in stderr.lower()
                 )
 
-                rebase_success = await self._rebase_on_remote(target_branch)
-                if not rebase_success:
+                if not is_non_fast_forward:
+                    # Some other error, fail immediately
+                    self._check_git_command_result(code, stderr, f"push changes to {target_branch}")
+
+                if not allow_rebase:
+                    # Hand the divergence to the caller instead of resolving it with a blind
+                    # text merge. The caller re-reads, re-applies and re-validates.
                     server_info = self._get_server_context()
                     raise GitPushConflictError(
-                        f"Cannot push to {target_branch} on {server_info}: "
-                        f"Remote has conflicting changes that cannot be automatically merged."
+                        f"Cannot push to {target_branch} on {server_info}: remote has moved "
+                        f"(non-fast-forward). Caller must re-read and re-apply."
                     )
 
-                logger.info("Rebase successful, retrying push...")
-            else:
-                # Last attempt failed
-                server_info = self._get_server_context()
-                raise GitPushConflictError(
-                    f"Failed to push changes to {target_branch} on {server_info} after {max_retries} attempts: {stderr}"
-                )
+                # Non-fast-forward error - try to rebase and retry
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Push rejected (non-fast-forward), attempting rebase and retry "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+
+                    rebase_success = await self._rebase_on_remote(target_branch)
+                    if not rebase_success:
+                        server_info = self._get_server_context()
+                        raise GitPushConflictError(
+                            f"Cannot push to {target_branch} on {server_info}: "
+                            f"Remote has conflicting changes that cannot be automatically merged."
+                        )
+
+                    logger.info("Rebase successful, retrying push...")
+                else:
+                    # Last attempt failed
+                    server_info = self._get_server_context()
+                    raise GitPushConflictError(
+                        f"Failed to push changes to {target_branch} on {server_info} after {max_retries} attempts: {stderr}"
+                    )
 
     async def commit_and_push_changes(
         self, message: str, files_or_paths: list[str] | None = None, branch: str | None = None
@@ -1540,6 +1602,225 @@ class GitConnector:
         except Exception as e:
             logger.warning(f"Error retrieving previous file content for {file_path}: {e}")
             return None
+
+    async def show_file_at(self, ref: str, file_path: str) -> str | None:
+        """Return the content of a file as of ``ref``, or None if absent there.
+
+        Local-only (``git show``), so it is cheap on a warm clone that carries
+        history. Used by ProjectStore.read_at to reconstruct a past version.
+        """
+        await self.ensure_repo_cloned()
+        clean_file_path = self._get_full_path(file_path)
+
+        stdout, stderr, code = await self._run_git_command(["show", f"{ref}:{clean_file_path}"])
+        if code == 0:
+            return stdout
+        logger.debug(f"File {clean_file_path} not present at {ref}: {stderr}")
+        return None
+
+    async def list_file_revisions(self, file_path: str, limit: int = 50) -> list[dict[str, str]]:
+        """Return the commits that touched ``file_path``, newest first.
+
+        File-scoped (``git log -- <file>``), so unrelated commits for other
+        projects in the shared repo are not reported as revisions of this file.
+        Each entry has: ref, author, timestamp (ISO 8601), message.
+        """
+        await self.ensure_repo_cloned()
+        clean_file_path = self._get_full_path(file_path)
+
+        # Unit separator between fields, record separator between commits, so a
+        # multi-line commit message cannot be misparsed as another revision.
+        stdout, stderr, code = await self._run_git_command(
+            ["log", f"-n{limit}", "--format=%H%x1f%an%x1f%aI%x1f%s%x1e", "--", clean_file_path]
+        )
+        if code != 0:
+            logger.debug(f"git log failed for {clean_file_path}: {stderr}")
+            return []
+
+        revisions: list[dict[str, str]] = []
+        for record in stdout.split("\x1e"):
+            record = record.strip()
+            if not record:
+                continue
+            parts = record.split("\x1f")
+            if len(parts) != 4:
+                continue
+            revisions.append({"ref": parts[0], "author": parts[1], "timestamp": parts[2], "message": parts[3]})
+        return revisions
+
+    async def list_changed_files(self, old_commit: str, new_commit: str) -> list[str]:
+        """Return repo-relative paths changed between two commits.
+
+        Drives the incremental reconcile: only the files that actually changed
+        are re-read, instead of re-reading every project file.
+        """
+        await self.ensure_repo_cloned()
+
+        stdout, stderr, code = await self._run_git_command(["diff", "--name-only", old_commit, new_commit])
+        if code != 0:
+            logger.warning(f"git diff --name-only {old_commit}..{new_commit} failed: {stderr}")
+            return []
+
+        return [line.strip() for line in stdout.splitlines() if line.strip()]
+
+    async def build_commit(self, changes: dict[str, str | None], message: str, parent: str | None = None) -> str | None:
+        """Build a commit object directly, without touching the working tree or shared index.
+
+        Uses git's low-level object commands so a write never materialises a file in the
+        shared working copy. Every operation gets its OWN index (``GIT_INDEX_FILE``), so
+        two concurrent writers can never see each other's staged state, and a failure
+        leaves nothing behind: the temporary index is simply discarded.
+
+        This deliberately replaces the ``write file`` + ``git add -A`` + ``commit`` path for
+        project files. ``git add -A`` stages *everything* in the working tree, which on a
+        shared warm copy means one writer's commit can carry another writer's half-written
+        file -- or a pending deletion -- to the remote.
+
+        Args:
+            changes: repo-relative path -> new content, or None to delete that path
+            message: commit message
+            parent: parent commit (defaults to current HEAD; None-and-no-HEAD makes a root commit)
+
+        Returns:
+            The new commit sha, or None when the resulting tree is identical to the parent's
+            (nothing to commit). The branch ref is NOT moved -- call ``set_branch_ref``.
+        """
+        await self.ensure_repo_cloned()
+
+        if parent is None:
+            stdout, _, code = await self._run_git_command(["rev-parse", "HEAD"], cwd=self.__working_dir)
+            parent = stdout.strip() if code == 0 else None
+
+        index_fd, index_path = tempfile.mkstemp(prefix="git-index-", dir=settings.TEMP_DIR)
+        os.close(index_fd)
+        os.unlink(index_path)  # git wants to create it itself
+        index_env = {"GIT_INDEX_FILE": index_path}
+
+        try:
+            if parent:
+                _, stderr, code = await self._run_git_command(
+                    ["read-tree", parent], env=index_env, cwd=self.__working_dir
+                )
+                self._check_git_command_result(code, stderr, f"read-tree {parent}")
+
+            for file_path, content in changes.items():
+                clean_path = self._get_full_path(file_path)
+                if content is None:
+                    _, stderr, code = await self._run_git_command(
+                        ["update-index", "--force-remove", clean_path], env=index_env, cwd=self.__working_dir
+                    )
+                    self._check_git_command_result(code, stderr, f"update-index --force-remove {clean_path}")
+                    continue
+
+                blob, stderr, code = await self._run_git_command(
+                    ["hash-object", "-w", "--stdin"], cwd=self.__working_dir, stdin=content
+                )
+                self._check_git_command_result(code, stderr, f"hash-object for {clean_path}")
+
+                _, stderr, code = await self._run_git_command(
+                    ["update-index", "--add", "--cacheinfo", f"100644,{blob.strip()},{clean_path}"],
+                    env=index_env,
+                    cwd=self.__working_dir,
+                )
+                self._check_git_command_result(code, stderr, f"update-index --add {clean_path}")
+
+            tree, stderr, code = await self._run_git_command(["write-tree"], env=index_env, cwd=self.__working_dir)
+            self._check_git_command_result(code, stderr, "write-tree")
+            tree = tree.strip()
+
+            if parent:
+                parent_tree, _, code = await self._run_git_command(
+                    ["rev-parse", f"{parent}^{{tree}}"], cwd=self.__working_dir
+                )
+                if code == 0 and parent_tree.strip() == tree:
+                    logger.debug("build_commit: tree unchanged, nothing to commit")
+                    return None
+
+            # commit-tree reads the identity from the environment first, and this container
+            # can have GIT_AUTHOR_NAME set to an empty string, which git rejects. Pass it
+            # explicitly so the commit never depends on ambient environment.
+            identity = {
+                "GIT_AUTHOR_NAME": GIT_COMMIT_AUTHOR_NAME,
+                "GIT_AUTHOR_EMAIL": GIT_COMMIT_AUTHOR_EMAIL,
+                "GIT_COMMITTER_NAME": GIT_COMMIT_AUTHOR_NAME,
+                "GIT_COMMITTER_EMAIL": GIT_COMMIT_AUTHOR_EMAIL,
+            }
+            commit_args = ["commit-tree", tree]
+            if parent:
+                commit_args += ["-p", parent]
+            commit_args += ["-m", message]
+            commit, stderr, code = await self._run_git_command(commit_args, env=identity, cwd=self.__working_dir)
+            self._check_git_command_result(code, stderr, "commit-tree")
+
+            logger.debug(f"Built commit {commit.strip()} for {len(changes)} path(s) without a working tree")
+            return commit.strip()
+        finally:
+            if os.path.exists(index_path):
+                os.unlink(index_path)
+
+    async def set_branch_ref(self, commit: str, branch: str | None = None) -> None:
+        """Point the local branch at ``commit``.
+
+        Separated from ``build_commit`` on purpose: the caller moves the ref only when it
+        intends to publish, and rolling back after a failed push is just moving it back --
+        no working tree to clean up.
+        """
+        target_branch = branch or self.branch
+        _, stderr, code = await self._run_git_command(
+            ["update-ref", f"refs/heads/{target_branch}", commit], cwd=self.__working_dir
+        )
+        self._check_git_command_result(code, stderr, f"update-ref refs/heads/{target_branch}")
+
+    async def sync_worktree_to_head(self) -> None:
+        """Make the working copy match HEAD again after a plumbing commit.
+
+        Writes bypass the working tree, so after moving the ref the checkout is stale.
+        Keeping it in step preserves the invariant that the warm copy mirrors HEAD, which
+        the read paths and any leftover working-tree reader rely on.
+        """
+        _, stderr, code = await self._run_git_command(["reset", "--hard", "HEAD"], cwd=self.__working_dir)
+        self._check_git_command_result(code, stderr, "reset --hard HEAD")
+
+    async def get_remote_commit_hash(self, branch: str | None = None) -> str | None:
+        """The remote branch tip, without fetching. None when it cannot be determined.
+
+        ``ls-remote`` asks the server for one ref and transfers no objects, so it is
+        the cheap way to answer "has anything changed?" before paying for a fetch
+        plus a working-tree reset. Measured at roughly 60ms against the sandbox,
+        against seconds for the full reconcile it guards.
+        """
+        target_branch = branch or self.branch
+
+        stdout, stderr, code = await self._run_git_command(["ls-remote", "origin", f"refs/heads/{target_branch}"])
+        if code != 0:
+            logger.warning(f"Could not read remote hash for {target_branch}: {stderr}")
+            return None
+
+        line = stdout.strip()
+        if not line:
+            return None
+        return line.split()[0]
+
+    async def count_unpushed_commits(self, branch: str | None = None) -> int:
+        """How many commits the local branch has that origin/<branch> does not.
+
+        Local-only (no fetch), because the case this exists for is a local commit
+        that was built and ref'd but never acknowledged by a push -- for instance
+        when a rollback could not complete. Returns 0 when the remote-tracking ref
+        is unknown, so a fresh clone does not read as diverged.
+        """
+        target_branch = branch or self.branch
+
+        stdout, stderr, code = await self._run_git_command(
+            ["rev-list", "--count", f"origin/{target_branch}..HEAD"], cwd=self.__working_dir
+        )
+        if code != 0:
+            logger.debug(f"Could not count unpushed commits for {target_branch}: {stderr}")
+            return 0
+        try:
+            return int(stdout.strip())
+        except ValueError:
+            return 0
 
     async def close(self) -> None:
         """Clean up resources. Safe to call multiple times."""
@@ -1772,7 +2053,7 @@ async def start_monitoring_task(
 
 # TODO: replace factory method with direct calls to the GitConnector?
 async def create_git_connector_from_repo_config(
-    repo_config: dict[str, Any], full_history: bool = False
+    repo_config: dict[str, Any], full_history: bool = False, working_dir: str | None = None
 ) -> GitConnector:
     connector = GitConnector(
         repo_url=repo_config["url"],
@@ -1784,6 +2065,7 @@ async def create_git_connector_from_repo_config(
         project_name=repo_config.get("project_name"),
         name=repo_config.get("name"),
         full_history=full_history,
+        working_dir=working_dir,
     )
     return connector
 
@@ -1807,7 +2089,9 @@ async def create_git_connector_for_argocd(project_name: str) -> GitConnector:
     return await create_git_connector_from_repo_config(gitops_repo_config)
 
 
-async def create_git_connector_for_project_files(project_name: str, full_history: bool = True) -> GitConnector:
+async def create_git_connector_for_project_files(
+    project_name: str, full_history: bool = True, working_dir: str | None = None
+) -> GitConnector:
     # full_history defaults to True: ANY project-files connector can end up feeding
     # analyze_project_changes (the file-scoped diff that detects removed components/
     # deployments), and a --depth 1 clone has no previous commit so that diff silently
@@ -1823,4 +2107,6 @@ async def create_git_connector_for_project_files(project_name: str, full_history
         "project_name": project_name,
         "name": "projects",
     }
-    return await create_git_connector_from_repo_config(projects_repo_config, full_history=full_history)
+    return await create_git_connector_from_repo_config(
+        projects_repo_config, full_history=full_history, working_dir=working_dir
+    )

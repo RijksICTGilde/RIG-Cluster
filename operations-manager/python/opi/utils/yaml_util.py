@@ -6,6 +6,7 @@ This module provides centralized utilities for YAML file operations using JSONPa
 
 import logging
 import os
+import tempfile
 from typing import Any
 
 from jsonpath_ng.ext import parse as jsonpath_parse
@@ -56,32 +57,52 @@ def load_yaml_from_path(file_path: str) -> dict[str, Any] | None:
 
 def save_yaml_to_path(file_path: str, data: dict[str, Any]) -> bool:
     """
-    Save YAML data to a file path.
+    Save YAML data to a file path, atomically.
+
+    The dump goes to a temporary file in the same directory and is then moved into place
+    with os.replace, which is atomic on a single filesystem. A reader therefore sees either
+    the old file or the complete new one, never a half-written one.
+
+    This matters because the previous implementation opened the target with mode "w", which
+    truncates first: a dump that raised partway (an unrepresentable value reaching the
+    dumper) left a truncated or empty file behind, which a subsequent commit would then
+    happily publish. Callers also ignored the False return, so that damage was silent.
 
     Args:
         file_path: Path where to save the YAML file
         data: Dictionary containing YAML data
 
     Returns:
-        True if save was successful, False otherwise
+        True if the save succeeded.
+
+    Raises:
+        OSError, ValueError: propagated from the dump or the move. Deliberately raised
+            rather than returned as False, so a failed write can never be mistaken for a
+            successful one by a caller that does not check the return value.
     """
+    yaml = _create_yaml_writer()
+
+    dir_name = os.path.dirname(file_path)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+
+    # Same directory as the target, so os.replace stays within one filesystem.
+    fd, tmp_path = tempfile.mkstemp(prefix=f".{os.path.basename(file_path)}.", dir=dir_name or ".")
     try:
-        yaml = _create_yaml_writer()
-
-        # Ensure directory exists
-        dir_name = os.path.dirname(file_path)
-        if dir_name:
-            os.makedirs(dir_name, exist_ok=True)
-
-        with open(file_path, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             yaml.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, file_path)
+    except BaseException:
+        # Leave the existing file untouched and drop the partial temporary.
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        logger.exception(f"Error saving YAML file {file_path}")
+        raise
 
-        logger.debug(f"Successfully saved YAML to: {file_path}")
-        return True
-
-    except Exception as e:
-        logger.exception(f"Error saving YAML file {file_path}: {e}")
-        return False
+    logger.debug(f"Successfully saved YAML to: {file_path}")
+    return True
 
 
 def find_value_by_jsonpath(data: dict[str, Any], json_path: str, default: Any = None) -> Any:
@@ -145,20 +166,20 @@ def dump_yaml_to_string(data: dict[str, Any]) -> str:
 
     Returns:
         YAML content as string
+
+    Raises:
+        Propagates any dumper error. It previously returned "" on failure, which is a
+        dangerous sentinel now that ProjectStore commits this string straight into git:
+        an empty string would silently publish an empty project file.
     """
-    try:
-        yaml = _create_yaml_writer()
+    yaml = _create_yaml_writer()
 
-        from io import StringIO
+    from io import StringIO
 
-        output = StringIO()
-        yaml.dump(data, output)
+    output = StringIO()
+    yaml.dump(data, output)
 
-        return output.getvalue()
-
-    except Exception as e:
-        logger.exception(f"Error dumping YAML to string: {e}")
-        return ""
+    return output.getvalue()
 
 
 def update_value_by_jsonpath(data: dict[str, Any], json_path: str, new_value: Any) -> bool:

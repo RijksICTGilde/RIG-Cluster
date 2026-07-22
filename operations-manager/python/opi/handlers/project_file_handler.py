@@ -20,7 +20,7 @@ from opi.services.resource_analyzer import _k8s_memory_to_mb
 from opi.services.schema_migration import migrate_to_latest
 from opi.utils.age import decrypt_age_block_to_bytes, decrypt_password_smart_sync, get_decoded_project_private_key
 from opi.utils.env_vars import validate_and_parse_env_vars
-from opi.utils.yaml_util import save_yaml_to_path
+from opi.utils.yaml_util import load_yaml_from_string, save_yaml_to_path
 
 if TYPE_CHECKING:
     from opi.connectors.git import GitConnector
@@ -240,7 +240,6 @@ class ProjectFileHandler:
         """Initialize the ProjectFileHandler."""
         logger.debug("Initializing ProjectFileHandler")
         self._project_data: dict[str, str | list | dict[str, str]] | None = None
-        self._full_file_path: str | None = None
         self._was_migrated: bool = False
         # Deployments whose component extraction was already logged; the helper
         # is called many times per deployment in one run and would spam DEBUG.
@@ -339,57 +338,16 @@ class ProjectFileHandler:
             logger.debug("Decrypted content is not valid YAML, returning as string")
             return decrypted_value
 
-    async def read_project_file(self, full_file_path: str) -> dict[str, str | list | dict[str, str]]:
-        """
-        Read and parse a project YAML file. Keeps it in memory for future use.
-
-        Args:
-            full_file_path: Path to the project YAML file
-
-        Returns:
-            Dictionary containing the parsed project data
-
-        Raises:
-            Exception: If file cannot be read or parsed
-        """
-        if self._full_file_path and self._full_file_path != full_file_path:
-            raise Exception("Can only initialize one project file per class")
-
-        if not self._project_data:
-            raw_data = await self._parse_project_file(full_file_path)
-            migrated_data, self._was_migrated = migrate_to_latest(raw_data)
-            self._project_data = migrated_data
-            self._full_file_path = full_file_path
-        return self._project_data
+    # read_project_file() was removed together with its last caller. It read a
+    # project file straight off the filesystem, which for the shared warm working
+    # copy races ProjectStore.reconcile()'s `reset --hard` + `clean -fd`. Change
+    # detection now uses read_committed_project_file(), which reads the committed
+    # object and cannot tear. Nothing should read a project file from a path again.
 
     @property
     def was_migrated(self) -> bool:
-        """Whether the last read_project_file call required schema migration."""
+        """Whether the last committed-file read required schema migration."""
         return self._was_migrated
-
-    async def _parse_project_file(self, file_path: str) -> dict[str, str | list | dict[str, str]]:
-        """
-        Parse a project YAML file.
-
-        Args:
-            file_path: Path to the project YAML file
-
-        Returns:
-            Dictionary containing the parsed project data
-        """
-        logger.debug(f"Parsing project file: {file_path}")
-        # TODO add schema and do schema validation
-        # TODO check if yaml references are valid
-        try:
-            yaml = YAML()
-            with open(file_path) as f:
-                project_data = yaml.load(f)
-            logger.debug(f"Successfully parsed project file: {file_path}")
-            return project_data
-        except Exception as e:
-            # TODO: do not log and re-raise
-            logger.exception(f"Error parsing project file: {e}")
-            raise
 
     # TODO: should this method be here or moved?
     async def get_previous_yaml_content(self, git_connector: GitConnector, file_path: str) -> dict[str, Any] | None:
@@ -536,16 +494,39 @@ class ProjectFileHandler:
                     return None
         return current
 
-    async def analyze_project_changes(
-        self, git_connector: GitConnector, full_file_path: str, relative_file_path: str
-    ) -> dict[str, Any]:
+    async def read_committed_project_file(
+        self, git_connector: GitConnector, relative_file_path: str
+    ) -> dict[str, str | list | dict[str, str]]:
+        """Read and parse the COMMITTED project file, straight from git objects.
+
+        Deliberately not a working-tree read. The warm working copy is shared, and
+        ``ProjectStore.reconcile()`` does ``reset --hard`` plus ``clean -fd`` on it
+        under the store's lock -- which this code path does not hold. Reading the
+        file from disk therefore races a routine reconcile (30s TTL, triggered by
+        ordinary page loads) and can observe a half-rewritten or missing file.
+        ``git show`` reads immutable objects, so it cannot tear.
+
+        Sets ``was_migrated`` exactly like read_project_file does, so the caller's
+        auto-migration commit keeps working.
+        """
+        if not self._project_data:
+            content = await git_connector.show_file_at("HEAD", relative_file_path)
+            if content is None:
+                raise ValueError(f"Project file not found at HEAD: {relative_file_path}")
+            raw_data = load_yaml_from_string(content)
+            if raw_data is None:
+                raise ValueError(f"Project file is empty or invalid YAML: {relative_file_path}")
+            migrated_data, self._was_migrated = migrate_to_latest(raw_data)
+            self._project_data = migrated_data
+        return self._project_data
+
+    async def analyze_project_changes(self, git_connector: GitConnector, relative_file_path: str) -> dict[str, Any]:
         """
         Analyze changes between current and previous versions of a project file.
 
         Args:
             git_connector: GitConnector to access the repository
             relative_file_path: Relative path to the YAML file within the repository
-            full_file_path: Full path to the YAML file on the OS
 
         Returns:
             Dictionary containing:
@@ -554,8 +535,8 @@ class ProjectFileHandler:
             - diff: DeepDiff result
             - changes: Structured changes with added/changed/deleted items
         """
-        # Read current YAML content
-        current_yaml = await self.read_project_file(full_file_path)
+        # Read current YAML content from the committed object, not the shared worktree
+        current_yaml = await self.read_committed_project_file(git_connector, relative_file_path)
 
         # Get previous YAML content from git history
         previous_yaml = await self.get_previous_yaml_content(git_connector, relative_file_path)

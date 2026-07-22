@@ -35,7 +35,10 @@ from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.manager.run_support import LABEL_RUN
-from opi.services.project_service import get_project_service
+from opi.services.project_authorization import (
+    is_user_authorized_for_project,
+)
+from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
 from opi.utils.naming import generate_unique_name
 from starlette.websockets import WebSocketState
@@ -347,10 +350,9 @@ async def stream_logs(
             return
 
         # === AUTHORIZATION ===
-        project_service = get_project_service()
 
         # Check if user has access to this project
-        if not project_service.is_user_authorized_for_project(project_name, user_email):
+        if not is_user_authorized_for_project(project_name, user_email):
             # Generic error to prevent project enumeration
             logger.warning(f"WebSocket auth failed: user {user_email} not authorized for {project_name}")
             await websocket.close(code=4003, reason="Access denied")
@@ -372,13 +374,12 @@ async def stream_logs(
         kubectl = KubectlConnector()
         current_cluster = settings.CLUSTER_MANAGER
 
-        all_projects = project_service.get_all_projects()
-        if project_name not in all_projects:
+        project_info = get_project_store().get(project_name)
+        if project_info is None:
             await send_message(websocket, "error", message="Resource not found")
             await websocket.close(code=4004)
             return
 
-        project_info = all_projects[project_name]
         project_data = project_info.data or {}
         deployments_list = project_data.get("deployments", [])
 
@@ -725,13 +726,12 @@ async def stream_logs(
                             continue
                         if new_component and new_component != current_component:
                             # Re-fetch project data to get current components
-                            fresh_projects = project_service.get_all_projects()
-                            if project_name not in fresh_projects:
+                            fresh_project = get_project_store().get(project_name)
+                            if fresh_project is None:
                                 await send_message(websocket, "error", message="Project no longer exists")
                                 running = False
                                 break
 
-                            fresh_project = fresh_projects[project_name]
                             fresh_data = fresh_project.data or {}
                             fresh_deployments = fresh_data.get("deployments", [])
 

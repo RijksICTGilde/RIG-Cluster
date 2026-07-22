@@ -1816,7 +1816,23 @@ tasks:
         FORGEJO_PASSWORD=${FORGEJO_PASSWORD:-admin1234}
         E2E_ARTIFACT_DIR=${E2E_ARTIFACT_DIR:-tests/e2e/artifacts}
         E2E_TRACE=${E2E_TRACE:-1}
-        uv run pytest tests/e2e/ -m "e2e and sandbox" -v --timeout=300
+        uv run pytest tests/e2e/ -m "e2e and sandbox and not reallife" -v --timeout=300
+    silent: false
+
+  test-e2e-sandbox-reallife:
+    desc: "Run the long real-life E2E suite (5 projects, semi-concurrent UI+API mutations) against a running sandbox"
+    dir: operations-manager/python
+    cmds:
+      - uv run playwright install chromium --with-deps
+      - >-
+        E2E_BASE_URL=${E2E_BASE_URL:-https://zad.sandbox.rijksapp.dev}
+        E2E_SECRET_KEY=${E2E_SECRET_KEY:-sandbox-dev-secret-key-fixed-for-stable-sessions-32min}
+        FORGEJO_URL=${FORGEJO_URL:-https://forgejo.sandbox.rijksapp.dev}
+        FORGEJO_USER=${FORGEJO_USER:-rig-admin}
+        FORGEJO_PASSWORD=${FORGEJO_PASSWORD:-admin1234}
+        E2E_ARTIFACT_DIR=${E2E_ARTIFACT_DIR:-tests/e2e/artifacts}
+        E2E_TRACE=${E2E_TRACE:-1}
+        uv run pytest tests/e2e/test_sandbox_reallife.py -m "e2e and sandbox and reallife" -v --timeout=600
     silent: false
 
   test-coverage:

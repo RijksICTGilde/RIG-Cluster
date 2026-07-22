@@ -726,6 +726,38 @@ class AsyncTaskService:
         finally:
             await self._pool.release(conn)
 
+    async def find_newer_active_tasks(
+        self,
+        task_id: str,
+        project_name: str,
+    ) -> list[dict]:
+        """Return not-yet-terminal tasks for this project created after the given one.
+
+        The caller decides whether any of these actually supersedes the current
+        task by comparing deployment scopes; that logic lives in task_supersede so
+        this stays a plain query. Includes ``payload`` because a task's real scope
+        (e.g. add_component's target deployments) is stored there, not in the
+        deployment_name column. Newest first.
+        """
+        conn = await self._pool.acquire()
+        try:
+            rows = await conn.fetch(
+                """
+                SELECT id, task_type, project_name, deployment_name, payload, status, created_at
+                FROM async_tasks
+                WHERE status IN ('pending', 'claimed', 'running')
+                  AND project_name = $1
+                  AND id != $2
+                  AND created_at > (SELECT created_at FROM async_tasks WHERE id = $2)
+                ORDER BY created_at DESC
+                """,
+                project_name,
+                uuid.UUID(task_id),
+            )
+            return [d for d in (_row_to_dict(row) for row in rows) if d is not None]
+        finally:
+            await self._pool.release(conn)
+
     async def get_last_completed_task(
         self,
         task_type: str,

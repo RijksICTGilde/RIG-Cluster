@@ -5,9 +5,11 @@ This module provides functionality to authenticate with ArgoCD and manage applic
 including triggering synchronization of applications.
 """
 
+import asyncio
 import json
 import logging
 import ssl
+import threading
 from typing import Any
 
 import aiohttp
@@ -16,6 +18,19 @@ import requests
 from opi.utils.logging_redact import redact_sensitive_headers
 
 logger = logging.getLogger(__name__)
+
+# ArgoCD session tokens are JWTs valid for 24 hours, but a connector is built per
+# operation (16 call sites) and each construction used to log in again. That login
+# costs ~700ms because ArgoCD verifies the password with bcrypt, so it dominated
+# every page load and task step that touched ArgoCD.
+#
+# The token is therefore shared process-wide, keyed by (server, user). Two locks
+# guard it because there are two login paths: a synchronous one in __init__ and an
+# async one for requests. Both re-check the cache after acquiring, so a burst of
+# callers that all find the cache empty produces ONE login instead of one each.
+_token_cache: dict[tuple[str, str], str] = {}
+_token_cache_lock = threading.Lock()
+_token_refresh_lock = asyncio.Lock()
 
 
 class ArgoConnector:
@@ -64,13 +79,41 @@ class ArgoConnector:
 
         logger.debug(f"ArgoConnector initialized with server: {self.base_url}")
 
-        # Try to perform initial login during initialization
-        # If this fails, async methods will handle re-authentication
-        try:
-            self._perform_login()
-        except Exception as e:
-            logger.warning(f"Initial login failed during initialization: {e}")
-            logger.info("Will attempt async login when methods are called")
+        # Reuse the process-wide token when one is already known. Without this every
+        # construction paid a ~700ms blocking bcrypt login, on the event loop.
+        self.auth_token = self._cached_token()
+        if self.auth_token is None:
+            # Try to perform initial login during initialization
+            # If this fails, async methods will handle re-authentication
+            try:
+                self._perform_login()
+            except Exception as e:
+                logger.warning(f"Initial login failed during initialization: {e}")
+                logger.info("Will attempt async login when methods are called")
+
+    def _cache_key(self) -> tuple[str, str]:
+        return (self.base_url, self.username)
+
+    def _cached_token(self) -> str | None:
+        with _token_cache_lock:
+            return _token_cache.get(self._cache_key())
+
+    def _store_token(self, token: str) -> None:
+        with _token_cache_lock:
+            _token_cache[self._cache_key()] = token
+
+    def _invalidate_token(self, used_token: str | None) -> None:
+        """Drop the shared token, but only if it is still the one that just failed.
+
+        Compare-and-clear: another caller may already have replaced it after our
+        request went out. Clearing unconditionally would throw away that fresh
+        token and send everyone back through a login they do not need.
+        """
+        if used_token is None:
+            return
+        with _token_cache_lock:
+            if _token_cache.get(self._cache_key()) == used_token:
+                _token_cache.pop(self._cache_key(), None)
 
     def _perform_login(self) -> bool:
         """
@@ -108,6 +151,7 @@ class ArgoConnector:
                 logger.debug("Processing sync login response")
                 self.auth_token = response_data.get("token")
                 if self.auth_token:
+                    self._store_token(self.auth_token)
                     logger.info("Successfully logged in to ArgoCD (sync) - token received")
                     return True
                 else:
@@ -161,6 +205,7 @@ class ArgoConnector:
                     logger.debug(f"Login response data: {response_data}")
                     self.auth_token = response_data.get("token")
                     if self.auth_token:
+                        self._store_token(self.auth_token)
                         logger.info("Successfully logged in to ArgoCD - token received")
                         return True
                     else:
@@ -184,11 +229,27 @@ class ArgoConnector:
         return ssl_context
 
     async def _ensure_authenticated(self) -> bool:
-        """Ensure we have a valid authentication token."""
-        if not self.auth_token:
+        """Ensure we have a valid authentication token, logging in at most once.
+
+        The shared token is re-checked after acquiring the refresh lock: when many
+        callers hit an empty cache at the same moment, the first performs the login
+        and the rest adopt its token instead of each paying another ~700ms.
+        """
+        if self.auth_token:
+            return True
+
+        cached = self._cached_token()
+        if cached:
+            self.auth_token = cached
+            return True
+
+        async with _token_refresh_lock:
+            cached = self._cached_token()
+            if cached:
+                self.auth_token = cached
+                return True
             logger.info("No authentication token available. Performing async login.")
             return await self.login()
-        return True
 
     async def _make_authenticated_request(
         self,
@@ -234,9 +295,12 @@ class ArgoConnector:
 
                 if response.status == 401 and retry_count == 0:
                     logger.warning("Received 401 Unauthorized. Attempting to re-login and retry.")
-                    # Clear the current token and re-authenticate
+                    # Invalidate only the token this request actually used, then
+                    # re-authenticate through the shared path so concurrent 401s
+                    # collapse into a single login.
+                    self._invalidate_token(self.auth_token)
                     self.auth_token = None
-                    if await self.login():
+                    if await self._ensure_authenticated():
                         logger.info("Re-authentication successful, retrying request")
                         return await self._make_authenticated_request(method, url, json_data, retry_count + 1)
                     else:
@@ -496,7 +560,7 @@ class ArgoConnector:
         max_retries: int = 5,
         retry_delay: int = 3,
         kubectl_connector: Any = None,
-        namespace: str = "rig-prd-operations",
+        namespace: str | None = None,
     ) -> bool:
         """
         Wait for an ArgoCD application to be fully deleted.
@@ -516,7 +580,7 @@ class ArgoConnector:
             kubectl_connector: Connector used to confirm absence against the Kubernetes
                 API when ArgoCD is ambiguous. Without it, an ambiguous ArgoCD answer
                 cannot be confirmed and deletion is reported as unconfirmed (False).
-            namespace: Namespace holding the ArgoCD Application CR
+            namespace: Namespace holding the ArgoCD Application CR; defaults to this instance's cluster
 
         Returns:
             True only if the application is confirmed deleted, False otherwise.

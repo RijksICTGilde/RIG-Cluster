@@ -278,10 +278,12 @@ class MockProjectInfo:
 def _mock_project_service(project: MockProjectInfo | None = None, user_role: str = "owner"):
     """Create a mock project service that returns the given project."""
     svc = MagicMock()
-    svc.get_project.return_value = project
-    svc.is_user_authorized_for_project.return_value = project is not None
-    svc.get_user_role_for_project.return_value = user_role
+    svc.get.return_value = project
     svc.load_project_from_data = MagicMock()
+    # Authorization moved out of the service into project_authorization; callers patch
+    # those free functions using the two hints below.
+    svc._authorized = project is not None
+    svc._role = user_role
     return svc
 
 
@@ -293,7 +295,9 @@ class TestRequireProjectEditAccess:
         svc = _mock_project_service(project=None)
         with (
             patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.web.project_edit_security.get_project_service", return_value=svc),
+            patch("opi.web.project_edit_security.get_project_store", return_value=svc),
+            patch("opi.web.project_edit_security.is_user_authorized_for_project", return_value=svc._authorized),
+            patch("opi.web.project_edit_security.get_user_role_for_project", return_value=svc._role),
         ):
             request = MagicMock()
             with pytest.raises(HTTPException) as exc_info:
@@ -306,10 +310,12 @@ class TestRequireProjectEditAccess:
 
         project = MockProjectInfo("test-project")
         svc = _mock_project_service(project=project)
-        svc.is_user_authorized_for_project.return_value = False
+        svc._authorized = False
         with (
             patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.web.project_edit_security.get_project_service", return_value=svc),
+            patch("opi.web.project_edit_security.get_project_store", return_value=svc),
+            patch("opi.web.project_edit_security.is_user_authorized_for_project", return_value=svc._authorized),
+            patch("opi.web.project_edit_security.get_user_role_for_project", return_value=svc._role),
         ):
             request = MagicMock()
             with pytest.raises(HTTPException) as exc_info:
@@ -324,7 +330,9 @@ class TestRequireProjectEditAccess:
         svc = _mock_project_service(project=project, user_role="viewer")
         with (
             patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.web.project_edit_security.get_project_service", return_value=svc),
+            patch("opi.web.project_edit_security.get_project_store", return_value=svc),
+            patch("opi.web.project_edit_security.is_user_authorized_for_project", return_value=svc._authorized),
+            patch("opi.web.project_edit_security.get_user_role_for_project", return_value=svc._role),
         ):
             request = MagicMock()
             with pytest.raises(HTTPException) as exc_info:
@@ -339,7 +347,9 @@ class TestRequireProjectEditAccess:
         svc = _mock_project_service(project=project, user_role="owner")
         with (
             patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.web.project_edit_security.get_project_service", return_value=svc),
+            patch("opi.web.project_edit_security.get_project_store", return_value=svc),
+            patch("opi.web.project_edit_security.is_user_authorized_for_project", return_value=svc._authorized),
+            patch("opi.web.project_edit_security.get_user_role_for_project", return_value=svc._role),
         ):
             request = MagicMock()
             result_project, result_email = require_project_edit_access(request, "test-project")
@@ -389,7 +399,9 @@ class TestSequenceActionEndpoint:
 
         with (
             patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.web.project_edit_security.get_project_service", return_value=svc),
+            patch("opi.web.project_edit_security.get_project_store", return_value=svc),
+            patch("opi.web.project_edit_security.is_user_authorized_for_project", return_value=svc._authorized),
+            patch("opi.web.project_edit_security.get_user_role_for_project", return_value=svc._role),
         ):
             from opi.web.router_detail_edit import sequence_action
 
@@ -416,7 +428,9 @@ class TestSequenceActionEndpoint:
 
         with (
             patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.web.project_edit_security.get_project_service", return_value=svc),
+            patch("opi.web.project_edit_security.get_project_store", return_value=svc),
+            patch("opi.web.project_edit_security.is_user_authorized_for_project", return_value=svc._authorized),
+            patch("opi.web.project_edit_security.get_user_role_for_project", return_value=svc._role),
         ):
             from opi.web.router_detail_edit import sequence_action
 
@@ -443,7 +457,9 @@ class TestSequenceActionEndpoint:
 
         with (
             patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.web.project_edit_security.get_project_service", return_value=svc),
+            patch("opi.web.project_edit_security.get_project_store", return_value=svc),
+            patch("opi.web.project_edit_security.is_user_authorized_for_project", return_value=svc._authorized),
+            patch("opi.web.project_edit_security.get_user_role_for_project", return_value=svc._role),
         ):
             from opi.web.router_detail_edit import sequence_action
 

@@ -124,8 +124,8 @@ class TestSchedulerPicksUpYamlSchedule:
             return snaps
 
         scheduler._get_namespace_snapshots = fake_get.__get__(scheduler, BackupScheduler)  # type: ignore[method-assign]
-        with patch("opi.services.project_service.get_project_service") as mock_get:
-            mock_get.return_value.get_all_projects.return_value = projects_dict
+        with patch("opi.core.backup_scheduler.get_project_store") as mock_get:
+            mock_get.return_value.get_all.return_value = list(projects_dict.values())
             asyncio.run(scheduler._check_and_schedule())
 
     def test_rrule_daily_creates_task(self) -> None:
@@ -762,10 +762,10 @@ class TestSchedulerToHandlerPipeline:
 
         projects_dict = {"webshop": project}
         with (
-            patch("opi.services.project_service.get_project_service") as mock_get,
+            patch("opi.core.backup_scheduler.get_project_store") as mock_get,
             freeze_time(_FROZEN_TIME),
         ):
-            mock_get.return_value.get_all_projects.return_value = projects_dict
+            mock_get.return_value.get_all.return_value = list(projects_dict.values())
             _run(scheduler._check_and_schedule())
 
         # Verify task was created
@@ -803,8 +803,8 @@ class TestSchedulerToHandlerPipeline:
         )
 
         projects_dict = {"test-project": project}
-        with patch("opi.services.project_service.get_project_service") as mock_get:
-            mock_get.return_value.get_all_projects.return_value = projects_dict
+        with patch("opi.core.backup_scheduler.get_project_store") as mock_get:
+            mock_get.return_value.get_all.return_value = list(projects_dict.values())
             _run(scheduler._check_and_schedule())
 
         scheduler._task_service.create_task.assert_not_called()
@@ -830,8 +830,8 @@ class TestSchedulerToHandlerPipeline:
         )
 
         projects_dict = {"test-project": project}
-        with patch("opi.services.project_service.get_project_service") as mock_get:
-            mock_get.return_value.get_all_projects.return_value = projects_dict
+        with patch("opi.core.backup_scheduler.get_project_store") as mock_get:
+            mock_get.return_value.get_all.return_value = list(projects_dict.values())
             _run(scheduler._check_and_schedule())
 
         scheduler._task_service.create_task.assert_not_called()
@@ -1196,10 +1196,10 @@ class TestCreateDeploymentFromSourceYAML:
 
         _bt = "opi.core.backup_tasks"
         with (
-            patch(f"{_bt}.get_project_service") as mock_ps,
+            patch(f"{_bt}.get_project_store") as mock_ps,
             patch(f"{_bt}.ProjectManager") as mock_pm_cls,
         ):
-            mock_ps.return_value.get_project.return_value = mock_project
+            mock_ps.return_value.get.return_value = mock_project
             # The mutation now reads fresh via ProjectManager.get_contents() and
             # persists through save_and_commit_project (the single validated path).
             mock_pm = MagicMock()

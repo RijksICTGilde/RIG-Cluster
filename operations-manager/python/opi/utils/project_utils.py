@@ -124,6 +124,42 @@ def parse_aliases(aliases_str: str) -> dict[str, Any]:
         raise ComponentValidationError(f"Invalid aliases format: {e!s}") from e
 
 
+def apply_resource_limits(
+    resources: dict,
+    *,
+    cpu_limit: str | None = None,
+    memory_limit: str | None = None,
+) -> None:
+    """Write CPU/memory limits into the canonical nested resources form, in place.
+
+    Manifest generation (``project_file_handler._resolve_resources``) reads
+    ``resources.limits.*`` and ``resources.requests.*`` -- never the flat
+    ``resources.cpu`` / ``resources.memory`` shorthand. The read-time fixup only
+    migrates that shorthand into ``limits`` when the nested value is ABSENT, so
+    writing the shorthand over an existing limit silently dropped the change.
+    Writing the nested form directly makes a limit change take effect on the same
+    commit.
+
+    A memory request must not exceed the memory limit, so an existing request
+    above the new limit is lowered to it (and an absent request is set to it).
+    """
+    from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+
+    if cpu_limit is None and memory_limit is None:
+        return
+
+    limits = resources.setdefault("limits", {})
+    requests = resources.setdefault("requests", {})
+
+    if cpu_limit is not None:
+        limits["cpu"] = cpu_limit
+    if memory_limit is not None:
+        limits["memory"] = memory_limit
+        existing = requests.get("memory")
+        if existing is None or parse_k8s_memory_to_mi(str(existing)) > parse_k8s_memory_to_mi(memory_limit):
+            requests["memory"] = memory_limit
+
+
 async def build_component_config(
     name: str,
     component_type: str,
@@ -180,13 +216,10 @@ async def build_component_config(
         "uses-components": [],
     }
 
-    # Add resource limits if specified
+    # Add resource limits if specified, in the canonical nested form.
     if cpu_limit or memory_limit:
         component_config["resources"] = {}
-        if cpu_limit:
-            component_config["resources"]["cpu"] = cpu_limit
-        if memory_limit:
-            component_config["resources"]["memory"] = memory_limit
+        apply_resource_limits(component_config["resources"], cpu_limit=cpu_limit, memory_limit=memory_limit)
 
     # Encrypt and add user env vars if provided
     if env_vars:

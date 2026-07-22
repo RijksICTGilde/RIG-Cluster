@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import HTTPException
 from opi.core.config import settings
-from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
 from starlette.requests import Request  # noqa: TC002 — FastAPI needs Request at runtime
 
 
@@ -43,8 +43,7 @@ def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
             logger.warning(f"Missing project_name parameter for route {func.__name__}")
             raise HTTPException(status_code=401, detail="Missing project_name parameter")
 
-        project_service = get_project_service()
-        project = project_service.get_project(project_name_from_url)
+        project = get_project_store().get(project_name_from_url)
 
         if not project or not secrets.compare_digest(project.api_key, x_api_key):
             logger.warning(f"Authentication failed for route {func.__name__} - invalid API key")

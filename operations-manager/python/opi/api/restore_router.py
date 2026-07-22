@@ -1,19 +1,18 @@
 """API router for PVC, database, and bucket restore operations."""
 
 import logging
-import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
-from opi.connectors.git import create_git_connector_for_project_files
 from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
 from opi.handlers.project_file_handler import (
     create_project_file_handler,
+    extract_storage_from_component_services,
 )
 
 if TYPE_CHECKING:
@@ -30,7 +29,7 @@ from opi.manager.backup import (
 )
 from opi.manager.project_manager import ProjectManager
 from opi.services import ServiceType
-from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
 from opi.utils.naming import (
     generate_bucket_name,
     generate_database_name,
@@ -676,8 +675,7 @@ async def restore_project_pvc(
         )
 
         # 1. Get project info
-        project_service = get_project_service()
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 
@@ -692,146 +690,141 @@ async def restore_project_pvc(
                 status_code=404, detail=f"Deployment '{body.deployment_name}' not found or has no cluster configured"
             )
 
-        # 3. Clone project files repo to read/modify project file
-        git_connector = await create_git_connector_for_project_files(f"restore-{project_name}")
+        # 3. Read the committed project file through the store: no clone, no working
+        # directory, and no connector for this handler to hold or close. Reading via
+        # the manager that later saves records the compare-and-swap base, so the
+        # commit after a long restore merges with anything that landed in between
+        # instead of overwriting it.
+        restore_project_manager = ProjectManager(project_file_relative_path=f"projects/{project.filename}")
+        try:
+            project_data = await restore_project_manager.get_contents()
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}") from e
 
-        async with git_connector:
-            working_dir = await git_connector.get_working_dir()
-            project_file_path = os.path.join(working_dir, "projects", project.filename)
+        # 4. Find the deployment and component reference
+        deployments = project_data.get("deployments", [])
+        base_components = {c.get("name"): c for c in project_data.get("components", [])}
+        target_deployment = None
+        target_component_ref = None
 
-            # Read project file
-            project_data = await project_file_handler.read_project_file(project_file_path)
-            if not project_data:
-                raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}")
+        for dep in deployments:
+            if dep.get("name") == body.deployment_name:
+                target_deployment = dep
+                for comp in dep.get("components", []):
+                    # Deployment components use "reference" to point to base component
+                    if comp.get("reference") == body.component_name:
+                        target_component_ref = comp
+                        break
+                break
 
-            # 4. Find the deployment and component reference
-            deployments = project_data.get("deployments", [])
-            base_components = {c.get("name"): c for c in project_data.get("components", [])}
-            target_deployment = None
-            target_component_ref = None
+        if not target_deployment:
+            raise HTTPException(status_code=404, detail=f"Deployment '{body.deployment_name}' not found in project")
+        if not target_component_ref:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Component '{body.component_name}' not found in deployment '{body.deployment_name}'",
+            )
 
-            for dep in deployments:
-                if dep.get("name") == body.deployment_name:
-                    target_deployment = dep
-                    for comp in dep.get("components", []):
-                        # Deployment components use "reference" to point to base component
-                        if comp.get("reference") == body.component_name:
-                            target_component_ref = comp
-                            break
-                    break
+        # Get the base component for storage definitions
+        base_component = base_components.get(body.component_name)
+        if not base_component:
+            raise HTTPException(status_code=404, detail=f"Base component '{body.component_name}' not found in project")
 
-            if not target_deployment:
-                raise HTTPException(status_code=404, detail=f"Deployment '{body.deployment_name}' not found in project")
-            if not target_component_ref:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Component '{body.component_name}' not found in deployment '{body.deployment_name}'",
-                )
+        # 5. Find storage configuration from BASE component
+        storage_list = extract_storage_from_component_services(base_component)
+        target_storage = None
 
-            # Get the base component for storage definitions
-            base_component = base_components.get(body.component_name)
-            if not base_component:
-                raise HTTPException(
-                    status_code=404, detail=f"Base component '{body.component_name}' not found in project"
-                )
+        for idx, storage in enumerate(storage_list):
+            # Skip non-persistent storage
+            if storage.get("type") != "persistent":
+                continue
+            # Use name field directly, fallback to generated name
+            storage_name = storage.get("name")
+            if not storage_name:
+                mount_path = storage.get("mount-path", "") or storage.get("mount_path", "")
+                storage_name = generate_storage_name(mount_path, idx)
+            if storage_name == body.storage_name:
+                target_storage = storage
+                break
 
-            # 5. Find storage configuration from BASE component
-            from opi.handlers.project_file_handler import extract_storage_from_component_services
+        if not target_storage:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Storage '{body.storage_name}' not found in component '{body.component_name}'",
+            )
 
-            storage_list = extract_storage_from_component_services(base_component)
-            target_storage = None
-
-            for idx, storage in enumerate(storage_list):
-                # Skip non-persistent storage
-                if storage.get("type") != "persistent":
-                    continue
-                # Use name field directly, fallback to generated name
-                storage_name = storage.get("name")
-                if not storage_name:
-                    mount_path = storage.get("mount-path", "") or storage.get("mount_path", "")
-                    storage_name = generate_storage_name(mount_path, idx)
-                if storage_name == body.storage_name:
-                    target_storage = storage
-                    break
-
-            if not target_storage:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Storage '{body.storage_name}' not found in component '{body.component_name}'",
-                )
-
-            # 6. Get current generation and calculate next
-            current_generation = project_file_handler.get_storage_generation(
+        # 6. Get current generation and calculate next. None means the storage has
+        # never been restored before (no generation recorded yet): generation 0.
+        current_generation = (
+            project_file_handler.get_storage_generation(
                 project_data, body.deployment_name, body.component_name, body.storage_name
             )
-            next_generation = current_generation + 1
+            or 0
+        )
+        next_generation = current_generation + 1
 
-            # 7. Calculate PVC names
-            unique_name = generate_unique_name(body.deployment_name, body.component_name)
-            source_pvc_name = generate_pvc_name(unique_name, body.storage_name, current_generation)
-            target_pvc_name = generate_pvc_name(unique_name, body.storage_name, next_generation)
+        # 7. Calculate PVC names
+        unique_name = generate_unique_name(body.deployment_name, body.component_name)
+        source_pvc_name = generate_pvc_name(unique_name, body.storage_name, current_generation)
+        target_pvc_name = generate_pvc_name(unique_name, body.storage_name, next_generation)
 
-            # 8. Get namespace and storage info
-            raw_namespace = target_deployment.get("namespace", project_name)
-            namespace = get_prefixed_namespace(deployment_cluster, raw_namespace)
-            storage_size = target_storage.get("size", "10Gi")
-            storage_class = get_storage_class_name(deployment_cluster)
-            access_modes = get_storage_access_modes(deployment_cluster)
+        # 8. Get namespace and storage info
+        raw_namespace = target_deployment.get("namespace", project_name)
+        namespace = get_prefixed_namespace(deployment_cluster, raw_namespace)
+        storage_size = target_storage.get("size", "10Gi")
+        storage_class = get_storage_class_name(deployment_cluster)
+        access_modes = get_storage_access_modes(deployment_cluster)
 
-            logger.info(
-                f"Restoring {source_pvc_name} -> {target_pvc_name} "
-                f"(generation {current_generation} -> {next_generation}) in {namespace}"
+        logger.info(
+            f"Restoring {source_pvc_name} -> {target_pvc_name} "
+            f"(generation {current_generation} -> {next_generation}) in {namespace}"
+        )
+
+        # 9. Perform the restore
+        backup_manager = create_backup_manager()
+        result = await backup_manager.restore_to_project_pvc(
+            cluster=deployment_cluster,
+            namespace=namespace,
+            source_pvc_name=source_pvc_name,
+            target_pvc_name=target_pvc_name,
+            storage_size=storage_size,
+            storage_class=storage_class,
+            access_modes=access_modes,
+            snapshot_id=body.snapshot_id,
+            backup_enabled=target_storage.get("backup", True),
+            project_name=project_name,
+        )
+
+        if not result.success:
+            return JSONResponse(
+                content={
+                    "status": "failed",
+                    "message": f"Restore failed: {result.error}",
+                    "result": _result_to_model(result).model_dump() if result else None,
+                    "new_generation": None,
+                    "project_updated": False,
+                    "refresh_triggered": False,
+                },
+                status_code=500,
             )
 
-            # 9. Perform the restore
-            backup_manager = create_backup_manager()
-            result = await backup_manager.restore_to_project_pvc(
-                cluster=deployment_cluster,
-                namespace=namespace,
-                source_pvc_name=source_pvc_name,
-                target_pvc_name=target_pvc_name,
-                storage_size=storage_size,
-                storage_class=storage_class,
-                access_modes=access_modes,
-                snapshot_id=body.snapshot_id,
-                backup_enabled=target_storage.get("backup", True),
-                project_name=project_name,
-            )
+        # 10. Update project file with new generation
+        logger.info(f"Updating project file with generation {next_generation}")
+        project_file_handler.set_storage_generation(
+            project_data, body.deployment_name, body.component_name, body.storage_name, next_generation
+        )
 
-            if not result.success:
-                return JSONResponse(
-                    content={
-                        "status": "failed",
-                        "message": f"Restore failed: {result.error}",
-                        "result": _result_to_model(result).model_dump() if result else None,
-                        "new_generation": None,
-                        "project_updated": False,
-                        "refresh_triggered": False,
-                    },
-                    status_code=500,
-                )
-
-            # 10. Update project file with new generation
-            logger.info(f"Updating project file with generation {next_generation}")
-            project_file_handler.set_storage_generation(
-                project_data, body.deployment_name, body.component_name, body.storage_name, next_generation
-            )
-
-            # 11. Commit and push the change
-            commit_message = (
-                f"Restore PVC {source_pvc_name} to {target_pvc_name}\n\n"
-                f"Project: {project_name}\n"
-                f"Deployment: {body.deployment_name}\n"
-                f"Component: {body.component_name}\n"
-                f"Storage: {body.storage_name}\n"
-                f"Generation: {current_generation} -> {next_generation}"
-            )
-            restore_project_manager = ProjectManager(
-                project_file_relative_path=f"projects/{project.filename}",
-                git_connector_for_project_files=git_connector,
-            )
-            await restore_project_manager.save_and_commit_project(project_data, commit_message)
-            logger.info("Project file committed and pushed")
+        # 11. Commit and push the change
+        commit_message = (
+            f"Restore PVC {source_pvc_name} to {target_pvc_name}\n\n"
+            f"Project: {project_name}\n"
+            f"Deployment: {body.deployment_name}\n"
+            f"Component: {body.component_name}\n"
+            f"Storage: {body.storage_name}\n"
+            f"Generation: {current_generation} -> {next_generation}"
+        )
+        await restore_project_manager.save_and_commit_project(project_data, commit_message)
+        logger.info("Project file committed and pushed")
 
         # 12. Trigger project refresh for the specific deployment
         logger.info(f"Triggering project refresh for {project_name}, deployment: {body.deployment_name}")
@@ -985,8 +978,6 @@ async def _restore_pvc(
     # Get storage config from component
     base_components = {c.get("name"): c for c in project_data.get("components", [])}
     base_component = base_components.get(component_name, {})
-    from opi.handlers.project_file_handler import extract_storage_from_component_services
-
     storage_list = extract_storage_from_component_services(base_component) if isinstance(base_component, dict) else []
     target_storage = next((s for s in storage_list if s.get("name") == storage_name), None)
 
@@ -1201,8 +1192,7 @@ async def restore_backup_run(
         logger.info(f"Backup run restore: project={project_name}, deployment={deployment_name}, run={backup_run_id}")
 
         # Get project and validate
-        project_service = get_project_service()
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
         if not project or not project.data:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found or has no data")
 
@@ -1227,56 +1217,53 @@ async def restore_backup_run(
 
         logger.info(f"Found {len(run_snapshots)} snapshot(s) in backup run {backup_run_id}")
 
-        # Clone project files repo
-        git_connector = await create_git_connector_for_project_files(f"restore-run-{project_name}")
+        # Read the committed project file through the store: no clone, no working
+        # directory, and no connector for this handler to hold or close. Reading via
+        # the manager that later saves records the compare-and-swap base, so the
+        # commit after a long restore merges with anything that landed in between
+        # instead of overwriting it.
+        restore_project_manager = ProjectManager(project_file_relative_path=f"projects/{project.filename}")
+        try:
+            project_data = await restore_project_manager.get_contents()
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}") from e
 
-        async with git_connector:
-            working_dir = await git_connector.get_working_dir()
-            project_file_path = os.path.join(working_dir, "projects", project.filename)
-            project_data = await project_file_handler.read_project_file(project_file_path)
-            if not project_data:
-                raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}")
+        # Restore each snapshot
+        restore_details: list[PVCRestoreDetail] = []
+        generation_updates: list[GenerationUpdate] = []
 
-            # Restore each snapshot
-            restore_details: list[PVCRestoreDetail] = []
-            generation_updates: list[GenerationUpdate] = []
+        for snapshot in run_snapshots:
+            detail, update = await _restore_snapshot(
+                snapshot=snapshot,
+                project_name=project_name,
+                deployment_name=deployment_name,
+                deployment_cluster=deployment_cluster,
+                namespace=namespace,
+                project_data=project_data,
+                project_file_handler=project_file_handler,
+                backup_manager=backup_manager,
+            )
+            restore_details.append(detail)
+            if update:
+                generation_updates.append(update)
 
-            for snapshot in run_snapshots:
-                detail, update = await _restore_snapshot(
-                    snapshot=snapshot,
-                    project_name=project_name,
-                    deployment_name=deployment_name,
-                    deployment_cluster=deployment_cluster,
-                    namespace=namespace,
-                    project_data=project_data,
-                    project_file_handler=project_file_handler,
-                    backup_manager=backup_manager,
-                )
-                restore_details.append(detail)
-                if update:
-                    generation_updates.append(update)
+        # Update project file with new generations
+        project_updated = False
+        if generation_updates:
+            for upd in generation_updates:
+                _set_generation(project_file_handler, project_data, upd)
+            project_updated = True
 
-            # Update project file with new generations
-            project_updated = False
-            if generation_updates:
-                for upd in generation_updates:
-                    _set_generation(project_file_handler, project_data, upd)
-                project_updated = True
-
-                # Commit and push
-                restored_names = [d.target_pvc_name for d in restore_details if d.success]
-                commit_message = (
-                    f"Restore backup run {backup_run_id}\n\n"
-                    f"Project: {project_name}\n"
-                    f"Deployment: {deployment_name}\n"
-                    f"Resources restored: {', '.join(restored_names)}"
-                )
-                restore_project_manager = ProjectManager(
-                    project_file_relative_path=f"projects/{project.filename}",
-                    git_connector_for_project_files=git_connector,
-                )
-                await restore_project_manager.save_and_commit_project(project_data, commit_message)
-                logger.info("Project file committed and pushed")
+            # Commit and push
+            restored_names = [d.target_pvc_name for d in restore_details if d.success]
+            commit_message = (
+                f"Restore backup run {backup_run_id}\n\n"
+                f"Project: {project_name}\n"
+                f"Deployment: {deployment_name}\n"
+                f"Resources restored: {', '.join(restored_names)}"
+            )
+            await restore_project_manager.save_and_commit_project(project_data, commit_message)
+            logger.info("Project file committed and pushed")
 
         # Trigger project refresh
         refresh_triggered = False
@@ -1634,8 +1621,7 @@ async def restore_deployment_resource(
             )
 
         # 1. Get project info
-        project_service = get_project_service()
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 
@@ -1653,118 +1639,113 @@ async def restore_deployment_resource(
         raw_namespace = project_file_handler.extract_deployment_namespace(project.data, deployment_name)
         namespace = get_prefixed_namespace(deployment_cluster, raw_namespace or project_name)
 
-        # 3. Clone project files repo to read/modify project file
-        git_connector = await create_git_connector_for_project_files(f"restore-{project_name}-{deployment_name}")
+        # 3. Read the committed project file through the store: no clone, no working
+        # directory, and no connector for this handler to hold or close. Reading via
+        # the manager that later saves records the compare-and-swap base, so the
+        # commit after a long restore merges with anything that landed in between
+        # instead of overwriting it.
+        restore_project_manager = ProjectManager(project_file_relative_path=f"projects/{project.filename}")
+        try:
+            project_data = await restore_project_manager.get_contents()
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}") from e
 
-        async with git_connector:
-            working_dir = await git_connector.get_working_dir()
-            project_file_path = os.path.join(working_dir, "projects", project.filename)
-
-            # Read project file
-            project_data = await project_file_handler.read_project_file(project_file_path)
-            if not project_data:
-                raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}")
-
-            # Route to appropriate handler based on resource type
-            if body.resource_type == "pvc":
-                result = await _restore_pvc_with_versioning(
-                    project_name=project_name,
-                    deployment_name=deployment_name,
-                    component_name=body.component_name,
-                    storage_name=body.reference_name,
-                    snapshot_id=body.snapshot_id,
-                    deployment_cluster=deployment_cluster,
-                    namespace=namespace,
-                    project_data=project_data,
-                    project_file_handler=project_file_handler,
-                )
-            elif body.resource_type == "database":
-                result = await _restore_database_with_versioning(
-                    project_name=project_name,
-                    deployment_name=deployment_name,
-                    component_name=body.component_name,
-                    reference_name=body.reference_name,
-                    snapshot_id=body.snapshot_id,
-                    deployment_cluster=deployment_cluster,
-                    namespace=namespace,
-                    project_data=project_data,
-                    project_file_handler=project_file_handler,
-                )
-            else:  # minio
-                result = await _restore_bucket_with_versioning(
-                    project_name=project_name,
-                    deployment_name=deployment_name,
-                    component_name=body.component_name,
-                    reference_name=body.reference_name,
-                    snapshot_id=body.snapshot_id,
-                    deployment_cluster=deployment_cluster,
-                    namespace=namespace,
-                    project_data=project_data,
-                    project_file_handler=project_file_handler,
-                )
-
-            if not result["success"]:
-                return JSONResponse(
-                    content={
-                        "status": "failed",
-                        "message": result["error"],
-                        "resource_type": body.resource_type,
-                        "reference_name": body.reference_name,
-                        "old_generation": result.get("old_generation"),
-                        "new_generation": result.get("new_generation"),
-                        "old_resource_name": result.get("old_resource_name"),
-                        "new_resource_name": result.get("new_resource_name"),
-                        "project_updated": False,
-                        "refresh_triggered": False,
-                    },
-                    status_code=500,
-                )
-
-            # 4. Update project file with new generation
-            logger.info(f"Updating project file with generation {result['new_generation']}")
-            if body.resource_type == "pvc":
-                # PVC is component-level
-                project_file_handler.set_storage_generation(
-                    project_data, deployment_name, body.component_name, body.reference_name, result["new_generation"]
-                )
-            elif body.resource_type == "database":
-                # Database is deployment-level - determine service type from project config
-                project_services = project_data.get("services", [])
-                uses_namespace_postgresql = any(
-                    service_item == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-                    if isinstance(service_item, str)
-                    else ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item
-                    for service_item in (project_services or [])
-                )
-                service_type = (
-                    ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-                    if uses_namespace_postgresql
-                    else ServiceType.POSTGRESQL_DATABASE.value
-                )
-                project_file_handler.set_deployment_service_generation(
-                    project_data, deployment_name, service_type, result["new_generation"]
-                )
-            else:  # minio
-                # Bucket is deployment-level
-                project_file_handler.set_deployment_service_generation(
-                    project_data, deployment_name, ServiceType.MINIO_STORAGE.value, result["new_generation"]
-                )
-            # 5. Commit and push the change
-            commit_message = (
-                f"Restore {body.resource_type} {result['old_resource_name']} to {result['new_resource_name']}\n\n"
-                f"Project: {project_name}\n"
-                f"Deployment: {deployment_name}\n"
-                f"Component: {body.component_name}\n"
-                f"Resource: {body.reference_name}\n"
-                f"Generation: {result['old_generation']} -> {result['new_generation']}\n"
-                f"Snapshot: {body.snapshot_id}"
+        # Route to appropriate handler based on resource type
+        if body.resource_type == "pvc":
+            result = await _restore_pvc_with_versioning(
+                project_name=project_name,
+                deployment_name=deployment_name,
+                component_name=body.component_name,
+                storage_name=body.reference_name,
+                snapshot_id=body.snapshot_id,
+                deployment_cluster=deployment_cluster,
+                namespace=namespace,
+                project_data=project_data,
+                project_file_handler=project_file_handler,
             )
-            restore_project_manager = ProjectManager(
-                project_file_relative_path=f"projects/{project.filename}",
-                git_connector_for_project_files=git_connector,
+        elif body.resource_type == "database":
+            result = await _restore_database_with_versioning(
+                project_name=project_name,
+                deployment_name=deployment_name,
+                component_name=body.component_name,
+                reference_name=body.reference_name,
+                snapshot_id=body.snapshot_id,
+                deployment_cluster=deployment_cluster,
+                namespace=namespace,
+                project_data=project_data,
+                project_file_handler=project_file_handler,
             )
-            await restore_project_manager.save_and_commit_project(project_data, commit_message)
-            logger.info("Project file committed and pushed")
+        else:  # minio
+            result = await _restore_bucket_with_versioning(
+                project_name=project_name,
+                deployment_name=deployment_name,
+                component_name=body.component_name,
+                reference_name=body.reference_name,
+                snapshot_id=body.snapshot_id,
+                deployment_cluster=deployment_cluster,
+                namespace=namespace,
+                project_data=project_data,
+                project_file_handler=project_file_handler,
+            )
+
+        if not result["success"]:
+            return JSONResponse(
+                content={
+                    "status": "failed",
+                    "message": result["error"],
+                    "resource_type": body.resource_type,
+                    "reference_name": body.reference_name,
+                    "old_generation": result.get("old_generation"),
+                    "new_generation": result.get("new_generation"),
+                    "old_resource_name": result.get("old_resource_name"),
+                    "new_resource_name": result.get("new_resource_name"),
+                    "project_updated": False,
+                    "refresh_triggered": False,
+                },
+                status_code=500,
+            )
+
+        # 4. Update project file with new generation
+        logger.info(f"Updating project file with generation {result['new_generation']}")
+        if body.resource_type == "pvc":
+            # PVC is component-level
+            project_file_handler.set_storage_generation(
+                project_data, deployment_name, body.component_name, body.reference_name, result["new_generation"]
+            )
+        elif body.resource_type == "database":
+            # Database is deployment-level - determine service type from project config
+            project_services = project_data.get("services", [])
+            uses_namespace_postgresql = any(
+                service_item == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+                if isinstance(service_item, str)
+                else ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item
+                for service_item in (project_services or [])
+            )
+            service_type = (
+                ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+                if uses_namespace_postgresql
+                else ServiceType.POSTGRESQL_DATABASE.value
+            )
+            project_file_handler.set_deployment_service_generation(
+                project_data, deployment_name, service_type, result["new_generation"]
+            )
+        else:  # minio
+            # Bucket is deployment-level
+            project_file_handler.set_deployment_service_generation(
+                project_data, deployment_name, ServiceType.MINIO_STORAGE.value, result["new_generation"]
+            )
+        # 5. Commit and push the change
+        commit_message = (
+            f"Restore {body.resource_type} {result['old_resource_name']} to {result['new_resource_name']}\n\n"
+            f"Project: {project_name}\n"
+            f"Deployment: {deployment_name}\n"
+            f"Component: {body.component_name}\n"
+            f"Resource: {body.reference_name}\n"
+            f"Generation: {result['old_generation']} -> {result['new_generation']}\n"
+            f"Snapshot: {body.snapshot_id}"
+        )
+        await restore_project_manager.save_and_commit_project(project_data, commit_message)
+        logger.info("Project file committed and pushed")
 
         # 6. Trigger project refresh if requested
         refresh_triggered = False

@@ -13,7 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from opi.services.project_service import Project, ProjectService, ProjectUser
+from opi.services.project_service import Project, ProjectUser
+from opi.services.project_store import GitProjectStore
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -41,7 +42,7 @@ def mock_task_service() -> AsyncMock:
 
 @pytest.fixture
 def mock_auth_project_service() -> Any:
-    mock_service = MagicMock(spec=ProjectService)
+    mock_service = MagicMock(spec=GitProjectStore)
     test_project = Project(
         name="test-project",
         api_key=API_KEY,
@@ -52,11 +53,11 @@ def mock_auth_project_service() -> Any:
     def get_project(name: str) -> Project | None:
         return test_project if name == "test-project" else None
 
-    mock_service.get_project = get_project
+    mock_service.get = get_project
 
     with (
-        patch("opi.api.endpoint_util.get_project_service", return_value=mock_service),
-        patch("opi.api.task_router.get_project_service", return_value=mock_service),
+        patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+        patch("opi.api.task_router.get_project_store", return_value=mock_service),
     ):
         yield mock_service
 

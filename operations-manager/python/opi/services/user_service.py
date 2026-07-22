@@ -22,6 +22,10 @@ class UserService:
         """Initialize the in-memory user store and email allowlist."""
         self._users: dict[str, dict[str, Any]] = {}
         self._allowed_emails: set[str] = set()
+        # Platform administrators: authorized for every project regardless of its
+        # members list. Moved here from ProjectService, which held it alongside the
+        # project cache -- an allowlist of emails belongs with the other user state.
+        self._platform_admin_emails: set[str] = set()
         logger.info("UserService initialized with in-memory storage and email access control")
 
     def store_user(self, user_info: dict[str, Any]) -> None:
@@ -262,6 +266,19 @@ class UserService:
 
         self._allowed_emails.add(email.lower())
         logger.info(f"Added email to allowlist: {email}")
+
+    def add_platform_admins(self, emails: list[str]) -> None:
+        """Grant platform-admin rights to these emails (also allowlists them)."""
+        valid = [e.lower().strip() for e in emails if e and e.strip()]
+        if not valid:
+            return
+        self._platform_admin_emails.update(valid)
+        self.add_allowed_emails(valid)
+        logger.info(f"Added {len(valid)} platform admin(s): {valid}")
+
+    def is_platform_admin(self, email: str) -> bool:
+        """Whether this email has platform-admin rights."""
+        return bool(email) and email.lower().strip() in self._platform_admin_emails
 
     def add_allowed_emails(self, emails: list[str]) -> None:
         """

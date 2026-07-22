@@ -17,7 +17,7 @@ from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.project_manager import ProjectManager
-from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
 from opi.services.resource_tuning_service import (
     trigger_reprocessing,
     tune_deployment_resources,
@@ -50,8 +50,7 @@ def _get_project_data(project_name: str) -> tuple[dict[str, Any], str]:
     Raises:
         HTTPException: If project not found or has no data
     """
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
+    project = get_project_store().get(project_name)
 
     if not project:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")

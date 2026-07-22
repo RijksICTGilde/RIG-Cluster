@@ -26,6 +26,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 from opi.services.project_service import ProjectService, ProjectUser
+from opi.services.user_service import get_user_service
 from opi.web.project_edit_security import (
     IMMUTABLE_PROJECT_FIELDS,
     apply_form_data_to_project,
@@ -86,10 +87,10 @@ def project_service() -> ProjectService:
     """Singleton ProjectService seeded with one project, cleaned up after."""
     service = ProjectService()
     saved_projects = dict(service._projects)
-    saved_admins = set(service._admin_emails)
+    saved_admins = set(get_user_service()._platform_admin_emails)
     service._projects.clear()
-    service._admin_emails.clear()
-    service._admin_emails.add(ADMIN_EMAIL)
+    get_user_service()._platform_admin_emails.clear()
+    get_user_service()._platform_admin_emails.add(ADMIN_EMAIL)
     service.register(
         project_name=PROJECT_NAME,
         api_key=STORED_DATA["config"]["api-key"],
@@ -100,8 +101,8 @@ def project_service() -> ProjectService:
     yield service
     service._projects.clear()
     service._projects.update(saved_projects)
-    service._admin_emails.clear()
-    service._admin_emails.update(saved_admins)
+    get_user_service()._platform_admin_emails.clear()
+    get_user_service()._platform_admin_emails.update(saved_admins)
 
 
 def _request_for(email: str) -> Any:

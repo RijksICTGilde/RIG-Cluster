@@ -187,6 +187,11 @@ class Settings(BaseSettings):
     GIT_PROJECTS_SERVER_FILE_PATH: str = "projects/simple-example.yaml"
     GIT_PROJECTS_SERVER_BRANCH: str = "main"
     GIT_PROJECTS_SERVER_POLL_INTERVAL: int = 120  # seconds
+    # Fallback poll for edits made outside ZAD (by hand, or from another cluster).
+    # Bounds how long an out-of-band revocation (member removed, invite key revoked
+    # by pushing to zad-projects directly) can keep working on this instance.
+    # Cheap when idle: reconcile() starts with an ls-remote check. 0 disables.
+    PROJECT_STORE_RECONCILE_INTERVAL_SECONDS: int = 300
 
     # Project deployment repository - shared repo where all project manifests are pushed
     # This is a single shared repository; projects are separated by subdirectories internally
