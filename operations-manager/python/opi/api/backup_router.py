@@ -22,7 +22,7 @@ from opi.manager.backup import (
     create_database_backup_manager,
 )
 from opi.services import ServiceType
-from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
 from opi.utils.naming import generate_backup_run_id
 from opi.utils.secrets import DatabaseSecret, MinIOSecret
 from pydantic import BaseModel, Field
@@ -375,8 +375,7 @@ async def backup_project_deployment(
         )
 
         # Look up project data
-        project_service = get_project_service()
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
 
         if not project or not project.data:
             raise HTTPException(
@@ -661,8 +660,7 @@ async def list_backup_runs(request: Request, project_name: str, deployment_name:
         logger.info(f"Listing backup runs for project: {project_name}, deployment: {deployment_name}")
 
         # Look up project data
-        project_service = get_project_service()
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
 
         if not project or not project.data:
             raise HTTPException(
@@ -813,8 +811,7 @@ async def delete_snapshot(
         logger.info(f"Delete snapshot request: {project_name}/{deployment_name}/{snapshot_id}")
 
         # Look up project data
-        project_service = get_project_service()
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
 
         if not project or not project.data:
             raise HTTPException(

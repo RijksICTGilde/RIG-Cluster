@@ -10,6 +10,8 @@ No FastAPI dependencies (Request, HTTPException, etc.) are used here.
 import logging
 from typing import Any
 
+from opi.services.project_store import get_project_store
+
 logger = logging.getLogger(__name__)
 
 
@@ -300,7 +302,6 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
     """
 
     from opi.manager.project_manager import create_project_manager
-    from opi.services.project_service import get_project_service
     from opi.utils.project_utils import validate_project_name
 
     project_name: str = payload["project_name"]
@@ -330,8 +331,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
             force_clone,
         )
 
-        project_service = get_project_service()
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
 
         if not project:
             error_msg = f"Project '{project_name}' not found in project registry"
@@ -441,7 +441,6 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
     """
 
     from opi.manager.project_manager import create_project_manager
-    from opi.services.project_service import get_project_service
     from opi.utils.project_utils import validate_project_name
 
     project_name: str = payload["project_name"]
@@ -461,8 +460,12 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
         lookup_task = progress.add_task("Looking up project")
         logger.info("Project refresh request for: %s (force_clone=%s)", project_name, force_clone)
 
-        project_service = get_project_service()
-        project = project_service.get_project(project_name)
+        # Pick up anything committed outside ZAD before reprocessing, so "refresh"
+        # actually means "use what is in git right now". Costs one ls-remote when
+        # nothing changed; a fetch and a targeted re-read when it did.
+        await get_project_store().reconcile()
+
+        project = get_project_store().get(project_name)
 
         if not project:
             error_msg = f"Project '{project_name}' not found in project registry"

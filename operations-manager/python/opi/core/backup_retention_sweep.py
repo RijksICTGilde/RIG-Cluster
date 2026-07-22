@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING
 
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
+from opi.services.project_store import get_project_store
 
 if TYPE_CHECKING:
     from opi.manager.backup.base import SnapshotInfo
@@ -123,7 +124,6 @@ class BackupRetentionSweep:
 
     async def run(self) -> None:
         """Run one sweep over all projects' backup repositories."""
-        from opi.services.project_service import get_project_service
 
         dry_run = settings.BACKUP_SWEEP_DRY_RUN
         cutoff = datetime.now(UTC) - timedelta(days=settings.BACKUP_ORPHAN_RETENTION_DAYS)
@@ -134,9 +134,9 @@ class BackupRetentionSweep:
             dry_run,
         )
 
-        projects = get_project_service().get_all_projects()
+        projects = get_project_store().get_all()
         total_deleted = 0
-        for project in projects.values():
+        for project in projects:
             if not project.data:
                 continue
             project_name = project.data.get("name", "")

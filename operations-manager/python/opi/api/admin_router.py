@@ -19,6 +19,7 @@ from opi.api.endpoint_util import validate_admin_api_key
 from opi.core.config import settings
 from opi.core.database_pools import get_database_pool
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
+from opi.services.project_store import get_project_store
 
 logger = logging.getLogger(__name__)
 
@@ -132,14 +133,12 @@ async def trigger_reconciliation(
           -H "X-API-Key: your-admin-api-key"
     """
     from opi.jobs.reconciliation import reconcile
-    from opi.services.project_service import get_project_service
 
     pool = get_database_pool("main")
-    project_service = get_project_service()
 
     # Build project YAML list from all loaded projects
-    all_projects = project_service.get_all_projects()
-    project_yamls: list[dict[str, Any]] = [p.data for p in all_projects.values() if p.data]
+    all_projects = get_project_store().get_all()
+    project_yamls: list[dict[str, Any]] = [p.data for p in all_projects if p.data]
 
     results = await reconcile(
         pool=pool,
@@ -205,11 +204,10 @@ async def orphan_sweep_report(request: Request) -> JSONResponse:
           -H "X-API-Key: your-admin-api-key"
     """
     from opi.jobs.service_orphan_sweep import sweep
-    from opi.services.project_service import get_project_service
 
     pool = get_database_pool("main")
-    all_projects = get_project_service().get_all_projects()
-    project_yamls: list[dict[str, Any]] = [p.data for p in all_projects.values() if p.data]
+    all_projects = get_project_store().get_all()
+    project_yamls: list[dict[str, Any]] = [p.data for p in all_projects if p.data]
 
     report = await sweep(pool, project_yamls, cluster=settings.CLUSTER_MANAGER)
     return JSONResponse(content=report, status_code=200)
@@ -236,7 +234,6 @@ async def confirm_orphans(request: Request) -> JSONResponse:
           -d '{"items": [{"type": "postgresql_database", "name": "regel_k4c_pr104"}]}'
     """
     from opi.jobs.service_orphan_sweep import CONFIRMABLE, sweep
-    from opi.services.project_service import get_project_service
 
     body = await request.json()
     items = body.get("items")
@@ -244,8 +241,8 @@ async def confirm_orphans(request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail="Body must contain a non-empty 'items' list")
 
     pool = get_database_pool("main")
-    all_projects = get_project_service().get_all_projects()
-    project_yamls: list[dict[str, Any]] = [p.data for p in all_projects.values() if p.data]
+    all_projects = get_project_store().get_all()
+    project_yamls: list[dict[str, Any]] = [p.data for p in all_projects if p.data]
     cluster = settings.CLUSTER_MANAGER
 
     report = await sweep(pool, project_yamls, cluster=cluster)

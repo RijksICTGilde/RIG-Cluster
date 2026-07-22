@@ -43,6 +43,7 @@ from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.rrule_utils import parse_rrule
+from opi.services.project_store import get_project_store
 
 if TYPE_CHECKING:
     from opi.manager.backup.base import SnapshotInfo
@@ -212,17 +213,15 @@ class BackupScheduler:
 
     async def _check_and_schedule(self) -> None:
         """Check all projects for deployments that need backups."""
-        from opi.services.project_service import get_project_service
 
-        project_service = get_project_service()
-        projects = project_service.get_all_projects()
+        projects = get_project_store().get_all()
 
         # Per-tick cache of Kopia snapshot listings, keyed by (cluster, k8s_namespace).
         # Multiple deployments in the same project usually share a namespace, so this
         # avoids redundant Kopia list calls within a single tick.
         snapshot_cache: dict[tuple[str, str], list[SnapshotInfo] | None] = {}
 
-        for project in projects.values():
+        for project in projects:
             if not project.data:
                 continue
 

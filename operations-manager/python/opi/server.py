@@ -37,6 +37,7 @@ from opi.core.git_monitor import start_git_monitoring, stop_git_monitoring
 from opi.core.startup import run_startup_tasks
 from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
 from opi.middleware.authorization import AuthorizationMiddleware
+from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
 from opi.web.router import web_router
 
 if TYPE_CHECKING:
@@ -85,6 +86,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     # Start periodic task cleanup
     start_periodic_cleanup()
+
+    # Start the project-store fallback reconcile poll: bounds how long an
+    # out-of-band edit to zad-projects (member removed, invite key revoked by a
+    # direct push) can go unnoticed by this instance's cache.
+    start_reconcile_poll()
 
     # Start async task worker if enabled (combined mode)
     _worker_instance = None
@@ -276,6 +282,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     # Stop periodic task cleanup
     stop_periodic_cleanup()
+
+    # Stop the project-store fallback reconcile poll
+    stop_reconcile_poll()
 
     # Stop Git monitoring service
     if settings.ENABLE_GIT_MONITOR:

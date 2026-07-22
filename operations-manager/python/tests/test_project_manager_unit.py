@@ -188,34 +188,64 @@ def _valid_project_for_save() -> dict:
 
 
 class TestSaveAndCommitProjectValidation:
-    """save_and_commit_project must validate schema + structural integrity BEFORE any write/commit."""
+    """save_and_commit_project must validate schema + structural integrity BEFORE any write/commit.
+
+    The persist path now runs inside GitProjectStore, so these tests drive a real
+    store wired to a fake git connector: the validate-before-write ordering, the
+    single commit, and the cache write-through are all exercised for real rather
+    than asserted against a mock of the thing under test.
+    """
+
+    @staticmethod
+    def _store_with(git, tmp_path):
+        """A real GitProjectStore whose only fake part is the git connector."""
+        from opi.services.project_store import GitProjectStore
+
+        store = GitProjectStore(working_dir=str(tmp_path))
+
+        async def _get_connector():
+            return git
+
+        store.get_connector = _get_connector
+        return store
+
+    @staticmethod
+    def _fake_git():
+        from unittest.mock import AsyncMock
+
+        git = AsyncMock()
+        # No prior committed version: `before` is None and nothing is migrated.
+        git.show_file_at = AsyncMock(return_value=None)
+        git.get_local_commit_hash = AsyncMock(return_value="deadbeef")
+        # The store builds a commit from git objects instead of writing into a working
+        # tree, so build_commit is the thing that must (not) happen.
+        git.build_commit = AsyncMock(return_value="newcommit")
+        return git
 
     @pytest.mark.asyncio
-    async def test_schema_invalid_dict_raises_and_never_commits(self):
-        """A schema violation must abort before save_yaml_to_path and commit_and_push run."""
-        from unittest.mock import AsyncMock, patch
+    async def test_schema_invalid_dict_raises_and_never_commits(self, tmp_path):
+        """A schema violation must abort before the file write and the commit run."""
+        from unittest.mock import patch
 
         from opi.core.project_schema import ProjectSchemaError
 
         pm = ProjectManager.__new__(ProjectManager)
         pm._project_file_relative_path = "projects/valid-project.yaml"
 
-        git = AsyncMock()
+        git = self._fake_git()
         invalid = _valid_project_for_save()
         invalid["name"] = 123  # schema requires a string
 
         with (
-            patch.object(ProjectManager, "get_project_full_file_path", new=AsyncMock(return_value="/tmp/p.yaml")),
-            patch.object(ProjectManager, "get_git_connector_for_project_files", new=AsyncMock(return_value=git)),
-            patch("opi.manager.project_manager.save_yaml_to_path") as save_mock,
-            patch("opi.manager.project_manager.get_project_service") as svc_mock,
+            patch("opi.manager.project_manager.get_project_store", return_value=self._store_with(git, tmp_path)),
+            patch("opi.services.project_store.get_project_service") as svc_mock,
             pytest.raises(ProjectSchemaError),
         ):
             await pm.save_and_commit_project(invalid, "msg")
 
-        save_mock.assert_not_called()
-        git.commit_and_push.assert_not_called()
-        svc_mock.assert_not_called()
+        git.build_commit.assert_not_awaited()
+        git.push_changes.assert_not_awaited()
+        svc_mock.return_value.load_project_from_data.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_structural_dangling_reference_raises(self):
@@ -242,54 +272,82 @@ class TestSaveAndCommitProjectValidation:
             await pm._validate_structural_integrity(project)
 
     @pytest.mark.asyncio
-    async def test_valid_dict_commits_once_and_refreshes_cache(self):
+    async def test_valid_dict_commits_once_and_refreshes_cache(self, tmp_path):
         """A valid dict is written once, committed once, and refreshes the read-only cache."""
         from unittest.mock import AsyncMock, patch
 
         pm = ProjectManager.__new__(ProjectManager)
         pm._project_file_relative_path = "projects/valid-project.yaml"
 
-        git = AsyncMock()
+        git = self._fake_git()
         valid = _valid_project_for_save()
 
         with (
-            patch.object(ProjectManager, "_validate_structural_integrity", new=AsyncMock()),
-            patch.object(ProjectManager, "get_project_full_file_path", new=AsyncMock(return_value="/tmp/p.yaml")),
-            patch.object(ProjectManager, "get_git_connector_for_project_files", new=AsyncMock(return_value=git)),
-            patch("opi.manager.project_manager.save_yaml_to_path") as save_mock,
-            patch("opi.manager.project_manager.get_project_service") as svc_mock,
+            patch("opi.services.project_store.validate_project_structure", new=AsyncMock()),
+            patch("opi.manager.project_manager.get_project_store", return_value=self._store_with(git, tmp_path)),
+            patch("opi.services.project_store.get_project_service") as svc_mock,
         ):
             await pm.save_and_commit_project(valid, "Add component")
 
-        save_mock.assert_called_once()
-        git.commit_and_push.assert_awaited_once_with("Add component")
+        git.build_commit.assert_awaited_once()
+        assert git.build_commit.await_args.args[1] == "Add component"
+        git.push_changes.assert_awaited_once()
         svc_mock.return_value.load_project_from_data.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_refresh_cache_false_skips_cache_load(self):
+    async def test_validation_happens_before_the_commit_is_built(self, tmp_path):
+        """Ordering guard: nothing is committed until validation has passed.
+
+        The write and the commit are one operation now (the content goes straight into a
+        git object), so the ordering that still carries meaning is validate -> build ->
+        push: an invalid project must never reach an object, let alone the remote.
+        """
+        from unittest.mock import AsyncMock, patch
+
+        pm = ProjectManager.__new__(ProjectManager)
+        pm._project_file_relative_path = "projects/valid-project.yaml"
+
+        order: list[str] = []
+        git = self._fake_git()
+        git.build_commit = AsyncMock(side_effect=lambda *a, **k: (order.append("build"), "newcommit")[1])
+        git.push_changes = AsyncMock(side_effect=lambda *a, **k: order.append("push"))
+        valid = _valid_project_for_save()
+
+        with (
+            patch(
+                "opi.services.project_store.validate_project_structure",
+                new=AsyncMock(side_effect=lambda *a, **k: order.append("validate")),
+            ),
+            patch("opi.manager.project_manager.get_project_store", return_value=self._store_with(git, tmp_path)),
+            patch("opi.services.project_store.get_project_service"),
+        ):
+            await pm.save_and_commit_project(valid, "Add component")
+
+        assert order == ["validate", "build", "push"]
+
+    @pytest.mark.asyncio
+    async def test_refresh_cache_false_skips_cache_load(self, tmp_path):
         """refresh_cache=False still commits but does not touch the in-memory cache."""
         from unittest.mock import AsyncMock, patch
 
         pm = ProjectManager.__new__(ProjectManager)
         pm._project_file_relative_path = "projects/valid-project.yaml"
 
-        git = AsyncMock()
+        git = self._fake_git()
         valid = _valid_project_for_save()
 
         with (
-            patch.object(ProjectManager, "_validate_structural_integrity", new=AsyncMock()),
-            patch.object(ProjectManager, "get_project_full_file_path", new=AsyncMock(return_value="/tmp/p.yaml")),
-            patch.object(ProjectManager, "get_git_connector_for_project_files", new=AsyncMock(return_value=git)),
-            patch("opi.manager.project_manager.save_yaml_to_path"),
-            patch("opi.manager.project_manager.get_project_service") as svc_mock,
+            patch("opi.services.project_store.validate_project_structure", new=AsyncMock()),
+            patch("opi.manager.project_manager.get_project_store", return_value=self._store_with(git, tmp_path)),
+            patch("opi.services.project_store.get_project_service") as svc_mock,
         ):
             await pm.save_and_commit_project(valid, "Add component", refresh_cache=False)
 
-        git.commit_and_push.assert_awaited_once()
-        svc_mock.assert_not_called()
+        git.build_commit.assert_awaited_once()
+        svc_mock.return_value.load_project_from_data.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_enforce_validation_false_commits_despite_structural_failure(self):
+    async def test_enforce_validation_false_commits_despite_structural_failure(self, tmp_path):
         """Trusted background mutators (enforce_validation=False) persist even when the
         project has pre-existing structural drift; validation runs but only warns."""
         from unittest.mock import AsyncMock, patch
@@ -299,28 +357,25 @@ class TestSaveAndCommitProjectValidation:
         pm = ProjectManager.__new__(ProjectManager)
         pm._project_file_relative_path = "projects/valid-project.yaml"
 
-        git = AsyncMock()
+        git = self._fake_git()
         valid = _valid_project_for_save()
 
         with (
-            patch.object(
-                ProjectManager,
-                "_validate_structural_integrity",
+            patch(
+                "opi.services.project_store.validate_project_structure",
                 new=AsyncMock(side_effect=ProjectIntegrityError("pre-existing drift")),
             ),
-            patch.object(ProjectManager, "get_project_full_file_path", new=AsyncMock(return_value="/tmp/p.yaml")),
-            patch.object(ProjectManager, "get_git_connector_for_project_files", new=AsyncMock(return_value=git)),
-            patch("opi.manager.project_manager.save_yaml_to_path") as save_mock,
-            patch("opi.manager.project_manager.get_project_service"),
+            patch("opi.manager.project_manager.get_project_store", return_value=self._store_with(git, tmp_path)),
+            patch("opi.services.project_store.get_project_service"),
         ):
             await pm.save_and_commit_project(valid, "auto-tune", enforce_validation=False)
 
-        save_mock.assert_called_once()
-        git.commit_and_push.assert_awaited_once_with("auto-tune")
+        git.build_commit.assert_awaited_once()
+        git.push_changes.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_enforce_validation_true_aborts_on_structural_failure(self):
-        """The default (enforce_validation=True) still fails closed: no write, no commit."""
+    async def test_enforce_validation_true_aborts_on_structural_failure(self, tmp_path):
+        """A user-driven edit that introduces drift is rejected before any write."""
         from unittest.mock import AsyncMock, patch
 
         from opi.core.project_schema import ProjectIntegrityError
@@ -328,22 +383,19 @@ class TestSaveAndCommitProjectValidation:
         pm = ProjectManager.__new__(ProjectManager)
         pm._project_file_relative_path = "projects/valid-project.yaml"
 
-        git = AsyncMock()
+        git = self._fake_git()
         valid = _valid_project_for_save()
 
         with (
-            patch.object(
-                ProjectManager,
-                "_validate_structural_integrity",
+            patch(
+                "opi.services.project_store.validate_project_structure",
                 new=AsyncMock(side_effect=ProjectIntegrityError("introduced drift")),
             ),
-            patch.object(ProjectManager, "get_project_full_file_path", new=AsyncMock(return_value="/tmp/p.yaml")),
-            patch.object(ProjectManager, "get_git_connector_for_project_files", new=AsyncMock(return_value=git)),
-            patch("opi.manager.project_manager.save_yaml_to_path") as save_mock,
-            patch("opi.manager.project_manager.get_project_service"),
+            patch("opi.manager.project_manager.get_project_store", return_value=self._store_with(git, tmp_path)),
+            patch("opi.services.project_store.get_project_service"),
             pytest.raises(ProjectIntegrityError),
         ):
             await pm.save_and_commit_project(valid, "user edit")
 
-        save_mock.assert_not_called()
-        git.commit_and_push.assert_not_awaited()
+        git.build_commit.assert_not_awaited()
+        git.push_changes.assert_not_awaited()

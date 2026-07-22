@@ -24,7 +24,7 @@ from opi.handlers.project_file_handler import (
 from opi.manager.backup import create_backup_manager
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services import CloneFromType
-from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
 from opi.utils.naming import generate_pvc_name, generate_storage_name, generate_unique_name
 
 if TYPE_CHECKING:
@@ -99,8 +99,7 @@ async def _create_deployment_from_source(
     choices for domain fields (subdomain, base-domain, domain-format) and
     clone-from are used instead of copying from source.
     """
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
+    project = get_project_store().get(project_name)
     if not project or not project.data:
         msg = f"Project '{project_name}' niet gevonden"
         raise ValueError(msg)
@@ -223,8 +222,7 @@ async def _pre_restore_pvcs(
         pvc_task_id: Parent task ID for subtask tracking
     """
     # Load project data
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
+    project = get_project_store().get(project_name)
     if not project or not project.data:
         msg = f"Project '{project_name}' niet gevonden"
         raise ValueError(msg)
@@ -376,8 +374,7 @@ async def _resolve_deployment_info(
     Raises:
         ValueError: If project/deployment not found or on wrong cluster.
     """
-    project_service = get_project_service()
-    project = project_service.get_project(project_name)
+    project = get_project_store().get(project_name)
     if not project or not project.data:
         msg = f"Project '{project_name}' niet gevonden"
         raise ValueError(msg)
@@ -470,8 +467,7 @@ async def _restore_single_resource(
     # Update project file with new generation
     new_generation = result.get("new_generation")
     if new_generation is not None:
-        project_service = get_project_service()
-        project = project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
         if project and project.data:
             # Read fresh from Git (not the read-only cache) and persist through the
             # single validated save path.

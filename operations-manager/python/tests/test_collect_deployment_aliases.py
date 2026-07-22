@@ -16,7 +16,9 @@ def _pm(component_defs: dict[str, dict]) -> ProjectManager:
     """A ProjectManager with just the three methods _collect_deployment_aliases uses."""
     pm = ProjectManager.__new__(ProjectManager)
 
-    async def get_contents() -> dict:
+    async def get_contents(*, record_base: bool = True) -> dict:
+        # record_base mirrors the real signature: projection helpers such as
+        # _collect_deployment_aliases read without recording a compare-and-swap base.
         return {"deployments": [{"name": "dep1", "components": [{"reference": n} for n in component_defs]}]}
 
     async def get_by_json_path(expr: str) -> dict:

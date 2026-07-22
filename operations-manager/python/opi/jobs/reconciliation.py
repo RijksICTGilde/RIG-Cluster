@@ -20,6 +20,7 @@ from opi.connectors.minio_mc import MinioConnector, create_minio_connector
 from opi.connectors.postgres import PostgresConnector, create_postgres_connector
 from opi.core.config import settings
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
+from opi.services.project_store import get_project_store
 from opi.utils.naming import (
     generate_backup_prefix,
     generate_bucket_name,
@@ -204,10 +205,9 @@ async def cleanup_project(
 
     # Same expected-set protection as the full reconcile: a mark whose
     # resource is back in the project YAMLs must never be purged.
-    from opi.services.project_service import get_project_service
 
-    all_projects = get_project_service().get_all_projects()
-    expected = _build_expected_resources([p.data for p in all_projects.values() if p.data])
+    all_projects = get_project_store().get_all()
+    expected = _build_expected_resources([p.data for p in all_projects if p.data])
 
     await _purge_marks(project_expired, service, pool, results, dry_run, expected=expected)
 
@@ -760,9 +760,8 @@ async def _purge_pvc(
             return
 
         from opi.manager.project_manager import ProjectManager
-        from opi.services.project_service import get_project_service
 
-        project = get_project_service().get_project(project_name)
+        project = get_project_store().get(project_name)
         if not project:
             error_msg = f"Project '{project_name}' not found - cannot purge PVC manifest '{resource_name}'"
             logger.warning(error_msg)
@@ -876,10 +875,9 @@ async def _purge_deployment_manifests(
 
         # Look up the project to get the git connector
         from opi.manager.project_manager import ProjectManager
-        from opi.services.project_service import get_project_service
         from opi.utils.naming import generate_deployment_manifest_path
 
-        project = get_project_service().get_project(project_name)
+        project = get_project_store().get(project_name)
         if not project:
             logger.warning(
                 "Project '%s' not found - cannot clean up manifests for '%s'. Removing mark.",

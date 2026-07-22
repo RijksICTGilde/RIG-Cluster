@@ -46,13 +46,23 @@
     </div>
     {% endif %}
 
+    <style>
+        #wizard-step-form .wizard-step__saving { display: none; }
+        #wizard-step-form.htmx-request .wizard-step__saving {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--rvo-space-xs);
+            color: var(--rvo-color-grijs-700);
+        }
+    </style>
     <form id="wizard-step-form"
           autocomplete="off"
           hx-ext="json-enc"
           hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
           hx-post="/forms/wizard/{{ flow_id }}/step/{{ section.section_id }}"
           hx-target="#wizard-step-content"
-          hx-swap="innerHTML">
+          hx-swap="innerHTML"
+          hx-disabled-elt="#wizard-step-form button[type='submit']">
 
         <div class="wizard-step__fields">
             {{ step_html | process_components }}
@@ -81,8 +91,13 @@
                           hx-swap="innerHTML"
                           hx-include="#wizard-step-form"
                           hx-vals='{"_goto": "review"}'
-                          hx-ext="json-enc" />
+                          hx-ext="json-enc"
+                          hx-disabled-elt="this" />
                 {% endif %}
+
+                <span class="wizard-step__saving" aria-hidden="true">
+                    <c-icon icon="refresh" size="sm" />Bezig&hellip;
+                </span>
 
                 {% if steps.is_last %}
                     {% if show_review %}

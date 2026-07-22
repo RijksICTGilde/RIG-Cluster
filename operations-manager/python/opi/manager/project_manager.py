@@ -26,9 +26,7 @@ from opi.connectors import create_argo_connector
 from opi.connectors.chisel_connector import ChiselConnector
 from opi.connectors.git import (
     GitConnector,
-    GitPushConflictError,
     create_git_connector_for_argocd,
-    create_git_connector_for_project_files,
     create_git_connector_from_repo_config,
 )
 from opi.connectors.kubectl import KubectlConnector
@@ -64,15 +62,13 @@ from opi.handlers.project_file_handler import (
     extract_service_names_from_component,
     find_attachment_data_list,
     is_image_pull_disable_reason,
-    save_project_file,
-    validate_attachment_couplings,
-    validate_attachment_references,
 )
 from opi.handlers.sops import SopsHandler
+from opi.manager.project_validation import validate_component_references, validate_project_structure
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
-from opi.services.project_service import ProjectUser, get_project_service
+from opi.services.project_store import get_project_store
 from opi.utils.age import (
     decrypt_age_content,
     decrypt_password_smart,
@@ -111,6 +107,7 @@ from opi.utils.naming import (
 )
 from opi.utils.project_utils import (
     ComponentValidationError,
+    apply_resource_limits,
     build_component_config,
     normalize_container_image,
     validate_component_paths,
@@ -130,7 +127,6 @@ from opi.utils.secrets import (
 from opi.utils.sops import encrypt_to_sops_files_or_fail
 from opi.utils.yaml_util import (
     find_value_by_jsonpath,
-    save_yaml_to_path,
 )
 
 if TYPE_CHECKING:
@@ -332,6 +328,12 @@ class DeploymentResult:
 class ProjectManager:
     """Manager for project resources and deployments."""
 
+    # Class-level default: the state get_contents() last returned, used as the
+    # compare-and-swap base on save. Declared here so instances that bypass
+    # __init__ (tests calling the unbound methods with a stand-in self) still
+    # resolve it, and so the attribute has one documented home.
+    __contents_as_read: dict[str, Any] | None = None
+
     def __init__(
         self,
         *,
@@ -339,6 +341,7 @@ class ProjectManager:
         git_connector_for_project_files: GitConnector | None = None,
     ) -> None:
         self.__has_contents = False
+        self.__contents_as_read: dict[str, Any] | None = None
         logger.debug("Initializing ProjectManager")
         self._project_file_relative_path = project_file_relative_path
         self._kubectl_connector = KubectlConnector()
@@ -444,7 +447,7 @@ class ProjectManager:
         from opi.services import ServiceType
         from opi.utils.naming import generate_postgres_superuser_secret_name
 
-        project_data = await self.get_contents()
+        project_data = await self.get_contents(record_base=False)
         project_name = project_data.get("name")
         project_services = project_data.get("services", [])
 
@@ -495,7 +498,7 @@ class ProjectManager:
         return self._database_manager
 
     async def get_name(self) -> str:
-        contents = await self.get_contents()
+        contents = await self.get_contents(record_base=False)
         return contents["name"]
 
     async def get_deployments(
@@ -524,7 +527,7 @@ class ProjectManager:
             ValueError: If a deployment declares a namespace that does not
                 match the project name. See ``enforce_namespace_pin``.
         """
-        project_data = await self.get_contents()
+        project_data = await self.get_contents(record_base=False)
 
         # Tenant-isolation guard: pin every deployment namespace to the
         # project name before anything reads it. Shared with the git-monitor
@@ -625,7 +628,7 @@ class ProjectManager:
         Returns:
             List of repository configurations
         """
-        project_data = await self.get_contents()
+        project_data = await self.get_contents(record_base=False)
         return project_data.get("repositories", [])
 
     async def get_components(self) -> list[dict[str, Any]]:
@@ -635,16 +638,19 @@ class ProjectManager:
         Returns:
             List of component configurations
         """
-        project_data = await self.get_contents()
+        project_data = await self.get_contents(record_base=False)
         return project_data.get("components", [])
 
     async def get_git_connector_for_project_files(self) -> GitConnector:
         if self.__git_connector_for_project_files is None:
-            # This connector runs the file-scoped diff (removed-component detection) in
-            # analyze_project_changes, so it needs commit history. That is now the default
-            # for project-files connectors (blobless clone); see create_git_connector_for_project_files.
-            self.__git_connector_for_project_files = await create_git_connector_for_project_files("")
-            await self.__git_connector_for_project_files.ensure_repo_cloned()
+            # Use the ProjectStore's warm, long-lived working copy instead of cloning
+            # the projects repo per request. It is cloned once per process with full
+            # history (blobless), so the file-scoped diff that detects removed
+            # components/deployments still works, but an edit no longer pays for a
+            # clone. The store owns this connector: we must never close it (close()
+            # rmtree's the working directory), hence owns=False below.
+            self.__git_connector_for_project_files = await get_project_store().get_connector()
+            self.__owns_git_connector_for_project_files = False
         return self.__git_connector_for_project_files
 
     async def set_git_connector_for_project_files(self, git_connector: GitConnector) -> None:
@@ -996,7 +1002,7 @@ class ProjectManager:
         logger.debug(f"Collecting aliases for deployment: {deployment_name}")
 
         # Get project data
-        project_data = await self.get_contents()
+        project_data = await self.get_contents(record_base=False)
 
         # Find the deployment in project data
         deployments = project_data.get("deployments", [])
@@ -1144,7 +1150,7 @@ class ProjectManager:
             Keycloak config entry with host/realm/username/password or None if not found
         """
 
-        project_data = await self.get_contents()
+        project_data = await self.get_contents(record_base=False)
         keycloak_list = project_data.get("config", {}).get("keycloak", [])
         if not keycloak_list:
             return None
@@ -1313,123 +1319,28 @@ class ProjectManager:
         current_cluster_deployments = await self.get_deployments(cluster_filter=True)
         return bool(current_cluster_deployments)
 
-    async def get_project_full_file_path(self):
-        if self._project_file_relative_path is None:
-            raise ValueError("Project file relative path is not set")
-        git_connector_for_project_files = await self.get_git_connector_for_project_files()
-        git_working_dir = await git_connector_for_project_files.get_working_dir()
-        return os.path.join(git_working_dir, str(self._project_file_relative_path))
+    # get_project_full_file_path() was removed with its last caller. It handed out a
+    # path into the shared warm working copy, and reading that path raced
+    # ProjectStore.reconcile(), which does `reset --hard` + `clean -fd` on the same
+    # directory under a lock this code never held. Change detection now reads the
+    # committed object via git show, which cannot tear.
 
-    async def save_project_data(self) -> None:
-        project_full_file_path = await self.get_project_full_file_path()
-        save_yaml_to_path(project_full_file_path, await self.get_contents())
+    # save_project_data() was removed deliberately. It wrote the project file straight
+    # into the shared warm working copy without committing, leaving the change to be
+    # picked up by whichever unrelated operation ran `git add -A` next -- or discarded by
+    # a concurrent reconcile before that happened, after which the eventual commit found
+    # nothing to commit and reported success anyway. Use save_and_commit_project(), which
+    # writes and commits as one locked, validated operation.
 
     async def _validate_structural_integrity(self, project_data: dict[str, Any]) -> None:
         """Validate cross-field structural integrity of a complete project dict.
 
-        Runs the reference/uniqueness/path/root/domain checks that were previously
-        scattered across add_component, add_component_to_deployment and
-        upsert_deployment, against the final merged dict so they hold no matter
-        which caller produced it. Meant to run AFTER json-schema validation and
-        BEFORE any write or commit. Raises ProjectIntegrityError on the first
-        violation; fails closed.
+        Delegates to opi.manager.project_validation, which holds the single
+        implementation so ProjectManager and ProjectStore run exactly the same
+        checks on the final state. Meant to run AFTER json-schema validation and
+        BEFORE any write or commit. Raises ProjectIntegrityError; fails closed.
         """
-        project_name = project_data.get("name", "(onbekend)")
-        components = project_data.get("components", []) or []
-        deployments = project_data.get("deployments", []) or []
-
-        # Component names unique
-        seen_components: set[str] = set()
-        for comp in components:
-            if not isinstance(comp, dict):
-                continue
-            cname = comp.get("name")
-            if cname in seen_components:
-                raise ProjectIntegrityError(f"Project '{project_name}': component '{cname}' is meervoudig gedefinieerd")
-            seen_components.add(cname)
-
-        project_service_names = set(
-            ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", []))
-        )
-        component_by_name = {c.get("name"): c for c in components if isinstance(c, dict)}
-
-        # Component service references resolve to a project-level service
-        for comp in components:
-            if not isinstance(comp, dict):
-                continue
-            comp_service_names = ServiceAdapter.extract_service_names_from_project_services(comp.get("services", []))
-            invalid_services = [s for s in comp_service_names if s not in project_service_names]
-            if invalid_services:
-                raise ProjectIntegrityError(
-                    f"Project '{project_name}': component '{comp.get('name')}' verwijst naar services die niet op "
-                    f"projectniveau bestaan: {invalid_services}"
-                )
-
-        # Deployment names unique
-        seen_deployments: set[str] = set()
-        for index, dep in enumerate(deployments):
-            if not isinstance(dep, dict):
-                continue
-            dep_name = dep.get("name")
-            if dep_name in seen_deployments:
-                raise ProjectIntegrityError(
-                    f"Project '{project_name}': deployment '{dep_name}' is meervoudig gedefinieerd"
-                )
-            seen_deployments.add(dep_name)
-
-            refs = dep.get("components", []) or []
-            domain_mode = dep.get("domain-mode", "component-specific")
-
-            # All component references resolve to a defined component
-            reference_result = self._validate_component_references(project_data, refs, "deployment")
-            if not reference_result["success"]:
-                raise ProjectIntegrityError(reference_result["error"])
-
-            # Ingress path uniqueness within the deployment
-            paths = []
-            for ref in refs:
-                ref_name = ref.get("reference") if isinstance(ref, dict) else None
-                comp = component_by_name.get(ref_name)
-                if comp:
-                    paths.append(comp.get("path", "/"))
-            try:
-                validate_component_paths(paths, domain_mode)
-            except ComponentValidationError as e:
-                raise ProjectIntegrityError(str(e)) from e
-
-            # Root component constraints
-            root_ref = dep.get("root-component")
-            if root_ref:
-                ref_names = [r.get("reference") for r in refs if isinstance(r, dict) and r.get("reference")]
-                try:
-                    validate_root_component(root_ref, ref_names, domain_mode, dep.get("domain-format"))
-                except ComponentValidationError as e:
-                    raise ProjectIntegrityError(str(e)) from e
-
-            # Hard domain-config violations. A FieldWarning (e.g. an unapproved
-            # custom domain) is non-fatal: the UI handles it via domain-request
-            # entries, so only a ValueError/FieldError is a structural rejection.
-            try:
-                await DomainConfigEnforcer(deployment_index=index).enforce(project_data, {"project_name": project_name})
-            except FieldWarning:
-                pass
-            except ValueError as e:
-                raise ProjectIntegrityError(str(e)) from e
-
-        # Attachment references must resolve to a catalog entry, so an unknown id
-        # is rejected at save time instead of failing later at deploy/resolve time.
-        attachment_errors = validate_attachment_references(project_data)
-        if attachment_errors:
-            raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(attachment_errors)}")
-
-        # Attachment couplings must be structurally valid: no reference coupled
-        # twice, no empty delivery target, no colliding path/env-var. The base
-        # component 'services' list is not covered by the JSON schema, so this is
-        # the only place a duplicate reference with an empty path is rejected
-        # before it can be committed.
-        coupling_errors = validate_attachment_couplings(project_data)
-        if coupling_errors:
-            raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(coupling_errors)}")
+        await validate_project_structure(project_data)
 
     async def save_and_commit_project(
         self,
@@ -1444,8 +1355,8 @@ class ProjectManager:
         Order (fails closed -- steps 1-2 happen before any disk write or commit):
             1. validate_project_schema       -- JSON schema, raises ProjectSchemaError
             2. _validate_structural_integrity -- refs/uniqueness/paths/domain, raises ProjectIntegrityError
-            3. save_yaml_to_path              -- canonical dumper only
-            4. commit_and_push                -- single commit + push
+            3. store.save                     -- canonical dumper, commit built from git
+                                                 objects (no working-tree write) + push
             5. load_project_from_data         -- refresh read-only cache (when refresh_cache)
 
         The input dict must already be migrated to the latest schema -- callers
@@ -1460,32 +1371,36 @@ class ProjectManager:
         leave on-disk and live state out of sync). It never introduces a
         less-validated write path: the same checks run either way.
         """
-        try:
-            validate_project_schema(project_data)
-            await self._validate_structural_integrity(project_data)
-        except (ProjectSchemaError, ProjectIntegrityError) as e:
-            if enforce_validation:
-                raise
-            logger.warning(
-                "Persisting project '%s' despite a validation failure (enforce_validation=False); "
-                "the project file has pre-existing drift that should be repaired: %s",
-                project_data.get("name", "(onbekend)"),
-                e,
-            )
+        filename = (
+            os.path.basename(self._project_file_relative_path)
+            if self._project_file_relative_path
+            else f"{project_data.get('name')}.yaml"
+        )
 
-        project_full_file_path = await self.get_project_full_file_path()
-        save_yaml_to_path(project_full_file_path, project_data)
+        # Routed through the ProjectStore so this write is serialized against every
+        # other project-file writer in the process, validated on the final state,
+        # rolled back cleanly on push failure, and written through to the cache.
+        #
+        # base is what get_contents() last handed out. It turns this into a
+        # compare-and-swap: if someone else wrote in between, the store merges and
+        # re-validates rather than silently publishing over their change. None when
+        # the caller built project_data without reading first (create), which is the
+        # one case where there is nothing to lose.
+        await get_project_store().save(
+            str(project_data.get("name")),
+            project_data,
+            message=commit_message,
+            actor="operations-manager",
+            enforce_validation=enforce_validation,
+            filename=filename,
+            refresh_cache=refresh_cache,
+            base=self.__contents_as_read,
+        )
 
-        git_connector = await self.get_git_connector_for_project_files()
-        await git_connector.commit_and_push(commit_message)
-
-        if refresh_cache:
-            filename = (
-                os.path.basename(self._project_file_relative_path)
-                if self._project_file_relative_path
-                else f"{project_data.get('name')}.yaml"
-            )
-            get_project_service().load_project_from_data(project_data, filename)
+        # This manager now knows the current state, so a second save from the same
+        # instance compares against what it just wrote instead of against the older
+        # read -- which would otherwise look like a concurrent change.
+        self.__contents_as_read = copy.deepcopy(project_data)
 
     async def mutate_and_commit_project(
         self,
@@ -1509,34 +1424,27 @@ class ProjectManager:
         deployment that another task already removed).
 
         Returns True if a commit was pushed, False if the mutation was already applied.
+
+        Delegates to ProjectStore.mutate, which is the mutation-as-function
+        primitive: it holds the per-repo lock for the whole read-modify-write, so
+        in-process writers serialize (each waiter re-reads the previous winner's
+        result) instead of racing, and only falls back to the optimistic
+        fetch/re-apply/retry loop for writes that landed from outside this process.
+        ``max_attempts`` is kept for caller compatibility; the store applies its
+        own bounded retry budget.
         """
-        for attempt in range(max_attempts):
-            if attempt > 0:
-                # Drop our failed local commit and re-sync to the winner's state.
-                git_connector = await self.get_git_connector_for_project_files()
-                await git_connector.reset_to_remote()
+        name = await self.get_name()
+        filename = os.path.basename(self._project_file_relative_path) if self._project_file_relative_path else None
 
-            current = await self.get_contents()
-            mutated = mutator(current)
-            if mutated is None:
-                logger.info("Project mutation already applied, nothing to commit: %s", commit_message)
-                return False
-
-            try:
-                await self.save_and_commit_project(mutated, commit_message, enforce_validation=enforce_validation)
-                return True
-            except GitPushConflictError:
-                if attempt < max_attempts - 1:
-                    logger.warning(
-                        "Push conflict on '%s' (attempt %d/%d); re-reading remote and re-applying",
-                        commit_message,
-                        attempt + 1,
-                        max_attempts,
-                    )
-                    continue
-                raise
-
-        return False
+        result = await get_project_store().mutate(
+            name,
+            mutator,
+            message=commit_message,
+            actor="operations-manager",
+            enforce_validation=enforce_validation,
+            filename=filename,
+        )
+        return result.committed
 
     async def check_and_create_namespaces(
         self, deployment_name: str | None = None, deployment_names: list[str] | None = None
@@ -1552,8 +1460,6 @@ class ProjectManager:
         Returns:
             True if all namespaces were checked/created successfully
         """
-
-        await self.get_project_full_file_path()
 
         project_data: dict[str, str | list | dict[str, str]] = await self.get_contents()
         logger.info(f"Checking namespaces for project: {project_data['name']}")
@@ -2459,13 +2365,12 @@ class ProjectManager:
         logger.info(f"Processing project from Git: {relative_project_file_path}")
 
         try:
-            project_full_file_path = await self.get_project_full_file_path()
             git_connector_for_project_files = await self.get_git_connector_for_project_files()
 
             # Use the file handler to analyze changes
             # TODO: change detection may turn out too difficult or unpredictable, so perhaps we should use API calls instead for partial changes
             analysis = await self._project_file_handler.analyze_project_changes(
-                git_connector_for_project_files, project_full_file_path, relative_project_file_path
+                git_connector_for_project_files, relative_project_file_path
             )
 
             current_yaml = analysis["current_yaml"]
@@ -2481,9 +2386,14 @@ class ProjectManager:
             if self._project_file_handler.was_migrated:
                 project_name = current_yaml.get("name", relative_project_file_path)
                 logger.info(f"Schema migration applied for project '{project_name}', committing changes")
-                save_project_file(project_full_file_path, current_yaml)
-                await git_connector_for_project_files.commit_and_push(
-                    f"auto-migrate {project_name} to schema v{current_yaml.get('schema-version', '?')}"
+                # Central save: one locked write+commit. The previous write-then-commit
+                # pair left the migrated file uncommitted in the shared warm copy in
+                # between, where a concurrent reconcile could discard it -- after which
+                # the commit found nothing to commit and still reported success.
+                await self.save_and_commit_project(
+                    current_yaml,
+                    f"auto-migrate {project_name} to schema v{current_yaml.get('schema-version', '?')}",
+                    enforce_validation=False,
                 )
 
             previous_yaml = analysis["previous_yaml"]
@@ -4413,6 +4323,14 @@ class ProjectManager:
                 reenable_msg = "auto-reenable: image changed for " + ", ".join(f"{d}/{c}" for d, c in reenabled)
                 await self.save_and_commit_project(project_data, reenable_msg, enforce_validation=False)
 
+            # Snapshot the compare-and-swap base for the end-of-run save. Right now it
+            # is exactly the state project_data was built on: the read above, plus the
+            # reenable save when one happened. The provisioning steps below read and
+            # even save through this same manager (Keycloak realm creation persists
+            # its generated admin credentials mid-run), and each of those moves the
+            # recorded base forward -- past project_data's lineage.
+            process_base = self.__contents_as_read
+
             # # 1.5. Create configuration handler to collect deployment info
             # config_handler = create_configuration_handler(project_name, self.project_data)
 
@@ -4514,17 +4432,36 @@ class ProjectManager:
             # Clear clones tracking after all deployments processed
             self.clear_clones_performed()
 
-            # Persist the in-memory project data before committing. The loop above
-            # set clone-from.status.completed=True, and the clone itself recorded
-            # the database generation -- both mutate project_data in memory only.
-            # Without this save those mutations never reach the file, so every
-            # reconcile re-reads completed=false / generation=None and re-clones,
-            # creating a fresh full copy each pass. Mirrors every other write flow.
-            await self.save_project_data()
-
+            # Persist the in-memory project data. The loop above set
+            # clone-from.status.completed=True, and the clone itself recorded the database
+            # generation -- both mutate project_data in memory only. Without this save
+            # those mutations never reach the file, so every reconcile re-reads
+            # completed=false / generation=None and re-clones, creating a fresh full copy
+            # each pass.
+            #
+            # This used to be save_project_data() (a bare write into the shared warm
+            # working copy) followed by commit_and_push. That pair had a silent-loss
+            # window: the write sat uncommitted on disk across the awaits above, and a
+            # concurrent reconcile (30s TTL, triggered by any request) does
+            # `reset --hard` + `git clean -fd`, which discarded it. The subsequent
+            # commit_and_push then found nothing to commit and still reported success.
+            # Routing through the central save makes the write and the commit one
+            # atomic, locked operation.
+            #
+            # It must save project_data itself: a fresh get_contents() read is a
+            # deepcopy of the committed state and does not carry the in-memory
+            # mutations this save exists to persist. And it must compare against
+            # the base project_data was built on, not the newer one a mid-run read
+            # or save recorded: against a newer base the store sees everything
+            # committed since (the Keycloak credentials, an external edit) as
+            # deleted by us and publishes right over it. Against the true base it
+            # three-way merges our mutations with whatever landed in between.
+            self.__contents_as_read = process_base
             scope = f" (deployment: {deployment_name})" if deployment_name else ""
-            await (await self.get_git_connector_for_project_files()).commit_and_push(
-                f"Process project {project_name}{scope}"
+            await self.save_and_commit_project(
+                project_data,
+                f"Process project {project_name}{scope}",
+                enforce_validation=False,
             )
 
             await self._argo_manager.create_argocd_resources(deployment_names=targets)
@@ -4534,36 +4471,14 @@ class ProjectManager:
                 if deployment.get("cluster") == settings.CLUSTER_MANAGER:
                     await self._bootstrap_manager.execute_bootstrap_for_deployment(project_data, deployment)
 
-            # Register the project with the original (encrypted) data.
-            # The web UI does its own decryption for display via deepcopy.
-            api_key = await self.get_api_key()
-            project_name = await self.get_name()
-            project_service = get_project_service()
-            filename = (
-                os.path.basename(self._project_file_relative_path)
-                if self._project_file_relative_path
-                else f"{project_name}.yaml"
-            )
-
-            project_data_with_configs = await self.get_contents()
-
-            # Extract users from project data
-            users_data = project_data_with_configs.get("users", [])
-            users = []
-            if users_data and isinstance(users_data, list):
-                users.extend(
-                    ProjectUser(email=user_data["email"], role=user_data["role"])
-                    for user_data in users_data
-                    if isinstance(user_data, dict) and "email" in user_data and "role" in user_data
-                )
-
-            project_service.register(
-                project_name,
-                api_key,
-                filename,
-                users=users or None,
-                data=project_data_with_configs,
-            )
+            # The read cache is not touched here. save_and_commit_project above already
+            # wrote through to it, from what actually landed in git -- which is the only
+            # version readers may see. Registering again from in-memory state would let
+            # the cache drift ahead of the repository.
+            #
+            # If a step between the save and this point ever starts mutating project_data
+            # (the bootstrap actions above do not today), that mutation must be persisted
+            # with save_and_commit_project as well, not pushed into the cache directly.
 
             if progress_manager and creation_task:
                 self.get_progress_manager().complete_task(creation_task)
@@ -6319,14 +6234,47 @@ class ProjectManager:
 
         return result
 
-    async def get_contents(self) -> dict[str, Any]:
+    async def get_contents(self, *, record_base: bool = True) -> dict[str, Any]:
         """
         Convenience method to get the contents of the project file.
+
+        :param record_base: whether this read becomes the compare-and-swap base for a
+            later save. True for a caller that is going to mutate and save what it
+            gets back; False for an internal projection that reads the file, takes one
+            value out of it and discards the rest.
         :return: Contents of the project file
         """
-        full_path = await self.get_project_full_file_path()
+        # Read through the store, not off the working copy. Same committed state and
+        # the same schema migration, but ProjectManager no longer needs a working
+        # directory of its own -- which is what let callers read and write around the
+        # store in the first place.
         self.__has_contents = True
-        return await self._project_file_handler.read_project_file(full_path)
+        if self._project_file_relative_path is None:
+            raise ValueError("Project file relative path is not set")
+        data = await get_project_store().read_path(str(self._project_file_relative_path))
+        if data is None:
+            raise ValueError(f"Project file not found: {self._project_file_relative_path}")
+
+        # Remember what was read so save_and_commit_project() can hand it to the store
+        # as the compare-and-swap base. Nearly every write goes read-here/write-later
+        # through this one class, so recording it here covers those call sites without
+        # touching any of them. A copy, because callers mutate the dict they get back.
+        #
+        # record_base=False exists because this method is not called only by the caller
+        # that saves. Projection helpers (get_name, get_deployments, ...) read the file
+        # too, and they run BETWEEN a caller's read and its save -- in almost every
+        # write method, on the very next line:
+        #
+        #     project_data = await self.get_contents()   # the dict we will save
+        #     project_name = await self.get_name()       # reads the file again
+        #
+        # Were that second read to record as well, the base would end up NEWER than the
+        # state project_data was built on. The store would then re-apply our change
+        # against the newer base and *revert* the concurrent write instead of merging
+        # with it -- and the result validates fine, so nothing downstream catches it.
+        if record_base:
+            self.__contents_as_read = copy.deepcopy(data)
+        return data
 
     async def get_decrypted_view(self) -> dict[str, Any]:
         """
@@ -6336,7 +6284,7 @@ class ProjectManager:
         """
         import copy
 
-        project_data = await self.get_contents()
+        project_data = await self.get_contents(record_base=False)
         view = copy.deepcopy(project_data)
 
         try:
@@ -6383,7 +6331,7 @@ class ProjectManager:
         Returns:
             The value found at the JSONPath, or None if not found
         """
-        project_data = await self.get_contents()
+        project_data = await self.get_contents(record_base=False)
 
         try:
             jsonpath_expr = jsonpath_parse(json_path)
@@ -6403,7 +6351,7 @@ class ProjectManager:
         encrypted_api_key = await self._get_by_json_path("$.config.api-key")
         if not encrypted_api_key:
             raise ValueError(f"No api key found in project config for {project_name}")
-        private_key = await get_decoded_project_private_key(await self.get_contents())
+        private_key = await get_decoded_project_private_key(await self.get_contents(record_base=False))
         decrypted_api_key = await decrypt_age_content(str(encrypted_api_key), private_key)
         logger.debug(f"Successfully decrypted API key for project: {project_name}")
         return decrypted_api_key
@@ -7068,10 +7016,7 @@ class ProjectManager:
 
             if cpu_limit is not None or memory_limit is not None:
                 resources = component.setdefault("resources", {})
-                if cpu_limit is not None:
-                    resources["cpu"] = cpu_limit
-                if memory_limit is not None:
-                    resources["memory"] = memory_limit
+                apply_resource_limits(resources, cpu_limit=cpu_limit, memory_limit=memory_limit)
 
             await self.save_and_commit_project(project_data, f"Update component '{name}' in project '{project_name}'")
 
@@ -7587,25 +7532,7 @@ class ProjectManager:
         Returns:
             Dict with validation result: {"success": bool, "error": str | None, "invalid_references": list | None}
         """
-        project_components = project_data.get("components", [])
-        component_names = {comp.get("name") for comp in project_components}
-        invalid_references = []
-
-        for component in components:
-            # Handle both ComponentReference objects and dict format
-            reference = getattr(component, "reference", None) or component.get("reference")
-
-            if reference not in component_names:
-                invalid_references.append(reference)
-
-        if invalid_references:
-            available_components = list(component_names) if component_names else ["none"]
-            project_name = project_data.get("name", "unknown")
-            error_msg = f"Invalid component references in {context} for project '{project_name}': {invalid_references}. Available components: {available_components}"
-            logger.error(error_msg)
-            return {"success": False, "error": error_msg, "invalid_references": invalid_references}
-
-        return {"success": True, "error": None, "invalid_references": None}
+        return validate_component_references(project_data, components, context)
 
     async def update_project_field_by_path(
         self, project_name: str, json_path: str, new_value: Any, commit_message: str

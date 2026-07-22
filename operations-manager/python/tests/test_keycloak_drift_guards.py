@@ -57,7 +57,6 @@ class TestSetupProjectRealmDriftGuard:
     async def test_raises_when_admin_user_already_exists(self) -> None:
         project_manager = MagicMock()
         project_manager.get_contents = AsyncMock(return_value={})
-        project_manager.save_project_data = AsyncMock()
 
         manager = KeycloakManager(project_manager)
 
@@ -82,8 +81,6 @@ class TestSetupProjectRealmDriftGuard:
 
             gen_pw.assert_not_called()
             enc.assert_not_called()
-
-        project_manager.save_project_data.assert_not_called()
 
 
 class TestSetupProjectRealmImmediatePersist:

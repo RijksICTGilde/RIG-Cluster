@@ -57,7 +57,7 @@ from opi.manager.run_support import (
     parse_expires,
     resolve_image,
 )
-from opi.services.project_service import get_project_service
+from opi.services.project_store import get_project_store
 from opi.services.runs_service import RunKind, RunStatus, get_runs_service
 from opi.utils.naming import (
     generate_db_console_client_id,
@@ -149,7 +149,6 @@ class DbConsoleManager:
 
     def __init__(self) -> None:
         self._kubectl = create_kubectl_connector()
-        self._project_service = get_project_service()
 
     # ------------------------------------------------------------------ helpers
 
@@ -221,7 +220,7 @@ class DbConsoleManager:
         Raises DbConsoleError on validation problems so the start click gets
         immediate feedback. The slow provisioning runs in provision().
         """
-        project = self._project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
         if not project or not project.data:
             raise DbConsoleError(f"Project '{project_name}' not found")
 
@@ -351,7 +350,7 @@ class DbConsoleManager:
         opened_by: str,
     ) -> None:
         """Render + apply the console bundle (the slow part). Raises on failure."""
-        project = self._project_service.get_project(project_name)
+        project = get_project_store().get(project_name)
         deployment = find_deployment(project.data, deployment_name) if project and project.data else None
         if project is None or deployment is None:
             raise DbConsoleError("Project of deployment niet meer gevonden.")
