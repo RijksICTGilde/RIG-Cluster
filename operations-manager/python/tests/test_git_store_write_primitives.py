@@ -49,7 +49,9 @@ def _make_repo(tmp_path: Path) -> Path:
     """A repo with one commit containing two project files."""
     repo = tmp_path / "repo"
     (repo / "projects").mkdir(parents=True)
-    _git(repo, "init", "-q")
+    # Pin the branch: the connector writes refs/heads/main, so a repo on the
+    # machine's default branch name would leave HEAD pointing elsewhere.
+    _git(repo, "init", "-q", "-b", "main")
     (repo / "projects" / "alpha.yaml").write_text("name: alpha\n")
     (repo / "projects" / "bravo.yaml").write_text("name: bravo\n")
     _git(repo, "add", "-A")
