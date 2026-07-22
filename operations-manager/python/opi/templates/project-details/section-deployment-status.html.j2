@@ -13,7 +13,7 @@
             {% for deployment in project.deployments | sort(attribute='name') %}
             <div hx-get="/projects/details/{{ project.name }}/argocd-status/{{ deployment.name }}?prefix={{ deployment.name }}"
                  hx-trigger="load" hx-swap="innerHTML">
-                <p class="rvo-text--subtle">ArgoCD status laden...</p>
+                {% include "project-details/_argocd-status-skeleton.html.j2" %}
             </div>
             {% endfor %}
         </c-grid>
