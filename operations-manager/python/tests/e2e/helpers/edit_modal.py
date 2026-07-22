@@ -64,6 +64,31 @@ class EditModalHelper:
         submit_btn = self.page.locator("#modal-wizard-form button[type='submit']")
         self._click_and_wait(submit_btn)
 
+    def submit_step_expect_progress(self, timeout: float | None = None) -> None:
+        """Submit a process_project step and wait for the progress panel to appear.
+
+        These steps return a progress panel that polls every 2s (hx-trigger
+        "every 2s"), so the page never reaches network-idle - the swap wait used
+        by submit_step() would hang. Wait for the panel element instead.
+        """
+        submit_btn = self.page.locator("#modal-wizard-form button[type='submit']")
+        submit_btn.click()
+        self.page.locator(".edit-progress-view").wait_for(state="visible", timeout=timeout or self.action_timeout_ms)
+
+    def fill_codemirror_kv(self, field_name: str, text: str) -> None:
+        """Set a CodeMirror-backed key-value textarea (data-cm-kv).
+
+        The textarea is hidden and CodeMirror's contenteditable (.cm-content) is
+        the real editor, so Playwright's fill() on the textarea does nothing.
+        Type into the CodeMirror content of the editor wrapping this field.
+        """
+        editor = self.page.locator(f".kv-editor:has(textarea[name='{field_name}']) .cm-content")
+        editor.wait_for(state="visible", timeout=self.action_timeout_ms)
+        editor.click()
+        self.page.keyboard.press("ControlOrMeta+A")
+        self.page.keyboard.press("Delete")
+        self.page.keyboard.type(text)
+
     def has_validation_errors(self) -> bool:
         """Check if the current step shows validation errors."""
         errors = self.page.locator("[invalid], c-alert[kind='error'], .rvo-form-field__error")

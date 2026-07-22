@@ -303,8 +303,9 @@ def _set_env_vars_via_ui(page: Page, base_url: str, project_name: str, component
     """Set a component's user env vars through the components modal (process_project)."""
     modal = _open_components_modal(page, base_url, project_name)
     index = _component_index_in_modal(page, component_name)
-    modal.fill_field(f"components[{index}]/user-env-vars", env_text)
-    modal.submit_step()
+    # The env-vars field is a CodeMirror editor overlaying a hidden textarea.
+    modal.fill_codemirror_kv(f"components[{index}]/user-env-vars", env_text)
+    modal.submit_step_expect_progress()
     _await_progress(modal, project_name)
     modal.close_modal()
 
@@ -314,7 +315,7 @@ def _remove_component_via_ui(page: Page, base_url: str, project_name: str, compo
     modal = _open_components_modal(page, base_url, project_name)
     index = _component_index_in_modal(page, component_name)
     modal.sequence_remove("components", index)
-    modal.submit_step()
+    modal.submit_step_expect_progress()
     _await_progress(modal, project_name)
     modal.close_modal()
 
