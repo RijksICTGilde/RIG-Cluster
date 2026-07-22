@@ -26,10 +26,9 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
        by the wizard with editables and generators).  YAML generation is
        skipped.
     """
-    from opi.connectors.git import GitConnector
-    from opi.core.config import settings
     from opi.core.simple_background import _monitor_argocd_and_deployment
     from opi.manager.project_manager import ProjectManager
+    from opi.services.project_store import get_project_store
     from opi.utils.project_utils import generate_self_service_project_yaml, validate_project_name
 
     start_time = time.time()
@@ -102,14 +101,6 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     try:
         from opi.utils.yaml_util import load_yaml_from_string
 
-        git_connector_for_project_files = GitConnector(
-            repo_url=settings.GIT_PROJECTS_SERVER_URL,
-            username=settings.GIT_PROJECTS_SERVER_USERNAME,
-            password=settings.GIT_PROJECTS_SERVER_PASSWORD,
-            branch=settings.GIT_PROJECTS_SERVER_BRANCH,
-            repo_path=settings.GIT_PROJECTS_SERVER_REPO_PATH,
-        )
-
         project_file_path = f"projects/{project_name}.yaml"
         commit_message = (
             f"Create project {project_name}"
@@ -122,8 +113,14 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
         # over their project on the next reload. Edit/update flows that
         # reuse this task type (modal-edit, component delete) MUST set
         # is_new_project=False so legitimate overwrites still work.
+        # Asked of the store, not of a private clone: the store owns the projects
+        # repo, and reconcile() first costs one ls-remote (~60ms) when nothing
+        # changed, so a project created by another cluster is still seen.
+        store = get_project_store()
         is_new_project = payload.get("is_new_project", False)
-        if is_new_project and await git_connector_for_project_files.file_exists(project_file_path):
+        if is_new_project:
+            await store.reconcile()
+        if is_new_project and await store.read_path(project_file_path) is not None:
             error_msg = (
                 f"Project '{project_name}' bestaat al. "
                 f"Kies een andere projectnaam; een bestaand project kan niet "
@@ -143,10 +140,10 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
         # Persist through the single validated save path: schema + structural
         # integrity validation, canonical dumper, commit + push, and cache
         # refresh in one shot. Replaces the previous unvalidated direct commit.
-        project_manager = ProjectManager(
-            project_file_relative_path=project_file_path,
-            git_connector_for_project_files=git_connector_for_project_files,
-        )
+        # No connector injected on purpose. Injecting one makes ProjectManager skip
+        # the store's warm copy (see get_git_connector_for_project_files), so the
+        # processing step below would read a clone taken before this very write.
+        project_manager = ProjectManager(project_file_relative_path=project_file_path)
         await project_manager.save_and_commit_project(project_data_dict, commit_message)
         logger.info("Project file created and pushed at %s", project_file_path)
         progress.complete_task(git_task)
