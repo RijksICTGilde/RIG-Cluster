@@ -30,6 +30,7 @@ class PublishOnWebProvider(ServiceProvider):
 
 class KeycloakProvider(ServiceProvider):
     service_type = ServiceType.KEYCLOAK
+    cleanup_manager_key = "keycloak"
     config_model = KeycloakConfig
     config_schema_version = "1.0"
     config_section_id = "keycloak-config"
@@ -56,6 +57,7 @@ class MetricsScraperProvider(ServiceProvider):
 
 class PersistentStorageProvider(ServiceProvider):
     service_type = ServiceType.PERSISTENT_STORAGE
+    cleanup_manager_key = "pvc"
     config_model = StorageConfig
     config_schema_version = "1.0"
 
@@ -68,18 +70,18 @@ class TempStorageProvider(ServiceProvider):
 
 class PostgresqlDatabaseProvider(ServiceProvider):
     service_type = ServiceType.POSTGRESQL_DATABASE
+    cleanup_manager_key = "database"
     provision_order = 10
 
     async def provision(self, ctx: ProvisionContext) -> None:
         # database_manager handles both the shared and namespace postgres variants in
         # one call, so only this provider provisions (namespace-postgres does not).
-        await ctx.database_manager.create_resources_for_deployment(
-            ctx.project_data, ctx.deployment, ctx.force_clone
-        )
+        await ctx.database_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment, ctx.force_clone)
 
 
 class NamespacePostgresqlDatabaseProvider(ServiceProvider):
     service_type = ServiceType.NAMESPACE_POSTGRESQL_DATABASE
+    cleanup_manager_key = "database"
     config_model = NamespacePostgresConfig
     config_schema_version = "1.0"
     config_section_id = "postgresql-config"
@@ -88,6 +90,7 @@ class NamespacePostgresqlDatabaseProvider(ServiceProvider):
 
 class MinioStorageProvider(ServiceProvider):
     service_type = ServiceType.MINIO_STORAGE
+    cleanup_manager_key = "minio"
     provision_order = 20
 
     async def provision(self, ctx: ProvisionContext) -> None:
@@ -96,6 +99,7 @@ class MinioStorageProvider(ServiceProvider):
 
 class RedisProvider(ServiceProvider):
     service_type = ServiceType.REDIS
+    cleanup_manager_key = "redis"
     provision_order = 40
 
     async def provision(self, ctx: ProvisionContext) -> None:
@@ -105,6 +109,7 @@ class RedisProvider(ServiceProvider):
 
 class NamespaceRedisProvider(ServiceProvider):
     service_type = ServiceType.NAMESPACE_REDIS
+    cleanup_manager_key = "redis"
 
 
 class PlatformProvider(ServiceProvider):
