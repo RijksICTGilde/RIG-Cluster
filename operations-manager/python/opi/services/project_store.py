@@ -676,15 +676,31 @@ class GitProjectStore(ProjectStore):
         The push is the durability ack: nothing is reflected in the cache until it
         succeeds.
         """
-        logger.debug("Persisting %s for actor=%s: %s", relative_path, actor, message)
         started = time.monotonic()
-        ref = await self._commit_and_publish(connector, {relative_path: dump_yaml_to_string(data)}, message)
+        ref, committed = await self._commit_and_publish(connector, {relative_path: dump_yaml_to_string(data)}, message)
         elapsed = time.monotonic() - started
+
+        # Say which of the two happened. A save whose result is byte-identical to what
+        # is already committed produces no commit, which is correct but indistinguishable
+        # in the log from a real write except by the absence of a store-push line next to
+        # it. Callers save unconditionally (they cannot know whether one of the managers
+        # mutated project_data in memory), so no-ops are normal and frequent -- naming
+        # them, with the message that was attempted, is what makes that legible.
+        outcome = f"committed {ref[:8]}" if committed else "no change"
         log = logger.warning if elapsed >= _PERSIST_WARN_SECONDS else logger.info
-        log("store-persist %s: commit+push took %.2fs (actor=%s)", relative_path, elapsed, actor)
+        log(
+            "store-persist %s: %s in %.2fs (actor=%s) -- %s",
+            relative_path,
+            outcome,
+            elapsed,
+            actor,
+            message,
+        )
         return ref
 
-    async def _commit_and_publish(self, connector: GitConnector, changes: dict[str, str | None], message: str) -> str:
+    async def _commit_and_publish(
+        self, connector: GitConnector, changes: dict[str, str | None], message: str
+    ) -> tuple[str, bool]:
         """Build a commit for exactly these paths, publish it, and roll back cleanly on failure.
 
         Two properties matter here, and both come from building the commit from git objects
@@ -703,7 +719,10 @@ class GitProjectStore(ProjectStore):
             message: commit message
 
         Returns:
-            The published commit ref, or the unchanged HEAD when there was nothing to commit.
+            ``(ref, committed)``: the published commit ref and True, or the unchanged HEAD
+            and False when the new content matched what was already committed. Callers use
+            the flag to report which of the two happened; deriving it by re-reading HEAD
+            would cost an extra git subprocess per save.
         """
         # Self-heal before building on top of local state. The rollback below is itself
         # an await, so a teardown that interrupts it (double cancel, loop shutdown) can
@@ -724,7 +743,7 @@ class GitProjectStore(ProjectStore):
         commit = await connector.build_commit(changes, message)
         if commit is None:
             logger.debug("Nothing to commit for %s", list(changes))
-            return old_head
+            return old_head, False
 
         await connector.set_branch_ref(commit)
         try:
@@ -739,7 +758,7 @@ class GitProjectStore(ProjectStore):
 
         # The checkout is stale now that the ref moved; keep the warm copy mirroring HEAD.
         await connector.sync_worktree_to_head()
-        return commit
+        return commit, True
 
     def _refresh_cache(self, name: str, data: dict[str, Any], filename: str) -> Project:
         """Write-through cache update. Called only after a successful push."""
