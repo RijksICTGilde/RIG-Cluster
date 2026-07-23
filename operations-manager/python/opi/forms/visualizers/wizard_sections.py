@@ -60,6 +60,8 @@ from opi.forms.visualizers.fields.services import (
 from opi.forms.visualizers.fields.team import USERS_SEQUENCE
 from opi.forms.visualizers.sections import FormSection
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.services.registry import get_provider
+from opi.services.services_enums import ServiceType
 
 
 def _extract_services(data: dict[str, Any]) -> list[str]:
@@ -356,10 +358,20 @@ AUTH_WALL_CONFIG_SECTION = FormSection(
 # Lookup for conditional sections keyed by service name
 # ---------------------------------------------------------------------------
 
+# Per-service config sections indexed by section_id, so the four service dicts can be
+# DERIVED from the provider registry (config_section_id) instead of hand-synced
+# (RC-5 Phase 3). Adding a service's config section = define it here + declare
+# config_section_id on its provider.
+_CONFIG_SECTIONS_BY_ID: dict[str, FormSection] = {
+    section.section_id: section
+    for section in (KEYCLOAK_CONFIG_SECTION, POSTGRESQL_CONFIG_SECTION, AUTH_WALL_CONFIG_SECTION)
+}
+
+# service name -> config FormSection, derived by iterating the provider registry.
 SERVICE_CONFIG_SECTIONS: dict[str, FormSection] = {
-    "keycloak": KEYCLOAK_CONFIG_SECTION,
-    "namespace-postgresql-database": POSTGRESQL_CONFIG_SECTION,
-    "authorization-wall": AUTH_WALL_CONFIG_SECTION,
+    service_type.value: _CONFIG_SECTIONS_BY_ID[provider.config_section_id]
+    for service_type in ServiceType
+    if (provider := get_provider(service_type)).config_section_id in _CONFIG_SECTIONS_BY_ID
 }
 
 # ---------------------------------------------------------------------------
@@ -459,9 +471,8 @@ EDIT_SECTIONS: dict[str, FormSection] = {
     "team-edit": TEAM_SECTION,
     "components-edit": COMPONENTS_EDIT_SECTION,
     "services-edit": SERVICES_EDIT_SECTION,
-    "keycloak-config": KEYCLOAK_CONFIG_SECTION,
-    "postgresql-config": POSTGRESQL_CONFIG_SECTION,
-    "auth-wall-config": AUTH_WALL_CONFIG_SECTION,
+    # Per-service config sections, derived from the registry (keyed by section_id).
+    **{section.section_id: section for section in SERVICE_CONFIG_SECTIONS.values()},
 }
 
 # ---------------------------------------------------------------------------
