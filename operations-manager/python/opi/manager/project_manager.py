@@ -71,6 +71,8 @@ from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, Va
 from opi.services.project import Project
 from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
 from opi.services.project_store import get_project_store
+from opi.services.provider import ProvisionContext
+from opi.services.registry import provisioning_providers
 from opi.services.services import service_entry_config, service_entry_name
 from opi.utils.age import (
     decrypt_age_content,
@@ -4448,10 +4450,21 @@ class ProjectManager:
             for deployment in deployments:
                 if deployment.get("cluster") == settings.CLUSTER_MANAGER:
                     current_deployment_name = deployment.get("name")
-                    await db_manager.create_resources_for_deployment(project_data, deployment, force_clone)
-                    await self._minio_manager.create_resources_for_deployment(project_data, deployment, force_clone)
-                    await self._keycloak_manager.create_resources_for_deployment(project_data, deployment)
-                    await self._redis_manager.create_resources_for_deployment(project_data, deployment)
+                    # RC-5 Phase 4: dispatch provisioning through the provider registry
+                    # instead of a hand-maintained sequence. Byte-identical -- the same
+                    # managers, in the same db -> minio -> keycloak -> redis order, with
+                    # the same args (managers keep their own self-guards).
+                    provision_ctx = ProvisionContext(
+                        project_data=project_data,
+                        deployment=deployment,
+                        force_clone=force_clone,
+                        database_manager=db_manager,
+                        minio_manager=self._minio_manager,
+                        keycloak_manager=self._keycloak_manager,
+                        redis_manager=self._redis_manager,
+                    )
+                    for provider in provisioning_providers():
+                        await provider.provision(provision_ctx)
 
             # Generate application manifests (including PVC) BEFORE setting clone status.
             # PVC clone relies on clone-from.status.completed being false to include dataSource.

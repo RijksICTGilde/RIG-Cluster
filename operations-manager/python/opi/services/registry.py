@@ -20,7 +20,7 @@ from opi.services.config_models.keycloak import KeycloakConfig
 from opi.services.config_models.metrics_scraper import MetricsScraperConfig
 from opi.services.config_models.namespace_postgres import NamespacePostgresConfig
 from opi.services.config_models.storage import StorageConfig
-from opi.services.provider import ServiceProvider
+from opi.services.provider import ProvisionContext, ServiceProvider
 from opi.services.services_enums import ServiceType
 
 
@@ -34,6 +34,10 @@ class KeycloakProvider(ServiceProvider):
     config_schema_version = "1.0"
     config_section_id = "keycloak-config"
     modal_flow_id = "modal-edit-keycloak-config"
+    provision_order = 30
+
+    async def provision(self, ctx: ProvisionContext) -> None:
+        await ctx.keycloak_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment)
 
 
 class AuthorizationWallProvider(ServiceProvider):
@@ -64,6 +68,14 @@ class TempStorageProvider(ServiceProvider):
 
 class PostgresqlDatabaseProvider(ServiceProvider):
     service_type = ServiceType.POSTGRESQL_DATABASE
+    provision_order = 10
+
+    async def provision(self, ctx: ProvisionContext) -> None:
+        # database_manager handles both the shared and namespace postgres variants in
+        # one call, so only this provider provisions (namespace-postgres does not).
+        await ctx.database_manager.create_resources_for_deployment(
+            ctx.project_data, ctx.deployment, ctx.force_clone
+        )
 
 
 class NamespacePostgresqlDatabaseProvider(ServiceProvider):
@@ -76,10 +88,19 @@ class NamespacePostgresqlDatabaseProvider(ServiceProvider):
 
 class MinioStorageProvider(ServiceProvider):
     service_type = ServiceType.MINIO_STORAGE
+    provision_order = 20
+
+    async def provision(self, ctx: ProvisionContext) -> None:
+        await ctx.minio_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment, ctx.force_clone)
 
 
 class RedisProvider(ServiceProvider):
     service_type = ServiceType.REDIS
+    provision_order = 40
+
+    async def provision(self, ctx: ProvisionContext) -> None:
+        # redis_manager handles both the shared and namespace redis variants.
+        await ctx.redis_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment)
 
 
 class NamespaceRedisProvider(ServiceProvider):
@@ -126,3 +147,12 @@ def get_provider(service_type: ServiceType) -> ServiceProvider:
     that from happening for any ``ServiceType``.
     """
     return SERVICE_PROVIDERS[service_type]
+
+
+def provisioning_providers() -> list[ServiceProvider]:
+    """Providers that provision deployment resources, in ``provision_order`` (RC-5
+    Phase 4). Only providers that override ``provision`` are included; the order
+    reproduces today's fixed db -> minio -> keycloak -> redis sequence.
+    """
+    overriding = [p for p in SERVICE_PROVIDERS.values() if type(p).provision is not ServiceProvider.provision]
+    return sorted(overriding, key=lambda p: p.provision_order)
