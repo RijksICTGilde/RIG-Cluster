@@ -1012,7 +1012,7 @@ class ProjectManager:
 
         # Find the deployment in project data
         deployments = project_data.get("deployments", [])
-        deployment = next((d for d in deployments if d.get("name") == deployment_name), None)
+        deployment = Project.locate(deployments, name=deployment_name)
 
         if not deployment:
             logger.warning(f"Deployment '{deployment_name}' not found in project data")
@@ -3025,7 +3025,7 @@ class ProjectManager:
         for repo_name, repo_deployments in deployments_by_repo.items():
             logger.info(f"Processing repository: {repo_name} with {len(repo_deployments)} deployments")
 
-            repo_info = next((r for r in repositories if r.get("name") == repo_name), None)
+            repo_info = Project.locate(repositories, name=repo_name)
             if not repo_info:
                 raise Exception(f"Repository configuration not found: {repo_name}")
 
@@ -3066,10 +3066,8 @@ class ProjectManager:
         project_data = await self.get_contents()
         repositories = project_data.get("repositories") or []
         repositories: list[dict[str, str]] = repositories
-        for repo in repositories:
-            if repo.get("name") == repository_name:
-                return repo.get("path", "")
-        return ""
+        repo = Project.locate(repositories, name=repository_name)
+        return repo.get("path", "") if repo else ""
 
     @staticmethod
     async def _sops_private_key_for(project_data: dict[str, Any]) -> str | None:
