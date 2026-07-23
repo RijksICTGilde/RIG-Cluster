@@ -32,12 +32,16 @@ class KeycloakProvider(ServiceProvider):
     service_type = ServiceType.KEYCLOAK
     config_model = KeycloakConfig
     config_schema_version = "1.0"
+    config_section_id = "keycloak-config"
+    modal_flow_id = "modal-edit-keycloak-config"
 
 
 class AuthorizationWallProvider(ServiceProvider):
     service_type = ServiceType.AUTHORIZATION_WALL
     config_model = AuthorizationWallConfig
     config_schema_version = "1.0"
+    config_section_id = "auth-wall-config"
+    modal_flow_id = "modal-edit-auth-wall-config"
 
 
 class MetricsScraperProvider(ServiceProvider):
@@ -66,6 +70,8 @@ class NamespacePostgresqlDatabaseProvider(ServiceProvider):
     service_type = ServiceType.NAMESPACE_POSTGRESQL_DATABASE
     config_model = NamespacePostgresConfig
     config_schema_version = "1.0"
+    config_section_id = "postgresql-config"
+    modal_flow_id = "modal-edit-postgresql-config"
 
 
 class MinioStorageProvider(ServiceProvider):
