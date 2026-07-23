@@ -12,13 +12,48 @@ and BEFORE any write or commit. Fails closed on the first violation.
 import logging
 from typing import Any
 
+from pydantic import ValidationError
+
 from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
 from opi.services import ServiceAdapter
+from opi.services.project import Project
+from opi.services.registry import get_provider
+from opi.services.services_enums import ServiceType
 from opi.utils.project_utils import ComponentValidationError, validate_component_paths, validate_root_component
 
 logger = logging.getLogger(__name__)
+
+
+def validate_service_configs(project_data: dict[str, Any]) -> None:
+    """Validate each project-level service's config against its provider's typed
+    model (RC-5 A: the per-service config-validation chokepoint).
+
+    Only services that carry a config block at project level are checked -- so a
+    bare service (no config) is skipped, and component-level configs (storage
+    mounts, metrics port/path) are validated elsewhere. Fails closed: raises
+    ProjectIntegrityError on the first invalid service config.
+    """
+    view = Project(project_data)
+    project_name = project_data.get("name", "(onbekend)")
+    for name in ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", [])):
+        raw = view.service_config(name)
+        if raw is None:
+            continue  # bare service / no project-level config to validate
+        try:
+            service_type = ServiceType(name)
+        except ValueError:
+            continue  # unknown service name -- other validation handles it
+        provider = get_provider(service_type)
+        if provider.config_model is None:
+            continue  # service takes no typed config
+        try:
+            provider.validate_config(raw)
+        except ValidationError as e:
+            raise ProjectIntegrityError(
+                f"Project '{project_name}': configuratie van service '{name}' is ongeldig: {e}"
+            ) from e
 
 
 def validate_component_references(project_data: dict, components: list, context: str = "deployment") -> dict[str, Any]:
@@ -155,3 +190,7 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
     coupling_errors = validate_attachment_couplings(project_data)
     if coupling_errors:
         raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(coupling_errors)}")
+
+    # Per-service typed config validation (RC-5 A). Runs last: the envelope and
+    # cross-field structure are valid by here, so this only judges the config values.
+    validate_service_configs(project_data)
