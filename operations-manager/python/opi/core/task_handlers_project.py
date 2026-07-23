@@ -189,6 +189,9 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
                 project_name=project_name,
                 task_progress_manager=progress,
                 monitor_task=monitor_task,
+                # Scope the wait to what this task touched. Without it another
+                # deployment's broken app blocks this one's wait indefinitely.
+                deployment_names=deployment_names or ([deployment_name] if deployment_name else None),
             )
 
             progress.complete_task(deploy_task)
