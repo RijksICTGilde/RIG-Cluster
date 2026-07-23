@@ -120,6 +120,21 @@ class MetricsScraperProvider(ServiceProvider):
     manifest_secret_class = MetricsAuthSecret
     manifest_order = 50
 
+    def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
+        # Contribute the scrape port/path as a template var so the deployment's
+        # prometheus.io annotations point at the app's real metrics endpoint. The
+        # template falls back to the application port / "/metrics" when either is None.
+        contribution = super().contribute_manifest_context(ctx)  # envFrom + secret file
+        port, path = None, None
+        for service_item in (ctx.component_def or {}).get("services", []):
+            if service_entry_name(service_item) == ServiceType.METRICS_SCRAPER.value:
+                config = service_entry_config(service_item)
+                if isinstance(config, dict):
+                    port, path = config.get("port"), config.get("path")
+                break
+        contribution.template_vars["metrics_config"] = {"port": port, "path": path}
+        return contribution
+
     def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:
         token = settings.PROMETHEUS_METRICS_AUTH_TOKEN
         if not token:
