@@ -11,7 +11,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from opi.services.provider import ProvisionContext, ServiceProvider
+from opi.services.provider import ProvisionContext, RemovalContext, ServiceProvider
 from opi.services.registry import SERVICE_PROVIDERS, get_provider, provisioning_providers
 from opi.services.services import ServiceAdapter
 from opi.services.services_enums import ServiceType
@@ -114,3 +114,94 @@ def test_default_provision_is_noop():
         await get_provider(ServiceType.PUBLISH_ON_WEB).provision(None)  # type: ignore[arg-type]
 
     asyncio.run(run())  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: generic cleanup dispatch
+# ---------------------------------------------------------------------------
+
+# Frozen copy of the old DeleteProjectManager._SERVICE_TYPE_MANAGER_ATTR map. The
+# provider registry now owns this mapping via cleanup_manager_key; this guard fails
+# if a provider's key ever drifts from the dispatch the map used to perform.
+_LEGACY_SERVICE_MANAGER_KEYS = {
+    ServiceType.POSTGRESQL_DATABASE: "database",
+    ServiceType.NAMESPACE_POSTGRESQL_DATABASE: "database",
+    ServiceType.MINIO_STORAGE: "minio",
+    ServiceType.REDIS: "redis",
+    ServiceType.NAMESPACE_REDIS: "redis",
+    ServiceType.KEYCLOAK: "keycloak",
+    ServiceType.PERSISTENT_STORAGE: "pvc",
+}
+
+
+def test_cleanup_manager_key_matches_legacy_map():
+    actual = {t: p.cleanup_manager_key for t, p in SERVICE_PROVIDERS.items() if p.cleanup_manager_key is not None}
+    assert actual == _LEGACY_SERVICE_MANAGER_KEYS
+
+
+def test_services_without_cleanup_have_no_manager_key():
+    # Anything not in the legacy map must have cleanup_manager_key None (no server-side
+    # resources), so the generic dispatch skips it exactly as the old `.get() is None`
+    # guard did.
+    for t in ServiceType:
+        if t not in _LEGACY_SERVICE_MANAGER_KEYS:
+            assert get_provider(t).cleanup_manager_key is None, t.value
+
+
+def test_handle_service_removal_delegates_to_resolved_manager():
+
+    manager = AsyncMock()
+    manager.handle_service_removal.return_value = {"errors": []}
+    resolved_keys = []
+
+    async def get_manager(key):
+        resolved_keys.append(key)
+        return manager
+
+    ctx = RemovalContext(
+        project_name="p",
+        deployment_name="d",
+        deployment_data={"name": "d"},
+        project_data={"name": "p"},
+        marked_for_deletion_service=None,
+        get_manager=get_manager,
+    )
+
+    async def run():
+        return await get_provider(ServiceType.MINIO_STORAGE).handle_service_removal(ctx)
+
+    result = asyncio.run(run())
+    assert result == {"errors": []}
+    assert resolved_keys == ["minio"]
+    manager.handle_service_removal.assert_awaited_once_with(
+        project_name="p",
+        deployment_name="d",
+        deployment_data={"name": "d"},
+        project_data={"name": "p"},
+        marked_for_deletion_service=None,
+    )
+
+
+def test_handle_service_removal_noop_without_manager_key():
+
+    called = False
+
+    async def get_manager(key):
+        nonlocal called
+        called = True
+        return None
+
+    ctx = RemovalContext(
+        project_name="p",
+        deployment_name="d",
+        deployment_data=None,
+        project_data={"name": "p"},
+        marked_for_deletion_service=None,
+        get_manager=get_manager,
+    )
+
+    async def run():
+        return await get_provider(ServiceType.PUBLISH_ON_WEB).handle_service_removal(ctx)
+
+    assert asyncio.run(run()) == {}
+    assert called is False  # a keyless service never resolves a manager

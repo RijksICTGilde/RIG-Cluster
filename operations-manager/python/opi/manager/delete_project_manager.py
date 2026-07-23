@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 
@@ -16,6 +16,8 @@ from opi.core.config import settings
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.project import Project
 from opi.services.project_store import get_project_store
+from opi.services.provider import RemovalContext
+from opi.services.registry import get_provider
 
 if TYPE_CHECKING:
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
@@ -2246,17 +2248,10 @@ class DeleteProjectManager:
         )
         return deletion_results
 
-    # -- Service-type → manager mapping -----------------------------------
-
-    _SERVICE_TYPE_MANAGER_ATTR: ClassVar[dict[ServiceType, str]] = {
-        ServiceType.POSTGRESQL_DATABASE: "database",
-        ServiceType.NAMESPACE_POSTGRESQL_DATABASE: "database",
-        ServiceType.MINIO_STORAGE: "minio",
-        ServiceType.REDIS: "redis",
-        ServiceType.NAMESPACE_REDIS: "redis",
-        ServiceType.KEYCLOAK: "keycloak",
-        ServiceType.PERSISTENT_STORAGE: "pvc",
-    }
+    # -- Manager-key → manager instance resolution ------------------------
+    # The service-type → manager-key mapping now lives on each provider as
+    # `cleanup_manager_key` (RC-5 Phase 5); this only resolves a key to its
+    # manager instance, invoked via RemovalContext.get_manager.
 
     async def _get_manager_for_service(self, manager_key: str) -> Any:
         """Resolve the manager instance for a given manager key."""
@@ -2334,8 +2329,11 @@ class DeleteProjectManager:
                 # Group related service types that share a manager
                 # (e.g., namespace-postgresql-database is handled by database manager)
                 # We only need to check once per manager per deployment
-                manager_key = self._SERVICE_TYPE_MANAGER_ATTR.get(svc_type)
-                if manager_key is None:
+                # RC-5 Phase 5: dispatch cleanup through the provider registry instead
+                # of the _SERVICE_TYPE_MANAGER_ATTR map. Byte-identical -- the provider
+                # resolves the same manager by key and delegates handle_service_removal.
+                provider = get_provider(svc_type)
+                if provider.cleanup_manager_key is None:
                     continue
 
                 was_used = file_handler.deployment_uses_service(previous_yaml, dep_name, svc_values)
@@ -2351,13 +2349,15 @@ class DeleteProjectManager:
                     results["services_removed"] += 1
 
                     try:
-                        manager = await self._get_manager_for_service(manager_key)
-                        svc_result = await manager.handle_service_removal(
-                            project_name=project_name,
-                            deployment_name=dep_name,
-                            deployment_data=prev_dep_data,
-                            project_data=previous_yaml,
-                            marked_for_deletion_service=marked_for_deletion_service,
+                        svc_result = await provider.handle_service_removal(
+                            RemovalContext(
+                                project_name=project_name,
+                                deployment_name=dep_name,
+                                deployment_data=prev_dep_data,
+                                project_data=previous_yaml,
+                                marked_for_deletion_service=marked_for_deletion_service,
+                                get_manager=self._get_manager_for_service,
+                            )
                         )
                         results["service_results"].append(svc_result)
                         if svc_result.get("errors"):
