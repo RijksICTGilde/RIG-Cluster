@@ -17,7 +17,6 @@
             {% set dep_idx = project.deployments.index(deployment) %}
             {% set dep_backup = deployment.get('backup', {}) if deployment.get('backup') is mapping else {} %}
             {% set dep_schedule = dep_backup.get('schedule', '') %}
-            {% set backups = deployment_backups.get(deployment.name, []) %}
             <div class="deployment-section" id="backups-{{ deployment.name }}"
                  {% if not cluster_loop.first_shown %}style="display: none;"{% endif %}>
             <c-layout-flow gap="md">
@@ -39,10 +38,10 @@
                     <c-layout-row gap="sm">
                         <c-button kind="secondary" size="sm" label="Backup aanmaken" showIcon="before" icon="iconen-toevoegen"
                                   @click="openEditModal('modal-backup', 'Backup aanmaken', {deployment: '{{ deployment.name }}'})" />
-                        {% if backups %}
-                        <c-button kind="secondary" size="sm" label="Herstellen" showIcon="before" icon="terug"
-                                  @click="openEditModal('modal-restore', 'Backup herstellen', {deployment: '{{ deployment.name }}'})" />
-                        {% endif %}
+                        {# Filled by the snapshot fragment (hx-swap-oob) once it knows
+                           whether there is anything to restore. Rendering it here would
+                           mean guessing, since the snapshots are fetched separately. #}
+                        <span id="restore-btn-{{ deployment.name }}"></span>
                     </c-layout-row>
                 </c-layout-flow>
 
@@ -55,130 +54,20 @@
                         <c-tag content="{{ deployment.namespace }}" />
                     </c-layout-row>
 
-                    {% if backups %}
-                    {# Group backups by backup_run_id for visual distinction #}
-                    {% set backup_runs = {} %}
-                    {% for backup in backups %}
-                        {% set run_id = backup.backup_run_id or 'unknown' %}
-                        {% if run_id not in backup_runs %}
-                            {% set _ = backup_runs.update({run_id: []}) %}
-                        {% endif %}
-                        {% set _ = backup_runs[run_id].append(backup) %}
-                    {% endfor %}
-                    {% set run_colors = ['var(--rvo-color-wit)', 'var(--rvo-color-grijs-100)'] %}
-                    <div style="overflow-x: auto;">
-                        <table class="backup-table" style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
-                            <thead>
-                                <tr style="border-bottom: 2px solid var(--rvo-color-grijs-300);">
-                                    <th>Backup Run</th>
-                                    <th>Type</th>
-                                    <th>Component</th>
-                                    <th>Storage</th>
-                                    <th>Gen</th>
-                                    <th>Timestamp</th>
-                                    <th>Grootte</th>
-                                    <th>Snapshot ID</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% set color_idx = namespace(val=0) %}
-                                {% for run_id, run_backups in backup_runs.items() | sort(reverse=true) %}
-                                {% set row_bg = run_colors[color_idx.val % 2] %}
-                                {% for backup in run_backups %}
-                                <tr style="border-bottom: 1px solid var(--rvo-color-grijs-200); background: {{ row_bg }};">
-                                    <td>
-                                        {% if run_id != 'unknown' %}
-                                            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-                                                <code style="font-family: monospace; font-size: 0.75rem; background: var(--rvo-color-hemelblauw-200); color: var(--rvo-color-donkerblauw); padding: 2px 6px; border-radius: 4px; cursor: help;" title="{{ run_backups | length }} item(s) in deze backup run">{{ run_id }}</code>
-                                                {% set trigger_val = backup.trigger or 'scheduled' %}
-                                                {% if trigger_val == 'manual' %}
-                                                    <span style="font-size: 0.7rem; padding: 1px 6px; border-radius: 4px; background: var(--rvo-color-oranje-300); color: var(--rvo-color-donkerblauw); white-space: nowrap;" title="Handmatige backup - wordt niet automatisch verwijderd">handmatig</span>
-                                                {% else %}
-                                                    <span style="font-size: 0.7rem; padding: 1px 6px; border-radius: 4px; background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700); white-space: nowrap;" title="Automatische backup - valt onder retentiebeleid">auto</span>
-                                                {% endif %}
-                                            </div>
-                                        {% else %}
-                                            <span style="color: var(--rvo-color-grijs-500); font-size: 0.75rem;">-</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if backup.resource_type == 'pvc' %}
-                                            <c-tag type="info" content="PVC" />
-                                        {% elif backup.resource_type == 'database' %}
-                                            <c-tag type="success" content="DB" />
-                                        {% elif backup.resource_type == 'bucket' %}
-                                            <c-tag type="warning" content="Bucket" />
-                                        {% else %}
-                                            <span style="color: var(--rvo-color-grijs-500); font-size: 0.75rem;">{{ backup.resource_type or '-' }}</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        <span style="display: inline-flex; align-items: center; gap: 4px;">
-                                            <c-icon icon="document-blanco" size="sm" color="grijs-600" />
-                                            {{ backup.component_name or '-' }}
-                                        </span>
-                                    </td>
-                                    <td>
-                                        {{ backup.storage_name or '-' }}
-                                    </td>
-                                    <td>
-                                        {% if backup.generation is not none %}
-                                            <span style="display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; background: var(--rvo-color-grijs-200); border-radius: 4px; font-weight: 500;">v{{ backup.generation }}</span>
-                                        {% else %}
-                                            <span style="color: var(--rvo-color-grijs-500);">-</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        <span style="color: var(--rvo-color-grijs-700);">{{ backup.timestamp | dutch_date }}</span>
-                                    </td>
-                                    <td>
-                                        {% if backup.size_bytes is not none %}
-                                            {% if backup.size_bytes == 0 %}
-                                                <span style="color: var(--rvo-color-grijs-500);">0 B (leeg)</span>
-                                            {% else %}
-                                                {% set size_mb = (backup.size_bytes / 1048576) | round(2) %}
-                                                {% if size_mb >= 1024 %}
-                                                    {{ (size_mb / 1024) | round(2) }} GB
-                                                {% elif size_mb >= 1 %}
-                                                    {{ size_mb }} MB
-                                                {% else %}
-                                                    {{ (backup.size_bytes / 1024) | round(2) }} KB
-                                                {% endif %}
-                                            {% endif %}
-                                        {% else %}
-                                            <span style="color: var(--rvo-color-grijs-500);">-</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% set tags_display = [] %}
-                                        {% if backup.tags %}
-                                            {% for key, value in backup.tags.items() %}
-                                                {% set _ = tags_display.append(key ~ ': ' ~ value) %}
-                                            {% endfor %}
-                                        {% endif %}
-                                        <code style="font-family: monospace; font-size: 0.7rem; background: var(--rvo-color-grijs-100); padding: 2px 6px; border-radius: 4px; cursor: pointer; user-select: all;" title="Click to select, PVC: {{ backup.pvc_name }}&#10;{% if backup.tags %}Tags:&#10;{{ tags_display | join('&#10;') }}{% endif %}">{{ backup.snapshot_id }}</code>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                                {% set color_idx.val = color_idx.val + 1 %}
-                                {% endfor %}
-                            </tbody>
-                        </table>
+                    <div hx-get="/projects/details/{{ project.name }}/backups/{{ deployment.name }}"
+                         hx-trigger="load" hx-swap="innerHTML">
+                        {# Same skeleton silhouette as the ArgoCD blocks, so a loading
+                           backup list reads as "loading" and not as "empty". #}
+                        <div class="argocd-skeleton" role="status" aria-label="Backups worden geladen">
+                            <div class="argocd-skeleton__row">
+                                <span class="argocd-skeleton__bone" style="width: 30%; height: 18px;"></span>
+                                <span class="argocd-skeleton__bone" style="width: 80px; height: 20px;"></span>
+                            </div>
+                            <span class="argocd-skeleton__bone" style="width: 100%; height: 14px;"></span>
+                            <span class="argocd-skeleton__bone" style="width: 100%; height: 14px;"></span>
+                            <span class="argocd-skeleton__bone" style="width: 45%; height: 14px;"></span>
+                        </div>
                     </div>
-                    <p class="rvo-text--sm rvo-text--subtle" style="margin-top: 8px;">
-                        {% set known_runs = backup_runs.keys() | reject('equalto', 'unknown') | list %}
-                        {% if known_runs | length > 0 %}
-                            {{ known_runs | length }} backup run(s), {{ backups|length }} snapshot(s) totaal
-                        {% else %}
-                            {{ backups|length }} backup(s) gevonden
-                        {% endif %}
-                    </p>
-                    {% else %}
-                    <p class="rvo-text--md rvo-text--subtle">
-                        <c-icon icon="info" size="sm" color="grijs-500" />
-                        Geen backups gevonden voor deze deployment
-                    </p>
-                    {% endif %}
                 </c-layout-flow>
             </c-card>
             </c-layout-flow>
