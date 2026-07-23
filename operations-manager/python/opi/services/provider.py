@@ -24,6 +24,7 @@ config models are wired into the read path in Phase 3.
 from __future__ import annotations
 
 from abc import ABC
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from opi.services.services import ServiceAdapter, ServiceDefinition
@@ -36,6 +37,26 @@ if TYPE_CHECKING:
 #: A service's raw config as it appears in the project file: a dict for most
 #: services, or a list for sequence configs (e.g. storage mounts).
 ServiceConfigData = dict[str, Any] | list[Any]
+
+
+@dataclass
+class ProvisionContext:
+    """Inputs a provider needs to provision one deployment's resources (RC-5 Phase 4).
+
+    Carries the *already-resolved* managers so a provider delegates to its manager
+    without importing it -- keeping provider.py free of manager imports. The managers
+    keep their own self-guards (e.g. ``_deployment_uses_postgresql``) and are
+    replay-safe, so dispatching through providers stays byte-identical to the old
+    fixed sequence.
+    """
+
+    project_data: dict[str, Any]
+    deployment: dict[str, Any]
+    force_clone: bool
+    database_manager: Any
+    minio_manager: Any
+    keycloak_manager: Any
+    redis_manager: Any
 
 
 class ServiceProvider(ABC):
@@ -89,6 +110,12 @@ class ServiceProvider(ABC):
     #: is derived from this.
     modal_flow_id: ClassVar[str | None] = None
 
+    #: Order in the generic provisioning loop (RC-5 Phase 4); lower runs first. Only
+    #: meaningful for providers that override ``provision``. The defaults on the four
+    #: provisioning providers reproduce today's fixed db -> minio -> keycloak -> redis
+    #: sequence.
+    provision_order: ClassVar[int] = 100
+
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         # A concrete provider must declare which service it is; the definition is
@@ -131,3 +158,13 @@ class ServiceProvider(ABC):
         config: ServiceConfigData = {} if raw_config is None else raw_config
         migrated = self.migrate_config(config, from_version or self.config_schema_version)
         return self.config_model.model_validate(migrated)
+
+    async def provision(self, ctx: ProvisionContext) -> None:
+        """Provision this service's deployment-level resources (RC-5 Phase 4).
+
+        Default no-op -- for services with no deployment-level provisioning (storage,
+        publish-on-web, ...). The four provisioning services override this to delegate
+        to their manager's ``create_resources_for_deployment`` (self-guarded and
+        replay-safe), so the generic loop is byte-identical to the old fixed sequence.
+        """
+        return
