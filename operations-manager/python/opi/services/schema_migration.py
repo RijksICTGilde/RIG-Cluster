@@ -14,7 +14,7 @@ from opi.services.services_enums import ServiceType
 
 logger = logging.getLogger(__name__)
 
-LATEST_SCHEMA_VERSION = 2.3
+LATEST_SCHEMA_VERSION = 2.4
 
 # NOTE: Domain restriction changes (task-1) introduced:
 # - domains.allowed-subdomains entries changed from list[str] to list[{name, status, history}]
@@ -94,6 +94,9 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
         migrated = True
 
     if version < 2.3 and _migrate_v2_2_to_v2_3(project_data):
+        migrated = True
+
+    if version < 2.4 and _migrate_v2_3_to_v2_4(project_data):
         migrated = True
 
     if migrated:
@@ -553,6 +556,48 @@ def _fixup_flat_resources(entity: dict[str, Any]) -> bool:
         del res["memory"]
         changed = True
 
+    return changed
+
+
+def _normalize_service_entry(entry: Any, id_key: str) -> Any:
+    """Convert a legacy name-as-key service entry to the uniform record form.
+
+    ``{X: {config: ...}}`` -> ``{id_key: X, config: ...}``. Bare strings and entries
+    already in record form (they carry ``name``/``reference``) are returned as-is.
+    ``id_key`` is ``"name"`` for project-level definitions, ``"reference"`` for
+    component-level references.
+    """
+    if not isinstance(entry, dict):
+        return entry
+    if "name" in entry or "reference" in entry:
+        return entry
+    keys = [key for key in entry if key not in ("config", "schema-version")]
+    if len(keys) != 1:
+        return entry
+    name = keys[0]
+    body = entry[name]
+    record: dict[str, Any] = {id_key: name}
+    if isinstance(body, dict):
+        record.update(body)  # brings config (and any legacy 'type')
+    elif body is not None:
+        record["config"] = body
+    return record
+
+
+def _migrate_v2_3_to_v2_4(project_data: dict[str, Any]) -> bool:
+    """Normalize project-level service definitions to the uniform ``{name, config}``
+    record (RC-5 A). Bare strings stay bare; already-normalized entries are untouched.
+    Component-level references are normalized in a later step.
+    """
+    services = project_data.get("services")
+    if not isinstance(services, list):
+        return False
+    changed = False
+    for i, entry in enumerate(services):
+        normalized = _normalize_service_entry(entry, "name")
+        if normalized is not entry:
+            services[i] = normalized
+            changed = True
     return changed
 
 
