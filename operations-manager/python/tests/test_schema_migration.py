@@ -778,3 +778,68 @@ class TestMigrateV2_1ToV2_2:
 
         assert was_migrated is False
         assert result["schema-version"] == 2.2
+
+
+# ---------------------------------------------------------------------------
+# v2.2 -> v2.3: relocate config.keycloak -> keycloak service config.realms (RC-5 B)
+# ---------------------------------------------------------------------------
+
+
+def _v22_with_keycloak_connections() -> dict:
+    return {
+        "schema-version": 2.2,
+        "name": "wies",
+        "services": [{"keycloak": {"config": {"template": "sso-only"}}}],
+        "config": {
+            "age-public-key": "age1x",
+            "api-key": "k",
+            "keycloak": [
+                {
+                    "host": "https://keycloak.rijksapp.nl",
+                    "realm": "wies-odcn-production",
+                    "username": "wies_odcn_production_admin",
+                    "password": "ENCRYPTED",
+                }
+            ],
+        },
+    }
+
+
+def test_v23_relocates_keycloak_connections_to_service_config():
+    out, migrated = migrate_to_latest(_v22_with_keycloak_connections())
+    assert migrated is True
+    assert out["schema-version"] == LATEST_SCHEMA_VERSION
+    # moved verbatim under the keycloak service, project-level config.keycloak gone
+    assert "keycloak" not in out["config"]
+    realms = out["services"][0]["keycloak"]["config"]["realms"]
+    assert realms == [
+        {
+            "host": "https://keycloak.rijksapp.nl",
+            "realm": "wies-odcn-production",
+            "username": "wies_odcn_production_admin",
+            "password": "ENCRYPTED",
+        }
+    ]
+    # existing keycloak config (template) preserved
+    assert out["services"][0]["keycloak"]["config"]["template"] == "sso-only"
+
+
+def test_v23_is_idempotent():
+    once, _ = migrate_to_latest(_v22_with_keycloak_connections())
+    twice, migrated_again = migrate_to_latest(copy.deepcopy(once))
+    assert migrated_again is False
+    assert twice["services"] == once["services"]
+    assert "keycloak" not in twice["config"]
+
+
+def test_v23_promotes_bare_string_keycloak_service():
+    data = {
+        "schema-version": 2.2,
+        "name": "x",
+        "services": ["keycloak"],
+        "config": {"keycloak": [{"realm": "x-prod", "host": "h", "username": "u", "password": "p"}]},
+    }
+    out, _ = migrate_to_latest(data)
+    assert out["services"] == [
+        {"keycloak": {"config": {"realms": [{"realm": "x-prod", "host": "h", "username": "u", "password": "p"}]}}}
+    ]

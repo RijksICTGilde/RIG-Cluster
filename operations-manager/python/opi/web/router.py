@@ -17,6 +17,7 @@ from datetime import UTC
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates import get_templates
+from opi.services.project import Project
 from opi.services.project_authorization import (
     get_user_role_for_project,
     is_user_authorized_for_project,
@@ -1014,15 +1015,15 @@ async def project_details(request: Request, project_name: str):
         # Store decrypted private key for display (admins only see this in UI)
         project_data_decrypted["config"]["age-private-key"] = project_private_key
 
-        # Decrypt Keycloak passwords
-        if project_data_decrypted["config"].get("keycloak"):
-            for kc_config in project_data_decrypted["config"]["keycloak"]:
-                if kc_config.get("password"):
-                    try:
-                        kc_config["password"] = await decrypt_password_smart(kc_config["password"], project_private_key)
-                    except Exception as e:
-                        logger.warning(f"Failed to decrypt Keycloak password for realm {kc_config.get('realm')}: {e}")
-                        kc_config["password"] = None
+        # Decrypt Keycloak passwords (RC-5 B: connections live under the keycloak
+        # service config now, relocated from the old project-level config.keycloak).
+        for kc_config in Project(project_data_decrypted).get("services/keycloak/config/realms") or []:
+            if kc_config.get("password"):
+                try:
+                    kc_config["password"] = await decrypt_password_smart(kc_config["password"], project_private_key)
+                except Exception as e:
+                    logger.warning(f"Failed to decrypt Keycloak password for realm {kc_config.get('realm')}: {e}")
+                    kc_config["password"] = None
 
         for deployment in project_data_decrypted.get("deployments", []):
             # Decrypt deployment-component-level user-env-vars
