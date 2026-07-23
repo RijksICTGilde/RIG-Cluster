@@ -14,7 +14,7 @@ from opi.services.services_enums import ServiceType
 
 logger = logging.getLogger(__name__)
 
-LATEST_SCHEMA_VERSION = 2.2
+LATEST_SCHEMA_VERSION = 2.3
 
 # NOTE: Domain restriction changes (task-1) introduced:
 # - domains.allowed-subdomains entries changed from list[str] to list[{name, status, history}]
@@ -91,6 +91,9 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
         migrated = True
 
     if version < 2.2 and _migrate_v2_1_to_v2_2(project_data):
+        migrated = True
+
+    if version < 2.3 and _migrate_v2_2_to_v2_3(project_data):
         migrated = True
 
     if migrated:
@@ -551,6 +554,33 @@ def _fixup_flat_resources(entity: dict[str, Any]) -> bool:
         changed = True
 
     return changed
+
+
+def _migrate_v2_2_to_v2_3(project_data: dict[str, Any]) -> bool:
+    """Relocate the per-cluster Keycloak admin connections from the project-level
+    ``config.keycloak`` list to the keycloak service's ``config.realms`` (RC-5 B).
+
+    Verbatim move: entries are unchanged (host/realm/username/password/...), still
+    matched by ``realm`` downstream as before. The keycloak service entry is
+    find-or-created (a project with keycloak connections uses the keycloak service).
+
+    Returns True if any change was made. Idempotent: once ``config.keycloak`` is
+    gone, it is a no-op.
+    """
+    config = project_data.get("config")
+    if not isinstance(config, dict) or "keycloak" not in config:
+        return False
+
+    kc_list = config.get("keycloak")
+    # Lazy import avoids any module-load ordering issues (schema_migration is imported early).
+    from opi.services.project import Project
+
+    if kc_list:
+        # Move verbatim into services[keycloak].config.realms (find-or-creates the
+        # keycloak service entry, preserving any existing keycloak config + order).
+        Project(project_data).set("services/keycloak/config/realms", kc_list)
+    del config["keycloak"]
+    return True
 
 
 def _migrate_v2_1_to_v2_2(project_data: dict[str, Any]) -> bool:

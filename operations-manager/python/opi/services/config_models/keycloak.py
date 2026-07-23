@@ -64,12 +64,31 @@ class KeycloakRealmRoleEntry(BaseModel):
     name: str
 
 
+class KeycloakRealm(BaseModel):
+    """Per-realm admin connection (OPI-managed, one per cluster).
+
+    Relocated verbatim from the old project-level ``config.keycloak`` (RC-5 B). Kept
+    as-is -- matched by ``realm`` (deterministic ``{project}-{cluster}``) as before.
+    ``extra="allow"`` tolerates fields written over time (e.g. ``service_client_secret``);
+    password is stored AGE-encrypted or ``plain:``-prefixed, so it's just a string here.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    host: str
+    realm: str
+    username: str
+    password: str
+
+
 class KeycloakConfig(BaseModel):
     # extra="allow": config is polymorphic (internal template vs external
     # host/realm/client-id/client-secret) and must not reject real files.
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     template: str = "sso-only"
+    # OPI-managed per-cluster admin connections, relocated from project config.keycloak.
+    realms: list[KeycloakRealm] = Field(default_factory=list)
     variables: dict[str, Any] = Field(default_factory=dict)
     additional_redirect_uris: list[str] = Field(default_factory=list)
     restrict_access: RestrictAccessConfig | None = Field(default=None, alias="restrict-access")
