@@ -13,6 +13,7 @@ from opi.connectors.minio_mc import MinioConnector, create_minio_connector
 from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.core.config import settings
 from opi.services import CloneFromType, ServiceType
+from opi.services.project import Project
 from opi.utils.naming import generate_bucket_name, generate_minio_policy_name, generate_minio_username
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import MinIOSecret
@@ -71,7 +72,7 @@ class MinioManager:
         """
         # Find the deployment in project data
         deployments = project_data.get("deployments", [])
-        deployment = next((d for d in deployments if d.get("name") == deployment_name), None)
+        deployment = Project.locate(deployments, name=deployment_name)
 
         if not deployment:
             logger.debug(f"Deployment {deployment_name} not found in project data")
@@ -1762,9 +1763,7 @@ class MinioManager:
                 if not project_data:
                     raise Exception(f"Project '{project_name}' not found")
 
-                deployment = next(
-                    (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name), None
-                )
+                deployment = Project(project_data).find("deployments", name=deployment_name)
                 if not deployment:
                     raise Exception(f"Deployment '{deployment_name}' not found")
 
