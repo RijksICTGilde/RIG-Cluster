@@ -267,8 +267,8 @@ class TestMigrateV1ToV2:
         # persistent-storage should be a dict with config
         persistent = services[1]
         assert isinstance(persistent, dict)
-        assert "persistent-storage" in persistent
-        config = persistent["persistent-storage"]["config"]
+        assert persistent["reference"] == "persistent-storage"
+        config = persistent["config"]
         assert len(config) == 1
         assert config[0]["name"] == "data"
         assert config[0]["size"] == "250Mi"
@@ -278,8 +278,8 @@ class TestMigrateV1ToV2:
         # temp-storage should be a dict with config
         temp = services[2]
         assert isinstance(temp, dict)
-        assert "temp-storage" in temp
-        config = temp["temp-storage"]["config"]
+        assert temp["reference"] == "temp-storage"
+        config = temp["config"]
         assert len(config) == 1
         assert config[0]["name"] == "temp"
         assert config[0]["size"] == "250Mi"
@@ -299,10 +299,10 @@ class TestMigrateV1ToV2:
 
         assert services[0] == "publish-on-web"
         assert services[1] == "keycloak"
-        # Dict entry preserved
+        # Dict entry normalized to the component reference record.
         assert isinstance(services[2], dict)
-        assert "authorization-wall" in services[2]
-        assert services[2]["authorization-wall"]["config"]["banner"] == "Welcome!"
+        assert services[2]["reference"] == "authorization-wall"
+        assert services[2]["config"]["banner"] == "Welcome!"
 
     def test_helm_chart_rename(self):
         data = _v1_project_with_helm_chart()
@@ -343,8 +343,8 @@ class TestMigrateV1ToV2:
 
         persistent = services[1]
         assert isinstance(persistent, dict)
-        assert "persistent-storage" in persistent
-        config = persistent["persistent-storage"]["config"]
+        assert persistent["reference"] == "persistent-storage"
+        config = persistent["config"]
         assert len(config) == 1
         assert config[0]["name"] == "data"
         assert config[0]["size"] == "500Mi"
@@ -442,7 +442,7 @@ class TestMigrateV1ToV2:
         assert upload["services"][0] == "publish-on-web"
         persistent = upload["services"][1]
         assert isinstance(persistent, dict)
-        assert "persistent-storage" in persistent
+        assert persistent["reference"] == "persistent-storage"
         assert upload["services"][2] == "postgresql-database"
 
 
@@ -889,3 +889,45 @@ def test_v24_leaves_already_normalized_and_bare():
     }
     out, _ = migrate_to_latest(copy.deepcopy(data))
     assert out["services"] == data["services"]
+
+
+# ---------------------------------------------------------------------------
+# v2.4: component-level services -> {reference, config} (RC-5 A2b)
+# ---------------------------------------------------------------------------
+
+
+def test_v24_normalizes_component_services_to_reference_records():
+    data = {
+        "schema-version": 2.3,
+        "name": "p",
+        "components": [
+            {
+                "name": "api",
+                "services": [
+                    "publish-on-web",
+                    {"persistent-storage": {"config": [{"name": "data", "size": "1Gi", "mount-path": "/data"}]}},
+                    {"metrics-scraper": {"port": 8000, "path": "/metrics"}},  # inline config -> wrapped
+                ],
+            }
+        ],
+    }
+    out, migrated = migrate_to_latest(data)
+    assert migrated is True
+    assert out["components"][0]["services"] == [
+        "publish-on-web",
+        {"reference": "persistent-storage", "config": [{"name": "data", "size": "1Gi", "mount-path": "/data"}]},
+        {"reference": "metrics-scraper", "config": {"port": 8000, "path": "/metrics"}},
+    ]
+
+
+def test_v24_leaves_attachments_legacy():
+    # attachments is the deferred hard case (project 'data' catalog + own $defs).
+    data = {
+        "schema-version": 2.3,
+        "name": "p",
+        "services": [{"attachments": {"data": [{"id": "x", "filename": "f", "content": "c"}]}}],
+        "components": [{"name": "api", "services": [{"attachments": {"config": [{"reference": "x", "provide-as": "file", "path": "/x"}]}}]}],
+    }
+    out, _ = migrate_to_latest(data)
+    assert out["services"][0] == {"attachments": {"data": [{"id": "x", "filename": "f", "content": "c"}]}}
+    assert out["components"][0]["services"][0] == {"attachments": {"config": [{"reference": "x", "provide-as": "file", "path": "/x"}]}}
