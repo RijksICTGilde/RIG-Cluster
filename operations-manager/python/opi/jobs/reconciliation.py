@@ -47,19 +47,16 @@ def _deployment_level_service_names(deployment: dict[str, Any]) -> set[str]:
     hold the database generation metadata). Entries are plain strings,
     ``{reference: name, ...}`` dicts, or ``{name: {config}}`` dicts.
     """
+    from opi.services.services import service_entry_name
+
     names: set[str] = set()
     services = deployment.get("services")
     if not isinstance(services, list):
         return names
     for svc in services:
-        if isinstance(svc, str):
-            names.add(svc)
-        elif isinstance(svc, dict):
-            ref = svc.get("reference")
-            if ref:
-                names.add(ref)
-            elif svc:
-                names.add(next(iter(svc)))
+        name = service_entry_name(svc)
+        if name is not None:
+            names.add(name)
     return names
 
 
