@@ -1,0 +1,142 @@
+{
+  "$defs": {
+    "DatabasePrivilege": {
+      "description": "PostgreSQL role privileges accepted for the namespace database user.\n\nMatches the allow-list previously enforced inline in DatabaseManager.",
+      "enum": [
+        "SUPERUSER",
+        "NOSUPERUSER",
+        "CREATEDB",
+        "NOCREATEDB",
+        "CREATEROLE",
+        "NOCREATEROLE",
+        "LOGIN",
+        "NOLOGIN",
+        "REPLICATION",
+        "NOREPLICATION",
+        "BYPASSRLS",
+        "NOBYPASSRLS"
+      ],
+      "title": "DatabasePrivilege",
+      "type": "string"
+    },
+    "DatabaseResources": {
+      "additionalProperties": false,
+      "description": "requests/limits pair, mirroring DEFAULT_CONFIG['resources'].",
+      "properties": {
+        "limits": {
+          "$ref": "#/$defs/LimitsQuantities",
+          "default": {
+            "cpu": "500m",
+            "memory": "512Mi"
+          }
+        },
+        "requests": {
+          "$ref": "#/$defs/RequestsQuantities",
+          "default": {
+            "cpu": "100m",
+            "memory": "256Mi"
+          }
+        }
+      },
+      "title": "DatabaseResources",
+      "type": "object"
+    },
+    "LimitsQuantities": {
+      "additionalProperties": false,
+      "description": "CPU/memory *limits* (defaults differ from requests, as in DEFAULT_CONFIG).",
+      "properties": {
+        "cpu": {
+          "default": "500m",
+          "title": "Cpu",
+          "type": "string"
+        },
+        "memory": {
+          "default": "512Mi",
+          "title": "Memory",
+          "type": "string"
+        }
+      },
+      "title": "LimitsQuantities",
+      "type": "object"
+    },
+    "RequestsQuantities": {
+      "additionalProperties": false,
+      "description": "CPU/memory *requests*. Per-field defaults preserve the old deep-merge: a\nconfig overriding only ``requests.memory`` keeps the default ``cpu``.",
+      "properties": {
+        "cpu": {
+          "default": "100m",
+          "title": "Cpu",
+          "type": "string"
+        },
+        "memory": {
+          "default": "256Mi",
+          "title": "Memory",
+          "type": "string"
+        }
+      },
+      "title": "RequestsQuantities",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Typed config for a dedicated (namespace) PostgreSQL cluster.\n\nField defaults reproduce ``DatabaseManager.DEFAULT_CONFIG`` so validating an\nexisting (untyped) config through this model yields the same merged result the\nold ``dict.get()`` merge produced.",
+  "properties": {
+    "image": {
+      "default": "ghcr.io/cloudnative-pg/postgresql:17",
+      "title": "Image",
+      "type": "string"
+    },
+    "instances": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Instances",
+      "type": "integer"
+    },
+    "postInitSQL": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Postinitsql",
+      "type": "array"
+    },
+    "privileges": {
+      "items": {
+        "$ref": "#/$defs/DatabasePrivilege"
+      },
+      "title": "Privileges",
+      "type": "array"
+    },
+    "registry": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Registry"
+    },
+    "resources": {
+      "$ref": "#/$defs/DatabaseResources",
+      "default": {
+        "limits": {
+          "cpu": "500m",
+          "memory": "512Mi"
+        },
+        "requests": {
+          "cpu": "100m",
+          "memory": "256Mi"
+        }
+      }
+    },
+    "storage": {
+      "default": "10Gi",
+      "title": "Storage",
+      "type": "string"
+    }
+  },
+  "title": "NamespacePostgresConfig",
+  "type": "object"
+}
