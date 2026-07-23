@@ -7,8 +7,12 @@ carries the same ``ServiceDefinition`` object the rest of the app already reads,
 so the provider abstraction composes with today's design instead of forking it.
 """
 
-from opi.services.provider import ServiceProvider
-from opi.services.registry import SERVICE_PROVIDERS, get_provider
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+from opi.services.provider import ProvisionContext, ServiceProvider
+from opi.services.registry import SERVICE_PROVIDERS, get_provider, provisioning_providers
 from opi.services.services import ServiceAdapter
 from opi.services.services_enums import ServiceType
 
@@ -56,3 +60,57 @@ def test_providers_are_service_provider_instances() -> None:
 def test_get_provider_returns_registered_instance() -> None:
     for t in ServiceType:
         assert get_provider(t) is SERVICE_PROVIDERS[t]
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: generic provisioning dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_provisioning_providers_order_matches_legacy_sequence():
+    # Must reproduce today's fixed db -> minio -> keycloak -> redis order.
+    assert [p.service_type.value for p in provisioning_providers()] == [
+        "postgresql-database",
+        "minio-storage",
+        "keycloak",
+        "redis",
+    ]
+
+
+def test_namespace_variants_do_not_double_provision():
+    # namespace-postgres and namespace-redis share a manager with their primary and
+    # must NOT override provision (else the manager would be called twice).
+    provisioning = {p.service_type for p in provisioning_providers()}
+    assert ServiceType.NAMESPACE_POSTGRESQL_DATABASE not in provisioning
+    assert ServiceType.NAMESPACE_REDIS not in provisioning
+
+
+def test_provision_delegates_to_the_right_manager():
+    db, minio, keycloak, redis = (AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock())
+    ctx = ProvisionContext(
+        project_data={"name": "p"},
+        deployment={"name": "d"},
+        force_clone=True,
+        database_manager=SimpleNamespace(create_resources_for_deployment=db),
+        minio_manager=SimpleNamespace(create_resources_for_deployment=minio),
+        keycloak_manager=SimpleNamespace(create_resources_for_deployment=keycloak),
+        redis_manager=SimpleNamespace(create_resources_for_deployment=redis),
+    )
+
+    async def run():
+        for provider in provisioning_providers():
+            await provider.provision(ctx)
+
+    asyncio.run(run())
+    # same calls + args as the old fixed sequence
+    db.assert_awaited_once_with({"name": "p"}, {"name": "d"}, True)
+    minio.assert_awaited_once_with({"name": "p"}, {"name": "d"}, True)
+    keycloak.assert_awaited_once_with({"name": "p"}, {"name": "d"})
+    redis.assert_awaited_once_with({"name": "p"}, {"name": "d"})
+
+
+def test_default_provision_is_noop():
+    async def run():
+        await get_provider(ServiceType.PUBLISH_ON_WEB).provision(None)  # type: ignore[arg-type]
+
+    asyncio.run(run())  # must not raise
