@@ -71,8 +71,8 @@ from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, Va
 from opi.services.project import Project
 from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
 from opi.services.project_store import get_project_store
-from opi.services.provider import ProvisionContext
-from opi.services.registry import provisioning_providers
+from opi.services.provider import ManifestContext, ProvisionContext
+from opi.services.registry import manifest_secret_providers, provisioning_providers
 from opi.services.services import service_entry_config, service_entry_name
 from opi.utils.age import (
     decrypt_age_content,
@@ -5089,16 +5089,16 @@ class ProjectManager:
             # Determine which services this component uses (check once, use multiple times)
             component_uses_postgresql = False
             component_uses_minio = False
-            component_uses_sso = False
             component_uses_redis = False
             component_uses_authorization_wall = False
             component_uses_metrics_scraper = False
             component_def = None
+            all_services: list[str] = []
             metrics_config = {"port": None, "path": None}
 
             if component_reference:
                 component_def = self._project_file_handler._find_component(project_data, component_reference)
-                all_services: list[str] = extract_service_names_from_component(component_def) if component_def else []
+                all_services = extract_service_names_from_component(component_def) if component_def else []
 
                 # Check for both postgresql-database (shared) and namespace-postgresql-database (dedicated)
                 component_uses_postgresql = (
@@ -5106,7 +5106,6 @@ class ProjectManager:
                     or ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in all_services
                 )
                 component_uses_minio = ServiceType.MINIO_STORAGE.value in all_services
-                component_uses_sso = ServiceType.KEYCLOAK.value in all_services
                 component_uses_redis = (
                     ServiceType.REDIS.value in all_services or ServiceType.NAMESPACE_REDIS.value in all_services
                 )
@@ -5118,31 +5117,16 @@ class ProjectManager:
             # Note: Secret FILES are only generated if the secret is in _secrets_to_create map
             env_from_secrets = []
 
-            # Add deployment-level secrets based on services used
-            if component_uses_postgresql:
-                database_secret_name = DatabaseSecret.get_secret_name(deployment_name)
-                env_from_secrets.append(database_secret_name)
-                logger.debug(f"Database secret added to envFrom: {database_secret_name}")
-
-            if component_uses_minio:
-                minio_secret_name = MinIOSecret.get_secret_name(deployment_name)
-                env_from_secrets.append(minio_secret_name)
-                logger.debug(f"MinIO secret added to envFrom: {minio_secret_name}")
-
-            if component_uses_sso:
-                keycloak_secret_name = KeycloakSecret.get_secret_name(deployment_name)
-                env_from_secrets.append(keycloak_secret_name)
-                logger.debug(f"Keycloak secret added to envFrom: {keycloak_secret_name}")
-
-            if component_uses_redis:
-                redis_secret_name = RedisSecret.get_secret_name(deployment_name)
-                env_from_secrets.append(redis_secret_name)
-                logger.debug(f"Redis secret added to envFrom: {redis_secret_name}")
-
-            if component_uses_metrics_scraper:
-                metrics_auth_secret_name = MetricsAuthSecret.get_secret_name(deployment_name)
-                env_from_secrets.append(metrics_auth_secret_name)
-                logger.debug(f"Metrics auth secret added to envFrom: {metrics_auth_secret_name}")
+            # Add deployment-level secrets based on services used (RC-5 Phase 6a):
+            # each provider that owns a per-deployment envFrom secret contributes its
+            # name via contribute_manifest_context, in manifest_order. Byte-identical
+            # to the old fixed db -> minio -> keycloak -> redis -> metrics sequence.
+            manifest_ctx = ManifestContext(deployment_name=deployment_name)
+            for provider in manifest_secret_providers():
+                if any(t.value in all_services for t in provider.manifest_activation_types()):
+                    contributed = provider.contribute_manifest_context(manifest_ctx).env_from_secrets
+                    env_from_secrets.extend(contributed)
+                    logger.debug(f"{provider.service_type.value} secret added to envFrom: {contributed}")
 
             # Platform secret (always present, per-component)
             platform_secret_name = PlatformSecret.get_secret_name(unique_name)
