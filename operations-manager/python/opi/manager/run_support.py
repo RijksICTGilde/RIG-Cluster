@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from opi.extensions.pipeline import load_extensions
+from opi.services.project import Project
 from opi.services.runs_service import RunKind, RunStatus, get_runs_service
 
 if TYPE_CHECKING:
@@ -26,10 +27,7 @@ logger = logging.getLogger(__name__)
 
 def find_deployment(project_data: dict[str, Any], deployment_name: str) -> dict[str, Any] | None:
     """Return a deployment dict by name from project data (shared by run managers)."""
-    for deployment in project_data.get("deployments", []) or []:
-        if deployment.get("name") == deployment_name:
-            return deployment
-    return None
+    return Project(project_data).find("deployments", name=deployment_name)
 
 
 def parse_expires(value: str | None) -> datetime | None:

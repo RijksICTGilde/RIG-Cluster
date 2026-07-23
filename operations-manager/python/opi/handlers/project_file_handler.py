@@ -2196,11 +2196,10 @@ class ProjectFileHandler:
             Remote source configuration or None if not found
         """
         remote_sources = self.extract_remote_sources(project_data)
-        for source in remote_sources:
-            if source.get("name") == name:
-                logger.debug(f"Found remote source: {name}")
-                return source
-
+        source = Project.locate(remote_sources, name=name)
+        if source is not None:
+            logger.debug(f"Found remote source: {name}")
+            return source
         logger.warning(f"Remote source '{name}' not found")
         return None
 
@@ -2421,11 +2420,10 @@ class ProjectFileHandler:
             Helm-chart configuration or None if not found
         """
         helm_charts = self.extract_helm_charts(project_data)
-        for chart in helm_charts:
-            if chart.get("name") == name:
-                logger.debug(f"Found helm chart: {name}")
-                return chart
-
+        chart = Project.locate(helm_charts, name=name)
+        if chart is not None:
+            logger.debug(f"Found helm chart: {name}")
+            return chart
         logger.warning(f"Helm chart '{name}' not found")
         return None
 
@@ -2672,11 +2670,10 @@ class ProjectFileHandler:
             Helmfile configuration or None if not found
         """
         helmfiles = self.extract_helmfiles(project_data)
-        for helmfile in helmfiles:
-            if helmfile.get("name") == name:
-                logger.debug(f"Found helmfile: {name}")
-                return helmfile
-
+        helmfile = Project.locate(helmfiles, name=name)
+        if helmfile is not None:
+            logger.debug(f"Found helmfile: {name}")
+            return helmfile
         logger.warning(f"Helmfile '{name}' not found")
         return None
 
@@ -2997,12 +2994,10 @@ class ProjectFileHandler:
         """
         invites = self.extract_invites_config(project_data)
         active_invites = invites.get("active", [])
-
-        for invite in active_invites:
-            if invite.get("key") == key:
-                logger.debug(f"Found invite with key: {key}")
-                return invite
-
+        invite = Project.locate(active_invites, key=key)
+        if invite is not None:
+            logger.debug(f"Found invite with key: {key}")
+            return invite
         logger.debug(f"Invite with key '{key}' not found")
         return None
 
