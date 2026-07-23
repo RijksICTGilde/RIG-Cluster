@@ -54,3 +54,4 @@ secrets-overview-*.yaml
 /operations-manager/python/tests/e2e/screenshots/
 /operations-manager/docs/
 /operations-manager/python/tests/e2e/artifacts/
+/.env
