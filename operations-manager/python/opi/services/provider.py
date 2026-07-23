@@ -59,6 +59,25 @@ class ProvisionContext:
     redis_manager: Any
 
 
+@dataclass
+class RemovalContext:
+    """Inputs for cleaning up one service removed from one deployment (RC-5 Phase 5).
+
+    Carries the diff-driven removal args plus ``get_manager`` -- an async resolver
+    (``DeleteProjectManager._get_manager_for_service``) so a provider reaches its
+    manager lazily by key, exactly as the old ``_SERVICE_TYPE_MANAGER_ATTR`` dispatch
+    did. All managers share the ``handle_service_removal`` signature, so the base
+    provider dispatch stays byte-identical.
+    """
+
+    project_name: str
+    deployment_name: str
+    deployment_data: dict[str, Any] | None
+    project_data: dict[str, Any]
+    marked_for_deletion_service: Any
+    get_manager: Any  # async callable: (manager_key: str) -> manager
+
+
 class ServiceProvider(ABC):
     """One subclass per ``ServiceType``; the single declarative home for a service.
 
@@ -116,6 +135,11 @@ class ServiceProvider(ABC):
     #: sequence.
     provision_order: ClassVar[int] = 100
 
+    #: Manager key for server-side cleanup on removal (RC-5 Phase 5), or None if the
+    #: service has no server-side resources to clean up. Resolved via
+    #: RemovalContext.get_manager; replaces the _SERVICE_TYPE_MANAGER_ATTR map.
+    cleanup_manager_key: ClassVar[str | None] = None
+
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         # A concrete provider must declare which service it is; the definition is
@@ -168,3 +192,24 @@ class ServiceProvider(ABC):
         replay-safe), so the generic loop is byte-identical to the old fixed sequence.
         """
         return
+
+    async def handle_service_removal(self, ctx: RemovalContext) -> dict[str, Any]:
+        """Clean up this service's server-side resources when it is removed from a
+        deployment (RC-5 Phase 5).
+
+        Generic by default: a service with a ``cleanup_manager_key`` resolves that
+        manager via the context and delegates to its ``handle_service_removal`` (all
+        managers share the signature), byte-identical to the old
+        ``_SERVICE_TYPE_MANAGER_ATTR`` dispatch. A service with no server-side
+        resources (``cleanup_manager_key is None``) returns an empty result.
+        """
+        if self.cleanup_manager_key is None:
+            return {}
+        manager = await ctx.get_manager(self.cleanup_manager_key)
+        return await manager.handle_service_removal(
+            project_name=ctx.project_name,
+            deployment_name=ctx.deployment_name,
+            deployment_data=ctx.deployment_data,
+            project_data=ctx.project_data,
+            marked_for_deletion_service=ctx.marked_for_deletion_service,
+        )
