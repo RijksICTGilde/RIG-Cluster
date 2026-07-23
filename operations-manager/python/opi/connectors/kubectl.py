@@ -471,6 +471,37 @@ class KubectlConnector:
             logger.debug(f"Namespace {namespace} does not exist")
             return False
 
+    async def get_namespace_label_map(self, label_key: str) -> dict[str, str]:
+        """Every namespace in the cluster, mapped to its value for ``label_key``.
+
+        One call instead of one per namespace. Startup checks 45 projects across 44
+        namespaces; asking per namespace meant 127 ``kubectl get`` invocations (a
+        subprocess each) plus 127 unconditional ``kubectl label`` calls, together 70
+        of the 83 seconds it took to boot. With this map both questions -- does it
+        exist, does it carry the right label -- are answered locally.
+
+        Namespaces without the label are present with an empty string, so a caller
+        can tell "missing label" from "missing namespace" (absent from the dict).
+        """
+        args = ["get", "namespaces", "-o", "json"]
+        stdout, stderr, code = await self._run_kubectl_command(args)
+
+        if code != 0:
+            # Fall back to per-namespace checks rather than guessing: an empty map
+            # would read as "no namespace exists" and trigger creation attempts.
+            logger.warning(f"Could not list namespaces: {stderr}")
+            raise KubectlExecutionError(f"Failed to list namespaces: {stderr}")
+
+        data = json.loads(stdout)
+        result: dict[str, str] = {}
+        for item in data.get("items", []):
+            meta = item.get("metadata", {})
+            name = meta.get("name")
+            if name:
+                result[name] = (meta.get("labels", {}) or {}).get(label_key, "")
+        logger.debug(f"Listed {len(result)} namespaces with label '{label_key}'")
+        return result
+
     async def delete_namespace(self, namespace: str) -> bool:
         """
         Delete a namespace from the cluster.
