@@ -79,6 +79,16 @@ class ServiceProvider(ABC):
     #: Current config schema version (major.minor). Only meaningful with a config_model.
     config_schema_version: ClassVar[str] = "1.0"
 
+    #: Wizard/edit config-section id for this service (RC-5 Phase 3), or None if the
+    #: service has no config UI. The FormSection object itself lives in the forms
+    #: layer (wizard_sections); this is only the declarative link, so provider.py
+    #: stays free of forms imports. The forms layer derives SERVICE_CONFIG_SECTIONS /
+    #: EDIT_SECTIONS by iterating the registry instead of a hand-synced dict.
+    config_section_id: ClassVar[str | None] = None
+    #: Modal-edit flow id for this service's config, or None. SERVICE_CONFIG_MODAL_FLOWS
+    #: is derived from this.
+    modal_flow_id: ClassVar[str | None] = None
+
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         # A concrete provider must declare which service it is; the definition is
