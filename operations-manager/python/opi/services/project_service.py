@@ -29,7 +29,7 @@ class ProjectUser(BaseModel):
 logger = logging.getLogger(__name__)
 
 
-class Project(BaseModel):
+class ProjectSummary(BaseModel):
     """Pydantic model for project mapping."""
 
     name: str
@@ -56,7 +56,7 @@ class ProjectService:
         if not ProjectService._initialized:
             # In-memory storage for project mappings
             # In the future, this will be replaced with database tables
-            self._projects: dict[str, Project] = {}
+            self._projects: dict[str, ProjectSummary] = {}
             ProjectService._initialized = True
             logger.debug("ProjectService singleton initialized")
         else:
@@ -87,7 +87,7 @@ class ProjectService:
             True if registration was successful
         """
         is_update = project_name in self._projects
-        project = Project(name=project_name, api_key=api_key, filename=filename, users=users, data=data)
+        project = ProjectSummary(name=project_name, api_key=api_key, filename=filename, users=users, data=data)
         self._projects[project_name] = project
         action = "Updated" if is_update else "Registered"
         logger.debug(f"{action} project: {project_name} (file: {filename}) with {len(users) if users else 0} users")
@@ -105,7 +105,7 @@ class ProjectService:
 
         return True
 
-    def get_project_by_api_key(self, api_key: str) -> Project | None:
+    def get_project_by_api_key(self, api_key: str) -> ProjectSummary | None:
         """
         Get project by API key.
 
@@ -123,7 +123,7 @@ class ProjectService:
         logger.debug("No project found for provided API key")
         return None
 
-    def get_project(self, project_name: str) -> Project | None:
+    def get_project(self, project_name: str) -> ProjectSummary | None:
         """
         Get project data for a specific project.
 
@@ -158,16 +158,16 @@ class ProjectService:
         logger.debug(f"No project found to remove: {project_name}")
         return False
 
-    def get_all_projects(self) -> dict[str, Project]:
+    def get_all_projects(self) -> dict[str, ProjectSummary]:
         """
         Get all project mappings.
 
         Returns:
-            Dictionary of project_name -> Project mappings
+            Dictionary of project_name -> ProjectSummary mappings
         """
         return self._projects.copy()
 
-    def replace_all_projects(self, projects: dict[str, Project]) -> None:
+    def replace_all_projects(self, projects: dict[str, ProjectSummary]) -> None:
         """Atomically replace all project mappings.
 
         This avoids the race condition of clear-then-rebuild, where concurrent
@@ -212,7 +212,7 @@ class ProjectService:
         )
         return api_key
 
-    def build_project_from_data(self, project_data: dict[str, Any], filename: str) -> Project | None:
+    def build_project_from_data(self, project_data: dict[str, Any], filename: str) -> ProjectSummary | None:
         """Parse project data into a Project WITHOUT registering it.
 
         Split out so a caller that needs the whole set before swapping it in
@@ -256,7 +256,7 @@ class ProjectService:
                     if isinstance(user_data, dict) and "email" in user_data and "role" in user_data
                 )
 
-            return Project(
+            return ProjectSummary(
                 name=str(project_name),
                 api_key=str(api_key),
                 filename=filename,

@@ -64,7 +64,7 @@ from opi.core.project_schema import (
     validate_project_schema,
 )
 from opi.manager.project_validation import validate_project_structure
-from opi.services.project_service import Project, ProjectUser, get_project_service
+from opi.services.project_service import ProjectSummary, ProjectUser, get_project_service
 from opi.services.schema_migration import migrate_to_latest
 from opi.services.user_service import get_user_service
 from opi.utils.age import decrypt_age_content, get_decoded_project_private_key
@@ -153,13 +153,13 @@ class ProjectStore(ABC):
     # ---- reads: served from the in-memory cache, no I/O ----
 
     @abstractmethod
-    def get(self, name: str) -> Project | None: ...
+    def get(self, name: str) -> ProjectSummary | None: ...
 
     @abstractmethod
-    def get_all(self) -> list[Project]: ...
+    def get_all(self) -> list[ProjectSummary]: ...
 
     @abstractmethod
-    def get_by_api_key(self, api_key: str) -> Project | None: ...
+    def get_by_api_key(self, api_key: str) -> ProjectSummary | None: ...
 
     @abstractmethod
     def exists(self, name: str) -> bool: ...
@@ -170,7 +170,7 @@ class ProjectStore(ABC):
     # ---- mutations: serialized read-modify-write, validated before persist ----
 
     @abstractmethod
-    async def create(self, name: str, data: dict[str, Any], *, message: str, actor: str) -> Project: ...
+    async def create(self, name: str, data: dict[str, Any], *, message: str, actor: str) -> ProjectSummary: ...
 
     @abstractmethod
     async def mutate(self, name: str, change: ChangeFunction, *, message: str, actor: str) -> MutationResult: ...
@@ -303,13 +303,13 @@ class GitProjectStore(ProjectStore):
     # reads
     # ------------------------------------------------------------------
 
-    def get(self, name: str) -> Project | None:
+    def get(self, name: str) -> ProjectSummary | None:
         return get_project_service().get_project(name)
 
-    def get_all(self) -> list[Project]:
+    def get_all(self) -> list[ProjectSummary]:
         return list(get_project_service().get_all_projects().values())
 
-    def get_by_api_key(self, api_key: str) -> Project | None:
+    def get_by_api_key(self, api_key: str) -> ProjectSummary | None:
         return get_project_service().get_project_by_api_key(api_key)
 
     def exists(self, name: str) -> bool:
@@ -369,7 +369,7 @@ class GitProjectStore(ProjectStore):
     # mutations
     # ------------------------------------------------------------------
 
-    async def create(self, name: str, data: dict[str, Any], *, message: str, actor: str) -> Project:
+    async def create(self, name: str, data: dict[str, Any], *, message: str, actor: str) -> ProjectSummary:
         """Create a new project file. Fails if the project already exists."""
         async with self._locked("create", name):
             connector = await self.get_connector()
@@ -779,7 +779,7 @@ class GitProjectStore(ProjectStore):
         await connector.sync_worktree_to_head()
         return commit, True
 
-    def _refresh_cache(self, name: str, data: dict[str, Any], filename: str) -> Project:
+    def _refresh_cache(self, name: str, data: dict[str, Any], filename: str) -> ProjectSummary:
         """Write-through cache update. Called only after a successful push."""
         service = get_project_service()
         service.load_project_from_data(data, filename)
@@ -792,7 +792,7 @@ class GitProjectStore(ProjectStore):
             # the next restart.
             users = _users_from_data(data)
             service.register(name, "", filename, users, data)
-            project = service.get_project(name) or Project(
+            project = service.get_project(name) or ProjectSummary(
                 name=name, api_key="", filename=filename, users=users, data=data
             )
         return project
@@ -1033,7 +1033,7 @@ class GitProjectStore(ProjectStore):
             connector = await self.get_connector()
             service = get_project_service()
 
-            loaded: dict[str, Project] = {}
+            loaded: dict[str, ProjectSummary] = {}
             member_emails: list[str] = []
             for filename in await self._list_project_files(connector):
                 data = await self._read_committed(connector, f"{PROJECTS_SUBDIR}/{filename}")
