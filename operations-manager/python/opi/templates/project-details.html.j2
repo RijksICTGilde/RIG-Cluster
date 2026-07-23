@@ -25,6 +25,7 @@
 
     {# ==================== PROJECT TAB ==================== #}
     <c-layout-flow id="tab-project" gap="lg">
+        {% include "project-details/section-resource-usage.html.j2" %}
         {% include "project-details/section-actions.html.j2" %}
         {% include "project-details/section-deployment-status.html.j2" %}
         {% include "project-details/section-team.html.j2" %}
