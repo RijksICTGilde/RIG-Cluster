@@ -1,0 +1,143 @@
+{
+  "$defs": {
+    "AccountLink": {
+      "enum": [
+        "automatic",
+        "confirm",
+        "verify"
+      ],
+      "title": "AccountLink",
+      "type": "string"
+    },
+    "KeycloakClientEntry": {
+      "additionalProperties": true,
+      "description": "An ``additional-clients`` item. Only ``name`` is guardrailed; the rest\n(redirect-uris, ...) is advanced pass-through -- the hard 10% the plan leaves\nhand-authored -- so extras are allowed.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "KeycloakClientEntry",
+      "type": "object"
+    },
+    "KeycloakRealmRoleEntry": {
+      "additionalProperties": true,
+      "description": "A ``realm-roles`` item; ``name`` required, advanced keys pass through.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "KeycloakRealmRoleEntry",
+      "type": "object"
+    },
+    "RestrictAccessConfig": {
+      "additionalProperties": false,
+      "description": "``restrict-access`` sub-object; keys are well-defined so extras are forbidden.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "error-message": {
+          "default": "${accessDeniedNoPermission}",
+          "title": "Error-Message",
+          "type": "string"
+        },
+        "realm-role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Realm-Role"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        }
+      },
+      "title": "RestrictAccessConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "properties": {
+    "account-link": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AccountLink"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "additional-clients": {
+      "items": {
+        "$ref": "#/$defs/KeycloakClientEntry"
+      },
+      "title": "Additional-Clients",
+      "type": "array"
+    },
+    "additional_redirect_uris": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Additional Redirect Uris",
+      "type": "array"
+    },
+    "realm-roles": {
+      "items": {
+        "$ref": "#/$defs/KeycloakRealmRoleEntry"
+      },
+      "title": "Realm-Roles",
+      "type": "array"
+    },
+    "restrict-access": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RestrictAccessConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "template": {
+      "default": "sso-only",
+      "title": "Template",
+      "type": "string"
+    },
+    "variables": {
+      "additionalProperties": true,
+      "title": "Variables",
+      "type": "object"
+    }
+  },
+  "title": "KeycloakConfig",
+  "type": "object"
+}
