@@ -20,7 +20,8 @@ from opi.services.config_models.keycloak import KeycloakConfig
 from opi.services.config_models.metrics_scraper import MetricsScraperConfig
 from opi.services.config_models.namespace_postgres import NamespacePostgresConfig
 from opi.services.config_models.storage import StorageConfig
-from opi.services.provider import ProvisionContext, ServiceProvider
+from opi.services.provider import ManifestContext, ManifestContribution, ProvisionContext, ServiceProvider
+from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 from opi.utils.secrets import DatabaseSecret, KeycloakSecret, MetricsAuthSecret, MinIOSecret, RedisSecret
 
@@ -50,6 +51,44 @@ class AuthorizationWallProvider(ServiceProvider):
     config_schema_version = "1.0"
     config_section_id = "auth-wall-config"
     modal_flow_id = "modal-edit-auth-wall-config"
+    # After the secret providers (10-50); an auth wall fronts the pod, so its
+    # service_port override applies last (RC-5 Phase 6b).
+    manifest_order = 60
+
+    def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
+        # An auth wall sits in front of the pod: it adds the oauth2-proxy sidecar and
+        # overrides service_port to 4180 (the proxy port). Needs the deployment's
+        # already-provisioned keycloak secret for the proxy's issuer/client config.
+        keycloak_secret = ctx.get_secret(ctx.deployment_name, "keycloak", KeycloakSecret)
+        if keycloak_secret is None:
+            # Component asked for an auth wall but no keycloak service is configured;
+            # contribute nothing (matches the old warn-and-skip branch -- the manager
+            # still logs the warning).
+            return ManifestContribution()
+
+        banner_text = None
+        for service_item in ctx.project_data.get("services", []):
+            if service_entry_name(service_item) == ServiceType.AUTHORIZATION_WALL.value:
+                auth_wall_config = service_entry_config(service_item)
+                if isinstance(auth_wall_config, dict):
+                    banner_text = auth_wall_config.get("banner")
+                break
+
+        return ManifestContribution(
+            template_vars={
+                "authorization_wall": {
+                    "issuer_url": keycloak_secret.discovery_url.replace("/.well-known/openid-configuration", ""),
+                    "client_id": keycloak_secret.client_id,
+                    "keycloak_secret_name": KeycloakSecret.get_secret_name(ctx.deployment_name),
+                    "cookie_secret_name": f"{ctx.unique_name}-oauth2-cookie",
+                    "banner": banner_text,
+                },
+                # The ingress goes through the auth proxy on 4180; the app's own primary
+                # port stays behind it (extra inbound ports keep their Service entries).
+                "service_port": 4180,
+            },
+            sidecars=["authorization-wall"],
+        )
 
 
 class MetricsScraperProvider(ServiceProvider):
@@ -186,4 +225,15 @@ def manifest_secret_providers() -> list[ServiceProvider]:
     component loop stays byte-identical.
     """
     contributing = [p for p in SERVICE_PROVIDERS.values() if p.manifest_secret_class is not None]
+    return sorted(contributing, key=lambda p: p.manifest_order)
+
+
+def manifest_providers() -> list[ServiceProvider]:
+    """All providers that contribute to a component's manifests, in ``manifest_order``
+    (RC-5 Phase 6). Superset of ``manifest_secret_providers()`` -- also includes
+    override providers (auth-wall). The generic component loop calls each once and
+    applies its ``ManifestContribution`` (additive env_from/sidecars, override
+    template_vars).
+    """
+    contributing = [p for p in SERVICE_PROVIDERS.values() if type(p).contributes_to_manifests()]
     return sorted(contributing, key=lambda p: p.manifest_order)
