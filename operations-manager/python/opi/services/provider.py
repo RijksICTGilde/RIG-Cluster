@@ -83,14 +83,19 @@ class RemovalContext:
 class ManifestContext:
     """Inputs a provider needs to contribute to one component's manifests (RC-5 Phase 6).
 
-    Phase 6a covers the ``envFrom`` secret references, which need only the deployment
-    name (secret names are ``<secret-class-template>`` on ``deployment_name``). Later
-    sub-phases add the fields their anchor points need (component config for the
-    metrics var, resolved secrets for the auth-wall sidecar, alias-resolution for the
-    secret files) rather than speculatively front-loading them here.
+    Grows per sub-phase rather than speculatively front-loading fields. Phase 6a needs
+    only ``deployment_name`` (envFrom secret names). Phase 6b adds ``project_data`` +
+    ``unique_name`` (auth-wall reads the banner from project services and names the
+    cookie secret) and ``get_secret`` -- a resolver for an already-provisioned
+    per-deployment secret (``ProjectManager._get_secret_from_map``), so the auth-wall
+    provider reaches the keycloak secret without importing the manager, exactly like
+    RemovalContext.get_manager.
     """
 
     deployment_name: str
+    project_data: dict[str, Any]
+    unique_name: str
+    get_secret: Any  # callable: (deployment_name: str, secret_type: str, secret_class) -> secret | None
 
 
 @dataclass
@@ -98,14 +103,26 @@ class ManifestContribution:
     """What a provider adds to a component's manifests (RC-5 Phase 6).
 
     A declarative description the generic component loop merges into the template
-    context -- the provider never touches the manifest generator itself. Phase 6a
-    populates only ``env_from_secrets``; the sidecar/template-var anchor (6b) and the
-    secret-file anchor (6c) grow this object with further fields, because a service's
-    secret files conceptually belong to that service.
+    context -- the provider never touches the manifest generator itself. Two merge
+    semantics, matching "a service may *add to* and *override* the base manifest":
+
+    * ``env_from_secrets`` / ``sidecars`` are **additive** (the loop extends the base
+      lists, in ``manifest_order``).
+    * ``template_vars`` is an **override** (the loop ``update``s the base template
+      context, so e.g. auth-wall replaces ``service_port`` 8080 -> 4180).
+
+    With a single override provider today the order is moot; when several providers
+    override the same key (e.g. two proxies chained in front) ``manifest_order`` will
+    define precedence. Phase 6c adds the secret-file anchor, because a service's secret
+    files conceptually belong to that service.
     """
 
     #: Secret names to append to the pod's ``envFrom`` list, in ``manifest_order``.
     env_from_secrets: list[str] = field(default_factory=list)
+    #: Template-context keys to override (merged with ``dict.update``).
+    template_vars: dict[str, Any] = field(default_factory=dict)
+    #: Sidecar names to append to the pod's ``sidecars`` list.
+    sidecars: list[str] = field(default_factory=list)
 
 
 class ServiceProvider(ABC):
@@ -266,6 +283,18 @@ class ServiceProvider(ABC):
         to also fire for their namespace variant.
         """
         return self.manifest_activated_by or (self.service_type,)
+
+    @classmethod
+    def contributes_to_manifests(cls) -> bool:
+        """Whether this provider contributes anything to a component's manifests
+        (RC-5 Phase 6): either a per-deployment envFrom secret (6a) or an overridden
+        ``contribute_manifest_context`` (6b: auth-wall sidecar + service_port override).
+        ``registry.manifest_providers()`` uses this to build the contributor set.
+        """
+        return (
+            cls.manifest_secret_class is not None
+            or cls.contribute_manifest_context is not ServiceProvider.contribute_manifest_context
+        )
 
     def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
         """This service's contribution to a component's manifests (RC-5 Phase 6).
