@@ -1,8 +1,8 @@
-"""ProjectAccessor -- one generic entry point to read/query/mutate a project dict.
+"""Project -- one generic entry point to read/query/mutate a project dict.
 
 Rationale (RC-5): the project file is read ~110 different ways today -- hand-rolled
 ``for x in components: if x.get("name") == n`` loops, ``next(iter(dict))`` key
-extractions, three competing path engines. ProjectAccessor consolidates the
+extractions, three competing path engines. Project consolidates the
 *read/locate/mutate* side into a single generic entry point, the counterpart to
 ``project_store`` (the single entry point for *persisting* the file).
 
@@ -15,13 +15,13 @@ we access project-file data. Two kinds of method live here, both generic:
   etc.: "give me X of service Y", parameterised by service *name*. This is wanted.
 
 What does NOT belong here is a method hardcoded to one specific service (a
-``get_keycloak_config()``). And ProjectAccessor holds no service *meaning*: methods like
+``get_keycloak_config()``). And Project holds no service *meaning*: methods like
 ``service_config_model`` locate the raw config generically and **delegate**
 validation to that service's provider object (where the meaning lives).
 
 Design invariants:
 
-* **The dict stays the source of truth.** ProjectAccessor wraps the dict by reference
+* **The dict stays the source of truth.** Project wraps the dict by reference
   and mutates it in place through the order-preserving path engine, so ruamel
   ``CommentedMap``/``CommentedSeq`` order and comments survive. Persist via
   ``project_store``; never round-trip the whole file through models.
@@ -50,8 +50,10 @@ from opi.forms.editables.service_path import (
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
+    from opi.services.project_service import ProjectSummary
 
-class ProjectAccessor:
+
+class Project:
     """A thin, generic, reference-aware view over a parsed project dict.
 
     Wraps the dict by reference and mutates it in place (order-preserving). Get the
@@ -82,7 +84,7 @@ class ProjectAccessor:
         """Whether a path resolves to a present (truthy) value."""
         return smart_path_exists(self._data, path)
 
-    def set(self, path: str, value: Any) -> ProjectAccessor:
+    def set(self, path: str, value: Any) -> Project:
         """Set a value by path, creating intermediates and preserving list order.
         Chainable."""
         smart_set_value(self._data, path, value)
@@ -158,3 +160,38 @@ class ProjectAccessor:
         except ValueError:
             return None
         return get_provider(service_type).validate_config(self.service_config(name))
+
+    # --- typed projection --------------------------------------------------------
+    def get_summary(self, filename: str) -> ProjectSummary | None:
+        """Lightweight typed projection of this project (name, api-key, users).
+
+        This is the aggregate root producing its edge DTO: consumers that only need
+        the summary fields (the store's cache index, API responses) call this instead
+        of a separate parallel model. Returns None when the project lacks a name or
+        api-key (nothing to index).
+
+        The api-key is returned **as stored** (possibly AGE-encrypted); plaintext
+        resolution is a crypto concern that stays with the caller (ProjectService),
+        not the aggregate root -- keeping this projection pure.
+        """
+        # Lazy import avoids the project <-> project_service cycle.
+        from opi.services.project_service import ProjectSummary, ProjectUser
+
+        name = self._data.get("name")
+        config = self._data.get("config") or {}
+        api_key = config.get("api-key")
+        if not name or not api_key:
+            return None
+        users_data = self._data.get("users") or []
+        users = [
+            ProjectUser(email=user["email"], role=user["role"])
+            for user in users_data
+            if isinstance(user, dict) and "email" in user and "role" in user
+        ]
+        return ProjectSummary(
+            name=str(name),
+            api_key=str(api_key),
+            filename=filename,
+            users=users or None,
+            data=self._data,
+        )
