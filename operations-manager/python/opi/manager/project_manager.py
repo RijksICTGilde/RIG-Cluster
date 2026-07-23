@@ -2243,11 +2243,15 @@ class ProjectManager:
             logger.warning(f"No deployments found in project: {project_name}")
             return
 
-        for deployment in deployments:
-            cluster_name = deployment["cluster"]
-            base_namespace = deployment["namespace"]
-            namespace = get_prefixed_namespace(cluster_name, base_namespace)
+        # The SOPS secret lives per namespace, and deployments of a project share one,
+        # so iterating deployments read the same secret several times: 128 `kubectl get
+        # secret` calls for 44 namespaces at startup. Same fix as for the namespaces.
+        namespaces = {
+            get_prefixed_namespace(cast("str", deployment["cluster"]), cast("str", deployment["namespace"]))
+            for deployment in deployments
+        }
 
+        for namespace in sorted(namespaces):
             # Use shared function for SOPS secret creation
             await self._ensure_sops_secret_in_namespace(namespace, contents)
 

@@ -17,6 +17,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from opi.core.config import settings
 from opi.manager.project_manager import ProjectManager
 
 MANAGED_BY = "argocd.argoproj.io/managed-by"
@@ -26,13 +27,16 @@ MANAGED_BY = "argocd.argoproj.io/managed-by"
 def manager(monkeypatch: pytest.MonkeyPatch) -> ProjectManager:
     pm = ProjectManager(project_file_relative_path="projects/demo.yaml")
 
+    # The SOPS path resolves the namespace prefix from the deployment's own cluster,
+    # so this has to be a cluster that exists in the configuration.
+    cluster = settings.CLUSTER_MANAGER
     project_data: dict[str, Any] = {
         "name": "demo",
         # Three deployments, one namespace: the shape that caused the duplication.
         "deployments": [
-            {"name": "main", "namespace": "demo", "cluster": "test-cluster"},
-            {"name": "acc", "namespace": "demo", "cluster": "test-cluster"},
-            {"name": "pr-1", "namespace": "demo", "cluster": "test-cluster"},
+            {"name": "main", "namespace": "demo", "cluster": cluster},
+            {"name": "acc", "namespace": "demo", "cluster": cluster},
+            {"name": "pr-1", "namespace": "demo", "cluster": cluster},
         ],
     }
     monkeypatch.setattr(pm, "get_contents", AsyncMock(return_value=project_data))
@@ -104,6 +108,22 @@ async def test_a_namespace_missing_from_the_map_is_created(
 
     created.assert_awaited_once()
     assert kubectl.apply_label_to_resource.await_count == 0, "creation applies the label itself"
+
+
+async def test_the_sops_secret_is_checked_once_per_namespace(
+    manager: ProjectManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same duplication, other half of the startup loop.
+
+    The SOPS secret is per namespace, so three deployments sharing one namespace read
+    and (re)write the same secret three times.
+    """
+    ensure = AsyncMock()
+    monkeypatch.setattr(manager, "_ensure_sops_secret_in_namespace", ensure)
+
+    await manager.check_and_create_sops_secrets_in_namespaces()
+
+    assert ensure.await_count == 1, "one namespace, one secret"
 
 
 def _prefix() -> str:
