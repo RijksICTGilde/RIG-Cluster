@@ -237,7 +237,13 @@ _EXPECTED_ENVFROM_ORDER = [
 
 
 def _manifest_ctx(
-    *, deployment_name="mydep", project_data=None, unique_name="mydep-web", cluster="sandboxed-local", get_secret=None
+    *,
+    deployment_name="mydep",
+    project_data=None,
+    unique_name="mydep-web",
+    cluster="sandboxed-local",
+    get_secret=None,
+    component_def=None,
 ):
     return ManifestContext(
         deployment_name=deployment_name,
@@ -245,6 +251,7 @@ def _manifest_ctx(
         unique_name=unique_name,
         cluster=cluster,
         get_secret=get_secret if get_secret is not None else (lambda *a, **k: None),
+        component_def=component_def,
     )
 
 
@@ -470,3 +477,27 @@ def test_non_secret_file_services_declare_none():
     ctx = _manifest_ctx()
     for t in (ServiceType.KEYCLOAK, ServiceType.PLATFORM, ServiceType.PUBLISH_ON_WEB, ServiceType.PERSISTENT_STORAGE):
         assert get_provider(t).build_secret_files(ctx) == [], t.value
+
+
+# ---------------------------------------------------------------------------
+# Metrics scraper: scrape port/path reach the manifest (bug fix, not byte-identical)
+# ---------------------------------------------------------------------------
+
+
+def test_metrics_contributes_configured_port_and_path():
+    # The component's configured scrape port/path must reach the deployment template
+    # (previously they were silently dropped and fell back to the application port).
+    component_def = {"services": [{"reference": "metrics-scraper", "config": {"port": 9090, "path": "/m"}}]}
+    ctx = _manifest_ctx(component_def=component_def)
+    contribution = get_provider(ServiceType.METRICS_SCRAPER).contribute_manifest_context(ctx)
+    assert contribution.template_vars["metrics_config"] == {"port": 9090, "path": "/m"}
+    # still contributes its envFrom auth secret (6a) alongside the template var.
+    assert contribution.env_from_secrets == ["mydep-metrics-auth"]
+
+
+def test_metrics_contributes_nulls_when_unconfigured():
+    # No component config -> {port: None, path: None}; the template then falls back to
+    # the application port / "/metrics" (same end result as before, now explicit).
+    ctx = _manifest_ctx(component_def={"services": [{"reference": "metrics-scraper"}]})
+    contribution = get_provider(ServiceType.METRICS_SCRAPER).contribute_manifest_context(ctx)
+    assert contribution.template_vars["metrics_config"] == {"port": None, "path": None}

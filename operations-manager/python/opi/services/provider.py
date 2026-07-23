@@ -97,6 +97,10 @@ class ManifestContext:
     unique_name: str
     cluster: str
     get_secret: Any  # callable: (deployment_name: str, secret_type: str, secret_class) -> secret | None
+    #: The component's resolved definition, or None when there is no component
+    #: reference. Providers read their component-level config from it (e.g. the
+    #: metrics-scraper scrape port/path).
+    component_def: dict[str, Any] | None = None
 
 
 @dataclass
