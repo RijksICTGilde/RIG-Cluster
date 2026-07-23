@@ -16,7 +16,7 @@
            triggers here would fire in parallel -- 18 for 'wies' -- and each opens a
            Kopia repository, which OOM-killed the pod. #}
         <div hx-get="/projects/details/{{ project.name }}/backups"
-             hx-trigger="load" hx-swap="none"></div>
+             hx-trigger="intersect once" hx-swap="none"></div>
 
         {% set cluster_loop = namespace(first_shown=true) %}
         {% for deployment in project.deployments | sort(attribute='name') %}
