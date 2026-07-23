@@ -11,7 +11,12 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from opi.services.provider import ManifestContext, ProvisionContext, RemovalContext, ServiceProvider
+from opi.services.provider import (
+    ManifestContext,
+    ProvisionContext,
+    RemovalContext,
+    ServiceProvider,
+)
 from opi.services.registry import (
     SERVICE_PROVIDERS,
     get_provider,
@@ -21,6 +26,7 @@ from opi.services.registry import (
 )
 from opi.services.services import ServiceAdapter
 from opi.services.services_enums import ServiceType
+from opi.utils.secrets import DatabaseSecret, MinIOSecret, RedisSecret
 
 
 def test_every_service_type_has_a_provider() -> None:
@@ -230,11 +236,14 @@ _EXPECTED_ENVFROM_ORDER = [
 ]
 
 
-def _manifest_ctx(*, deployment_name="mydep", project_data=None, unique_name="mydep-web", get_secret=None):
+def _manifest_ctx(
+    *, deployment_name="mydep", project_data=None, unique_name="mydep-web", cluster="sandboxed-local", get_secret=None
+):
     return ManifestContext(
         deployment_name=deployment_name,
         project_data=project_data if project_data is not None else {},
         unique_name=unique_name,
+        cluster=cluster,
         get_secret=get_secret if get_secret is not None else (lambda *a, **k: None),
     )
 
@@ -343,3 +352,121 @@ def test_auth_wall_contributes_nothing_without_keycloak_secret():
     assert contribution.sidecars == []
     assert contribution.template_vars == {}
     assert contribution.env_from_secrets == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 6c: credential secret-file contribution
+# ---------------------------------------------------------------------------
+
+
+def _fake_creds():
+    # Superset of every credential field the cred providers read.
+    return SimpleNamespace(
+        host="db.host",
+        port=5432,
+        username="u",
+        password="p",
+        database="d",
+        schema="s",
+        access_key="ak",
+        secret_key="sk",
+        bucket_name="bucket",
+        region="eu",
+        key_prefix="kp",
+    )
+
+
+def test_postgres_build_secret_file():
+    creds = _fake_creds()
+    ctx = _manifest_ctx(get_secret=lambda dep, t, cls: creds if t == "database" else None)
+    specs = get_provider(ServiceType.POSTGRESQL_DATABASE).build_secret_files(ctx)
+    assert len(specs) == 1
+    spec = specs[0]
+    assert spec.secret_name == "mydep-database"
+    assert spec.secret_type == "database"
+    assert spec.resolve_aliases is True
+    # postgres is the only service that re-registers its secret in the deployment map.
+    assert isinstance(spec.register_secret, DatabaseSecret)
+    expected = DatabaseSecret(
+        host="db.host", port=5432, username="u", password="p", database="d", schema="s"
+    ).to_k8s_secret_data()
+    assert spec.secret_pairs == expected
+
+
+def test_minio_build_secret_file_uses_cluster_host():
+    creds = _fake_creds()
+    ctx = _manifest_ctx(cluster="sandboxed-local", get_secret=lambda dep, t, cls: creds if t == "minio" else None)
+    specs = get_provider(ServiceType.MINIO_STORAGE).build_secret_files(ctx)
+    assert len(specs) == 1
+    spec = specs[0]
+    assert spec.secret_name == "mydep-minio"
+    assert spec.secret_type == "minio"
+    assert spec.resolve_aliases is True
+    assert spec.register_secret is None
+    # host/port come from cluster config, not the creds.
+    from opi.core.cluster_config import get_minio_host, get_minio_port
+
+    expected = MinIOSecret(
+        host=get_minio_host("sandboxed-local"),
+        port=get_minio_port("sandboxed-local"),
+        access_key="ak",
+        secret_key="sk",
+        bucket_name="bucket",
+        region="eu",
+    ).to_k8s_secret_data()
+    assert spec.secret_pairs == expected
+
+
+def test_redis_build_secret_file():
+    creds = _fake_creds()
+    ctx = _manifest_ctx(get_secret=lambda dep, t, cls: creds if t == "redis" else None)
+    specs = get_provider(ServiceType.REDIS).build_secret_files(ctx)
+    assert len(specs) == 1
+    spec = specs[0]
+    assert spec.secret_name == "mydep-redis"
+    assert spec.secret_type == "redis"
+    assert spec.resolve_aliases is True
+    assert spec.register_secret is None
+    expected = RedisSecret(host="db.host", port=5432, username="u", password="p", key_prefix="kp").to_k8s_secret_data()
+    assert spec.secret_pairs == expected
+
+
+def test_credential_providers_no_creds_no_secret_files():
+    ctx = _manifest_ctx(get_secret=lambda *a, **k: None)
+    for t in (ServiceType.POSTGRESQL_DATABASE, ServiceType.MINIO_STORAGE, ServiceType.REDIS):
+        assert get_provider(t).build_secret_files(ctx) == [], t.value
+
+
+def test_metrics_secret_file_gated_on_token(monkeypatch):
+    from opi.services import registry as registry_module
+
+    ctx = _manifest_ctx()
+    monkeypatch.setattr(registry_module.settings, "PROMETHEUS_METRICS_AUTH_TOKEN", None)
+    assert get_provider(ServiceType.METRICS_SCRAPER).build_secret_files(ctx) == []
+
+    monkeypatch.setattr(registry_module.settings, "PROMETHEUS_METRICS_AUTH_TOKEN", "tok")
+    specs = get_provider(ServiceType.METRICS_SCRAPER).build_secret_files(ctx)
+    assert len(specs) == 1
+    assert specs[0].secret_name == "mydep-metrics-auth"
+    assert specs[0].resolve_aliases is False
+    assert specs[0].register_secret is None
+
+
+def test_auth_wall_contributes_cookie_secret_file():
+    keycloak_secret = SimpleNamespace(
+        discovery_url="https://kc/realms/r/.well-known/openid-configuration", client_id="c"
+    )
+    ctx = _manifest_ctx(unique_name="mydep-web", get_secret=lambda *a, **k: keycloak_secret)
+    contribution = get_provider(ServiceType.AUTHORIZATION_WALL).contribute_manifest_context(ctx)
+    assert len(contribution.secret_files) == 1
+    spec = contribution.secret_files[0]
+    assert spec.secret_name == "mydep-web-oauth2-cookie"
+    assert set(spec.secret_pairs) == {"cookie-secret"}
+    assert spec.secret_pairs["cookie-secret"]  # a non-empty random token
+    assert spec.resolve_aliases is False
+
+
+def test_non_secret_file_services_declare_none():
+    ctx = _manifest_ctx()
+    for t in (ServiceType.KEYCLOAK, ServiceType.PLATFORM, ServiceType.PUBLISH_ON_WEB, ServiceType.PERSISTENT_STORAGE):
+        assert get_provider(t).build_secret_files(ctx) == [], t.value
