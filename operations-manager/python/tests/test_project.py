@@ -94,7 +94,9 @@ class TestOrderPreservation:
         v = Project(data)
         # Setting a new service config find-or-creates at the end, never reorders.
         v.set("services/redis/config/x", 1)
-        names = [s if isinstance(s, str) else next(iter(s)) for s in data["services"]]
+        from opi.services.services import service_entry_name
+
+        names = [service_entry_name(s) for s in data["services"]]
         assert names[:2] == ["publish-on-web", "keycloak"]
         assert names[-1] == "redis"
 
