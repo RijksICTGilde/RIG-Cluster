@@ -113,18 +113,18 @@ def ensure_service_in_list(
     idx, entry = find_service_in_list(services, service_name)
 
     if idx == -1:
-        # Service not in list - add it
-        new_entry: dict[str, Any] = {service_name: {}}
+        # Service not in list - add it in the uniform record form (RC-5 A2.3).
+        new_entry: dict[str, Any] = {"name": service_name}
         services.append(new_entry)
         return len(services) - 1, new_entry
 
     if isinstance(entry, str):
-        # Promote string to dict
-        promoted: dict[str, Any] = {service_name: {}}
+        # Promote bare string to the uniform record form.
+        promoted: dict[str, Any] = {"name": service_name}
         services[idx] = promoted
         return idx, promoted
 
-    # Already a dict
+    # Already a dict (record or legacy) - leave its form as-is.
     if not isinstance(entry, dict):
         msg = f"Unexpected service entry type: {type(entry)}"
         raise TypeError(msg)
