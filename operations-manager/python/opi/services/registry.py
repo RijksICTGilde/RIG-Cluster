@@ -19,6 +19,7 @@ from opi.services.config_models.authorization_wall import AuthorizationWallConfi
 from opi.services.config_models.keycloak import KeycloakConfig
 from opi.services.config_models.metrics_scraper import MetricsScraperConfig
 from opi.services.config_models.namespace_postgres import NamespacePostgresConfig
+from opi.services.config_models.storage import StorageConfig
 from opi.services.provider import ServiceProvider
 from opi.services.services_enums import ServiceType
 
@@ -47,10 +48,14 @@ class MetricsScraperProvider(ServiceProvider):
 
 class PersistentStorageProvider(ServiceProvider):
     service_type = ServiceType.PERSISTENT_STORAGE
+    config_model = StorageConfig
+    config_schema_version = "1.0"
 
 
 class TempStorageProvider(ServiceProvider):
     service_type = ServiceType.TEMP_STORAGE
+    config_model = StorageConfig
+    config_schema_version = "1.0"
 
 
 class PostgresqlDatabaseProvider(ServiceProvider):

@@ -171,6 +171,32 @@ class TestKeycloakConfigModel:
             self._provider().validate_config({"restrict-access": {"enabled": True, "realmrole": "x"}})
 
 
+class TestStorageConfigModel:
+    """persistent-storage and temp-storage share StorageConfig (a list of mounts)."""
+
+    def test_persistent_storage_list_validates(self) -> None:
+        model = get_provider(ServiceType.PERSISTENT_STORAGE).validate_config(
+            [{"name": "data", "size": "500Mi", "mount-path": "/data"}]
+        )
+        assert model.root[0].name == "data"
+        assert model.root[0].mount_path == "/data"
+
+    def test_temp_storage_shares_the_same_model(self) -> None:
+        p_model = get_provider(ServiceType.PERSISTENT_STORAGE).config_model
+        t_model = get_provider(ServiceType.TEMP_STORAGE).config_model
+        assert p_model is t_model
+
+    def test_missing_required_field_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            get_provider(ServiceType.PERSISTENT_STORAGE).validate_config([{"name": "data", "size": "500Mi"}])
+
+    def test_unknown_field_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            get_provider(ServiceType.TEMP_STORAGE).validate_config(
+                [{"name": "t", "size": "1Gi", "mount-path": "/tmp", "extra": 1}]
+            )
+
+
 class TestProviderValidateConfig:
     def _provider(self):
         return get_provider(ServiceType.NAMESPACE_POSTGRESQL_DATABASE)
