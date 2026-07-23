@@ -95,7 +95,35 @@ class ManifestContext:
     deployment_name: str
     project_data: dict[str, Any]
     unique_name: str
+    cluster: str
     get_secret: Any  # callable: (deployment_name: str, secret_type: str, secret_class) -> secret | None
+
+
+@dataclass
+class SecretFileSpec:
+    """A SOPS secret manifest a service needs written for a deployment (RC-5 Phase 6c).
+
+    A service declares *what* secret it needs; the shared writer
+    (``ProjectManager._write_secret_file``) does the actual write -- to_k8s aliases,
+    ``create_manifest_file``, obsolete-prune bookkeeping. The provider builds
+    ``secret_pairs`` from its typed secret (via ``ctx.get_secret`` /
+    ``ctx.cluster`` / settings); the shared writer stays service-agnostic.
+    """
+
+    #: The Kubernetes Secret name (e.g. ``get_secret_name(deployment_name)``). The
+    #: manifest file is ``<secret_name>-secret.to-sops.yaml``.
+    secret_name: str
+    #: Base secret data (``typed_secret.to_k8s_secret_data()``, or raw pairs for the
+    #: auth-wall cookie).
+    secret_pairs: dict[str, str]
+    #: Alias/secret bucket for cross-component alias resolution + logs (e.g.
+    #: ``"database"``); None disables alias resolution (metrics, cookie).
+    secret_type: str | None = None
+    #: When True, resolve this deployment's aliases of ``secret_type`` into the pairs.
+    resolve_aliases: bool = False
+    #: Typed secret to register in the deployment's secret map before writing
+    #: (``_add_secret_to_create``); only postgres does this today. None = skip.
+    register_secret: Any = None
 
 
 @dataclass
@@ -123,6 +151,8 @@ class ManifestContribution:
     template_vars: dict[str, Any] = field(default_factory=dict)
     #: Sidecar names to append to the pod's ``sidecars`` list.
     sidecars: list[str] = field(default_factory=list)
+    #: SOPS secret manifests this service needs written (RC-5 Phase 6c).
+    secret_files: list[SecretFileSpec] = field(default_factory=list)
 
 
 class ServiceProvider(ABC):
@@ -308,4 +338,17 @@ class ServiceProvider(ABC):
         contribution = ManifestContribution()
         if self.manifest_secret_class is not None:
             contribution.env_from_secrets.append(self.manifest_secret_class.get_secret_name(ctx.deployment_name))
+        contribution.secret_files = self.build_secret_files(ctx)
         return contribution
+
+    def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:
+        """SOPS secret manifests this service needs for the deployment (RC-5 Phase 6c).
+
+        Default none. The credential services (postgres, minio, redis, metrics)
+        override this to build their typed secret from ``ctx.get_secret`` /
+        ``ctx.cluster`` / settings and return a spec; the shared writer
+        (``ProjectManager._write_secret_file``) does the actual write. A service that
+        cannot build its secret (no provisioned credentials) returns ``[]`` and logs,
+        matching the old warn-and-skip branches.
+        """
+        return []

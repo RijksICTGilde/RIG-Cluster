@@ -15,15 +15,28 @@ services stay one-liners here.
 
 from __future__ import annotations
 
+import logging
+import secrets
+
+from opi.core.cluster_config import get_minio_host, get_minio_port
+from opi.core.config import settings
 from opi.services.config_models.authorization_wall import AuthorizationWallConfig
 from opi.services.config_models.keycloak import KeycloakConfig
 from opi.services.config_models.metrics_scraper import MetricsScraperConfig
 from opi.services.config_models.namespace_postgres import NamespacePostgresConfig
 from opi.services.config_models.storage import StorageConfig
-from opi.services.provider import ManifestContext, ManifestContribution, ProvisionContext, ServiceProvider
+from opi.services.provider import (
+    ManifestContext,
+    ManifestContribution,
+    ProvisionContext,
+    SecretFileSpec,
+    ServiceProvider,
+)
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 from opi.utils.secrets import DatabaseSecret, KeycloakSecret, MetricsAuthSecret, MinIOSecret, RedisSecret
+
+logger = logging.getLogger(__name__)
 
 
 class PublishOnWebProvider(ServiceProvider):
@@ -74,13 +87,14 @@ class AuthorizationWallProvider(ServiceProvider):
                     banner_text = auth_wall_config.get("banner")
                 break
 
+        cookie_secret_name = f"{ctx.unique_name}-oauth2-cookie"
         return ManifestContribution(
             template_vars={
                 "authorization_wall": {
                     "issuer_url": keycloak_secret.discovery_url.replace("/.well-known/openid-configuration", ""),
                     "client_id": keycloak_secret.client_id,
                     "keycloak_secret_name": KeycloakSecret.get_secret_name(ctx.deployment_name),
-                    "cookie_secret_name": f"{ctx.unique_name}-oauth2-cookie",
+                    "cookie_secret_name": cookie_secret_name,
                     "banner": banner_text,
                 },
                 # The ingress goes through the auth proxy on 4180; the app's own primary
@@ -88,6 +102,14 @@ class AuthorizationWallProvider(ServiceProvider):
                 "service_port": 4180,
             },
             sidecars=["authorization-wall"],
+            # The oauth2-proxy needs a random cookie-signing secret; the shared writer
+            # SOPS-encrypts it. Its <deployment>-<component>- prefix survives the prune.
+            secret_files=[
+                SecretFileSpec(
+                    secret_name=cookie_secret_name,
+                    secret_pairs={"cookie-secret": secrets.token_urlsafe(32)},
+                )
+            ],
         )
 
 
@@ -97,6 +119,22 @@ class MetricsScraperProvider(ServiceProvider):
     config_schema_version = "1.0"
     manifest_secret_class = MetricsAuthSecret
     manifest_order = 50
+
+    def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:
+        token = settings.PROMETHEUS_METRICS_AUTH_TOKEN
+        if not token:
+            logger.warning(
+                f"Deployment '{ctx.deployment_name}' uses metrics-scraper but "
+                f"PROMETHEUS_METRICS_AUTH_TOKEN is not configured"
+            )
+            return []
+        return [
+            SecretFileSpec(
+                secret_name=MetricsAuthSecret.get_secret_name(ctx.deployment_name),
+                secret_pairs=MetricsAuthSecret(token=token).to_k8s_secret_data(),
+                secret_type="metrics",
+            )
+        ]
 
 
 class PersistentStorageProvider(ServiceProvider):
@@ -127,6 +165,30 @@ class PostgresqlDatabaseProvider(ServiceProvider):
         # one call, so only this provider provisions (namespace-postgres does not).
         await ctx.database_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment, ctx.force_clone)
 
+    def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:
+        creds = ctx.get_secret(ctx.deployment_name, "database", DatabaseSecret)
+        if creds is None:
+            logger.warning(f"Deployment '{ctx.deployment_name}' uses PostgreSQL but no database credentials found")
+            return []
+        # host is already resolved by database_manager (namespace-specific or shared).
+        secret = DatabaseSecret(
+            host=creds.host,
+            port=creds.port,
+            username=creds.username,
+            password=creds.password,
+            database=creds.database,
+            schema=creds.schema,
+        )
+        return [
+            SecretFileSpec(
+                secret_name=DatabaseSecret.get_secret_name(ctx.deployment_name),
+                secret_pairs=secret.to_k8s_secret_data(),
+                secret_type="database",
+                resolve_aliases=True,
+                register_secret=secret,
+            )
+        ]
+
 
 class NamespacePostgresqlDatabaseProvider(ServiceProvider):
     service_type = ServiceType.NAMESPACE_POSTGRESQL_DATABASE
@@ -147,6 +209,29 @@ class MinioStorageProvider(ServiceProvider):
     async def provision(self, ctx: ProvisionContext) -> None:
         await ctx.minio_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment, ctx.force_clone)
 
+    def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:
+        creds = ctx.get_secret(ctx.deployment_name, "minio", MinIOSecret)
+        if creds is None:
+            logger.warning(f"Deployment '{ctx.deployment_name}' uses MinIO but no object storage credentials found")
+            return []
+        # host/port are cluster-specific; the rest comes from the provisioned creds.
+        secret = MinIOSecret(
+            host=get_minio_host(ctx.cluster),
+            port=get_minio_port(ctx.cluster),
+            access_key=creds.access_key,
+            secret_key=creds.secret_key,
+            bucket_name=creds.bucket_name,
+            region=creds.region,
+        )
+        return [
+            SecretFileSpec(
+                secret_name=MinIOSecret.get_secret_name(ctx.deployment_name),
+                secret_pairs=secret.to_k8s_secret_data(),
+                secret_type="minio",
+                resolve_aliases=True,
+            )
+        ]
+
 
 class RedisProvider(ServiceProvider):
     service_type = ServiceType.REDIS
@@ -160,6 +245,27 @@ class RedisProvider(ServiceProvider):
     async def provision(self, ctx: ProvisionContext) -> None:
         # redis_manager handles both the shared and namespace redis variants.
         await ctx.redis_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment)
+
+    def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:
+        creds = ctx.get_secret(ctx.deployment_name, "redis", RedisSecret)
+        if creds is None:
+            logger.warning(f"Deployment '{ctx.deployment_name}' uses Redis but no cache credentials found")
+            return []
+        secret = RedisSecret(
+            host=creds.host,
+            port=creds.port,
+            username=creds.username,
+            password=creds.password,
+            key_prefix=creds.key_prefix,
+        )
+        return [
+            SecretFileSpec(
+                secret_name=RedisSecret.get_secret_name(ctx.deployment_name),
+                secret_pairs=secret.to_k8s_secret_data(),
+                secret_type="redis",
+                resolve_aliases=True,
+            )
+        ]
 
 
 class NamespaceRedisProvider(ServiceProvider):
