@@ -3144,23 +3144,23 @@ def extract_storage_from_component_services(component: dict[str, Any]) -> list[d
         List of storage config dicts with keys: name, size, mount-path, type
     """
     from opi.services.schema_migration import _STORAGE_SERVICE_TO_TYPE
+    from opi.services.services import service_entry_config, service_entry_name
 
     storage_configs: list[dict[str, Any]] = []
-    services = component.get("services", [])
-
-    for entry in services:
-        if not isinstance(entry, dict):
+    for entry in component.get("services", []):
+        # Format-agnostic (bare string / legacy name-as-key / new {reference, config}).
+        name = service_entry_name(entry)
+        if name not in _STORAGE_SERVICE_TO_TYPE:
             continue
-        for service_name, service_data in entry.items():
-            if service_name not in _STORAGE_SERVICE_TO_TYPE:
-                continue
-            storage_type = _STORAGE_SERVICE_TO_TYPE[service_name]
-            config_items = service_data.get("config", []) if isinstance(service_data, dict) else []
-            for item in config_items:
-                if isinstance(item, dict):
-                    config = dict(item)
-                    config["type"] = storage_type
-                    storage_configs.append(config)
+        storage_type = _STORAGE_SERVICE_TO_TYPE[name]
+        config_items = service_entry_config(entry)
+        if not isinstance(config_items, list):
+            continue
+        for item in config_items:
+            if isinstance(item, dict):
+                config = dict(item)
+                config["type"] = storage_type
+                storage_configs.append(config)
 
     return storage_configs
 
@@ -3237,16 +3237,18 @@ def extract_component_attachment_uses(component: dict[str, Any]) -> list[dict[st
     Reads the ``config`` key (``use`` is the pre-rename name, still accepted for any
     not-yet-migrated data).
     """
+    from opi.services.services import service_entry_config, service_entry_name
+
     uses: list[dict[str, Any]] = []
     for entry in component.get("services", []):
-        if not isinstance(entry, dict):
+        # Format-agnostic (legacy {attachments: {config}} / new {reference: attachments, config}).
+        if service_entry_name(entry) != "attachments":
             continue
-        service_data = entry.get("attachments")
-        if not isinstance(service_data, dict):
-            continue
-        coupling = service_data.get("config")
-        if coupling is None:
-            coupling = service_data.get("use", [])
+        coupling = service_entry_config(entry)
+        if coupling is None and isinstance(entry, dict):
+            # Legacy pre-rename 'use' key (only on the legacy name-as-key form).
+            body = entry.get("attachments")
+            coupling = body.get("use", []) if isinstance(body, dict) else []
         uses.extend(item for item in (coupling or []) if isinstance(item, dict) and item.get("reference"))
     return uses
 

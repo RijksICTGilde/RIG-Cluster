@@ -70,6 +70,8 @@ from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
 from opi.services.project import Project
 from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
+from opi.services.project_store import get_project_store
+from opi.services.services import service_entry_config, service_entry_name
 from opi.utils.age import (
     decrypt_age_content,
     decrypt_password_smart,
@@ -4410,9 +4412,7 @@ class ProjectManager:
             # This check is infrastructure-level, independent of any manager initialization
             project_services = project_data.get("services", [])
             needs_infrastructure_namespace = any(
-                service_item == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-                if isinstance(service_item, str)
-                else ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item
+                service_entry_name(service_item) == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
                 for service_item in (project_services or [])
             )
 
@@ -5258,12 +5258,10 @@ class ProjectManager:
                     banner_text = None
                     project_services = project_data.get("services", [])
                     for service_item in project_services:
-                        if isinstance(service_item, dict) and ServiceType.AUTHORIZATION_WALL.value in service_item:
-                            auth_wall_data = service_item[ServiceType.AUTHORIZATION_WALL.value]
-                            if isinstance(auth_wall_data, dict):
-                                auth_wall_config = auth_wall_data.get("config", {})
-                                if isinstance(auth_wall_config, dict):
-                                    banner_text = auth_wall_config.get("banner")
+                        if service_entry_name(service_item) == ServiceType.AUTHORIZATION_WALL.value:
+                            auth_wall_config = service_entry_config(service_item)
+                            if isinstance(auth_wall_config, dict):
+                                banner_text = auth_wall_config.get("banner")
                             break
 
                     variables["authorization_wall"] = {
@@ -5321,8 +5319,10 @@ class ProjectManager:
                 # Config is stored as: services: [{metrics-scraper: {config: [{port, path}]}}]
                 services = component_def.get("services", [])
                 for service_item in services:
-                    if isinstance(service_item, dict) and ServiceType.METRICS_SCRAPER.value in service_item:
-                        metrics_data = service_item[ServiceType.METRICS_SCRAPER.value]
+                    # Format-agnostic (inline legacy {metrics-scraper: {port, path}} /
+                    # new {reference: metrics-scraper, config: {port, path}}).
+                    if service_entry_name(service_item) == ServiceType.METRICS_SCRAPER.value:
+                        metrics_data = service_entry_config(service_item)
                         if isinstance(metrics_data, dict):
                             metrics_config = {
                                 "port": metrics_data.get("port"),

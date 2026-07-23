@@ -45,6 +45,25 @@ def service_entry_name(entry: Any) -> str | None:
     return None
 
 
+def service_entry_config(entry: Any) -> Any:
+    """Return the ``config`` of a service entry, format-agnostic (None if none).
+
+    New record: the ``config`` field on the entry. Legacy ``{X: {config: ...}}``: the
+    ``config`` under the name key, or -- for services whose legacy value carries the
+    config inline without a ``config`` wrapper (e.g. metrics-scraper
+    ``{metrics-scraper: {port, path}}``) -- that inline body itself.
+    """
+    if not isinstance(entry, dict):
+        return None
+    if "name" in entry or "reference" in entry:
+        return entry.get("config")
+    name = service_entry_name(entry)
+    body = entry.get(name) if name is not None else None
+    if isinstance(body, dict):
+        return body.get("config", body) if "config" in body else body
+    return body
+
+
 @dataclass
 class VariableDefinition:
     """
@@ -674,10 +693,10 @@ class ServiceAdapter:
     def build_component_service_entries(cls, service_names: list[str]) -> list[str | dict[str, Any]]:
         """Build a component-level services list with storage configs embedded.
 
-        Converts a flat list of service name strings into the v2 mixed format
-        where storage services carry their config inline::
+        Converts a flat list of service name strings into the uniform component
+        format where storage services carry their config as a reference record::
 
-            ["publish-on-web", {"persistent-storage": {"config": [...]}}]
+            ["publish-on-web", {"reference": "persistent-storage", "config": [...]}]
         """
         parsed = cls.parse_services_from_strings(service_names)
         storage_configs = cls.create_storage_configs(parsed)
@@ -694,7 +713,7 @@ class ServiceAdapter:
         entries: list[str | dict[str, Any]] = []
         for svc in parsed:
             if svc.value in storage_by_svc:
-                entries.append({svc.value: {"config": storage_by_svc[svc.value]}})
+                entries.append({"reference": svc.value, "config": storage_by_svc[svc.value]})
             else:
                 entries.append(svc.value)
         return entries

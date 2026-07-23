@@ -575,29 +575,52 @@ def _normalize_service_entry(entry: Any, id_key: str) -> Any:
     if len(keys) != 1:
         return entry
     name = keys[0]
+    if name == "attachments":
+        # Deferred hard case: attachments has its own project-level 'data' catalog and
+        # dedicated $defs. Leave it in the legacy name-as-key form (readers handle it).
+        return entry
     body = entry[name]
     record: dict[str, Any] = {id_key: name}
     if isinstance(body, dict):
-        record.update(body)  # brings config (and any legacy 'type')
+        if "config" in body:
+            record.update(body)  # config-wrapped legacy (+ any siblings like 'type')
+        else:
+            # Inline config with no wrapper (e.g. metrics-scraper {port, path}).
+            record["config"] = body
     elif body is not None:
         record["config"] = body
     return record
 
 
 def _migrate_v2_3_to_v2_4(project_data: dict[str, Any]) -> bool:
-    """Normalize project-level service definitions to the uniform ``{name, config}``
-    record (RC-5 A). Bare strings stay bare; already-normalized entries are untouched.
-    Component-level references are normalized in a later step.
+    """Normalize service entries to the uniform record form (RC-5 A):
+    project-level definitions -> ``{name, config}``, component-level references ->
+    ``{reference, config}``. Bare strings stay bare; already-normalized entries and
+    attachments (deferred) are untouched. Deployment-level services are OPI-managed
+    and already in ``{reference, config}`` form.
     """
-    services = project_data.get("services")
-    if not isinstance(services, list):
-        return False
     changed = False
-    for i, entry in enumerate(services):
-        normalized = _normalize_service_entry(entry, "name")
-        if normalized is not entry:
-            services[i] = normalized
-            changed = True
+
+    services = project_data.get("services")
+    if isinstance(services, list):
+        for i, entry in enumerate(services):
+            normalized = _normalize_service_entry(entry, "name")
+            if normalized is not entry:
+                services[i] = normalized
+                changed = True
+
+    for component in project_data.get("components", []) or []:
+        if not isinstance(component, dict):
+            continue
+        comp_services = component.get("services")
+        if not isinstance(comp_services, list):
+            continue
+        for i, entry in enumerate(comp_services):
+            normalized = _normalize_service_entry(entry, "reference")
+            if normalized is not entry:
+                comp_services[i] = normalized
+                changed = True
+
     return changed
 
 
