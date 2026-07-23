@@ -1490,6 +1490,99 @@ def _snapshot_to_dict(s: Any) -> dict[str, Any]:
     }
 
 
+@web_router.get("/projects/details/{project_name}/resource-usage", response_class=HTMLResponse)
+@requires_sso
+async def project_resource_usage_fragment(request: Request, project_name: str) -> HTMLResponse:
+    """Compact project-wide CPU and memory totals (HTMX lazy-load).
+
+    A project's deployments -- including every PR environment -- share one namespace,
+    so the per-deployment metrics blocks never show the total. This sums across the
+    project's namespaces, the same Prometheus queries the dashboard's Resource Usage
+    card uses, so a project with 18 PRs shows one honest number for its footprint.
+
+    Memory is the working set (what is actually resident), not the limit, which is
+    the number that answers "how much is this project really using".
+
+    Lazy on its own request: Prometheus is cheap, but this keeps it off the page's
+    render and out of the way if Prometheus is down.
+    """
+    from opi.core.cluster_config import get_prefixed_namespace
+    from opi.core.config import settings
+
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    if not is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    project = get_project_store().get(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    current_cluster = settings.CLUSTER_MANAGER
+    namespaces = sorted(
+        {
+            get_prefixed_namespace(current_cluster, d["namespace"])
+            for d in (project.data or {}).get("deployments", [])
+            if d.get("cluster") == current_cluster and d.get("namespace")
+        }
+    )
+
+    ctx: dict[str, Any] = {"project": project, "usage": None, "usage_error": None}
+
+    if namespaces:
+        ns_regex = "|".join(namespaces)
+        try:
+            from opi.connectors.prometheus import get_metrics_connector
+
+            prom = await get_metrics_connector()
+            if not prom.is_connected:
+                ctx["usage_error"] = "Prometheus is niet beschikbaar"
+            else:
+
+                async def _scalar(promql: str) -> float:
+                    result = await prom.custom_query(promql)
+                    if result and result[0].get("value"):
+                        return float(result[0]["value"][1])
+                    return 0.0
+
+                cpu_used = await _scalar(
+                    f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{ns_regex}",container!=""}}[5m]))'
+                )
+                cpu_limit = await _scalar(
+                    f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="cpu"}})'
+                )
+                mem_used = await _scalar(
+                    f'sum(container_memory_working_set_bytes{{namespace=~"{ns_regex}",container!=""}})'
+                )
+                mem_limit = await _scalar(
+                    f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="memory"}})'
+                )
+                pods = await _scalar(f'count(kube_pod_info{{namespace=~"{ns_regex}"}})')
+
+                ctx["usage"] = {
+                    "cpu_used": cpu_used,
+                    "cpu_limit": cpu_limit,
+                    "cpu_pct": min(100, round(cpu_used / cpu_limit * 100)) if cpu_limit > 0 else 0,
+                    "mem_used": mem_used,
+                    "mem_limit": mem_limit,
+                    "mem_pct": min(100, round(mem_used / mem_limit * 100)) if mem_limit > 0 else 0,
+                    "pods": int(pods),
+                    "deployments": len(
+                        [d for d in (project.data or {}).get("deployments", []) if d.get("cluster") == current_cluster]
+                    ),
+                }
+        except Exception as e:
+            logger.warning(f"Failed to fetch project resource usage for {project_name}: {e}")
+            ctx["usage_error"] = str(e)
+
+    return get_templates().TemplateResponse(
+        request=request,
+        name="project-details/_resource-usage.html.j2",
+        context=ctx,
+    )
+
+
 @web_router.get("/projects/details/{project_name}/backups", response_class=HTMLResponse)
 @requires_sso
 async def backups_fragment(request: Request, project_name: str) -> HTMLResponse:
