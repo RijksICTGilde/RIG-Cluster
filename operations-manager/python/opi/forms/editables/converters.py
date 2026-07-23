@@ -201,7 +201,9 @@ class ServiceListConverter:
 
     @staticmethod
     def _restore_attachments_data(item: Any, existing_data: Any) -> Any:
-        name = item if isinstance(item, str) else (next(iter(item), None) if isinstance(item, dict) else None)
+        from opi.services.services import service_entry_name
+
+        name = service_entry_name(item)
         if name != "attachments":
             return item
         current = item["attachments"] if isinstance(item, dict) and isinstance(item.get("attachments"), dict) else {}

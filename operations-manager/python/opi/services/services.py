@@ -19,6 +19,32 @@ class ServiceValidationError(ValueError):
     """Raised for user-facing service validation failures."""
 
 
+def service_entry_name(entry: Any) -> str | None:
+    """Return the service name from a ``services``-list entry, format-agnostic.
+
+    Handles every form a services list may hold (RC-5 A):
+    - bare string: ``"publish-on-web"``
+    - new record (project): ``{"name": "keycloak", "config": {...}}``
+    - new record (component reference): ``{"reference": "keycloak", "config": ...}``
+    - legacy single-key dict: ``{"keycloak": {"config": {...}}}``
+
+    Returns None for an unrecognisable entry. The ``name``/``reference`` keys take
+    precedence, so a two-key record is handled where the legacy single-key logic
+    (``next(iter(dict))``) would break.
+    """
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        name = entry.get("name") or entry.get("reference")
+        if name is not None:
+            return name
+        # Legacy: the service name is the sole key (excluding record metadata).
+        keys = [key for key in entry if key not in ("config", "schema-version")]
+        if len(keys) == 1:
+            return keys[0]
+    return None
+
+
 @dataclass
 class VariableDefinition:
     """
@@ -519,17 +545,10 @@ class ServiceAdapter:
         Returns a new list with missing dependency names prepended, preserving order.
         """
 
-        def _name(entry: Any) -> str | None:
-            if isinstance(entry, str):
-                return entry
-            if isinstance(entry, dict):
-                return next(iter(entry), None)
-            return None
-
-        selected_set = {name for entry in selected if (name := _name(entry)) is not None}
+        selected_set = {name for entry in selected if (name := service_entry_name(entry)) is not None}
         to_add: list[str] = []
         for entry in selected:
-            svc_name = _name(entry)
+            svc_name = service_entry_name(entry)
             if svc_name is None:
                 continue
             try:
@@ -701,20 +720,12 @@ class ServiceAdapter:
         service_names: list[str] = []
 
         for service_item in project_services:
-            if isinstance(service_item, str):
-                # Simple string format
-                service_names.append(service_item)
-            elif isinstance(service_item, dict):
-                # Dict format: {"service-name": {"config": {...}}}
-                # Extract the key (service name)
-                if len(service_item) == 0:
-                    raise ValueError(f"Service dict is empty: {service_item}")
-                if len(service_item) > 1:
-                    raise ValueError(f"Service dict should have exactly one key (service name): {service_item}")
-                service_name = next(iter(service_item.keys()))
-                service_names.append(service_name)
-            else:
+            if not isinstance(service_item, str | dict):
                 raise TypeError(f"Invalid service item type {type(service_item)}, must be str or dict: {service_item}")
+            name = service_entry_name(service_item)
+            if name is None:
+                raise ValueError(f"Cannot determine service name from entry: {service_item}")
+            service_names.append(name)
 
         return service_names
 
@@ -920,7 +931,7 @@ class ServiceAdapter:
                 entries_to_add = [
                     entry
                     for entry in new_entries
-                    if (entry if isinstance(entry, str) else next(iter(entry))) not in existing_comp_svc_names
+                    if service_entry_name(entry) not in existing_comp_svc_names
                 ]
 
                 if entries_to_add:

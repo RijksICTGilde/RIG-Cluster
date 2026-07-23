@@ -291,12 +291,21 @@ class TestExtractServiceNamesFromProjectServices:
         assert ServiceAdapter.extract_service_names_from_project_services([]) == []
 
     def test_empty_dict_raises(self):
-        with pytest.raises(ValueError, match="empty"):
+        with pytest.raises(ValueError, match="Cannot determine service name"):
             ServiceAdapter.extract_service_names_from_project_services([{}])
 
-    def test_multi_key_dict_raises(self):
-        with pytest.raises(ValueError, match="exactly one key"):
+    def test_ambiguous_multi_key_dict_raises(self):
+        # A multi-key dict without name/reference is ambiguous (RC-5 A: the new form
+        # uses an explicit name/reference key).
+        with pytest.raises(ValueError, match="Cannot determine service name"):
             ServiceAdapter.extract_service_names_from_project_services([{"a": {}, "b": {}}])
+
+    def test_new_record_format_accepted(self):
+        # RC-5 A: {name/reference, config} records (multi-key dicts) resolve by the
+        # name/reference value, not the sole key.
+        assert ServiceAdapter.extract_service_names_from_project_services(
+            [{"name": "keycloak", "config": {"template": "sso-only"}}, {"reference": "publish-on-web"}]
+        ) == ["keycloak", "publish-on-web"]
 
     def test_invalid_type_raises(self):
         with pytest.raises(TypeError, match="Invalid service item type"):
