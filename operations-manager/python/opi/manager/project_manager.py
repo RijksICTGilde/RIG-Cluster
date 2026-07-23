@@ -71,7 +71,7 @@ from opi.services.project_store import ConcurrencyError, ConflictError, get_proj
 from opi.services.project_store import get_project_store
 from opi.services.provider import ManifestContext, ProvisionContext, SecretFileSpec
 from opi.services.registry import manifest_providers, provisioning_providers
-from opi.services.services import service_entry_config, service_entry_name
+from opi.services.services import service_entry_name
 from opi.utils.age import (
     decrypt_age_content,
     decrypt_password_smart,
@@ -5125,22 +5125,18 @@ class ProjectManager:
             #     logger.debug(f"Config DEBUG: Adding component {component_name} with namespace: {namespace}")
             #     config_handler.add_component(component_name, "component", namespace)
 
-            # Determine which services this component uses. Secret/envFrom/sidecar
-            # contributions are driven generically off the provider registry (RC-5
-            # Phase 6); only these two flags remain -- they gate the metrics_config
-            # template var and the auth-wall observability log below.
+            # Service contributions (envFrom, sidecars, template vars, secret files) are
+            # driven generically off the provider registry (RC-5 Phase 6). Only the
+            # auth-wall observability log below still needs an explicit flag.
             component_uses_authorization_wall = False
-            component_uses_metrics_scraper = False
             component_def = None
             all_services: list[str] = []
-            metrics_config = {"port": None, "path": None}
 
             if component_reference:
                 component_def = self._project_file_handler._find_component(project_data, component_reference)
                 all_services = extract_service_names_from_component(component_def) if component_def else []
 
                 component_uses_authorization_wall = ServiceType.AUTHORIZATION_WALL.value in all_services
-                component_uses_metrics_scraper = ServiceType.METRICS_SCRAPER.value in all_services
 
             # Collect each used service's manifest contribution once (RC-5 Phase 6).
             # A provider may add envFrom secrets + sidecars (additive) and override
@@ -5153,6 +5149,7 @@ class ProjectManager:
                 unique_name=unique_name,
                 cluster=cluster,
                 get_secret=self._get_secret_from_map,
+                component_def=component_def,
             )
             manifest_contributions = [
                 provider.contribute_manifest_context(manifest_ctx)
@@ -5228,8 +5225,10 @@ class ProjectManager:
                 "generated_at": generated_at,
                 # CA certificate configuration for SSL/TLS
                 "ca_config": get_ca_certificate_config(cluster),
-                # Prometheus metrics configuration (passed to template if metrics-scraper service enabled)
-                "metrics_config": metrics_config if component_uses_metrics_scraper else None,
+                # Prometheus metrics configuration. Base is None; the metrics-scraper
+                # provider overrides this with the component's scrape {port, path} via
+                # its manifest contribution (RC-5 Phase 6b) when the service is used.
+                "metrics_config": None,
                 # Resource configuration (requests and limits)
                 "resources_requests_memory": component_resources["requests_memory"],
                 "resources_requests_cpu": component_resources["requests_cpu"],
@@ -5309,26 +5308,6 @@ class ProjectManager:
                     logger.warning(
                         f"Component '{component_name}' uses authorization-wall but no keycloak service configured"
                     )
-
-            # Configure metrics scraper if enabled
-            if component_uses_metrics_scraper and component_def:
-                # Extract metrics config from component's service definition.
-                # Config is stored as: services: [{metrics-scraper: {config: [{port, path}]}}]
-                services = component_def.get("services", [])
-                for service_item in services:
-                    # Format-agnostic (inline legacy {metrics-scraper: {port, path}} /
-                    # new {reference: metrics-scraper, config: {port, path}}).
-                    if service_entry_name(service_item) == ServiceType.METRICS_SCRAPER.value:
-                        metrics_data = service_entry_config(service_item)
-                        if isinstance(metrics_data, dict):
-                            metrics_config = {
-                                "port": metrics_data.get("port"),
-                                "path": metrics_data.get("path"),
-                            }
-                        break
-                logger.info(
-                    f"Metrics scraper enabled for component '{component_name}': port={metrics_config.get('port')}, path={metrics_config.get('path')}"
-                )
 
             # Generate extra manifests for sidecars (e.g. ConfigMaps)
             # Each sidecar template can define a 'configmap' section that produces a standalone manifest
