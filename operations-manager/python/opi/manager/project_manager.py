@@ -72,7 +72,7 @@ from opi.services.project import Project
 from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
 from opi.services.project_store import get_project_store
 from opi.services.provider import ManifestContext, ProvisionContext
-from opi.services.registry import manifest_secret_providers, provisioning_providers
+from opi.services.registry import manifest_providers, provisioning_providers
 from opi.services.services import service_entry_config, service_entry_name
 from opi.utils.age import (
     decrypt_age_content,
@@ -5112,21 +5112,32 @@ class ProjectManager:
                 component_uses_authorization_wall = ServiceType.AUTHORIZATION_WALL.value in all_services
                 component_uses_metrics_scraper = ServiceType.METRICS_SCRAPER.value in all_services
 
+            # Collect each used service's manifest contribution once (RC-5 Phase 6).
+            # A provider may add envFrom secrets + sidecars (additive) and override
+            # template vars (e.g. auth-wall service_port 8080 -> 4180). envFrom is
+            # applied here (it is a template var itself); template_vars/sidecars are
+            # merged after the template context dict is built, below.
+            manifest_ctx = ManifestContext(
+                deployment_name=deployment_name,
+                project_data=project_data,
+                unique_name=unique_name,
+                get_secret=self._get_secret_from_map,
+            )
+            manifest_contributions = [
+                provider.contribute_manifest_context(manifest_ctx)
+                for provider in manifest_providers()
+                if any(t.value in all_services for t in provider.manifest_activation_types())
+            ]
+
             # Build envFrom secrets list based on services used and user env vars
             # This list determines which secrets are referenced in the deployment manifest
             # Note: Secret FILES are only generated if the secret is in _secrets_to_create map
             env_from_secrets = []
 
-            # Add deployment-level secrets based on services used (RC-5 Phase 6a):
-            # each provider that owns a per-deployment envFrom secret contributes its
-            # name via contribute_manifest_context, in manifest_order. Byte-identical
-            # to the old fixed db -> minio -> keycloak -> redis -> metrics sequence.
-            manifest_ctx = ManifestContext(deployment_name=deployment_name)
-            for provider in manifest_secret_providers():
-                if any(t.value in all_services for t in provider.manifest_activation_types()):
-                    contributed = provider.contribute_manifest_context(manifest_ctx).env_from_secrets
-                    env_from_secrets.extend(contributed)
-                    logger.debug(f"{provider.service_type.value} secret added to envFrom: {contributed}")
+            # Add deployment-level secrets in manifest_order -- byte-identical to the old
+            # fixed db -> minio -> keycloak -> redis -> metrics append sequence.
+            for contribution in manifest_contributions:
+                env_from_secrets.extend(contribution.env_from_secrets)
 
             # Platform secret (always present, per-component)
             platform_secret_name = PlatformSecret.get_secret_name(unique_name)
@@ -5247,32 +5258,19 @@ class ProjectManager:
             # config_handler.add_custom_config(component_name, "port", application_port)
             # config_handler.add_custom_config(component_name, "unique_name", unique_name)
 
-            # Add authorization-wall sidecar if enabled
-            if component_uses_authorization_wall:
-                keycloak_secret = self._get_secret_from_map(deployment_name, "keycloak", KeycloakSecret)
-                if keycloak_secret:
-                    # Extract optional config (banner) from project-level services
-                    banner_text = None
-                    project_services = project_data.get("services", [])
-                    for service_item in project_services:
-                        if service_entry_name(service_item) == ServiceType.AUTHORIZATION_WALL.value:
-                            auth_wall_config = service_entry_config(service_item)
-                            if isinstance(auth_wall_config, dict):
-                                banner_text = auth_wall_config.get("banner")
-                            break
+            # Merge each service's manifest contribution into the template context
+            # (RC-5 Phase 6b): sidecars are additive, template_vars override base keys
+            # (auth-wall sets authorization_wall + service_port 8080 -> 4180). The
+            # contributions were collected once, above, before the dict was built.
+            for contribution in manifest_contributions:
+                variables.update(contribution.template_vars)
+                if contribution.sidecars:
+                    variables.setdefault("sidecars", []).extend(contribution.sidecars)
 
-                    variables["authorization_wall"] = {
-                        "issuer_url": keycloak_secret.discovery_url.replace("/.well-known/openid-configuration", ""),
-                        "client_id": keycloak_secret.client_id,
-                        "keycloak_secret_name": KeycloakSecret.get_secret_name(deployment_name),
-                        "cookie_secret_name": f"{unique_name}-oauth2-cookie",
-                        "banner": banner_text,
-                    }
-                    variables["sidecars"] = ["authorization-wall"]
-                    # The ingress goes through the auth proxy on 4180; the app's own primary port
-                    # stays behind it. The extra inbound ports are separate (not fronted by the
-                    # proxy), so they keep their Service entries for cluster-internal reachability.
-                    variables["service_port"] = 4180
+            # Auth-wall observability: the provider contributes nothing when a component
+            # asks for an auth wall but no keycloak secret is provisioned (old warn path).
+            if component_uses_authorization_wall:
+                if "authorization_wall" in variables:
                     logger.info(f"Authorization wall enabled for component '{component_name}'")
                 else:
                     logger.warning(
