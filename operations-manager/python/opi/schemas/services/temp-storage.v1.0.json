@@ -1,0 +1,34 @@
+{
+  "$defs": {
+    "StorageEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "mount-path": {
+          "title": "Mount-Path",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "size": {
+          "title": "Size",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "size",
+        "mount-path"
+      ],
+      "title": "StorageEntry",
+      "type": "object"
+    }
+  },
+  "description": "The component-level storage config: a list of mount specs.",
+  "items": {
+    "$ref": "#/$defs/StorageEntry"
+  },
+  "title": "StorageConfig",
+  "type": "array"
+}
