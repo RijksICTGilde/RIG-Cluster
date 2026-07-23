@@ -949,7 +949,17 @@ tasks:
       - |
         echo "Updating operations-manager deployment..."
         SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
-        kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
+        # On odcn-production the image is a CalVer tag that changes every deploy, so the
+        # apply above already rolls the deployment. A `rollout restart` on top of that is
+        # a SECOND change to the pod template, so two rollouts start at once and you
+        # briefly see three pods. Only restart where the tag does NOT change: local and
+        # sandbox load the image into kind under a fixed `:latest`, so apply sees nothing
+        # new and the restart is what actually picks up the rebuilt image.
+        if [ "{{.CLUSTER}}" = "odcn-production" ]; then
+          echo "CalVer image tag changed; the apply triggers the rollout (no restart needed)."
+        else
+          kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
+        fi
       - echo -e "✅ Operations manager updated successfully!"
     silent: true
 
