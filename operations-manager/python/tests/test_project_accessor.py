@@ -1,4 +1,4 @@
-"""Tests for ProjectView -- the single generic read/query/mutate entry point.
+"""Tests for ProjectAccessor -- the single generic read/query/mutate entry point.
 
 Covers the two generic method families: path/reference access, and service-generic
 access ("give me X of service Y", parameterised by name). Also asserts the core
@@ -6,7 +6,7 @@ invariant that mutation preserves list order.
 """
 
 import pytest
-from opi.services.project_view import ProjectView
+from opi.services.project_accessor import ProjectAccessor
 from opi.services.services_enums import ServiceType
 from pydantic import ValidationError
 
@@ -31,67 +31,67 @@ def _project() -> dict:
 
 class TestPathAccess:
     def test_get_plain_path(self) -> None:
-        assert ProjectView(_project()).get("name") == "demo"
+        assert ProjectAccessor(_project()).get("name") == "demo"
 
     def test_get_field_match_filter(self) -> None:
-        v = ProjectView(_project())
+        v = ProjectAccessor(_project())
         assert v.get("components{name=api}/ports/inbound[0]") == 8000
 
     def test_get_service_config_path(self) -> None:
-        v = ProjectView(_project())
+        v = ProjectAccessor(_project())
         assert v.get("services/keycloak/config/template") == "sso-support"
 
     def test_get_missing_returns_default(self) -> None:
-        assert ProjectView(_project()).get("nope/x", default="d") == "d"
+        assert ProjectAccessor(_project()).get("nope/x", default="d") == "d"
 
     def test_exists(self) -> None:
-        v = ProjectView(_project())
+        v = ProjectAccessor(_project())
         assert v.exists("services/keycloak/config/template")
         assert not v.exists("services/keycloak/config/missing")
 
     def test_set_is_chainable_and_mutates_underlying_dict(self) -> None:
         data = _project()
-        v = ProjectView(data)
+        v = ProjectAccessor(data)
         v.set("services/keycloak/config/template", "sso-only").set("name", "renamed")
         assert data["name"] == "renamed"
         assert v.get("services/keycloak/config/template") == "sso-only"
 
     def test_delete(self) -> None:
-        v = ProjectView(_project())
+        v = ProjectAccessor(_project())
         v.delete("services/keycloak/config/template")
         assert v.get("services/keycloak/config/template") is None
 
     def test_data_returns_wrapped_dict(self) -> None:
         data = _project()
-        assert ProjectView(data).data is data
+        assert ProjectAccessor(data).data is data
 
 
 class TestReferenceLookup:
     def test_find_by_name(self) -> None:
-        v = ProjectView(_project())
+        v = ProjectAccessor(_project())
         assert v.find("components", name="web")["ports"]["inbound"] == [3000]
 
     def test_find_missing_returns_none(self) -> None:
-        assert ProjectView(_project()).find("components", name="ghost") is None
+        assert ProjectAccessor(_project()).find("components", name="ghost") is None
 
     def test_find_all(self) -> None:
-        v = ProjectView(_project())
+        v = ProjectAccessor(_project())
         assert len(v.find_all("components")) == 2
 
     def test_locate_over_nested_list_by_reference(self) -> None:
-        v = ProjectView(_project())
+        v = ProjectAccessor(_project())
         deployment = v.find("deployments", name="prod")
-        assert ProjectView.locate(deployment["components"], reference="web") == {"reference": "web"}
+        assert ProjectAccessor.locate(deployment["components"], reference="web") == {"reference": "web"}
 
     def test_locate_multiple_fields(self) -> None:
         items = [{"a": 1, "b": 2}, {"a": 1, "b": 3}]
-        assert ProjectView.locate(items, a=1, b=3) == {"a": 1, "b": 3}
+        assert ProjectAccessor.locate(items, a=1, b=3) == {"a": 1, "b": 3}
 
 
 class TestOrderPreservation:
     def test_set_appends_without_reordering(self) -> None:
         data = {"services": ["publish-on-web", {"keycloak": {"config": {}}}]}
-        v = ProjectView(data)
+        v = ProjectAccessor(data)
         # Setting a new service config find-or-creates at the end, never reorders.
         v.set("services/redis/config/x", 1)
         names = [s if isinstance(s, str) else next(iter(s)) for s in data["services"]]
@@ -101,58 +101,58 @@ class TestOrderPreservation:
 
 class TestServiceGenericAccess:
     def test_service_entry_string_form(self) -> None:
-        assert ProjectView(_project()).service_entry("publish-on-web") == "publish-on-web"
+        assert ProjectAccessor(_project()).service_entry("publish-on-web") == "publish-on-web"
 
     def test_service_entry_dict_form(self) -> None:
-        entry = ProjectView(_project()).service_entry("keycloak")
+        entry = ProjectAccessor(_project()).service_entry("keycloak")
         assert entry == {"keycloak": {"config": {"template": "sso-support"}}}
 
     def test_service_entry_absent(self) -> None:
-        assert ProjectView(_project()).service_entry("redis") is None
+        assert ProjectAccessor(_project()).service_entry("redis") is None
 
     def test_uses_service(self) -> None:
-        v = ProjectView(_project())
+        v = ProjectAccessor(_project())
         assert v.uses_service("publish-on-web")
         assert not v.uses_service("redis")
 
     def test_service_config_raw(self) -> None:
-        assert ProjectView(_project()).service_config("namespace-postgresql-database") == {
+        assert ProjectAccessor(_project()).service_config("namespace-postgresql-database") == {
             "instances": 2,
             "storage": "5Gi",
         }
 
     def test_service_config_model_delegates_to_provider(self) -> None:
-        model = ProjectView(_project()).service_config_model("keycloak")
+        model = ProjectAccessor(_project()).service_config_model("keycloak")
         assert model is not None
         assert model.template == "sso-support"
 
     def test_service_config_model_validates_and_defaults(self) -> None:
-        model = ProjectView(_project()).service_config_model("namespace-postgresql-database")
+        model = ProjectAccessor(_project()).service_config_model("namespace-postgresql-database")
         assert model.instances == 2
         assert model.storage == "5Gi"
         # provider default fills the rest
         assert model.image == "ghcr.io/cloudnative-pg/postgresql:17"
 
     def test_service_config_model_absent_service_returns_none(self) -> None:
-        assert ProjectView(_project()).service_config_model("redis") is None
+        assert ProjectAccessor(_project()).service_config_model("redis") is None
 
     def test_service_config_model_unknown_name_returns_none(self) -> None:
         data = {"services": [{"not-a-service": {"config": {}}}]}
-        assert ProjectView(data).service_config_model("not-a-service") is None
+        assert ProjectAccessor(data).service_config_model("not-a-service") is None
 
     def test_service_config_model_service_without_config_raises(self) -> None:
         data = {"services": ["publish-on-web"]}
         with pytest.raises(TypeError):
-            ProjectView(data).service_config_model("publish-on-web")
+            ProjectAccessor(data).service_config_model("publish-on-web")
 
     def test_service_config_model_bad_value_fails_closed(self) -> None:
         data = {"services": [{"namespace-postgresql-database": {"config": {"instances": -1}}}]}
         with pytest.raises(ValidationError):
-            ProjectView(data).service_config_model("namespace-postgresql-database")
+            ProjectAccessor(data).service_config_model("namespace-postgresql-database")
 
     def test_service_type_coverage_is_generic(self) -> None:
         # Sanity: the method dispatches by name for every configurable service.
-        v = ProjectView(_project())
+        v = ProjectAccessor(_project())
         for name in ("keycloak", "namespace-postgresql-database"):
             assert ServiceType(name)  # name is a valid service
             assert v.service_config_model(name) is not None
