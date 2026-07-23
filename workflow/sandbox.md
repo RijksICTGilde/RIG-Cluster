@@ -1,5 +1,19 @@
 # Sandbox Cluster
 
+> **⚡ Are you a dclaude session on the shared dev server? Read this first.**
+>
+> To put your PR's code on the shared sandbox, use the baked **`sandbox-deploy`** command
+> (details at the bottom: "Deploying your PR to the shared sandbox"). It does the whole
+> working path: claim the lock → build → `kind load` → `kubectl set image` → rollout →
+> verify `/version`. Then `sandbox-release` when done.
+>
+> **Do NOT run `task sandbox:update-operations-manager` (or `sandbox:setup`) in a session.**
+> Those are for a *full local dev* setup: they need `kustomize`, the SOPS `security/sandbox-key.txt`,
+> and they kustomize-apply an overlay that points at a **registry** image (`ghcr.io/...`) — none
+> of which apply to a session-based local-build deploy, so they will fail or deploy the wrong image.
+> `sandbox-deploy` is the one blessed path here. The rest of this doc describes the full local
+> dev setup (for context), not the session flow.
+
 The sandbox is a full, throwaway copy of the ZAD platform you run on your own machine. It is where you exercise real end-to-end behaviour (wizard, API, project-file writes, ArgoCD deploys) without touching production.
 
 ## It is local, not hosted
