@@ -24,7 +24,7 @@ config models are wired into the read path in Phase 3.
 from __future__ import annotations
 
 from abc import ABC
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from opi.services.services import ServiceAdapter, ServiceDefinition
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from opi.services.services_enums import ServiceType
+    from opi.utils.secrets import BaseSecret
 
 #: A service's raw config as it appears in the project file: a dict for most
 #: services, or a list for sequence configs (e.g. storage mounts).
@@ -76,6 +77,35 @@ class RemovalContext:
     project_data: dict[str, Any]
     marked_for_deletion_service: Any
     get_manager: Any  # async callable: (manager_key: str) -> manager
+
+
+@dataclass
+class ManifestContext:
+    """Inputs a provider needs to contribute to one component's manifests (RC-5 Phase 6).
+
+    Phase 6a covers the ``envFrom`` secret references, which need only the deployment
+    name (secret names are ``<secret-class-template>`` on ``deployment_name``). Later
+    sub-phases add the fields their anchor points need (component config for the
+    metrics var, resolved secrets for the auth-wall sidecar, alias-resolution for the
+    secret files) rather than speculatively front-loading them here.
+    """
+
+    deployment_name: str
+
+
+@dataclass
+class ManifestContribution:
+    """What a provider adds to a component's manifests (RC-5 Phase 6).
+
+    A declarative description the generic component loop merges into the template
+    context -- the provider never touches the manifest generator itself. Phase 6a
+    populates only ``env_from_secrets``; the sidecar/template-var anchor (6b) and the
+    secret-file anchor (6c) grow this object with further fields, because a service's
+    secret files conceptually belong to that service.
+    """
+
+    #: Secret names to append to the pod's ``envFrom`` list, in ``manifest_order``.
+    env_from_secrets: list[str] = field(default_factory=list)
 
 
 class ServiceProvider(ABC):
@@ -139,6 +169,21 @@ class ServiceProvider(ABC):
     #: service has no server-side resources to clean up. Resolved via
     #: RemovalContext.get_manager; replaces the _SERVICE_TYPE_MANAGER_ATTR map.
     cleanup_manager_key: ClassVar[str | None] = None
+
+    #: Per-deployment secret whose name is added to the pod's ``envFrom`` when a
+    #: component uses this service (RC-5 Phase 6a), or None. The base
+    #: ``contribute_manifest_context`` derives the name via
+    #: ``manifest_secret_class.get_secret_name(deployment_name)``.
+    manifest_secret_class: ClassVar[type[BaseSecret] | None] = None
+    #: Order of this provider's contribution in the generic manifest loop; lower runs
+    #: first. Pins today's fixed envFrom append order (db 10, minio 20, keycloak 30,
+    #: redis 40, metrics 50) so the golden renders stay byte-identical.
+    manifest_order: ClassVar[int] = 100
+    #: Service types that activate this provider's manifest contribution. Empty means
+    #: "just my own service_type"; the shared postgres/redis providers override this to
+    #: also fire for their namespace variant (mirroring the provisioning grouping), so
+    #: exactly one provider contributes per manager.
+    manifest_activated_by: ClassVar[tuple[ServiceType, ...]] = ()
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
@@ -213,3 +258,25 @@ class ServiceProvider(ABC):
             project_data=ctx.project_data,
             marked_for_deletion_service=ctx.marked_for_deletion_service,
         )
+
+    def manifest_activation_types(self) -> tuple[ServiceType, ...]:
+        """Service types whose presence in a component activates this provider's
+        manifest contribution (RC-5 Phase 6). Defaults to just this provider's own
+        service_type; shared providers (postgres, redis) override ``manifest_activated_by``
+        to also fire for their namespace variant.
+        """
+        return self.manifest_activated_by or (self.service_type,)
+
+    def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
+        """This service's contribution to a component's manifests (RC-5 Phase 6).
+
+        Phase 6a: a service with a ``manifest_secret_class`` contributes that secret's
+        name to the pod's ``envFrom`` -- byte-identical to the hand-written append
+        block it replaces. Services with no manifest contribution inherit the empty
+        default. Later sub-phases extend ``ManifestContribution`` (sidecars, template
+        vars, secret files) and override this hook accordingly.
+        """
+        contribution = ManifestContribution()
+        if self.manifest_secret_class is not None:
+            contribution.env_from_secrets.append(self.manifest_secret_class.get_secret_name(ctx.deployment_name))
+        return contribution

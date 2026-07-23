@@ -22,6 +22,7 @@ from opi.services.config_models.namespace_postgres import NamespacePostgresConfi
 from opi.services.config_models.storage import StorageConfig
 from opi.services.provider import ProvisionContext, ServiceProvider
 from opi.services.services_enums import ServiceType
+from opi.utils.secrets import DatabaseSecret, KeycloakSecret, MetricsAuthSecret, MinIOSecret, RedisSecret
 
 
 class PublishOnWebProvider(ServiceProvider):
@@ -36,6 +37,8 @@ class KeycloakProvider(ServiceProvider):
     config_section_id = "keycloak-config"
     modal_flow_id = "modal-edit-keycloak-config"
     provision_order = 30
+    manifest_secret_class = KeycloakSecret
+    manifest_order = 30
 
     async def provision(self, ctx: ProvisionContext) -> None:
         await ctx.keycloak_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment)
@@ -53,6 +56,8 @@ class MetricsScraperProvider(ServiceProvider):
     service_type = ServiceType.METRICS_SCRAPER
     config_model = MetricsScraperConfig
     config_schema_version = "1.0"
+    manifest_secret_class = MetricsAuthSecret
+    manifest_order = 50
 
 
 class PersistentStorageProvider(ServiceProvider):
@@ -72,6 +77,11 @@ class PostgresqlDatabaseProvider(ServiceProvider):
     service_type = ServiceType.POSTGRESQL_DATABASE
     cleanup_manager_key = "database"
     provision_order = 10
+    manifest_secret_class = DatabaseSecret
+    manifest_order = 10
+    # Shared provider: fires for both the shared and namespace postgres variant, so
+    # exactly one database envFrom secret is contributed (like provisioning).
+    manifest_activated_by = (ServiceType.POSTGRESQL_DATABASE, ServiceType.NAMESPACE_POSTGRESQL_DATABASE)
 
     async def provision(self, ctx: ProvisionContext) -> None:
         # database_manager handles both the shared and namespace postgres variants in
@@ -92,6 +102,8 @@ class MinioStorageProvider(ServiceProvider):
     service_type = ServiceType.MINIO_STORAGE
     cleanup_manager_key = "minio"
     provision_order = 20
+    manifest_secret_class = MinIOSecret
+    manifest_order = 20
 
     async def provision(self, ctx: ProvisionContext) -> None:
         await ctx.minio_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment, ctx.force_clone)
@@ -101,6 +113,10 @@ class RedisProvider(ServiceProvider):
     service_type = ServiceType.REDIS
     cleanup_manager_key = "redis"
     provision_order = 40
+    manifest_secret_class = RedisSecret
+    manifest_order = 40
+    # Shared provider: fires for both the shared and namespace redis variant.
+    manifest_activated_by = (ServiceType.REDIS, ServiceType.NAMESPACE_REDIS)
 
     async def provision(self, ctx: ProvisionContext) -> None:
         # redis_manager handles both the shared and namespace redis variants.
@@ -161,3 +177,13 @@ def provisioning_providers() -> list[ServiceProvider]:
     """
     overriding = [p for p in SERVICE_PROVIDERS.values() if type(p).provision is not ServiceProvider.provision]
     return sorted(overriding, key=lambda p: p.provision_order)
+
+
+def manifest_secret_providers() -> list[ServiceProvider]:
+    """Providers that contribute a per-deployment ``envFrom`` secret, in
+    ``manifest_order`` (RC-5 Phase 6a). The order reproduces today's fixed envFrom
+    append sequence (db -> minio -> keycloak -> redis -> metrics), so the generic
+    component loop stays byte-identical.
+    """
+    contributing = [p for p in SERVICE_PROVIDERS.values() if p.manifest_secret_class is not None]
+    return sorted(contributing, key=lambda p: p.manifest_order)
