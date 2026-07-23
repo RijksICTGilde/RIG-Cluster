@@ -36,14 +36,31 @@ def test_the_fragment_does_list_snapshots() -> None:
     assert "is_user_authorized_for_project" in source, "the fragment is a separate entry point and needs its own check"
 
 
-def test_the_section_defers_to_the_fragment() -> None:
+def test_the_section_fires_exactly_one_lazy_request() -> None:
+    """One request for the whole section, never one per deployment.
+
+    Per-deployment triggers OOM-killed the pod: 'wies' has 18 deployments in one
+    namespace, so 18 hx-trigger="load" blocks opened 18 parallel Kopia connects to
+    the same repository. This is the regression guard for that.
+    """
     section = (_TEMPLATES / "section-backups.html.j2").read_text()
 
-    assert 'hx-get="/projects/details/{{ project.name }}/backups/{{ deployment.name }}"' in section
-    assert 'hx-trigger="load"' in section
-    # deployment_backups is gone from the page context; a leftover reference would
-    # silently render an empty list instead of failing.
+    assert section.count('hx-trigger="load"') == 1, "exactly one loader for the whole backups section"
+    assert 'hx-get="/projects/details/{{ project.name }}/backups"' in section
+    # Not the per-deployment URL that caused the swarm.
+    assert "/backups/{{ deployment.name }}" not in section
     assert "deployment_backups" not in section
+
+
+def test_the_fragment_lists_each_namespace_once() -> None:
+    """Deployments share a namespace, so the sweep must dedupe on namespace.
+
+    18 wies deployments live in one namespace; listing per deployment would reopen
+    the same Kopia repository 18 times even in a single request.
+    """
+    source = inspect.getsource(router.backups_fragment)
+    assert "per_namespace" in source
+    assert "if k8s_namespace in per_namespace" in source, "must skip a namespace already listed"
 
 
 def test_the_restore_button_waits_for_the_snapshot_list() -> None:
@@ -64,9 +81,16 @@ def test_the_restore_button_waits_for_the_snapshot_list() -> None:
     assert "Herstellen" in restore_block.group(0)
 
 
+def test_every_deployment_block_is_filled_out_of_band() -> None:
+    """One response fills all the per-deployment placeholders."""
+    fragment = (_TEMPLATES / "_backup-snapshots.html.j2").read_text()
+    assert 'id="backups-snapshots-{{ deployment.name }}" hx-swap-oob="true"' in fragment
+    assert "for deployment in deployments" in fragment
+
+
 def test_a_failed_backup_lookup_is_shown_not_swallowed() -> None:
     """An empty list and an unreachable repository look identical otherwise."""
-    fragment = (_TEMPLATES / "_backup-snapshots.html.j2").read_text()
+    fragment = (_TEMPLATES / "_backup-snapshots-one.html.j2").read_text()
     assert "backups_error" in fragment
 
     source = inspect.getsource(router.backups_fragment)
