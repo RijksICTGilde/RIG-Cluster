@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class DatabasePrivilege(StrEnum):
@@ -87,3 +87,13 @@ class NamespacePostgresConfig(BaseModel):
     privileges: list[DatabasePrivilege] = Field(default_factory=list)
     postInitSQL: list[str] = Field(default_factory=list)
     resources: DatabaseResources = DatabaseResources()
+
+    @field_validator("privileges", mode="before")
+    @classmethod
+    def _uppercase_privileges(cls, value: object) -> object:
+        # Preserve the old case-insensitive behaviour (privilege.upper()): SQL role
+        # keywords are case-insensitive, so a hand-edited lowercase value still
+        # validates and is normalised to the canonical uppercase form.
+        if isinstance(value, list):
+            return [item.upper() if isinstance(item, str) else item for item in value]
+        return value
