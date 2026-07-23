@@ -809,10 +809,12 @@ def test_v23_relocates_keycloak_connections_to_service_config():
     out, migrated = migrate_to_latest(_v22_with_keycloak_connections())
     assert migrated is True
     assert out["schema-version"] == LATEST_SCHEMA_VERSION
-    # moved verbatim under the keycloak service, project-level config.keycloak gone
+    # moved verbatim under the keycloak service, project-level config.keycloak gone.
+    # The keycloak entry is now the normalized {name, config} record (v2.4 also runs).
     assert "keycloak" not in out["config"]
-    realms = out["services"][0]["keycloak"]["config"]["realms"]
-    assert realms == [
+    entry = out["services"][0]
+    assert entry["name"] == "keycloak"
+    assert entry["config"]["realms"] == [
         {
             "host": "https://keycloak.rijksapp.nl",
             "realm": "wies-odcn-production",
@@ -821,7 +823,7 @@ def test_v23_relocates_keycloak_connections_to_service_config():
         }
     ]
     # existing keycloak config (template) preserved
-    assert out["services"][0]["keycloak"]["config"]["template"] == "sso-only"
+    assert entry["config"]["template"] == "sso-only"
 
 
 def test_v23_is_idempotent():
@@ -840,6 +842,50 @@ def test_v23_promotes_bare_string_keycloak_service():
         "config": {"keycloak": [{"realm": "x-prod", "host": "h", "username": "u", "password": "p"}]},
     }
     out, _ = migrate_to_latest(data)
+    # relocated + normalized to the {name, config} record (v2.4 also runs).
     assert out["services"] == [
-        {"keycloak": {"config": {"realms": [{"realm": "x-prod", "host": "h", "username": "u", "password": "p"}]}}}
+        {"name": "keycloak", "config": {"realms": [{"realm": "x-prod", "host": "h", "username": "u", "password": "p"}]}}
     ]
+
+
+# ---------------------------------------------------------------------------
+# v2.3 -> v2.4: normalize project-level service definitions to {name, config} (RC-5 A)
+# ---------------------------------------------------------------------------
+
+
+def test_v24_normalizes_project_services_to_name_records():
+    data = {
+        "schema-version": 2.3,
+        "name": "p",
+        "services": [
+            "publish-on-web",  # bare string stays bare
+            {"keycloak": {"config": {"template": "sso-only"}}},
+            {"namespace-postgresql-database": {"config": {"instances": 1}}},
+        ],
+    }
+    out, migrated = migrate_to_latest(data)
+    assert migrated is True
+    assert out["schema-version"] == LATEST_SCHEMA_VERSION
+    assert out["services"] == [
+        "publish-on-web",
+        {"name": "keycloak", "config": {"template": "sso-only"}},
+        {"name": "namespace-postgresql-database", "config": {"instances": 1}},
+    ]
+
+
+def test_v24_is_idempotent():
+    data = {"schema-version": 2.3, "name": "p", "services": [{"keycloak": {"config": {"template": "x"}}}]}
+    once, _ = migrate_to_latest(data)
+    twice, again = migrate_to_latest(copy.deepcopy(once))
+    assert again is False
+    assert twice["services"] == once["services"]
+
+
+def test_v24_leaves_already_normalized_and_bare():
+    data = {
+        "schema-version": 2.4,
+        "name": "p",
+        "services": ["publish-on-web", {"name": "keycloak", "config": {"template": "x"}}],
+    }
+    out, _ = migrate_to_latest(copy.deepcopy(data))
+    assert out["services"] == data["services"]
