@@ -15,6 +15,8 @@ services stay one-liners here.
 
 from __future__ import annotations
 
+from opi.services.config_models.authorization_wall import AuthorizationWallConfig
+from opi.services.config_models.metrics_scraper import MetricsScraperConfig
 from opi.services.config_models.namespace_postgres import NamespacePostgresConfig
 from opi.services.provider import ServiceProvider
 from opi.services.services_enums import ServiceType
@@ -30,10 +32,14 @@ class KeycloakProvider(ServiceProvider):
 
 class AuthorizationWallProvider(ServiceProvider):
     service_type = ServiceType.AUTHORIZATION_WALL
+    config_model = AuthorizationWallConfig
+    config_schema_version = "1.0"
 
 
 class MetricsScraperProvider(ServiceProvider):
     service_type = ServiceType.METRICS_SCRAPER
+    config_model = MetricsScraperConfig
+    config_schema_version = "1.0"
 
 
 class PersistentStorageProvider(ServiceProvider):
