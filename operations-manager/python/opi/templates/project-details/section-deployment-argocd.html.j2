@@ -5,7 +5,7 @@
      {% if not loop.first and project.deployments|length > 1 %}style="display: none;"{% endif %}>
 
     <div hx-get="/projects/details/{{ project.name }}/argocd-status/{{ deployment.name }}?prefix=dep-{{ deployment.name }}"
-         hx-trigger="load" hx-swap="innerHTML">
+         hx-trigger="intersect once" hx-swap="innerHTML">
         {% include "project-details/_argocd-status-skeleton.html.j2" %}
     </div>
 </div>

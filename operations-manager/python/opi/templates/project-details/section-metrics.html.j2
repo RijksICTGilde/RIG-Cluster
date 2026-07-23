@@ -13,7 +13,7 @@
         <div id="metrics-content"
              data-project-name="{{ project.name }}"
              hx-get="/projects/details/{{ project.name }}/metrics/{{ deployments_on_current_cluster[0].name }}"
-             hx-trigger="load"
+             hx-trigger="intersect once"
              hx-swap="innerHTML">
             <div class="metrics-loading">
                 <p class="rvo-text--subtle">Metrics laden...</p>

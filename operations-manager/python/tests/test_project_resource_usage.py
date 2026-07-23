@@ -19,16 +19,17 @@ _TEMPLATES = Path(__file__).resolve().parents[1] / "opi" / "templates" / "projec
 def test_it_is_a_single_lazy_request() -> None:
     """One request, not one per deployment -- the lesson from the backup OOM."""
     section = (_TEMPLATES / "section-resource-usage.html.j2").read_text()
-    assert section.count('hx-trigger="load"') == 1
+    assert section.count("hx-trigger=") == 1
     assert 'hx-get="/projects/details/{{ project.name }}/resource-usage"' in section
 
 
-def test_it_is_the_first_card_on_the_project_tab() -> None:
+def test_it_sits_high_on_the_project_tab_under_the_actions() -> None:
     page = (Path(__file__).resolve().parents[1] / "opi" / "templates" / "project-details.html.j2").read_text()
     tab = page.split('id="tab-project"', 1)[1]
     resource_at = tab.index("section-resource-usage")
-    actions_at = tab.index("section-actions")
-    assert resource_at < actions_at, "resource usage must come before the rest of the project tab"
+    # Directly under the actions, above everything else on the tab.
+    assert tab.index("section-actions") < resource_at, "actions stay on top"
+    assert resource_at < tab.index("section-team"), "resource usage above the rest"
 
 
 def test_it_sums_across_namespaces_not_per_deployment() -> None:

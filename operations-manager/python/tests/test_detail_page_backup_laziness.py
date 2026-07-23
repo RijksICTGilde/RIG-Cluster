@@ -40,12 +40,16 @@ def test_the_section_fires_exactly_one_lazy_request() -> None:
     """One request for the whole section, never one per deployment.
 
     Per-deployment triggers OOM-killed the pod: 'wies' has 18 deployments in one
-    namespace, so 18 hx-trigger="load" blocks opened 18 parallel Kopia connects to
-    the same repository. This is the regression guard for that.
+    namespace, so 18 per-deployment blocks opened 18 parallel Kopia connects to the
+    same repository. This is the regression guard for that.
+
+    'intersect once', not 'load': the section lives in the (hidden) Deployments tab,
+    so it should not fetch until that tab is opened.
     """
     section = (_TEMPLATES / "section-backups.html.j2").read_text()
 
-    assert section.count('hx-trigger="load"') == 1, "exactly one loader for the whole backups section"
+    assert section.count("hx-trigger=") == 1, "exactly one loader for the whole backups section"
+    assert 'hx-trigger="intersect once"' in section
     assert 'hx-get="/projects/details/{{ project.name }}/backups"' in section
     # Not the per-deployment URL that caused the swarm.
     assert "/backups/{{ deployment.name }}" not in section
