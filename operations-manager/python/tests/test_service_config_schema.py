@@ -122,6 +122,55 @@ class TestMetricsScraperConfigModel:
             self._provider().validate_config({"port": "not-a-number"})
 
 
+class TestKeycloakConfigModel:
+    """Keycloak is polymorphic (internal template vs external connection) with
+    advanced pass-through; v1.0 must guardrail the common fields without rejecting
+    any real-world shape."""
+
+    def _provider(self):
+        return get_provider(ServiceType.KEYCLOAK)
+
+    def test_internal_config_with_restrict_access_and_clients(self) -> None:
+        # mb-docs-helmfile.yaml shape.
+        model = self._provider().validate_config(
+            {
+                "template": "sso-support",
+                "additional_redirect_uris": [],
+                "additional-clients": [
+                    {"name": "mb-grist-helmfile-production", "redirect-uris": ["https://grist.rijksapp.nl/*"]}
+                ],
+                "restrict-access": {"enabled": True, "realm-role": "allowed-user"},
+            }
+        )
+        assert model.template == "sso-support"
+        assert model.restrict_access is not None
+        assert model.restrict_access.realm_role == "allowed-user"
+        assert model.additional_clients[0].name == "mb-grist-helmfile-production"
+        # advanced pass-through preserved (the hard 10% left hand-authored)
+        assert model.additional_clients[0].model_extra["redirect-uris"] == ["https://grist.rijksapp.nl/*"]
+
+    def test_external_polymorphic_config_is_accepted(self) -> None:
+        # mb-grist-helmfile.yaml type: external -> different key set must not be rejected.
+        model = self._provider().validate_config(
+            {"host": "https://kc.example", "realm": "r", "client-id": "x", "client-secret": "y"}
+        )
+        assert model.model_extra["host"] == "https://kc.example"
+
+    def test_account_link_enum(self) -> None:
+        model = self._provider().validate_config({"account-link": "automatic"})
+        assert model.account_link is not None
+        assert model.account_link.value == "automatic"
+
+    def test_bad_account_link_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            self._provider().validate_config({"account-link": "nope"})
+
+    def test_restrict_access_unknown_field_rejected(self) -> None:
+        # restrict-access keys are well-defined -> extras forbidden (catches typos).
+        with pytest.raises(ValidationError):
+            self._provider().validate_config({"restrict-access": {"enabled": True, "realmrole": "x"}})
+
+
 class TestProviderValidateConfig:
     def _provider(self):
         return get_provider(ServiceType.NAMESPACE_POSTGRESQL_DATABASE)

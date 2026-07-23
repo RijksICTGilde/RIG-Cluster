@@ -16,6 +16,7 @@ services stay one-liners here.
 from __future__ import annotations
 
 from opi.services.config_models.authorization_wall import AuthorizationWallConfig
+from opi.services.config_models.keycloak import KeycloakConfig
 from opi.services.config_models.metrics_scraper import MetricsScraperConfig
 from opi.services.config_models.namespace_postgres import NamespacePostgresConfig
 from opi.services.provider import ServiceProvider
@@ -28,6 +29,8 @@ class PublishOnWebProvider(ServiceProvider):
 
 class KeycloakProvider(ServiceProvider):
     service_type = ServiceType.KEYCLOAK
+    config_model = KeycloakConfig
+    config_schema_version = "1.0"
 
 
 class AuthorizationWallProvider(ServiceProvider):
