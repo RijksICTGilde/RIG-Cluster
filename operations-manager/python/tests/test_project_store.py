@@ -636,4 +636,26 @@ async def test_mutation_logs_lock_and_persist_timing(harness: StoreHarness, capl
     messages = [r.getMessage() for r in caplog.records]
     assert any(m.startswith("store-lock mutate 'demo': held") for m in messages), messages
     assert any(m.startswith("store-push") and "push took" in m for m in messages), messages
-    assert any(m.startswith("store-persist") and "commit+push took" in m for m in messages), messages
+    # The persist line states the outcome and the message it was for: without that,
+    # a write that changed nothing is indistinguishable in production from one that
+    # did, except by the presence of a store-push line beside it.
+    assert any(m.startswith("store-persist") and "committed " in m and "timed" in m for m in messages), messages
+
+
+async def test_persist_reports_a_write_that_changed_nothing(harness: StoreHarness, caplog) -> None:
+    """Saving identical content logs 'no change' and produces no commit.
+
+    Callers save unconditionally -- process_project_from_git cannot know whether one
+    of the resource managers mutated project_data in memory -- so a save whose result
+    matches what is already committed is normal, not a bug. It must still be readable
+    as such, and it must not create an empty commit in zad-projects.
+    """
+    import logging
+
+    # Exactly what the remote was seeded with, so the dump is byte-identical.
+    with caplog.at_level(logging.INFO, logger="opi.services.project_store"):
+        await harness.store.save(PROJECT_NAME, _project(), message="nothing to do", actor="tester")
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(m.startswith("store-persist") and "no change" in m for m in messages), messages
+    assert not any(m.startswith("store-push") for m in messages), messages
