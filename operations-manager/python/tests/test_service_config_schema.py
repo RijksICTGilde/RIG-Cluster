@@ -88,6 +88,40 @@ class TestNamespacePostgresConfigModel:
             NamespacePostgresConfig.model_validate({"instaces": 2})
 
 
+class TestAuthorizationWallConfigModel:
+    def _provider(self):
+        return get_provider(ServiceType.AUTHORIZATION_WALL)
+
+    def test_banner_validates(self) -> None:
+        assert self._provider().validate_config({"banner": "Beperkte toegang"}).banner == "Beperkte toegang"
+
+    def test_empty_config_defaults_to_none_banner(self) -> None:
+        assert self._provider().validate_config({}).banner is None
+
+    def test_unknown_field_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            self._provider().validate_config({"bannre": "typo"})
+
+
+class TestMetricsScraperConfigModel:
+    def _provider(self):
+        return get_provider(ServiceType.METRICS_SCRAPER)
+
+    def test_port_and_path_validate(self) -> None:
+        model = self._provider().validate_config({"port": 8000, "path": "/metrics"})
+        assert model.port == 8000
+        assert model.path == "/metrics"
+
+    def test_empty_config_defaults_to_none(self) -> None:
+        model = self._provider().validate_config({})
+        assert model.port is None
+        assert model.path is None
+
+    def test_non_int_port_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            self._provider().validate_config({"port": "not-a-number"})
+
+
 class TestProviderValidateConfig:
     def _provider(self):
         return get_provider(ServiceType.NAMESPACE_POSTGRESQL_DATABASE)
