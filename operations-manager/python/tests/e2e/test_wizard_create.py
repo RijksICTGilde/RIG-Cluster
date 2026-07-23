@@ -12,13 +12,47 @@ Run with: pytest tests/e2e/ -m "e2e and sandbox" -v --timeout=300
 from typing import TYPE_CHECKING
 
 import pytest
+from tests.e2e.helpers import sandbox_api
 from tests.e2e.helpers.cleanup import ProjectCleanup
+from tests.e2e.helpers.lifecycle import create_project_via_wizard
 from tests.e2e.helpers.wizard import WizardHelper, _unique_project_name
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
 
+    from tests.e2e.helpers.forgejo import ForgejoClient
+
 pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
+
+
+def test_wizard_create_verified_in_forgejo(
+    sandbox_url: str,
+    sandbox_page: "Page",
+    forgejo: "ForgejoClient",
+) -> None:
+    """Create a project via the real wizard, then verify it in the Forgejo git repo.
+
+    Forgejo (zad-projects) is the authoritative "did it work?" source -- the wizard's
+    HTTP response is never trusted on its own. The technical project id is server-
+    generated (a random slug, not the display name), so it is resolved by diffing the
+    repo listing before/after (create_project_via_wizard). Cleaned up via the API.
+    """
+    display = _unique_project_name()
+    project = create_project_via_wizard(
+        sandbox_page,
+        sandbox_url,
+        forgejo,
+        display_name=display,
+        user_email="admin@sandbox.rijksapp.dev",
+    )
+    try:
+        assert forgejo.project_file_exists(project.name), f"'{project.name}' not committed to zad-projects"
+        assert "web" in forgejo.component_names(project.name), "component 'web' not in the committed project"
+        data = forgejo.get_project_yaml(project.name)
+        assert data and data.get("components"), "committed project yaml has no components"
+    finally:
+        # Force teardown so a partial/207 delete still cleans the sandbox.
+        sandbox_api.delete_project_via_api(sandbox_url, project.name, project.api_key, verify_ssl=False)
 
 
 @pytest.fixture
@@ -84,8 +118,11 @@ def test_wizard_minimal_project(
     wizard.fill_component(name="web", image="nginx:latest")
     wizard.click_next()
 
-    # Step 5: Domains - advance (use defaults or skip)
+    # Step 5: Deployment - advance with defaults
     wizard.click_next()
+
+    # Step 6: Web address - advance with defaults to the review page
+    wizard.click_review()
 
     # Review page - verify we can see the project name
     sandbox_page.wait_for_load_state("networkidle")
