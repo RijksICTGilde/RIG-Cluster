@@ -159,11 +159,7 @@
       "properties": {
         "age-public-key": { "type": "string" },
         "age-private-key": { "$ref": "#/$defs/age-encrypted" },
-        "api-key": { "$ref": "#/$defs/age-encrypted" },
-        "keycloak": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/keycloak-config" }
-        }
+        "api-key": { "$ref": "#/$defs/age-encrypted" }
       }
     },
 

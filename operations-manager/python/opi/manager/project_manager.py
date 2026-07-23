@@ -68,6 +68,7 @@ from opi.manager.project_validation import validate_component_references, valida
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
+from opi.services.project import Project
 from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
 from opi.utils.age import (
     decrypt_age_content,
@@ -1156,7 +1157,9 @@ class ProjectManager:
         """
 
         project_data = await self.get_contents(record_base=False)
-        keycloak_list = project_data.get("config", {}).get("keycloak", [])
+        # RC-5 B: keycloak admin connections live under the keycloak service config
+        # (relocated from the old project-level config.keycloak). Still matched by realm.
+        keycloak_list = Project(project_data).get("services/keycloak/config/realms") or []
         if not keycloak_list:
             return None
 
