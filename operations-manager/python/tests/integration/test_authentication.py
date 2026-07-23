@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from opi.services.project_service import Project, ProjectUser
+from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.project_store import GitProjectStore
 
 if TYPE_CHECKING:
@@ -26,20 +26,20 @@ def mock_project_service_with_projects() -> Any:
         mock_service = MagicMock(spec=GitProjectStore)
 
         # Create test projects
-        project_a = Project(
+        project_a = ProjectSummary(
             name="project-a",
             api_key="valid-api-key-a",
             filename="project-a.yaml",
             users=[ProjectUser(email="user@example.com", role="Developer")],
         )
-        project_b = Project(
+        project_b = ProjectSummary(
             name="project-b",
             api_key="valid-api-key-b",
             filename="project-b.yaml",
             users=[ProjectUser(email="other@example.com", role="Admin")],
         )
 
-        def get_project(name: str) -> Project | None:
+        def get_project(name: str) -> ProjectSummary | None:
             projects = {"project-a": project_a, "project-b": project_b}
             return projects.get(name)
 
