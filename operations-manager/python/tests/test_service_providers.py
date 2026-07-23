@@ -11,8 +11,13 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from opi.services.provider import ProvisionContext, RemovalContext, ServiceProvider
-from opi.services.registry import SERVICE_PROVIDERS, get_provider, provisioning_providers
+from opi.services.provider import ManifestContext, ProvisionContext, RemovalContext, ServiceProvider
+from opi.services.registry import (
+    SERVICE_PROVIDERS,
+    get_provider,
+    manifest_secret_providers,
+    provisioning_providers,
+)
 from opi.services.services import ServiceAdapter
 from opi.services.services_enums import ServiceType
 
@@ -205,3 +210,64 @@ def test_handle_service_removal_noop_without_manager_key():
 
     assert asyncio.run(run()) == {}
     assert called is False  # a keyless service never resolves a manager
+
+
+# ---------------------------------------------------------------------------
+# Phase 6a: generic envFrom-secret manifest contribution
+# ---------------------------------------------------------------------------
+
+# Frozen contract: the exact envFrom secret-name sequence the hand-written append
+# block produced for deployment "mydep", in order. This is the byte-identity the
+# golden-manifest harness protects at the render layer; this test pins it at the
+# provider layer so a drift is caught here too.
+_EXPECTED_ENVFROM_ORDER = [
+    ("postgresql-database", "mydep-database"),
+    ("minio-storage", "mydep-minio"),
+    ("keycloak", "mydep-keycloak"),
+    ("redis", "mydep-redis"),
+    ("metrics-scraper", "mydep-metrics-auth"),
+]
+
+
+def test_manifest_secret_providers_order_and_names():
+    ctx = ManifestContext(deployment_name="mydep")
+    actual = [
+        (p.service_type.value, p.contribute_manifest_context(ctx).env_from_secrets[0])
+        for p in manifest_secret_providers()
+    ]
+    assert actual == _EXPECTED_ENVFROM_ORDER
+
+
+def test_shared_providers_activate_for_namespace_variant():
+    # postgres and redis contribute their single envFrom secret for BOTH the shared
+    # and the namespace variant, so exactly one secret is added per manager.
+    pg = get_provider(ServiceType.POSTGRESQL_DATABASE)
+    assert set(pg.manifest_activation_types()) == {
+        ServiceType.POSTGRESQL_DATABASE,
+        ServiceType.NAMESPACE_POSTGRESQL_DATABASE,
+    }
+    redis = get_provider(ServiceType.REDIS)
+    assert set(redis.manifest_activation_types()) == {ServiceType.REDIS, ServiceType.NAMESPACE_REDIS}
+
+
+def test_default_manifest_activation_is_own_service_type():
+    kc = get_provider(ServiceType.KEYCLOAK)
+    assert kc.manifest_activation_types() == (ServiceType.KEYCLOAK,)
+
+
+def test_non_secret_services_contribute_nothing():
+    ctx = ManifestContext(deployment_name="mydep")
+    for t in ServiceType:
+        provider = get_provider(t)
+        if provider.manifest_secret_class is None:
+            assert provider.contribute_manifest_context(ctx).env_from_secrets == [], t.value
+
+
+def test_namespace_variants_are_not_separate_contributors():
+    # The shared provider owns the contribution; the namespace variants must not carry
+    # their own manifest_secret_class (else the secret would be added twice).
+    assert get_provider(ServiceType.NAMESPACE_POSTGRESQL_DATABASE).manifest_secret_class is None
+    assert get_provider(ServiceType.NAMESPACE_REDIS).manifest_secret_class is None
+    contributors = {p.service_type for p in manifest_secret_providers()}
+    assert ServiceType.NAMESPACE_POSTGRESQL_DATABASE not in contributors
+    assert ServiceType.NAMESPACE_REDIS not in contributors
