@@ -11,6 +11,13 @@
             <p class="rvo-text--subtle">Backup beheer voor cluster: {{ current_cluster }}</p>
         </div>
 
+        {# ONE lazy request for the whole section. It lists each namespace once and
+           fills every deployment block below via hx-swap-oob. Per-deployment
+           triggers here would fire in parallel -- 18 for 'wies' -- and each opens a
+           Kopia repository, which OOM-killed the pod. #}
+        <div hx-get="/projects/details/{{ project.name }}/backups"
+             hx-trigger="load" hx-swap="none"></div>
+
         {% set cluster_loop = namespace(first_shown=true) %}
         {% for deployment in project.deployments | sort(attribute='name') %}
             {% if deployment.cluster == current_cluster %}
@@ -54,8 +61,8 @@
                         <c-tag content="{{ deployment.namespace }}" />
                     </c-layout-row>
 
-                    <div hx-get="/projects/details/{{ project.name }}/backups/{{ deployment.name }}"
-                         hx-trigger="load" hx-swap="innerHTML">
+                    {# Filled out-of-band by the single /backups request above. #}
+                    <div id="backups-snapshots-{{ deployment.name }}">
                         {# Same skeleton silhouette as the ArgoCD blocks, so a loading
                            backup list reads as "loading" and not as "empty". #}
                         <div class="argocd-skeleton" role="status" aria-label="Backups worden geladen">

@@ -1470,14 +1470,40 @@ async def _fetch_argocd_deployment_status(
         return _argocd_unavailable_result(app_name, str(app_error), source="API")
 
 
-@web_router.get("/projects/details/{project_name}/backups/{deployment_name}", response_class=HTMLResponse)
-@requires_sso
-async def backups_fragment(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
-    """Backup snapshots for one deployment (HTMX lazy-load).
+def _snapshot_to_dict(s: Any) -> dict[str, Any]:
+    return {
+        "snapshot_id": s.snapshot_id,
+        "pvc_name": s.pvc_name,
+        "timestamp": s.timestamp,
+        "size_bytes": s.size_bytes,
+        "cluster": s.cluster,
+        "namespace": s.namespace,
+        "project_name": s.project_name,
+        "deployment_name": s.deployment_name,
+        "component_name": s.component_name,
+        "storage_name": s.storage_name,
+        "generation": s.generation,
+        "backup_run_id": s.backup_run_id,
+        "resource_type": s.resource_type,
+        "tags": s.tags,
+        "trigger": s.trigger,
+    }
 
-    Split out of the detail page because listing snapshots opens a Kopia repository
-    over S3 -- 2.1s to connect, 0.4s to list, measured in production -- which made it
-    70% of the page's render time even for visitors who never open the Backups tab.
+
+@web_router.get("/projects/details/{project_name}/backups", response_class=HTMLResponse)
+@requires_sso
+async def backups_fragment(request: Request, project_name: str) -> HTMLResponse:
+    """Backup snapshots for the WHOLE project, in one HTMX lazy-load.
+
+    Listing snapshots opens a Kopia repository over S3 (2.1s connect + 0.4s list,
+    measured in production), so it must stay off the detail page's own render. But
+    it must be ONE request, not one per deployment: an earlier version gave every
+    deployment block its own hx-trigger="load", and a project like 'wies' has 18
+    deployments in a single namespace. That fired 18 parallel Kopia connects to the
+    same repository, ~9 at once, and OOM-killed the pod.
+
+    Deployments share a namespace, so this lists each namespace once (cached) and
+    fans the results back out to the per-deployment blocks via hx-swap-oob.
     """
     from opi.core.cluster_config import get_prefixed_namespace
     from opi.core.config import settings
@@ -1493,54 +1519,50 @@ async def backups_fragment(request: Request, project_name: str, deployment_name:
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    deployment = next(
-        (d for d in (project.data or {}).get("deployments", []) if d.get("name") == deployment_name),
-        None,
-    )
-    if not deployment:
-        raise HTTPException(status_code=404, detail="Deployment not found")
+    current_cluster = settings.CLUSTER_MANAGER
+    deployments = [d for d in (project.data or {}).get("deployments", []) if d.get("cluster") == current_cluster]
 
-    backups: list[dict[str, Any]] = []
+    manager = BackupManager()
+    # One list_snapshots per distinct namespace, not per deployment.
+    per_namespace: dict[str, list[Any]] = {}
     error: str | None = None
-    cluster = deployment.get("cluster")
-    base_namespace = deployment.get("namespace")
-
-    if cluster == settings.CLUSTER_MANAGER and base_namespace:
+    for deployment in deployments:
+        base_namespace = deployment.get("namespace")
+        if not base_namespace:
+            continue
+        k8s_namespace = get_prefixed_namespace(current_cluster, base_namespace)
+        if k8s_namespace in per_namespace:
+            continue
         try:
-            snapshots = await BackupManager().list_snapshots(
-                cluster, get_prefixed_namespace(cluster, base_namespace), project_name=project_name
+            per_namespace[k8s_namespace] = await manager.list_snapshots(
+                current_cluster, k8s_namespace, project_name=project_name
             )
-            backups = [
-                {
-                    "snapshot_id": s.snapshot_id,
-                    "pvc_name": s.pvc_name,
-                    "timestamp": s.timestamp,
-                    "size_bytes": s.size_bytes,
-                    "cluster": s.cluster,
-                    "namespace": s.namespace,
-                    "project_name": s.project_name,
-                    "deployment_name": s.deployment_name,
-                    "component_name": s.component_name,
-                    "storage_name": s.storage_name,
-                    "generation": s.generation,
-                    "backup_run_id": s.backup_run_id,
-                    "resource_type": s.resource_type,
-                    "tags": s.tags,
-                    "trigger": s.trigger,
-                }
-                for s in snapshots
-                if s.deployment_name == deployment_name
-            ]
         except Exception as backup_err:
-            # Reported in the fragment rather than swallowed: an empty list and an
-            # unreachable backup repository look identical to a user otherwise.
-            logger.warning(f"Failed to fetch backups for deployment {deployment_name}: {backup_err}")
+            # Shown, not swallowed: an empty list and an unreachable repository look
+            # identical to a user otherwise.
+            logger.warning(f"Failed to fetch backups for namespace {k8s_namespace}: {backup_err}")
             error = str(backup_err)
+            per_namespace[k8s_namespace] = []
+
+    backups_by_deployment: dict[str, list[dict[str, Any]]] = {}
+    for deployment in deployments:
+        base_namespace = deployment.get("namespace")
+        name = deployment.get("name")
+        if not base_namespace or not name:
+            continue
+        k8s_namespace = get_prefixed_namespace(current_cluster, base_namespace)
+        backups_by_deployment[name] = [
+            _snapshot_to_dict(s) for s in per_namespace.get(k8s_namespace, []) if s.deployment_name == name
+        ]
 
     return get_templates().TemplateResponse(
         request=request,
         name="project-details/_backup-snapshots.html.j2",
-        context={"backups": backups, "deployment": deployment, "backups_error": error},
+        context={
+            "deployments": deployments,
+            "backups_by_deployment": backups_by_deployment,
+            "backups_error": error,
+        },
     )
 
 
