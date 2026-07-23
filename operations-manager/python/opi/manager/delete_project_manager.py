@@ -146,7 +146,7 @@ class DeleteProjectManager:
 
             # Also check for orphaned AppProjects
             # AppProjects typically follow pattern: {project_name}-{deployment_name} or {project_name}-infrastructure
-            appproject_prefix = generate_argocd_appproject_prefix(project_name)
+            # (matched by `project_name in line` below).
             argo_namespace = get_argo_namespace(settings.CLUSTER_MANAGER)
 
             # Use kubectl to list AppProjects matching the pattern
