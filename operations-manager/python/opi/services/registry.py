@@ -15,6 +15,7 @@ services stay one-liners here.
 
 from __future__ import annotations
 
+from opi.services.config_models.namespace_postgres import NamespacePostgresConfig
 from opi.services.provider import ServiceProvider
 from opi.services.services_enums import ServiceType
 
@@ -49,6 +50,8 @@ class PostgresqlDatabaseProvider(ServiceProvider):
 
 class NamespacePostgresqlDatabaseProvider(ServiceProvider):
     service_type = ServiceType.NAMESPACE_POSTGRESQL_DATABASE
+    config_model = NamespacePostgresConfig
+    config_schema_version = "1.0"
 
 
 class MinioStorageProvider(ServiceProvider):
