@@ -44,8 +44,6 @@ from opi.core.cluster_config import (
     get_ingress_tls_enabled,
     get_keycloak_discovery_url,
     get_letsencrypt_contact_email,
-    get_minio_host,
-    get_minio_port,
     get_namespace,
     get_prefixed_namespace,
     supports_vpa,
@@ -71,7 +69,7 @@ from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, Va
 from opi.services.project import Project
 from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
 from opi.services.project_store import get_project_store
-from opi.services.provider import ManifestContext, ProvisionContext
+from opi.services.provider import ManifestContext, ProvisionContext, SecretFileSpec
 from opi.services.registry import manifest_providers, provisioning_providers
 from opi.services.services import service_entry_config, service_entry_name
 from opi.utils.age import (
@@ -122,7 +120,6 @@ from opi.utils.secrets import (
     BaseSecret,
     DatabaseSecret,
     KeycloakSecret,
-    MetricsAuthSecret,
     MinIOSecret,
     PlatformSecret,
     RedisSecret,
@@ -1148,6 +1145,48 @@ class ProjectManager:
 
         logger.info(f"Successfully resolved {len(resolved)} aliases")
         return resolved
+
+    def _write_secret_file(
+        self,
+        spec: SecretFileSpec,
+        *,
+        deployment_name: str,
+        namespace: str,
+        output_dir: str,
+        template_path: str,
+        created_files: list[str],
+    ) -> None:
+        """Write one deployment SOPS secret manifest (RC-5 Phase 6c shared writer).
+
+        The single place that turns a service's ``SecretFileSpec`` into a file:
+        optional secret registration, cross-component alias resolution,
+        ``create_manifest_file`` and obsolete-prune bookkeeping. Services declare the
+        spec (``ServiceProvider.build_secret_files``); this stays service-agnostic.
+        """
+        if spec.register_secret is not None:
+            self._add_secret_to_create(deployment_name, spec.secret_type, spec.register_secret)
+
+        secret_data = dict(spec.secret_pairs)
+        if spec.resolve_aliases and spec.secret_type:
+            aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get(spec.secret_type, {})
+            if aliases:
+                logger.debug(f"Resolving {len(aliases)} {spec.secret_type} aliases for deployment {deployment_name}")
+                resolved_aliases = self._resolve_aliases(aliases, secret_data)
+                secret_data.update(resolved_aliases)
+                logger.info(f"Added {len(resolved_aliases)} resolved {spec.secret_type} aliases to deployment secret")
+
+        manifest_name = f"{spec.secret_name}-secret"
+        secret_path = self._manifest_generator.create_manifest_file(
+            template_path=template_path,
+            values={"name": spec.secret_name, "namespace": namespace, "secret_pairs": secret_data},
+            output_dir=output_dir,
+            output_filename=manifest_name,
+            use_sops=True,
+        )
+        sops_filename = f"{manifest_name}.to-sops.yaml"
+        created_files.append(sops_filename)
+        logger.info(f"Secret '{spec.secret_name}' will be SOPS encrypted: {sops_filename}")
+        logger.debug(f"Successfully created secret manifest: {secret_path}")
 
     async def _get_project_keycloak_config_for_cluster(self, cluster: str) -> dict[str, Any] | None:
         """
@@ -5086,10 +5125,10 @@ class ProjectManager:
             #     logger.debug(f"Config DEBUG: Adding component {component_name} with namespace: {namespace}")
             #     config_handler.add_component(component_name, "component", namespace)
 
-            # Determine which services this component uses (check once, use multiple times)
-            component_uses_postgresql = False
-            component_uses_minio = False
-            component_uses_redis = False
+            # Determine which services this component uses. Secret/envFrom/sidecar
+            # contributions are driven generically off the provider registry (RC-5
+            # Phase 6); only these two flags remain -- they gate the metrics_config
+            # template var and the auth-wall observability log below.
             component_uses_authorization_wall = False
             component_uses_metrics_scraper = False
             component_def = None
@@ -5100,15 +5139,6 @@ class ProjectManager:
                 component_def = self._project_file_handler._find_component(project_data, component_reference)
                 all_services = extract_service_names_from_component(component_def) if component_def else []
 
-                # Check for both postgresql-database (shared) and namespace-postgresql-database (dedicated)
-                component_uses_postgresql = (
-                    ServiceType.POSTGRESQL_DATABASE.value in all_services
-                    or ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in all_services
-                )
-                component_uses_minio = ServiceType.MINIO_STORAGE.value in all_services
-                component_uses_redis = (
-                    ServiceType.REDIS.value in all_services or ServiceType.NAMESPACE_REDIS.value in all_services
-                )
                 component_uses_authorization_wall = ServiceType.AUTHORIZATION_WALL.value in all_services
                 component_uses_metrics_scraper = ServiceType.METRICS_SCRAPER.value in all_services
 
@@ -5121,6 +5151,7 @@ class ProjectManager:
                 deployment_name=deployment_name,
                 project_data=project_data,
                 unique_name=unique_name,
+                cluster=cluster,
                 get_secret=self._get_secret_from_map,
             )
             manifest_contributions = [
@@ -5269,6 +5300,8 @@ class ProjectManager:
 
             # Auth-wall observability: the provider contributes nothing when a component
             # asks for an auth wall but no keycloak secret is provisioned (old warn path).
+            # The cookie secret itself is now part of the auth-wall provider's
+            # contribution (secret_files), written in the shared loop below.
             if component_uses_authorization_wall:
                 if "authorization_wall" in variables:
                     logger.info(f"Authorization wall enabled for component '{component_name}'")
@@ -5276,37 +5309,6 @@ class ProjectManager:
                     logger.warning(
                         f"Component '{component_name}' uses authorization-wall but no keycloak service configured"
                     )
-
-            # Create authorization-wall cookie secret if needed
-            if component_uses_authorization_wall and "authorization_wall" in variables:
-                import secrets as secrets_module
-
-                cookie_secret_value = secrets_module.token_urlsafe(32)
-                cookie_secret_name = variables["authorization_wall"]["cookie_secret_name"]
-                secret_template_path = os.path.join(
-                    os.path.dirname(__file__), "..", "..", "manifests", "generic-secret.yaml.to-sops.jinja"
-                )
-                cookie_secret_vars = {
-                    "name": cookie_secret_name,
-                    "namespace": namespace,
-                    "secret_pairs": {"cookie-secret": cookie_secret_value},
-                }
-                # Determine output dir for the cookie secret manifest
-                if target_dir:
-                    cookie_output_dir = os.path.join(working_dir, target_dir)
-                else:
-                    cookie_output_dir = os.path.join(working_dir, project_name, deployment_name)
-                self._manifest_generator.create_manifest_file(
-                    template_path=secret_template_path,
-                    values=cookie_secret_vars,
-                    output_dir=cookie_output_dir,
-                    output_filename=f"{cookie_secret_name}-secret",
-                    use_sops=True,
-                )
-                # Register the generated file so the obsolete-manifest prune keeps it;
-                # its name carries the <deployment>-<component>- prefix the prune targets.
-                created_files.append(f"{cookie_secret_name}-secret.to-sops.yaml")
-                logger.info(f"Created authorization-wall cookie secret: {cookie_secret_name}")
 
             # Configure metrics scraper if enabled
             if component_uses_metrics_scraper and component_def:
@@ -5977,212 +5979,21 @@ class ProjectManager:
                             f"(set contact-email in project config or letsencrypt.contact_email in cluster config)"
                         )
 
-            # Create database secret if component uses PostgreSQL service
-            if component_uses_postgresql:
-                db_credentials = self._get_secret_from_map(deployment_name, "database", DatabaseSecret)
-
-                if db_credentials:
-                    logger.debug(f"Creating database secret for {component_name} with PostgreSQL credentials")
-
-                    # Use the host from db_credentials - database_manager already determined
-                    # the correct host (namespace-specific or shared) based on service type
-                    database_secret = DatabaseSecret(
-                        host=db_credentials.host,  # Already set by database_manager
-                        port=db_credentials.port,
-                        username=db_credentials.username,
-                        password=db_credentials.password,
-                        database=db_credentials.database,
-                        schema=db_credentials.schema,
-                    )
-
-                    # Store the updated secret instance for configuration tracking
-                    self._add_secret_to_create(deployment_name, "database", database_secret)
-
-                    # Get base database secret data
-                    database_secret_data = database_secret.to_k8s_secret_data()
-
-                    # Add resolved database aliases from all components
-                    database_aliases = (
-                        self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get("database", {})
-                    )
-                    if database_aliases:
-                        logger.debug(
-                            f"Resolving {len(database_aliases)} database aliases for deployment {deployment_name}"
-                        )
-                        resolved_aliases = self._resolve_aliases(database_aliases, database_secret_data)
-                        database_secret_data.update(resolved_aliases)
-                        logger.info(f"Added {len(resolved_aliases)} resolved database aliases to deployment secret")
-
-                    # Create database secret vars with all required environment variables + aliases
-                    # Use deployment-level naming for the secret name
-                    database_secret_vars = {
-                        "name": DatabaseSecret.get_secret_name(deployment_name),
-                        "namespace": namespace,
-                        "secret_pairs": database_secret_data,  # Now includes base + aliases
-                    }
-
-                    # Create database secret with deployment-level naming (not component-level)
-                    # This matches what we look for in _get_existing_database_credentials_from_k8s
-                    database_manifest_name = f"{DatabaseSecret.get_secret_name(deployment_name)}-secret"
-
-                    database_secret_path = self._manifest_generator.create_manifest_file(
-                        template_path=secret_template_path,
-                        values=database_secret_vars,
+            # Write each used service's declared secret files via the shared writer
+            # (RC-5 Phase 6c). The typed secret plus alias/register flags are built by
+            # the service provider (build_secret_files); this loop only drives the
+            # shared write. Byte-identical to the old per-service blocks -- write order
+            # is immaterial (kustomization is built from a disk scan and the
+            # obsolete-manifest prune keeps a name set, both order-independent).
+            for contribution in manifest_contributions:
+                for spec in contribution.secret_files:
+                    self._write_secret_file(
+                        spec,
+                        deployment_name=deployment_name,
+                        namespace=namespace,
                         output_dir=full_output_dir,
-                        output_filename=database_manifest_name,
-                        use_sops=True,
-                    )
-
-                    # All secrets are SOPS encrypted for security
-                    sops_filename = f"{database_manifest_name}.to-sops.yaml"
-                    created_files.append(sops_filename)
-                    logger.info(f"Database secret will be SOPS encrypted: {sops_filename}")
-                    logger.info(f"Successfully created database secret manifest: {database_secret_path}")
-                else:
-                    logger.warning(
-                        f"Component {component_name} uses PostgreSQL but no database credentials found in deployment {deployment_name}"
-                    )
-
-            # Create MinIO secret if component uses object storage service
-            if component_uses_minio:
-                # Get MinIO credentials from the private secrets map (not from deployment data)
-                minio_credentials = self._get_secret_from_map(deployment_name, "minio", MinIOSecret)
-
-                if minio_credentials:
-                    logger.debug(f"Creating MinIO secret for {component_name} with object storage credentials")
-
-                    # Create typed MinIO secret with cluster-specific host and port
-                    minio_secret = MinIOSecret(
-                        host=get_minio_host(cluster),
-                        port=get_minio_port(cluster),
-                        access_key=minio_credentials.access_key,
-                        secret_key=minio_credentials.secret_key,
-                        bucket_name=minio_credentials.bucket_name,
-                        region=minio_credentials.region,
-                    )
-
-                    # Get base MinIO secret data
-                    minio_secret_data = minio_secret.to_k8s_secret_data()
-
-                    # Add resolved MinIO aliases from all components
-                    minio_aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get("minio", {})
-                    if minio_aliases:
-                        logger.debug(f"Resolving {len(minio_aliases)} minio aliases for deployment {deployment_name}")
-                        resolved_aliases = self._resolve_aliases(minio_aliases, minio_secret_data)
-                        minio_secret_data.update(resolved_aliases)
-                        logger.info(f"Added {len(resolved_aliases)} resolved minio aliases to deployment secret")
-
-                    # Create MinIO secret vars with all required environment variables + aliases
-                    # Use deployment-level naming for the secret name
-                    minio_secret_vars = {
-                        "name": MinIOSecret.get_secret_name(deployment_name),
-                        "namespace": namespace,
-                        "secret_pairs": minio_secret_data,  # Now includes base + aliases
-                    }
-
-                    # Create MinIO secret with deployment-level naming (not component-level)
-                    # This matches what we look for in _get_existing_minio_credentials_from_k8s
-                    minio_manifest_name = f"{MinIOSecret.get_secret_name(deployment_name)}-secret"
-
-                    minio_secret_path = self._manifest_generator.create_manifest_file(
                         template_path=secret_template_path,
-                        values=minio_secret_vars,
-                        output_dir=full_output_dir,
-                        output_filename=minio_manifest_name,
-                        use_sops=True,
-                    )
-
-                    # All secrets are SOPS encrypted for security
-                    sops_filename = f"{minio_manifest_name}.to-sops.yaml"
-                    created_files.append(sops_filename)
-                    logger.info(f"MinIO secret will be SOPS encrypted: {sops_filename}")
-                    logger.info(f"Successfully created MinIO secret manifest: {minio_secret_path}")
-                else:
-                    logger.warning(
-                        f"Component {component_name} uses MinIO but no object storage credentials found in deployment {deployment_name}"
-                    )
-
-            # Create Redis secret if component uses Redis cache service
-            if component_uses_redis:
-                # Get Redis credentials from the private secrets map
-                redis_credentials = self._get_secret_from_map(deployment_name, "redis", RedisSecret)
-
-                if redis_credentials:
-                    logger.debug(f"Creating Redis secret for {component_name} with cache credentials")
-
-                    redis_secret = RedisSecret(
-                        host=redis_credentials.host,
-                        port=redis_credentials.port,
-                        username=redis_credentials.username,
-                        password=redis_credentials.password,
-                        key_prefix=redis_credentials.key_prefix,
-                    )
-
-                    # Get base Redis secret data
-                    redis_secret_data = redis_secret.to_k8s_secret_data()
-
-                    # Add resolved Redis aliases from all components
-                    redis_aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get("redis", {})
-                    if redis_aliases:
-                        logger.debug(f"Resolving {len(redis_aliases)} redis aliases for deployment {deployment_name}")
-                        resolved_aliases = self._resolve_aliases(redis_aliases, redis_secret_data)
-                        redis_secret_data.update(resolved_aliases)
-                        logger.info(f"Added {len(resolved_aliases)} resolved redis aliases to deployment secret")
-
-                    redis_secret_vars = {
-                        "name": RedisSecret.get_secret_name(deployment_name),
-                        "namespace": namespace,
-                        "secret_pairs": redis_secret_data,
-                    }
-
-                    redis_manifest_name = f"{RedisSecret.get_secret_name(deployment_name)}-secret"
-
-                    redis_secret_path = self._manifest_generator.create_manifest_file(
-                        template_path=secret_template_path,
-                        values=redis_secret_vars,
-                        output_dir=full_output_dir,
-                        output_filename=redis_manifest_name,
-                        use_sops=True,
-                    )
-
-                    sops_filename = f"{redis_manifest_name}.to-sops.yaml"
-                    created_files.append(sops_filename)
-                    logger.info(f"Redis secret will be SOPS encrypted: {sops_filename}")
-                    logger.info(f"Successfully created Redis secret manifest: {redis_secret_path}")
-                else:
-                    logger.warning(
-                        f"Component {component_name} uses Redis but no cache credentials found in deployment {deployment_name}"
-                    )
-
-            # Create metrics auth secret if component uses metrics-scraper
-            if component_uses_metrics_scraper:
-                metrics_auth_token = settings.PROMETHEUS_METRICS_AUTH_TOKEN
-                if metrics_auth_token:
-                    metrics_secret = MetricsAuthSecret(token=metrics_auth_token)
-                    metrics_secret_data = metrics_secret.to_k8s_secret_data()
-
-                    metrics_secret_vars = {
-                        "name": MetricsAuthSecret.get_secret_name(deployment_name),
-                        "namespace": namespace,
-                        "secret_pairs": metrics_secret_data,
-                    }
-
-                    metrics_manifest_name = f"{MetricsAuthSecret.get_secret_name(deployment_name)}-secret"
-
-                    self._manifest_generator.create_manifest_file(
-                        template_path=secret_template_path,
-                        values=metrics_secret_vars,
-                        output_dir=full_output_dir,
-                        output_filename=metrics_manifest_name,
-                        use_sops=True,
-                    )
-
-                    sops_filename = f"{metrics_manifest_name}.to-sops.yaml"
-                    created_files.append(sops_filename)
-                    logger.info(f"Metrics auth secret will be SOPS encrypted: {sops_filename}")
-                else:
-                    logger.warning(
-                        f"Component {component_name} uses metrics-scraper but PROMETHEUS_METRICS_AUTH_TOKEN is not configured"
+                        created_files=created_files,
                     )
 
         # Emit one tenant-baseline NetworkPolicy per deployment after all
