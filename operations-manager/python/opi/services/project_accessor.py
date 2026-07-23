@@ -1,8 +1,8 @@
-"""ProjectView -- one generic entry point to read/query/mutate a project dict.
+"""ProjectAccessor -- one generic entry point to read/query/mutate a project dict.
 
 Rationale (RC-5): the project file is read ~110 different ways today -- hand-rolled
 ``for x in components: if x.get("name") == n`` loops, ``next(iter(dict))`` key
-extractions, three competing path engines. ProjectView consolidates the
+extractions, three competing path engines. ProjectAccessor consolidates the
 *read/locate/mutate* side into a single generic entry point, the counterpart to
 ``project_store`` (the single entry point for *persisting* the file).
 
@@ -15,13 +15,13 @@ we access project-file data. Two kinds of method live here, both generic:
   etc.: "give me X of service Y", parameterised by service *name*. This is wanted.
 
 What does NOT belong here is a method hardcoded to one specific service (a
-``get_keycloak_config()``). And ProjectView holds no service *meaning*: methods like
+``get_keycloak_config()``). And ProjectAccessor holds no service *meaning*: methods like
 ``service_config_model`` locate the raw config generically and **delegate**
 validation to that service's provider object (where the meaning lives).
 
 Design invariants:
 
-* **The dict stays the source of truth.** ProjectView wraps the dict by reference
+* **The dict stays the source of truth.** ProjectAccessor wraps the dict by reference
   and mutates it in place through the order-preserving path engine, so ruamel
   ``CommentedMap``/``CommentedSeq`` order and comments survive. Persist via
   ``project_store``; never round-trip the whole file through models.
@@ -51,7 +51,7 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
 
-class ProjectView:
+class ProjectAccessor:
     """A thin, generic, reference-aware view over a parsed project dict.
 
     Wraps the dict by reference and mutates it in place (order-preserving). Get the
@@ -82,7 +82,7 @@ class ProjectView:
         """Whether a path resolves to a present (truthy) value."""
         return smart_path_exists(self._data, path)
 
-    def set(self, path: str, value: Any) -> ProjectView:
+    def set(self, path: str, value: Any) -> ProjectAccessor:
         """Set a value by path, creating intermediates and preserving list order.
         Chainable."""
         smart_set_value(self._data, path, value)

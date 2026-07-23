@@ -16,6 +16,7 @@ from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
 
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.project_accessor import ProjectAccessor
 from opi.services.resource_analyzer import _k8s_memory_to_mb
 from opi.services.schema_migration import migrate_to_latest
 from opi.utils.age import decrypt_age_block_to_bytes, decrypt_password_smart_sync, get_decoded_project_private_key
@@ -818,11 +819,13 @@ class ProjectFileHandler:
         return storage_configs
 
     def _find_component(self, project_data: dict[str, Any], component_name: str) -> dict[str, Any] | None:
-        """Find a component dict by name in project data."""
-        for comp in project_data.get("components", []):
-            if isinstance(comp, dict) and comp.get("name") == component_name:
-                return comp
-        return None
+        """Find a component dict by name in project data.
+
+        Delegates to the shared ProjectAccessor (RC-5 consolidation) so this
+        reference lookup uses the one reference-aware access layer instead of a
+        hand-rolled scan.
+        """
+        return ProjectAccessor(project_data).find("components", name=component_name)
 
     def _decrypt_and_clean_env_vars(self, env_vars: dict[str, Any], private_key: str | None) -> dict[str, str]:
         """Decrypt individual env var values.
