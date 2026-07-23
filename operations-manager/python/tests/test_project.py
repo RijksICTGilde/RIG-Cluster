@@ -99,6 +99,40 @@ class TestOrderPreservation:
         assert names[-1] == "redis"
 
 
+class TestFormAgnosticServiceAccess:
+    """RC-5 A2.1: service config read/write works on the new {name/reference, config}
+    record and the legacy name-as-key form alike."""
+
+    def test_read_new_record_form(self):
+        data = {"services": [{"name": "keycloak", "config": {"template": "sso-only"}}]}
+        v = Project(data)
+        assert v.uses_service("keycloak")
+        assert v.service_config("keycloak") == {"template": "sso-only"}
+        assert v.get("services/keycloak/config/template") == "sso-only"
+
+    def test_read_reference_record_form(self):
+        data = {"services": [{"reference": "persistent-storage", "config": [{"name": "data"}]}]}
+        assert Project(data).service_config("persistent-storage") == [{"name": "data"}]
+
+    def test_read_legacy_form(self):
+        data = {"services": [{"keycloak": {"config": {"template": "x"}}}]}
+        assert Project(data).get("services/keycloak/config/template") == "x"
+
+    def test_write_into_existing_record_form(self):
+        data = {"services": [{"name": "keycloak", "config": {"template": "sso-only"}}]}
+        Project(data).set("services/keycloak/config/restrict-access/enabled", True)
+        # written into the record's own config, template preserved, no name-as-key key
+        entry = data["services"][0]
+        assert entry["name"] == "keycloak"
+        assert entry["config"]["template"] == "sso-only"
+        assert entry["config"]["restrict-access"]["enabled"] is True
+
+    def test_delete_in_record_form(self):
+        data = {"services": [{"name": "keycloak", "config": {"template": "x", "banner": "b"}}]}
+        Project(data).delete("services/keycloak/config/banner")
+        assert data["services"][0]["config"] == {"template": "x"}
+
+
 class TestGetSummary:
     """Project (aggregate root) produces its lightweight typed projection."""
 

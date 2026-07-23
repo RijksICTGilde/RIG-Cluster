@@ -14,6 +14,7 @@ from opi.connectors.postgres import PostgresConnector, create_postgres_connector
 from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
 from opi.services import CloneFromType, ServiceType
+from opi.services.project import Project
 from opi.services.registry import get_provider
 from opi.utils.naming import generate_database_name
 from opi.utils.passwords import generate_secure_password
@@ -1229,21 +1230,8 @@ class DatabaseManager:
         Returns:
             True if project uses namespace-specific PostgreSQL, False otherwise
         """
-        # Check project-level services
-        project_services = project_data.get("services", [])
-        if not project_services:
-            return False
-
-        # Services can be strings or dicts with service name as key
-        for service_item in project_services:
-            if isinstance(service_item, str):
-                if service_item == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value:
-                    return True
-            elif isinstance(service_item, dict) and ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item:
-                # Dict format: {"namespace-postgresql-database": {"config": {...}}}
-                return True
-
-        return False
+        # Form-agnostic (bare string / legacy name-as-key / new {name, config} record).
+        return Project(project_data).uses_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value)
 
     def _get_database_service_config(self, project_data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -1293,27 +1281,13 @@ class DatabaseManager:
         # still read the legacy project-level service-entry shape here (bare string
         # or {name-as-key: {config}}); RC-5 Phase 3 normalises that shape.
         service_name = ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-        user_config: dict[str, Any] | None = None
-        for service_item in project_data.get("services", []):
-            if isinstance(service_item, dict) and service_name in service_item:
-                service_data = service_item[service_name]
-                if isinstance(service_data, dict) and "config" in service_data:
-                    config = service_data["config"]
-                    if not isinstance(config, dict):
-                        raise ValueError(f"Service config for '{service_name}' must be a dict, got {type(config)}")
-                    user_config = config
-                else:
-                    # Service present without a config block -> model defaults.
-                    user_config = {}
-                break
-            if isinstance(service_item, str) and service_item == service_name:
-                user_config = {}
-                break
-
-        # provider.validate_config applies model defaults and fails closed on bad
-        # values; model_dump keeps the dict return contract callers depend on.
+        # Form-agnostic read via the Project aggregate root (bare string / legacy
+        # name-as-key / new {name, config} record). None when the service is absent
+        # or has no config block -> validate_config supplies the model defaults, and
+        # fails closed on a malformed (non-dict) config.
+        raw_config = Project(project_data).service_config(service_name)
         provider = get_provider(ServiceType.NAMESPACE_POSTGRESQL_DATABASE)
-        merged_config = provider.validate_config(user_config).model_dump(mode="json")
+        merged_config = provider.validate_config(raw_config).model_dump(mode="json")
         logger.debug(f"Database config (validated via provider): {merged_config}")
         return merged_config
 

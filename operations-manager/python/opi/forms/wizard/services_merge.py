@@ -25,11 +25,9 @@ from typing import Any
 
 def service_name(entry: Any) -> str | None:
     """The service identity for a services-list entry, or None if unrecognised."""
-    if isinstance(entry, str):
-        return entry
-    if isinstance(entry, dict) and len(entry) == 1:
-        return next(iter(entry))
-    return None
+    from opi.services.services import service_entry_name
+
+    return service_entry_name(entry)
 
 
 def _deep_update(base: dict[str, Any], overlay: dict[str, Any]) -> None:

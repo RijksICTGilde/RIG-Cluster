@@ -22,8 +22,23 @@ import re
 from typing import Any
 
 from opi.forms.editables.path import delete_value, get_value, set_value
+from opi.services.services import service_entry_name
 
 _SERVICE_CONFIG_RE = re.compile(r"^services/([^/\[]+)(/(.+))?$")
+
+
+def _service_entry_body(entry: dict[str, Any] | str, service_name: str) -> Any:
+    """The config-carrying sub-dict of a service entry, format-agnostic.
+
+    New record (``{name/reference: X, config: ...}``) carries ``config`` on the entry
+    itself, so the body is the entry. Legacy (``{X: {config: ...}}``) carries it under
+    the service-name key.
+    """
+    if not isinstance(entry, dict):
+        return None
+    if "name" in entry or "reference" in entry:
+        return entry
+    return entry.get(service_name)
 
 
 def is_service_config_path(yaml_path: str) -> bool:
@@ -78,9 +93,7 @@ def find_service_in_list(
         if not found.
     """
     for i, item in enumerate(services):
-        if isinstance(item, str) and item == service_name:
-            return i, item
-        if isinstance(item, dict) and service_name in item:
+        if service_entry_name(item) == service_name:
             return i, item
     return -1, None
 
@@ -139,14 +152,7 @@ def smart_get_value(data: dict[str, Any], yaml_path: str) -> Any:
     if idx == -1:
         return None
 
-    if isinstance(entry, str):
-        # String entry has no config
-        return None
-
-    if not isinstance(entry, dict):
-        return None
-
-    service_data = entry.get(service_name)
+    service_data = _service_entry_body(entry, service_name)
     if sub_path is None:
         return service_data
 
@@ -184,12 +190,7 @@ def smart_path_exists(data: dict[str, Any], yaml_path: str) -> bool:
         return True
 
     # Deeper path - need a dict entry with config
-    if isinstance(entry, str):
-        return False
-    if not isinstance(entry, dict):
-        return False
-
-    service_data = entry.get(service_name)
+    service_data = _service_entry_body(entry, service_name)
     if not isinstance(service_data, dict):
         return False
 
@@ -228,15 +229,31 @@ def smart_set_value(data: dict[str, Any], yaml_path: str, value: Any) -> dict[st
         data["services"] = []
 
     _idx, service_entry = ensure_service_in_list(data["services"], service_name)
+    is_record = "name" in service_entry or "reference" in service_entry
 
     if sub_path is None:
-        # Setting the service's entire config
-        service_entry[service_name] = value
+        # Setting the service's entire config body.
+        if is_record:
+            # New record: keep the identity key, replace the config-bearing fields.
+            id_key = "name" if "name" in service_entry else "reference"
+            id_val = service_entry[id_key]
+            service_entry.clear()
+            service_entry[id_key] = id_val
+            if isinstance(value, dict):
+                service_entry.update(value)
+        else:
+            service_entry[service_name] = value
     else:
-        # Ensure the service has a dict to navigate into
-        if not isinstance(service_entry[service_name], dict):
-            service_entry[service_name] = {}
-        set_value(service_entry[service_name], sub_path, value)
+        # Navigate into the config-carrying body (record entry itself, or the
+        # legacy name-keyed sub-dict); initialise it if absent.
+        body = _service_entry_body(service_entry, service_name)
+        if not isinstance(body, dict):
+            if is_record:
+                body = service_entry
+            else:
+                service_entry[service_name] = {}
+                body = service_entry[service_name]
+        set_value(body, sub_path, value)
 
     return data
 
@@ -269,8 +286,8 @@ def smart_delete_value(data: dict[str, Any], yaml_path: str) -> None:
     if sub_path is None:
         # No sub-path: remove the entire service entry
         services.pop(idx)
-    elif isinstance(entry, dict):
+    else:
         # Has sub-path: delete only the nested config key
-        service_data = entry.get(service_name)
-        if isinstance(service_data, dict):
-            delete_value(service_data, sub_path)
+        body = _service_entry_body(entry, service_name)
+        if isinstance(body, dict):
+            delete_value(body, sub_path)
