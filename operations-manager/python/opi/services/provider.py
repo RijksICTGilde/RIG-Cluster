@@ -15,15 +15,16 @@ provisioning, cleanup, manifest contribution) are added to this base class in la
 phases, when generic code actually consumes them, so their context types can be
 imported lazily / under ``TYPE_CHECKING`` at that point.
 
-Phase 1 is metadata-only: each provider carries its existing ``ServiceDefinition``
-(unchanged) and nothing consumes providers yet beyond the coverage guard in
-``tests/test_service_providers.py``.
+Each provider carries its existing ``ServiceDefinition`` (unchanged) plus, for
+configurable services, a typed ``config_model`` (Phase 2). ``database_manager``
+already validates namespace-postgres config through its provider; the remaining
+config models are wired into the read path in Phase 3.
 """
 
 from __future__ import annotations
 
 from abc import ABC
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from opi.services.services import ServiceAdapter, ServiceDefinition
 
@@ -31,6 +32,10 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from opi.services.services_enums import ServiceType
+
+#: A service's raw config as it appears in the project file: a dict for most
+#: services, or a list for sequence configs (e.g. storage mounts).
+ServiceConfigData = dict[str, Any] | list[Any]
 
 
 class ServiceProvider(ABC):
@@ -59,8 +64,9 @@ class ServiceProvider(ABC):
       current version, so no down-conversion is needed. Convert-then-validate: an
       older config is migrated forward, then validated against ``config_model``.
 
-    Services without config (publish-on-web, storage, platform, ...) leave
-    ``config_model`` as ``None`` and inherit the no-op defaults.
+    Services without config (publish-on-web, minio, redis, platform, shared
+    postgresql-database, ...) leave ``config_model`` as ``None`` and inherit the
+    no-op defaults.
     """
 
     #: The service this provider handles. Set by each concrete subclass.
@@ -82,17 +88,22 @@ class ServiceProvider(ABC):
         if service_type is not None:
             cls.definition = ServiceAdapter.SERVICE_DEFINITIONS[service_type]
 
-    def migrate_config(self, config: dict[str, object], from_version: str) -> dict[str, object]:
+    def migrate_config(self, config: ServiceConfigData, from_version: str) -> ServiceConfigData:
         """Convert an older config forward to ``config_schema_version`` (hub).
 
         Forward-only (spoke -> hub); the default is identity, correct for a service
         still at its first version. A service that bumps its version overrides this
         and applies the ordered steps ``from_version -> ... -> current``. Keep each
         step simple and lossless where possible (the Kubernetes conversion rule).
+
+        ``config`` is a dict for most services, or a list for services whose config
+        is a sequence (e.g. storage mounts).
         """
         return config
 
-    def validate_config(self, raw_config: dict[str, object] | None, from_version: str | None = None) -> BaseModel:
+    def validate_config(
+        self, raw_config: ServiceConfigData | None = None, from_version: str | None = None
+    ) -> BaseModel:
         """Migrate (if needed) then validate this service's config; fail closed.
 
         ``from_version`` is the version stamped on the project-file entry; ``None``
@@ -100,9 +111,13 @@ class ServiceProvider(ABC):
         version (the config already matches the current model). Raises
         ``pydantic.ValidationError`` on bad values, or ``TypeError`` if the service
         takes no config.
+
+        ``raw_config`` may be a dict (most services) or a list (sequence configs
+        such as storage mounts). ``None`` defaults to an empty dict, which suits
+        dict-config services; list-config services are always passed their list.
         """
         if self.config_model is None:
             raise TypeError(f"Service '{self.service_type.value}' takes no config")
-        config = dict(raw_config or {})
+        config: ServiceConfigData = {} if raw_config is None else raw_config
         migrated = self.migrate_config(config, from_version or self.config_schema_version)
         return self.config_model.model_validate(migrated)
