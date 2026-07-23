@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from opi.core.config import settings
+from opi.services.project import Project
 from opi.services.schema_migration import migrate_to_latest
 from opi.services.user_service import get_user_service
 from opi.utils.age import decrypt_age_content_sync, is_age_encrypted
@@ -226,17 +227,14 @@ class ProjectService:
         try:
             project_data, _ = migrate_to_latest(project_data)
 
-            project_name = project_data.get("name")
-            if not project_name:
-                logger.warning("Project data missing 'name' field")
-                return None
-
-            # Extract API key from config section
-            config = project_data.get("config", {})
-            api_key = config.get("api-key")
-
-            if not api_key:
-                logger.warning(f"No API key found in project config for: {project_name}")
+            # Structural projection (name/users/api-key-as-stored) is produced by the
+            # Project aggregate root; this service owns the crypto step below.
+            summary = Project(project_data).get_summary(filename)
+            if summary is None:
+                if not project_data.get("name"):
+                    logger.warning("Project data missing 'name' field")
+                else:
+                    logger.warning(f"No API key found in project config for: {project_data.get('name')}")
                 return None
 
             # Project files store api-key AGE-encrypted, but every API-layer
@@ -244,25 +242,9 @@ class ProjectService:
             # Registering the ciphertext here poisons the in-memory key and
             # 401s all API calls for the project until the next process run
             # re-registers the decrypted key.
-            api_key = self._resolve_plaintext_api_key(project_name, str(api_key), config)
-
-            # Extract users from project data
-            users_data = project_data.get("users", [])
-            users = []
-            if users_data and isinstance(users_data, list):
-                users.extend(
-                    ProjectUser(email=user_data["email"], role=user_data["role"])
-                    for user_data in users_data
-                    if isinstance(user_data, dict) and "email" in user_data and "role" in user_data
-                )
-
-            return ProjectSummary(
-                name=str(project_name),
-                api_key=str(api_key),
-                filename=filename,
-                users=users or None,
-                data=project_data,
-            )
+            config = project_data.get("config", {})
+            summary.api_key = self._resolve_plaintext_api_key(summary.name, str(summary.api_key), config)
+            return summary
         except Exception:
             logger.exception("Error building project from project data")
             return None
