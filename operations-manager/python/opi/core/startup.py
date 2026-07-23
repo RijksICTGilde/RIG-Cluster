@@ -29,6 +29,7 @@ from tenacity import (
 
 from opi.bootstrap.keycloak_setup import setup_keycloak
 from opi.connectors.keycloak import create_keycloak_connector
+from opi.connectors.kubectl import create_kubectl_connector
 from opi.connectors.minio_mc import create_minio_connector
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.cluster_config import get_prefixed_namespace
@@ -513,11 +514,25 @@ async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: 
         # Provisioning is a separate concern from loading: it needs the project list, not
         # the file walk, so it now runs off the cache the store just populated.
         if not skip_checks:
+            # Read the cluster's namespaces once instead of per project-deployment. This
+            # loop used to take 70 of the 83 seconds it took to boot, nearly all of it
+            # spent forking kubectl: 127 `get namespace` plus 127 `label namespace` for
+            # 44 distinct namespaces that were already correct.
+            known_namespace_labels: dict[str, str] | None = None
+            try:
+                known_namespace_labels = await create_kubectl_connector().get_namespace_label_map(
+                    "argocd.argoproj.io/managed-by"
+                )
+                logger.info(f"Read {len(known_namespace_labels)} namespaces in one call for the startup check")
+            except Exception as e:
+                # Fall back to the per-namespace path rather than skipping the check.
+                logger.warning(f"Could not pre-read namespaces, falling back to per-namespace checks: {e}")
+
             for project in store.get_all():
                 project_manager = ProjectManager(project_file_relative_path=f"projects/{project.filename}")
                 try:
                     logger.info(f"Checking namespaces and secrets for project: {project.filename}")
-                    await project_manager.check_and_create_namespaces()
+                    await project_manager.check_and_create_namespaces(known_namespace_labels=known_namespace_labels)
                     await project_manager.check_and_create_sops_secrets_in_namespaces()
                 except Exception as e:
                     logger.error(f"Error checking project {project.filename}: {e}")

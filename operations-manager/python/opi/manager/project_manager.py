@@ -1447,7 +1447,10 @@ class ProjectManager:
         return result.committed
 
     async def check_and_create_namespaces(
-        self, deployment_name: str | None = None, deployment_names: list[str] | None = None
+        self,
+        deployment_name: str | None = None,
+        deployment_names: list[str] | None = None,
+        known_namespace_labels: dict[str, str] | None = None,
     ) -> bool:
         """
         Check and create namespaces for all deployments in the project for this cluster.
@@ -1456,6 +1459,11 @@ class ProjectManager:
             deployment_name: Optional single deployment to process
             deployment_names: Optional explicit set of deployments to process
                 (takes precedence over ``deployment_name``)
+            known_namespace_labels: namespace -> argocd managed-by value, as read in one
+                call by the caller. Given this, an existing namespace with the right
+                label costs no kubectl invocation at all. Startup passes it because it
+                walks every project; per-request callers leave it None and each check
+                talks to the cluster, which is what you want for a single deployment.
 
         Returns:
             True if all namespaces were checked/created successfully
@@ -1485,27 +1493,39 @@ class ProjectManager:
 
         all_successful = True
 
+        # Deployments share a namespace (one per project, not per deployment), so the
+        # same namespace was checked and labelled once per deployment: 127 rounds for
+        # 44 namespaces at startup. Collapse to the distinct set first.
+        namespaces: dict[str, list[str]] = {}
         for deployment in deployments:
             namespace = get_prefixed_namespace(settings.CLUSTER_MANAGER, cast("str", deployment["namespace"]))
+            namespaces.setdefault(namespace, []).append(cast("str", deployment["name"]))
 
+        manager_value = get_argo_namespace(settings.CLUSTER_MANAGER)
+
+        for namespace, deployment_list in namespaces.items():
             logger.info(
-                f"Checking namespace '{namespace}' for deployment '{deployment['name']}' for project '{project_data['name']}':"
+                f"Checking namespace '{namespace}' for deployment(s) {deployment_list} for project '{project_data['name']}':"
             )
-            # Check if namespace exists
-            namespace_exists = await self._kubectl_connector.namespace_exists(namespace)
-            if namespace_exists:
-                logger.info(
-                    f"Namespace '{namespace}' already exists for deployment '{deployment['name']}' for project '{project_data['name']}'"
-                )
+
+            if known_namespace_labels is not None:
+                namespace_exists = namespace in known_namespace_labels
+                label_is_correct = known_namespace_labels.get(namespace) == manager_value
             else:
-                logger.info(
-                    f"Creating namespace '{namespace}' for deployment '{deployment['name']}' for project '{project_data['name']}':"
-                )
+                namespace_exists = await self._kubectl_connector.namespace_exists(namespace)
+                label_is_correct = False  # unknown, so apply it as before
+
+            if namespace_exists:
+                logger.info(f"Namespace '{namespace}' already exists for project '{project_data['name']}'")
+            else:
+                logger.info(f"Creating namespace '{namespace}' for project '{project_data['name']}':")
                 # Create the namespace using shared function
                 await self._create_namespace_with_argocd_label(namespace)
+                label_is_correct = True  # applied as part of creation
 
-            # Always ensure ArgoCD managed-by label exists (idempotent)
-            await self._ensure_argocd_managed_by_label(namespace)
+            # Idempotent, but not free: skip it when we already read the right value.
+            if not label_is_correct:
+                await self._ensure_argocd_managed_by_label(namespace)
 
             if progress_manager:
                 progress_manager.set_namespace(namespace)
