@@ -15,6 +15,7 @@ from opi.services.provider import ManifestContext, ProvisionContext, RemovalCont
 from opi.services.registry import (
     SERVICE_PROVIDERS,
     get_provider,
+    manifest_providers,
     manifest_secret_providers,
     provisioning_providers,
 )
@@ -229,8 +230,17 @@ _EXPECTED_ENVFROM_ORDER = [
 ]
 
 
+def _manifest_ctx(*, deployment_name="mydep", project_data=None, unique_name="mydep-web", get_secret=None):
+    return ManifestContext(
+        deployment_name=deployment_name,
+        project_data=project_data if project_data is not None else {},
+        unique_name=unique_name,
+        get_secret=get_secret if get_secret is not None else (lambda *a, **k: None),
+    )
+
+
 def test_manifest_secret_providers_order_and_names():
-    ctx = ManifestContext(deployment_name="mydep")
+    ctx = _manifest_ctx()
     actual = [
         (p.service_type.value, p.contribute_manifest_context(ctx).env_from_secrets[0])
         for p in manifest_secret_providers()
@@ -255,8 +265,8 @@ def test_default_manifest_activation_is_own_service_type():
     assert kc.manifest_activation_types() == (ServiceType.KEYCLOAK,)
 
 
-def test_non_secret_services_contribute_nothing():
-    ctx = ManifestContext(deployment_name="mydep")
+def test_non_secret_services_contribute_no_envfrom():
+    ctx = _manifest_ctx()
     for t in ServiceType:
         provider = get_provider(t)
         if provider.manifest_secret_class is None:
@@ -271,3 +281,65 @@ def test_namespace_variants_are_not_separate_contributors():
     contributors = {p.service_type for p in manifest_secret_providers()}
     assert ServiceType.NAMESPACE_POSTGRESQL_DATABASE not in contributors
     assert ServiceType.NAMESPACE_REDIS not in contributors
+
+
+# ---------------------------------------------------------------------------
+# Phase 6b: auth-wall sidecar + service_port override contribution
+# ---------------------------------------------------------------------------
+
+
+def test_manifest_providers_includes_auth_wall_after_secrets():
+    # The override provider (auth-wall) joins the contributor set, ordered last.
+    order = [p.service_type.value for p in manifest_providers()]
+    assert order == [
+        "postgresql-database",
+        "minio-storage",
+        "keycloak",
+        "redis",
+        "metrics-scraper",
+        "authorization-wall",
+    ]
+
+
+def test_auth_wall_contributes_sidecar_and_port_override():
+    keycloak_secret = SimpleNamespace(
+        discovery_url="https://kc.example/realms/r/.well-known/openid-configuration",
+        client_id="my-client",
+    )
+    resolved = []
+
+    def get_secret(deployment_name, secret_type, secret_class):
+        resolved.append((deployment_name, secret_type))
+        return keycloak_secret
+
+    ctx = _manifest_ctx(
+        deployment_name="mydep",
+        unique_name="mydep-web",
+        project_data={"services": [{"reference": "authorization-wall", "config": {"banner": "Restricted"}}]},
+        get_secret=get_secret,
+    )
+    contribution = get_provider(ServiceType.AUTHORIZATION_WALL).contribute_manifest_context(ctx)
+
+    # Byte-identical to the old manager block: sidecar added, service_port overridden,
+    # authorization_wall dict built from the resolved keycloak secret + project banner.
+    assert contribution.sidecars == ["authorization-wall"]
+    assert contribution.template_vars["service_port"] == 4180
+    assert contribution.template_vars["authorization_wall"] == {
+        "issuer_url": "https://kc.example/realms/r",
+        "client_id": "my-client",
+        "keycloak_secret_name": "mydep-keycloak",
+        "cookie_secret_name": "mydep-web-oauth2-cookie",
+        "banner": "Restricted",
+    }
+    assert resolved == [("mydep", "keycloak")]
+
+
+def test_auth_wall_contributes_nothing_without_keycloak_secret():
+    # Component asks for an auth wall but no keycloak secret is provisioned: the
+    # provider contributes nothing (the manager logs the warning), matching the old
+    # warn-and-skip branch -- no sidecar, no port override.
+    ctx = _manifest_ctx(get_secret=lambda *a, **k: None)
+    contribution = get_provider(ServiceType.AUTHORIZATION_WALL).contribute_manifest_context(ctx)
+    assert contribution.sidecars == []
+    assert contribution.template_vars == {}
+    assert contribution.env_from_secrets == []
