@@ -24,6 +24,36 @@
       "title": "KeycloakClientEntry",
       "type": "object"
     },
+    "KeycloakRealm": {
+      "additionalProperties": true,
+      "description": "Per-realm admin connection (OPI-managed, one per cluster).\n\nRelocated verbatim from the old project-level ``config.keycloak`` (RC-5 B). Kept\nas-is -- matched by ``realm`` (deterministic ``{project}-{cluster}``) as before.\n``extra=\"allow\"`` tolerates fields written over time (e.g. ``service_client_secret``);\npassword is stored AGE-encrypted or ``plain:``-prefixed, so it's just a string here.",
+      "properties": {
+        "host": {
+          "title": "Host",
+          "type": "string"
+        },
+        "password": {
+          "title": "Password",
+          "type": "string"
+        },
+        "realm": {
+          "title": "Realm",
+          "type": "string"
+        },
+        "username": {
+          "title": "Username",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host",
+        "realm",
+        "username",
+        "password"
+      ],
+      "title": "KeycloakRealm",
+      "type": "object"
+    },
     "KeycloakRealmRoleEntry": {
       "additionalProperties": true,
       "description": "A ``realm-roles`` item; ``name`` required, advanced keys pass through.",
@@ -114,6 +144,13 @@
         "$ref": "#/$defs/KeycloakRealmRoleEntry"
       },
       "title": "Realm-Roles",
+      "type": "array"
+    },
+    "realms": {
+      "items": {
+        "$ref": "#/$defs/KeycloakRealm"
+      },
+      "title": "Realms",
       "type": "array"
     },
     "restrict-access": {

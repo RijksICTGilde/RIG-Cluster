@@ -14,6 +14,7 @@ from opi.connectors.subdomain import SubdomainConnector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.project import Project
 from opi.services.project_store import get_project_store
 
 if TYPE_CHECKING:
@@ -323,13 +324,15 @@ class DeleteProjectManager:
             # 4. Remove keycloak config entry from project.yaml
             try:
                 project_data = await self.project_manager.get_contents()
-                keycloak_list = project_data.get("config", {}).get("keycloak", [])
+                # RC-5 B: keycloak connections live under the keycloak service config.
+                view = Project(project_data)
+                keycloak_list = view.get("services/keycloak/config/realms") or []
 
                 # Remove entry matching this realm
                 updated_list = [kc for kc in keycloak_list if kc.get("realm") != realm_name]
 
                 if updated_list != keycloak_list:
-                    project_data["config"]["keycloak"] = updated_list
+                    view.set("services/keycloak/config/realms", updated_list)
                     # Central save: writes and commits as one locked operation. This used
                     # to be save_project_data(), which wrote the file into the shared warm
                     # working copy and never committed it -- leaving it to be swept up by
