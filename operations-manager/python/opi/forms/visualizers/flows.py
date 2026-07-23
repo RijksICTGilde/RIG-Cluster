@@ -37,6 +37,8 @@ from opi.forms.visualizers.wizard_sections import (
     build_domain_section,
     build_restore_new_deployment_sections,
 )
+from opi.services.registry import get_provider
+from opi.services.services_enums import ServiceType
 
 if TYPE_CHECKING:
     from opi.forms.editables.editable import Editable
@@ -222,10 +224,12 @@ FLOW_REGISTRY: dict[str, FormFlow] = {
 }
 
 # Lookup: service name → modal flow ID (for detail page config buttons)
+# service name -> modal-edit flow id, derived from the provider registry
+# (modal_flow_id) instead of hand-synced (RC-5 Phase 3).
 SERVICE_CONFIG_MODAL_FLOWS: dict[str, str] = {
-    "keycloak": MODAL_EDIT_KEYCLOAK_FLOW.flow_id,
-    "namespace-postgresql-database": MODAL_EDIT_POSTGRESQL_FLOW.flow_id,
-    "authorization-wall": MODAL_EDIT_AUTH_WALL_FLOW.flow_id,
+    service_type.value: provider.modal_flow_id
+    for service_type in ServiceType
+    if (provider := get_provider(service_type)).modal_flow_id is not None
 }
 
 
