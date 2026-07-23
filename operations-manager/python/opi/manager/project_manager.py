@@ -76,6 +76,7 @@ from opi.utils.age import (
     encrypt_age_content,
     get_decoded_project_private_key,
     get_project_public_key,
+    is_age_encrypted,
 )
 from opi.utils.env_vars import detect_circular_references, extract_variable_references, substitute_variables
 
@@ -1018,6 +1019,11 @@ class ProjectManager:
             "secret": {},
         }
 
+        # Alias values may hold secrets (e.g. a password) and are stored AGE-encrypted
+        # like user-env-vars. Decrypt lazily below, only when a value is encrypted, so
+        # projects without an AGE key and existing plaintext aliases keep working.
+        project_private_key: str | None = None
+
         # Scan all components
         components = deployment.get("components", [])
         for component in components:
@@ -1040,6 +1046,13 @@ class ProjectManager:
                         f"Alias '{alias_name}' in component '{component_name}' has non-string value, skipping"
                     )
                     continue
+
+                # Decrypt AGE-encrypted alias values before categorization/substitution.
+                # Plaintext values pass through unchanged (backward compatible).
+                if is_age_encrypted(alias_template):
+                    if project_private_key is None:
+                        project_private_key = await get_decoded_project_private_key(project_data)
+                    alias_template = await decrypt_age_content(alias_template, project_private_key)
 
                 try:
                     # Determine which service and source type this alias belongs to

@@ -14,7 +14,7 @@ from opi.forms.editables.converters import (
     ServiceListConverter,
     TruncateConverter,
 )
-from opi.forms.editables.generators import UserEnvVarsEncryptGenerator
+from opi.forms.editables.generators import ComponentAliasesEncryptGenerator, UserEnvVarsEncryptGenerator
 from opi.forms.editables.validators import KeyValueValidator
 
 FAKE_AGE_ENCRYPTED = "-----BEGIN AGE ENCRYPTED FILE-----\nencrypted\n-----END AGE ENCRYPTED FILE-----"
@@ -393,16 +393,53 @@ class TestKeyValueConverterEncryption:
         result = conv.write("SECRET=value", context_data={"config": {}})
         assert result == "SECRET=value"
 
-    def test_write_dict_mode_does_not_encrypt(self):
-        """write_as='dict' mode should never attempt encryption."""
+    def test_write_dict_mode_encrypts_each_value(self):
+        """write_as='dict' (aliases) must AGE-encrypt each value, keeping names readable."""
+        conv = KeyValueConverter(fmt="env", write_as="dict")
+        yaml_data = {"config": {"age-public-key": FAKE_PUBLIC_KEY}}
+
+        with patch("opi.utils.age.encrypt_age_content_sync", return_value=FAKE_AGE_ENCRYPTED) as mock:
+            result = conv.write("KEY=value", context_data=yaml_data)
+
+        mock.assert_called_once_with("value", FAKE_PUBLIC_KEY)
+        assert isinstance(result, dict)
+        assert "KEY" in result
+        assert "BEGIN AGE ENCRYPTED FILE" in str(result["KEY"])
+
+    def test_write_dict_mode_skips_already_encrypted(self):
+        """Already-encrypted alias values must not be double-encrypted."""
         conv = KeyValueConverter(fmt="env", write_as="dict")
         yaml_data = {"config": {"age-public-key": FAKE_PUBLIC_KEY}}
 
         with patch("opi.utils.age.encrypt_age_content_sync") as mock:
-            result = conv.write("KEY=value", context_data=yaml_data)
+            result = conv.write({"KEY": FAKE_AGE_ENCRYPTED}, context_data=yaml_data)
 
         mock.assert_not_called()
-        assert isinstance(result, dict)
+        assert result == {"KEY": FAKE_AGE_ENCRYPTED}
+
+    def test_write_dict_mode_without_public_key_returns_plain(self):
+        """Without a project public key, alias values are stored plain (backward compatible)."""
+        conv = KeyValueConverter(fmt="env", write_as="dict")
+
+        with patch("opi.utils.age.encrypt_age_content_sync") as mock:
+            result = conv.write("KEY=value", context_data={"config": {}})
+
+        mock.assert_not_called()
+        assert result == {"KEY": "value"}
+
+    def test_read_dict_mode_decrypts_each_value(self):
+        """Reading aliases must decrypt each AGE-encrypted value for editor display."""
+        conv = KeyValueConverter(fmt="env", write_as="dict")
+        stored = {"KEY": FAKE_AGE_ENCRYPTED, "PLAIN": "just-text"}
+
+        with (
+            patch("opi.utils.age.decrypt_age_content_sync", return_value="decrypted"),
+            patch("opi.forms.editables.converters.resolve_project_private_key", return_value="AGE-SECRET-KEY-1TEST"),
+        ):
+            result = conv.read(stored, context_data={"config": {}})
+
+        assert "KEY=decrypted" in result
+        assert "PLAIN=just-text" in result
 
 
 class TestUserEnvVarsEncryptGenerator:
@@ -466,6 +503,64 @@ class TestUserEnvVarsEncryptGenerator:
         mock.assert_not_called()
         # Value stays plain - this is a known limitation when no key exists
         assert yaml_data["components"][0]["user-env-vars"] == "SECRET=value"
+
+
+class TestComponentAliasesEncryptGenerator:
+    """Verify that the generator encrypts each component alias value."""
+
+    def test_encrypts_plain_alias_values(self):
+        """Plain-text alias values on components must be encrypted; names stay readable."""
+        yaml_data = {
+            "config": {"age-public-key": FAKE_PUBLIC_KEY},
+            "components": [
+                {"name": "frontend", "aliases": {"DB_PASS": "secret123", "SELF": "https://$PUBLIC_HOST"}},
+            ],
+        }
+
+        with patch("opi.utils.age.encrypt_age_content_sync", return_value=FAKE_AGE_ENCRYPTED):
+            ComponentAliasesEncryptGenerator().generate(yaml_data)
+
+        aliases = yaml_data["components"][0]["aliases"]
+        assert set(aliases.keys()) == {"DB_PASS", "SELF"}
+        for value in aliases.values():
+            assert "BEGIN AGE ENCRYPTED FILE" in str(value)
+
+    def test_skips_already_encrypted(self):
+        """Already-encrypted alias values must not be re-encrypted."""
+        yaml_data = {
+            "config": {"age-public-key": FAKE_PUBLIC_KEY},
+            "components": [{"name": "frontend", "aliases": {"DB_PASS": FAKE_AGE_ENCRYPTED}}],
+        }
+
+        with patch("opi.utils.age.encrypt_age_content_sync") as mock:
+            ComponentAliasesEncryptGenerator().generate(yaml_data)
+
+        mock.assert_not_called()
+
+    def test_skips_when_no_public_key(self):
+        """Without a project public key, generator should skip (not crash)."""
+        yaml_data = {
+            "config": {},
+            "components": [{"name": "frontend", "aliases": {"DB_PASS": "secret"}}],
+        }
+
+        with patch("opi.utils.age.encrypt_age_content_sync") as mock:
+            ComponentAliasesEncryptGenerator().generate(yaml_data)
+
+        mock.assert_not_called()
+        assert yaml_data["components"][0]["aliases"]["DB_PASS"] == "secret"
+
+    def test_skips_components_without_aliases(self):
+        """Components without an aliases map should be left alone."""
+        yaml_data = {
+            "config": {"age-public-key": FAKE_PUBLIC_KEY},
+            "components": [{"name": "frontend"}],
+        }
+
+        with patch("opi.utils.age.encrypt_age_content_sync") as mock:
+            ComponentAliasesEncryptGenerator().generate(yaml_data)
+
+        mock.assert_not_called()
 
 
 class TestAGEEncryptConverter:
