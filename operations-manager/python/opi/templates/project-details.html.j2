@@ -1245,6 +1245,21 @@
      * Switch between deployment sections across all panels
      */
     function switchDeployment(deploymentName) {
+        // A hash can point at a deployment that no longer exists -- e.g. after deleting
+        // it and reloading with '#deployments/<name>' still in the URL. Without this
+        // guard the code below hides every section and fires a metrics request for a
+        // deployment that is not there, producing a page for something that is gone.
+        // Fall back to the first available deployment, or the overview when there is none.
+        if (!document.getElementById('deployment-' + deploymentName)) {
+            var gsel = document.getElementById('global-deployment-selector');
+            var alt = gsel && gsel.options.length ? gsel.options[0].value : null;
+            if (alt && alt !== deploymentName) {
+                deploymentName = alt;
+            } else {
+                location.hash = 'deployments';
+                return;
+            }
+        }
         // Hide all deployment sections
         document.querySelectorAll('.deployment-section').forEach(section => {
             section.style.display = 'none';
@@ -2102,7 +2117,22 @@
                 if (dangerActionType === 'project') {
                     window.location.href = '/projects';
                 } else {
-                    window.location.reload();
+                    // Confirm before reloading -- the reload used to happen instantly, so
+                    // the "succesvol verwijderd" the backend returns was never seen.
+                    progressEl.style.display = 'none';
+                    var okEl = document.getElementById('danger-confirm-success');
+                    if (okEl) {
+                        okEl.textContent = result.message || 'Verwijderen gelukt';
+                        okEl.style.display = '';
+                    }
+                    // Drop a hash that points at the just-deleted deployment, or the reload
+                    // restores a deployment that no longer exists (blank sections + metrics
+                    // loaded for a ghost).
+                    if (dangerActionType === 'deployment' &&
+                        location.hash.indexOf('deployments/' + dangerActionTarget) !== -1) {
+                        location.hash = 'deployments';
+                    }
+                    setTimeout(function () { window.location.reload(); }, 1200);
                 }
             } else {
                 progressEl.style.display = 'none';
