@@ -210,6 +210,14 @@ class GitProjectStore(ProjectStore):
         self._lock = asyncio.Lock()
         self._connector: GitConnector | None = None
         self._working_dir = working_dir or os.path.join(settings.TEMP_DIR, "zad-projects-warm")
+        # The commit the cache is known to fully reflect. Set only where the whole
+        # cache is loaded consistently: bootstrap and reconcile. It is the backstop
+        # against cache/disk drift -- reconcile reloads everything changed between
+        # this and the current tree, so a path that advances the disk without the
+        # cache is caught within one reconcile tick instead of surviving to a restart.
+        # Kept as a lower bound on purpose: if it lags, reconcile re-reads a few files
+        # redundantly (safe); it is never allowed to run ahead of what the cache holds.
+        self._cache_head: str | None = None
 
     # ------------------------------------------------------------------
     # warm working copy
@@ -889,21 +897,30 @@ class GitProjectStore(ProjectStore):
 
         # Cheap check outside the lock: no divergence means no work, and no reason
         # to make readers queue behind a write that can hold the lock for seconds.
+        # The cache is provably fresh only when it matches BOTH the remote (no external
+        # commit waiting) AND its own last-loaded head (no silent disk advance). Gating
+        # on remote == disk alone was the gap that let a self-heal reset move the disk
+        # past the cache and never recover: reconcile read "nothing to do" while the
+        # cache served a stale project until a restart.
         remote_head = await connector.get_remote_commit_hash()
-        if remote_head is not None and remote_head == await connector.get_local_commit_hash():
-            logger.debug("Reconcile: remote is unchanged, nothing to do")
+        disk_head = await connector.get_local_commit_hash()
+        if remote_head is not None and remote_head == disk_head == self._cache_head:
+            logger.debug("Reconcile: remote, disk and cache all current, nothing to do")
             return
 
         async with self._locked("reconcile", "*"):
-            old_head = await connector.get_local_commit_hash()
             await connector.reset_to_remote()
             new_head = await connector.get_local_commit_hash()
 
-            if old_head == new_head:
-                logger.debug("Reconcile: no new commits")
-                return
-
-            await self._reload_changed_into_cache(connector, old_head, new_head)
+            # Reload from what the CACHE last reflected, not from the disk's prior head:
+            # if some path advanced the disk without the cache, only cache_head knows
+            # how far back the cache actually is, and therefore what must be re-read.
+            base = self._cache_head or new_head
+            if base != new_head:
+                await self._reload_changed_into_cache(connector, base, new_head)
+            else:
+                logger.debug("Reconcile: cache already at %s", new_head[:8])
+            self._cache_head = new_head
 
     async def _resync_after_conflict(self, connector: GitConnector) -> None:
         """Fetch the remote after a rejected push, and take the whole tree with us.
@@ -1010,7 +1027,11 @@ class GitProjectStore(ProjectStore):
             if member_emails:
                 get_user_service().add_allowed_emails(member_emails)
 
-            logger.info("ProjectStore bootstrap loaded %d project(s)", len(loaded))
+            # The cache now reflects the tree at this commit; record it as the
+            # freshness baseline reconcile checks against.
+            self._cache_head = await connector.get_local_commit_hash()
+
+            logger.info("ProjectStore bootstrap loaded %d project(s) at %s", len(loaded), (self._cache_head or "?")[:8])
 
 
 def _apply_our_change_to(
