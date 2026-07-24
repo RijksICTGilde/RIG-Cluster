@@ -642,6 +642,61 @@ async def test_mutation_logs_lock_and_persist_timing(harness: StoreHarness, capl
     assert any(m.startswith("store-persist") and "committed " in m and "timed" in m for m in messages), messages
 
 
+async def test_self_heal_reset_reloads_externally_changed_projects(harness: StoreHarness) -> None:
+    """The self-heal reset must not desync the cache from git.
+
+    An interrupted rollback leaves an unpushed local commit. The next write's
+    self-heal does fetch + hard reset, which does not only discard that local commit
+    -- it fast-forwards the disk over every commit another writer pushed meanwhile.
+    Those projects are then on disk but stale in the cache, and reconcile's fast path
+    (remote head == local head) reads "nothing to do" forever. This is the exact
+    production failure: a project served without its newest deployments until restart.
+    """
+    other_path = "projects/other.yaml"
+    other_v1 = _project(name="other", deployments=[])
+
+    # Remote starts with demo + other; load both into the cache.
+    harness.remote.commit(
+        "add other", {RELATIVE_PATH: dump_yaml_to_string(_project()), other_path: dump_yaml_to_string(other_v1)}
+    )
+    harness.connector.tree = dict(harness.remote.files)
+    harness.connector.base_ref = harness.remote.head
+    harness.connector.local_head = harness.remote.head
+    await harness.store.bootstrap()
+    assert harness.store.get("other") is not None
+    assert [d["name"] for d in harness.store.get("other").data["deployments"]] == []
+
+    # Another pod adds a deployment to 'other' -- the "pr-480" of the incident.
+    other_v2 = _project(
+        name="other",
+        deployments=[{"name": "pr-480", "cluster": "odcn-production", "namespace": "other", "components": []}],
+    )
+    harness.remote.commit(
+        "external: pr-480 on other",
+        {RELATIVE_PATH: harness.remote.files[RELATIVE_PATH], other_path: dump_yaml_to_string(other_v2)},
+    )
+
+    # An interrupted rollback left an unpushed commit on the warm copy.
+    harness.connector._built["built-orphan"] = (dict(harness.connector.tree), "orphan")
+    harness.connector.local_head = "built-orphan"
+    assert await harness.connector.count_unpushed_commits() == 1
+
+    # A normal write to a DIFFERENT project triggers the self-heal.
+    await harness.store.save(
+        PROJECT_NAME, _add_deployment_result("d1"), message="unrelated write", actor="tester", enforce_validation=False
+    )
+
+    other = harness.store.get("other")
+    assert other is not None
+    names = [d["name"] for d in other.data["deployments"]]
+    assert "pr-480" in names, "self-heal pulled pr-480 onto disk; the cache must reflect it, not a restart"
+
+
+def _add_deployment_result(name: str) -> dict[str, Any]:
+    """demo with one deployment -- a plain dict for save(), not a change function."""
+    return _project(deployments=[{"name": name, "cluster": "odcn-production", "namespace": "demo", "components": []}])
+
+
 async def test_persist_reports_a_write_that_changed_nothing(harness: StoreHarness, caplog) -> None:
     """Saving identical content logs 'no change' and produces no commit.
 

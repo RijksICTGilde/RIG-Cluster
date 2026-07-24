@@ -736,7 +736,18 @@ class GitProjectStore(ProjectStore):
                 "This means an earlier rollback did not complete.",
                 unpushed,
             )
+            # reset_to_remote() is `fetch` + `reset --hard origin/main`, so it does not
+            # only discard the local-ahead commit: it also fast-forwards the disk over
+            # every commit another writer pushed meanwhile. Those external projects are
+            # now on disk but NOT in the cache, and reconcile's fast path (remote head
+            # == local head) will then read "nothing to do" forever -- so the cache
+            # served a project without its newest deployments until a restart. Reload
+            # the diff into the cache, exactly as the push-conflict path does.
+            before_reset = await connector.get_local_commit_hash()
             await connector.reset_to_remote()
+            after_reset = await connector.get_local_commit_hash()
+            if before_reset != after_reset:
+                await self._reload_changed_into_cache(connector, before_reset, after_reset)
 
         old_head = await connector.get_local_commit_hash()
 
