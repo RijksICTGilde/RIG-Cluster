@@ -374,6 +374,39 @@ class TestDeleteDeploymentSeparation:
         )
 
     @pytest.mark.asyncio
+    async def test_argocd_403_precheck_is_not_reported_as_a_failed_deletion(self):
+        """ArgoCD returns 403 for an app that is already gone. The existence pre-check
+        in delete_deployment_from_yaml_change must tolerate that and confirm deletion
+        via the wait, not raise -> log a traceback and record the (successful) deletion
+        as an error. Regression: a deployment whose app WAS deleted (NotFound in the
+        cluster) still showed 'Error waiting for ArgoCD app deletion'."""
+        mock_pm = _make_project_manager_mock()
+        manager = DeleteProjectManager(mock_pm)
+
+        mock_argo = AsyncMock()
+        mock_argo.refresh_application = AsyncMock(return_value=True)
+        # 403 on the pre-check, exactly what ArgoCD returns for a gone app.
+        mock_argo.application_exists = AsyncMock(side_effect=PermissionError("permission denied"))
+        # The wait confirms it is gone via the Kubernetes API.
+        mock_argo.wait_for_application_deletion = AsyncMock(return_value=True)
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("os.path.exists", return_value=False),
+        ):
+            result = await manager.delete_deployment_from_yaml_change(
+                "test-project",
+                _make_deployment("pr-42"),
+                _make_project_data(deployments=[]),
+            )
+
+        assert not any("Error waiting for ArgoCD app deletion" in str(e) for e in result["errors"]), result["errors"]
+        mock_argo.wait_for_application_deletion.assert_awaited()
+        wait_ops = [op for op in result["operations"] if op["type"] == "argocd_app_deletion_wait"]
+        assert wait_ops, "the deletion wait must run"
+        assert wait_ops[0]["status"] == "success", wait_ops
+
+    @pytest.mark.asyncio
     async def test_deployment_resources_are_cleaned(self):
         """delete_deployment should clean up deployment-level resources."""
         mock_pm = _make_project_manager_mock()
