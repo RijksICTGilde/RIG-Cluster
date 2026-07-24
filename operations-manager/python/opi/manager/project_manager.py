@@ -2927,7 +2927,25 @@ class ProjectManager:
                 self._processing_error = failure_summary
                 return False
             elif health_warnings:
+                # The deploy itself succeeded: manifests generated, pushed, and synced.
+                # The app's own pods are crashing (CrashLoopBackOff, a not-yet-built PR
+                # image), which is the tenant's problem, not ours. This branch used to
+                # fall through WITHOUT returning, so the function returned None, the
+                # caller read that as failure, and a crash-looping PR environment
+                # produced a failed task and a useless "Deployment processing failed"
+                # alert on every push. Complete the task and report the reason instead.
+                summary = "; ".join(health_warnings)
                 logger.info("ArgoCD applications synced (%d runtime health warning(s) above)", len(health_warnings))
+                if progress_manager and argo_task:
+                    progress_manager.complete_task(argo_task)
+                    notice = progress_manager.add_subtask(
+                        argo_task,
+                        f"Let op: de deployment is uitgerold, maar de applicatie draait niet gezond: {summary}. "
+                        "Dat ligt aan de applicatie zelf (bijvoorbeeld een crashende pod of een image dat nog "
+                        "niet gebouwd is), niet aan het uitrollen.",
+                    )
+                    progress_manager.complete_task(notice)
+                return True
             else:
                 logger.info("All ArgoCD applications are synced and healthy")
                 if progress_manager and argo_task:
