@@ -27,6 +27,7 @@ from opi.forms.wizard.session import (
     save_wizard_state,
 )
 from opi.forms.wizard.state import CLEARED_FIELD
+from opi.services.schema_migration import normalize_service_entries
 from opi.utils.csrf import reject_misfired_form_get
 from opi.web.menu import get_menu_items
 
@@ -2028,6 +2029,13 @@ async def _start_project_creation(
     project_name = data.get("name", "")
     if not project_name:
         raise HTTPException(status_code=400, detail="Projectnaam is verplicht")
+
+    # The wizard editables still write component-level service config in the legacy
+    # name-as-key / inline shape ({persistent-storage: {config: ...}}, metrics inline);
+    # normalize to the uniform {reference, config} form so the created file is born in
+    # the current schema and needs no migration on first process. Same normalizer the
+    # v2.3->v2.4 migration uses - one canonical shape, no drift.
+    normalize_service_entries(data)
 
     # Ensure multiline AGE-encrypted values use literal block scalars
     _apply_literal_scalars(data)

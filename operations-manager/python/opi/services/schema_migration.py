@@ -96,7 +96,7 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
     if version < 2.3 and _migrate_v2_2_to_v2_3(project_data):
         migrated = True
 
-    if version < 2.4 and _migrate_v2_3_to_v2_4(project_data):
+    if version < 2.4 and normalize_service_entries(project_data):
         migrated = True
 
     if migrated:
@@ -592,12 +592,18 @@ def _normalize_service_entry(entry: Any, id_key: str) -> Any:
     return record
 
 
-def _migrate_v2_3_to_v2_4(project_data: dict[str, Any]) -> bool:
+def normalize_service_entries(project_data: dict[str, Any]) -> bool:
     """Normalize service entries to the uniform record form (RC-5 A):
     project-level definitions -> ``{name, config}``, component-level references ->
     ``{reference, config}``. Bare strings stay bare; already-normalized entries and
     attachments (deferred) are untouched. Deployment-level services are OPI-managed
     and already in ``{reference, config}`` form.
+
+    Idempotent and version-independent. This is both the v2.3 -> v2.4 migration step
+    AND the canonical shape used on the create/wizard save path, so newly created
+    project files are born in the current uniform form (the wizard editables still
+    write the legacy name-as-key/inline shape for component services). One normalizer,
+    one canonical shape - the editables and the migration no longer each hand-encode it.
     """
     changed = False
 

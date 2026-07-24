@@ -6,6 +6,7 @@ from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION,
     detect_schema_version,
     migrate_to_latest,
+    normalize_service_entries,
 )
 
 # ---------------------------------------------------------------------------
@@ -920,14 +921,50 @@ def test_v24_normalizes_component_services_to_reference_records():
     ]
 
 
+def test_normalize_service_entries_standalone():
+    """The public normalizer canonicalizes project + component (incl. inline metrics)
+    services to the uniform record form, version-independently - this is what the
+    create/wizard save path calls so new files are born current."""
+    data = {
+        "name": "p",
+        "services": [{"keycloak": {"config": {"template": "sso-only"}}}, "publish-on-web"],
+        "components": [
+            {
+                "name": "web",
+                "services": [
+                    {"persistent-storage": {"config": [{"name": "data", "mount-path": "/data"}]}},
+                    {"metrics-scraper": {"port": 8080, "path": "/metrics"}},
+                ],
+            }
+        ],
+    }
+    changed = normalize_service_entries(data)
+    assert changed is True
+    assert data["services"][0] == {"name": "keycloak", "config": {"template": "sso-only"}}
+    assert data["services"][1] == "publish-on-web"
+    assert data["components"][0]["services"] == [
+        {"reference": "persistent-storage", "config": [{"name": "data", "mount-path": "/data"}]},
+        {"reference": "metrics-scraper", "config": {"port": 8080, "path": "/metrics"}},
+    ]
+    # Idempotent: a second pass changes nothing.
+    assert normalize_service_entries(data) is False
+
+
 def test_v24_leaves_attachments_legacy():
     # attachments is the deferred hard case (project 'data' catalog + own $defs).
     data = {
         "schema-version": 2.3,
         "name": "p",
         "services": [{"attachments": {"data": [{"id": "x", "filename": "f", "content": "c"}]}}],
-        "components": [{"name": "api", "services": [{"attachments": {"config": [{"reference": "x", "provide-as": "file", "path": "/x"}]}}]}],
+        "components": [
+            {
+                "name": "api",
+                "services": [{"attachments": {"config": [{"reference": "x", "provide-as": "file", "path": "/x"}]}}],
+            }
+        ],
     }
     out, _ = migrate_to_latest(data)
     assert out["services"][0] == {"attachments": {"data": [{"id": "x", "filename": "f", "content": "c"}]}}
-    assert out["components"][0]["services"][0] == {"attachments": {"config": [{"reference": "x", "provide-as": "file", "path": "/x"}]}}
+    assert out["components"][0]["services"][0] == {
+        "attachments": {"config": [{"reference": "x", "provide-as": "file", "path": "/x"}]}
+    }
