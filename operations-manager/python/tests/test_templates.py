@@ -108,5 +108,7 @@ class TestGetServiceName:
         assert get_service_name({}) == ""
 
     def test_other_type(self):
-        """Other types return str representation."""
-        assert get_service_name(42) == "42"
+        """Unrecognisable entries (not a string or a service record) return empty
+        string -- the format-agnostic resolver treats them like an empty dict,
+        which is safe to render in a template."""
+        assert get_service_name(42) == ""
