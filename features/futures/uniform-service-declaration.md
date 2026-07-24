@@ -1,9 +1,10 @@
 # Uniform Service Declaration (name-defines / reference-uses)
 
-Status: Design locked (2026-07-23), not yet implemented. Target format for how
-services are declared and referenced in a project file, as part of RC-5 ("Uniform,
-Declarative Platform Services"). This note is the canonical reference for the
-change; the migration lands in RC-5 Phase 3.
+Status: Implemented (2026-07-24). Target format for how services are declared and
+referenced in a project file, as part of RC-5 ("Uniform, Declarative Platform
+Services"). This note is the canonical reference for the file-format change; the
+delivered provider architecture that reads it is documented in
+`features/service-provider-registry.md`.
 
 ## Why
 
