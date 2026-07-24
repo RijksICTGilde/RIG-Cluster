@@ -1878,7 +1878,21 @@ class DeleteProjectManager:
         try:
             argo_connector = create_argo_connector()
             app_name = generate_argocd_application_name(project_name, deployment_name)
-            app_exists = await argo_connector.application_exists(app_name)
+            try:
+                app_exists = await argo_connector.application_exists(app_name)
+            except PermissionError:
+                # ArgoCD returns 403 for an application that is already gone (and when
+                # it is stalled). This pre-check must not treat that as an error: it
+                # would log a traceback and mark a successful deletion as failed, which
+                # is exactly what happened for a deployment whose app WAS deleted. Fall
+                # through to the deletion wait, which resolves the 403 against the
+                # Kubernetes API as ground truth.
+                logger.info(
+                    "ArgoCD returned permission denied for '%s' during the pre-check; the app is likely "
+                    "already gone. Confirming via the deletion wait (Kubernetes API).",
+                    app_name,
+                )
+                app_exists = True
 
             if app_exists:
                 await argo_connector.refresh_application("user-applications")
