@@ -146,6 +146,14 @@ def test_all_services_present_in_project_yaml(
     logger.info("Component '%s' services: %s", comp.get("name"), comp_names)
     assert "keycloak" in comp_names, f"component does not reference keycloak: {comp_names}"
 
+    # Component-level service entries must be in the uniform {reference, config} form -
+    # NOT the legacy name-as-key ({persistent-storage: {config: ...}}) or inline
+    # ({metrics-scraper: {port, path}}) shape the wizard editables emit. The create
+    # path normalizes them so the file is born current (attachments stays legacy).
+    for entry in comp_services:
+        if isinstance(entry, dict) and "attachments" not in entry:
+            assert "reference" in entry, f"component service not in uniform {{reference, config}} form: {entry!r}"
+
 
 # How long provisioning (process_project + ArgoCD sync of every service) may take
 # after the wizard submit returns. Observed ~100s on the sandbox; generous headroom.
