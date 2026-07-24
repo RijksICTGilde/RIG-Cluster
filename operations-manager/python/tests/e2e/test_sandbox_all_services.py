@@ -6,9 +6,10 @@ provisioned in the cluster (database, cache, object storage, auth, ...).
 The other sandbox suites create service-less projects, so nothing exercises the
 full provisioning path end to end. This suite ticks all 10 create-wizard services
 (publish-on-web, keycloak, authorization-wall, metrics-scraper, persistent-storage,
-temp-storage, postgresql-database, minio-storage, redis, attachments), and then
-adds the two hidden namespace variants (namespace-postgresql-database,
-namespace-redis) via the edit flow, so every ServiceType is covered.
+temp-storage, postgresql-database, minio-storage, redis, attachments), and then, on
+a separate minimal project, adds the two hidden namespace variants
+(namespace-postgresql-database, namespace-redis) via the v2 API - they have no
+wizard/edit card - so every ServiceType is covered.
 
 Verification is layered:
 1. The committed project YAML in Forgejo declares every service in the uniform
@@ -219,4 +220,111 @@ def test_all_services_provisioned_in_cluster(
         sorted(secrets),
         pvcs,
         ingresses,
+    )
+
+
+# --- Namespace-variant services (added via the API; hidden in the wizard) --------
+#
+# namespace-postgresql-database and namespace-redis are hidden=True, so they have no
+# wizard/edit card - the only ways to add them are the v2 API and a direct YAML edit.
+# We add them via POST /api/v2/projects/{name}/services to a minimal project.
+# namespace-postgres provisions a DEDICATED CNPG database cluster in the project's
+# infrastructure namespace (the differentiator from the shared postgresql-database).
+# namespace-redis is a documented not-yet-implemented stub that falls back to shared
+# Redis (opi/manager/redis_manager.py), so we only assert it is accepted, not that it
+# provisions a dedicated instance.
+
+_ADD_SERVICE_ATTEMPTS = 3
+
+
+def _add_service_with_retry(base_url: str, project: CreatedProject, service: str) -> None:
+    """Add a service via the v2 API, waiting for the task and retrying the known
+    transient race where a just-created CNPG instance is not yet reachable when the
+    provisioner connects (fails with 'Connection refused' at user creation). The
+    add itself is idempotent (already-present services are skipped)."""
+    last_reason = ""
+    for attempt in range(_ADD_SERVICE_ATTEMPTS):
+        task_id = sandbox_api.start_task(
+            base_url,
+            "POST",
+            f"/api/v2/projects/{project.name}/services",
+            project.api_key,
+            {"service": service, "components": ["web"]},
+            verify_ssl=_VERIFY_SSL,
+        )
+        state, reason = sandbox_api.task_outcome(
+            base_url, task_id, project.api_key, verify_ssl=_VERIFY_SSL, timeout=420
+        )
+        if state == "completed":
+            return
+        last_reason = reason or ""
+        logger.warning("add-service '%s' attempt %d/%d: %s", service, attempt + 1, _ADD_SERVICE_ATTEMPTS, last_reason)
+    raise AssertionError(
+        f"add-service '{service}' did not complete after {_ADD_SERVICE_ATTEMPTS} attempts: {last_reason}"
+    )
+
+
+@pytest.fixture(scope="module")
+def namespace_variants_project(
+    sandbox_context: BrowserContext,
+    sandbox_url: str,
+    forgejo: ForgejoClient,
+) -> Generator[CreatedProject]:
+    """A minimal project with the two namespace-variant services added via the API."""
+    display_name = _unique_project_name(prefix="nsv")
+    page = sandbox_context.new_page()
+    created: CreatedProject | None = None
+    try:
+        created = create_project_with_services(
+            page, sandbox_url, forgejo, display_name, user_email=SANDBOX_TEST_USER["email"], services=["publish-on-web"]
+        )
+        logger.info("Created namespace-variants base project: %s", created.name)
+        _add_service_with_retry(sandbox_url, created, "namespace-postgresql-database")
+        _add_service_with_retry(sandbox_url, created, "namespace-redis")
+        yield created
+    finally:
+        page.close()
+        if created is not None:
+            sandbox_api.delete_project_via_api(sandbox_url, created.name, created.api_key, verify_ssl=_VERIFY_SSL)
+
+
+@pytest.mark.timeout(900)
+def test_namespace_variants_in_project_yaml(
+    namespace_variants_project: CreatedProject,
+    forgejo: ForgejoClient,
+) -> None:
+    """Both namespace variants are accepted and land in the project YAML + component."""
+    data = forgejo.get_project_yaml(namespace_variants_project.name)
+    assert data is not None
+    present = _service_names(data)
+    for svc in ("namespace-postgresql-database", "namespace-redis"):
+        assert svc in present, f"{svc} not in project services: {present}"
+
+
+@pytest.mark.timeout(900)
+def test_namespace_postgres_provisions_dedicated_cluster(
+    namespace_variants_project: CreatedProject,
+) -> None:
+    """namespace-postgres provisions a DEDICATED CNPG database cluster (+ pod) in the
+    project's infrastructure namespace - the thing that distinguishes it from the
+    shared postgresql-database."""
+    if not cluster.kubectl_available():
+        pytest.skip("kubectl cannot reach a cluster - live provisioning checks need the sandbox host")
+
+    infra_ns = f"rig-{namespace_variants_project.name}-infrastructure"
+    have_cluster = cluster.wait_for(
+        lambda: bool(cluster.cnpg_cluster_names(infra_ns)),
+        timeout=_PROVISION_TIMEOUT,
+    )
+    assert have_cluster, f"no dedicated CNPG cluster provisioned in '{infra_ns}'"
+
+    clusters = cluster.cnpg_cluster_names(infra_ns)
+    logger.info("namespace-postgres dedicated CNPG cluster(s) in '%s': %s", infra_ns, clusters)
+    # The database pod must actually run.
+    pod_running = cluster.wait_for(
+        lambda: any("db" in name for name in cluster.resource_names("pods", infra_ns)),
+        timeout=180.0,
+    )
+    assert pod_running, (
+        f"CNPG database pod not running in '{infra_ns}'; pods: {cluster.resource_names('pods', infra_ns)}"
     )
