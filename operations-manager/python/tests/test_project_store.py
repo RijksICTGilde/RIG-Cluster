@@ -735,6 +735,60 @@ async def test_reconcile_repairs_cache_drift_even_when_disk_equals_remote(harnes
     )
 
 
+async def test_reconcile_logs_error_only_for_drift_not_for_external_pulls(harness: StoreHarness, caplog) -> None:
+    """Drift is an unknown path and must be loud; an external pull is routine and must not be.
+
+    The discriminator is whether the disk had to move. If reconcile reloads changed
+    data while the disk already matched the remote, no external commit explains it --
+    a path advanced the working copy without the cache, which should not happen.
+    """
+    import logging
+
+    other_path = "projects/other.yaml"
+    harness.remote.commit(
+        "add other",
+        {RELATIVE_PATH: dump_yaml_to_string(_project()), other_path: dump_yaml_to_string(_project(name="other"))},
+    )
+    harness.connector.tree = dict(harness.remote.files)
+    harness.connector.base_ref = harness.remote.head
+    harness.connector.local_head = harness.remote.head
+    await harness.store.bootstrap()
+
+    # (1) External pull: remote ahead of disk. Routine -- INFO, never ERROR.
+    other_v2 = _project(
+        name="other",
+        deployments=[{"name": "ext", "cluster": "odcn-production", "namespace": "other", "components": []}],
+    )
+    harness.remote.commit(
+        "external", {RELATIVE_PATH: harness.remote.files[RELATIVE_PATH], other_path: dump_yaml_to_string(other_v2)}
+    )
+    # disk still behind remote (local_head not advanced) -> reset will move it.
+    with caplog.at_level(logging.INFO, logger="opi.services.project_store"):
+        await harness.store.reconcile()
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR], "an external pull is not an error"
+    assert "ext" in [d["name"] for d in harness.store.get("other").data["deployments"]]
+
+    # (2) Drift: disk already at remote, but the cache is stale. This is the anomaly.
+    caplog.clear()
+    other_v3 = _project(
+        name="other",
+        deployments=[{"name": "drifted", "cluster": "odcn-production", "namespace": "other", "components": []}],
+    )
+    harness.remote.commit(
+        "silent", {RELATIVE_PATH: harness.remote.files[RELATIVE_PATH], other_path: dump_yaml_to_string(other_v3)}
+    )
+    harness.connector.tree = dict(harness.remote.files)
+    harness.connector.local_head = harness.remote.head  # disk == remote, cache behind
+
+    with caplog.at_level(logging.INFO, logger="opi.services.project_store"):
+        await harness.store.reconcile()
+
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert errors, "drift with disk == remote must be logged as an error"
+    assert "drifted from git" in errors[0]
+    assert "drifted" in [d["name"] for d in harness.store.get("other").data["deployments"]]
+
+
 def _add_deployment_result(name: str) -> dict[str, Any]:
     """demo with one deployment -- a plain dict for save(), not a change function."""
     return _project(deployments=[{"name": name, "cluster": "odcn-production", "namespace": "demo", "components": []}])
