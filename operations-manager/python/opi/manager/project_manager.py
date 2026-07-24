@@ -68,7 +68,7 @@ from opi.manager.project_validation import validate_component_references, valida
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
-from opi.services.project_store import get_project_store
+from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
 from opi.utils.age import (
     decrypt_age_content,
     decrypt_password_smart,
@@ -139,6 +139,11 @@ if TYPE_CHECKING:
 T = TypeVar("T", bound=BaseSecret)
 
 logger = logging.getLogger(__name__)
+
+# How many times upsert_deployment re-reads and re-applies on a concurrent-edit
+# conflict before giving up. Matches the store's own MAX_MUTATION_ATTEMPTS: a handful
+# absorbs the bursts a busy pipeline produces without masking a genuine, persistent clash.
+_UPSERT_CONFLICT_RETRIES = 5
 
 
 def enforce_namespace_pin(project_data: dict[str, Any]) -> None:
@@ -6437,6 +6442,59 @@ class ProjectManager:
         subdomain: str | None = None,
         base_domain: str | None = None,
     ) -> dict[str, Any]:
+        """Create or update a deployment, retrying a concurrent-edit conflict.
+
+        Busy projects (regelrecht pushes many image updates in seconds) make two
+        writers touch the same deployment at once. The store refuses to lose either
+        edit and raises ConflictError -- correct, but a single-shot upsert then failed
+        the task and leaned on the caller's pipeline to push again. Because each
+        attempt re-reads the freshest state via get_contents() and re-applies the image
+        change on top, a bounded retry resolves the conflict here instead. Only the
+        concurrent-edit conflict is retried; every other outcome returns as before.
+        """
+        for attempt in range(_UPSERT_CONFLICT_RETRIES):
+            try:
+                return await self._upsert_deployment_once(
+                    deployment_name,
+                    components,
+                    clone_from=clone_from,
+                    force_clone=force_clone,
+                    domain_format=domain_format,
+                    subdomain=subdomain,
+                    base_domain=base_domain,
+                )
+            except (ConflictError, ConcurrencyError) as e:
+                if attempt == _UPSERT_CONFLICT_RETRIES - 1:
+                    logger.warning(
+                        "Upsert of '%s' still conflicts after %d attempts; giving up",
+                        deployment_name,
+                        _UPSERT_CONFLICT_RETRIES,
+                    )
+                    return {
+                        "success": False,
+                        "created": False,
+                        "error": f"Error upserting deployment '{deployment_name}': {e}",
+                        "error_type": "conflict",
+                    }
+                logger.info(
+                    "Upsert of '%s' hit a concurrent edit (attempt %d/%d); re-reading and retrying",
+                    deployment_name,
+                    attempt + 1,
+                    _UPSERT_CONFLICT_RETRIES,
+                )
+        # Unreachable: the loop either returns a result or the final-attempt error.
+        return {"success": False, "created": False, "error": "upsert retry loop exhausted", "error_type": "conflict"}
+
+    async def _upsert_deployment_once(
+        self,
+        deployment_name: str,
+        components: list,  # ComponentReference objects from router
+        clone_from: str | None = None,
+        force_clone: bool = False,
+        domain_format: str | None = None,
+        subdomain: str | None = None,
+        base_domain: str | None = None,
+    ) -> dict[str, Any]:
         """
         Create or update a deployment in the project YAML file.
 
@@ -6752,6 +6810,10 @@ class ProjectManager:
                     result_create["warnings"] = normalized_warnings_create
                 return result_create
 
+        except (ConflictError, ConcurrencyError):
+            # Retried by upsert_deployment on a fresh read. Must propagate, not become a
+            # generic error dict, or the retry never sees it.
+            raise
         except Exception as e:
             error_msg = f"Error upserting deployment '{deployment_name}': {e}"
             logger.exception(error_msg)

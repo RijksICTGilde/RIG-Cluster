@@ -97,3 +97,47 @@ class TestUpsertCommitMessage:
         assert result["success"] is True
         message = save.call_args.args[1]
         assert message == "Update deployment 'pr-372' in project 'demo': configuration"
+
+
+class TestUpsertConflictRetry:
+    """A concurrent-edit conflict must be retried on a fresh read, not fail the task.
+
+    Busy projects (regelrecht) push many image updates per second, so two writers touch
+    the same deployment at once and the store raises ConflictError. A single-shot upsert
+    failed the task and depended on the caller's pipeline to push again.
+    """
+
+    async def test_conflict_is_retried_until_it_lands(self):
+        pm = _make_manager()
+        save = _wire_update_mocks(pm, _project("ghcr.io/org/app:v1"))
+        from opi.services.project_store import ConflictError
+
+        # Conflict once (another writer landed first), then succeed on the fresh re-read.
+        save.side_effect = [ConflictError("gewijzigd sinds u begon"), None]
+
+        with patch("opi.manager.project_manager.ensure_domain_requests"):
+            result = await pm.upsert_deployment(
+                deployment_name="pr-372",
+                components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v2")],
+            )
+
+        assert result["success"] is True
+        assert save.await_count == 2, "the conflict must be retried, not failed"
+
+    async def test_persistent_conflict_returns_a_conflict_not_a_crash(self):
+        pm = _make_manager()
+        save = _wire_update_mocks(pm, _project("ghcr.io/org/app:v1"))
+        from opi.manager.project_manager import _UPSERT_CONFLICT_RETRIES
+        from opi.services.project_store import ConflictError
+
+        save.side_effect = ConflictError("gewijzigd sinds u begon")  # never resolves
+
+        with patch("opi.manager.project_manager.ensure_domain_requests"):
+            result = await pm.upsert_deployment(
+                deployment_name="pr-372",
+                components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v2")],
+            )
+
+        assert result["success"] is False
+        assert result["error_type"] == "conflict", result
+        assert save.await_count == _UPSERT_CONFLICT_RETRIES, "bounded, not infinite"
