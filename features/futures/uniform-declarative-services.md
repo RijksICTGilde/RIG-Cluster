@@ -1,7 +1,9 @@
 # Uniform, Declarative Platform Services
 
-Status: Idea / design brief (2026-07-19). No code yet — this is the target
-architecture and migration roadmap for making platform services uniform.
+Status: Implemented (2026-07-24). This was the design brief and phased migration
+roadmap; the delivered architecture is documented in
+`features/service-provider-registry.md`. Kept here for the rationale and the
+phase-by-phase history.
 
 ## Why
 
