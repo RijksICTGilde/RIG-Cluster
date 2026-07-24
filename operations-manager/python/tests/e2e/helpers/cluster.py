@@ -74,6 +74,12 @@ def pod_container_names(namespace: str) -> list[str]:
     return names
 
 
+def cnpg_cluster_names(namespace: str) -> list[str]:
+    """CNPG ``postgresql.cnpg.io/Cluster`` names in the namespace (dedicated
+    namespace-postgres databases)."""
+    return resource_names("clusters.postgresql.cnpg.io", namespace)
+
+
 def deployment_pod_annotations(namespace: str) -> dict[str, str]:
     """Merged pod-template annotations across the namespace's deployments."""
     annotations: dict[str, str] = {}
