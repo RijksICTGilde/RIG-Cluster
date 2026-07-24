@@ -692,6 +692,49 @@ async def test_self_heal_reset_reloads_externally_changed_projects(harness: Stor
     assert "pr-480" in names, "self-heal pulled pr-480 onto disk; the cache must reflect it, not a restart"
 
 
+async def test_reconcile_repairs_cache_drift_even_when_disk_equals_remote(harness: StoreHarness) -> None:
+    """The backstop: reconcile detects a cache that lags the disk, not just the remote.
+
+    Gating reconcile on remote-head == disk-head assumes the cache matches the disk.
+    If any path advances the disk without the cache (the self-heal reset was one such
+    path), disk == remote holds while the cache is stale, and the old fast path read
+    "nothing to do" forever. Tracking the head the cache reflects closes that: even
+    with disk == remote, a cache behind that head is reloaded.
+    """
+    other_path = "projects/other.yaml"
+    harness.remote.commit(
+        "add other",
+        {RELATIVE_PATH: dump_yaml_to_string(_project()), other_path: dump_yaml_to_string(_project(name="other"))},
+    )
+    harness.connector.tree = dict(harness.remote.files)
+    harness.connector.base_ref = harness.remote.head
+    harness.connector.local_head = harness.remote.head
+    await harness.store.bootstrap()
+
+    # An external commit lands (another cluster/pod), and the disk is fast-forwarded
+    # onto it WITHOUT the cache -- simulating any drift path, not a specific bug.
+    other_v2 = _project(
+        name="other",
+        deployments=[{"name": "pr-480", "cluster": "odcn-production", "namespace": "other", "components": []}],
+    )
+    harness.remote.commit(
+        "external: pr-480",
+        {RELATIVE_PATH: harness.remote.files[RELATIVE_PATH], other_path: dump_yaml_to_string(other_v2)},
+    )
+    harness.connector.tree = dict(harness.remote.files)
+    harness.connector.local_head = harness.remote.head  # disk == remote, cache still behind
+
+    assert "pr-480" not in [d["name"] for d in harness.store.get("other").data["deployments"]]
+
+    # disk == remote, so the old fast path would return here. The cache-head check must
+    # still notice the cache is behind and reload.
+    await harness.store.reconcile()
+
+    assert "pr-480" in [d["name"] for d in harness.store.get("other").data["deployments"]], (
+        "reconcile must repair a cache that lags the disk, even when disk == remote"
+    )
+
+
 def _add_deployment_result(name: str) -> dict[str, Any]:
     """demo with one deployment -- a plain dict for save(), not a change function."""
     return _project(deployments=[{"name": name, "cluster": "odcn-production", "namespace": "demo", "components": []}])
