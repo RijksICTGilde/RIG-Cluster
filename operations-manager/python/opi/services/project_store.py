@@ -909,6 +909,7 @@ class GitProjectStore(ProjectStore):
             return
 
         async with self._locked("reconcile", "*"):
+            disk_before = await connector.get_local_commit_hash()
             await connector.reset_to_remote()
             new_head = await connector.get_local_commit_hash()
 
@@ -916,11 +917,27 @@ class GitProjectStore(ProjectStore):
             # if some path advanced the disk without the cache, only cache_head knows
             # how far back the cache actually is, and therefore what must be re-read.
             base = self._cache_head or new_head
-            if base != new_head:
-                await self._reload_changed_into_cache(connector, base, new_head)
-            else:
-                logger.debug("Reconcile: cache already at %s", new_head[:8])
+            changed = await self._reload_changed_into_cache(connector, base, new_head) if base != new_head else []
             self._cache_head = new_head
+
+            # A reset that moved the disk means external commits were waiting -- normal:
+            # another cluster or a hand edit pushed, and pulling them in is this loop's
+            # job. But a reload that CHANGED cached data while the disk did NOT move means
+            # the disk already matched the remote, yet the cache was stale. That is a path
+            # advancing the working copy without updating the cache -- the class of bug
+            # this backstop exists to catch. It should not happen; log it loudly so the
+            # path gets found, not just silently repaired.
+            disk_moved = disk_before != new_head
+            if changed and not disk_moved:
+                logger.error(
+                    "ProjectStore cache had drifted from git: %s were stale in the cache while the working "
+                    "copy already matched the remote (%s). Some write path advanced the disk without updating "
+                    "the cache. reconcile repaired it, but the path must be found -- this should not happen.",
+                    changed,
+                    new_head[:8],
+                )
+            elif changed:
+                logger.info("Reconcile: pulled external change(s) into the cache: %s", changed)
 
     async def _resync_after_conflict(self, connector: GitConnector) -> None:
         """Fetch the remote after a rejected push, and take the whole tree with us.
@@ -948,7 +965,7 @@ class GitProjectStore(ProjectStore):
         if old_head != new_head:
             await self._reload_changed_into_cache(connector, old_head, new_head)
 
-    async def _reload_changed_into_cache(self, connector: GitConnector, old_head: str, new_head: str) -> None:
+    async def _reload_changed_into_cache(self, connector: GitConnector, old_head: str, new_head: str) -> list[str]:
         """Re-read the project files that changed between two commits into the cache.
 
         Shared by reconcile and by the push-conflict retry path. A rejected push is
@@ -957,14 +974,20 @@ class GitProjectStore(ProjectStore):
         on disk. Without this the cache would keep serving the old version of those
         projects until someone triggered a reconcile, which since the removal of the
         30-second poll may be a long time. The fetch is already paid for here.
+
+        Returns the filenames whose cached data ACTUALLY changed (not merely files that
+        differ between the two commits). Write-through means the cache is often already
+        current for a file that git shows as changed; only a genuine change is drift
+        worth flagging, so reconcile uses this to tell its own writes from a real gap.
         """
         changed = await connector.list_changed_files(old_head, new_head)
         project_files = [p for p in changed if p.startswith(f"{PROJECTS_SUBDIR}/") and p.endswith((".yaml", ".yml"))]
         if not project_files:
-            return
+            return []
 
         logger.info("Reloading %d changed project file(s) between %s..%s", len(project_files), old_head, new_head)
 
+        really_changed: list[str] = []
         for relative_path in project_files:
             data = await self._read_committed(connector, relative_path)
             filename = os.path.basename(relative_path)
@@ -974,9 +997,15 @@ class GitProjectStore(ProjectStore):
                 for name in removed:
                     get_project_service().remove_project(name)
                     logger.info("Evicted externally deleted project '%s'", name)
+                if removed:
+                    really_changed.append(filename)
                 continue
+            before = self._cached_by_filename(filename)
             get_project_service().load_project_from_data(data, filename)
-            logger.info("Reloaded '%s' from git", filename)
+            if before != data:
+                really_changed.append(filename)
+                logger.info("Reloaded '%s' from git", filename)
+        return really_changed
 
     async def _list_project_files(self, connector: GitConnector) -> list[str]:
         """Filenames of the project files present in the warm working copy."""
