@@ -22,6 +22,7 @@ flow explicit and traceable.
 from unittest.mock import AsyncMock
 
 import pytest
+from opi.connectors.subdomain import get_domains_config
 from opi.forms.editables.editable import Editable, FormState, WidgetType
 from opi.forms.editables.hooks import StripTransientsHook
 from opi.forms.editables.lifecycle import collect_hooks, run_hooks
@@ -179,11 +180,12 @@ class TestWizardSubmitFlowTraced:
 
         await run_hooks(FormState.PRE_SAVE, all_with_system, final_data)
 
-        # Verify domains entry was created
-        assert "domains" in final_data, (
+        # Verify domains entry was created (now under the publish-on-web service config)
+        domains = get_domains_config(final_data)
+        assert domains is not None, (
             f"domains section not created by SubdomainRequestHook! Final data keys: {list(final_data.keys())}"
         )
-        allowed = final_data["domains"]["allowed-subdomains"]
+        allowed = domains["allowed-subdomains"]
         assert len(allowed) == 1
         assert allowed[0]["domain"] == "sandbox.rijksapp.dev"
         assert allowed[0]["subdomains"][0]["name"] == "mijn-test"
