@@ -2,10 +2,12 @@
 
 import copy
 
+from opi.connectors.subdomain import get_domains_config
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION,
     detect_schema_version,
     migrate_to_latest,
+    normalize_domains_location,
     normalize_service_entries,
 )
 
@@ -948,6 +950,56 @@ def test_normalize_service_entries_standalone():
     ]
     # Idempotent: a second pass changes nothing.
     assert normalize_service_entries(data) is False
+
+
+# ---------------------------------------------------------------------------
+# v2.4 -> v2.5: relocate root domains: block under the publish-on-web service (RC-5)
+# ---------------------------------------------------------------------------
+
+
+def test_v25_relocates_root_domains_under_publish_on_web_service():
+    """The root domains: approval block moves under the publish-on-web service config;
+    the root key is removed and a bare service string is promoted to a record."""
+    data = {
+        "schema-version": 2.4,
+        "name": "p",
+        "services": ["publish-on-web"],
+        "domains": {
+            "allowed-domains": [{"domain": "mijn-app.nl", "status": "approved"}],
+            "allowed-subdomains": [{"domain": "sandbox.dev", "subdomains": [{"name": "a", "status": "requested"}]}],
+        },
+    }
+    out, migrated = migrate_to_latest(data)
+    assert migrated is True
+    assert out["schema-version"] == LATEST_SCHEMA_VERSION
+    # root block is gone, relocated under the promoted publish-on-web service record
+    assert "domains" not in out
+    assert out["services"] == [
+        {
+            "name": "publish-on-web",
+            "config": {
+                "domains": {
+                    "allowed-domains": [{"domain": "mijn-app.nl", "status": "approved"}],
+                    "allowed-subdomains": [
+                        {"domain": "sandbox.dev", "subdomains": [{"name": "a", "status": "requested"}]}
+                    ],
+                }
+            },
+        }
+    ]
+    # and the runtime resolver reads it back from the new home
+    assert get_domains_config(out)["allowed-domains"][0]["domain"] == "mijn-app.nl"
+
+
+def test_v25_is_idempotent_and_noop_without_domains():
+    """A file with no root domains block is untouched; a second pass changes nothing."""
+    assert normalize_domains_location({"name": "p", "services": ["publish-on-web"]}) is False
+
+    data = {"schema-version": 2.4, "name": "p", "domains": {"allowed-domains": []}}
+    once, _ = migrate_to_latest(data)
+    twice, again = migrate_to_latest(copy.deepcopy(once))
+    assert again is False
+    assert get_domains_config(twice) == {"allowed-domains": []}
 
 
 def test_v24_leaves_attachments_legacy():

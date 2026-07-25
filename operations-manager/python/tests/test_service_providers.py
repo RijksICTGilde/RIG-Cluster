@@ -779,6 +779,7 @@ def test_apply_approval_verdicts_routes_to_owning_spec():
     the new status + a history entry; skips are left untouched."""
     import copy
 
+    from opi.connectors.subdomain import get_domains_config
     from opi.services.approvals import apply_approval_verdicts
 
     project = copy.deepcopy(_APPROVAL_PROJECT)
@@ -795,7 +796,10 @@ def test_apply_approval_verdicts_routes_to_owning_spec():
     ]
     apply_approval_verdicts(project, items, admin_email="admin@test.nl")
 
-    approved = next(d for d in project["domains"]["allowed-domains"] if d["domain"] == "wait.nl")
+    # the verdict write migrates the block from root to the publish-on-web service
+    # config; read it back location-independently.
+    domains = get_domains_config(project)
+    approved = next(d for d in domains["allowed-domains"] if d["domain"] == "wait.nl")
     assert approved["status"] == "approved"
     assert approved["history"][-1] == {
         "date": approved["history"][-1]["date"],  # timestamp is dynamic
@@ -804,7 +808,7 @@ def test_apply_approval_verdicts_routes_to_owning_spec():
         "message": "ok",
     }
     # the skipped subdomain is unchanged (still approved, no new history)
-    sub = project["domains"]["allowed-subdomains"][0]["subdomains"][0]
+    sub = domains["allowed-subdomains"][0]["subdomains"][0]
     assert sub["status"] == "approved"
     assert "history" not in sub or len(sub["history"]) == 0
 
@@ -813,11 +817,12 @@ def test_apply_approval_verdicts_falls_back_to_type_when_untagged():
     """An in-flight item without a ``service`` tag still routes on its spec key."""
     import copy
 
+    from opi.connectors.subdomain import get_domains_config
     from opi.services.approvals import apply_approval_verdicts
 
     project = copy.deepcopy(_APPROVAL_PROJECT)
     items = [{"type": "domain", "domain": "wait.nl", "name": "wait.nl", "status": "denied"}]
     apply_approval_verdicts(project, items)
 
-    denied = next(d for d in project["domains"]["allowed-domains"] if d["domain"] == "wait.nl")
+    denied = next(d for d in get_domains_config(project)["allowed-domains"] if d["domain"] == "wait.nl")
     assert denied["status"] == "denied"

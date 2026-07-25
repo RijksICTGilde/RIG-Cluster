@@ -13,8 +13,10 @@ Two operations, mirroring the spec's ``list_items`` / ``record`` callbacks:
 - :func:`apply_approval_verdicts` -- RECORD: apply the approver's decisions, building
   the uniform history entry once and delegating the state write to each item's spec.
 
-State still lives in the root ``domains:`` block for now; moving it under the owning
-service is a separate step (see features/futures/service-vertical-slice.md).
+Approval state is owned by the declaring service and stored under its config (for
+publish-on-web: ``services/[publish-on-web]/config/domains``, resolved read-both /
+migrated write-new by connectors/subdomain.py). This module stays state-agnostic -- it
+only routes to the specs.
 """
 
 from __future__ import annotations

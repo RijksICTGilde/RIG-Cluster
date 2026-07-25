@@ -14,13 +14,17 @@ from opi.services.services_enums import ServiceType
 
 logger = logging.getLogger(__name__)
 
-LATEST_SCHEMA_VERSION = 2.4
+LATEST_SCHEMA_VERSION = 2.5
 
 # NOTE: Domain restriction changes (task-1) introduced:
 # - domains.allowed-subdomains entries changed from list[str] to list[{name, status, history}]
 # - domains.custom-domains renamed to domains.allowed-domains
 # No migration needed yet — all existing projects predate the domain restriction feature.
 # When migrating existing projects, add a v2.2→v2.3 migration that converts the old formats.
+#
+# v2.4 -> v2.5 (RC-5): the domain-approval block moved from the project root (`domains:`)
+# to the publish-on-web service config (`services/[publish-on-web]/config/domains`).
+# See ``normalize_domains_location`` below.
 
 # Storage service types and their corresponding storage type values
 _STORAGE_SERVICE_TO_TYPE = {
@@ -97,6 +101,9 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
         migrated = True
 
     if version < 2.4 and normalize_service_entries(project_data):
+        migrated = True
+
+    if version < 2.5 and normalize_domains_location(project_data):
         migrated = True
 
     if migrated:
@@ -628,6 +635,28 @@ def normalize_service_entries(project_data: dict[str, Any]) -> bool:
                 changed = True
 
     return changed
+
+
+def normalize_domains_location(project_data: dict[str, Any]) -> bool:
+    """Relocate the root ``domains:`` approval block under the publish-on-web service
+    config: ``services/[publish-on-web]/config/domains`` (v2.4 -> v2.5, RC-5).
+
+    The block is project-global and publish-on-web is a root-level service definition,
+    so the service-definition config is its home. Placement is delegated to
+    ``ensure_domains_config`` -- the single authority on where the block lives -- so
+    this migration and the runtime read/write path (connectors/subdomain.py) never
+    disagree. Idempotent: a no-op once the block already lives under the service (or
+    there is no block at all).
+
+    Readers accept both locations (``get_domains_config``), so a file that has not been
+    migrated yet keeps working and relocates on its next load/save.
+    """
+    if not isinstance(project_data.get("domains"), dict):
+        return False
+    from opi.connectors.subdomain import ensure_domains_config
+
+    ensure_domains_config(project_data)
+    return True
 
 
 def _migrate_v2_2_to_v2_3(project_data: dict[str, Any]) -> bool:
