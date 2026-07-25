@@ -1,9 +1,18 @@
-"""keycloak service."""
+"""keycloak service.
+
+Owns its project-level config section (template + access restriction + additional
+clients). The nested sequences (additional-clients, realm-roles) stay hand-authored as
+editables/visualizers in the forms layer; the service references them. Its API surface
+(config_api_fields, from KeycloakConfig) is broader than the UI section.
+"""
 
 from __future__ import annotations
 
-from opi.services.catalog.base import ProvisionContext, Service
+from typing import Any
+
+from opi.services.catalog.base import ConfigLayer, ProvisionContext, Service, config_path
 from opi.services.config_models.keycloak import KeycloakConfig
+from opi.services.services import service_entry_name
 from opi.services.services_enums import ServiceType
 from opi.utils.secrets import KeycloakSecret
 
@@ -21,3 +30,93 @@ class KeycloakService(Service):
 
     async def provision(self, ctx: ProvisionContext) -> None:
         await ctx.keycloak_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment)
+
+    # --- config field ownership -------------------------------------------------
+
+    def _config_selected(self, project_data: dict[str, Any]) -> bool:
+        return self.service_type.value in [
+            service_entry_name(entry) for entry in project_data.get("services", []) or []
+        ]
+
+    def config_api_fields(self, layer: ConfigLayer) -> list[str]:
+        # Full KeycloakConfig surface (broader than the UI section, which shows
+        # template / restrict-access / additional-clients).
+        return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
+
+    def config_editables(self, layer: ConfigLayer):
+        if layer is not ConfigLayer.PROJECT:
+            return []
+        from opi.forms.editables.fields.services import (
+            KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE,
+            KEYCLOAK_RESTRICT_ACCESS_EDITABLE,
+            KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG_EDITABLE,
+            KEYCLOAK_RESTRICT_ACCESS_ROLE_EDITABLE,
+            KEYCLOAK_TEMPLATE_EDITABLE,
+        )
+
+        return [
+            KEYCLOAK_TEMPLATE_EDITABLE,
+            KEYCLOAK_RESTRICT_ACCESS_EDITABLE,
+            KEYCLOAK_RESTRICT_ACCESS_ROLE_EDITABLE,
+            KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG_EDITABLE,
+            KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE,
+        ]
+
+    def config_form_section(self, layer: ConfigLayer):
+        if layer is not ConfigLayer.PROJECT:
+            return None
+        cached = getattr(self, "_config_section_cache", None)
+        if cached is None:
+            from opi.forms.layout import Fieldset, Sequence
+            from opi.forms.visualizers.fields.services import (
+                KEYCLOAK_ADDITIONAL_CLIENTS,
+                KEYCLOAK_REDIRECT_URIS,
+                KEYCLOAK_RESTRICT_ACCESS,
+                KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG,
+                KEYCLOAK_RESTRICT_ACCESS_ROLE,
+                KEYCLOAK_TEMPLATE,
+            )
+            from opi.forms.visualizers.sections import FormSection
+
+            def cp(*segments: str) -> str:
+                return config_path(ConfigLayer.PROJECT, self.service_type, "config", *segments)
+
+            cached = FormSection(
+                section_id="keycloak-config",
+                title="Keycloak configuratie",
+                icon="sleutel",
+                description="SSO en authenticatie-instellingen",
+                visible=self._config_selected,
+                post_save_action="process_project",
+                editables=[
+                    KEYCLOAK_TEMPLATE,
+                    KEYCLOAK_REDIRECT_URIS,
+                    KEYCLOAK_RESTRICT_ACCESS,
+                    KEYCLOAK_RESTRICT_ACCESS_ROLE,
+                    KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG,
+                    KEYCLOAK_ADDITIONAL_CLIENTS,
+                ],
+                layout=[
+                    Fieldset(legend="Template", children=[cp("template")]),
+                    Fieldset(
+                        legend="Toegangsbeperking",
+                        description="Beperk toegang tot de applicatie op basis van Keycloak realm-rollen.",
+                        children=[
+                            cp("restrict-access", "enabled"),
+                            cp("restrict-access", "realm-role"),
+                            cp("restrict-access", "error-message"),
+                        ],
+                    ),
+                    Fieldset(
+                        legend="Extra Keycloak clients",
+                        description=(
+                            "Voeg extra clients toe als er externe applicaties zijn "
+                            "die het Keycloak realm van dit project gebruiken. Elke client krijgt een eigen client-ID "
+                            "en redirect URI's."
+                        ),
+                        children=[Sequence(field_name=cp("additional-clients"))],
+                    ),
+                ],
+            )
+            self._config_section_cache = cached
+        return cached

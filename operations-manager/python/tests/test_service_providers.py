@@ -647,6 +647,24 @@ def test_auth_wall_depends_on_keycloak():
     assert "publish-on-web" in resolved
 
 
+def test_keycloak_owns_its_config_section():
+    """keycloak (the complex one) owns its project-level config section; the nested
+    additional-clients sequence stays hand-authored but is referenced by the service."""
+    provider = get_service(ServiceType.KEYCLOAK)
+    section = provider.config_form_section(ConfigLayer.PROJECT)
+    assert section is not None
+    assert section.section_id == "keycloak-config"
+    assert section.visible({"services": ["keycloak"]}) is True
+    assert section.visible({"services": []}) is False
+    assert provider.config_form_section(ConfigLayer.PROJECT) is section
+    # the section's Template fieldset path is enum-built
+    assert section.layout[0].children == ["services/keycloak/config/template"]
+    # api surface = full KeycloakConfig (broader than the UI section)
+    api_fields = provider.config_api_fields(ConfigLayer.PROJECT)
+    assert api_fields == provider.config_model_field_names()
+    assert set(api_fields) >= {"template", "restrict-access", "additional-clients"}
+
+
 def test_config_ownership_defaults_are_noop():
     """Services that don't own config fields (and non-project layers) return the empty
     defaults, so unmigrated services keep working."""
