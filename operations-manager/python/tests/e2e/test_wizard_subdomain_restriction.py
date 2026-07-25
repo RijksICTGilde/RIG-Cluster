@@ -117,9 +117,11 @@ class TestSubdomainRestrictionValidation:
         # Submit WITHOUT checking the request checkbox
         auth_page.locator(".wizard-step__actions button[type='submit']").click()
 
-        # Should show an error about the subdomain not being requested
+        # The submit is blocked with a visible validation error and stays on the domain
+        # step: the request checkbox is shown (SubdomainNeedsRequestCondition) and required,
+        # so leaving it unchecked surfaces the standard required-field error on it.
         try:
-            auth_page.locator("text=niet aangevraagd").first.wait_for(state="attached", timeout=10000)
+            auth_page.locator("text=Dit veld is verplicht").first.wait_for(state="attached", timeout=10000)
         except Exception:
             page_text = auth_page.locator("#wizard-step-content").inner_text()
-            pytest.fail(f"Expected error about subdomain not being requested. Page text: {page_text[:500]}")
+            pytest.fail(f"Expected a validation error blocking submit. Page text: {page_text[:500]}")
