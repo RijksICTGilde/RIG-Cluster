@@ -272,3 +272,26 @@ storage/metrics (which exercise the hook-point), then keycloak (complex nested f
 - `features/service-provider-registry.md` — the delivered provider registry.
 - `features/futures/editables-as-shared-validation-layer.md` — the editables-from-model
   pipeline this design sources from.
+
+## publish-on-web: a service that deviates (boundary decision, 2026-07-25)
+
+publish-on-web is not a simple service - it spans three config planes (component
+tls/attachment, the deployment "Webadres" domain wizard, and a project-root
+`domains:` approval state) PLUS cross-project platform infrastructure: an admin
+domain-approval router (`router_subdomain_admin`), a global subdomain registry
+(`connectors/subdomain.py`, a DB table unique across all projects), and ingress
+generation (`project_manager` / `naming.py`).
+
+Decision: the **service owns only its config-as-code contributions** - the component
+TLS/attachment fieldset (`config_component_layout()` in
+`opi/services/catalog/publish_on_web.py`). The approval state, the global registry,
+the admin approver and ingress generation stay **platform infrastructure** the service
+depends on; they are cross-project concerns, not per-service config, so forcing them
+into a service module would break the per-service boundary. The deployment-level domain
+wizard (DOMAIN_SECTION) is a candidate for a future `ConfigLayer.DEPLOYMENT` hook but
+was left in the forms layer for now. See the full code map in the commit that landed
+this.
+
+`config_component_order` (static ClassVar, sorted by `_service_component_layouts()`)
+gives a stable display order across component-level services; a user-facing priority
+remains a deferred refinement.
