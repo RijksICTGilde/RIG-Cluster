@@ -907,57 +907,18 @@ def _apply_approval_to_project(
     project_data: dict[str, Any],
     wizard_data: dict[str, Any],
 ) -> None:
-    """Map approval items back into the project's domains structure.
+    """Apply the submitted approval verdicts back onto the project (catalog-driven).
 
-    For each item where status != "skip", updates the status in the
-    correct location and appends a history entry.
+    Delegates to the generic approver interface, which routes each item to the service
+    spec that owns it (``record``) instead of a hard-coded domain/subdomain switch.
     """
-    from datetime import UTC, datetime
+    from opi.services.approvals import apply_approval_verdicts
 
     items = wizard_data.get("_approval_items", [])
     if not items:
         return
-
     admin_email = wizard_data.get("_admin_email", "admin")
-    domains = project_data.setdefault("domains", {})
-
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        new_status = item.get("status", "skip")
-        if new_status == "skip":
-            continue
-
-        item_type = item.get("type")
-        domain = item.get("domain", "")
-        name = item.get("name", "")
-        message = item.get("message") or None
-
-        history_entry: dict[str, str] = {
-            "date": datetime.now(UTC).isoformat(),
-            "status": new_status,
-        }
-        if admin_email:
-            history_entry["by"] = admin_email
-        if message:
-            history_entry["message"] = message
-
-        if item_type == "subdomain":
-            for entry in domains.get("allowed-subdomains", []):
-                if not isinstance(entry, dict) or entry.get("domain") != domain:
-                    continue
-                for sub in entry.get("subdomains", []):
-                    if isinstance(sub, dict) and sub.get("name") == name:
-                        sub["status"] = new_status
-                        sub.setdefault("history", []).append(history_entry)
-                        break
-
-        elif item_type == "domain":
-            for entry in domains.get("allowed-domains", []):
-                if isinstance(entry, dict) and entry.get("domain") == domain:
-                    entry["status"] = new_status
-                    entry.setdefault("history", []).append(history_entry)
-                    break
+    apply_approval_verdicts(project_data, items, admin_email)
 
 
 def build_domain_approval_section() -> FormSection:
