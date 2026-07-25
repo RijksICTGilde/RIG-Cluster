@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from opi.core.config import settings
-from opi.services.catalog.base import ManifestContext, ManifestContribution, SecretFileSpec, Service
+from opi.services.catalog.base import ConfigLayer, ManifestContext, ManifestContribution, SecretFileSpec, Service
 from opi.services.config_models.metrics_scraper import MetricsScraperConfig
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
@@ -20,6 +20,34 @@ class MetricsScraperService(Service):
     config_schema_version = "1.0"
     manifest_secret_class = MetricsAuthSecret
     manifest_order = 50
+
+    # --- config field ownership (component-level; hooks into the component form) ----
+    # metrics-scraper is a component-level service: no standalone wizard step. It hooks
+    # its port/path fieldset into the per-component form via config_component_layout().
+
+    def config_api_fields(self, layer: ConfigLayer) -> list[str]:
+        # port/path live on the component reference's config.
+        return self.config_model_field_names() if layer is ConfigLayer.COMPONENT else []
+
+    def config_editables(self, layer: ConfigLayer):
+        if layer is not ConfigLayer.COMPONENT:
+            return []
+        from opi.forms.editables.fields.components import METRICS_PATH_EDITABLE, METRICS_PORT_EDITABLE
+
+        return [METRICS_PORT_EDITABLE, METRICS_PATH_EDITABLE]
+
+    def config_component_layout(self):
+        from opi.forms.layout import Fieldset
+
+        svc = self.service_type.value
+        return [
+            Fieldset(
+                legend="Prometheus metrics scraper configuratie",
+                depends_on="services",
+                show_when={"contains": svc},
+                children=[f"services{{{svc}}}/port", f"services{{{svc}}}/path"],
+            )
+        ]
 
     def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
         # Contribute the scrape port/path as a template var so the deployment's

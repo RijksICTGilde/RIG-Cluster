@@ -343,6 +343,17 @@ class Service(ABC):
         hand-authoring them."""
         return None
 
+    def config_component_layout(self) -> list[Any]:
+        """Layout node(s) this service HOOKS INTO the per-component form (default none).
+
+        Component-level services (storage, metrics-scraper, ...) don't get a standalone
+        wizard step -- their fields live inside the component definition. This is the
+        hook point: the component form assembly collects each service's nodes and
+        inserts them. (Display ordering across services is registry order for now; an
+        explicit priority is a later refinement.)
+        """
+        return []
+
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
         """The config field names the API accepts at ``layer`` (default none).
 
