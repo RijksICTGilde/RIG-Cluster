@@ -9,6 +9,7 @@ the select, so the default domain was never stored).
 from unittest.mock import AsyncMock
 
 import pytest
+from opi.connectors.subdomain import get_domains_config
 from opi.forms.editables.editable import Editable, FormState, WidgetType
 from opi.forms.editables.hooks import StripTransientsHook
 from opi.forms.editables.lifecycle import collect_hooks, run_hooks
@@ -66,8 +67,8 @@ class TestWizardSubdomainFlow:
         context = {"resolvers": build_resolver_map(materialized)}
         await run_hooks(FormState.PRE_SAVE, all_editables, yaml_data, context)
 
-        assert "domains" in yaml_data
-        assert yaml_data["domains"]["allowed-subdomains"][0]["subdomains"][0]["name"] == "mijn-test"
+        assert get_domains_config(yaml_data) is not None
+        assert get_domains_config(yaml_data)["allowed-subdomains"][0]["subdomains"][0]["name"] == "mijn-test"
         assert "_request-subdomain" not in yaml_data["deployments"][0]
 
     @pytest.mark.asyncio

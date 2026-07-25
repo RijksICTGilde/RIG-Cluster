@@ -6,6 +6,7 @@ Tests the state machine, hook collection, ordering, and concrete hooks
 """
 
 import pytest
+from opi.connectors.subdomain import get_domains_config
 from opi.forms.editables.editable import Editable, FormState, WidgetType
 from opi.forms.editables.lifecycle import collect_hooks, run_hooks
 from opi.forms.visualizers.visualizer import EditableVisualizer
@@ -217,7 +218,7 @@ class TestSubdomainRequestHook:
 
         await hook.execute(yaml_data, {})
 
-        domains = yaml_data.get("domains")
+        domains = get_domains_config(yaml_data)
         assert domains is not None
         allowed = domains["allowed-subdomains"]
         assert len(allowed) == 1
@@ -268,9 +269,10 @@ class TestSubdomainRequestHook:
         await hook.execute(yaml_data, {})
         # Domain request IS created (unknown.com needs approval),
         # but no subdomain request (subdomains not restricted on unknown domains)
-        assert "domains" in yaml_data
-        assert "allowed-domains" in yaml_data["domains"]
-        assert "allowed-subdomains" not in yaml_data.get("domains", {})
+        domains = get_domains_config(yaml_data)
+        assert domains is not None
+        assert "allowed-domains" in domains
+        assert "allowed-subdomains" not in domains
 
     @pytest.mark.asyncio
     async def test_skips_already_registered_subdomain(self, monkeypatch):
@@ -300,7 +302,7 @@ class TestSubdomainRequestHook:
 
         await hook.execute(yaml_data, {})
         # Should not add a duplicate
-        assert len(yaml_data["domains"]["allowed-subdomains"][0]["subdomains"]) == 1
+        assert len(get_domains_config(yaml_data)["allowed-subdomains"][0]["subdomains"]) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -375,8 +377,9 @@ class TestHookOrdering:
         await run_hooks(FormState.PRE_SAVE, [request_vis, strip_vis], yaml_data)
 
         # SubdomainRequestHook created the domains entry (ran first, transient was available)
-        assert "domains" in yaml_data
-        assert yaml_data["domains"]["allowed-subdomains"][0]["subdomains"][0]["name"] == "mijn-app"
+        domains = get_domains_config(yaml_data)
+        assert domains is not None
+        assert domains["allowed-subdomains"][0]["subdomains"][0]["name"] == "mijn-app"
 
         # StripTransientsHook removed the transient field (ran last)
         assert "_request-subdomain" not in yaml_data["deployments"][0]

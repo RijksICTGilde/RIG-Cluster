@@ -2,6 +2,7 @@
 
 import copy
 
+from opi.connectors.subdomain import get_domains_config
 from opi.forms.visualizers.wizard_sections import _apply_approval_to_project
 from opi.services.approvals import collect_approval_items
 
@@ -132,7 +133,7 @@ class TestApplyApprovalToProject:
 
         _apply_approval_to_project(project_data, wizard_data)
 
-        subdomain = project_data["domains"]["allowed-subdomains"][0]["subdomains"][0]
+        subdomain = get_domains_config(project_data)["allowed-subdomains"][0]["subdomains"][0]
         assert subdomain["status"] == "approved"
         assert len(subdomain["history"]) == 2
         last_entry = subdomain["history"][-1]
@@ -158,7 +159,7 @@ class TestApplyApprovalToProject:
 
         _apply_approval_to_project(project_data, wizard_data)
 
-        domain = project_data["domains"]["allowed-domains"][0]
+        domain = get_domains_config(project_data)["allowed-domains"][0]
         assert domain["status"] == "denied"
         assert len(domain["history"]) == 2
         last_entry = domain["history"][-1]
@@ -184,7 +185,7 @@ class TestApplyApprovalToProject:
         _apply_approval_to_project(project_data, wizard_data)
 
         # Subdomain should be unchanged
-        subdomain = project_data["domains"]["allowed-subdomains"][0]["subdomains"][0]
+        subdomain = get_domains_config(project_data)["allowed-subdomains"][0]["subdomains"][0]
         original_sub = original_data["domains"]["allowed-subdomains"][0]["subdomains"][0]
         assert subdomain["status"] == original_sub["status"]
         assert len(subdomain["history"]) == len(original_sub["history"])
@@ -221,15 +222,15 @@ class TestApplyApprovalToProject:
         _apply_approval_to_project(project_data, wizard_data)
 
         # Domain approved
-        assert project_data["domains"]["allowed-domains"][0]["status"] == "approved"
+        assert get_domains_config(project_data)["allowed-domains"][0]["status"] == "approved"
 
         # First subdomain skipped (unchanged)
-        sub0 = project_data["domains"]["allowed-subdomains"][0]["subdomains"][0]
+        sub0 = get_domains_config(project_data)["allowed-subdomains"][0]["subdomains"][0]
         assert sub0["status"] == "requested"
         assert len(sub0["history"]) == 1
 
         # Second subdomain approved (was denied)
-        sub1 = project_data["domains"]["allowed-subdomains"][0]["subdomains"][1]
+        sub1 = get_domains_config(project_data)["allowed-subdomains"][0]["subdomains"][1]
         assert sub1["status"] == "approved"
         assert len(sub1["history"]) == 3
 
@@ -250,7 +251,7 @@ class TestApplyApprovalToProject:
 
         _apply_approval_to_project(project_data, wizard_data)
 
-        last_entry = project_data["domains"]["allowed-subdomains"][0]["subdomains"][0]["history"][-1]
+        last_entry = get_domains_config(project_data)["allowed-subdomains"][0]["subdomains"][0]["history"][-1]
         assert "message" not in last_entry
 
     def test_empty_items_is_noop(self):
@@ -279,4 +280,4 @@ class TestApplyApprovalToProject:
 
         # Should not raise, even though no matching entry exists
         _apply_approval_to_project(project_data, wizard_data)
-        assert "domains" in project_data
+        assert get_domains_config(project_data) is not None

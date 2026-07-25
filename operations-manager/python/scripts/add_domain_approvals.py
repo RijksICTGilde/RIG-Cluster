@@ -59,7 +59,13 @@ def add_domain_approvals(project_data: dict, dry_run: bool = False) -> dict[str,
 
     changes: dict[str, list[str]] = {}
 
-    # Ensure domains section exists
+    # Ensure domains section exists.
+    # NOTE (RC-5): the approval state now lives under the publish-on-web service config
+    # (services/[publish-on-web]/config/domains). This standalone stdlib-only script
+    # keeps writing the legacy root ``domains:`` block on purpose -- OPI reads both
+    # locations (connectors/subdomain.py:get_domains_config) and migrates root -> service
+    # on the next reconcile write, so the output stays correct without pulling the full
+    # opi import chain into this script.
     if "domains" not in project_data and not dry_run:
         project_data["domains"] = {}
     domains = project_data.get("domains", {})
