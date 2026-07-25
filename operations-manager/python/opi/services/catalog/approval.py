@@ -52,12 +52,27 @@ class ApproverScope(StrEnum):
     PROJECT_MEMBER = "project-member"
 
 
+#: Wire shape of an approval **item** -- one approvable thing found in a project, as
+#: the approver interface (listing + modal flow) consumes it. Transient: it is seeded
+#: into the wizard, never persisted (stripped before the project is saved). A plain
+#: dict, not a dataclass, because it is the established contract of the approval
+#: editables + ``approval_items.html.j2`` template. Keys:
+#:   ``service``        -- the ServiceType value of the owning service (routing)
+#:   ``type``           -- the owning ``ApprovalSpec.key`` (routing + display)
+#:   ``domain``/``name``-- display identity of the item
+#:   ``current_status`` -- the stored status string
+#:   ``status``         -- the approver's verdict ("skip" until decided)
+#:   ``history``        -- prior verdict entries
+#:   ``message``        -- optional note (added by the approver)
+ApprovalItem = dict[str, Any]
+
+
 @dataclass(frozen=True)
 class ApprovalSpec:
     """A service's declaration that a value it manages requires approval.
 
     This is the DEFINITION ("dit heeft approval nodig"): a service returns one or more
-    of these from ``config_approvals(layer)``. It is pure data plus one rule callback --
+    of these from ``config_approvals(layer)``. It is pure data plus rule callbacks --
     it carries no forms / manager / DB imports, so the catalog stays load-light.
 
     Attributes:
@@ -70,12 +85,22 @@ class ApprovalSpec:
             stored approval state. The service owns this rule; generic code just calls
             it. The ``value`` is opaque to the generic layer -- its shape is the
             service's business (a domain string, a ``(domain, subdomain)`` pair, ...).
+        list_items: The LIST ("wat staat er open voor deze aanvraag?"). Enumerates the
+            approvable items this spec currently has in a project, as
+            :data:`ApprovalItem` dicts. The generic approver interface concatenates
+            these across the catalog instead of hard-coding one subsystem's shape.
+            ``None`` for a check-only spec that does not surface in the approver UI.
+        record: The RECORD ("leg het oordeel vast"). Applies one approver verdict --
+            writes the new status + appends ``history_entry`` to the stored state for
+            the given item. ``None`` if the spec is not approver-writable.
     """
 
     key: str
     label: str
     approver: ApproverScope
     status_of: Callable[[dict[str, Any], Any], ApprovalStatus]
+    list_items: Callable[[dict[str, Any]], list[ApprovalItem]] | None = None
+    record: Callable[[dict[str, Any], ApprovalItem, dict[str, Any]], None] | None = None
 
     def status(self, project_data: dict[str, Any], value: Any) -> ApprovalStatus:
         """The approval status of ``value`` given the current project state."""

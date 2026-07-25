@@ -3,7 +3,7 @@
 import copy
 
 from opi.forms.visualizers.wizard_sections import _apply_approval_to_project
-from opi.web.router_subdomain_admin import _collect_approval_items
+from opi.services.approvals import collect_approval_items
 
 # ---------------------------------------------------------------------------
 # Test data
@@ -66,7 +66,7 @@ PROJECT_DATA_NO_DOMAINS = {"name": "empty-project"}
 
 class TestCollectApprovalItems:
     def test_collects_domains_and_subdomains(self):
-        items = _collect_approval_items(PROJECT_DATA_WITH_DOMAINS)
+        items = collect_approval_items(PROJECT_DATA_WITH_DOMAINS)
         assert len(items) == 4
 
         # Two allowed-domains
@@ -87,24 +87,24 @@ class TestCollectApprovalItems:
         assert sub_items[1]["current_status"] == "denied"
 
     def test_returns_empty_for_no_domains(self):
-        assert _collect_approval_items(PROJECT_DATA_NO_DOMAINS) == []
+        assert collect_approval_items(PROJECT_DATA_NO_DOMAINS) == []
 
     def test_returns_empty_for_empty_dict(self):
-        assert _collect_approval_items({}) == []
+        assert collect_approval_items({}) == []
 
     def test_all_items_default_to_skip(self):
-        items = _collect_approval_items(PROJECT_DATA_WITH_DOMAINS)
+        items = collect_approval_items(PROJECT_DATA_WITH_DOMAINS)
         for item in items:
             assert item["status"] == "skip"
 
     def test_history_is_included(self):
-        items = _collect_approval_items(PROJECT_DATA_WITH_DOMAINS)
+        items = collect_approval_items(PROJECT_DATA_WITH_DOMAINS)
         domain_item = next(i for i in items if i["domain"] == "other.nl")
         assert len(domain_item["history"]) == 2
 
     def test_handles_malformed_entries(self):
         data = {"domains": {"allowed-subdomains": ["not-a-dict", {"domain": "x.com"}]}}
-        items = _collect_approval_items(data)
+        items = collect_approval_items(data)
         assert items == []
 
 

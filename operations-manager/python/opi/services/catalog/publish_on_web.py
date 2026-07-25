@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.services.catalog.approval import ApprovalSpec, ApprovalStatus, ApproverScope
+from opi.services.catalog.approval import ApprovalItem, ApprovalSpec, ApprovalStatus, ApproverScope
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.services_enums import ServiceType
 
@@ -25,6 +25,9 @@ def _to_status(stored: str | None) -> ApprovalStatus:
         return ApprovalStatus(stored)
     except ValueError:
         return ApprovalStatus.NONE
+
+
+# --- CHECK: is a requested domain / subdomain approved? --------------------------
 
 
 def _domain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
@@ -46,6 +49,83 @@ def _subdomain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatu
 
     domain, subdomain = value
     return _to_status(get_subdomain_status(project_data, domain, subdomain))
+
+
+# --- LIST: enumerate the approvable items in a project ---------------------------
+# These read the state where it lives today (root ``domains:``). The wire shape is the
+# established ApprovalItem contract (kept byte-identical to the previous router code).
+
+
+def _domain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
+    domains = project_data.get("domains")
+    if not isinstance(domains, dict):
+        return []
+    items: list[ApprovalItem] = []
+    for entry in domains.get("allowed-domains", []):
+        if not isinstance(entry, dict):
+            continue
+        items.append(
+            {
+                "type": "domain",
+                "domain": entry.get("domain", ""),
+                "name": entry.get("domain", ""),
+                "current_status": entry.get("status", ""),
+                "status": "skip",
+                "history": entry.get("history", []),
+            }
+        )
+    return items
+
+
+def _subdomain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
+    domains = project_data.get("domains")
+    if not isinstance(domains, dict):
+        return []
+    items: list[ApprovalItem] = []
+    for entry in domains.get("allowed-subdomains", []):
+        if not isinstance(entry, dict):
+            continue
+        base_domain = entry.get("domain", "")
+        for sub in entry.get("subdomains", []):
+            if not isinstance(sub, dict):
+                continue
+            items.append(
+                {
+                    "type": "subdomain",
+                    "domain": base_domain,
+                    "name": sub.get("name", ""),
+                    "current_status": sub.get("status", ""),
+                    "status": "skip",
+                    "history": sub.get("history", []),
+                }
+            )
+    return items
+
+
+# --- RECORD: persist an approver verdict onto the stored state -------------------
+# The generic layer builds the uniform ``history_entry`` (date/status/by/message);
+# each spec locates its own entry and writes the new status + history.
+
+
+def _domain_record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
+    domains = project_data.setdefault("domains", {})
+    for entry in domains.get("allowed-domains", []):
+        if isinstance(entry, dict) and entry.get("domain") == item.get("domain", ""):
+            entry["status"] = item.get("status", "skip")
+            entry.setdefault("history", []).append(history_entry)
+            break
+
+
+def _subdomain_record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
+    domains = project_data.setdefault("domains", {})
+    for entry in domains.get("allowed-subdomains", []):
+        if not isinstance(entry, dict) or entry.get("domain") != item.get("domain", ""):
+            continue
+        for sub in entry.get("subdomains", []):
+            if isinstance(sub, dict) and sub.get("name") == item.get("name", ""):
+                sub["status"] = item.get("status", "skip")
+                sub.setdefault("history", []).append(history_entry)
+                break
 
 
 class PublishOnWebService(Service):
@@ -78,12 +158,16 @@ class PublishOnWebService(Service):
                 label="Domein",
                 approver=ApproverScope.PLATFORM_ADMIN,
                 status_of=_domain_status,
+                list_items=_domain_items,
+                record=_domain_record,
             ),
             ApprovalSpec(
                 key="subdomain",
                 label="Subdomein",
                 approver=ApproverScope.PLATFORM_ADMIN,
                 status_of=_subdomain_status,
+                list_items=_subdomain_items,
+                record=_subdomain_record,
             ),
         ]
 
