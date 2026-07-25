@@ -205,6 +205,38 @@ Stays hand-authored, co-located with the service (the hard ~10%):
 - **Phase E:** keycloak (the complex one) — keep `additional-clients`/`realm-roles`
   hand-authored on the provider, derive the scalar parts.
 
+## Working method: per-service checklist (agreed)
+
+We migrate services **one at a time**; per service we run this checklist and note the
+extra step that service needs (some have their own screen, some plug in at component
+level, some depend on another service). Conventions applied throughout:
+
+- **Enums, not strings.** Service identity via `ServiceType`, layer via `ConfigLayer`,
+  paths via `config_path(layer, service, *segments)` (`opi/services/provider.py`) - no
+  hardcoded `"services/authorization-wall/config/..."` literals. Enums document, grep
+  and validate better.
+- **Reuse fields, don't re-declare.** Field names/defaults come from the service's
+  `config_model` (`config_model_field_names()`), not a second copy; shared field sets
+  (e.g. storage `name/size/mount-path`) are defined once and reused.
+- **Dependencies are explicit.** A service that needs another declares it in
+  `ServiceDefinition.requires`; `resolve_service_dependencies` pulls it in (auth-wall
+  -> keycloak + publish-on-web). Keep this typed/enum-based.
+
+Per service, tick:
+1. `config_editables(layer)` - the data fields, paths via `config_path`, reused where possible.
+2. `config_form_section(layer)` **or** a component/deployment hook-point (storage lives
+   in the component definition, not a standalone section).
+3. `config_api_fields(layer)` - derived from the `config_model`.
+4. Dependencies verified (and enforced).
+5. No string literals left.
+
+**Reference implementation: `authorization-wall`** (done). Owns its `banner` field:
+enum-built path, section built by the provider (`visible` from `service_type`), api
+fields from `AuthorizationWallConfig`, keycloak dependency verified. Field atoms still
+physically live in forms (re-used from there); relocating them into a per-service
+module is a later step. Next services: namespace-postgres, then the component-level
+storage/metrics (which exercise the hook-point), then keycloak (complex nested fields).
+
 ## Guardrails
 
 - **Golden-manifest byte-diff** (`tests/test_golden_manifests.py`) — template render

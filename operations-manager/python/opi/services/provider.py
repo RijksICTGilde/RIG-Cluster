@@ -56,6 +56,30 @@ class ConfigLayer(Enum):
     DEPLOYMENT_COMPONENT = "deployment-component"
 
 
+#: The per-layer prefix of a service's config yaml_path. Encodes the layer shape once
+#: (project ``services/X`` vs component ``components[*]/services{X}`` etc.) so no
+#: service hardcodes it; ``{svc}`` is filled with the ServiceType value.
+_LAYER_PATH_PREFIX: dict[ConfigLayer, str] = {
+    ConfigLayer.PROJECT: "services/{svc}",
+    ConfigLayer.COMPONENT: "components[*]/services{{{svc}}}",
+    ConfigLayer.DEPLOYMENT: "deployments[*]/services{{{svc}}}",
+    ConfigLayer.DEPLOYMENT_COMPONENT: "deployments[*]/components[*]/services{{{svc}}}",
+}
+
+
+def config_path(layer: ConfigLayer, service: ServiceType, *segments: str) -> str:
+    """Build a service's config ``yaml_path`` from enums instead of a hardcoded string.
+
+    ``config_path(ConfigLayer.PROJECT, ServiceType.AUTHORIZATION_WALL, "config", "banner")``
+    -> ``"services/authorization-wall/config/banner"``. The layer determines the
+    prefix (project / component / deployment), the ServiceType fills the service
+    segment, and ``segments`` are the config keys. This keeps service identity and
+    layer as enums (typed, greppable, documented) rather than scattered path literals.
+    """
+    prefix = _LAYER_PATH_PREFIX[layer].format(svc=service.value)
+    return "/".join([prefix, *segments]) if segments else prefix
+
+
 #: A service's raw config as it appears in the project file: a dict for most
 #: services, or a list for sequence configs (e.g. storage mounts).
 ServiceConfigData = dict[str, Any] | list[Any]
@@ -320,8 +344,21 @@ class ServiceProvider(ABC):
         return None
 
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
-        """The config field names the API accepts at ``layer`` (default none)."""
+        """The config field names the API accepts at ``layer`` (default none).
+
+        Services with a ``config_model`` derive these from the model (see
+        ``config_model_field_names``) rather than re-declaring them, so the API
+        surface stays in lock-step with the schema."""
         return []
+
+    def config_model_field_names(self) -> list[str]:
+        """The field names of this service's ``config_model`` (alias-aware), or [].
+
+        The single source for "which config keys does this service have" - reused by
+        ``config_api_fields`` so the API surface is not a second hand-maintained copy."""
+        if self.config_model is None:
+            return []
+        return [field.alias or name for name, field in self.config_model.model_fields.items()]
 
     async def provision(self, ctx: ProvisionContext) -> None:
         """Provision this service's deployment-level resources (RC-5 Phase 4).
