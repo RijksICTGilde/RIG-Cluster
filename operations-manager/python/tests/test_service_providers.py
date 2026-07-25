@@ -532,6 +532,30 @@ def test_auth_wall_owns_its_config_section():
     assert provider.config_api_fields(ConfigLayer.PROJECT) == provider.config_model_field_names()
 
 
+def test_namespace_postgres_owns_its_config_section():
+    """namespace-postgres owns its project-level config section (instances + storage).
+    Its API surface is the FULL config model (broader than the 2 UI fields) - the
+    UI/API split the design calls for."""
+    provider = get_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE)
+
+    section = provider.config_form_section(ConfigLayer.PROJECT)
+    assert section is not None
+    assert section.section_id == "postgresql-config"
+    assert section.visible({"services": ["namespace-postgresql-database"]}) is True
+    assert section.visible({"services": []}) is False
+    assert provider.config_form_section(ConfigLayer.PROJECT) is section
+
+    # UI section exposes 2 fields; their paths are enum-built.
+    assert [e.yaml_path for e in provider.config_editables(ConfigLayer.PROJECT)] == [
+        "services/namespace-postgresql-database/config/instances",
+        "services/namespace-postgresql-database/config/storage",
+    ]
+    # API surface = the whole model (image/registry/privileges/... are API/YAML-only).
+    api_fields = provider.config_api_fields(ConfigLayer.PROJECT)
+    assert api_fields == provider.config_model_field_names()
+    assert set(api_fields) >= {"instances", "storage", "image", "privileges"}
+
+
 def test_config_path_builds_from_enums():
     """Service config yaml_paths are built from ConfigLayer + ServiceType enums, not
     hardcoded strings - one place encodes each layer's path shape."""
