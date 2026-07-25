@@ -6,8 +6,8 @@
 ## Summary
 
 Every platform service (keycloak, postgres, minio, redis, auth-wall, storage, ...)
-is now defined **once** as a self-contained `ServiceProvider` subclass, registered in
-a single `SERVICE_PROVIDERS` map. Generic code drives config validation, wizard/flow
+is now defined **once** as a self-contained `Service` subclass, registered in
+a single `SERVICES` map. Generic code drives config validation, wizard/flow
 assembly, provisioning, cleanup, and manifest generation by iterating that registry
 instead of the ~14 hand-synced per-service edit sites that existed before.
 
@@ -19,12 +19,16 @@ registry line, and a coverage test fails CI if you forget the registry line.
 
 ## Where
 
-- `opi/services/provider.py` — the `ServiceProvider` base class and the context/
+- `opi/services/catalog/base.py` — the `Service` base class and the context/
   contribution dataclasses (`ProvisionContext`, `RemovalContext`, `ManifestContext`,
   `ManifestContribution`, `SecretFileSpec`).
-- `opi/services/registry.py` — `SERVICE_PROVIDERS` (one entry per `ServiceType`) plus
-  the derivation helpers (`get_provider`, `provisioning_providers`,
-  `manifest_secret_providers`, `manifest_providers`).
+- `opi/services/catalog/<service>.py` — one module per service (its `Service`
+  subclass; config models + config UI move in per service as they migrate). A
+  service is a user-facing configuration-as-code unit, **not** a connector/provider
+  ("how OPI talks to a system").
+- `opi/services/registry.py` — assembles `SERVICES` (one entry per `ServiceType`) plus
+  the derivation helpers (`get_service`, `provisioning_services`,
+  `manifest_secret_services`, `manifest_services`).
 - `opi/services/config_models/` — the typed Pydantic config models, one per
   configurable service.
 - `opi/schemas/services/<name>.v<major.minor>.json` — the committed JSON-schema
@@ -39,10 +43,10 @@ with a no-op default, so a trivial service is a one-liner while keycloak overrid
 handful:
 
 ```python
-class PublishOnWebProvider(ServiceProvider):
+class PublishOnWebService(Service):
     service_type = ServiceType.PUBLISH_ON_WEB          # no config, no provisioning
 
-class KeycloakProvider(ServiceProvider):
+class KeycloakService(Service):
     service_type = ServiceType.KEYCLOAK
     cleanup_manager_key = "keycloak"                   # cleanup dispatch (Phase 5)
     config_model = KeycloakConfig                      # typed config (Phase 2)
@@ -68,9 +72,9 @@ managers are reached lazily through the context objects.
 |---|---|---|---|
 | Config shape + versioning | `config_model`, `config_schema_version`, `migrate_config`, `validate_config` | — | Pydantic model is both the value guardrail and the JSON-schema source. Migrate-then-validate, fail-closed. |
 | Wizard / edit / modal | `config_section_id`, `modal_flow_id` | — | Forms layer derives `SERVICE_CONFIG_SECTIONS` / `EDIT_SECTIONS` / `SERVICE_CONFIG_MODAL_FLOWS` by iterating the registry. The `FormSection` object itself stays in the forms layer; the provider only holds the declarative link. |
-| Provisioning | `provision(ctx)`, `provision_order` | `provisioning_providers()` | Ordered loop replaces the fixed db -> minio -> keycloak -> redis sequence. No-op default = no manager needed. |
+| Provisioning | `provision(ctx)`, `provision_order` | `provisioning_services()` | Ordered loop replaces the fixed db -> minio -> keycloak -> redis sequence. No-op default = no manager needed. |
 | Cleanup on removal | `handle_service_removal(ctx)`, `cleanup_manager_key` | — | Generic dispatch by manager key replaces the old `_SERVICE_TYPE_MANAGER_ATTR` map. |
-| Manifest contribution | `contribute_manifest_context(ctx)`, `build_secret_files(ctx)`, `manifest_secret_class`, `manifest_order`, `manifest_activated_by` | `manifest_secret_providers()`, `manifest_providers()` | Emits a declarative `ManifestContribution` (additive `env_from_secrets`/`sidecars`/`secret_files`, override `template_vars`). The component loop merges it; providers never touch the manifest generator. |
+| Manifest contribution | `contribute_manifest_context(ctx)`, `build_secret_files(ctx)`, `manifest_secret_class`, `manifest_order`, `manifest_activated_by` | `manifest_secret_services()`, `manifest_services()` | Emits a declarative `ManifestContribution` (additive `env_from_secrets`/`sidecars`/`secret_files`, override `template_vars`). The component loop merges it; providers never touch the manifest generator. |
 
 ## Typed, versioned config
 
@@ -97,7 +101,7 @@ Managers validate config through `provider.validate_config(...)` instead of raw
 
 1. Add the member to `ServiceType` (`opi/services/services_enums.py`) and its
    `ServiceDefinition` to `ServiceAdapter.SERVICE_DEFINITIONS`.
-2. Add a `ServiceProvider` subclass + one line in `SERVICE_PROVIDERS`. The coverage
+2. Add a `Service` subclass + one line in `SERVICES`. The coverage
    guard (`tests/test_service_providers.py`) fails CI until you do.
 3. If it takes config: add a Pydantic model under `opi/services/config_models/`, set
    `config_model` + `config_schema_version`, and run

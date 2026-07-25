@@ -19,7 +19,7 @@ from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
 from opi.services import ServiceAdapter
 from opi.services.project import Project
-from opi.services.registry import get_provider
+from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 from opi.utils.project_utils import ComponentValidationError, validate_component_paths, validate_root_component
 
@@ -45,7 +45,7 @@ def validate_service_configs(project_data: dict[str, Any]) -> None:
             service_type = ServiceType(name)
         except ValueError:
             continue  # unknown service name -- other validation handles it
-        provider = get_provider(service_type)
+        provider = get_service(service_type)
         if provider.config_model is None:
             continue  # service takes no typed config
         try:

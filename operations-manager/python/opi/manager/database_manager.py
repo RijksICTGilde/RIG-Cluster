@@ -15,7 +15,7 @@ from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
 from opi.services import CloneFromType, ServiceType
 from opi.services.project import Project
-from opi.services.registry import get_provider
+from opi.services.registry import get_service
 from opi.utils.naming import generate_database_name
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import DatabaseSecret
@@ -1286,7 +1286,7 @@ class DatabaseManager:
         # or has no config block -> validate_config supplies the model defaults, and
         # fails closed on a malformed (non-dict) config.
         raw_config = Project(project_data).service_config(service_name)
-        provider = get_provider(ServiceType.NAMESPACE_POSTGRESQL_DATABASE)
+        provider = get_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE)
         merged_config = provider.validate_config(raw_config).model_dump(mode="json")
         logger.debug(f"Database config (validated via provider): {merged_config}")
         return merged_config

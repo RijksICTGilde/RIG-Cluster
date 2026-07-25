@@ -37,7 +37,7 @@ from opi.forms.visualizers.wizard_sections import (
     build_domain_section,
     build_restore_new_deployment_sections,
 )
-from opi.services.registry import get_provider
+from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 
 if TYPE_CHECKING:
@@ -229,7 +229,7 @@ FLOW_REGISTRY: dict[str, FormFlow] = {
 SERVICE_CONFIG_MODAL_FLOWS: dict[str, str] = {
     service_type.value: provider.modal_flow_id
     for service_type in ServiceType
-    if (provider := get_provider(service_type)).modal_flow_id is not None
+    if (provider := get_service(service_type)).modal_flow_id is not None
 }
 
 
