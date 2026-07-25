@@ -77,9 +77,13 @@ def _service_component_layouts() -> list[Any]:
     form (RC-5 'service owns its fields'), in registry order. A component-level service
     (metrics-scraper, ...) owns its fieldset via ``config_component_layout()`` instead
     of it living hand-authored in COMPONENTS_SECTION."""
+    contributors = sorted(
+        (get_service(service_type) for service_type in ServiceType),
+        key=lambda s: s.config_component_order,
+    )
     nodes: list[Any] = []
-    for service_type in ServiceType:
-        nodes.extend(get_service(service_type).config_component_layout())
+    for service in contributors:
+        nodes.extend(service.config_component_layout())
     return nodes
 
 
@@ -180,16 +184,8 @@ COMPONENTS_SECTION = FormSection(
                 # service catalog in registry order (explicit display priority is a later
                 # refinement). Kept where the storage sequences used to sit.
                 *_service_component_layouts(),
+                # attachments stays hand-authored here (the deferred polymorphic case).
                 Sequence(field_name="services{attachments}/config"),
-                Fieldset(
-                    legend="Publicatie op het web",
-                    depends_on="services",
-                    show_when={"contains": "publish-on-web"},
-                    children=[
-                        "services{publish-on-web}/config/tls",
-                        "services{publish-on-web}/config/attachment",
-                    ],
-                ),
             ],
         ),
     ],

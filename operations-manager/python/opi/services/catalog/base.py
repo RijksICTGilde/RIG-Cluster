@@ -255,6 +255,11 @@ class Service(ABC):
     #: is derived from this.
     modal_flow_id: ClassVar[str | None] = None
 
+    #: Display order of this service's ``config_component_layout()`` nodes within the
+    #: per-component form; lower shows first. A static ordering for now -- a
+    #: user-facing priority is a deferred future refinement.
+    config_component_order: ClassVar[int] = 100
+
     #: Order in the generic provisioning loop (RC-5 Phase 4); lower runs first. Only
     #: meaningful for providers that override ``provision``. The defaults on the four
     #: provisioning providers reproduce today's fixed db -> minio -> keycloak -> redis
