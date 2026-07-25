@@ -391,11 +391,11 @@ def get_flow(flow_id: str, **context: Any) -> FormFlow:
             )
 
     # Admin domain/subdomain approval flow
-    if flow_id == "admin-domain-approval":
+    if flow_id == "admin-approval":
         from opi.forms.visualizers.wizard_sections import build_domain_approval_section
 
         return FormFlow(
-            flow_id="admin-domain-approval",
+            flow_id="admin-approval",
             title="Domein- en subdomeingoedkeuring",
             mode=FlowMode.WIZARD,
             show_review=False,

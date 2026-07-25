@@ -9,7 +9,7 @@ project-root ``domains:`` block via the resolvers in connectors/subdomain.py).
 Still NOT owned here -- cross-project platform infrastructure the service depends on but
 does not own: the deployment-level "Webadres" domain wizard (DOMAIN_SECTION), the
 generic catalog-driven approver interface (opi/services/approvals.py +
-router_subdomain_admin, no longer domain-specific), the global subdomain registry DB
+router_approvals, no longer domain-specific), the global subdomain registry DB
 (connectors/subdomain.py), and ingress generation (project_manager / naming.py).
 """
 
@@ -55,8 +55,8 @@ def _subdomain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatu
 
 
 # --- LIST: enumerate the approvable items in a project ---------------------------
-# These read the state where it lives today (root ``domains:``). The wire shape is the
-# established ApprovalItem contract (kept byte-identical to the previous router code).
+# These read the state via get_domains_config (service config, root fallback). The wire
+# shape is the established ApprovalItem contract (byte-identical to the old router code).
 
 
 def _domain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
@@ -159,8 +159,8 @@ class PublishOnWebService(Service):
     def config_approvals(self, layer: ConfigLayer):
         # A deployment's requested domain / subdomain needs platform-admin approval
         # before ingress is generated for it. The rule (status_of) reuses the existing
-        # pure predicates; the state still lives in the project's ``domains:`` block
-        # (moving it under this service is a separate schema+data migration).
+        # pure predicates; the state lives under this service's config
+        # (services/[publish-on-web]/config/domains, resolved by connectors/subdomain.py).
         if layer is not ConfigLayer.DEPLOYMENT:
             return []
         return [
