@@ -46,7 +46,6 @@ from opi.forms.visualizers.fields.domains import (
 )
 from opi.forms.visualizers.fields.identity import CLUSTERS, DESCRIPTION, DISPLAY_NAME
 from opi.forms.visualizers.fields.services import (
-    AUTH_WALL_BANNER,
     KEYCLOAK_ADDITIONAL_CLIENTS,
     KEYCLOAK_REDIRECT_URIS,
     KEYCLOAK_RESTRICT_ACCESS,
@@ -60,6 +59,7 @@ from opi.forms.visualizers.fields.services import (
 from opi.forms.visualizers.fields.team import USERS_SEQUENCE
 from opi.forms.visualizers.sections import FormSection
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.services.provider import ConfigLayer
 from opi.services.registry import get_provider
 from opi.services.services_enums import ServiceType
 
@@ -343,16 +343,11 @@ def build_deployment_wizard_section(deployment_index: int) -> FormSection:
     )
 
 
-AUTH_WALL_CONFIG_SECTION = FormSection(
-    section_id="auth-wall-config",
-    title="Authorization wall configuratie",
-    icon="sleutel",
-    description="Instellingen voor de toegangspagina",
-    visible=lambda data: "authorization-wall" in _extract_services(data),
-    post_save_action="process_project",
-    editables=[AUTH_WALL_BANNER],
-    layout=["services/authorization-wall/config/banner"],
-)
+# RC-5 prototype: the authorization-wall service now OWNS its config section - it is
+# built by AuthorizationWallProvider.config_form_section() and merely re-exported here
+# under the familiar name, so flows.py / EDIT_SECTIONS / tests keep referring to it.
+# (keycloak / postgres sections still live hand-authored above until they follow.)
+AUTH_WALL_CONFIG_SECTION = get_provider(ServiceType.AUTHORIZATION_WALL).config_form_section(ConfigLayer.PROJECT)
 
 # ---------------------------------------------------------------------------
 # Lookup for conditional sections keyed by service name

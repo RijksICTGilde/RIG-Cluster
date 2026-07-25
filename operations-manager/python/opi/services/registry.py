@@ -26,6 +26,7 @@ from opi.services.config_models.metrics_scraper import MetricsScraperConfig
 from opi.services.config_models.namespace_postgres import NamespacePostgresConfig
 from opi.services.config_models.storage import StorageConfig
 from opi.services.provider import (
+    ConfigLayer,
     ManifestContext,
     ManifestContribution,
     ProvisionContext,
@@ -67,6 +68,52 @@ class AuthorizationWallProvider(ServiceProvider):
     # After the secret providers (10-50); an auth wall fronts the pod, so its
     # service_port override applies last (RC-5 Phase 6b).
     manifest_order = 60
+
+    # --- config field ownership (RC-5 prototype) --------------------------------
+    # auth-wall owns its single project-level field (banner). The wizard/edit layer
+    # sources this section from here instead of hand-authoring it in wizard_sections.
+    # Forms building blocks are imported lazily so registry.py stays forms-free at
+    # import time (avoids the forms -> registry -> forms cycle).
+
+    def _config_selected(self, project_data: dict[str, Any]) -> bool:
+        """Section visibility: derived from this provider's service_type, not a
+        hardcoded service-name string."""
+        return self.service_type.value in [
+            service_entry_name(entry) for entry in project_data.get("services", []) or []
+        ]
+
+    def config_api_fields(self, layer: ConfigLayer) -> list[str]:
+        return ["banner"] if layer is ConfigLayer.PROJECT else []
+
+    def config_editables(self, layer: ConfigLayer):
+        if layer is not ConfigLayer.PROJECT:
+            return []
+        from opi.forms.editables.fields.services import AUTH_WALL_BANNER_EDITABLE
+
+        return [AUTH_WALL_BANNER_EDITABLE]
+
+    def config_form_section(self, layer: ConfigLayer):
+        if layer is not ConfigLayer.PROJECT:
+            return None
+        # Built once and cached so consumers that compare section identity (e.g.
+        # EDIT_SECTIONS[...] is AUTH_WALL_CONFIG_SECTION) keep seeing one object.
+        cached = getattr(self, "_config_section_cache", None)
+        if cached is None:
+            from opi.forms.visualizers.fields.services import AUTH_WALL_BANNER
+            from opi.forms.visualizers.sections import FormSection
+
+            cached = FormSection(
+                section_id="auth-wall-config",
+                title="Authorization wall configuratie",
+                icon="sleutel",
+                description="Instellingen voor de toegangspagina",
+                visible=self._config_selected,
+                post_save_action="process_project",
+                editables=[AUTH_WALL_BANNER],
+                layout=["services/authorization-wall/config/banner"],
+            )
+            self._config_section_cache = cached
+        return cached
 
     def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
         # An auth wall sits in front of the pod: it adds the oauth2-proxy sidecar and
