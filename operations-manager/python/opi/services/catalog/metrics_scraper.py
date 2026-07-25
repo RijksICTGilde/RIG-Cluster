@@ -20,6 +20,7 @@ class MetricsScraperService(Service):
     config_schema_version = "1.0"
     manifest_secret_class = MetricsAuthSecret
     manifest_order = 50
+    config_component_order = 40
 
     # --- config field ownership (component-level; hooks into the component form) ----
     # metrics-scraper is a component-level service: no standalone wizard step. It hooks

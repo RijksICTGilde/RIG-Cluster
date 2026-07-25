@@ -12,6 +12,7 @@ class PersistentStorageService(Service):
     cleanup_manager_key = "pvc"
     config_model = StorageConfig
     config_schema_version = "1.0"
+    config_component_order = 10
 
     # Component-level service: hooks a storage-mounts sequence into the component form.
     # Its config is a LIST of {name, size, mount-path} entries (StorageConfig is a

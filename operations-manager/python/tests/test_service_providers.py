@@ -593,6 +593,32 @@ def test_storage_services_hook_sequences_into_component_form():
         assert len(provider.config_editables(ConfigLayer.COMPONENT)) == 1
 
 
+def test_publish_on_web_owns_its_component_config():
+    """publish-on-web owns its component TLS/attachment fieldset (the rest of the
+    domain feature is cross-project platform infra, not part of this service)."""
+    provider = get_service(ServiceType.PUBLISH_ON_WEB)
+    nodes = provider.config_component_layout()
+    assert len(nodes) == 1
+    assert nodes[0].legend == "Publicatie op het web"
+    assert [e.yaml_path for e in provider.config_editables(ConfigLayer.COMPONENT)] == [
+        "components[*]/services{publish-on-web}/config/tls",
+        "components[*]/services{publish-on-web}/config/attachment",
+    ]
+
+
+def test_component_layout_collection_is_ordered_by_config_component_order():
+    """The per-component form collects service fieldsets in config_component_order."""
+    from opi.forms.visualizers.wizard_sections import _service_component_layouts
+
+    labels = [getattr(n, "legend", None) or getattr(n, "field_name", None) for n in _service_component_layouts()]
+    assert labels == [
+        "services{persistent-storage}/config",
+        "services{temp-storage}/config",
+        "Publicatie op het web",
+        "Prometheus metrics scraper configuratie",
+    ]
+
+
 def test_config_path_builds_from_enums():
     """Service config yaml_paths are built from ConfigLayer + ServiceType enums, not
     hardcoded strings - one place encodes each layer's path shape."""
