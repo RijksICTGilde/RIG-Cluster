@@ -72,6 +72,17 @@ def _extract_services(data: dict[str, Any]) -> list[str]:
     return []
 
 
+def _service_component_layouts() -> list[Any]:
+    """Collect the per-component layout nodes each service hooks into the component
+    form (RC-5 'service owns its fields'), in registry order. A component-level service
+    (metrics-scraper, ...) owns its fieldset via ``config_component_layout()`` instead
+    of it living hand-authored in COMPONENTS_SECTION."""
+    nodes: list[Any] = []
+    for service_type in ServiceType:
+        nodes.extend(get_service(service_type).config_component_layout())
+    return nodes
+
+
 # ---------------------------------------------------------------------------
 # Core sections (always visible)
 # ---------------------------------------------------------------------------
@@ -176,15 +187,9 @@ COMPONENTS_SECTION = FormSection(
                         "services{publish-on-web}/config/attachment",
                     ],
                 ),
-                Fieldset(
-                    legend="Prometheus metrics scraper configuratie",
-                    depends_on="services",
-                    show_when={"contains": "metrics-scraper"},
-                    children=[
-                        "services{metrics-scraper}/port",
-                        "services{metrics-scraper}/path",
-                    ],
-                ),
+                # Component-level services hook their fieldsets in here (metrics-scraper
+                # today; storage etc. follow). Collected from the service catalog.
+                *_service_component_layouts(),
             ],
         ),
     ],
