@@ -184,8 +184,6 @@ COMPONENTS_SECTION = FormSection(
                 # service catalog in registry order (explicit display priority is a later
                 # refinement). Kept where the storage sequences used to sit.
                 *_service_component_layouts(),
-                # attachments stays hand-authored here (the deferred polymorphic case).
-                Sequence(field_name="services{attachments}/config"),
             ],
         ),
     ],
@@ -599,8 +597,6 @@ def build_component_deployment_select_section(component_index: int) -> FormSecti
     selected deployment using ``ListDistributor``.
     """
     from opi.forms.editables.distributors import ListDistributor
-    from opi.forms.editables.editable import Editable, WidgetType
-    from opi.forms.visualizers.visualizer import EditableVisualizer
 
     target_deployments_editable = Editable(
         yaml_path="_target_deployments",
@@ -823,25 +819,10 @@ RESTORE_TARGET_SECTION = FormSection(
     summary_fn=_restore_target_summary,
 )
 
-# Read-only carrier so ``services`` (and thus the attachments catalog) reaches the partial
-# for display, even when this section runs standalone (modal-edit-attachments) without the
-# services-selection section. ``readonly`` => skipped on save, so it never rewrites services.
-_ATTACHMENTS_SERVICES_CARRIER = EditableVisualizer(
-    editable=Editable(yaml_path="services"),
-    widget=WidgetType.HIDDEN,
-    label="",
-    readonly=True,
-)
-
-ATTACHMENTS_SECTION = FormSection(
-    section_id="attachments",
-    title="Bijlagen",
-    icon="map",
-    description="Upload bestanden (bijv. certificaten) om per component als bestand of env-var te koppelen",
-    visible=lambda data: "attachments" in _extract_services(data),
-    editables=[_ATTACHMENTS_SERVICES_CARRIER],
-    layout=[TemplatePartial(template="wizard/partials/attachments_upload.html.j2")],
-)
+# RC-5: the attachments service owns its "Bijlagen" upload section (built by
+# AttachmentsService.config_form_section, incl. the hidden read-only services carrier);
+# re-exported here so flows / tests keep referring to it.
+ATTACHMENTS_SECTION = get_service(ServiceType.ATTACHMENTS).config_form_section(ConfigLayer.PROJECT)
 
 
 def _new_deployment_summary(data: dict[str, Any], deployment_index: int = 0) -> str:
