@@ -40,6 +40,33 @@ Generalize it:
 - The approver **scope** is what makes it reusable: domains = PLATFORM_ADMIN
   (cross-project); cross-namespace access = PROJECT_ADMIN/MEMBER (within a project).
 
+### Delivered — the declare + check slice (grounded in domains)
+
+The first, load-bearing slice is built (`opi/services/catalog/approval.py`), so the
+shape is concrete rather than speculative. It answers the two questions a service asks:
+
+1. **"dit heeft approval nodig" (the DEFINITION)** — a service returns `ApprovalSpec`s
+   from `config_approvals(layer)`. An `ApprovalSpec` is pure data plus one rule callback
+   (`key`, `label`, `approver: ApproverScope`, `status_of`). publish-on-web declares
+   `domain` + `subdomain` at the `DEPLOYMENT` layer, both `PLATFORM_ADMIN`.
+2. **"is dit veld approved?" (the CHECK)** — `spec.status(project_data, value) ->
+   ApprovalStatus` (`NONE | REQUESTED | APPROVED | DENIED`), with `is_approved(...)` as
+   the gating shortcut. The `value` is opaque to the generic layer (a domain string; a
+   `(domain, subdomain)` pair) — its shape is the service's business.
+
+`Service.get_approval(key)` looks a spec up across layers. `status_of` **reuses the
+existing pure predicates** in `connectors/subdomain.py`
+(`get_project_allowed_domain_config`, `get_subdomain_status`) — no domain rules were
+duplicated or moved. The state still lives in the root `domains:` block; the spec just
+reads it where it is. `ApprovalStatus`' three non-`NONE` values equal the persisted
+status strings, so a stored verdict maps straight onto the enum.
+
+Still **future** (deliberately not in this slice, because each is real work with blast
+radius): the generic approval **interface/router** that iterates catalog specs for an
+approver and records verdicts (replacing `router_subdomain_admin`); moving the approval
+**state** from root `domains:` under publish-on-web (schema + data migration); the
+**persistence** ownership below.
+
 ## 2. Domains are misplaced at root — decompose into three concerns
 
 `domains: {allowed-domains, allowed-subdomains}` at the project root

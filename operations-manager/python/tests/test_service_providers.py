@@ -675,3 +675,72 @@ def test_config_ownership_defaults_are_noop():
     redis = get_service(ServiceType.REDIS)
     assert redis.config_form_section(ConfigLayer.PROJECT) is None
     assert redis.config_editables(ConfigLayer.PROJECT) == []
+
+
+# --- approval ownership (RC-5) ---------------------------------------------------
+# The generic approval capability: a service DECLARES what needs approval
+# (config_approvals / ApprovalSpec) and supplies the rule to CHECK a stored verdict
+# (status_of). Grounded in publish-on-web's domain / subdomain approval.
+
+_APPROVAL_PROJECT = {
+    "domains": {
+        "allowed-domains": [
+            {"domain": "ok.nl", "status": "approved"},
+            {"domain": "wait.nl", "status": "requested"},
+            {"domain": "no.nl", "status": "denied"},
+        ],
+        "allowed-subdomains": [
+            {"domain": "ok.nl", "subdomains": [{"name": "app", "status": "approved"}]},
+        ],
+    }
+}
+
+
+def test_publish_on_web_declares_domain_approval():
+    """DEFINITION: the service declares (as data) that domain + subdomain need
+    platform-admin approval, only at the deployment layer."""
+    from opi.services.catalog.approval import ApprovalSpec, ApproverScope
+
+    provider = get_service(ServiceType.PUBLISH_ON_WEB)
+    specs = provider.config_approvals(ConfigLayer.DEPLOYMENT)
+    assert all(isinstance(s, ApprovalSpec) for s in specs)
+    assert [(s.key, s.approver) for s in specs] == [
+        ("domain", ApproverScope.PLATFORM_ADMIN),
+        ("subdomain", ApproverScope.PLATFORM_ADMIN),
+    ]
+    # approvals are layer-scoped like the rest of the config surface
+    assert provider.config_approvals(ConfigLayer.COMPONENT) == []
+    # and looked up by key across layers
+    assert provider.get_approval("domain").label == "Domein"
+    assert provider.get_approval("does-not-exist") is None
+
+
+def test_domain_approval_check_reads_stored_verdict():
+    """CHECK: status_of maps the persisted verdict onto ApprovalStatus, for a value the
+    service knows how to identify (a domain string). Unknown -> NONE (nothing to gate)."""
+    from opi.services.catalog.approval import ApprovalStatus
+
+    dom = get_service(ServiceType.PUBLISH_ON_WEB).get_approval("domain")
+    assert dom.status(_APPROVAL_PROJECT, "ok.nl") is ApprovalStatus.APPROVED
+    assert dom.status(_APPROVAL_PROJECT, "wait.nl") is ApprovalStatus.REQUESTED
+    assert dom.status(_APPROVAL_PROJECT, "no.nl") is ApprovalStatus.DENIED
+    assert dom.status(_APPROVAL_PROJECT, "unknown.nl") is ApprovalStatus.NONE
+    # the common gating shortcut
+    assert dom.is_approved(_APPROVAL_PROJECT, "ok.nl") is True
+    assert dom.is_approved(_APPROVAL_PROJECT, "wait.nl") is False
+
+
+def test_subdomain_approval_check_reads_stored_verdict():
+    """CHECK: a compound value (domain, subdomain) resolves through the service's rule."""
+    from opi.services.catalog.approval import ApprovalStatus
+
+    sub = get_service(ServiceType.PUBLISH_ON_WEB).get_approval("subdomain")
+    assert sub.is_approved(_APPROVAL_PROJECT, ("ok.nl", "app")) is True
+    assert sub.status(_APPROVAL_PROJECT, ("ok.nl", "missing")) is ApprovalStatus.NONE
+
+
+def test_services_without_approvals_default_empty():
+    """Services with nothing to approve return the empty default at every layer."""
+    redis = get_service(ServiceType.REDIS)
+    assert all(redis.config_approvals(layer) == [] for layer in ConfigLayer)
+    assert redis.get_approval("domain") is None

@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 
     from opi.forms.editables.editable import Editable
     from opi.forms.visualizers.sections import FormSection
+    from opi.services.catalog.approval import ApprovalSpec
     from opi.services.services_enums import ServiceType
     from opi.utils.secrets import BaseSecret
 
@@ -375,6 +376,25 @@ class Service(ABC):
         if self.config_model is None:
             return []
         return [field.alias or name for name, field in self.config_model.model_fields.items()]
+
+    # --- approval ownership (RC-5 "service owns what needs approving") -----------
+    # A service declares, as data, which of the values it manages need approval before
+    # they take effect, and supplies the rule that reads the stored approval state back.
+    # Generic code (a catalog-driven approval interface, enforcers) consumes these
+    # uniformly instead of hard-coding one subsystem per approvable thing. See
+    # ``opi/services/catalog/approval.py``.
+
+    def config_approvals(self, layer: ConfigLayer) -> list[ApprovalSpec]:
+        """The approval declarations this service contributes at ``layer`` (default none)."""
+        return []
+
+    def get_approval(self, key: str) -> ApprovalSpec | None:
+        """This service's ApprovalSpec with ``key`` (searched across layers), or None."""
+        for layer in ConfigLayer:
+            for spec in self.config_approvals(layer):
+                if spec.key == key:
+                    return spec
+        return None
 
     async def provision(self, ctx: ProvisionContext) -> None:
         """Provision this service's deployment-level resources (RC-5 Phase 4).
