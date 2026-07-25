@@ -61,11 +61,31 @@ duplicated or moved. The state still lives in the root `domains:` block; the spe
 reads it where it is. `ApprovalStatus`' three non-`NONE` values equal the persisted
 status strings, so a stored verdict maps straight onto the enum.
 
-Still **future** (deliberately not in this slice, because each is real work with blast
-radius): the generic approval **interface/router** that iterates catalog specs for an
-approver and records verdicts (replacing `router_subdomain_admin`); moving the approval
-**state** from root `domains:` under publish-on-web (schema + data migration); the
-**persistence** ownership below.
+### Delivered — the generic, catalog-driven approver interface
+
+The router no longer hard-codes the domains subsystem. `ApprovalSpec` gained two more
+callbacks alongside `status_of`:
+- `list_items(project_data) -> list[ApprovalItem]` (LIST) — enumerate the approvable
+  items this spec currently has in a project.
+- `record(project_data, item, history_entry)` (RECORD) — persist one approver verdict.
+
+publish-on-web owns the domain/subdomain LIST + RECORD logic (moved out of the router
+and the wizard section). `opi/services/approvals.py` is the generic layer:
+`collect_approval_items` iterates `approval_services()` and tags each item with its
+owning `service` + spec `key`; `apply_approval_verdicts` builds the uniform history
+entry once and routes each decided item back to the owning spec's `record` (falling
+back to spec-key routing for an untagged in-flight item). `router_subdomain_admin` and
+the approval section's `post_merge` now just call these — no domain/subdomain switch
+left in generic code. The approval editables/visualizers (`fields/approval.py`) are the
+UI wire contract; the hidden `service` field was added to `approval_items.html.j2` so
+the owner tag survives the form round-trip. `Service.approval_specs()` +
+`registry.approval_services()` are the catalog-wide entry points.
+
+Still **future** (deliberately not yet, each is real work with blast radius): moving the
+approval **state** from root `domains:` under publish-on-web (schema + data migration —
+the next step, to be verified against the sandbox cluster); the **persistence**
+ownership below. The `router_subdomain_admin` module + URL prefix keep the domain name
+for now; renaming it to a generic `/admin/approvals` is cosmetic and deferred.
 
 ## 2. Domains are misplaced at root — decompose into three concerns
 

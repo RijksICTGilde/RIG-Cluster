@@ -744,3 +744,80 @@ def test_services_without_approvals_default_empty():
     redis = get_service(ServiceType.REDIS)
     assert all(redis.config_approvals(layer) == [] for layer in ConfigLayer)
     assert redis.get_approval("domain") is None
+
+
+# --- generic, catalog-driven approver interface ----------------------------------
+# The router lists pending items + records verdicts by iterating the catalog's specs,
+# not by hard-coding the domains subsystem.
+
+
+def test_approval_services_are_discovered_from_the_catalog():
+    """approval_services() surfaces exactly the services that declare an ApprovalSpec."""
+    from opi.services.registry import approval_services
+
+    services = approval_services()
+    assert get_service(ServiceType.PUBLISH_ON_WEB) in services
+    # a service with no approvals is not listed
+    assert get_service(ServiceType.REDIS) not in services
+
+
+def test_collect_approval_items_tags_owner_across_catalog():
+    """LIST: the generic collector concatenates each spec's items and tags them with
+    the owning service + spec key, so a verdict can later be routed back."""
+    from opi.services.approvals import collect_approval_items
+
+    items = collect_approval_items(_APPROVAL_PROJECT)
+    # 3 domains + 1 subdomain from the fixture
+    assert len(items) == 4
+    assert all(i["service"] == ServiceType.PUBLISH_ON_WEB.value for i in items)
+    assert {i["type"] for i in items} == {"domain", "subdomain"}
+    assert all(i["status"] == "skip" for i in items)
+
+
+def test_apply_approval_verdicts_routes_to_owning_spec():
+    """RECORD: the generic applier routes a decided item to its spec's record, writing
+    the new status + a history entry; skips are left untouched."""
+    import copy
+
+    from opi.services.approvals import apply_approval_verdicts
+
+    project = copy.deepcopy(_APPROVAL_PROJECT)
+    items = [
+        {
+            "service": "publish-on-web",
+            "type": "domain",
+            "domain": "wait.nl",
+            "name": "wait.nl",
+            "status": "approved",
+            "message": "ok",
+        },
+        {"service": "publish-on-web", "type": "subdomain", "domain": "ok.nl", "name": "app", "status": "skip"},
+    ]
+    apply_approval_verdicts(project, items, admin_email="admin@test.nl")
+
+    approved = next(d for d in project["domains"]["allowed-domains"] if d["domain"] == "wait.nl")
+    assert approved["status"] == "approved"
+    assert approved["history"][-1] == {
+        "date": approved["history"][-1]["date"],  # timestamp is dynamic
+        "status": "approved",
+        "by": "admin@test.nl",
+        "message": "ok",
+    }
+    # the skipped subdomain is unchanged (still approved, no new history)
+    sub = project["domains"]["allowed-subdomains"][0]["subdomains"][0]
+    assert sub["status"] == "approved"
+    assert "history" not in sub or len(sub["history"]) == 0
+
+
+def test_apply_approval_verdicts_falls_back_to_type_when_untagged():
+    """An in-flight item without a ``service`` tag still routes on its spec key."""
+    import copy
+
+    from opi.services.approvals import apply_approval_verdicts
+
+    project = copy.deepcopy(_APPROVAL_PROJECT)
+    items = [{"type": "domain", "domain": "wait.nl", "name": "wait.nl", "status": "denied"}]
+    apply_approval_verdicts(project, items)
+
+    denied = next(d for d in project["domains"]["allowed-domains"] if d["domain"] == "wait.nl")
+    assert denied["status"] == "denied"

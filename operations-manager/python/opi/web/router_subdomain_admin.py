@@ -28,6 +28,7 @@ from opi.forms.wizard.session import (
     init_modal_state_tokenized,
     save_modal_state_by_token,
 )
+from opi.services.approvals import collect_approval_items
 from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
 from opi.web.menu import get_menu_items
@@ -125,50 +126,6 @@ def _render_modal_step(
     return rendered
 
 
-def _collect_approval_items(project_data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract all domain and subdomain entries from a project as flat approval items."""
-    items: list[dict[str, Any]] = []
-    domains = project_data.get("domains")
-    if not domains or not isinstance(domains, dict):
-        return items
-
-    # Allowed domains (custom/non-default domains)
-    for entry in domains.get("allowed-domains", []):
-        if not isinstance(entry, dict):
-            continue
-        items.append(
-            {
-                "type": "domain",
-                "domain": entry.get("domain", ""),
-                "name": entry.get("domain", ""),
-                "current_status": entry.get("status", ""),
-                "status": "skip",
-                "history": entry.get("history", []),
-            }
-        )
-
-    # Allowed subdomains
-    for entry in domains.get("allowed-subdomains", []):
-        if not isinstance(entry, dict):
-            continue
-        base_domain = entry.get("domain", "")
-        for sub in entry.get("subdomains", []):
-            if not isinstance(sub, dict):
-                continue
-            items.append(
-                {
-                    "type": "subdomain",
-                    "domain": base_domain,
-                    "name": sub.get("name", ""),
-                    "current_status": sub.get("status", ""),
-                    "status": "skip",
-                    "history": sub.get("history", []),
-                }
-            )
-
-    return items
-
-
 def _collect_all_projects_approval_data() -> list[dict[str, Any]]:
     """Collect domain/subdomain data across all projects for the listing page."""
     all_projects = get_project_store().get_all()
@@ -177,7 +134,7 @@ def _collect_all_projects_approval_data() -> list[dict[str, Any]]:
     for project in sorted(all_projects, key=lambda p: p.name):
         project_name = project.name
         project_data = project.data or {}
-        items = _collect_approval_items(project_data)
+        items = collect_approval_items(project_data)
         if items:
             result.append(
                 {
@@ -232,7 +189,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
 
     project_data = project.data or {}
-    approval_items = _collect_approval_items(project_data)
+    approval_items = collect_approval_items(project_data)
     if not approval_items:
         raise HTTPException(status_code=400, detail="Geen domein- of subdomeinaanvragen voor dit project")
 
