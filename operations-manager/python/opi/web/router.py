@@ -30,12 +30,12 @@ from opi.web.menu import get_menu_items
 
 from ..utils.age import decrypt_age_content
 from .metrics_explorer_router import metrics_explorer_router
+from .router_approvals import approvals_router
 from .router_attachments import attachments_router
 from .router_db_console import db_console_router
 from .router_detail_edit import detail_edit_router
 from .router_jobs import jobs_router
 from .router_self_service import check_subdomain_availability_web
-from .router_subdomain_admin import subdomain_admin_router
 from .router_usage import usage_router
 from .router_user_admin import user_admin_router
 from .router_wizard import wizard_router
@@ -55,7 +55,7 @@ web_router.include_router(detail_edit_router)
 web_router.include_router(wizard_router)
 web_router.include_router(user_admin_router)
 web_router.include_router(usage_router)
-web_router.include_router(subdomain_admin_router)
+web_router.include_router(approvals_router)
 web_router.include_router(attachments_router)
 web_router.include_router(wizard_attachments_router)
 web_router.include_router(db_console_router)

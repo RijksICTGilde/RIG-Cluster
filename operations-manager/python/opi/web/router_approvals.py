@@ -1,4 +1,9 @@
-"""Admin routes for domain and subdomain approval management.
+"""Admin routes for the generic, catalog-driven approver interface (RC-5).
+
+Lists pending approval items across all projects and drives the approve/deny modal.
+The items + verdicts flow through the catalog ApprovalSpecs (opi/services/approvals.py),
+so this router is not domain-specific; domains are simply the only approvable today.
+Historically ``router_subdomain_admin`` at ``/admin/subdomains``.
 
 Provides a listing page of all domain/subdomain requests across projects,
 and admin-scoped modal wizard endpoints for approving/denying requests.
@@ -36,9 +41,9 @@ from opi.web.router_wizard import _apply_literal_scalars
 
 logger = logging.getLogger(__name__)
 
-subdomain_admin_router = APIRouter(prefix="/admin/subdomains", tags=["subdomain-admin"])
+approvals_router = APIRouter(prefix="/admin/approvals", tags=["approvals"])
 
-FLOW_ID = "admin-domain-approval"
+FLOW_ID = "admin-approval"
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +119,7 @@ def _render_modal_step(
         "wizard_token": wizard_token,
         "errors": errors or {},
         "global_errors": global_errors or [],
-        "step_base_url": f"/admin/subdomains/{project_name}/modal-wizard/{FLOW_ID}/step/",
+        "step_base_url": f"/admin/approvals/{project_name}/modal-wizard/{FLOW_ID}/step/",
         "step_target": "#edit-section-inner",
         "step_push_url": False,
         "step_query_params": "",
@@ -150,7 +155,7 @@ def _collect_all_projects_approval_data() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-@subdomain_admin_router.get("", response_class=HTMLResponse)
+@approvals_router.get("", response_class=HTMLResponse)
 @requires_sso
 async def list_subdomains(request: Request) -> HTMLResponse:
     """List all domain/subdomain requests across all projects."""
@@ -165,7 +170,7 @@ async def list_subdomains(request: Request) -> HTMLResponse:
 
     templates = get_templates()
     return templates.TemplateResponse(
-        "admin/subdomains.html.j2",
+        "admin/approvals.html.j2",
         {
             "request": request,
             "menu_items": get_menu_items(user),
@@ -175,7 +180,7 @@ async def list_subdomains(request: Request) -> HTMLResponse:
     )
 
 
-@subdomain_admin_router.get("/{project_name}/modal-wizard/{flow_id}", response_class=HTMLResponse)
+@approvals_router.get("/{project_name}/modal-wizard/{flow_id}", response_class=HTMLResponse)
 @requires_sso
 async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """Initialize the domain approval modal wizard for a project."""
@@ -216,7 +221,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     return HTMLResponse(content=rendered)
 
 
-@subdomain_admin_router.post(
+@approvals_router.post(
     "/{project_name}/modal-wizard/{flow_id}/step/{section_id}",
     response_class=HTMLResponse,
 )

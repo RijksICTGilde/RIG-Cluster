@@ -209,7 +209,7 @@
         document.getElementById('approval-modal').classList.add('is-open');
         document.body.style.overflow = 'hidden';
 
-        fetch('/admin/subdomains/' + projectName + '/modal-wizard/admin-domain-approval', {
+        fetch('/admin/approvals/' + projectName + '/modal-wizard/admin-approval', {
             credentials: 'same-origin',
         })
         .then(function(response) {
