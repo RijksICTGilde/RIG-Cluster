@@ -556,6 +556,28 @@ def test_namespace_postgres_owns_its_config_section():
     assert set(api_fields) >= {"instances", "storage", "image", "privileges"}
 
 
+def test_metrics_scraper_hooks_into_component_form():
+    """metrics-scraper is a component-level service: no standalone wizard section, it
+    HOOKS its fieldset into the per-component form via config_component_layout()."""
+    provider = get_service(ServiceType.METRICS_SCRAPER)
+
+    # no standalone project/edit section
+    assert provider.config_form_section(ConfigLayer.PROJECT) is None
+    # contributes exactly one component-form fieldset
+    nodes = provider.config_component_layout()
+    assert len(nodes) == 1
+    assert nodes[0].legend == "Prometheus metrics scraper configuratie"
+    assert nodes[0].children == ["services{metrics-scraper}/port", "services{metrics-scraper}/path"]
+    # component-level api fields + editables
+    assert set(provider.config_api_fields(ConfigLayer.COMPONENT)) == {"port", "path"}
+    assert [e.yaml_path for e in provider.config_editables(ConfigLayer.COMPONENT)] == [
+        "components[*]/services{metrics-scraper}/port",
+        "components[*]/services{metrics-scraper}/path",
+    ]
+    # a project-level service (auth-wall) contributes NO component layout
+    assert get_service(ServiceType.AUTHORIZATION_WALL).config_component_layout() == []
+
+
 def test_config_path_builds_from_enums():
     """Service config yaml_paths are built from ConfigLayer + ServiceType enums, not
     hardcoded strings - one place encodes each layer's path shape."""
