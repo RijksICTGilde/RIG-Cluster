@@ -578,6 +578,21 @@ def test_metrics_scraper_hooks_into_component_form():
     assert get_service(ServiceType.AUTHORIZATION_WALL).config_component_layout() == []
 
 
+def test_storage_services_hook_sequences_into_component_form():
+    """persistent/temp-storage are component-level: each hooks a mounts Sequence into
+    the component form and owns its component config editables."""
+    for service_type, field_name in (
+        (ServiceType.PERSISTENT_STORAGE, "services{persistent-storage}/config"),
+        (ServiceType.TEMP_STORAGE, "services{temp-storage}/config"),
+    ):
+        provider = get_service(service_type)
+        assert provider.config_form_section(ConfigLayer.PROJECT) is None
+        nodes = provider.config_component_layout()
+        assert len(nodes) == 1
+        assert nodes[0].field_name == field_name
+        assert len(provider.config_editables(ConfigLayer.COMPONENT)) == 1
+
+
 def test_config_path_builds_from_enums():
     """Service config yaml_paths are built from ConfigLayer + ServiceType enums, not
     hardcoded strings - one place encodes each layer's path shape."""
