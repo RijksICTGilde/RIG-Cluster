@@ -17,6 +17,7 @@ from opi.services.provider import (
     ProvisionContext,
     RemovalContext,
     ServiceProvider,
+    config_path,
 )
 from opi.services.registry import (
     SERVICE_PROVIDERS,
@@ -526,7 +527,36 @@ def test_auth_wall_owns_its_config_section():
     assert [e.yaml_path for e in provider.config_editables(ConfigLayer.PROJECT)] == [
         "services/authorization-wall/config/banner"
     ]
+    # api fields are DERIVED from AuthorizationWallConfig (banner), not re-declared
     assert provider.config_api_fields(ConfigLayer.PROJECT) == ["banner"]
+    assert provider.config_api_fields(ConfigLayer.PROJECT) == provider.config_model_field_names()
+
+
+def test_config_path_builds_from_enums():
+    """Service config yaml_paths are built from ConfigLayer + ServiceType enums, not
+    hardcoded strings - one place encodes each layer's path shape."""
+    assert (
+        config_path(ConfigLayer.PROJECT, ServiceType.AUTHORIZATION_WALL, "config", "banner")
+        == "services/authorization-wall/config/banner"
+    )
+    assert (
+        config_path(ConfigLayer.COMPONENT, ServiceType.PERSISTENT_STORAGE, "config[*]", "name")
+        == "components[*]/services{persistent-storage}/config[*]/name"
+    )
+    assert config_path(ConfigLayer.DEPLOYMENT, ServiceType.POSTGRESQL_DATABASE) == (
+        "deployments[*]/services{postgresql-database}"
+    )
+
+
+def test_auth_wall_depends_on_keycloak():
+    """auth-wall does not work without keycloak: its definition requires it, and
+    selecting auth-wall alone pulls keycloak (+ publish-on-web) in."""
+    provider = get_provider(ServiceType.AUTHORIZATION_WALL)
+    assert "services/keycloak" in provider.definition.requires
+
+    resolved = ServiceAdapter.resolve_service_dependencies(["authorization-wall"])
+    assert "keycloak" in resolved
+    assert "publish-on-web" in resolved
 
 
 def test_config_ownership_defaults_are_noop():
