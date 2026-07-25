@@ -12,8 +12,40 @@ service depends on those; it does not own them.
 
 from __future__ import annotations
 
+from typing import Any
+
+from opi.services.catalog.approval import ApprovalSpec, ApprovalStatus, ApproverScope
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.services_enums import ServiceType
+
+
+def _to_status(stored: str | None) -> ApprovalStatus:
+    """Map a persisted status string onto ApprovalStatus; anything else -> NONE."""
+    try:
+        return ApprovalStatus(stored)
+    except ValueError:
+        return ApprovalStatus.NONE
+
+
+def _domain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+    """Approval status of a requested domain (``value`` is the domain string).
+
+    Reads the stored state via the existing pure predicate -- no rules duplicated here.
+    """
+    from opi.connectors.subdomain import get_project_allowed_domain_config
+
+    cfg = get_project_allowed_domain_config(project_data, value)
+    if not isinstance(cfg, dict):
+        return ApprovalStatus.NONE
+    return _to_status(cfg.get("status"))
+
+
+def _subdomain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+    """Approval status of a requested subdomain (``value`` is a ``(domain, subdomain)``)."""
+    from opi.connectors.subdomain import get_subdomain_status
+
+    domain, subdomain = value
+    return _to_status(get_subdomain_status(project_data, domain, subdomain))
 
 
 class PublishOnWebService(Service):
@@ -32,6 +64,28 @@ class PublishOnWebService(Service):
         )
 
         return [PUBLISH_ON_WEB_TLS_EDITABLE, PUBLISH_ON_WEB_ATTACHMENT_EDITABLE]
+
+    def config_approvals(self, layer: ConfigLayer):
+        # A deployment's requested domain / subdomain needs platform-admin approval
+        # before ingress is generated for it. The rule (status_of) reuses the existing
+        # pure predicates; the state still lives in the project's ``domains:`` block
+        # (moving it under this service is a separate schema+data migration).
+        if layer is not ConfigLayer.DEPLOYMENT:
+            return []
+        return [
+            ApprovalSpec(
+                key="domain",
+                label="Domein",
+                approver=ApproverScope.PLATFORM_ADMIN,
+                status_of=_domain_status,
+            ),
+            ApprovalSpec(
+                key="subdomain",
+                label="Subdomein",
+                approver=ApproverScope.PLATFORM_ADMIN,
+                status_of=_subdomain_status,
+            ),
+        ]
 
     def config_component_layout(self):
         from opi.forms.layout import Fieldset
