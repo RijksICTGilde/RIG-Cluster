@@ -59,8 +59,8 @@ from opi.forms.visualizers.fields.services import (
 from opi.forms.visualizers.fields.team import USERS_SEQUENCE
 from opi.forms.visualizers.sections import FormSection
 from opi.forms.visualizers.visualizer import EditableVisualizer
-from opi.services.provider import ConfigLayer
-from opi.services.registry import get_provider
+from opi.services.catalog.base import ConfigLayer
+from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 
 
@@ -347,7 +347,7 @@ def build_deployment_wizard_section(deployment_index: int) -> FormSection:
 # built by AuthorizationWallProvider.config_form_section() and merely re-exported here
 # under the familiar name, so flows.py / EDIT_SECTIONS / tests keep referring to it.
 # (keycloak / postgres sections still live hand-authored above until they follow.)
-AUTH_WALL_CONFIG_SECTION = get_provider(ServiceType.AUTHORIZATION_WALL).config_form_section(ConfigLayer.PROJECT)
+AUTH_WALL_CONFIG_SECTION = get_service(ServiceType.AUTHORIZATION_WALL).config_form_section(ConfigLayer.PROJECT)
 
 # ---------------------------------------------------------------------------
 # Lookup for conditional sections keyed by service name
@@ -366,7 +366,7 @@ _CONFIG_SECTIONS_BY_ID: dict[str, FormSection] = {
 SERVICE_CONFIG_SECTIONS: dict[str, FormSection] = {
     service_type.value: _CONFIG_SECTIONS_BY_ID[provider.config_section_id]
     for service_type in ServiceType
-    if (provider := get_provider(service_type)).config_section_id in _CONFIG_SECTIONS_BY_ID
+    if (provider := get_service(service_type)).config_section_id in _CONFIG_SECTIONS_BY_ID
 }
 
 # ---------------------------------------------------------------------------

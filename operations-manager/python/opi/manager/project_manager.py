@@ -66,11 +66,11 @@ from opi.manager.project_validation import validate_component_references, valida
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
+from opi.services.catalog.base import ManifestContext, ProvisionContext, SecretFileSpec
 from opi.services.project import Project
 from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
 from opi.services.project_store import get_project_store
-from opi.services.provider import ManifestContext, ProvisionContext, SecretFileSpec
-from opi.services.registry import manifest_providers, provisioning_providers
+from opi.services.registry import manifest_services, provisioning_services
 from opi.services.services import service_entry_name
 from opi.utils.age import (
     decrypt_age_content,
@@ -1161,7 +1161,7 @@ class ProjectManager:
         The single place that turns a service's ``SecretFileSpec`` into a file:
         optional secret registration, cross-component alias resolution,
         ``create_manifest_file`` and obsolete-prune bookkeeping. Services declare the
-        spec (``ServiceProvider.build_secret_files``); this stays service-agnostic.
+        spec (``Service.build_secret_files``); this stays service-agnostic.
         """
         if spec.register_secret is not None:
             self._add_secret_to_create(deployment_name, spec.secret_type, spec.register_secret)
@@ -4502,7 +4502,7 @@ class ProjectManager:
                         keycloak_manager=self._keycloak_manager,
                         redis_manager=self._redis_manager,
                     )
-                    for provider in provisioning_providers():
+                    for provider in provisioning_services():
                         await provider.provision(provision_ctx)
 
             # Generate application manifests (including PVC) BEFORE setting clone status.
@@ -5153,7 +5153,7 @@ class ProjectManager:
             )
             manifest_contributions = [
                 provider.contribute_manifest_context(manifest_ctx)
-                for provider in manifest_providers()
+                for provider in manifest_services()
                 if any(t.value in all_services for t in provider.manifest_activation_types())
             ]
 

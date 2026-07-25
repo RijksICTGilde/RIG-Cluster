@@ -1,409 +1,85 @@
-"""Service provider registry (RC-5 Phase 1).
+"""Service registry -- assembles the per-service modules into ``SERVICES``.
 
-``SERVICE_PROVIDERS`` maps every ``ServiceType`` to its ``ServiceProvider``
-instance -- the single place generic code looks up service behaviour. Adding a new
-service means adding one subclass here plus its registry entry; the coverage guard
-(``tests/test_service_providers.py``) fails CI if a ``ServiceType`` has no provider,
-which is what keeps the registry the single source of truth.
+``SERVICES`` maps every ``ServiceType`` to its ``Service`` instance -- the single
+place generic code looks up service behaviour. Each service lives in its own module
+under ``opi.services.catalog``; adding one means adding a module there plus one line
+here. The coverage guard (``tests/test_service_providers.py``) fails CI if a
+``ServiceType`` has no service, which keeps this the single source of truth.
 
-Phase 1 is metadata-only: each provider is a thin subclass carrying its existing
-``ServiceDefinition``. Config-shape, provisioning, cleanup and manifest behaviour
-land on individual providers in later phases; a provider grows its own module once
-it carries real behaviour (e.g. keycloak, namespace-postgres), while trivial
-services stay one-liners here.
+A *service* is a user-facing configuration-as-code building block (keycloak,
+postgresql-database, ...), NOT a connector/provider ("how OPI talks to a system").
 """
 
 from __future__ import annotations
 
-import logging
-import secrets
-
-from opi.core.cluster_config import get_minio_host, get_minio_port
-from opi.core.config import settings
-from opi.services.config_models.authorization_wall import AuthorizationWallConfig
-from opi.services.config_models.keycloak import KeycloakConfig
-from opi.services.config_models.metrics_scraper import MetricsScraperConfig
-from opi.services.config_models.namespace_postgres import NamespacePostgresConfig
-from opi.services.config_models.storage import StorageConfig
-from opi.services.provider import (
-    ConfigLayer,
-    ManifestContext,
-    ManifestContribution,
-    ProvisionContext,
-    SecretFileSpec,
-    ServiceProvider,
-    config_path,
-)
-from opi.services.services import service_entry_config, service_entry_name
+from opi.services.catalog.attachments import AttachmentsService
+from opi.services.catalog.authorization_wall import AuthorizationWallService
+from opi.services.catalog.base import Service
+from opi.services.catalog.keycloak import KeycloakService
+from opi.services.catalog.metrics_scraper import MetricsScraperService
+from opi.services.catalog.minio import MinioStorageService
+from opi.services.catalog.namespace_postgres import NamespacePostgresqlDatabaseService
+from opi.services.catalog.namespace_redis import NamespaceRedisService
+from opi.services.catalog.persistent_storage import PersistentStorageService
+from opi.services.catalog.platform import PlatformService
+from opi.services.catalog.postgresql_database import PostgresqlDatabaseService
+from opi.services.catalog.publish_on_web import PublishOnWebService
+from opi.services.catalog.redis import RedisService
+from opi.services.catalog.temp_storage import TempStorageService
 from opi.services.services_enums import ServiceType
-from opi.utils.secrets import DatabaseSecret, KeycloakSecret, MetricsAuthSecret, MinIOSecret, RedisSecret
-
-logger = logging.getLogger(__name__)
-
-
-class PublishOnWebProvider(ServiceProvider):
-    service_type = ServiceType.PUBLISH_ON_WEB
-
-
-class KeycloakProvider(ServiceProvider):
-    service_type = ServiceType.KEYCLOAK
-    cleanup_manager_key = "keycloak"
-    config_model = KeycloakConfig
-    config_schema_version = "1.0"
-    config_section_id = "keycloak-config"
-    modal_flow_id = "modal-edit-keycloak-config"
-    provision_order = 30
-    manifest_secret_class = KeycloakSecret
-    manifest_order = 30
-
-    async def provision(self, ctx: ProvisionContext) -> None:
-        await ctx.keycloak_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment)
-
-
-class AuthorizationWallProvider(ServiceProvider):
-    service_type = ServiceType.AUTHORIZATION_WALL
-    config_model = AuthorizationWallConfig
-    config_schema_version = "1.0"
-    config_section_id = "auth-wall-config"
-    modal_flow_id = "modal-edit-auth-wall-config"
-    # After the secret providers (10-50); an auth wall fronts the pod, so its
-    # service_port override applies last (RC-5 Phase 6b).
-    manifest_order = 60
-
-    # --- config field ownership (RC-5 prototype) --------------------------------
-    # auth-wall owns its single project-level field (banner). The wizard/edit layer
-    # sources this section from here instead of hand-authoring it in wizard_sections.
-    # Forms building blocks are imported lazily so registry.py stays forms-free at
-    # import time (avoids the forms -> registry -> forms cycle).
-
-    def _config_selected(self, project_data: dict[str, Any]) -> bool:
-        """Section visibility: derived from this provider's service_type, not a
-        hardcoded service-name string."""
-        return self.service_type.value in [
-            service_entry_name(entry) for entry in project_data.get("services", []) or []
-        ]
-
-    def config_api_fields(self, layer: ConfigLayer) -> list[str]:
-        # Derived from AuthorizationWallConfig (banner), not re-declared here.
-        return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
-
-    def config_editables(self, layer: ConfigLayer):
-        if layer is not ConfigLayer.PROJECT:
-            return []
-        from opi.forms.editables.fields.services import AUTH_WALL_BANNER_EDITABLE
-
-        return [AUTH_WALL_BANNER_EDITABLE]
-
-    def config_form_section(self, layer: ConfigLayer):
-        if layer is not ConfigLayer.PROJECT:
-            return None
-        # Built once and cached so consumers that compare section identity (e.g.
-        # EDIT_SECTIONS[...] is AUTH_WALL_CONFIG_SECTION) keep seeing one object.
-        cached = getattr(self, "_config_section_cache", None)
-        if cached is None:
-            from opi.forms.visualizers.fields.services import AUTH_WALL_BANNER
-            from opi.forms.visualizers.sections import FormSection
-
-            cached = FormSection(
-                section_id="auth-wall-config",
-                title="Authorization wall configuratie",
-                icon="sleutel",
-                description="Instellingen voor de toegangspagina",
-                visible=self._config_selected,
-                post_save_action="process_project",
-                editables=[AUTH_WALL_BANNER],
-                layout=[config_path(ConfigLayer.PROJECT, self.service_type, "config", "banner")],
-            )
-            self._config_section_cache = cached
-        return cached
-
-    def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
-        # An auth wall sits in front of the pod: it adds the oauth2-proxy sidecar and
-        # overrides service_port to 4180 (the proxy port). Needs the deployment's
-        # already-provisioned keycloak secret for the proxy's issuer/client config.
-        keycloak_secret = ctx.get_secret(ctx.deployment_name, "keycloak", KeycloakSecret)
-        if keycloak_secret is None:
-            # Component asked for an auth wall but no keycloak service is configured;
-            # contribute nothing (matches the old warn-and-skip branch -- the manager
-            # still logs the warning).
-            return ManifestContribution()
-
-        banner_text = None
-        for service_item in ctx.project_data.get("services", []):
-            if service_entry_name(service_item) == ServiceType.AUTHORIZATION_WALL.value:
-                auth_wall_config = service_entry_config(service_item)
-                if isinstance(auth_wall_config, dict):
-                    banner_text = auth_wall_config.get("banner")
-                break
-
-        cookie_secret_name = f"{ctx.unique_name}-oauth2-cookie"
-        return ManifestContribution(
-            template_vars={
-                "authorization_wall": {
-                    "issuer_url": keycloak_secret.discovery_url.replace("/.well-known/openid-configuration", ""),
-                    "client_id": keycloak_secret.client_id,
-                    "keycloak_secret_name": KeycloakSecret.get_secret_name(ctx.deployment_name),
-                    "cookie_secret_name": cookie_secret_name,
-                    "banner": banner_text,
-                },
-                # The ingress goes through the auth proxy on 4180; the app's own primary
-                # port stays behind it (extra inbound ports keep their Service entries).
-                "service_port": 4180,
-            },
-            sidecars=["authorization-wall"],
-            # The oauth2-proxy needs a random cookie-signing secret; the shared writer
-            # SOPS-encrypts it. Its <deployment>-<component>- prefix survives the prune.
-            secret_files=[
-                SecretFileSpec(
-                    secret_name=cookie_secret_name,
-                    secret_pairs={"cookie-secret": secrets.token_urlsafe(32)},
-                )
-            ],
-        )
-
-
-class MetricsScraperProvider(ServiceProvider):
-    service_type = ServiceType.METRICS_SCRAPER
-    config_model = MetricsScraperConfig
-    config_schema_version = "1.0"
-    manifest_secret_class = MetricsAuthSecret
-    manifest_order = 50
-
-    def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
-        # Contribute the scrape port/path as a template var so the deployment's
-        # prometheus.io annotations point at the app's real metrics endpoint. The
-        # template falls back to the application port / "/metrics" when either is None.
-        contribution = super().contribute_manifest_context(ctx)  # envFrom + secret file
-        port, path = None, None
-        for service_item in (ctx.component_def or {}).get("services", []):
-            if service_entry_name(service_item) == ServiceType.METRICS_SCRAPER.value:
-                config = service_entry_config(service_item)
-                if isinstance(config, dict):
-                    port, path = config.get("port"), config.get("path")
-                break
-        contribution.template_vars["metrics_config"] = {"port": port, "path": path}
-        return contribution
-
-    def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:
-        token = settings.PROMETHEUS_METRICS_AUTH_TOKEN
-        if not token:
-            logger.warning(
-                f"Deployment '{ctx.deployment_name}' uses metrics-scraper but "
-                f"PROMETHEUS_METRICS_AUTH_TOKEN is not configured"
-            )
-            return []
-        return [
-            SecretFileSpec(
-                secret_name=MetricsAuthSecret.get_secret_name(ctx.deployment_name),
-                secret_pairs=MetricsAuthSecret(token=token).to_k8s_secret_data(),
-                secret_type="metrics",
-            )
-        ]
-
-
-class PersistentStorageProvider(ServiceProvider):
-    service_type = ServiceType.PERSISTENT_STORAGE
-    cleanup_manager_key = "pvc"
-    config_model = StorageConfig
-    config_schema_version = "1.0"
-
-
-class TempStorageProvider(ServiceProvider):
-    service_type = ServiceType.TEMP_STORAGE
-    config_model = StorageConfig
-    config_schema_version = "1.0"
-
-
-class PostgresqlDatabaseProvider(ServiceProvider):
-    service_type = ServiceType.POSTGRESQL_DATABASE
-    cleanup_manager_key = "database"
-    provision_order = 10
-    manifest_secret_class = DatabaseSecret
-    manifest_order = 10
-    # Shared provider: fires for both the shared and namespace postgres variant, so
-    # exactly one database envFrom secret is contributed (like provisioning).
-    manifest_activated_by = (ServiceType.POSTGRESQL_DATABASE, ServiceType.NAMESPACE_POSTGRESQL_DATABASE)
-
-    async def provision(self, ctx: ProvisionContext) -> None:
-        # database_manager handles both the shared and namespace postgres variants in
-        # one call, so only this provider provisions (namespace-postgres does not).
-        await ctx.database_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment, ctx.force_clone)
-
-    def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:
-        creds = ctx.get_secret(ctx.deployment_name, "database", DatabaseSecret)
-        if creds is None:
-            logger.warning(f"Deployment '{ctx.deployment_name}' uses PostgreSQL but no database credentials found")
-            return []
-        # host is already resolved by database_manager (namespace-specific or shared).
-        secret = DatabaseSecret(
-            host=creds.host,
-            port=creds.port,
-            username=creds.username,
-            password=creds.password,
-            database=creds.database,
-            schema=creds.schema,
-        )
-        return [
-            SecretFileSpec(
-                secret_name=DatabaseSecret.get_secret_name(ctx.deployment_name),
-                secret_pairs=secret.to_k8s_secret_data(),
-                secret_type="database",
-                resolve_aliases=True,
-                register_secret=secret,
-            )
-        ]
-
-
-class NamespacePostgresqlDatabaseProvider(ServiceProvider):
-    service_type = ServiceType.NAMESPACE_POSTGRESQL_DATABASE
-    cleanup_manager_key = "database"
-    config_model = NamespacePostgresConfig
-    config_schema_version = "1.0"
-    config_section_id = "postgresql-config"
-    modal_flow_id = "modal-edit-postgresql-config"
-
-
-class MinioStorageProvider(ServiceProvider):
-    service_type = ServiceType.MINIO_STORAGE
-    cleanup_manager_key = "minio"
-    provision_order = 20
-    manifest_secret_class = MinIOSecret
-    manifest_order = 20
-
-    async def provision(self, ctx: ProvisionContext) -> None:
-        await ctx.minio_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment, ctx.force_clone)
-
-    def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:
-        creds = ctx.get_secret(ctx.deployment_name, "minio", MinIOSecret)
-        if creds is None:
-            logger.warning(f"Deployment '{ctx.deployment_name}' uses MinIO but no object storage credentials found")
-            return []
-        # host/port are cluster-specific; the rest comes from the provisioned creds.
-        secret = MinIOSecret(
-            host=get_minio_host(ctx.cluster),
-            port=get_minio_port(ctx.cluster),
-            access_key=creds.access_key,
-            secret_key=creds.secret_key,
-            bucket_name=creds.bucket_name,
-            region=creds.region,
-        )
-        return [
-            SecretFileSpec(
-                secret_name=MinIOSecret.get_secret_name(ctx.deployment_name),
-                secret_pairs=secret.to_k8s_secret_data(),
-                secret_type="minio",
-                resolve_aliases=True,
-            )
-        ]
-
-
-class RedisProvider(ServiceProvider):
-    service_type = ServiceType.REDIS
-    cleanup_manager_key = "redis"
-    provision_order = 40
-    manifest_secret_class = RedisSecret
-    manifest_order = 40
-    # Shared provider: fires for both the shared and namespace redis variant.
-    manifest_activated_by = (ServiceType.REDIS, ServiceType.NAMESPACE_REDIS)
-
-    async def provision(self, ctx: ProvisionContext) -> None:
-        # redis_manager handles both the shared and namespace redis variants.
-        await ctx.redis_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment)
-
-    def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:
-        creds = ctx.get_secret(ctx.deployment_name, "redis", RedisSecret)
-        if creds is None:
-            logger.warning(f"Deployment '{ctx.deployment_name}' uses Redis but no cache credentials found")
-            return []
-        secret = RedisSecret(
-            host=creds.host,
-            port=creds.port,
-            username=creds.username,
-            password=creds.password,
-            key_prefix=creds.key_prefix,
-        )
-        return [
-            SecretFileSpec(
-                secret_name=RedisSecret.get_secret_name(ctx.deployment_name),
-                secret_pairs=secret.to_k8s_secret_data(),
-                secret_type="redis",
-                resolve_aliases=True,
-            )
-        ]
-
-
-class NamespaceRedisProvider(ServiceProvider):
-    service_type = ServiceType.NAMESPACE_REDIS
-    cleanup_manager_key = "redis"
-
-
-class PlatformProvider(ServiceProvider):
-    service_type = ServiceType.PLATFORM
-
-
-class AttachmentsProvider(ServiceProvider):
-    # Deliberately no config_model. Attachments is the polymorphic hard case: its
-    # config is two different shapes at two levels -- a project-level catalog
-    # (`data: [{id, filename, content}]`) and component-level uses
-    # (`config: [{reference, provide-as, path?, env-name?}]`) -- which does not fit
-    # one config_model per service. Both shapes are ALREADY guardrailed by the
-    # `attachment-data-entry` / `attachment-use-entry` $defs in project_v2.json, so a
-    # Pydantic model here would only duplicate an existing guard. Left as-is (YAGNI).
-    service_type = ServiceType.ATTACHMENTS
-
 
 # One entry per ServiceType. The coverage guard asserts completeness.
-SERVICE_PROVIDERS: dict[ServiceType, ServiceProvider] = {
-    ServiceType.PUBLISH_ON_WEB: PublishOnWebProvider(),
-    ServiceType.KEYCLOAK: KeycloakProvider(),
-    ServiceType.AUTHORIZATION_WALL: AuthorizationWallProvider(),
-    ServiceType.METRICS_SCRAPER: MetricsScraperProvider(),
-    ServiceType.PERSISTENT_STORAGE: PersistentStorageProvider(),
-    ServiceType.TEMP_STORAGE: TempStorageProvider(),
-    ServiceType.POSTGRESQL_DATABASE: PostgresqlDatabaseProvider(),
-    ServiceType.NAMESPACE_POSTGRESQL_DATABASE: NamespacePostgresqlDatabaseProvider(),
-    ServiceType.MINIO_STORAGE: MinioStorageProvider(),
-    ServiceType.REDIS: RedisProvider(),
-    ServiceType.NAMESPACE_REDIS: NamespaceRedisProvider(),
-    ServiceType.PLATFORM: PlatformProvider(),
-    ServiceType.ATTACHMENTS: AttachmentsProvider(),
+SERVICES: dict[ServiceType, Service] = {
+    ServiceType.PUBLISH_ON_WEB: PublishOnWebService(),
+    ServiceType.KEYCLOAK: KeycloakService(),
+    ServiceType.AUTHORIZATION_WALL: AuthorizationWallService(),
+    ServiceType.METRICS_SCRAPER: MetricsScraperService(),
+    ServiceType.PERSISTENT_STORAGE: PersistentStorageService(),
+    ServiceType.TEMP_STORAGE: TempStorageService(),
+    ServiceType.POSTGRESQL_DATABASE: PostgresqlDatabaseService(),
+    ServiceType.NAMESPACE_POSTGRESQL_DATABASE: NamespacePostgresqlDatabaseService(),
+    ServiceType.MINIO_STORAGE: MinioStorageService(),
+    ServiceType.REDIS: RedisService(),
+    ServiceType.NAMESPACE_REDIS: NamespaceRedisService(),
+    ServiceType.PLATFORM: PlatformService(),
+    ServiceType.ATTACHMENTS: AttachmentsService(),
 }
 
 
-def get_provider(service_type: ServiceType) -> ServiceProvider:
-    """Return the provider for a service type.
+def get_service(service_type: ServiceType) -> Service:
+    """Return the service for a service type.
 
-    Raises ``KeyError`` if no provider is registered -- the coverage guard prevents
-    that from happening for any ``ServiceType``.
+    Raises ``KeyError`` if none is registered -- the coverage guard prevents that
+    from happening for any ``ServiceType``.
     """
-    return SERVICE_PROVIDERS[service_type]
+    return SERVICES[service_type]
 
 
-def provisioning_providers() -> list[ServiceProvider]:
-    """Providers that provision deployment resources, in ``provision_order`` (RC-5
-    Phase 4). Only providers that override ``provision`` are included; the order
+def provisioning_services() -> list[Service]:
+    """Services that provision deployment resources, in ``provision_order`` (RC-5
+    Phase 4). Only services that override ``provision`` are included; the order
     reproduces today's fixed db -> minio -> keycloak -> redis sequence.
     """
-    overriding = [p for p in SERVICE_PROVIDERS.values() if type(p).provision is not ServiceProvider.provision]
-    return sorted(overriding, key=lambda p: p.provision_order)
+    overriding = [s for s in SERVICES.values() if type(s).provision is not Service.provision]
+    return sorted(overriding, key=lambda s: s.provision_order)
 
 
-def manifest_secret_providers() -> list[ServiceProvider]:
-    """Providers that contribute a per-deployment ``envFrom`` secret, in
+def manifest_secret_services() -> list[Service]:
+    """Services that contribute a per-deployment ``envFrom`` secret, in
     ``manifest_order`` (RC-5 Phase 6a). The order reproduces today's fixed envFrom
     append sequence (db -> minio -> keycloak -> redis -> metrics), so the generic
     component loop stays byte-identical.
     """
-    contributing = [p for p in SERVICE_PROVIDERS.values() if p.manifest_secret_class is not None]
-    return sorted(contributing, key=lambda p: p.manifest_order)
+    contributing = [s for s in SERVICES.values() if s.manifest_secret_class is not None]
+    return sorted(contributing, key=lambda s: s.manifest_order)
 
 
-def manifest_providers() -> list[ServiceProvider]:
-    """All providers that contribute to a component's manifests, in ``manifest_order``
-    (RC-5 Phase 6). Superset of ``manifest_secret_providers()`` -- also includes
-    override providers (auth-wall). The generic component loop calls each once and
+def manifest_services() -> list[Service]:
+    """All services that contribute to a component's manifests, in ``manifest_order``
+    (RC-5 Phase 6). Superset of ``manifest_secret_services()`` -- also includes
+    override services (auth-wall). The generic component loop calls each once and
     applies its ``ManifestContribution`` (additive env_from/sidecars, override
     template_vars).
     """
-    contributing = [p for p in SERVICE_PROVIDERS.values() if type(p).contributes_to_manifests()]
-    return sorted(contributing, key=lambda p: p.manifest_order)
+    contributing = [s for s in SERVICES.values() if type(s).contributes_to_manifests()]
+    return sorted(contributing, key=lambda s: s.manifest_order)

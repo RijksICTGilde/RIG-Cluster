@@ -8,7 +8,7 @@ from opi.forms.editables.converters import (
 )
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.validators import RangeValidator, RealmRoleValidator, UrlValidator
-from opi.services.provider import ConfigLayer, config_path
+from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.services_enums import ServiceType
 
 # ===========================================================================

@@ -46,7 +46,7 @@ FormSection  (forms/visualizers/wizard_sections.py)    ── groups editables +
 EditableFormProcessor.process_json_submission  (forms/editables/processor.py)
    │  read submitted[yaml_path] → validate → converter.write() → smart_set_value(dict, yaml_path)
    ▼
-project YAML dict  ──►  (separately) validated by ServiceProvider.config_model (Pydantic)
+project YAML dict  ──►  (separately) validated by Service.config_model (Pydantic)
 ```
 
 The editables layer and the `config_model` layer are **two independent descriptions
@@ -98,13 +98,13 @@ namespace-postgres `POSTGRESQL_CONFIG_SECTION`, auth-wall `AUTH_WALL_CONFIG_SECT
 each with a `visible` lambda that hardcodes a service-name **string literal**
 (`"keycloak" in _extract_services(data)`, etc.) rather than deriving from `ServiceType`.
 
-### What the ServiceProvider exposes today
+### What the Service exposes today
 
-`ServiceProvider` (`opi/services/provider.py`) carries for config:
+`Service` (`opi/services/catalog/base.py`) carries for config:
 `config_model`, `config_schema_version`, `migrate_config`, `validate_config`, and the
 **string ids** `config_section_id` / `modal_flow_id`. It has **no** `config_editables()`
 or `config_section()` — the link to the forms layer is one-directional and string
-based: `wizard_sections.py` imports `get_provider` and derives its section maps from
+based: `wizard_sections.py` imports `get_service` and derives its section maps from
 `config_section_id`. So the provider knows *that* a service has a config section, but
 the section's **content** (fields, defaults, validators, layout, visibility) still
 lives hand-authored in the forms layer.
@@ -212,7 +212,7 @@ extra step that service needs (some have their own screen, some plug in at compo
 level, some depend on another service). Conventions applied throughout:
 
 - **Enums, not strings.** Service identity via `ServiceType`, layer via `ConfigLayer`,
-  paths via `config_path(layer, service, *segments)` (`opi/services/provider.py`) - no
+  paths via `config_path(layer, service, *segments)` (`opi/services/catalog/base.py`) - no
   hardcoded `"services/authorization-wall/config/..."` literals. Enums document, grep
   and validate better.
 - **Reuse fields, don't re-declare.** Field names/defaults come from the service's

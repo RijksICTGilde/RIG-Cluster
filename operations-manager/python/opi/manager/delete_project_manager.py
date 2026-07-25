@@ -14,10 +14,10 @@ from opi.connectors.subdomain import SubdomainConnector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.catalog.base import RemovalContext
 from opi.services.project import Project
 from opi.services.project_store import get_project_store
-from opi.services.provider import RemovalContext
-from opi.services.registry import get_provider
+from opi.services.registry import get_service
 
 if TYPE_CHECKING:
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
@@ -2332,7 +2332,7 @@ class DeleteProjectManager:
                 # RC-5 Phase 5: dispatch cleanup through the provider registry instead
                 # of the _SERVICE_TYPE_MANAGER_ATTR map. Byte-identical -- the provider
                 # resolves the same manager by key and delegates handle_service_removal.
-                provider = get_provider(svc_type)
+                provider = get_service(svc_type)
                 if provider.cleanup_manager_key is None:
                     continue
 
