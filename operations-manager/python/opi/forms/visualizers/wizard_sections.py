@@ -175,8 +175,11 @@ COMPONENTS_SECTION = FormSection(
                         "user-env-vars",
                     ],
                 ),
-                Sequence(field_name="services{persistent-storage}/config"),
-                Sequence(field_name="services{temp-storage}/config"),
+                # Component-level services hook their fieldsets/sequences in here
+                # (persistent-storage, temp-storage, metrics-scraper), collected from the
+                # service catalog in registry order (explicit display priority is a later
+                # refinement). Kept where the storage sequences used to sit.
+                *_service_component_layouts(),
                 Sequence(field_name="services{attachments}/config"),
                 Fieldset(
                     legend="Publicatie op het web",
@@ -187,9 +190,6 @@ COMPONENTS_SECTION = FormSection(
                         "services{publish-on-web}/config/attachment",
                     ],
                 ),
-                # Component-level services hook their fieldsets in here (metrics-scraper
-                # today; storage etc. follow). Collected from the service catalog.
-                *_service_component_layouts(),
             ],
         ),
     ],
