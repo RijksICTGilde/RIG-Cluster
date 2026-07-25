@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from abc import ABC
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from opi.services.services import ServiceAdapter, ServiceDefinition
@@ -32,8 +33,28 @@ from opi.services.services import ServiceAdapter, ServiceDefinition
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.sections import FormSection
     from opi.services.services_enums import ServiceType
     from opi.utils.secrets import BaseSecret
+
+
+class ConfigLayer(Enum):
+    """The level of the project file at which a service contributes config.
+
+    A single service can plug in at more than one layer, each with a different
+    field set: the project-level ``services:`` definition, a component's
+    ``services:`` reference, a deployment's services, or a per-component override
+    inside a deployment. The layer is encoded in the editable ``yaml_path``
+    (``services/X/…`` vs ``components[*]/services{X}/…`` vs ``deployments[*]/…``);
+    this enum names it so a provider can answer "what do I contribute at layer L".
+    """
+
+    PROJECT = "project"
+    COMPONENT = "component"
+    DEPLOYMENT = "deployment"
+    DEPLOYMENT_COMPONENT = "deployment-component"
+
 
 #: A service's raw config as it appears in the project file: a dict for most
 #: services, or a list for sequence configs (e.g. storage mounts).
@@ -278,6 +299,29 @@ class ServiceProvider(ABC):
         config: ServiceConfigData = {} if raw_config is None else raw_config
         migrated = self.migrate_config(config, from_version or self.config_schema_version)
         return self.config_model.model_validate(migrated)
+
+    # --- config field ownership (RC-5 "service owns its fields") ----------------
+    # A service owns the fields it needs and exposes them per layer + per consumer.
+    # ``config_editables`` is the shared DATA (yaml_path + validator + default), used
+    # by both the wizard and the API; ``config_form_section`` is the wizard/embed UI
+    # view; ``config_api_fields`` the field names the API accepts. Defaults are empty,
+    # so a service with no config, or one not yet migrated to owning its fields, keeps
+    # working. Concrete providers import the forms building blocks lazily (inside the
+    # method) so provider.py / registry.py stay free of forms imports at load time.
+
+    def config_editables(self, layer: ConfigLayer) -> list[Editable]:
+        """The DATA editables this service contributes at ``layer`` (default none)."""
+        return []
+
+    def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
+        """The wizard/edit config section this service contributes at ``layer``, or
+        None. The forms layer sources its per-service sections from here instead of
+        hand-authoring them."""
+        return None
+
+    def config_api_fields(self, layer: ConfigLayer) -> list[str]:
+        """The config field names the API accepts at ``layer`` (default none)."""
+        return []
 
     async def provision(self, ctx: ProvisionContext) -> None:
         """Provision this service's deployment-level resources (RC-5 Phase 4).

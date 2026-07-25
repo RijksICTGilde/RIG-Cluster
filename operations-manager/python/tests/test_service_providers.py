@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from opi.services.provider import (
+    ConfigLayer,
     ManifestContext,
     ProvisionContext,
     RemovalContext,
@@ -501,3 +502,40 @@ def test_metrics_contributes_nulls_when_unconfigured():
     ctx = _manifest_ctx(component_def={"services": [{"reference": "metrics-scraper"}]})
     contribution = get_provider(ServiceType.METRICS_SCRAPER).contribute_manifest_context(ctx)
     assert contribution.template_vars["metrics_config"] == {"port": None, "path": None}
+
+
+# --- config field ownership (RC-5 prototype: auth-wall owns its fields) ----------
+
+
+def test_auth_wall_owns_its_config_section():
+    """The authorization-wall provider builds its own project-level config section
+    (the wizard/edit layer sources it from here). Visibility is derived from the
+    service_type, and the section object is cached so identity holds for consumers."""
+    provider = get_provider(ServiceType.AUTHORIZATION_WALL)
+
+    section = provider.config_form_section(ConfigLayer.PROJECT)
+    assert section is not None
+    assert section.section_id == "auth-wall-config"
+    # visibility derived from service_type, not a hardcoded string
+    assert section.visible({"services": ["authorization-wall"]}) is True
+    assert section.visible({"services": []}) is False
+    # cached: same object on repeat (consumers compare identity)
+    assert provider.config_form_section(ConfigLayer.PROJECT) is section
+
+    # data editables + api fields for the project layer
+    assert [e.yaml_path for e in provider.config_editables(ConfigLayer.PROJECT)] == [
+        "services/authorization-wall/config/banner"
+    ]
+    assert provider.config_api_fields(ConfigLayer.PROJECT) == ["banner"]
+
+
+def test_config_ownership_defaults_are_noop():
+    """Services that don't own config fields (and non-project layers) return the empty
+    defaults, so unmigrated services keep working."""
+    provider = get_provider(ServiceType.AUTHORIZATION_WALL)
+    assert provider.config_form_section(ConfigLayer.COMPONENT) is None
+    assert provider.config_api_fields(ConfigLayer.COMPONENT) == []
+    # a service with no config-field ownership yet
+    redis = get_provider(ServiceType.REDIS)
+    assert redis.config_form_section(ConfigLayer.PROJECT) is None
+    assert redis.config_editables(ConfigLayer.PROJECT) == []
