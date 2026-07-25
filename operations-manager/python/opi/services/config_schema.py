@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from opi.services.provider import ServiceProvider
+    from opi.services.catalog.base import Service
 
 SERVICE_SCHEMA_DIR = Path(__file__).resolve().parent.parent / "schemas" / "services"
 
@@ -37,7 +37,7 @@ def fragment_path(service_name: str, version: str) -> Path:
     return SERVICE_SCHEMA_DIR / fragment_filename(service_name, version)
 
 
-def render_service_config_schema(provider: ServiceProvider) -> str:
+def render_service_config_schema(provider: Service) -> str:
     """Render a provider's config model to deterministic JSON-schema text.
 
     ``sort_keys`` + fixed indent + trailing newline make the output byte-stable
@@ -53,11 +53,11 @@ def render_service_config_schema(provider: ServiceProvider) -> str:
 def write_all_service_config_schemas() -> list[Path]:
     """(Re)generate the committed fragment for every provider that has a config model."""
     # Imported here to avoid an import cycle (registry imports provider + config models).
-    from opi.services.registry import SERVICE_PROVIDERS
+    from opi.services.registry import SERVICES
 
     SERVICE_SCHEMA_DIR.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
-    for provider in SERVICE_PROVIDERS.values():
+    for provider in SERVICES.values():
         if provider.config_model is None:
             continue
         path = fragment_path(provider.service_type.value, provider.config_schema_version)

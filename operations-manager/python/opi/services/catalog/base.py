@@ -1,9 +1,9 @@
-"""ServiceProvider base class (RC-5 Phase 1).
+"""Service base class (RC-5 Phase 1).
 
 The RC-5 migration ("Uniform, Declarative Platform Services") replaces the ~14
 hand-maintained per-service edit sites with a single declarative unit per service:
-a ``ServiceProvider`` subclass, registered once in
-``opi.services.registry.SERVICE_PROVIDERS``. Generic code then iterates the registry
+a ``Service`` subclass, registered once in
+``opi.services.registry.SERVICES``. Generic code then iterates the registry
 instead of hand-synced wizard/flow/provisioning/cleanup/manifest lists.
 
 This module is intentionally dependency-light -- it imports only the service
@@ -204,7 +204,7 @@ class ManifestContribution:
     secret_files: list[SecretFileSpec] = field(default_factory=list)
 
 
-class ServiceProvider(ABC):
+class Service(ABC):
     """One subclass per ``ServiceType``; the single declarative home for a service.
 
     A subclass sets ``service_type``; the matching ``ServiceDefinition`` is bound
@@ -408,7 +408,7 @@ class ServiceProvider(ABC):
         """
         return (
             cls.manifest_secret_class is not None
-            or cls.contribute_manifest_context is not ServiceProvider.contribute_manifest_context
+            or cls.contribute_manifest_context is not Service.contribute_manifest_context
         )
 
     def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
