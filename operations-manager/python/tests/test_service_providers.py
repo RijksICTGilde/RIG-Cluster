@@ -614,6 +614,7 @@ def test_component_layout_collection_is_ordered_by_config_component_order():
     assert labels == [
         "services{persistent-storage}/config",
         "services{temp-storage}/config",
+        "services{attachments}/config",
         "Publicatie op het web",
         "Prometheus metrics scraper configuratie",
     ]
