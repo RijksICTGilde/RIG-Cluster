@@ -32,6 +32,7 @@ from opi.services.provider import (
     ProvisionContext,
     SecretFileSpec,
     ServiceProvider,
+    config_path,
 )
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
@@ -83,7 +84,8 @@ class AuthorizationWallProvider(ServiceProvider):
         ]
 
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
-        return ["banner"] if layer is ConfigLayer.PROJECT else []
+        # Derived from AuthorizationWallConfig (banner), not re-declared here.
+        return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
 
     def config_editables(self, layer: ConfigLayer):
         if layer is not ConfigLayer.PROJECT:
@@ -110,7 +112,7 @@ class AuthorizationWallProvider(ServiceProvider):
                 visible=self._config_selected,
                 post_save_action="process_project",
                 editables=[AUTH_WALL_BANNER],
-                layout=["services/authorization-wall/config/banner"],
+                layout=[config_path(ConfigLayer.PROJECT, self.service_type, "config", "banner")],
             )
             self._config_section_cache = cached
         return cached

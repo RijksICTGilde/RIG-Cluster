@@ -8,6 +8,8 @@ from opi.forms.editables.converters import (
 )
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.validators import RangeValidator, RealmRoleValidator, UrlValidator
+from opi.services.provider import ConfigLayer, config_path
+from opi.services.services_enums import ServiceType
 
 # ===========================================================================
 # Pure Editable definitions (data logic only)
@@ -135,6 +137,6 @@ POSTGRESQL_STORAGE_EDITABLE = Editable(
 # --- Authorization wall ---
 
 AUTH_WALL_BANNER_EDITABLE = Editable(
-    yaml_path="services/authorization-wall/config/banner",
+    yaml_path=config_path(ConfigLayer.PROJECT, ServiceType.AUTHORIZATION_WALL, "config", "banner"),
     virtualize=_SVC_VIRT,
 )
