@@ -123,13 +123,13 @@ KEYCLOAK_REALM_ROLES_EDITABLE = Editable(
 # --- PostgreSQL ---
 
 POSTGRESQL_INSTANCES_EDITABLE = Editable(
-    yaml_path="services/namespace-postgresql-database/config/instances",
+    yaml_path=config_path(ConfigLayer.PROJECT, ServiceType.NAMESPACE_POSTGRESQL_DATABASE, "config", "instances"),
     validator=RangeValidator(min_value=1, max_value=5),
     virtualize=_SVC_VIRT,
 )
 
 POSTGRESQL_STORAGE_EDITABLE = Editable(
-    yaml_path="services/namespace-postgresql-database/config/storage",
+    yaml_path=config_path(ConfigLayer.PROJECT, ServiceType.NAMESPACE_POSTGRESQL_DATABASE, "config", "storage"),
     values_provider="StorageSizeOptionsProvider",
     virtualize=_SVC_VIRT,
 )

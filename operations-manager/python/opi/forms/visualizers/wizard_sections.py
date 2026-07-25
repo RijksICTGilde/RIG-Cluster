@@ -52,8 +52,6 @@ from opi.forms.visualizers.fields.services import (
     KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG,
     KEYCLOAK_RESTRICT_ACCESS_ROLE,
     KEYCLOAK_TEMPLATE,
-    POSTGRESQL_INSTANCES,
-    POSTGRESQL_STORAGE,
     SERVICES,
 )
 from opi.forms.visualizers.fields.team import USERS_SEQUENCE
@@ -268,18 +266,11 @@ KEYCLOAK_CONFIG_SECTION = FormSection(
     ],
 )
 
-POSTGRESQL_CONFIG_SECTION = FormSection(
-    section_id="postgresql-config",
-    title="Database configuratie",
-    icon="database",
-    description="PostgreSQL database-instellingen",
-    visible=lambda data: "namespace-postgresql-database" in _extract_services(data),
-    post_save_action="process_project",
-    editables=[POSTGRESQL_INSTANCES, POSTGRESQL_STORAGE],
-    layout=[
-        "services/namespace-postgresql-database/config/instances",
-        "services/namespace-postgresql-database/config/storage",
-    ],
+# RC-5: the namespace-postgres service owns its config section (built by
+# NamespacePostgresqlDatabaseService.config_form_section); re-exported here under the
+# familiar name so flows / EDIT_SECTIONS / tests keep referring to it.
+POSTGRESQL_CONFIG_SECTION = get_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE).config_form_section(
+    ConfigLayer.PROJECT
 )
 
 DOMAIN_SECTION = FormSection(
