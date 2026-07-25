@@ -23,6 +23,92 @@ logger = logging.getLogger(__name__)
 audit_logger = logging.getLogger("opi.audit.subdomain")
 
 
+# ---------------------------------------------------------------------------
+# Domain approval state location (RC-5)
+#
+# The domain/subdomain approval block used to live at the project ROOT
+# (``domains:``). It now belongs to the publish-on-web service, under its
+# root-level service *definition* config: ``services/[publish-on-web]/config/domains``.
+# The block is project-global (one allow-list per project), and publish-on-web is a
+# root-level service definition (components/deployments merely reference it), so the
+# service-definition config is its natural home.
+#
+# The canonical relocation is the versioned schema migration
+# ``schema_migration.normalize_domains_location`` (v2.4 -> v2.5), which runs on load and
+# delegates the placement to :func:`ensure_domains_config` here (the single authority on
+# where the block lives). Readers accept BOTH locations (:func:`get_domains_config`) so a
+# not-yet-migrated file keeps working; writers use :func:`ensure_domains_config` so a
+# write always lands at -- and consolidates onto -- the service path. No schema change is
+# needed (service ``config`` is free-form) and old files keep validating + reading.
+# ---------------------------------------------------------------------------
+
+
+def _find_publish_on_web_definition(project_data: dict[str, Any]) -> Any:
+    """Return the root ``services:`` entry that defines publish-on-web, or None."""
+    from opi.services.services import service_entry_name
+    from opi.services.services_enums import ServiceType
+
+    for entry in project_data.get("services") or []:
+        if service_entry_name(entry) == ServiceType.PUBLISH_ON_WEB.value:
+            return entry
+    return None
+
+
+def get_domains_config(project_data: dict[str, Any]) -> dict[str, Any] | None:
+    """Read the domain-approval block, preferring the service path, root as fallback.
+
+    Read-both so files not yet migrated keep working; never mutates ``project_data``.
+    """
+    entry = _find_publish_on_web_definition(project_data)
+    if isinstance(entry, dict):
+        config = entry.get("config")
+        if isinstance(config, dict) and isinstance(config.get("domains"), dict):
+            return config["domains"]
+    root = project_data.get("domains")
+    return root if isinstance(root, dict) else None
+
+
+def ensure_domains_config(project_data: dict[str, Any]) -> dict[str, Any]:
+    """Return the writable service ``config/domains`` block, creating it as needed.
+
+    The single authority on WHERE the approval block lives, used both by the v2.5 schema
+    migration (``normalize_domains_location``) and by the runtime write paths. Absorbs a
+    legacy root ``domains:`` block into the publish-on-web service config and removes the
+    root copy so state never splits, promotes a bare ``- publish-on-web`` service string
+    to a ``{name, config}`` record, and adds the service definition if it is absent. On
+    already-migrated data there is no root block to absorb -- it just returns the
+    existing service block.
+    """
+    from opi.services.services_enums import ServiceType
+
+    services = project_data.get("services")
+    if not isinstance(services, list):
+        services = []
+        project_data["services"] = services
+
+    entry = _find_publish_on_web_definition(project_data)
+    if not isinstance(entry, dict):
+        record = {"name": ServiceType.PUBLISH_ON_WEB.value, "config": {}}
+        if entry is None:
+            services.append(record)
+        else:  # bare string definition -> promote in place
+            services[services.index(entry)] = record
+        entry = record
+
+    config = entry.get("config")
+    if not isinstance(config, dict):
+        config = {}
+        entry["config"] = config
+
+    domains = config.get("domains")
+    if not isinstance(domains, dict):
+        legacy_root = project_data.get("domains")
+        domains = legacy_root if isinstance(legacy_root, dict) else {}
+        config["domains"] = domains
+    project_data.pop("domains", None)
+    return domains
+
+
 def get_supported_base_domains(cluster: str | None = None) -> set[str]:
     """Get all supported base domains for nice URLs.
 
@@ -100,8 +186,8 @@ def get_project_allowed_subdomains(project_data: dict[str, Any], domain: str) ->
         List of subdomain detail dicts (name, status, history).
         Empty list if no entry found.
     """
-    domains_config = project_data.get("domains")
-    if not domains_config or not isinstance(domains_config, dict):
+    domains_config = get_domains_config(project_data)
+    if not domains_config:
         return []
     for entry in domains_config.get("allowed-subdomains", []):
         if isinstance(entry, dict) and entry.get("domain") == domain:
@@ -135,8 +221,8 @@ def get_project_allowed_domain_config(project_data: dict[str, Any], domain: str)
     Returns:
         Domain config dict if found, None otherwise.
     """
-    domains_config = project_data.get("domains")
-    if not domains_config or not isinstance(domains_config, dict):
+    domains_config = get_domains_config(project_data)
+    if not domains_config:
         return None
     for entry in domains_config.get("allowed-domains", []):
         if isinstance(entry, dict) and entry.get("domain") == domain:
@@ -368,7 +454,7 @@ def ensure_domain_requests(project_data: dict[str, Any], cluster: str) -> None:
         if not is_cluster_default:
             domain_config = get_project_allowed_domain_config(project_data, base_domain)
             if domain_config is None:
-                domains_section = project_data.setdefault("domains", {})
+                domains_section = ensure_domains_config(project_data)
                 allowed_domains = domains_section.setdefault("allowed-domains", [])
                 now = datetime.now(UTC).isoformat()
                 allowed_domains.append(
@@ -399,7 +485,7 @@ def ensure_domain_requests(project_data: dict[str, Any], cluster: str) -> None:
         if get_subdomain_status(project_data, base_domain, subdomain) is not None:
             continue
 
-        domains_section = project_data.setdefault("domains", {})
+        domains_section = ensure_domains_config(project_data)
         allowed_subdomains = domains_section.setdefault("allowed-subdomains", [])
 
         domain_entry = None

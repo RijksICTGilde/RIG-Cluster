@@ -1,13 +1,16 @@
 """publish-on-web service.
 
-Owns its component-level config (TLS mode + attachment) that it hooks into the
-per-component form. NOTE: the rest of the publish-on-web / domain feature is
-deliberately NOT here -- it is cross-project platform infrastructure, not per-service
-config: the deployment-level "Webadres" domain wizard (DOMAIN_SECTION), the
-root-level domain-approval state (`domains:` on the project), the cross-project admin
-approver (router_subdomain_admin), the global subdomain registry
-(connectors/subdomain.py), and ingress generation (project_manager / naming.py). This
-service depends on those; it does not own them.
+Owns its component-level config (TLS mode + attachment) hooked into the per-component
+form, AND the domain/subdomain approval capability: the `ApprovalSpec`s (declare +
+check + list + record) and the approval *state*, which now lives under this service's
+config at ``services/[publish-on-web]/config/domains`` (migrated lazily from the legacy
+project-root ``domains:`` block via the resolvers in connectors/subdomain.py).
+
+Still NOT owned here -- cross-project platform infrastructure the service depends on but
+does not own: the deployment-level "Webadres" domain wizard (DOMAIN_SECTION), the
+generic catalog-driven approver interface (opi/services/approvals.py +
+router_subdomain_admin, no longer domain-specific), the global subdomain registry DB
+(connectors/subdomain.py), and ingress generation (project_manager / naming.py).
 """
 
 from __future__ import annotations
@@ -57,7 +60,9 @@ def _subdomain_status(project_data: dict[str, Any], value: Any) -> ApprovalStatu
 
 
 def _domain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
-    domains = project_data.get("domains")
+    from opi.connectors.subdomain import get_domains_config
+
+    domains = get_domains_config(project_data)
     if not isinstance(domains, dict):
         return []
     items: list[ApprovalItem] = []
@@ -78,7 +83,9 @@ def _domain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
 
 
 def _subdomain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
-    domains = project_data.get("domains")
+    from opi.connectors.subdomain import get_domains_config
+
+    domains = get_domains_config(project_data)
     if not isinstance(domains, dict):
         return []
     items: list[ApprovalItem] = []
@@ -108,7 +115,9 @@ def _subdomain_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
 
 
 def _domain_record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
-    domains = project_data.setdefault("domains", {})
+    from opi.connectors.subdomain import ensure_domains_config
+
+    domains = ensure_domains_config(project_data)
     for entry in domains.get("allowed-domains", []):
         if isinstance(entry, dict) and entry.get("domain") == item.get("domain", ""):
             entry["status"] = item.get("status", "skip")
@@ -117,7 +126,9 @@ def _domain_record(project_data: dict[str, Any], item: ApprovalItem, history_ent
 
 
 def _subdomain_record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
-    domains = project_data.setdefault("domains", {})
+    from opi.connectors.subdomain import ensure_domains_config
+
+    domains = ensure_domains_config(project_data)
     for entry in domains.get("allowed-subdomains", []):
         if not isinstance(entry, dict) or entry.get("domain") != item.get("domain", ""):
             continue
