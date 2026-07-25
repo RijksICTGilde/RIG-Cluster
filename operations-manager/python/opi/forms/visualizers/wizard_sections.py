@@ -46,12 +46,6 @@ from opi.forms.visualizers.fields.domains import (
 )
 from opi.forms.visualizers.fields.identity import CLUSTERS, DESCRIPTION, DISPLAY_NAME
 from opi.forms.visualizers.fields.services import (
-    KEYCLOAK_ADDITIONAL_CLIENTS,
-    KEYCLOAK_REDIRECT_URIS,
-    KEYCLOAK_RESTRICT_ACCESS,
-    KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG,
-    KEYCLOAK_RESTRICT_ACCESS_ROLE,
-    KEYCLOAK_TEMPLATE,
     SERVICES,
 )
 from opi.forms.visualizers.fields.team import USERS_SEQUENCE
@@ -216,54 +210,11 @@ CONFIG_DISPLAY_SECTION = FormSection(
 # Conditional sections (visible based on selected services)
 # ---------------------------------------------------------------------------
 
-KEYCLOAK_CONFIG_SECTION = FormSection(
-    section_id="keycloak-config",
-    title="Keycloak configuratie",
-    icon="sleutel",
-    description="SSO en authenticatie-instellingen",
-    visible=lambda data: "keycloak" in _extract_services(data),
-    post_save_action="process_project",
-    editables=[
-        KEYCLOAK_TEMPLATE,
-        KEYCLOAK_REDIRECT_URIS,
-        KEYCLOAK_RESTRICT_ACCESS,
-        KEYCLOAK_RESTRICT_ACCESS_ROLE,
-        KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG,
-        KEYCLOAK_ADDITIONAL_CLIENTS,
-    ],
-    layout=[
-        Fieldset(
-            legend="Template",
-            children=["services/keycloak/config/template"],
-        ),
-        # Hidden: redirect URIs are managed via additional clients instead.
-        # Fieldset(
-        #     legend="Extra redirect-URI\u2019s",
-        #     ...
-        #     children=[Sequence(field_name="services/keycloak/config/additional_redirect_uris")],
-        # ),
-        Fieldset(
-            legend="Toegangsbeperking",
-            description="Beperk toegang tot de applicatie op basis van Keycloak realm-rollen.",
-            children=[
-                "services/keycloak/config/restrict-access/enabled",
-                "services/keycloak/config/restrict-access/realm-role",
-                "services/keycloak/config/restrict-access/error-message",
-            ],
-        ),
-        Fieldset(
-            legend="Extra Keycloak clients",
-            description=(
-                "Voeg extra clients toe als er externe applicaties zijn "
-                "die het Keycloak realm van dit project gebruiken. Elke client krijgt een eigen client-ID "
-                "en redirect URI's."
-            ),
-            children=[
-                Sequence(field_name="services/keycloak/config/additional-clients"),
-            ],
-        ),
-    ],
-)
+# RC-5: the keycloak service owns its config section (built by
+# KeycloakService.config_form_section); re-exported here so flows / EDIT_SECTIONS /
+# tests keep referring to it. The nested additional-clients editables stay in the
+# forms layer; the service references them.
+KEYCLOAK_CONFIG_SECTION = get_service(ServiceType.KEYCLOAK).config_form_section(ConfigLayer.PROJECT)
 
 # RC-5: the namespace-postgres service owns its config section (built by
 # NamespacePostgresqlDatabaseService.config_form_section); re-exported here under the
