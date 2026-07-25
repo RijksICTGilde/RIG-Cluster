@@ -12,11 +12,11 @@ Covers:
 import pytest
 from opi.services.config_models.namespace_postgres import NamespacePostgresConfig
 from opi.services.config_schema import fragment_path, render_service_config_schema
-from opi.services.registry import SERVICE_PROVIDERS, get_provider
+from opi.services.registry import SERVICES, get_service
 from opi.services.services_enums import ServiceType
 from pydantic import ValidationError
 
-_PROVIDERS_WITH_CONFIG = [p for p in SERVICE_PROVIDERS.values() if p.config_model is not None]
+_PROVIDERS_WITH_CONFIG = [p for p in SERVICES.values() if p.config_model is not None]
 
 
 class TestSchemaFragmentDriftLock:
@@ -90,7 +90,7 @@ class TestNamespacePostgresConfigModel:
 
 class TestAuthorizationWallConfigModel:
     def _provider(self):
-        return get_provider(ServiceType.AUTHORIZATION_WALL)
+        return get_service(ServiceType.AUTHORIZATION_WALL)
 
     def test_banner_validates(self) -> None:
         assert self._provider().validate_config({"banner": "Beperkte toegang"}).banner == "Beperkte toegang"
@@ -105,7 +105,7 @@ class TestAuthorizationWallConfigModel:
 
 class TestMetricsScraperConfigModel:
     def _provider(self):
-        return get_provider(ServiceType.METRICS_SCRAPER)
+        return get_service(ServiceType.METRICS_SCRAPER)
 
     def test_port_and_path_validate(self) -> None:
         model = self._provider().validate_config({"port": 8000, "path": "/metrics"})
@@ -128,7 +128,7 @@ class TestKeycloakConfigModel:
     any real-world shape."""
 
     def _provider(self):
-        return get_provider(ServiceType.KEYCLOAK)
+        return get_service(ServiceType.KEYCLOAK)
 
     def test_internal_config_with_restrict_access_and_clients(self) -> None:
         # mb-docs-helmfile.yaml shape.
@@ -175,31 +175,31 @@ class TestStorageConfigModel:
     """persistent-storage and temp-storage share StorageConfig (a list of mounts)."""
 
     def test_persistent_storage_list_validates(self) -> None:
-        model = get_provider(ServiceType.PERSISTENT_STORAGE).validate_config(
+        model = get_service(ServiceType.PERSISTENT_STORAGE).validate_config(
             [{"name": "data", "size": "500Mi", "mount-path": "/data"}]
         )
         assert model.root[0].name == "data"
         assert model.root[0].mount_path == "/data"
 
     def test_temp_storage_shares_the_same_model(self) -> None:
-        p_model = get_provider(ServiceType.PERSISTENT_STORAGE).config_model
-        t_model = get_provider(ServiceType.TEMP_STORAGE).config_model
+        p_model = get_service(ServiceType.PERSISTENT_STORAGE).config_model
+        t_model = get_service(ServiceType.TEMP_STORAGE).config_model
         assert p_model is t_model
 
     def test_missing_required_field_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            get_provider(ServiceType.PERSISTENT_STORAGE).validate_config([{"name": "data", "size": "500Mi"}])
+            get_service(ServiceType.PERSISTENT_STORAGE).validate_config([{"name": "data", "size": "500Mi"}])
 
     def test_unknown_field_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            get_provider(ServiceType.TEMP_STORAGE).validate_config(
+            get_service(ServiceType.TEMP_STORAGE).validate_config(
                 [{"name": "t", "size": "1Gi", "mount-path": "/tmp", "extra": 1}]
             )
 
 
 class TestProviderValidateConfig:
     def _provider(self):
-        return get_provider(ServiceType.NAMESPACE_POSTGRESQL_DATABASE)
+        return get_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE)
 
     def test_schema_version_is_declared(self) -> None:
         assert self._provider().config_schema_version == "1.0"
@@ -226,4 +226,4 @@ class TestProviderValidateConfig:
     def test_provider_without_config_model_raises(self) -> None:
         # A service that takes no config must not silently accept one.
         with pytest.raises(TypeError):
-            get_provider(ServiceType.PUBLISH_ON_WEB).validate_config({"anything": 1})
+            get_service(ServiceType.PUBLISH_ON_WEB).validate_config({"anything": 1})

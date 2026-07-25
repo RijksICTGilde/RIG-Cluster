@@ -150,7 +150,7 @@ class Project:
         names return None.
         """
         # Lazy imports keep this module dependency-light and cycle-free.
-        from opi.services.registry import get_provider
+        from opi.services.registry import get_service
         from opi.services.services_enums import ServiceType
 
         if not self.uses_service(name):
@@ -159,7 +159,7 @@ class Project:
             service_type = ServiceType(name)
         except ValueError:
             return None
-        return get_provider(service_type).validate_config(self.service_config(name))
+        return get_service(service_type).validate_config(self.service_config(name))
 
     # --- typed projection --------------------------------------------------------
     def get_summary(self, filename: str) -> ProjectSummary | None:
