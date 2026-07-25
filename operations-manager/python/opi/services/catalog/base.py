@@ -388,12 +388,22 @@ class Service(ABC):
         """The approval declarations this service contributes at ``layer`` (default none)."""
         return []
 
-    def get_approval(self, key: str) -> ApprovalSpec | None:
-        """This service's ApprovalSpec with ``key`` (searched across layers), or None."""
+    def approval_specs(self) -> list[ApprovalSpec]:
+        """All of this service's ApprovalSpecs across every layer (deduped by key).
+
+        The catalog-wide entry point for generic approval code (listing, recording):
+        it does not need to know which layer a spec lives at."""
+        seen: dict[str, ApprovalSpec] = {}
         for layer in ConfigLayer:
             for spec in self.config_approvals(layer):
-                if spec.key == key:
-                    return spec
+                seen.setdefault(spec.key, spec)
+        return list(seen.values())
+
+    def get_approval(self, key: str) -> ApprovalSpec | None:
+        """This service's ApprovalSpec with ``key`` (searched across layers), or None."""
+        for spec in self.approval_specs():
+            if spec.key == key:
+                return spec
         return None
 
     async def provision(self, ctx: ProvisionContext) -> None:

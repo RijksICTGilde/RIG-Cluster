@@ -58,6 +58,7 @@
             {# Action fields #}
             <div class="approval-item-actions">
                 {# Hidden context fields #}
+                <input type="hidden" name="_approval_items[{{ loop.index0 }}][service]" value="{{ item.service }}" />
                 <input type="hidden" name="_approval_items[{{ loop.index0 }}][type]" value="{{ item.type }}" />
                 <input type="hidden" name="_approval_items[{{ loop.index0 }}][domain]" value="{{ item.domain }}" />
                 <input type="hidden" name="_approval_items[{{ loop.index0 }}][name]" value="{{ item.name }}" />

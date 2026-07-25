@@ -74,6 +74,15 @@ def manifest_secret_services() -> list[Service]:
     return sorted(contributing, key=lambda s: s.manifest_order)
 
 
+def approval_services() -> list[Service]:
+    """Services that declare at least one ApprovalSpec, in registry order (RC-5).
+
+    The generic approver interface iterates these to list pending items + record
+    verdicts, instead of hard-coding one subsystem (domains) per approvable thing.
+    """
+    return [s for s in SERVICES.values() if s.approval_specs()]
+
+
 def manifest_services() -> list[Service]:
     """All services that contribute to a component's manifests, in ``manifest_order``
     (RC-5 Phase 6). Superset of ``manifest_secret_services()`` -- also includes
