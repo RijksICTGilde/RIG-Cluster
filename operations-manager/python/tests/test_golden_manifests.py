@@ -146,6 +146,19 @@ SCENARIOS: list[tuple[str, str, dict[str, object]]] = [
         ),
     ),
     (
+        # Explicit port AND path, both differing from the fallbacks (application_port /
+        # "/metrics"), so the prometheus.io annotations must render the configured
+        # values. Locks the metrics-scraper latent-fix: the service now propagates the
+        # real port/path (metrics_scraper.contribute_manifest_context) instead of the
+        # template always falling back to the app port / "/metrics".
+        "deployment-metrics-scraper-explicit",
+        "deployment.yaml.jinja",
+        _deployment_vars(
+            env_from_secrets=["prod-metrics-auth", "prod-web-platform"],
+            metrics_config={"port": 9464, "path": "/actuator/prometheus"},
+        ),
+    ),
+    (
         "deployment-storage",
         "deployment.yaml.jinja",
         _deployment_vars(
