@@ -1,6 +1,12 @@
 # RC-5 — Self-contained service packages
 
-Status: plan (2026-07-26). Branch: `uniform-declarative-platform-services`, PR #8.
+Status: DONE (2026-07-26, HEAD 3392409). Branch: `uniform-declarative-platform-services`, PR #8.
+
+All 12 services migrated to `catalog/<svc>/` packages; component form registry-driven;
+`config_models/` + `schemas/services/` dirs removed; `forms/*/fields/services.py` reduced
+to the platform-level SERVICES selection field only. Full unit suite 4361 passed (pyright +
+ruff clean). Not yet sandbox-validated. Worry #4 (deployment↔attachments cross-ref) was a
+false alarm: deployment attachment editables are an independent `DEPLOYMENT_COMP_*` set.
 
 ## Doel
 
