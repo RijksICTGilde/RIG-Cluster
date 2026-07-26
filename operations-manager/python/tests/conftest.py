@@ -253,13 +253,14 @@ def _orm_pg_container():
 
 @pytest.fixture
 async def orm_db(_orm_pg_container):
-    from opi.core.db import configure_engine, create_all_orm_tables, dispose_engine, session_scope
+    from opi.core.db import Base, configure_engine, create_all_orm_tables, dispose_engine, session_scope
     from sqlalchemy import text
 
     url = _orm_pg_container.get_connection_url().replace("+psycopg2", "+asyncpg")
     configure_engine(url)
     await create_all_orm_tables()
+    tables = ", ".join(Base.metadata.tables)
     async with session_scope() as session:
-        await session.execute(text("TRUNCATE subdomain_registry RESTART IDENTITY CASCADE"))
+        await session.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
     yield
     await dispose_engine()
