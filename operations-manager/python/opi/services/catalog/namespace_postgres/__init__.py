@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from opi.services.catalog.base import ConfigLayer, Service, config_path
-from opi.services.config_models.namespace_postgres import NamespacePostgresConfig
+from opi.services.catalog.namespace_postgres.config_model import NamespacePostgresConfig
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ServiceType
 
@@ -37,7 +37,10 @@ class NamespacePostgresqlDatabaseService(Service):
     def config_editables(self, layer: ConfigLayer):
         if layer is not ConfigLayer.PROJECT:
             return []
-        from opi.forms.editables.fields.services import POSTGRESQL_INSTANCES_EDITABLE, POSTGRESQL_STORAGE_EDITABLE
+        from opi.services.catalog.namespace_postgres.editables import (
+            POSTGRESQL_INSTANCES_EDITABLE,
+            POSTGRESQL_STORAGE_EDITABLE,
+        )
 
         return [POSTGRESQL_INSTANCES_EDITABLE, POSTGRESQL_STORAGE_EDITABLE]
 
@@ -46,8 +49,8 @@ class NamespacePostgresqlDatabaseService(Service):
             return None
         cached = getattr(self, "_config_section_cache", None)
         if cached is None:
-            from opi.forms.visualizers.fields.services import POSTGRESQL_INSTANCES, POSTGRESQL_STORAGE
             from opi.forms.visualizers.sections import FormSection
+            from opi.services.catalog.namespace_postgres.visualizers import POSTGRESQL_INSTANCES, POSTGRESQL_STORAGE
 
             cached = FormSection(
                 section_id="postgresql-config",

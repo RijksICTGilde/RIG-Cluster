@@ -10,7 +10,7 @@ Covers:
 """
 
 import pytest
-from opi.services.config_models.namespace_postgres import NamespacePostgresConfig
+from opi.services.catalog.namespace_postgres.config_model import NamespacePostgresConfig
 from opi.services.config_schema import fragment_path, render_service_config_schema
 from opi.services.registry import SERVICES, get_service
 from opi.services.services_enums import ServiceType
