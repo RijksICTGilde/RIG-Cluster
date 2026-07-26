@@ -11,6 +11,7 @@ import logging
 from typing import Any
 
 from opi.services.services_enums import ServiceType
+from opi.utils.naming import generate_storage_name
 
 logger = logging.getLogger(__name__)
 
@@ -183,8 +184,18 @@ def _migrate_component_v1_to_v2(component: dict[str, Any]) -> None:
             continue
         storage_type = item.get("type", "persistent")
         service_name = _STORAGE_TYPE_TO_SERVICE.get(storage_type)
-        if service_name:
-            storage_by_service.setdefault(service_name, []).append({k: v for k, v in item.items() if k != "type"})
+        if not service_name:
+            continue
+        entry = {k: v for k, v in item.items() if k != "type"}
+        bucket = storage_by_service.setdefault(service_name, [])
+        # The v2 storage config (StorageEntry) requires a name per mount, but v1
+        # entries often carried none. Synthesize the same name the renderer derives
+        # from the mount path (generate_storage_name) so a migrated legacy project
+        # stays valid under the config-validation gate instead of failing on the
+        # required `name` field.
+        if not entry.get("name"):
+            entry["name"] = generate_storage_name(entry.get("mount-path", ""), len(bucket))
+        bucket.append(entry)
 
     # Start from existing v2 services (if any) and merge in v1 data
     existing_services: list[str | dict[str, Any]] = component.get("services", [])
