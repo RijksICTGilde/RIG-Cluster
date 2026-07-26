@@ -198,26 +198,6 @@ PUBLISH_ON_WEB_ATTACHMENT_EDITABLE = Editable(
     show_when={"value": ["provided"]},
 )
 
-METRICS_PORT_EDITABLE = Editable(
-    yaml_path="components[*]/services{metrics-scraper}/port",
-    converter=IntegerConverter(),
-    required=True,
-    default=8080,
-    depends_on="components[*]/services",
-    show_when={"contains": "metrics-scraper"},
-    virtualize=("services", "_services-config"),
-)
-
-METRICS_PATH_EDITABLE = Editable(
-    yaml_path="components[*]/services{metrics-scraper}/path",
-    default="/metrics",
-    validator=PathValidator(),
-    required=True,
-    depends_on="components[*]/services",
-    show_when={"contains": "metrics-scraper"},
-    virtualize=("services", "_services-config"),
-)
-
 COMPONENTS_SEQUENCE_EDITABLE = Editable(
     yaml_path="components",
     min_items=1,

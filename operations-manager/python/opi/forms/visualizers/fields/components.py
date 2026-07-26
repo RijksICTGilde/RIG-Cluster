@@ -25,8 +25,6 @@ from opi.forms.editables.fields.components import (
     COMPONENT_USER_ENV_VARS_EDITABLE,
     COMPONENTS_SEQUENCE_EDITABLE,
     INBOUND_PORT_EDITABLE,
-    METRICS_PATH_EDITABLE,
-    METRICS_PORT_EDITABLE,
     OUTBOUND_PORT_EDITABLE,
     PUBLISH_ON_WEB_ATTACHMENT_EDITABLE,
     PUBLISH_ON_WEB_TLS_EDITABLE,
@@ -221,20 +219,6 @@ ATTACHMENT_USE_SEQUENCE = EditableVisualizer(
     label="Bijlagen",
     help_text="Koppel geuploade bijlagen aan dit component (als bestand of env-var)",
     children=[ATTACHMENT_USE_REFERENCE, ATTACHMENT_USE_PROVIDE_AS, ATTACHMENT_USE_PATH, ATTACHMENT_USE_ENV_NAME],
-)
-
-METRICS_PORT = EditableVisualizer(
-    editable=METRICS_PORT_EDITABLE,
-    widget=WidgetType.TEXT,
-    label="Metrics poort",
-    description="De poort waarop Prometheus metrics worden geserveerd.",
-)
-
-METRICS_PATH = EditableVisualizer(
-    editable=METRICS_PATH_EDITABLE,
-    widget=WidgetType.TEXT,
-    label="Metrics pad",
-    description="Het pad waarop de Prometheus metrics beschikbaar zijn.",
 )
 
 PUBLISH_ON_WEB_TLS = EditableVisualizer(
