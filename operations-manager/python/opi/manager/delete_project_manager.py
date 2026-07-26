@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, Any
 from fastapi import HTTPException
 
 from opi.connectors import create_argo_connector
-from opi.connectors.subdomain import SubdomainConnector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.catalog.base import RemovalContext
+from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.project import Project
 from opi.services.project_store import get_project_store
 from opi.services.registry import get_service

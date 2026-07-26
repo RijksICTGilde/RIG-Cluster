@@ -46,7 +46,7 @@ class TestWizardSubdomainFlow:
     @pytest.mark.asyncio
     async def test_flow_with_explicit_base_domain(self, monkeypatch):
         """When base-domain is explicitly set, the hook creates the domains entry."""
-        from opi.connectors.subdomain import SubdomainConnector
+        from opi.services.persistence.subdomain_registry import SubdomainConnector
 
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "sandboxed-local"})())
         monkeypatch.setattr(SubdomainConnector, "get_by_subdomain", AsyncMock(return_value=None))
@@ -83,7 +83,7 @@ class TestWizardSubdomainFlow:
         rijks.app), wrote it into the project file plus a phantom request, and
         deployed to a domain the user never chose.
         """
-        from opi.connectors.subdomain import SubdomainConnector
+        from opi.services.persistence.subdomain_registry import SubdomainConnector
 
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "sandboxed-local"})())
         monkeypatch.setattr(SubdomainConnector, "get_by_subdomain", AsyncMock(return_value=None))

@@ -465,8 +465,8 @@ class TestDomainConfigEnforcerReceivesFullData:
     @pytest.mark.asyncio
     async def test_enforcer_allows_subdomain_from_project_allowlist(self, monkeypatch):
         """Enforcer allows a subdomain that is in the project's allowed-subdomains list."""
-        from opi.connectors.subdomain import SubdomainConnector
         from opi.forms.editables.enforcers import DomainConfigEnforcer
+        from opi.services.persistence.subdomain_registry import SubdomainConnector
 
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
         monkeypatch.setattr(SubdomainConnector, "get_by_subdomain", AsyncMock(return_value=None))

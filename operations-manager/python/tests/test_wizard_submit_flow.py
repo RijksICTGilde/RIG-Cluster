@@ -107,7 +107,7 @@ class TestWizardSubmitFlowTraced:
     @pytest.mark.asyncio
     async def test_step4_process_json_submission_preserves_request_subdomain(self, monkeypatch):
         """Step 4: process_json_submission(strip_transients=False) should keep _request-subdomain."""
-        from opi.connectors.subdomain import SubdomainConnector
+        from opi.services.persistence.subdomain_registry import SubdomainConnector
 
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "sandboxed-local"})())
         monkeypatch.setattr(SubdomainConnector, "get_by_subdomain", AsyncMock(return_value=None))
@@ -136,7 +136,7 @@ class TestWizardSubmitFlowTraced:
     @pytest.mark.asyncio
     async def test_step5_hooks_create_domains_entry(self, monkeypatch):
         """Step 5: run_hooks(PRE_SAVE) should create domains.allowed-subdomains."""
-        from opi.connectors.subdomain import SubdomainConnector
+        from opi.services.persistence.subdomain_registry import SubdomainConnector
 
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "sandboxed-local"})())
         monkeypatch.setattr(SubdomainConnector, "get_by_subdomain", AsyncMock(return_value=None))
