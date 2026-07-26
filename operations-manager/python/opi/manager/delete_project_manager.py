@@ -1426,8 +1426,8 @@ class DeleteProjectManager:
                     from opi.core.database_pools import get_database_pool
                     from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
-                    pool = get_database_pool("main")
-                    marked_for_deletion_service = MarkedForDeletionService(pool)
+                    get_database_pool("main")  # guard: raises if the DB is unavailable -> immediate delete
+                    marked_for_deletion_service = MarkedForDeletionService()
                     logger.info(
                         f"Using deferred deletion for {project_name}/{deployment_name} "
                         f"(data-retention-period: {retention_period}, {retention_hours}h)"

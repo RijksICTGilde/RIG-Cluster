@@ -36,9 +36,8 @@ admin_router: APIRouter = APIRouter(
 
 
 def _get_marked_for_deletion_service() -> MarkedForDeletionService:
-    """Get a MarkedForDeletionService instance using the main database pool."""
-    pool = get_database_pool("main")
-    return MarkedForDeletionService(pool)
+    """Get a MarkedForDeletionService instance (ORM-backed)."""
+    return MarkedForDeletionService()
 
 
 @admin_router.get("/marked-for-deletion")
