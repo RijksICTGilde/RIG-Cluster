@@ -37,9 +37,12 @@ from opi.forms.editables.fields.components import (
 )
 from opi.forms.visualizers.visualizer import EditableVisualizer
 
-# temp-storage's visualizer lives in its service package; imported here only so the
-# component-form aggregation (COMPONENTS_SEQUENCE) can reference it.
-from opi.services.catalog.temp_storage.visualizers import TEMP_STORAGE_SEQUENCE
+# The component form's service-specific visualizers are contributed by each service via
+# config_component_visualizers() and gathered here in config_component_order, so the tail
+# of COMPONENTS_SEQUENCE is not a hand-synced list. (The visualizer definitions still
+# authored below move into their service packages one service at a time; temp-storage
+# already lives in catalog/temp_storage/visualizers.py.)
+from opi.services.registry import component_service_visualizers
 
 COMPONENT_NAME = EditableVisualizer(
     editable=COMPONENT_NAME_EDITABLE,
@@ -305,12 +308,8 @@ COMPONENTS_SEQUENCE = EditableVisualizer(
         COMPONENT_PATH,
         COMPONENT_ALIASES,
         COMPONENT_USER_ENV_VARS,
-        PERSISTENT_STORAGE_SEQUENCE,
-        TEMP_STORAGE_SEQUENCE,
-        ATTACHMENT_USE_SEQUENCE,
-        PUBLISH_ON_WEB_TLS,
-        PUBLISH_ON_WEB_ATTACHMENT,
-        METRICS_PORT,
-        METRICS_PATH,
+        # Per-service component visualizers, gathered from the registry in config_component_order
+        # (persistent-storage, temp-storage, attachments, publish-on-web, metrics-scraper).
+        *component_service_visualizers(),
     ],
 )

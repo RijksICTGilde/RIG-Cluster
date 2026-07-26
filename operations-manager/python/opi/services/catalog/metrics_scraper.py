@@ -37,6 +37,11 @@ class MetricsScraperService(Service):
 
         return [METRICS_PORT_EDITABLE, METRICS_PATH_EDITABLE]
 
+    def config_component_visualizers(self):
+        from opi.forms.visualizers.fields.components import METRICS_PATH, METRICS_PORT
+
+        return [METRICS_PORT, METRICS_PATH]
+
     def config_component_layout(self):
         from opi.forms.layout import Fieldset
 

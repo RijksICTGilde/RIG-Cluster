@@ -20,10 +20,12 @@ from opi.forms.editables.validators import (
     PathValidator,
 )
 
-# Component-level service editables that have moved into their service package are
-# imported here purely so the component-form aggregation (COMPONENTS_SEQUENCE_EDITABLE)
-# can reference them; the definitions live with the service, not in this module.
-from opi.services.catalog.temp_storage.editables import TEMP_STORAGE_SEQUENCE_EDITABLE
+# The component form's service-specific fields are contributed by each service via
+# config_editables(ConfigLayer.COMPONENT) and gathered here in config_component_order,
+# so the tail of COMPONENTS_SEQUENCE_EDITABLE is not a hand-synced list. (The service
+# editable definitions still authored below move into their service packages one
+# service at a time; temp-storage already lives in catalog/temp_storage/editables.py.)
+from opi.services.registry import component_service_editables
 
 # ===========================================================================
 # Pure Editable definitions (data logic only)
@@ -266,12 +268,8 @@ COMPONENTS_SEQUENCE_EDITABLE = Editable(
         COMPONENT_PATH_EDITABLE,
         COMPONENT_ALIASES_EDITABLE,
         COMPONENT_USER_ENV_VARS_EDITABLE,
-        PERSISTENT_STORAGE_SEQUENCE_EDITABLE,
-        TEMP_STORAGE_SEQUENCE_EDITABLE,
-        ATTACHMENT_USE_SEQUENCE_EDITABLE,
-        PUBLISH_ON_WEB_TLS_EDITABLE,
-        PUBLISH_ON_WEB_ATTACHMENT_EDITABLE,
-        METRICS_PORT_EDITABLE,
-        METRICS_PATH_EDITABLE,
+        # Per-service component fields, gathered from the registry in config_component_order
+        # (persistent-storage, temp-storage, attachments, publish-on-web, metrics-scraper).
+        *component_service_editables(),
     ],
 )
