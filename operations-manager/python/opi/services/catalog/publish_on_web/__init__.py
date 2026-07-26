@@ -149,7 +149,7 @@ class PublishOnWebService(Service):
     def config_editables(self, layer: ConfigLayer):
         if layer is not ConfigLayer.COMPONENT:
             return []
-        from opi.forms.editables.fields.components import (
+        from opi.services.catalog.publish_on_web.editables import (
             PUBLISH_ON_WEB_ATTACHMENT_EDITABLE,
             PUBLISH_ON_WEB_TLS_EDITABLE,
         )
@@ -157,7 +157,7 @@ class PublishOnWebService(Service):
         return [PUBLISH_ON_WEB_TLS_EDITABLE, PUBLISH_ON_WEB_ATTACHMENT_EDITABLE]
 
     def config_component_visualizers(self):
-        from opi.forms.visualizers.fields.components import PUBLISH_ON_WEB_ATTACHMENT, PUBLISH_ON_WEB_TLS
+        from opi.services.catalog.publish_on_web.visualizers import PUBLISH_ON_WEB_ATTACHMENT, PUBLISH_ON_WEB_TLS
 
         return [PUBLISH_ON_WEB_TLS, PUBLISH_ON_WEB_ATTACHMENT]
 
