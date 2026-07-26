@@ -156,6 +156,11 @@ class PublishOnWebService(Service):
 
         return [PUBLISH_ON_WEB_TLS_EDITABLE, PUBLISH_ON_WEB_ATTACHMENT_EDITABLE]
 
+    def config_component_visualizers(self):
+        from opi.forms.visualizers.fields.components import PUBLISH_ON_WEB_ATTACHMENT, PUBLISH_ON_WEB_TLS
+
+        return [PUBLISH_ON_WEB_TLS, PUBLISH_ON_WEB_ATTACHMENT]
+
     def config_approvals(self, layer: ConfigLayer):
         # A deployment's requested domain / subdomain needs platform-admin approval
         # before ingress is generated for it. The rule (status_of) reuses the existing
