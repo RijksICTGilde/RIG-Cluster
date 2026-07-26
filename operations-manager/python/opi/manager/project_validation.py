@@ -21,7 +21,7 @@ from opi.services import ServiceAdapter
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.project import Project
 from opi.services.registry import get_service
-from opi.services.services import service_entry_config, service_entry_name
+from opi.services.services import service_entry_config, service_entry_name, service_entry_schema_version
 from opi.services.services_enums import ServiceType
 from opi.utils.project_utils import ComponentValidationError, validate_component_paths, validate_root_component
 
@@ -50,13 +50,18 @@ def _accepted_config_fields(provider: Service, layer: ConfigLayer) -> list[str]:
     return names
 
 
-def _validate_one_config(name: str, raw: Any, layer: ConfigLayer, where: str, project_name: str) -> None:
+def _validate_one_config(
+    name: str, raw: Any, layer: ConfigLayer, where: str, project_name: str, from_version: str | None = None
+) -> None:
     """Validate one service config block against its provider's typed model.
 
     Shared by the project-level and component-level walks. Skips services that are
-    unknown or take no typed config. Fails closed: raises ProjectIntegrityError, with
-    the service's own accepted-field list (config_api_fields / config_editables)
-    appended so the message tells the user which keys the service accepts.
+    unknown or take no typed config. ``from_version`` is the entry's stamped
+    ``schema-version``, threaded through so the provider migrates an older config
+    block forward before validating (None = current version). Fails closed: raises
+    ProjectIntegrityError, with the service's own accepted-field list
+    (config_api_fields / config_editables) appended so the message tells the user
+    which keys the service accepts.
     """
     try:
         service_type = ServiceType(name)
@@ -66,7 +71,7 @@ def _validate_one_config(name: str, raw: Any, layer: ConfigLayer, where: str, pr
     if provider.config_model is None:
         return  # service takes no typed config
     try:
-        provider.validate_config(raw)
+        provider.validate_config(raw, from_version=from_version)
     except ValidationError as e:
         accepted = _accepted_config_fields(provider, layer)
         hint = f" Geaccepteerde velden: {', '.join(accepted)}." if accepted else ""
@@ -93,7 +98,8 @@ def validate_service_configs(project_data: dict[str, Any]) -> None:
         raw = view.service_config(name)
         if raw is None:
             continue  # bare service / no project-level config to validate
-        _validate_one_config(name, raw, ConfigLayer.PROJECT, "op projectniveau", project_name)
+        from_version = service_entry_schema_version(view.service_entry(name))
+        _validate_one_config(name, raw, ConfigLayer.PROJECT, "op projectniveau", project_name, from_version)
 
     # Component-level service references (storage mounts, metrics port/path). Their
     # config lives on the component's service entry, not at project level, so the
@@ -107,7 +113,10 @@ def validate_service_configs(project_data: dict[str, Any]) -> None:
             config = service_entry_config(entry)
             if name is None or config is None:
                 continue  # bare reference / no config to validate
-            _validate_one_config(name, config, ConfigLayer.COMPONENT, f"in component '{comp_name}'", project_name)
+            from_version = service_entry_schema_version(entry)
+            _validate_one_config(
+                name, config, ConfigLayer.COMPONENT, f"in component '{comp_name}'", project_name, from_version
+            )
 
 
 def validate_component_references(project_data: dict, components: list, context: str = "deployment") -> dict[str, Any]:

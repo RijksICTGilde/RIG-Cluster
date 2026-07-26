@@ -45,6 +45,22 @@ def service_entry_name(entry: Any) -> str | None:
     return None
 
 
+def service_entry_schema_version(entry: Any) -> str | None:
+    """Return the ``schema-version`` stamped on a service entry, or None.
+
+    The version is a sibling of ``config`` on the entry record
+    (``{"name": "keycloak", "config": {...}, "schema-version": "2.0"}``). It tells
+    the provider which config version the stored block is at, so ``validate_config``
+    can migrate it forward before validating. None means the entry predates
+    versioning (treated as the service's current version).
+    """
+    if isinstance(entry, dict):
+        version = entry.get("schema-version")
+        if version is not None:
+            return str(version)
+    return None
+
+
 def service_entry_config(entry: Any) -> Any:
     """Return the ``config`` of a service entry, format-agnostic (None if none).
 
@@ -948,9 +964,7 @@ class ServiceAdapter:
                 existing_comp_svc_names = set(cls.extract_service_names_from_project_services(existing_comp_services))
 
                 entries_to_add = [
-                    entry
-                    for entry in new_entries
-                    if service_entry_name(entry) not in existing_comp_svc_names
+                    entry for entry in new_entries if service_entry_name(entry) not in existing_comp_svc_names
                 ]
 
                 if entries_to_add:
