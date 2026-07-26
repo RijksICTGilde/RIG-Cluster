@@ -55,9 +55,6 @@ from opi.forms.visualizers.fields.identity import (
     DISPLAY_NAME,
 )
 from opi.forms.visualizers.fields.services import (
-    KEYCLOAK_REDIRECT_URIS,
-    KEYCLOAK_RESTRICT_ACCESS,
-    KEYCLOAK_TEMPLATE,
     SERVICES,
 )
 from opi.forms.visualizers.fields.team import (
@@ -101,9 +98,6 @@ __all__ = [
     "DEPLOYMENT_SUBDOMAIN",
     "DESCRIPTION",
     "DISPLAY_NAME",
-    "KEYCLOAK_REDIRECT_URIS",
-    "KEYCLOAK_RESTRICT_ACCESS",
-    "KEYCLOAK_TEMPLATE",
     "SERVICES",
     "USERS_SEQUENCE",
     "USER_EMAIL",
