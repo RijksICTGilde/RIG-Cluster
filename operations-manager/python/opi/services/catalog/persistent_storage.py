@@ -25,6 +25,11 @@ class PersistentStorageService(Service):
 
         return [PERSISTENT_STORAGE_SEQUENCE_EDITABLE]
 
+    def config_component_visualizers(self):
+        from opi.forms.visualizers.fields.components import PERSISTENT_STORAGE_SEQUENCE
+
+        return [PERSISTENT_STORAGE_SEQUENCE]
+
     def config_component_layout(self):
         from opi.forms.layout import Sequence
 

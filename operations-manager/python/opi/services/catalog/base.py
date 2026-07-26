@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 
     from opi.forms.editables.editable import Editable
     from opi.forms.visualizers.sections import FormSection
+    from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.services.catalog.approval import ApprovalSpec
     from opi.services.services_enums import ServiceType
     from opi.utils.secrets import BaseSecret
@@ -362,6 +363,15 @@ class Service(ABC):
         inserts them. (Display ordering across services is registry order for now; an
         explicit priority is a later refinement.)
         """
+        return []
+
+    def config_component_visualizers(self) -> list[EditableVisualizer]:
+        """The visualizers this service contributes to the per-component form (default none).
+
+        The visualizer counterpart of ``config_editables(ConfigLayer.COMPONENT)``: the
+        component-form aggregation (``COMPONENTS_SEQUENCE``) collects each service's
+        visualizers in ``config_component_order`` instead of a hand-synced list, so a
+        component-level service owns the display of its own fields."""
         return []
 
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:

@@ -28,6 +28,11 @@ class TempStorageService(Service):
             return []
         return [TEMP_STORAGE_SEQUENCE_EDITABLE]
 
+    def config_component_visualizers(self):
+        from opi.services.catalog.temp_storage.visualizers import TEMP_STORAGE_SEQUENCE
+
+        return [TEMP_STORAGE_SEQUENCE]
+
     def config_component_layout(self):
         from opi.forms.layout import Sequence
 

@@ -12,9 +12,11 @@ postgresql-database, ...), NOT a connector/provider ("how OPI talks to a system"
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from opi.services.catalog.attachments import AttachmentsService
 from opi.services.catalog.authorization_wall import AuthorizationWallService
-from opi.services.catalog.base import Service
+from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.keycloak import KeycloakService
 from opi.services.catalog.metrics_scraper import MetricsScraperService
 from opi.services.catalog.minio import MinioStorageService
@@ -27,6 +29,10 @@ from opi.services.catalog.publish_on_web import PublishOnWebService
 from opi.services.catalog.redis import RedisService
 from opi.services.catalog.temp_storage import TempStorageService
 from opi.services.services_enums import ServiceType
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable
+    from opi.forms.visualizers.visualizer import EditableVisualizer
 
 # One entry per ServiceType. The coverage guard asserts completeness.
 SERVICES: dict[ServiceType, Service] = {
@@ -92,3 +98,24 @@ def manifest_services() -> list[Service]:
     """
     contributing = [s for s in SERVICES.values() if type(s).contributes_to_manifests()]
     return sorted(contributing, key=lambda s: s.manifest_order)
+
+
+def component_service_editables() -> list[Editable]:
+    """Component-level editables every service contributes to the component form,
+    flattened in ``config_component_order`` (RC-5). This replaces the hand-synced tail
+    of ``COMPONENTS_SEQUENCE_EDITABLE`` so each service owns its own component fields;
+    services that contribute nothing at the component layer add nothing.
+    """
+    editables: list[Editable] = []
+    for service in sorted(SERVICES.values(), key=lambda s: s.config_component_order):
+        editables.extend(service.config_editables(ConfigLayer.COMPONENT))
+    return editables
+
+
+def component_service_visualizers() -> list[EditableVisualizer]:
+    """As ``component_service_editables``, for the component-form visualizers
+    (the tail of ``COMPONENTS_SEQUENCE``)."""
+    visualizers: list[EditableVisualizer] = []
+    for service in sorted(SERVICES.values(), key=lambda s: s.config_component_order):
+        visualizers.extend(service.config_component_visualizers())
+    return visualizers
