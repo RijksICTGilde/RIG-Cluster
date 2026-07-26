@@ -302,7 +302,7 @@ async def sweep(
 
     # --- Stale / wrong marks ---
     try:
-        service = MarkedForDeletionService(pool)
+        service = MarkedForDeletionService()
         for mark in await service.get_all_marks():
             rtype = mark["resource_type"]
             rname = mark["resource_name"]

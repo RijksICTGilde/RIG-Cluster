@@ -185,7 +185,7 @@ async def cleanup_project(
     if grace_period_days is None:
         grace_period_days = settings.DELETION_GRACE_PERIOD_DAYS
 
-    service = MarkedForDeletionService(pool)
+    service = MarkedForDeletionService()
 
     project_expired = await service.get_expired_marks(grace_period_days, project_name=project_name)
 
@@ -357,7 +357,7 @@ async def reconcile(
     if grace_period_days is None:
         grace_period_days = settings.DELETION_GRACE_PERIOD_DAYS
 
-    service = MarkedForDeletionService(pool)
+    service = MarkedForDeletionService()
     expected = _build_expected_resources(project_yamls)
 
     results: dict[str, Any] = {

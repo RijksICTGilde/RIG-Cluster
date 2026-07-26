@@ -2529,8 +2529,8 @@ class ProjectManager:
                 from opi.core.database_pools import get_database_pool
                 from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
-                pool = get_database_pool("main")
-                marked_service = MarkedForDeletionService(pool)
+                get_database_pool("main")  # guard: raises if the DB is unavailable -> immediate delete
+                marked_service = MarkedForDeletionService()
             except KeyError, ValueError:
                 logger.warning("Database pool not available - persistent resources will be deleted immediately")
 
