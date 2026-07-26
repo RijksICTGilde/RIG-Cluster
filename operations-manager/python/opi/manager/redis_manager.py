@@ -329,7 +329,9 @@ class RedisManager:
         """Check if project uses namespace-specific Redis service."""
         project_services = project_data.get("services", [])
         # Format-agnostic (bare string / legacy name-as-key / new {name, config} record).
-        return any(service_entry_name(service_item) == ServiceType.NAMESPACE_REDIS.value for service_item in project_services)
+        return any(
+            service_entry_name(service_item) == ServiceType.NAMESPACE_REDIS.value for service_item in project_services
+        )
 
     @staticmethod
     def _get_redis_service_config(project_data: dict[str, Any]) -> dict[str, Any] | None:

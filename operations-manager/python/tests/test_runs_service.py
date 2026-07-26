@@ -5,9 +5,17 @@ from opi.services.runs_service import RunKind, RunsService, RunStatus
 
 async def _new(svc, session_id, *, project="p1", deployment="d1", cluster="c1"):
     row = await svc.create_run(
-        kind=RunKind.DB_CONSOLE, session_id=session_id, cluster=cluster, project=project,
-        deployment=deployment, namespace="ns", name=f"run-{session_id}", spec={"k": session_id},
-        url=None, started_by=None, expires_at=None,
+        kind=RunKind.DB_CONSOLE,
+        session_id=session_id,
+        cluster=cluster,
+        project=project,
+        deployment=deployment,
+        namespace="ns",
+        name=f"run-{session_id}",
+        spec={"k": session_id},
+        url=None,
+        started_by=None,
+        expires_at=None,
     )
     return row
 
