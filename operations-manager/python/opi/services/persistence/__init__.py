@@ -3,3 +3,4 @@
 """
 
 from opi.services.persistence.subdomain_registry import SubdomainRegistry  # noqa: F401
+from opi.services.persistence.users import User  # noqa: F401
