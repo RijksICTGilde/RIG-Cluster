@@ -4,7 +4,6 @@ from typing import Any
 
 from opi.connectors.subdomain import (
     BARE_DOMAIN_SUBDOMAIN,
-    SubdomainConnector,
     get_project_allowed_domain_config,
     get_subdomain_status,
     get_supported_base_domains,
@@ -13,6 +12,7 @@ from opi.connectors.subdomain import (
 )
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_domain_supports_dots
+from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
 

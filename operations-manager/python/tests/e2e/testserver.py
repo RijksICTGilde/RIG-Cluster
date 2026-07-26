@@ -214,7 +214,7 @@ def create_test_app():
             patch("opi.core.config.settings.SECRET_KEY", SECRET_KEY),
             patch("opi.core.config.settings.ENABLE_GIT_MONITOR", False),
             patch(
-                "opi.connectors.subdomain.SubdomainConnector.get_by_subdomain",
+                "opi.services.persistence.subdomain_registry.SubdomainConnector.get_by_subdomain",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
