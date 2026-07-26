@@ -3,8 +3,8 @@
 Runs Alembic's autogenerate comparison scoped to ORM-managed tables (via
 ``include_orm_object``) against the configured database. Exits 0 when there is no drift
 for those tables -- proving the SQLAlchemy models match the DB and that a future
-``alembic revision --autogenerate`` would be empty for them. The raw-SQL tables
-(async_tasks, users, runs, marked_for_deletion) are ignored, so they never show up.
+``alembic revision --autogenerate`` would be empty for them. Any table not declared as an
+ORM model is ignored, so it never shows up.
 
 Run from ``operations-manager/python`` with DB access (e.g. inside the OPI pod):
 
