@@ -31,12 +31,12 @@ class AttachmentsService(Service):
     def config_editables(self, layer: ConfigLayer):
         if layer is not ConfigLayer.COMPONENT:
             return []
-        from opi.forms.editables.fields.components import ATTACHMENT_USE_SEQUENCE_EDITABLE
+        from opi.services.catalog.attachments.editables import ATTACHMENT_USE_SEQUENCE_EDITABLE
 
         return [ATTACHMENT_USE_SEQUENCE_EDITABLE]
 
     def config_component_visualizers(self):
-        from opi.forms.visualizers.fields.components import ATTACHMENT_USE_SEQUENCE
+        from opi.services.catalog.attachments.visualizers import ATTACHMENT_USE_SEQUENCE
 
         return [ATTACHMENT_USE_SEQUENCE]
 
