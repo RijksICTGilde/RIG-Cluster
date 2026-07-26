@@ -8,9 +8,10 @@ Alembic autogenerate future migrations for it.
 
 Coexistence is deliberate and safe: ``migrations/env.py`` points autogenerate at
 ``Base.metadata`` but scopes it (via ``include_object``) to ONLY the tables declared as
-ORM models here. The raw-SQL tables (async_tasks, users, runs, marked_for_deletion) are
-not on this metadata and are left untouched by autogenerate. Services can be migrated to
-the ORM one table at a time without a big-bang rewrite.
+ORM models here. Any table not (yet) declared as an ORM model stays off this metadata and
+is left untouched by autogenerate. Services can be migrated to the ORM one table at a time
+without a big-bang rewrite; today all of the platform's tables (async_tasks, users, runs,
+marked_for_deletion, subdomain_registry) are modeled.
 """
 
 from __future__ import annotations
@@ -112,10 +113,10 @@ def include_orm_object(object_: Any, name: str, type_: str, reflected: bool, com
     """Alembic ``include_object`` hook that scopes autogenerate to ORM-managed tables.
 
     A table is managed iff it is on :data:`Base.metadata`; indexes/constraints/columns
-    are managed iff their owning table is. Everything else -- the raw-SQL tables
-    (async_tasks, users, runs, marked_for_deletion) and their objects -- is ignored, so
-    autogenerate never proposes dropping them. Shared by ``migrations/env.py`` and the
-    schema-drift check (``scripts/check_orm_schema.py``)."""
+    are managed iff their owning table is. Everything else -- any table not declared as an
+    ORM model, and its objects -- is ignored, so autogenerate never proposes dropping it.
+    Shared by ``migrations/env.py`` and the schema-drift check
+    (``scripts/check_orm_schema.py``)."""
     if type_ == "table":
         return name in Base.metadata.tables
     table = getattr(object_, "table", None)

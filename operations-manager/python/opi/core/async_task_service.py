@@ -1,18 +1,29 @@
-"""Async task service for PostgreSQL-backed task queue."""
+"""Async task service for PostgreSQL-backed task queue (ORM-backed).
 
-import json
+Repository over :class:`opi.services.persistence.async_tasks.AsyncTask` on the shared
+async engine. Task claiming still relies on ``SELECT ... FOR UPDATE SKIP LOCKED`` so
+multiple workers can safely pull from the queue without stepping on each other.
+"""
+
 import logging
 import os
 import socket
 import uuid
-from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from opi.core.database_pool import DatabasePool
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.orm import aliased
+
+from opi.core.db import session_scope
+from opi.services.persistence.async_tasks import AsyncTask
 
 logger = logging.getLogger(__name__)
+
+# Statuses that count as "in flight" for concurrency / dedup purposes.
+_ACTIVE_STATES = ("claimed", "running")
+_OPEN_STATES = ("pending", "claimed", "running")
+_TERMINAL_STATES = ("completed", "failed", "cancelled")
 
 
 class TaskType(StrEnum):
@@ -51,37 +62,10 @@ class AsyncTaskStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
-_JSONB_COLUMNS = {"payload", "result", "subtasks"}
-
-
-def _row_to_dict(row: Any) -> dict | None:
-    """Convert an asyncpg Record to a dict with serializable types.
-
-    UUID objects are converted to strings, datetime objects to ISO format
-    strings, and jsonb columns (returned as strings by asyncpg) are
-    deserialized back to their Python equivalents.
-    """
-    if row is None:
-        return None
-    result = dict(row)
-    for key, value in result.items():
-        if isinstance(value, uuid.UUID):
-            result[key] = str(value)
-        elif isinstance(value, datetime):
-            result[key] = value.isoformat()
-        elif key in _JSONB_COLUMNS and isinstance(value, str):
-            result[key] = json.loads(value)
-    # Alias 'id' as 'task_id' for API consistency
-    if "id" in result:
-        result["task_id"] = result["id"]
-    return result
-
-
 class AsyncTaskService:
-    """Service layer for async task queue operations."""
+    """Service layer for async task queue operations (ORM-backed)."""
 
-    def __init__(self, pool: DatabasePool, cluster: str):
-        self._pool = pool
+    def __init__(self, cluster: str):
         self._cluster = cluster
         self._instance_id = os.environ.get("HOSTNAME", socket.gethostname())
 
@@ -99,105 +83,67 @@ class AsyncTaskService:
 
         Performs a deduplication check: if a task with the same project_name,
         deployment_name, and task_type already exists with a status of pending,
-        claimed, or running, that existing task is returned instead of creating
-        a new one.
-
-        Args:
-            task_type: The type of task to create.
-            project_name: The project this task belongs to.
-            deployment_name: The deployment this task targets (may be None).
-            cluster: The cluster this task should run on.
-            payload: JSON-serializable dict with task parameters.
-            created_by: Identifier of who created the task.
-
-        Returns:
-            A dict representing the created or existing task row.
+        claimed, or running, and its payload is identical, that existing task is
+        returned instead of creating a new one. A differing payload queues a new task.
         """
-        conn = await self._pool.acquire()
-        try:
-            # Dedup check: look for an active task with the same key fields
-            existing = await conn.fetchrow(
-                """
-                SELECT * FROM async_tasks
-                WHERE project_name = $1
-                  AND deployment_name IS NOT DISTINCT FROM $2
-                  AND task_type = $3
-                  AND status IN ('pending', 'claimed', 'running')
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                project_name,
-                deployment_name,
-                task_type,
-            )
+        async with session_scope() as session:
+            # Dedup check: look for an active task with the same key fields.
+            existing = (
+                await session.execute(
+                    select(AsyncTask)
+                    .where(
+                        AsyncTask.project_name == project_name,
+                        AsyncTask.deployment_name.is_not_distinct_from(deployment_name),
+                        AsyncTask.task_type == task_type,
+                        AsyncTask.status.in_(_OPEN_STATES),
+                    )
+                    .order_by(AsyncTask.created_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
             if existing is not None:
-                # Compare payloads: if the new request has different parameters
-                # (e.g. different image tag), create a new task that queues behind
-                # the running one.  Only dedup when the payload is identical.
-                existing_payload = existing["payload"]
-                if isinstance(existing_payload, str):
-                    existing_payload = json.loads(existing_payload)
-                if existing_payload == payload:
+                # Only dedup when the payload is identical; a different payload
+                # (e.g. different image tag) queues a new task behind the running one.
+                if existing.payload == payload:
                     logger.info(
                         "Dedup: returning existing %s task %s for %s/%s (status=%s, identical payload)",
                         task_type,
-                        existing["id"],
+                        existing.id,
                         project_name,
                         deployment_name,
-                        existing["status"],
+                        existing.status,
                     )
-                    return _row_to_dict(existing)
-                else:
-                    logger.info(
-                        "Dedup: existing %s task %s for %s/%s has different payload, creating new queued task",
-                        task_type,
-                        existing["id"],
-                        project_name,
-                        deployment_name,
-                    )
+                    return existing.to_dict()
+                logger.info(
+                    "Dedup: existing %s task %s for %s/%s has different payload, creating new queued task",
+                    task_type,
+                    existing.id,
+                    project_name,
+                    deployment_name,
+                )
 
+            row = AsyncTask(
+                task_type=task_type,
+                project_name=project_name,
+                deployment_name=deployment_name,
+                cluster=cluster,
+                payload=payload,
+                created_by=created_by,
+            )
             if max_attempts is not None:
-                row = await conn.fetchrow(
-                    """
-                    INSERT INTO async_tasks
-                        (task_type, project_name, deployment_name, cluster, payload, created_by, max_attempts)
-                    VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
-                    RETURNING *
-                    """,
-                    task_type,
-                    project_name,
-                    deployment_name,
-                    cluster,
-                    json.dumps(payload),
-                    created_by,
-                    max_attempts,
-                )
-            else:
-                row = await conn.fetchrow(
-                    """
-                    INSERT INTO async_tasks
-                        (task_type, project_name, deployment_name, cluster, payload, created_by)
-                    VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-                    RETURNING *
-                    """,
-                    task_type,
-                    project_name,
-                    deployment_name,
-                    cluster,
-                    json.dumps(payload),
-                    created_by,
-                )
+                row.max_attempts = max_attempts
+            session.add(row)
+            await session.flush()
+            await session.refresh(row)  # server defaults (id, timestamps, status)
             logger.info(
                 "Created task %s type=%s for %s/%s on cluster %s",
-                row["id"],
+                row.id,
                 task_type,
                 project_name,
                 deployment_name,
                 cluster,
             )
-            return _row_to_dict(row)
-        finally:
-            await self._pool.release(conn)
+            return row.to_dict()
 
     async def claim_next_task(
         self,
@@ -206,115 +152,83 @@ class AsyncTaskService:
     ) -> dict | None:
         """Claim the next pending task for the given cluster.
 
-        Uses SELECT ... FOR UPDATE SKIP LOCKED to safely claim a task without
-        conflicting with other workers.
+        Uses ``SELECT ... FOR UPDATE SKIP LOCKED`` to safely claim a task without
+        conflicting with other workers. Tasks are skipped when another task for the
+        same project/deployment is already in-flight (prevents concurrent git/ArgoCD
+        operations on the same deployment), and when a per-type concurrency limit is
+        already reached.
 
         Args:
             cluster: The cluster to claim a task for.
             type_concurrency_limits: Optional mapping of task_type -> max concurrent
-                tasks. When a task type has reached its limit, pending tasks of that
-                type are skipped until a slot opens up.
+                tasks.
 
         Returns:
             A dict representing the claimed task, or None if no task is available.
         """
-        conn = await self._pool.acquire()
-        try:
-            async with conn.transaction():
-                # Build optional per-type concurrency filter
-                type_limit_sql = ""
-                params: list[Any] = [cluster]
-                if type_concurrency_limits:
-                    # For each limited type, add a condition that skips pending
-                    # tasks of that type when the limit is already reached.
-                    conditions = []
-                    for task_type, max_concurrent in type_concurrency_limits.items():
-                        idx_type = len(params) + 1
-                        idx_limit = len(params) + 2
-                        conditions.append(
-                            f"""NOT (
-                                t.task_type = ${idx_type}
-                                AND (
-                                    SELECT COUNT(*) FROM async_tasks tc
-                                    WHERE tc.task_type = ${idx_type}
-                                      AND tc.status IN ('claimed', 'running')
-                                ) >= ${idx_limit}
-                            )"""
-                        )
-                        params.extend([task_type, max_concurrent])
-                    type_limit_sql = "AND " + " AND ".join(conditions)
+        async with session_scope() as session:
+            # Skip pending tasks when another task for the same project/deployment
+            # is already claimed/running.
+            running = aliased(AsyncTask)
+            inflight = (
+                select(1)
+                .select_from(running)
+                .where(
+                    running.project_name == AsyncTask.project_name,
+                    running.deployment_name.is_not_distinct_from(AsyncTask.deployment_name),
+                    running.status.in_(_ACTIVE_STATES),
+                    running.id != AsyncTask.id,
+                )
+                .exists()
+            )
 
-                # Claim the next pending task, but skip tasks where another
-                # task for the same project/deployment is already in-flight.
-                # This prevents concurrent processing of the same deployment
-                # which could cause race conditions in git/ArgoCD operations.
-                row = await conn.fetchrow(
-                    f"""
-                    SELECT id FROM async_tasks t
-                    WHERE t.status = 'pending' AND t.cluster = $1
-                      AND NOT EXISTS (
-                          SELECT 1 FROM async_tasks running
-                          WHERE running.project_name = t.project_name
-                            AND running.deployment_name IS NOT DISTINCT FROM t.deployment_name
-                            AND running.status IN ('claimed', 'running')
-                            AND running.id != t.id
-                      )
-                      {type_limit_sql}
-                    ORDER BY t.created_at ASC
-                    LIMIT 1
-                    FOR UPDATE SKIP LOCKED
-                    """,
-                    *params,
-                )
-                if row is None:
-                    return None
+            stmt = select(AsyncTask.id).where(
+                AsyncTask.status == "pending",
+                AsyncTask.cluster == cluster,
+                ~inflight,
+            )
 
-                task_id = row["id"]
-                updated = await conn.fetchrow(
-                    """
-                    UPDATE async_tasks
-                    SET status = 'claimed',
-                        claimed_by = $2,
-                        claimed_at = NOW(),
-                        heartbeat_at = NOW()
-                    WHERE id = $1
-                    RETURNING *
-                    """,
-                    task_id,
-                    self._instance_id,
+            # Per-type concurrency: skip pending tasks of a type at/over its limit.
+            for task_type, max_concurrent in (type_concurrency_limits or {}).items():
+                counter = aliased(AsyncTask)
+                in_flight_of_type = (
+                    select(func.count())
+                    .select_from(counter)
+                    .where(counter.task_type == task_type, counter.status.in_(_ACTIVE_STATES))
+                    .scalar_subquery()
                 )
-                logger.info(
-                    "Claimed task %s (type=%s) for cluster %s by %s",
-                    task_id,
-                    updated["task_type"],
-                    cluster,
-                    self._instance_id,
-                )
-                return _row_to_dict(updated)
-        finally:
-            await self._pool.release(conn)
+                stmt = stmt.where(~((AsyncTask.task_type == task_type) & (in_flight_of_type >= max_concurrent)))
+
+            stmt = stmt.order_by(AsyncTask.created_at.asc()).limit(1).with_for_update(skip_locked=True, of=AsyncTask)
+
+            task_id = (await session.execute(stmt)).scalars().first()
+            if task_id is None:
+                return None
+
+            await session.execute(
+                update(AsyncTask)
+                .where(AsyncTask.id == task_id)
+                .values(status="claimed", claimed_by=self._instance_id, claimed_at=func.now(), heartbeat_at=func.now())
+            )
+            claimed = await session.get(AsyncTask, task_id)
+            logger.info(
+                "Claimed task %s (type=%s) for cluster %s by %s",
+                task_id,
+                claimed.task_type,
+                cluster,
+                self._instance_id,
+            )
+            return claimed.to_dict()
 
     async def start_task(self, task_id: str) -> None:
-        """Mark a claimed task as running.
-
-        Args:
-            task_id: The UUID of the task to start.
-        """
-        conn = await self._pool.acquire()
-        try:
-            await conn.execute(
-                """
-                UPDATE async_tasks
-                SET status = 'running',
-                    started_at = NOW(),
-                    heartbeat_at = NOW()
-                WHERE id = $1
-                """,
-                uuid.UUID(task_id),
+        """Mark a claimed task as running."""
+        async with session_scope() as session:
+            await session.execute(
+                update(AsyncTask)
+                .where(AsyncTask.id == uuid.UUID(task_id))
+                .values(status="running", started_at=func.now(), heartbeat_at=func.now())
             )
-            logger.info("Started task %s", task_id)
-        finally:
-            await self._pool.release(conn)
+        logger.info("Started task %s", task_id)
 
     async def update_progress(
         self,
@@ -328,107 +242,55 @@ class AsyncTaskService:
     ) -> None:
         """Update progress information for a running task.
 
-        Only the fields that are provided (not None) will be updated.
-        The heartbeat timestamp is always refreshed.
-
-        Args:
-            task_id: The UUID of the task to update.
-            current_step: Description of the current step.
-            progress_percent: Completion percentage (0-100).
-            subtasks: List of subtask status dicts.
-            logs: List of log message strings.
-            events: Event data (JSON-serializable).
-            web_addresses: Web address data (JSON-serializable).
+        Only the fields that are provided (not None) are updated. The heartbeat
+        timestamp is always refreshed.
         """
-        set_clauses = ["heartbeat_at = NOW()"]
-        params: list[Any] = [uuid.UUID(task_id)]
-        param_idx = 2
-
+        values: dict[str, Any] = {"heartbeat_at": func.now()}
         if current_step is not None:
-            set_clauses.append(f"current_step = ${param_idx}")
-            params.append(current_step[:255] if len(current_step) > 255 else current_step)
-            param_idx += 1
-
+            values["current_step"] = current_step[:255]
         if progress_percent is not None:
-            set_clauses.append(f"progress_percent = ${param_idx}")
-            params.append(progress_percent)
-            param_idx += 1
-
+            values["progress_percent"] = progress_percent
         if subtasks is not None:
-            set_clauses.append(f"subtasks = ${param_idx}::jsonb")
-            params.append(json.dumps(subtasks))
-            param_idx += 1
-
+            values["subtasks"] = subtasks
         if logs is not None:
-            set_clauses.append(f"logs = ${param_idx}::text[]")
-            params.append(logs)
-            param_idx += 1
-
+            values["logs"] = logs
         if events is not None:
-            set_clauses.append(f"events = ${param_idx}::jsonb")
-            params.append(json.dumps(events))
-            param_idx += 1
-
+            values["events"] = events
         if web_addresses is not None:
-            set_clauses.append(f"web_addresses = ${param_idx}::jsonb")
-            params.append(json.dumps(web_addresses))
-            param_idx += 1
+            values["web_addresses"] = web_addresses
 
-        query = f"UPDATE async_tasks SET {', '.join(set_clauses)} WHERE id = $1"
-
-        conn = await self._pool.acquire()
-        try:
-            await conn.execute(query, *params)
-            logger.debug(
-                "Updated progress for task %s: step=%s percent=%s",
-                task_id,
-                current_step,
-                progress_percent,
-            )
-        finally:
-            await self._pool.release(conn)
+        async with session_scope() as session:
+            await session.execute(update(AsyncTask).where(AsyncTask.id == uuid.UUID(task_id)).values(**values))
+        logger.debug(
+            "Updated progress for task %s: step=%s percent=%s",
+            task_id,
+            current_step,
+            progress_percent,
+        )
 
     async def send_heartbeat(self, task_id: str) -> None:
-        """Send a heartbeat for a running task to prevent stale detection.
-
-        Args:
-            task_id: The UUID of the task.
-        """
-        conn = await self._pool.acquire()
-        try:
-            await conn.execute(
-                "UPDATE async_tasks SET heartbeat_at = NOW() WHERE id = $1",
-                uuid.UUID(task_id),
+        """Send a heartbeat for a running task to prevent stale detection."""
+        async with session_scope() as session:
+            await session.execute(
+                update(AsyncTask).where(AsyncTask.id == uuid.UUID(task_id)).values(heartbeat_at=func.now())
             )
-            logger.debug("Heartbeat sent for task %s", task_id)
-        finally:
-            await self._pool.release(conn)
+        logger.debug("Heartbeat sent for task %s", task_id)
 
     async def complete_task(self, task_id: str, result: dict | None = None) -> None:
-        """Mark a task as completed.
-
-        Args:
-            task_id: The UUID of the task.
-            result: Optional result data to store (JSON-serializable).
-        """
-        conn = await self._pool.acquire()
-        try:
-            await conn.execute(
-                """
-                UPDATE async_tasks
-                SET status = 'completed',
-                    result = $2::jsonb,
-                    completed_at = NOW(),
-                    progress_percent = 100,
-                    current_step = 'Done'
-                WHERE id = $1
-                """,
-                uuid.UUID(task_id),
-                json.dumps(result) if result is not None else None,
+        """Mark a task as completed."""
+        async with session_scope() as session:
+            await session.execute(
+                update(AsyncTask)
+                .where(AsyncTask.id == uuid.UUID(task_id))
+                .values(
+                    status="completed",
+                    result=result,
+                    completed_at=func.now(),
+                    progress_percent=100,
+                    current_step="Done",
+                )
             )
-            logger.info("Completed task %s", task_id)
-        finally:
-            await self._pool.release(conn)
+        logger.info("Completed task %s", task_id)
 
     async def fail_task(
         self,
@@ -439,34 +301,25 @@ class AsyncTaskService:
     ) -> None:
         """Mark a task as failed or re-queue it for retry.
 
-        If the attempt count is below max_attempts, the task is reset to pending
-        so that it can be retried. Otherwise it is marked as permanently failed.
-
-        Args:
-            task_id: The UUID of the task.
-            error_message: Description of the failure.
-            attempt_count: Current attempt number (before increment).
-            max_attempts: Maximum number of allowed attempts.
+        If the attempt count is below max_attempts, the task is reset to pending so it
+        can be retried. Otherwise it is marked as permanently failed.
         """
-        # Truncate to fit the DB column (varchar 255)
+        # Truncate to fit the DB column (varchar 255).
         if len(error_message) > 255:
             error_message = error_message[:252] + "..."
 
-        conn = await self._pool.acquire()
-        try:
+        async with session_scope() as session:
             if attempt_count < max_attempts:
-                await conn.execute(
-                    """
-                    UPDATE async_tasks
-                    SET status = 'pending',
-                        error_message = $2,
-                        claimed_by = NULL,
-                        claimed_at = NULL,
-                        attempt_count = attempt_count + 1
-                    WHERE id = $1
-                    """,
-                    uuid.UUID(task_id),
-                    error_message,
+                await session.execute(
+                    update(AsyncTask)
+                    .where(AsyncTask.id == uuid.UUID(task_id))
+                    .values(
+                        status="pending",
+                        error_message=error_message,
+                        claimed_by=None,
+                        claimed_at=None,
+                        attempt_count=AsyncTask.attempt_count + 1,
+                    )
                 )
                 logger.info(
                     "Task %s failed (attempt %d/%d), re-queued for retry: %s",
@@ -476,16 +329,10 @@ class AsyncTaskService:
                     error_message,
                 )
             else:
-                await conn.execute(
-                    """
-                    UPDATE async_tasks
-                    SET status = 'failed',
-                        error_message = $2,
-                        completed_at = NOW()
-                    WHERE id = $1
-                    """,
-                    uuid.UUID(task_id),
-                    error_message,
+                await session.execute(
+                    update(AsyncTask)
+                    .where(AsyncTask.id == uuid.UUID(task_id))
+                    .values(status="failed", error_message=error_message, completed_at=func.now())
                 )
                 logger.info(
                     "Task %s permanently failed after %d attempts: %s",
@@ -493,54 +340,24 @@ class AsyncTaskService:
                     max_attempts,
                     error_message,
                 )
-        finally:
-            await self._pool.release(conn)
 
     async def get_task(self, task_id: str) -> dict | None:
-        """Retrieve a single task by ID.
-
-        Args:
-            task_id: The UUID of the task to retrieve.
-
-        Returns:
-            A dict representing the task row, or None if not found.
-        """
-        conn = await self._pool.acquire()
-        try:
-            row = await conn.fetchrow(
-                "SELECT * FROM async_tasks WHERE id = $1",
-                uuid.UUID(task_id),
-            )
-            if row is None:
-                return None
-            return _row_to_dict(row)
-        finally:
-            await self._pool.release(conn)
+        """Retrieve a single task by ID."""
+        async with session_scope() as session:
+            row = await session.get(AsyncTask, uuid.UUID(task_id))
+            return row.to_dict() if row else None
 
     async def update_task_status(self, task_id: str, status: str) -> None:
-        """Update just the status of a task.
+        """Update just the status of a task (used for simple transitions like cancel).
 
-        Used for simple status transitions like cancellation.
-
-        Args:
-            task_id: The UUID of the task.
-            status: The new status value.
+        ``completed_at`` is stamped when transitioning to a terminal status.
         """
-        conn = await self._pool.acquire()
-        try:
-            await conn.execute(
-                """
-                UPDATE async_tasks
-                SET status = $2,
-                    completed_at = CASE WHEN $2 IN ('completed', 'failed', 'cancelled') THEN NOW() ELSE completed_at END
-                WHERE id = $1
-                """,
-                uuid.UUID(task_id),
-                status,
-            )
-            logger.info("Updated task %s status to %s", task_id, status)
-        finally:
-            await self._pool.release(conn)
+        values: dict[str, Any] = {"status": status}
+        if status in _TERMINAL_STATES:
+            values["completed_at"] = func.now()
+        async with session_scope() as session:
+            await session.execute(update(AsyncTask).where(AsyncTask.id == uuid.UUID(task_id)).values(**values))
+        logger.info("Updated task %s status to %s", task_id, status)
 
     async def list_tasks(
         self,
@@ -552,116 +369,89 @@ class AsyncTaskService:
     ) -> dict:
         """List tasks with optional filtering.
 
-        Args:
-            project_name: Filter by project name.
-            deployment_name: Filter by deployment name.
-            status: Filter by task status.
-            limit: Maximum number of tasks to return.
-            offset: Number of tasks to skip.
-
         Returns:
             A dict with 'tasks' (list of task dicts) and 'total' (count).
         """
-        where_clauses: list[str] = []
-        params: list[Any] = []
-        param_idx = 1
-
+        conds = []
         if project_name is not None:
-            where_clauses.append(f"project_name = ${param_idx}")
-            params.append(project_name)
-            param_idx += 1
-
+            conds.append(AsyncTask.project_name == project_name)
         if deployment_name is not None:
-            where_clauses.append(f"deployment_name = ${param_idx}")
-            params.append(deployment_name)
-            param_idx += 1
-
+            conds.append(AsyncTask.deployment_name == deployment_name)
         if status is not None:
-            where_clauses.append(f"status = ${param_idx}")
-            params.append(status)
-            param_idx += 1
+            conds.append(AsyncTask.status == status)
 
-        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-
-        query = f"""
-            SELECT * FROM async_tasks
-            {where_sql}
-            ORDER BY created_at DESC
-            LIMIT ${param_idx} OFFSET ${param_idx + 1}
-        """
-        params.extend([limit, offset])
-
-        count_query = f"SELECT COUNT(*) FROM async_tasks {where_sql}"
-        count_params = params[:-2]  # Exclude limit and offset
-
-        conn = await self._pool.acquire()
-        try:
-            rows = await conn.fetch(query, *params)
-            count_row = await conn.fetchrow(count_query, *count_params)
-            total = count_row[0] if count_row else 0
-            return {"tasks": [_row_to_dict(row) for row in rows], "total": total}
-        finally:
-            await self._pool.release(conn)
+        async with session_scope() as session:
+            total = (await session.execute(select(func.count()).select_from(AsyncTask).where(*conds))).scalar_one()
+            rows = (
+                (
+                    await session.execute(
+                        select(AsyncTask)
+                        .where(*conds)
+                        .order_by(AsyncTask.created_at.desc())
+                        .limit(limit)
+                        .offset(offset)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return {"tasks": [row.to_dict() for row in rows], "total": total}
 
     async def recover_stale_tasks(self, stale_threshold_seconds: int = 300) -> int:
         """Recover tasks that have gone stale (no heartbeat within threshold).
 
-        Tasks with remaining retry attempts are re-queued as pending. Tasks that
-        have exhausted their retry attempts are marked as failed.
-
-        Args:
-            stale_threshold_seconds: Number of seconds without a heartbeat before
-                a task is considered stale.
+        Tasks with remaining retry attempts are re-queued as pending. Tasks that have
+        exhausted their retry attempts are marked as failed.
 
         Returns:
             The number of tasks that were recovered (re-queued).
         """
-        conn = await self._pool.acquire()
-        try:
-            # Re-queue stale tasks that still have retry attempts
-            requeued_result = await conn.execute(
-                """
-                UPDATE async_tasks
-                SET status = 'pending',
-                    claimed_by = NULL,
-                    claimed_at = NULL,
-                    error_message = 'Recovered from stale state (no heartbeat)',
-                    attempt_count = attempt_count + 1
-                WHERE status IN ('claimed', 'running')
-                  AND heartbeat_at < NOW() - make_interval(secs => $1::double precision)
-                  AND attempt_count < max_attempts
-                """,
-                float(stale_threshold_seconds),
-            )
-            # asyncpg execute returns a status string like "UPDATE N"
-            requeued_count = int(requeued_result.split()[-1])
-
-            # Mark stale tasks with no retries left as failed
-            failed_result = await conn.execute(
-                """
-                UPDATE async_tasks
-                SET status = 'failed',
-                    error_message = 'Failed: stale task exceeded max attempts',
-                    completed_at = NOW()
-                WHERE status IN ('claimed', 'running')
-                  AND heartbeat_at < NOW() - make_interval(secs => $1::double precision)
-                  AND attempt_count >= max_attempts
-                """,
-                float(stale_threshold_seconds),
-            )
-            failed_count = int(failed_result.split()[-1])
-
-            if requeued_count > 0 or failed_count > 0:
-                logger.info(
-                    "Stale task recovery: %d re-queued, %d marked failed (threshold=%ds)",
-                    requeued_count,
-                    failed_count,
-                    stale_threshold_seconds,
+        # make_interval positional args: (years, months, weeks, days, hours, mins, secs).
+        cutoff = func.now() - func.make_interval(0, 0, 0, 0, 0, 0, float(stale_threshold_seconds))
+        async with session_scope() as session:
+            # Re-queue stale tasks that still have retry attempts.
+            requeued = await session.execute(
+                update(AsyncTask)
+                .where(
+                    AsyncTask.status.in_(_ACTIVE_STATES),
+                    AsyncTask.heartbeat_at < cutoff,
+                    AsyncTask.attempt_count < AsyncTask.max_attempts,
                 )
+                .values(
+                    status="pending",
+                    claimed_by=None,
+                    claimed_at=None,
+                    error_message="Recovered from stale state (no heartbeat)",
+                    attempt_count=AsyncTask.attempt_count + 1,
+                )
+            )
+            requeued_count = requeued.rowcount
 
-            return requeued_count
-        finally:
-            await self._pool.release(conn)
+            # Mark stale tasks with no retries left as failed (the re-queued ones are
+            # now 'pending', so they no longer match here).
+            failed = await session.execute(
+                update(AsyncTask)
+                .where(
+                    AsyncTask.status.in_(_ACTIVE_STATES),
+                    AsyncTask.heartbeat_at < cutoff,
+                    AsyncTask.attempt_count >= AsyncTask.max_attempts,
+                )
+                .values(
+                    status="failed",
+                    error_message="Failed: stale task exceeded max attempts",
+                    completed_at=func.now(),
+                )
+            )
+            failed_count = failed.rowcount
+
+        if requeued_count > 0 or failed_count > 0:
+            logger.info(
+                "Stale task recovery: %d re-queued, %d marked failed (threshold=%ds)",
+                requeued_count,
+                failed_count,
+                stale_threshold_seconds,
+            )
+        return requeued_count
 
     async def find_conflicting_task(
         self,
@@ -670,61 +460,25 @@ class AsyncTaskService:
         project_name: str,
         deployment_name: str | None = None,
     ) -> dict | None:
-        """Check if another task with the same type and project is already running.
+        """Check if another claimed/running task of the same type+project exists.
 
-        Looks for claimed/running tasks that match the same project_name and
-        task_type, excluding the given task_id (the one about to execute).
-
-        Args:
-            task_id: The current task's ID (excluded from the search).
-            task_type: The task type to check for.
-            project_name: The project name to check for.
-            deployment_name: Optional deployment name for more specific matching.
-
-        Returns:
-            A dict representing the conflicting task, or None if no conflict.
+        Excludes the given task_id. When ``deployment_name`` is provided the match is
+        deployment-specific. Returns the oldest match, or None.
         """
-        conn = await self._pool.acquire()
-        try:
-            if deployment_name:
-                row = await conn.fetchrow(
-                    """
-                    SELECT id, task_type, project_name, deployment_name, status, created_at
-                    FROM async_tasks
-                    WHERE status IN ('claimed', 'running')
-                      AND task_type = $1
-                      AND project_name = $2
-                      AND deployment_name = $3
-                      AND id != $4
-                    ORDER BY created_at ASC
-                    LIMIT 1
-                    """,
-                    task_type,
-                    project_name,
-                    deployment_name,
-                    uuid.UUID(task_id),
-                )
-            else:
-                row = await conn.fetchrow(
-                    """
-                    SELECT id, task_type, project_name, deployment_name, status, created_at
-                    FROM async_tasks
-                    WHERE status IN ('claimed', 'running')
-                      AND task_type = $1
-                      AND project_name = $2
-                      AND id != $3
-                    ORDER BY created_at ASC
-                    LIMIT 1
-                    """,
-                    task_type,
-                    project_name,
-                    uuid.UUID(task_id),
-                )
-            if row is None:
-                return None
-            return _row_to_dict(row)
-        finally:
-            await self._pool.release(conn)
+        conds = [
+            AsyncTask.status.in_(_ACTIVE_STATES),
+            AsyncTask.task_type == task_type,
+            AsyncTask.project_name == project_name,
+            AsyncTask.id != uuid.UUID(task_id),
+        ]
+        if deployment_name:
+            conds.append(AsyncTask.deployment_name == deployment_name)
+
+        async with session_scope() as session:
+            row = (
+                await session.execute(select(AsyncTask).where(*conds).order_by(AsyncTask.created_at.asc()).limit(1))
+            ).scalar_one_or_none()
+            return row.to_dict() if row else None
 
     async def find_newer_active_tasks(
         self,
@@ -733,30 +487,29 @@ class AsyncTaskService:
     ) -> list[dict]:
         """Return not-yet-terminal tasks for this project created after the given one.
 
-        The caller decides whether any of these actually supersedes the current
-        task by comparing deployment scopes; that logic lives in task_supersede so
-        this stays a plain query. Includes ``payload`` because a task's real scope
-        (e.g. add_component's target deployments) is stored there, not in the
-        deployment_name column. Newest first.
+        The caller decides whether any of these actually supersedes the current task by
+        comparing deployment scopes (that logic lives in task_supersede), so this stays
+        a plain query. Newest first.
         """
-        conn = await self._pool.acquire()
-        try:
-            rows = await conn.fetch(
-                """
-                SELECT id, task_type, project_name, deployment_name, payload, status, created_at
-                FROM async_tasks
-                WHERE status IN ('pending', 'claimed', 'running')
-                  AND project_name = $1
-                  AND id != $2
-                  AND created_at > (SELECT created_at FROM async_tasks WHERE id = $2)
-                ORDER BY created_at DESC
-                """,
-                project_name,
-                uuid.UUID(task_id),
+        ref_created_at = select(AsyncTask.created_at).where(AsyncTask.id == uuid.UUID(task_id)).scalar_subquery()
+        async with session_scope() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(AsyncTask)
+                        .where(
+                            AsyncTask.status.in_(_OPEN_STATES),
+                            AsyncTask.project_name == project_name,
+                            AsyncTask.id != uuid.UUID(task_id),
+                            AsyncTask.created_at > ref_created_at,
+                        )
+                        .order_by(AsyncTask.created_at.desc())
+                    )
+                )
+                .scalars()
+                .all()
             )
-            return [d for d in (_row_to_dict(row) for row in rows) if d is not None]
-        finally:
-            await self._pool.release(conn)
+            return [row.to_dict() for row in rows]
 
     async def get_last_completed_task(
         self,
@@ -768,68 +521,42 @@ class AsyncTaskService:
         """Get the most recently completed task matching the given criteria.
 
         Args:
-            task_type: The task type to filter on.
-            project_name: The project name to filter on.
-            deployment_name: Optional deployment name for more specific matching.
             only_scheduled: When True, exclude tasks explicitly tagged
-                `payload.trigger == "manual"`. Tasks with no trigger or any
-                other value are treated as scheduled (legacy-safe default).
-
-        Returns:
-            A dict representing the task, or None if no matching task exists.
+                ``payload.trigger == "manual"``. Tasks with no trigger or any other
+                value are treated as scheduled (legacy-safe default).
         """
-        conn = await self._pool.acquire()
-        try:
-            row = await conn.fetchrow(
-                """
-                SELECT * FROM async_tasks
-                WHERE task_type = $1
-                  AND project_name = $2
-                  AND deployment_name IS NOT DISTINCT FROM $3
-                  AND status = 'completed'
-                  AND (NOT $4 OR (payload->>'trigger') IS DISTINCT FROM 'manual')
-                ORDER BY completed_at DESC
-                LIMIT 1
-                """,
-                task_type,
-                project_name,
-                deployment_name,
-                only_scheduled,
-            )
-            if row is None:
-                return None
-            return _row_to_dict(row)
-        finally:
-            await self._pool.release(conn)
+        conds = [
+            AsyncTask.task_type == task_type,
+            AsyncTask.project_name == project_name,
+            AsyncTask.deployment_name.is_not_distinct_from(deployment_name),
+            AsyncTask.status == "completed",
+        ]
+        if only_scheduled:
+            conds.append(AsyncTask.payload["trigger"].astext.is_distinct_from("manual"))
+
+        async with session_scope() as session:
+            row = (
+                await session.execute(select(AsyncTask).where(*conds).order_by(AsyncTask.completed_at.desc()).limit(1))
+            ).scalar_one_or_none()
+            return row.to_dict() if row else None
 
     async def cleanup_old_tasks(self, retention_hours: int = 168) -> int:
         """Delete old completed/failed/cancelled tasks beyond the retention period.
 
-        Args:
-            retention_hours: Number of hours to retain completed tasks.
-
         Returns:
             The number of tasks deleted.
         """
-        conn = await self._pool.acquire()
-        try:
-            result = await conn.execute(
-                """
-                DELETE FROM async_tasks
-                WHERE status IN ('completed', 'failed', 'cancelled')
-                  AND completed_at < NOW() - make_interval(hours => $1)
-                """,
-                retention_hours,
-            )
-            deleted_count = int(result.split()[-1])
-
-            if deleted_count > 0:
-                logger.info(
-                    "Cleaned up %d old tasks (retention=%dh)",
-                    deleted_count,
-                    retention_hours,
+        # make_interval positional args: (years, months, weeks, days, hours, ...).
+        cutoff = func.now() - func.make_interval(0, 0, 0, 0, retention_hours)
+        async with session_scope() as session:
+            result = await session.execute(
+                delete(AsyncTask).where(
+                    AsyncTask.status.in_(_TERMINAL_STATES),
+                    AsyncTask.completed_at < cutoff,
                 )
+            )
+            deleted_count = result.rowcount
 
-            return deleted_count
-        finally:
-            await self._pool.release(conn)
+        if deleted_count > 0:
+            logger.info("Cleaned up %d old tasks (retention=%dh)", deleted_count, retention_hours)
+        return deleted_count
