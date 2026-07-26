@@ -18,42 +18,96 @@ from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
 from opi.services import ServiceAdapter
+from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.project import Project
 from opi.services.registry import get_service
+from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 from opi.utils.project_utils import ComponentValidationError, validate_component_paths, validate_root_component
 
 logger = logging.getLogger(__name__)
 
 
-def validate_service_configs(project_data: dict[str, Any]) -> None:
-    """Validate each project-level service's config against its provider's typed
-    model (RC-5 A: the per-service config-validation chokepoint).
+def _accepted_config_fields(provider: Service, layer: ConfigLayer) -> list[str]:
+    """The config field names a service accepts at ``layer``, for error guidance.
 
-    Only services that carry a config block at project level are checked -- so a
-    bare service (no config) is skipped, and component-level configs (storage
-    mounts, metrics port/path) are validated elsewhere. Fails closed: raises
-    ProjectIntegrityError on the first invalid service config.
+    Sources the service's own declarative field metadata: ``config_api_fields``
+    (the API/YAML-accepted keys, derived from ``config_model_field_names`` for
+    modelled services), falling back to the leaf names of ``config_editables`` for
+    services whose config is a sequence with no flat field set (storage). Returns []
+    when the service declares neither.
+    """
+    fields = provider.config_api_fields(layer)
+    if fields:
+        return fields
+    # Sequence configs (storage) declare no flat field set, so read the leaf names off
+    # the config_editables: the per-entry child fields (name/size/mount-path) when the
+    # editable is a sequence, else the editable's own leaf.
+    names: list[str] = []
+    for editable in provider.config_editables(layer):
+        leaves = editable.children or [editable]
+        names.extend(child.yaml_path.rsplit("/", 1)[-1] for child in leaves)
+    return names
+
+
+def _validate_one_config(name: str, raw: Any, layer: ConfigLayer, where: str, project_name: str) -> None:
+    """Validate one service config block against its provider's typed model.
+
+    Shared by the project-level and component-level walks. Skips services that are
+    unknown or take no typed config. Fails closed: raises ProjectIntegrityError, with
+    the service's own accepted-field list (config_api_fields / config_editables)
+    appended so the message tells the user which keys the service accepts.
+    """
+    try:
+        service_type = ServiceType(name)
+    except ValueError:
+        return  # unknown service name -- other validation handles it
+    provider = get_service(service_type)
+    if provider.config_model is None:
+        return  # service takes no typed config
+    try:
+        provider.validate_config(raw)
+    except ValidationError as e:
+        accepted = _accepted_config_fields(provider, layer)
+        hint = f" Geaccepteerde velden: {', '.join(accepted)}." if accepted else ""
+        raise ProjectIntegrityError(
+            f"Project '{project_name}': configuratie van service '{name}' {where} is ongeldig: {e}.{hint}"
+        ) from e
+
+
+def validate_service_configs(project_data: dict[str, Any]) -> None:
+    """Validate every service's config against its provider's typed model (RC-5 A:
+    the per-service config-validation chokepoint).
+
+    Covers BOTH layers a config can live at: project-level service definitions
+    (keycloak, namespace-postgres, auth-wall) and component-level service references
+    (persistent-storage / temp-storage mounts, metrics-scraper port/path). Services
+    without a config block, or without a typed model, are skipped. Fails closed:
+    raises ProjectIntegrityError on the first invalid service config.
     """
     view = Project(project_data)
     project_name = project_data.get("name", "(onbekend)")
+
+    # Project-level service definitions.
     for name in ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", [])):
         raw = view.service_config(name)
         if raw is None:
             continue  # bare service / no project-level config to validate
-        try:
-            service_type = ServiceType(name)
-        except ValueError:
-            continue  # unknown service name -- other validation handles it
-        provider = get_service(service_type)
-        if provider.config_model is None:
-            continue  # service takes no typed config
-        try:
-            provider.validate_config(raw)
-        except ValidationError as e:
-            raise ProjectIntegrityError(
-                f"Project '{project_name}': configuratie van service '{name}' is ongeldig: {e}"
-            ) from e
+        _validate_one_config(name, raw, ConfigLayer.PROJECT, "op projectniveau", project_name)
+
+    # Component-level service references (storage mounts, metrics port/path). Their
+    # config lives on the component's service entry, not at project level, so the
+    # project-level walk above never sees it.
+    for component in project_data.get("components", []) or []:
+        if not isinstance(component, dict):
+            continue
+        comp_name = component.get("name", "(onbekend)")
+        for entry in component.get("services", []) or []:
+            name = service_entry_name(entry)
+            config = service_entry_config(entry)
+            if name is None or config is None:
+                continue  # bare reference / no config to validate
+            _validate_one_config(name, config, ConfigLayer.COMPONENT, f"in component '{comp_name}'", project_name)
 
 
 def validate_component_references(project_data: dict, components: list, context: str = "deployment") -> dict[str, Any]:
