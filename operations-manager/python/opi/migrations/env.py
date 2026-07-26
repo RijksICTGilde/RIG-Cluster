@@ -6,8 +6,8 @@ from opi.core.config import settings
 from opi.core.db import Base, include_orm_object
 
 # Autogenerate target. Only tables declared as ORM models on Base.metadata are managed;
-# the raw-SQL tables (async_tasks, users, runs, marked_for_deletion) are left untouched
-# by autogenerate via include_orm_object. This is phased ORM adoption -- see opi/core/db.py.
+# any table not declared as an ORM model is left untouched by autogenerate via
+# include_orm_object. This is phased ORM adoption -- see opi/core/db.py.
 target_metadata = Base.metadata
 
 

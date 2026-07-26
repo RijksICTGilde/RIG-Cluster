@@ -101,8 +101,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             from opi.core.database_pools import get_database_pool
             from opi.core.task_worker import TaskWorker  # type: ignore[reportMissingImports]
 
-            pool = get_database_pool("main")
-            task_service = AsyncTaskService(pool=pool, cluster=settings.CLUSTER_MANAGER)
+            get_database_pool("main")  # ensure the shared asyncpg pool is initialized
+            task_service = AsyncTaskService(cluster=settings.CLUSTER_MANAGER)
             app.state.task_service = task_service
 
             from opi.services.oom_watcher import set_task_service
@@ -189,8 +189,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             from opi.core.async_task_service import AsyncTaskService  # type: ignore[reportMissingImports]
             from opi.core.database_pools import get_database_pool
 
-            pool = get_database_pool("main")
-            task_service = AsyncTaskService(pool=pool, cluster=settings.CLUSTER_MANAGER)
+            get_database_pool("main")  # ensure the shared asyncpg pool is initialized
+            task_service = AsyncTaskService(cluster=settings.CLUSTER_MANAGER)
             app.state.task_service = task_service
 
             from opi.services.oom_watcher import set_task_service
