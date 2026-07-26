@@ -301,6 +301,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     except Exception as e:
         logger.error(f"Error closing database pools: {e}")
 
+    # Dispose the ORM async engine (service-owned persistence, opi.core.db). Guarded by a
+    # timeout so a stuck connection can never hang the shutdown -- the pod must always be
+    # able to terminate.
+    try:
+        from opi.core.db import dispose_engine
+
+        await asyncio.wait_for(dispose_engine(), timeout=10.0)
+        logger.info("ORM async engine disposed successfully")
+    except TimeoutError:
+        logger.error("Timed out disposing ORM async engine after 10s; continuing shutdown")
+    except Exception as e:
+        logger.error(f"Error disposing ORM async engine: {e}")
+
     # Shut down OpenTelemetry tracing (flush pending spans)
     from opi.core.tracing import shutdown_tracing
 
