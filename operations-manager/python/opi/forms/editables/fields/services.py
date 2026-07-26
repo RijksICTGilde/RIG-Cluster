@@ -133,10 +133,3 @@ POSTGRESQL_STORAGE_EDITABLE = Editable(
     values_provider="StorageSizeOptionsProvider",
     virtualize=_SVC_VIRT,
 )
-
-# --- Authorization wall ---
-
-AUTH_WALL_BANNER_EDITABLE = Editable(
-    yaml_path=config_path(ConfigLayer.PROJECT, ServiceType.AUTHORIZATION_WALL, "config", "banner"),
-    virtualize=_SVC_VIRT,
-)
