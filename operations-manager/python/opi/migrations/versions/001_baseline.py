@@ -8,7 +8,7 @@ Create Date: 2026-03-02
 from collections.abc import Sequence
 
 from alembic import op
-from opi.connectors.subdomain import SUBDOMAIN_REGISTRY_TABLE_SQL
+from opi.services.persistence.subdomain_registry import SUBDOMAIN_REGISTRY_TABLE_SQL
 from opi.core.async_task_schema import ASYNC_TASKS_TABLE_SQL
 
 # revision identifiers, used by Alembic.

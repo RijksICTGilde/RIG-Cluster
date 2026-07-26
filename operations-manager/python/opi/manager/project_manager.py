@@ -30,7 +30,7 @@ from opi.connectors.git import (
     create_git_connector_from_repo_config,
 )
 from opi.connectors.kubectl import KubectlConnector
-from opi.connectors.subdomain import SubdomainConnector, ensure_domain_requests
+from opi.connectors.subdomain import ensure_domain_requests
 from opi.core.cluster_config import (
     get_argo_namespace,
     get_backup_namespace,
@@ -67,6 +67,7 @@ from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
 from opi.services.catalog.base import ManifestContext, ProvisionContext, SecretFileSpec
+from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.project import Project
 from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
 from opi.services.project_store import get_project_store
