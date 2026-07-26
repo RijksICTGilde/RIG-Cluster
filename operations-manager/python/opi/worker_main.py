@@ -31,7 +31,7 @@ async def main() -> None:
     await pool.initialize()
 
     # Create service and worker
-    task_service = AsyncTaskService(pool=pool, cluster=settings.CLUSTER_MANAGER)
+    task_service = AsyncTaskService(cluster=settings.CLUSTER_MANAGER)
     worker = TaskWorker(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
 
     # Register handlers

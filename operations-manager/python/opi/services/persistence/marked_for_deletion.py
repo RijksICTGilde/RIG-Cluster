@@ -30,8 +30,9 @@ class MarkedForDeletion(Base):
     cluster: Mapped[str] = mapped_column(String(100), nullable=False)
     marked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
     # 'metadata' is reserved on DeclarativeBase, so the attribute is renamed but the
-    # column stays 'metadata'.
-    resource_metadata: Mapped[dict] = mapped_column("metadata", JSONB, server_default=text("'{}'::jsonb"))
+    # column stays 'metadata'. Nullable to match the DDL (the '{}' server default means
+    # a real NULL never actually occurs).
+    resource_metadata: Mapped[dict | None] = mapped_column("metadata", JSONB, server_default=text("'{}'::jsonb"))
 
     __table_args__ = (
         Index("idx_marked_for_deletion_project", "project_name"),
