@@ -12,13 +12,15 @@ import pytest
 from opi.connectors.subdomain import (
     BARE_DOMAIN_SUBDOMAIN,
     RESERVED_SUBDOMAINS,
-    SUBDOMAIN_REGISTRY_TABLE_SQL,
-    SubdomainConnector,
     SubdomainNotAvailableError,
     SubdomainValidationError,
-    create_subdomain_connector,
     find_deployments_for_domain_item,
     validate_subdomain,
+)
+from opi.services.persistence.subdomain_registry import (
+    SUBDOMAIN_REGISTRY_TABLE_SQL,
+    SubdomainConnector,
+    create_subdomain_connector,
 )
 
 
@@ -743,7 +745,7 @@ class TestSubdomainAuditLogging:
 
         with (
             patch.object(connector, "_get_pool", return_value=mock_pool),
-            patch("opi.connectors.subdomain.audit_logger") as mock_audit_logger,
+            patch("opi.services.persistence.subdomain_registry.audit_logger") as mock_audit_logger,
         ):
             await connector.register(
                 subdomain="myapp",
@@ -776,7 +778,7 @@ class TestSubdomainAuditLogging:
 
         with (
             patch.object(connector, "_get_pool", return_value=mock_pool),
-            patch("opi.connectors.subdomain.audit_logger") as mock_audit_logger,
+            patch("opi.services.persistence.subdomain_registry.audit_logger") as mock_audit_logger,
         ):
             await connector.delete("myapp", "kind")
 
@@ -802,7 +804,7 @@ class TestSubdomainAuditLogging:
 
         with (
             patch.object(connector, "_get_pool", return_value=mock_pool),
-            patch("opi.connectors.subdomain.audit_logger") as mock_audit_logger,
+            patch("opi.services.persistence.subdomain_registry.audit_logger") as mock_audit_logger,
         ):
             await connector.delete_by_project("my-project")
 
@@ -829,7 +831,7 @@ class TestSubdomainAuditLogging:
 
         with (
             patch.object(connector, "_get_pool", return_value=mock_pool),
-            patch("opi.connectors.subdomain.audit_logger") as mock_audit_logger,
+            patch("opi.services.persistence.subdomain_registry.audit_logger") as mock_audit_logger,
         ):
             await connector.delete_by_deployment("my-project", "prod")
 
@@ -856,7 +858,7 @@ class TestSubdomainAuditLogging:
 
         with (
             patch.object(connector, "_get_pool", return_value=mock_pool),
-            patch("opi.connectors.subdomain.audit_logger") as mock_audit_logger,
+            patch("opi.services.persistence.subdomain_registry.audit_logger") as mock_audit_logger,
         ):
             await connector.delete_by_project("nonexistent-project")
 

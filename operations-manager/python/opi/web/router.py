@@ -2150,11 +2150,11 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
     from fastapi.responses import JSONResponse
 
     from opi.connectors.subdomain import (
-        create_subdomain_connector,
         validate_base_domain,
         validate_subdomain,
     )
     from opi.manager.project_manager import ProjectManager
+    from opi.services.persistence.subdomain_registry import create_subdomain_connector
 
     # Track state for rollback
     original_data: dict[str, Any] | None = None
