@@ -1,8 +1,15 @@
-"""persistent-storage service (component-level: mount volumes into a component)."""
+"""persistent-storage service (component-level: mount volumes into a component).
+
+Self-contained service package: behaviour here, editables in ``editables.py``,
+visualizers in ``visualizers.py``, committed schema fragment beside them. The config
+shape (a list of mount specs) is shared with temp-storage and lives in
+``catalog/shared/storage.py``.
+"""
 
 from __future__ import annotations
 
 from opi.services.catalog.base import ConfigLayer, Service
+from opi.services.catalog.persistent_storage.editables import PERSISTENT_STORAGE_SEQUENCE_EDITABLE
 from opi.services.catalog.shared.storage import StorageConfig
 from opi.services.services_enums import ServiceType
 
@@ -21,12 +28,10 @@ class PersistentStorageService(Service):
     def config_editables(self, layer: ConfigLayer):
         if layer is not ConfigLayer.COMPONENT:
             return []
-        from opi.forms.editables.fields.components import PERSISTENT_STORAGE_SEQUENCE_EDITABLE
-
         return [PERSISTENT_STORAGE_SEQUENCE_EDITABLE]
 
     def config_component_visualizers(self):
-        from opi.forms.visualizers.fields.components import PERSISTENT_STORAGE_SEQUENCE
+        from opi.services.catalog.persistent_storage.visualizers import PERSISTENT_STORAGE_SEQUENCE
 
         return [PERSISTENT_STORAGE_SEQUENCE]
 
