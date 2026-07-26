@@ -116,6 +116,25 @@ Managers validate config through `provider.validate_config(...)` instead of raw
 
 No generic code, flow list, or schema `$defs` edit is needed — that is the point.
 
+## Why `ServiceType` stays a hand-maintained enum (not auto-discovered)
+
+A fair question when reading step 1: if a service is meant to be a self-contained
+drop-in, why must you still add a `ServiceType` member and a `SERVICES` line by hand?
+Couldn't the registry auto-discover subclasses from the `catalog/` folder at startup?
+
+We looked at this deliberately and chose to keep the enum. The reasoning:
+
+- **`ServiceType` is the typed identity, referenced ~159x across 33 files** (`get_service(ServiceType.KEYCLOAK)`, `list[ServiceType]` signatures, presence helpers). Those references are what let Pyright catch a mistyped or non-existent service at check time. Pyright (a hard rule in this repo) can only check names that exist in source — an auto-discovered identity is `Any` to the type checker. **You cannot have both statically-typed `ServiceType.X` references and an auto-discovered identity; it is one or the other.**
+- **The enum is internal only — it is *not* a serialized contract.** Project YAML and the API key services by their **name string** (`keycloak`, `namespace-postgresql-database`); `ServiceAdapter.parse_services_from_strings` is the single string -> enum boundary. So the enum is not in `project_v2.json`, any Pydantic model, or a DB column. Changing it is therefore **not data- or contract-breaking** — it is purely an internal-code concern. (Roughly half the enum references are `ServiceType.X.value`, i.e. code converting straight back to the string to compare against the YAML.)
+- **Auto-discovery would only remove the one `SERVICES` line, not the enum member** — because a subclass still needs `service_type = ServiceType.X`, and that member has to exist for the 159 typed sites. So it does not deliver real "drop a module and you're done" plug&play; it trades an explicit, greppable registry for import-time folder-scanning magic to save a single line. Under KISS/YAGNI that is a poor trade for an event (adding a service) that happens rarely.
+- **Going fully plug&play means dropping the enum for string identity** (`Service.name = "keycloak"`, `get_service("keycloak")`). That is *possible and not data-breaking*, but it deletes Pyright's coverage of service identity on all 159 sites (a typo becomes a runtime `KeyError`) and forces a mechanical rewrite that reaches into the manager internals this migration intentionally left untouched. The cost (type-safety loss + churn) outweighs the benefit (one fewer edit per new service).
+
+**Conclusion:** the one hand-maintained enum line per service is the price of type-checked
+service identity across the codebase, and it is the cheapest insurance we have. It is a
+conscious trade-off, not an oversight. If a future need makes plug&play worth the
+type-safety loss, the migration path is string identity — and it is safe to attempt
+because nothing stored depends on the enum.
+
 ## Guardrails (tests)
 
 - `tests/test_service_providers.py` — **coverage guard** (the key one): fails if a
