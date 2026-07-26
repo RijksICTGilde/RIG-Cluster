@@ -297,8 +297,8 @@ def test_keycloak_additional_clients_add_resolves_virtualized_path() -> None:
     # form, so the editable was None, the add produced "" instead of an item, and the
     # button silently no-op'd in production (HTTP 200, no row added).
     from opi.forms.editables.editable import apply_virtualize
-    from opi.forms.editables.fields.services import KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE
     from opi.forms.visualizers.flows import get_flow
+    from opi.services.catalog.keycloak.editables import KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE
     from opi.web.router_wizard import _empty_sequence_item, _find_sequence_editable
 
     flow = get_flow("modal-edit-keycloak-config")
