@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from opi.forms.editables.editable import WidgetType
 from opi.forms.editables.fields.services import (
-    AUTH_WALL_BANNER_EDITABLE,
     KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE,
     KEYCLOAK_CLIENT_NAME_EDITABLE,
     KEYCLOAK_CLIENT_REDIRECT_URI_EDITABLE,
@@ -149,9 +148,3 @@ POSTGRESQL_STORAGE = EditableVisualizer(
 )
 
 # --- Authorization wall ---
-
-AUTH_WALL_BANNER = EditableVisualizer(
-    editable=AUTH_WALL_BANNER_EDITABLE,
-    widget=WidgetType.TEXTAREA,
-    label="Welkomstbanner tekst",
-)

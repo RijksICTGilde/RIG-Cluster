@@ -10,6 +10,7 @@ from __future__ import annotations
 import secrets
 from typing import Any
 
+from opi.services.catalog.authorization_wall.config_model import AuthorizationWallConfig
 from opi.services.catalog.base import (
     ConfigLayer,
     ManifestContext,
@@ -18,7 +19,6 @@ from opi.services.catalog.base import (
     Service,
     config_path,
 )
-from opi.services.config_models.authorization_wall import AuthorizationWallConfig
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 from opi.utils.secrets import KeycloakSecret
@@ -54,7 +54,7 @@ class AuthorizationWallService(Service):
     def config_editables(self, layer: ConfigLayer):
         if layer is not ConfigLayer.PROJECT:
             return []
-        from opi.forms.editables.fields.services import AUTH_WALL_BANNER_EDITABLE
+        from opi.services.catalog.authorization_wall.editables import AUTH_WALL_BANNER_EDITABLE
 
         return [AUTH_WALL_BANNER_EDITABLE]
 
@@ -65,8 +65,8 @@ class AuthorizationWallService(Service):
         # EDIT_SECTIONS[...] is AUTH_WALL_CONFIG_SECTION) keep seeing one object.
         cached = getattr(self, "_config_section_cache", None)
         if cached is None:
-            from opi.forms.visualizers.fields.services import AUTH_WALL_BANNER
             from opi.forms.visualizers.sections import FormSection
+            from opi.services.catalog.authorization_wall.visualizers import AUTH_WALL_BANNER
 
             cached = FormSection(
                 section_id="auth-wall-config",
