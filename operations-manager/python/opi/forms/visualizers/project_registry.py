@@ -55,7 +55,6 @@ from opi.forms.visualizers.fields.identity import (
     DISPLAY_NAME,
 )
 from opi.forms.visualizers.fields.services import (
-    AUTH_WALL_BANNER,
     KEYCLOAK_REDIRECT_URIS,
     KEYCLOAK_RESTRICT_ACCESS,
     KEYCLOAK_TEMPLATE,
@@ -77,7 +76,6 @@ __all__ = [
     "AGE_PRIVATE_KEY",
     "AGE_PUBLIC_KEY",
     "API_KEY",
-    "AUTH_WALL_BANNER",
     "CLUSTERS",
     "COMPONENTS_SEQUENCE",
     "COMPONENT_ALIASES",
