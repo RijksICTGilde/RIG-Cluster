@@ -163,17 +163,6 @@
       }
     },
 
-    "keycloak-config": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "host": { "type": "string" },
-        "realm": { "type": "string" },
-        "username": { "type": "string" },
-        "password": { "$ref": "#/$defs/age-encrypted-or-plain" }
-      }
-    },
-
     "repository": {
       "type": "object",
       "required": ["name", "url"],

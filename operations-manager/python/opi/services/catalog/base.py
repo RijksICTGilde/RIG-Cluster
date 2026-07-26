@@ -332,12 +332,16 @@ class Service(ABC):
 
     # --- config field ownership (RC-5 "service owns its fields") ----------------
     # A service owns the fields it needs and exposes them per layer + per consumer.
-    # ``config_editables`` is the shared DATA (yaml_path + validator + default), used
-    # by both the wizard and the API; ``config_form_section`` is the wizard/embed UI
-    # view; ``config_api_fields`` the field names the API accepts. Defaults are empty,
-    # so a service with no config, or one not yet migrated to owning its fields, keeps
-    # working. Concrete providers import the forms building blocks lazily (inside the
-    # method) so provider.py / registry.py stay free of forms imports at load time.
+    # ``config_editables`` is the DATA (yaml_path + validator + default) for a service's
+    # config at a layer; ``config_form_section`` is the wizard/embed UI view;
+    # ``config_api_fields`` the field names the API/YAML accepts (derived from the model
+    # via ``config_model_field_names`` for modelled services). ``config_api_fields`` and
+    # ``config_editables`` are consumed by the config-validation chokepoint
+    # (``manager/project_validation.py``) to report a service's accepted config fields
+    # when its config fails validation. Defaults are empty, so a service with no config,
+    # or one not yet migrated to owning its fields, keeps working. Concrete providers
+    # import the forms building blocks lazily (inside the method) so provider.py /
+    # registry.py stay free of forms imports at load time.
 
     def config_editables(self, layer: ConfigLayer) -> list[Editable]:
         """The DATA editables this service contributes at ``layer`` (default none)."""
