@@ -193,15 +193,6 @@ class TestBuildExpectedResources:
 # --- MarkedForDeletionService tests (mocked DB) ---
 
 
-def _make_mock_pool() -> MagicMock:
-    """Create a mock DatabasePool with acquire/release."""
-    pool = MagicMock()
-    conn = AsyncMock()
-    pool.acquire = AsyncMock(return_value=conn)
-    pool.release = AsyncMock()
-    return pool
-
-
 def _make_mark_row(
     resource_type: str = "postgresql_database",
     resource_name: str = "mydb",
@@ -231,7 +222,6 @@ class TestReconcile:
     @pytest.mark.asyncio
     async def test_unmarks_restored_resources(self) -> None:
         """Resources that reappear in project YAMLs should be unmarked."""
-        pool = _make_mock_pool()
         mark_id = str(uuid.uuid4())
 
         mock_service = AsyncMock(spec=MarkedForDeletionService)
@@ -262,7 +252,7 @@ class TestReconcile:
         ]
 
         with patch("opi.jobs.reconciliation.MarkedForDeletionService", return_value=mock_service):
-            results = await reconcile(pool, yamls, grace_period_days=7, dry_run=False)
+            results = await reconcile(yamls, grace_period_days=7, dry_run=False)
 
         assert len(results["unmarked"]) == 1
         assert results["unmarked"][0]["type"] == "postgresql_database"
@@ -270,8 +260,6 @@ class TestReconcile:
 
     @pytest.mark.asyncio
     async def test_dry_run_does_not_unmark(self) -> None:
-        pool = _make_mock_pool()
-
         mock_service = AsyncMock(spec=MarkedForDeletionService)
         mock_service.get_all_marks = AsyncMock(
             return_value=[
@@ -299,7 +287,7 @@ class TestReconcile:
         ]
 
         with patch("opi.jobs.reconciliation.MarkedForDeletionService", return_value=mock_service):
-            results = await reconcile(pool, yamls, grace_period_days=7, dry_run=True)
+            results = await reconcile(yamls, grace_period_days=7, dry_run=True)
 
         assert len(results["unmarked"]) == 1
         mock_service.unmark_resource.assert_not_called()
@@ -307,8 +295,6 @@ class TestReconcile:
     @pytest.mark.asyncio
     async def test_does_not_unmark_orphaned_resources(self) -> None:
         """Marks for resources NOT in expected set should remain."""
-        pool = _make_mock_pool()
-
         mock_service = AsyncMock(spec=MarkedForDeletionService)
         mock_service.get_all_marks = AsyncMock(
             return_value=[
@@ -322,7 +308,7 @@ class TestReconcile:
         mock_service.get_expired_marks = AsyncMock(return_value=[])
 
         with patch("opi.jobs.reconciliation.MarkedForDeletionService", return_value=mock_service):
-            results = await reconcile(pool, [], grace_period_days=7, dry_run=False)
+            results = await reconcile([], grace_period_days=7, dry_run=False)
 
         assert len(results["unmarked"]) == 0
         mock_service.unmark_resource.assert_not_called()
@@ -335,13 +321,11 @@ class TestCleanupProject:
     @pytest.mark.asyncio
     async def test_uses_sql_level_project_filter(self) -> None:
         """cleanup_project should pass project_name to get_expired_marks."""
-        pool = _make_mock_pool()
-
         mock_service = AsyncMock(spec=MarkedForDeletionService)
         mock_service.get_expired_marks = AsyncMock(return_value=[])
 
         with patch("opi.jobs.reconciliation.MarkedForDeletionService", return_value=mock_service):
-            results = await cleanup_project(pool, "myproject", grace_period_days=7)
+            results = await cleanup_project("myproject", grace_period_days=7)
 
         mock_service.get_expired_marks.assert_called_once_with(7, project_name="myproject")
         assert results["project_name"] == "myproject"
@@ -349,21 +333,17 @@ class TestCleanupProject:
 
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_expired_marks(self) -> None:
-        pool = _make_mock_pool()
-
         mock_service = AsyncMock(spec=MarkedForDeletionService)
         mock_service.get_expired_marks = AsyncMock(return_value=[])
 
         with patch("opi.jobs.reconciliation.MarkedForDeletionService", return_value=mock_service):
-            results = await cleanup_project(pool, "myproject", grace_period_days=7)
+            results = await cleanup_project("myproject", grace_period_days=7)
 
         assert results["purged"] == []
         assert results["errors"] == []
 
     @pytest.mark.asyncio
     async def test_uses_default_grace_period_from_settings(self) -> None:
-        pool = _make_mock_pool()
-
         mock_service = AsyncMock(spec=MarkedForDeletionService)
         mock_service.get_expired_marks = AsyncMock(return_value=[])
 
@@ -372,7 +352,7 @@ class TestCleanupProject:
             patch("opi.jobs.reconciliation.settings") as mock_settings,
         ):
             mock_settings.DELETION_GRACE_PERIOD_DAYS = 14
-            results = await cleanup_project(pool, "myproject")
+            results = await cleanup_project("myproject")
 
         mock_service.get_expired_marks.assert_called_once_with(14, project_name="myproject")
 
@@ -651,13 +631,12 @@ class TestPurgeSafetyGates:
     async def test_mark_in_expected_set_is_unmarked_not_purged(self) -> None:
         from opi.jobs.reconciliation import _purge_marks
 
-        pool = _make_mock_pool()
         mock_service = AsyncMock(spec=MarkedForDeletionService)
         results: dict = {"purged": [], "errors": []}
         expected = {"postgresql_database": {("waggl_9et_productie", "odcn-production")}}
 
         with patch("opi.jobs.reconciliation.create_postgres_connector") as mock_pg:
-            await _purge_marks([self._db_mark()], mock_service, pool, results, dry_run=False, expected=expected)
+            await _purge_marks([self._db_mark()], mock_service, results, dry_run=False, expected=expected)
 
         mock_pg.assert_not_called()
         mock_service.delete_mark.assert_awaited_once_with("mark-1")

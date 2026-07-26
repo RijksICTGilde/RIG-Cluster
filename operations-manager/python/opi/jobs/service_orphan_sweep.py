@@ -22,7 +22,7 @@ Classifications:
 
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.minio_mc import create_minio_connector
@@ -37,9 +37,6 @@ from opi.utils.naming import (
     generate_project_platform_client_id,
     generate_project_realm_name,
 )
-
-if TYPE_CHECKING:
-    from opi.core.database_pool import DatabasePool
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +124,6 @@ def _classify_project_realm_client(
 
 
 async def sweep(
-    pool: DatabasePool,
     project_yamls: list[dict[str, Any]],
     cluster: str,
     keycloak_url: str | None = None,

@@ -454,7 +454,7 @@ class Service(ABC):
         """Whether this provider contributes anything to a component's manifests
         (RC-5 Phase 6): either a per-deployment envFrom secret (6a) or an overridden
         ``contribute_manifest_context`` (6b: auth-wall sidecar + service_port override).
-        ``registry.manifest_providers()`` uses this to build the contributor set.
+        ``registry.manifest_services()`` uses this to build the contributor set.
         """
         return (
             cls.manifest_secret_class is not None

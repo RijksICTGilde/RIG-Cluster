@@ -1,3 +1,4 @@
+schema-version: 2
 name: example-project
 description: "A simple example project for demonstration purposes"
 
@@ -5,6 +6,16 @@ description: "A simple example project for demonstration purposes"
 clusters:
   - local
   - odcn-production
+
+users:
+  - email: admin@rijksoverheid.nl
+    role: admin
+
+# Platform services this project uses
+services:
+  - publish-on-web
+  - persistent-storage
+  - temp-storage
 
 # Repository configuration
 repositories:
@@ -29,31 +40,31 @@ repositories:
   - name: main-repo-autocreated
     url: "ssh://git@host.docker.internal:2222/srv/git/example-project-infra-autocreated.git"
     branch: "main"
-#    path: "infra"
 
 components:
   - name: frontend
-    publish-on-web: true
     type: deployment
-    storage:
-      - type: persistent
-        size: 10Gi
-        mount-path: /data
-      - type: ephemeral
-        size: 2Gi
-        mount-path: /tmp
     ports:
       inbound: [8080]
       outbound: [443, 80]  # for external API calls, CDN, etc.
-    sso-rijk: true
-    uses-services: []  # no direct service dependencies
-    uses-components: [backend]
+    uses-components: []
+    services:
+      - publish-on-web
+      - reference: persistent-storage
+        config:
+          - name: data
+            size: 10Gi
+            mount-path: /data
+      - reference: temp-storage
+        config:
+          - name: tmp
+            size: 2Gi
+            mount-path: /tmp
 
 # Deployments - combining environment/namespace and ArgoCD application info
 deployments:
   - name: just-a-name
     cluster: local
-    # TODO: namespace is too kubernetes specific; maybe 'target: 'shared' or target: 'unique'?
     namespace: example-project  # This is derived from the project name
     repository: main-repo
     components:
@@ -61,21 +72,21 @@ deployments:
         image: "nginxdemos/hello"
   - name: second-name
     cluster: local
-    namespace: example-project  # This is derived from the project name
+    namespace: example-project
     repository: main-repo-autocreated
     components:
       - reference: frontend
-        image: "strm/helloworld-http" #"tutum/hello-world"
+        image: "strm/helloworld-http"
   - name: third-name
     cluster: local
-    namespace: example-project  # This is derived from the project name
+    namespace: example-project
     repository: github-repo
     components:
       - reference: frontend
         image: "tutum/hello-world"
   - name: odcn-name
     cluster: odcn-production
-    namespace: example-project  # This is derived from the project name
+    namespace: example-project
     repository: github-repo
     components:
       - reference: frontend
