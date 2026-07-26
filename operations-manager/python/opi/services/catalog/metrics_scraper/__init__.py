@@ -6,7 +6,8 @@ import logging
 
 from opi.core.config import settings
 from opi.services.catalog.base import ConfigLayer, ManifestContext, ManifestContribution, SecretFileSpec, Service
-from opi.services.config_models.metrics_scraper import MetricsScraperConfig
+from opi.services.catalog.metrics_scraper.config_model import MetricsScraperConfig
+from opi.services.catalog.metrics_scraper.editables import METRICS_PATH_EDITABLE, METRICS_PORT_EDITABLE
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 from opi.utils.secrets import MetricsAuthSecret
@@ -33,12 +34,10 @@ class MetricsScraperService(Service):
     def config_editables(self, layer: ConfigLayer):
         if layer is not ConfigLayer.COMPONENT:
             return []
-        from opi.forms.editables.fields.components import METRICS_PATH_EDITABLE, METRICS_PORT_EDITABLE
-
         return [METRICS_PORT_EDITABLE, METRICS_PATH_EDITABLE]
 
     def config_component_visualizers(self):
-        from opi.forms.visualizers.fields.components import METRICS_PATH, METRICS_PORT
+        from opi.services.catalog.metrics_scraper.visualizers import METRICS_PATH, METRICS_PORT
 
         return [METRICS_PORT, METRICS_PATH]
 
