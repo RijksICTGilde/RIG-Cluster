@@ -169,6 +169,30 @@ def _v1_project_persistent_only() -> dict:
     }
 
 
+def _v1_project_nameless_storage() -> dict:
+    """V1 project whose storage entries carry NO name.
+
+    Older real project files predate the ``name`` field on storage mounts. The
+    v2 storage config (StorageEntry) requires a name, so the migration must
+    synthesize one from the mount path.
+    """
+    return {
+        "name": "nameless-storage",
+        "services": ["persistent-storage", "temp-storage"],
+        "components": [
+            {
+                "name": "app",
+                "type": "deployment",
+                "uses-services": ["persistent-storage", "temp-storage"],
+                "storage": [
+                    {"type": "persistent", "size": "10Gi", "mount-path": "/app/data"},
+                    {"type": "ephemeral", "size": "2Gi", "mount-path": "/tmp"},
+                ],
+            }
+        ],
+    }
+
+
 def _v2_project() -> dict:
     """Already-migrated v2 project."""
     return {
@@ -351,6 +375,33 @@ class TestMigrateV1ToV2:
         assert len(config) == 1
         assert config[0]["name"] == "data"
         assert config[0]["size"] == "500Mi"
+
+    def test_nameless_v1_storage_gets_synthesized_name(self):
+        """v1 storage without a name must migrate to a valid, named v2 config.
+
+        The v2 storage config requires a name per mount; a nameless legacy entry
+        would otherwise fail the config-validation gate. The synthesized name must
+        match what the renderer derives from the mount path (generate_storage_name),
+        and the resulting config must validate against the service's config_model.
+        """
+        from opi.services.registry import get_service
+        from opi.services.services_enums import ServiceType
+
+        result, was_migrated = migrate_to_latest(_v1_project_nameless_storage())
+
+        assert was_migrated is True
+        services = result["components"][0]["services"]
+
+        persistent = next(s for s in services if isinstance(s, dict) and s["reference"] == "persistent-storage")
+        assert persistent["config"][0]["name"] == "appdata"  # from /app/data
+        assert persistent["config"][0]["mount-path"] == "/app/data"
+
+        temp = next(s for s in services if isinstance(s, dict) and s["reference"] == "temp-storage")
+        assert temp["config"][0]["name"] == "tmp"  # from /tmp
+
+        # The migrated config must pass the per-service typed-config gate.
+        get_service(ServiceType.PERSISTENT_STORAGE).validate_config(persistent["config"])
+        get_service(ServiceType.TEMP_STORAGE).validate_config(temp["config"])
 
     def test_component_without_uses_services_preserved(self):
         """Component without uses-services should not have services wiped."""

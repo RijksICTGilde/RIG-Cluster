@@ -101,3 +101,32 @@ def test_bare_component_service_reference_is_skipped():
     validate_service_configs(
         {"name": "p", "components": [{"name": "c", "services": ["keycloak", "persistent-storage"]}]}
     )
+
+
+def test_entry_schema_version_is_threaded_to_validate_config(monkeypatch):
+    """The entry's stamped schema-version must reach the provider's validate_config.
+
+    Without threading, a config block stored at an older version would be validated
+    against the current model without being migrated forward first. This captures the
+    ``from_version`` passed to the provider for both a project-level and a
+    component-level entry.
+    """
+    from opi.services.registry import get_service
+    from opi.services.services_enums import ServiceType
+
+    captured: list[str | None] = []
+    keycloak = get_service(ServiceType.KEYCLOAK)
+    original = keycloak.validate_config
+
+    def spy(raw_config=None, from_version=None):
+        captured.append(from_version)
+        return original(raw_config, from_version=from_version)
+
+    monkeypatch.setattr(keycloak, "validate_config", spy)
+
+    data = {
+        "name": "p",
+        "services": [{"name": "keycloak", "config": {"template": "sso-only"}, "schema-version": "2.0"}],
+    }
+    validate_service_configs(data)
+    assert captured == ["2.0"]
