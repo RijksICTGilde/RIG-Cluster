@@ -17,8 +17,6 @@ from opi.forms.editables.fields.services import (
     KEYCLOAK_ROLE_DESCRIPTION_EDITABLE,
     KEYCLOAK_ROLE_NAME_EDITABLE,
     KEYCLOAK_TEMPLATE_EDITABLE,
-    POSTGRESQL_INSTANCES_EDITABLE,
-    POSTGRESQL_STORAGE_EDITABLE,
     SERVICES_EDITABLE,
 )
 from opi.forms.visualizers.visualizer import EditableVisualizer
@@ -133,18 +131,5 @@ KEYCLOAK_REALM_ROLES = EditableVisualizer(
     children=[KEYCLOAK_ROLE_NAME, KEYCLOAK_ROLE_DESCRIPTION],
 )
 
-# --- PostgreSQL ---
-
-POSTGRESQL_INSTANCES = EditableVisualizer(
-    editable=POSTGRESQL_INSTANCES_EDITABLE,
-    widget=WidgetType.NUMBER,
-    label="Aantal instanties",
-)
-
-POSTGRESQL_STORAGE = EditableVisualizer(
-    editable=POSTGRESQL_STORAGE_EDITABLE,
-    widget=WidgetType.SELECT,
-    label="Opslaggrootte",
-)
 
 # --- Authorization wall ---

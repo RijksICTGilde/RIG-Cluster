@@ -7,9 +7,7 @@ from opi.forms.editables.converters import (
     ServiceListConverter,
 )
 from opi.forms.editables.editable import Editable
-from opi.forms.editables.validators import RangeValidator, RealmRoleValidator, UrlValidator
-from opi.services.catalog.base import ConfigLayer, config_path
-from opi.services.services_enums import ServiceType
+from opi.forms.editables.validators import RealmRoleValidator, UrlValidator
 
 # ===========================================================================
 # Pure Editable definitions (data logic only)
@@ -117,19 +115,5 @@ KEYCLOAK_REALM_ROLES_EDITABLE = Editable(
     min_items=0,
     max_items=10,
     children=[KEYCLOAK_ROLE_NAME_EDITABLE, KEYCLOAK_ROLE_DESCRIPTION_EDITABLE],
-    virtualize=_SVC_VIRT,
-)
-
-# --- PostgreSQL ---
-
-POSTGRESQL_INSTANCES_EDITABLE = Editable(
-    yaml_path=config_path(ConfigLayer.PROJECT, ServiceType.NAMESPACE_POSTGRESQL_DATABASE, "config", "instances"),
-    validator=RangeValidator(min_value=1, max_value=5),
-    virtualize=_SVC_VIRT,
-)
-
-POSTGRESQL_STORAGE_EDITABLE = Editable(
-    yaml_path=config_path(ConfigLayer.PROJECT, ServiceType.NAMESPACE_POSTGRESQL_DATABASE, "config", "storage"),
-    values_provider="StorageSizeOptionsProvider",
     virtualize=_SVC_VIRT,
 )
