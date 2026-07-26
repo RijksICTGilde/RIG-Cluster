@@ -9,9 +9,10 @@ Two representations of the same table coexist during phased ORM adoption:
   targets it (see ``migrations/env.py``), so future schema changes are generated.
 - ``SUBDOMAIN_REGISTRY_TABLE_SQL`` -- the raw CREATE used by the Alembic baseline
   migration that first created the table.
-Queries still use raw asyncpg SQL via :class:`SubdomainConnector` (pragmatic; migrating
-the queries to the ORM is a later phase). Shared subdomain validation helpers stay in
-``opi/connectors/subdomain.py`` and are imported here.
+Queries run through the SQLAlchemy ORM (:class:`SubdomainConnector`) on the shared async
+engine in ``opi.core.db`` -- separate from the raw asyncpg pools the rest of the app
+uses. Shared subdomain validation helpers stay in ``opi/connectors/subdomain.py`` and
+are imported here.
 """
 
 from __future__ import annotations
@@ -20,7 +21,8 @@ import logging
 from datetime import datetime  # noqa: TC003 (runtime-resolved by SQLAlchemy Mapped)
 from typing import Any
 
-from sqlalchemy import DateTime, Index, Integer, String, UniqueConstraint, text
+from sqlalchemy import DateTime, Index, Integer, String, UniqueConstraint, delete, func, insert, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Mapped, mapped_column
 
 from opi.connectors.subdomain import (
@@ -32,8 +34,7 @@ from opi.connectors.subdomain import (
     validate_base_domain,
     validate_subdomain,
 )
-from opi.core.database_pools import get_database_pool
-from opi.core.db import Base
+from opi.core.db import Base, session_scope
 
 logger = logging.getLogger(__name__)
 # Audit logger kept under the same name as before the move, so log routing is unchanged.
@@ -44,7 +45,7 @@ class SubdomainRegistry(Base):
     """ORM model for the ``subdomain_registry`` table (schema-as-code).
 
     Matches ``SUBDOMAIN_REGISTRY_TABLE_SQL`` exactly; ``alembic revision --autogenerate``
-    must produce NO changes for this table. The queries below still use raw SQL.
+    must produce NO changes for this table.
     """
 
     __tablename__ = "subdomain_registry"
@@ -66,21 +67,28 @@ class SubdomainRegistry(Base):
         Index("idx_subdomain_deployment", "project_name", "deployment_name"),
     )
 
+    def to_dict(self) -> dict[str, Any]:
+        """Row as the flat dict the connector's callers expect (unchanged public shape)."""
+        return {
+            "id": self.id,
+            "subdomain": self.subdomain,
+            "base_domain": self.base_domain,
+            "project_name": self.project_name,
+            "deployment_name": self.deployment_name,
+            "cluster": self.cluster,
+            "created_at": self.created_at,
+            "created_by": self.created_by,
+        }
+
 
 class SubdomainConnector:
-    """Connector for managing subdomain registry using the application database pool.
+    """Repository for the subdomain registry (globally unique subdomains for nice URLs).
 
-    This connector manages the subdomain_registry table which tracks globally unique
-    subdomains for the nice URL feature. Each subdomain + base_domain combination
-    must be unique across all projects.
+    Each subdomain + base_domain combination must be unique across ALL projects. Queries
+    run through the SQLAlchemy ORM (:class:`SubdomainRegistry`) on the shared async engine
+    (``opi.core.db``); the atomic register / change operations use ``ON CONFLICT`` and a
+    single transaction to stay race-safe.
     """
-
-    TABLE_NAME = "subdomain_registry"
-
-    @staticmethod
-    def _get_pool():
-        """Get the main database pool."""
-        return get_database_pool("main")
 
     async def check_availability(self, subdomain: str, base_domain: str) -> bool:
         """Check if a subdomain is available for registration.
@@ -92,20 +100,14 @@ class SubdomainConnector:
         Returns:
             True if the subdomain is available, False if already taken
         """
-        pool = self._get_pool()
-        conn = await pool.acquire()
-        try:
-            result = await conn.fetchval(
-                f"""
-                SELECT 1 FROM {self.TABLE_NAME}
-                WHERE subdomain = $1 AND base_domain = $2
-                """,
-                subdomain.lower(),
-                base_domain.lower(),
+        async with session_scope() as session:
+            result = await session.execute(
+                select(SubdomainRegistry.id).where(
+                    SubdomainRegistry.subdomain == subdomain.lower(),
+                    SubdomainRegistry.base_domain == base_domain.lower(),
+                )
             )
-            return result is None
-        finally:
-            await pool.release(conn)
+            return result.first() is None
 
     async def register(
         self,
@@ -164,61 +166,58 @@ class SubdomainConnector:
             # (don't reveal whether subdomain is taken by another project or reserved)
             raise SubdomainNotAvailableError(f"Subdomein '{subdomain_lower}.{base_domain_lower}' is niet beschikbaar")
 
-        pool = self._get_pool()
-        conn = await pool.acquire()
         try:
-            # Atomic INSERT with ON CONFLICT - the true protection against TOCTOU races
-            # If a concurrent request registered the same subdomain between our check and
-            # this INSERT, ON CONFLICT DO NOTHING will make result=None, which we handle below
-            result = await conn.fetchrow(
-                f"""
-                INSERT INTO {self.TABLE_NAME}
-                (subdomain, base_domain, project_name, deployment_name, cluster, created_by)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                ON CONFLICT (subdomain, base_domain) DO NOTHING
-                RETURNING id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
-                """,
-                subdomain_lower,
-                base_domain_lower,
-                project_name,
-                deployment_name,
-                cluster,
-                created_by,
-            )
-
-            if result is None:
-                # Conflict occurred - subdomain was taken between check and register
-                existing = await self.get_by_subdomain(subdomain_lower, base_domain_lower)
-                if existing and existing.get("project_name") == project_name:
-                    # Same project - return existing registration
-                    logger.info(
-                        f"Subdomain '{subdomain_lower}.{base_domain_lower}' already registered "
-                        f"to same project '{project_name}'"
+            async with session_scope() as session:
+                # Atomic INSERT with ON CONFLICT - the true protection against TOCTOU races.
+                # RETURNING id yields None when the row already existed (conflict), which we
+                # handle below.
+                inserted_id = (
+                    await session.execute(
+                        pg_insert(SubdomainRegistry)
+                        .values(
+                            subdomain=subdomain_lower,
+                            base_domain=base_domain_lower,
+                            project_name=project_name,
+                            deployment_name=deployment_name,
+                            cluster=cluster,
+                            created_by=created_by,
+                        )
+                        .on_conflict_do_nothing(index_elements=["subdomain", "base_domain"])
+                        .returning(SubdomainRegistry.id)
                     )
-                    return existing
-                # Use generic error message to prevent information disclosure
-                raise SubdomainNotAvailableError(
-                    f"Subdomein '{subdomain_lower}.{base_domain_lower}' is niet beschikbaar"
+                ).scalar_one_or_none()
+
+                if inserted_id is None:
+                    # Conflict occurred - subdomain was taken between check and register.
+                    existing = await self.get_by_subdomain(subdomain_lower, base_domain_lower)
+                    if existing and existing.get("project_name") == project_name:
+                        logger.info(
+                            f"Subdomain '{subdomain_lower}.{base_domain_lower}' already registered "
+                            f"to same project '{project_name}'"
+                        )
+                        return existing
+                    # Generic error message to prevent information disclosure.
+                    raise SubdomainNotAvailableError(
+                        f"Subdomein '{subdomain_lower}.{base_domain_lower}' is niet beschikbaar"
+                    )
+
+                row = (
+                    await session.execute(select(SubdomainRegistry).where(SubdomainRegistry.id == inserted_id))
+                ).scalar_one()
+                logger.info(
+                    f"Registered subdomain '{subdomain_lower}.{base_domain_lower}' "
+                    f"for project '{project_name}', deployment '{deployment_name}'"
                 )
-
-            logger.info(
-                f"Registered subdomain '{subdomain_lower}.{base_domain_lower}' "
-                f"for project '{project_name}', deployment '{deployment_name}'"
-            )
-            # Audit log for subdomain registration
-            audit_logger.info(
-                f"SUBDOMAIN_REGISTERED: {subdomain_lower}.{base_domain_lower} "
-                f"project={project_name} deployment={deployment_name} cluster={cluster}"
-            )
-
-            return dict(result)
+                audit_logger.info(
+                    f"SUBDOMAIN_REGISTERED: {subdomain_lower}.{base_domain_lower} "
+                    f"project={project_name} deployment={deployment_name} cluster={cluster}"
+                )
+                return row.to_dict()
         except SubdomainNotAvailableError:
             raise
         except Exception as e:
             logger.exception(f"Failed to register subdomain '{subdomain_lower}.{base_domain_lower}'")
             raise SubdomainError(f"Subdomain registration failed: {e}") from e
-        finally:
-            await pool.release(conn)
 
     async def get_by_subdomain(self, subdomain: str, base_domain: str) -> dict[str, Any] | None:
         """Get a subdomain registration by subdomain and base domain.
@@ -230,21 +229,16 @@ class SubdomainConnector:
         Returns:
             Dictionary with registration details, or None if not found
         """
-        pool = self._get_pool()
-        conn = await pool.acquire()
-        try:
-            result = await conn.fetchrow(
-                f"""
-                SELECT id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
-                FROM {self.TABLE_NAME}
-                WHERE subdomain = $1 AND base_domain = $2
-                """,
-                subdomain.lower(),
-                base_domain.lower(),
-            )
-            return dict(result) if result else None
-        finally:
-            await pool.release(conn)
+        async with session_scope() as session:
+            row = (
+                await session.execute(
+                    select(SubdomainRegistry).where(
+                        SubdomainRegistry.subdomain == subdomain.lower(),
+                        SubdomainRegistry.base_domain == base_domain.lower(),
+                    )
+                )
+            ).scalar_one_or_none()
+            return row.to_dict() if row else None
 
     async def get_by_project(self, project_name: str) -> list[dict[str, Any]]:
         """Get all subdomain registrations for a project.
@@ -255,21 +249,13 @@ class SubdomainConnector:
         Returns:
             List of registration dictionaries
         """
-        pool = self._get_pool()
-        conn = await pool.acquire()
-        try:
-            results = await conn.fetch(
-                f"""
-                SELECT id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
-                FROM {self.TABLE_NAME}
-                WHERE project_name = $1
-                ORDER BY subdomain, base_domain
-                """,
-                project_name,
+        async with session_scope() as session:
+            result = await session.execute(
+                select(SubdomainRegistry)
+                .where(SubdomainRegistry.project_name == project_name)
+                .order_by(SubdomainRegistry.subdomain, SubdomainRegistry.base_domain)
             )
-            return [dict(row) for row in results]
-        finally:
-            await pool.release(conn)
+            return [row.to_dict() for row in result.scalars().all()]
 
     async def get_by_deployment(self, project_name: str, deployment_name: str) -> dict[str, Any] | None:
         """Get subdomain registration for a specific deployment.
@@ -281,21 +267,16 @@ class SubdomainConnector:
         Returns:
             Registration dictionary, or None if not found
         """
-        pool = self._get_pool()
-        conn = await pool.acquire()
-        try:
-            result = await conn.fetchrow(
-                f"""
-                SELECT id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
-                FROM {self.TABLE_NAME}
-                WHERE project_name = $1 AND deployment_name = $2
-                """,
-                project_name,
-                deployment_name,
-            )
-            return dict(result) if result else None
-        finally:
-            await pool.release(conn)
+        async with session_scope() as session:
+            row = (
+                await session.execute(
+                    select(SubdomainRegistry).where(
+                        SubdomainRegistry.project_name == project_name,
+                        SubdomainRegistry.deployment_name == deployment_name,
+                    )
+                )
+            ).scalar_one_or_none()
+            return row.to_dict() if row else None
 
     async def delete(self, subdomain: str, base_domain: str) -> bool:
         """Delete a subdomain registration.
@@ -307,25 +288,18 @@ class SubdomainConnector:
         Returns:
             True if deleted, False if not found
         """
-        pool = self._get_pool()
-        conn = await pool.acquire()
-        try:
-            result = await conn.execute(
-                f"""
-                DELETE FROM {self.TABLE_NAME}
-                WHERE subdomain = $1 AND base_domain = $2
-                """,
-                subdomain.lower(),
-                base_domain.lower(),
+        async with session_scope() as session:
+            result = await session.execute(
+                delete(SubdomainRegistry).where(
+                    SubdomainRegistry.subdomain == subdomain.lower(),
+                    SubdomainRegistry.base_domain == base_domain.lower(),
+                )
             )
-            deleted = result == "DELETE 1"
+            deleted = result.rowcount == 1
             if deleted:
                 logger.info(f"Deleted subdomain registration '{subdomain.lower()}.{base_domain.lower()}'")
-                # Audit log for subdomain deletion
                 audit_logger.info(f"SUBDOMAIN_DELETED: {subdomain.lower()}.{base_domain.lower()}")
             return deleted
-        finally:
-            await pool.release(conn)
 
     async def delete_by_project(self, project_name: str) -> int:
         """Delete all subdomain registrations for a project.
@@ -336,25 +310,15 @@ class SubdomainConnector:
         Returns:
             Number of registrations deleted
         """
-        pool = self._get_pool()
-        conn = await pool.acquire()
-        try:
-            result = await conn.execute(
-                f"""
-                DELETE FROM {self.TABLE_NAME}
-                WHERE project_name = $1
-                """,
-                project_name,
+        async with session_scope() as session:
+            result = await session.execute(
+                delete(SubdomainRegistry).where(SubdomainRegistry.project_name == project_name)
             )
-            # Parse "DELETE N" to get count
-            count = int(result.split()[-1]) if result else 0
+            count = result.rowcount
             if count > 0:
                 logger.info(f"Deleted {count} subdomain registration(s) for project '{project_name}'")
-                # Audit log for subdomain deletion by project
                 audit_logger.info(f"SUBDOMAINS_DELETED_BY_PROJECT: project={project_name} count={count}")
             return count
-        finally:
-            await pool.release(conn)
 
     async def delete_by_deployment(self, project_name: str, deployment_name: str) -> int:
         """Delete all subdomain registrations for a specific deployment.
@@ -366,31 +330,23 @@ class SubdomainConnector:
         Returns:
             Number of registrations deleted
         """
-        pool = self._get_pool()
-        conn = await pool.acquire()
-        try:
-            result = await conn.execute(
-                f"""
-                DELETE FROM {self.TABLE_NAME}
-                WHERE project_name = $1 AND deployment_name = $2
-                """,
-                project_name,
-                deployment_name,
+        async with session_scope() as session:
+            result = await session.execute(
+                delete(SubdomainRegistry).where(
+                    SubdomainRegistry.project_name == project_name,
+                    SubdomainRegistry.deployment_name == deployment_name,
+                )
             )
-            # Parse "DELETE N" to get count
-            count = int(result.split()[-1]) if result else 0
+            count = result.rowcount
             if count > 0:
                 logger.info(
                     f"Deleted {count} subdomain registration(s) for deployment '{project_name}/{deployment_name}'"
                 )
-                # Audit log for subdomain deletion by deployment
                 audit_logger.info(
                     f"SUBDOMAINS_DELETED_BY_DEPLOYMENT: project={project_name} "
                     f"deployment={deployment_name} count={count}"
                 )
             return count
-        finally:
-            await pool.release(conn)
 
     async def register_bare_domain(
         self,
@@ -434,48 +390,47 @@ class SubdomainConnector:
                 return existing
             raise SubdomainNotAvailableError(f"Kaal domein '{base_domain_lower}' is niet beschikbaar")
 
-        pool = self._get_pool()
-        conn = await pool.acquire()
         try:
-            result = await conn.fetchrow(
-                f"""
-                INSERT INTO {self.TABLE_NAME}
-                (subdomain, base_domain, project_name, deployment_name, cluster, created_by)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                ON CONFLICT (subdomain, base_domain) DO NOTHING
-                RETURNING id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
-                """,
-                BARE_DOMAIN_SUBDOMAIN,
-                base_domain_lower,
-                project_name,
-                deployment_name,
-                cluster,
-                created_by,
-            )
+            async with session_scope() as session:
+                inserted_id = (
+                    await session.execute(
+                        pg_insert(SubdomainRegistry)
+                        .values(
+                            subdomain=BARE_DOMAIN_SUBDOMAIN,
+                            base_domain=base_domain_lower,
+                            project_name=project_name,
+                            deployment_name=deployment_name,
+                            cluster=cluster,
+                            created_by=created_by,
+                        )
+                        .on_conflict_do_nothing(index_elements=["subdomain", "base_domain"])
+                        .returning(SubdomainRegistry.id)
+                    )
+                ).scalar_one_or_none()
 
-            if result is None:
-                existing = await self.get_by_subdomain(BARE_DOMAIN_SUBDOMAIN, base_domain_lower)
-                if existing and existing.get("project_name") == project_name:
-                    return existing
-                raise SubdomainNotAvailableError(f"Kaal domein '{base_domain_lower}' is niet beschikbaar")
+                if inserted_id is None:
+                    existing = await self.get_by_subdomain(BARE_DOMAIN_SUBDOMAIN, base_domain_lower)
+                    if existing and existing.get("project_name") == project_name:
+                        return existing
+                    raise SubdomainNotAvailableError(f"Kaal domein '{base_domain_lower}' is niet beschikbaar")
 
-            logger.info(
-                f"Registered bare domain '{base_domain_lower}' "
-                f"for project '{project_name}', deployment '{deployment_name}'"
-            )
-            audit_logger.info(
-                f"BARE_DOMAIN_REGISTERED: {base_domain_lower} "
-                f"project={project_name} deployment={deployment_name} cluster={cluster}"
-            )
-
-            return dict(result)
+                row = (
+                    await session.execute(select(SubdomainRegistry).where(SubdomainRegistry.id == inserted_id))
+                ).scalar_one()
+                logger.info(
+                    f"Registered bare domain '{base_domain_lower}' "
+                    f"for project '{project_name}', deployment '{deployment_name}'"
+                )
+                audit_logger.info(
+                    f"BARE_DOMAIN_REGISTERED: {base_domain_lower} "
+                    f"project={project_name} deployment={deployment_name} cluster={cluster}"
+                )
+                return row.to_dict()
         except SubdomainNotAvailableError:
             raise
         except Exception as e:
             logger.exception(f"Failed to register bare domain '{base_domain_lower}'")
             raise SubdomainError(f"Bare domain registration failed: {e}") from e
-        finally:
-            await pool.release(conn)
 
     async def delete_bare_domain(self, base_domain: str) -> bool:
         """Delete a bare domain registration.
@@ -611,56 +566,52 @@ class SubdomainConnector:
         Raises:
             SubdomainNotAvailableError: If the new subdomain is already taken
         """
-        pool = self._get_pool()
-        conn = await pool.acquire()
         try:
-            # Start transaction
-            async with conn.transaction():
-                # Step 1: Check if the new subdomain is available (within transaction)
-                existing_new = await conn.fetchval(
-                    f"""
-                    SELECT 1 FROM {self.TABLE_NAME}
-                    WHERE subdomain = $1 AND base_domain = $2
-                    """,
-                    new_subdomain,
-                    new_base_domain,
-                )
-
-                if existing_new is not None:
-                    # New subdomain is taken - transaction will rollback, old subdomain preserved
+            # session_scope is one transaction: on any exception it rolls back, so the
+            # old subdomain is preserved if the new one turns out to be taken.
+            async with session_scope() as session:
+                # Step 1: new subdomain available? (within the transaction)
+                taken = (
+                    await session.execute(
+                        select(SubdomainRegistry.id).where(
+                            SubdomainRegistry.subdomain == new_subdomain,
+                            SubdomainRegistry.base_domain == new_base_domain,
+                        )
+                    )
+                ).first()
+                if taken is not None:
                     raise SubdomainNotAvailableError(
                         f"Subdomein '{new_subdomain}.{new_base_domain}' is niet beschikbaar"
                     )
 
-                # Step 2: Delete the old subdomain registration
-                await conn.execute(
-                    f"""
-                    DELETE FROM {self.TABLE_NAME}
-                    WHERE subdomain = $1 AND base_domain = $2
-                    """,
-                    old_subdomain,
-                    old_base_domain,
+                # Step 2: delete the old registration
+                await session.execute(
+                    delete(SubdomainRegistry).where(
+                        SubdomainRegistry.subdomain == old_subdomain,
+                        SubdomainRegistry.base_domain == old_base_domain,
+                    )
                 )
 
-                # Step 3: Insert the new subdomain registration
-                result = await conn.fetchrow(
-                    f"""
-                    INSERT INTO {self.TABLE_NAME}
-                    (subdomain, base_domain, project_name, deployment_name, cluster, created_by)
-                    VALUES ($1, $2, $3, $4, $5, $6)
-                    RETURNING id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
-                    """,
-                    new_subdomain,
-                    new_base_domain,
-                    project_name,
-                    deployment_name,
-                    cluster,
-                    created_by,
-                )
+                # Step 3: insert the new registration
+                inserted_id = (
+                    await session.execute(
+                        insert(SubdomainRegistry)
+                        .values(
+                            subdomain=new_subdomain,
+                            base_domain=new_base_domain,
+                            project_name=project_name,
+                            deployment_name=deployment_name,
+                            cluster=cluster,
+                            created_by=created_by,
+                        )
+                        .returning(SubdomainRegistry.id)
+                    )
+                ).scalar_one()
+                row = (
+                    await session.execute(select(SubdomainRegistry).where(SubdomainRegistry.id == inserted_id))
+                ).scalar_one()
+                result_dict = row.to_dict()
 
-                # Transaction commits here if no exception
-
-            # Log success after transaction commits
             logger.info(
                 f"Atomically changed subdomain from '{old_subdomain}.{old_base_domain}' to "
                 f"'{new_subdomain}.{new_base_domain}' for deployment '{project_name}/{deployment_name}'"
@@ -669,11 +620,9 @@ class SubdomainConnector:
                 f"SUBDOMAIN_CHANGED: {old_subdomain}.{old_base_domain} -> {new_subdomain}.{new_base_domain} "
                 f"project={project_name} deployment={deployment_name} cluster={cluster}"
             )
-
-            return dict(result)
+            return result_dict
 
         except SubdomainNotAvailableError:
-            # Re-raise availability errors (transaction already rolled back)
             raise
         except Exception as e:
             logger.exception(
@@ -681,8 +630,6 @@ class SubdomainConnector:
                 f"'{new_subdomain}.{new_base_domain}'"
             )
             raise SubdomainError(f"Subdomain change failed: {e}") from e
-        finally:
-            await pool.release(conn)
 
     async def update(
         self,
@@ -702,38 +649,28 @@ class SubdomainConnector:
         Returns:
             Updated registration dictionary, or None if not found
         """
-        updates = []
-        params = [subdomain.lower(), base_domain.lower()]
-        param_idx = 3
-
+        values: dict[str, Any] = {}
         if deployment_name is not None:
-            updates.append(f"deployment_name = ${param_idx}")
-            params.append(deployment_name)
-            param_idx += 1
-
+            values["deployment_name"] = deployment_name
         if cluster is not None:
-            updates.append(f"cluster = ${param_idx}")
-            params.append(cluster)
-            param_idx += 1
+            values["cluster"] = cluster
 
-        if not updates:
+        if not values:
             return await self.get_by_subdomain(subdomain, base_domain)
 
-        pool = self._get_pool()
-        conn = await pool.acquire()
-        try:
-            result = await conn.fetchrow(
-                f"""
-                UPDATE {self.TABLE_NAME}
-                SET {", ".join(updates)}
-                WHERE subdomain = $1 AND base_domain = $2
-                RETURNING id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
-                """,
-                *params,
+        async with session_scope() as session:
+            result = await session.execute(
+                update(SubdomainRegistry)
+                .where(
+                    SubdomainRegistry.subdomain == subdomain.lower(),
+                    SubdomainRegistry.base_domain == base_domain.lower(),
+                )
+                .values(**values)
             )
-            return dict(result) if result else None
-        finally:
-            await pool.release(conn)
+            if result.rowcount == 0:
+                return None
+        # Read back the updated row (committed above) so the returned dict is current.
+        return await self.get_by_subdomain(subdomain, base_domain)
 
     async def count_all(self) -> int:
         """Count total number of subdomain registrations.
@@ -741,13 +678,9 @@ class SubdomainConnector:
         Returns:
             Total count of registrations
         """
-        pool = self._get_pool()
-        conn = await pool.acquire()
-        try:
-            result = await conn.fetchval(f"SELECT COUNT(*) FROM {self.TABLE_NAME}")
-            return result or 0
-        finally:
-            await pool.release(conn)
+        async with session_scope() as session:
+            result = await session.execute(select(func.count()).select_from(SubdomainRegistry))
+            return result.scalar_one() or 0
 
     async def list_all(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         """List all subdomain registrations.
@@ -759,22 +692,14 @@ class SubdomainConnector:
         Returns:
             List of registration dictionaries
         """
-        pool = self._get_pool()
-        conn = await pool.acquire()
-        try:
-            results = await conn.fetch(
-                f"""
-                SELECT id, subdomain, base_domain, project_name, deployment_name, cluster, created_at, created_by
-                FROM {self.TABLE_NAME}
-                ORDER BY subdomain, base_domain
-                LIMIT $1 OFFSET $2
-                """,
-                limit,
-                offset,
+        async with session_scope() as session:
+            result = await session.execute(
+                select(SubdomainRegistry)
+                .order_by(SubdomainRegistry.subdomain, SubdomainRegistry.base_domain)
+                .limit(limit)
+                .offset(offset)
             )
-            return [dict(row) for row in results]
-        finally:
-            await pool.release(conn)
+            return [row.to_dict() for row in result.scalars().all()]
 
 
 # Factory function
