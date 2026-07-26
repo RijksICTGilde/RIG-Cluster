@@ -58,8 +58,6 @@ from opi.forms.visualizers.fields.services import (
     KEYCLOAK_REDIRECT_URIS,
     KEYCLOAK_RESTRICT_ACCESS,
     KEYCLOAK_TEMPLATE,
-    POSTGRESQL_INSTANCES,
-    POSTGRESQL_STORAGE,
     SERVICES,
 )
 from opi.forms.visualizers.fields.team import (
@@ -106,8 +104,6 @@ __all__ = [
     "KEYCLOAK_REDIRECT_URIS",
     "KEYCLOAK_RESTRICT_ACCESS",
     "KEYCLOAK_TEMPLATE",
-    "POSTGRESQL_INSTANCES",
-    "POSTGRESQL_STORAGE",
     "SERVICES",
     "USERS_SEQUENCE",
     "USER_EMAIL",
