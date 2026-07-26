@@ -18,11 +18,13 @@ Regenerate intentional changes with::
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.forms.visualizers.flows import FLOW_REGISTRY, SERVICE_CONFIG_MODAL_FLOWS, FormFlow
-from opi.forms.visualizers.sections import FormSection
 from opi.forms.visualizers.wizard_sections import EDIT_SECTIONS, SERVICE_CONFIG_SECTIONS
+
+if TYPE_CHECKING:
+    from opi.forms.visualizers.sections import FormSection
 
 GOLDEN = Path(__file__).parent / "golden" / "flow_registry.json"
 
