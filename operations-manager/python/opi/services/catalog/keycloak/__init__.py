@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from opi.services.catalog.base import ConfigLayer, ProvisionContext, Service, config_path
-from opi.services.config_models.keycloak import KeycloakConfig
+from opi.services.catalog.keycloak.config_model import KeycloakConfig
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ServiceType
 from opi.utils.secrets import KeycloakSecret
@@ -46,7 +46,7 @@ class KeycloakService(Service):
     def config_editables(self, layer: ConfigLayer):
         if layer is not ConfigLayer.PROJECT:
             return []
-        from opi.forms.editables.fields.services import (
+        from opi.services.catalog.keycloak.editables import (
             KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE,
             KEYCLOAK_RESTRICT_ACCESS_EDITABLE,
             KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG_EDITABLE,
@@ -68,7 +68,8 @@ class KeycloakService(Service):
         cached = getattr(self, "_config_section_cache", None)
         if cached is None:
             from opi.forms.layout import Fieldset, Sequence
-            from opi.forms.visualizers.fields.services import (
+            from opi.forms.visualizers.sections import FormSection
+            from opi.services.catalog.keycloak.visualizers import (
                 KEYCLOAK_ADDITIONAL_CLIENTS,
                 KEYCLOAK_REDIRECT_URIS,
                 KEYCLOAK_RESTRICT_ACCESS,
@@ -76,7 +77,6 @@ class KeycloakService(Service):
                 KEYCLOAK_RESTRICT_ACCESS_ROLE,
                 KEYCLOAK_TEMPLATE,
             )
-            from opi.forms.visualizers.sections import FormSection
 
             def cp(*segments: str) -> str:
                 return config_path(ConfigLayer.PROJECT, self.service_type, "config", *segments)
