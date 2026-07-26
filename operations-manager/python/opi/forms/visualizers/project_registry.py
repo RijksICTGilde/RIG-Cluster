@@ -29,7 +29,6 @@ from opi.forms.visualizers.fields.components import (
     COMPONENT_SERVICES,
     COMPONENT_USER_ENV_VARS,
     COMPONENTS_SEQUENCE,
-    PERSISTENT_STORAGE_SEQUENCE,
 )
 from opi.forms.visualizers.fields.config_display import (
     AGE_PRIVATE_KEY,
@@ -109,7 +108,6 @@ __all__ = [
     "KEYCLOAK_REDIRECT_URIS",
     "KEYCLOAK_RESTRICT_ACCESS",
     "KEYCLOAK_TEMPLATE",
-    "PERSISTENT_STORAGE_SEQUENCE",
     "POSTGRESQL_INSTANCES",
     "POSTGRESQL_STORAGE",
     "SERVICES",

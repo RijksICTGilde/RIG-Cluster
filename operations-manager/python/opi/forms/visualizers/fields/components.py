@@ -28,10 +28,6 @@ from opi.forms.editables.fields.components import (
     METRICS_PATH_EDITABLE,
     METRICS_PORT_EDITABLE,
     OUTBOUND_PORT_EDITABLE,
-    PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE,
-    PERSISTENT_STORAGE_NAME_EDITABLE,
-    PERSISTENT_STORAGE_SEQUENCE_EDITABLE,
-    PERSISTENT_STORAGE_SIZE_EDITABLE,
     PUBLISH_ON_WEB_ATTACHMENT_EDITABLE,
     PUBLISH_ON_WEB_TLS_EDITABLE,
 )
@@ -188,35 +184,6 @@ COMPONENT_USER_ENV_VARS = EditableVisualizer(
         "Bijvoorbeeld: API_KEY=mijn-geheime-sleutel"
     ),
     attributes={"kv_format": "env"},
-)
-
-PERSISTENT_STORAGE_NAME = EditableVisualizer(
-    editable=PERSISTENT_STORAGE_NAME_EDITABLE,
-    widget=WidgetType.TEXT,
-    label="Naam",
-    help_text="Unieke naam voor dit opslagvolume binnen het component.",
-)
-
-PERSISTENT_STORAGE_SIZE = EditableVisualizer(
-    editable=PERSISTENT_STORAGE_SIZE_EDITABLE,
-    widget=WidgetType.SELECT,
-    label="Grootte",
-    help_text="De maximale grootte van het opslagvolume.",
-)
-
-PERSISTENT_STORAGE_MOUNT_PATH = EditableVisualizer(
-    editable=PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE,
-    widget=WidgetType.TEXT,
-    label="Mount pad",
-    help_text="Het pad in de container waar het volume wordt gemount (bijv. /data, /var/lib/app).",
-)
-
-PERSISTENT_STORAGE_SEQUENCE = EditableVisualizer(
-    editable=PERSISTENT_STORAGE_SEQUENCE_EDITABLE,
-    widget=WidgetType.SEQUENCE,
-    label="Persistente opslag",
-    help_text="Persistente opslagvolumes die in de container worden gemount",
-    children=[PERSISTENT_STORAGE_NAME, PERSISTENT_STORAGE_SIZE, PERSISTENT_STORAGE_MOUNT_PATH],
 )
 
 ATTACHMENT_USE_REFERENCE = EditableVisualizer(
