@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from opi.services.catalog.base import ConfigLayer, Service
-from opi.services.config_models.storage import StorageConfig
+from opi.services.catalog.shared.storage import StorageConfig
 from opi.services.services_enums import ServiceType
 
 

@@ -34,12 +34,12 @@ from opi.forms.editables.fields.components import (
     PERSISTENT_STORAGE_SIZE_EDITABLE,
     PUBLISH_ON_WEB_ATTACHMENT_EDITABLE,
     PUBLISH_ON_WEB_TLS_EDITABLE,
-    TEMP_STORAGE_MOUNT_PATH_EDITABLE,
-    TEMP_STORAGE_NAME_EDITABLE,
-    TEMP_STORAGE_SEQUENCE_EDITABLE,
-    TEMP_STORAGE_SIZE_EDITABLE,
 )
 from opi.forms.visualizers.visualizer import EditableVisualizer
+
+# temp-storage's visualizer lives in its service package; imported here only so the
+# component-form aggregation (COMPONENTS_SEQUENCE) can reference it.
+from opi.services.catalog.temp_storage.visualizers import TEMP_STORAGE_SEQUENCE
 
 COMPONENT_NAME = EditableVisualizer(
     editable=COMPONENT_NAME_EDITABLE,
@@ -214,35 +214,6 @@ PERSISTENT_STORAGE_SEQUENCE = EditableVisualizer(
     label="Persistente opslag",
     help_text="Persistente opslagvolumes die in de container worden gemount",
     children=[PERSISTENT_STORAGE_NAME, PERSISTENT_STORAGE_SIZE, PERSISTENT_STORAGE_MOUNT_PATH],
-)
-
-TEMP_STORAGE_NAME = EditableVisualizer(
-    editable=TEMP_STORAGE_NAME_EDITABLE,
-    widget=WidgetType.TEXT,
-    label="Naam",
-    help_text="Unieke naam voor dit tijdelijke opslagvolume binnen het component.",
-)
-
-TEMP_STORAGE_SIZE = EditableVisualizer(
-    editable=TEMP_STORAGE_SIZE_EDITABLE,
-    widget=WidgetType.SELECT,
-    label="Grootte",
-    help_text="De maximale grootte van het tijdelijke opslagvolume.",
-)
-
-TEMP_STORAGE_MOUNT_PATH = EditableVisualizer(
-    editable=TEMP_STORAGE_MOUNT_PATH_EDITABLE,
-    widget=WidgetType.TEXT,
-    label="Mount pad",
-    help_text="Het pad in de container waar het tijdelijke volume wordt gemount (bijv. /tmp/cache).",
-)
-
-TEMP_STORAGE_SEQUENCE = EditableVisualizer(
-    editable=TEMP_STORAGE_SEQUENCE_EDITABLE,
-    widget=WidgetType.SEQUENCE,
-    label="Tijdelijke opslag",
-    help_text="Tijdelijke opslagvolumes die in de container worden gemount (worden gewist bij herstart)",
-    children=[TEMP_STORAGE_NAME, TEMP_STORAGE_SIZE, TEMP_STORAGE_MOUNT_PATH],
 )
 
 ATTACHMENT_USE_REFERENCE = EditableVisualizer(
