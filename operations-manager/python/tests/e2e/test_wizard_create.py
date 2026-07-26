@@ -19,7 +19,6 @@ from tests.e2e.helpers.wizard import WizardHelper, _unique_project_name
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
-
     from tests.e2e.helpers.forgejo import ForgejoClient
 
 pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
@@ -27,8 +26,8 @@ pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
 
 def test_wizard_create_verified_in_forgejo(
     sandbox_url: str,
-    sandbox_page: "Page",
-    forgejo: "ForgejoClient",
+    sandbox_page: Page,
+    forgejo: ForgejoClient,
 ) -> None:
     """Create a project via the real wizard, then verify it in the Forgejo git repo.
 
@@ -49,7 +48,8 @@ def test_wizard_create_verified_in_forgejo(
         assert forgejo.project_file_exists(project.name), f"'{project.name}' not committed to zad-projects"
         assert "web" in forgejo.component_names(project.name), "component 'web' not in the committed project"
         data = forgejo.get_project_yaml(project.name)
-        assert data and data.get("components"), "committed project yaml has no components"
+        assert data, "committed project yaml is empty"
+        assert data.get("components"), "committed project yaml has no components"
     finally:
         # Force teardown so a partial/207 delete still cleans the sandbox.
         sandbox_api.delete_project_via_api(sandbox_url, project.name, project.api_key, verify_ssl=False)
