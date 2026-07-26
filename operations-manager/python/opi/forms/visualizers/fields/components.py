@@ -26,8 +26,6 @@ from opi.forms.editables.fields.components import (
     COMPONENTS_SEQUENCE_EDITABLE,
     INBOUND_PORT_EDITABLE,
     OUTBOUND_PORT_EDITABLE,
-    PUBLISH_ON_WEB_ATTACHMENT_EDITABLE,
-    PUBLISH_ON_WEB_TLS_EDITABLE,
 )
 from opi.forms.visualizers.visualizer import EditableVisualizer
 
@@ -219,27 +217,6 @@ ATTACHMENT_USE_SEQUENCE = EditableVisualizer(
     label="Bijlagen",
     help_text="Koppel geuploade bijlagen aan dit component (als bestand of env-var)",
     children=[ATTACHMENT_USE_REFERENCE, ATTACHMENT_USE_PROVIDE_AS, ATTACHMENT_USE_PATH, ATTACHMENT_USE_ENV_NAME],
-)
-
-PUBLISH_ON_WEB_TLS = EditableVisualizer(
-    editable=PUBLISH_ON_WEB_TLS_EDITABLE,
-    widget=WidgetType.SELECT,
-    label="TLS-modus",
-    help_text=(
-        "Standaard: het platform regelt het certificaat. Passthrough: de pod presenteert "
-        "z'n eigen certificaat (koppel dat als bijlage aan dit component). Aangeleverd: eigen "
-        "certificaat op de ingress (kies de PEM-bijlage). Let op: passthrough werkt alleen als "
-        "dit component een eigen hostname heeft (een domain-format met het component erin), of "
-        "als dit het enige gepubliceerde component is."
-    ),
-    attributes={"data-rerender": "true"},
-)
-
-PUBLISH_ON_WEB_ATTACHMENT = EditableVisualizer(
-    editable=PUBLISH_ON_WEB_ATTACHMENT_EDITABLE,
-    widget=WidgetType.SELECT,
-    label="Certificaat (bijlage)",
-    help_text="De PEM-bijlage (cert + key) die als certificaat op de ingress komt.",
 )
 
 COMPONENTS_SEQUENCE = EditableVisualizer(
