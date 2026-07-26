@@ -9,6 +9,9 @@ modelled here. Both services reference this same model.
 Storage config is a list, so validation goes through the provider's list-aware
 ``validate_config``. v1.0 requires the three fields every real storage entry
 carries (name/size/mount-path); failing early beats an invalid PVC at render time.
+
+Lives in ``catalog/shared`` because both storage services reference it; it is the
+one config model not owned by a single service package.
 """
 
 from __future__ import annotations

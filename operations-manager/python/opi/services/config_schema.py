@@ -19,6 +19,7 @@ and the bytes checked are produced the same way.
 
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -26,6 +27,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from opi.services.catalog.base import Service
 
+#: Fallback location for services not yet migrated to a self-contained package.
 SERVICE_SCHEMA_DIR = Path(__file__).resolve().parent.parent / "schemas" / "services"
 
 
@@ -33,8 +35,21 @@ def fragment_filename(service_name: str, version: str) -> str:
     return f"{service_name}.v{version}.json"
 
 
-def fragment_path(service_name: str, version: str) -> Path:
-    return SERVICE_SCHEMA_DIR / fragment_filename(service_name, version)
+def fragment_dir(provider: Service) -> Path:
+    """Directory that holds a provider's committed schema fragment.
+
+    A packaged service (``catalog/<svc>/__init__.py``) keeps its fragment beside its
+    code, so everything a service needs lives in one place. A not-yet-migrated flat
+    module (``catalog/<svc>.py``) falls back to the shared ``schemas/services`` dir.
+    """
+    module_file = Path(inspect.getfile(type(provider))).resolve()
+    if module_file.name == "__init__.py":
+        return module_file.parent
+    return SERVICE_SCHEMA_DIR
+
+
+def fragment_path(provider: Service) -> Path:
+    return fragment_dir(provider) / fragment_filename(provider.service_type.value, provider.config_schema_version)
 
 
 def render_service_config_schema(provider: Service) -> str:
@@ -55,12 +70,12 @@ def write_all_service_config_schemas() -> list[Path]:
     # Imported here to avoid an import cycle (registry imports provider + config models).
     from opi.services.registry import SERVICES
 
-    SERVICE_SCHEMA_DIR.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
     for provider in SERVICES.values():
         if provider.config_model is None:
             continue
-        path = fragment_path(provider.service_type.value, provider.config_schema_version)
+        path = fragment_path(provider)
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(render_service_config_schema(provider), encoding="utf-8")
         written.append(path)
     return written

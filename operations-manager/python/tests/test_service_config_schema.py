@@ -28,7 +28,7 @@ class TestSchemaFragmentDriftLock:
         "provider", _PROVIDERS_WITH_CONFIG, ids=[p.service_type.value for p in _PROVIDERS_WITH_CONFIG]
     )
     def test_committed_fragment_matches_model(self, provider) -> None:
-        path = fragment_path(provider.service_type.value, provider.config_schema_version)
+        path = fragment_path(provider)
         assert path.exists(), (
             f"Missing committed schema fragment {path.name}. "
             f"Regenerate with `uv run python -m opi.services.config_schema`."
