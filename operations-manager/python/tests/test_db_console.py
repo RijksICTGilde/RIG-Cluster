@@ -317,11 +317,22 @@ async def test_get_latest_run_queries_newest(orm_db):
     svc = RunsService()
     for sid, nm in (("s1", "n1"), ("s2", "n2")):
         await svc.create_run(
-            kind=RunKind.DB_CONSOLE, session_id=sid, cluster="c", project="proj", deployment="dep",
-            namespace="ns", name=nm, spec={}, url=None, started_by=None, expires_at=None,
+            kind=RunKind.DB_CONSOLE,
+            session_id=sid,
+            cluster="c",
+            project="proj",
+            deployment="dep",
+            namespace="ns",
+            name=nm,
+            spec={},
+            url=None,
+            started_by=None,
+            expires_at=None,
         )
     latest = await svc.get_latest_run("proj", "dep", RunKind.DB_CONSOLE)
     assert latest["session_id"] == "s2"  # newest by started_at
+
+
 def test_is_stale_starting():
     """A pod-less 'starting' run older than the window is reconcilable (so begin() can
     clear it instead of wedging forever); a fresh one, a terminal one, or None is not."""
