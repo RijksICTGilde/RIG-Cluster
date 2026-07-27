@@ -84,21 +84,29 @@ Er komt **één wekker per deployment**. Volgorde:
 
 Verwijst `waker-component` naar een niet-bestaand component, dan faalt de config luid.
 
-## Wekken
+## Wekken en handmatig slapen (toggle)
 
-Twee ingangen, één implementatie (`sleep_mode.flow.wake`):
+Twee transities, elk één implementatie (`sleep_mode.flow.wake` / `sleep_mode.flow.sleep`):
 
 ```
-POST /api/sleep-mode/{project}/{deployment}/wake      # wektoken, voor de wekkerpod
-GET  /api/sleep-mode/{project}/{deployment}/status    # wektoken, voor de wekkerpod
-POST /projects/{project}/deployments/{deployment}/wake # sessie + CSRF, voor de UI-knop
+POST /api/sleep-mode/{project}/{deployment}/wake       # wektoken, voor de wekkerpod
+GET  /api/sleep-mode/{project}/{deployment}/status     # wektoken, voor de wekkerpod
+POST /projects/{project}/deployments/{deployment}/wake  # sessie + CSRF, voor de UI-knop
+POST /projects/{project}/deployments/{deployment}/sleep # sessie + CSRF, voor de UI-knop
 ```
 
-- De UI toont een knop **"Applicatie wekken"** bij een deployment die niet wakker is
-  (alleen voor `admin`/`owner`). De knop verdwijnt zodra de deployment wakker is.
-- De API-endpoints gebruiken een **wektoken per deployment** (`X-Wake-Token`), bewust niet
-  de project-API-key: een gelekt wektoken kan één deployment wekken en verder niets. Het
-  endpoint accepteert alleen `sleeping -> waking`; al het andere is een no-op.
+- De UI toont precies **één** knop per deployment, afhankelijk van de status (alleen voor
+  `admin`/`owner`, alleen voor deployments die onder `match` vallen):
+  - `awake` → **"Deployment slapen"** (handmatig in slaapstand, `awake -> sleeping`),
+  - `sleeping`/`waking` → **"Applicatie wekken"** (`sleeping -> waking`).
+
+  De twee vormen samen een toggle: er staat er altijd maar één. Handmatig slapen mint —
+  net als de sweeper — een wektoken als er een wekker komt, zodat de deployment daarna weer
+  gewekt kan worden. Wakken zet de volgende deadline op `sleep-after-wake`, dus na een
+  handmatige wake valt de deployment vanzelf weer in slaapstand.
+- De API-endpoints (wekkerpod) gebruiken een **wektoken per deployment** (`X-Wake-Token`),
+  bewust niet de project-API-key: een gelekt wektoken kan één deployment wekken en verder
+  niets. Het endpoint accepteert alleen `sleeping -> waking`; al het andere is een no-op.
 
 ## Beveiliging van de wek-call
 
@@ -133,9 +141,16 @@ standaard 10) in `waking` staat gaat terug naar `awake` (kapot image dat nooit t
 
 `images/zad-waker/` (Go, distroless, non-root UID 1001). Gepubliceerd naar
 `ghcr.io/minbzk/base-images/zad-waker`; OPI's ghcr->RCR-rewrite regelt de pull op ODCN.
-Bouwen: `task docker-build-and-push BUILD_CONTEXT=images/zad-waker IMAGE_NAME=zad-waker
-REGISTRY_IMAGE=ghcr.io/minbzk/base-images/zad-waker`. De pagina hergebruikt bewust de
-vormgeving van de authorization sign-in card, zodat de twee pagina's consistent zijn.
+
+- **Publiceren naar ghcr:** `task publish-waker` (multi-platform build + push, net als de
+  andere base-images).
+- **Sandbox (kind):** `task build-waker-image` bouwt lokaal en `kind load`t de tag
+  `ghcr.io/minbzk/base-images/zad-waker:sandbox`. Die pinned tag matcht
+  `SLEEP_MODE_WAKER_IMAGE` in de sandboxed-local overlay, dus het `IfNotPresent`-beleid
+  gebruikt de geladen image zonder te pullen.
+
+De pagina hergebruikt bewust de vormgeving van de authorization sign-in card, zodat de twee
+pagina's consistent zijn.
 
 ## Configuratie (settings)
 
@@ -148,6 +163,11 @@ Operationele toggles (env-overschrijfbaar), in `opi/core/config.py`:
 | `SLEEP_MODE_PACE_SECONDS` | `15` | Pauze tussen gewijzigde projecten |
 | `SLEEP_MODE_WAKING_TIMEOUT_MINUTES` | `10` | Terug naar `awake` als `waking` vastloopt |
 | `SLEEP_MODE_WAKER_IMAGE` | `ghcr.io/minbzk/base-images/zad-waker:latest` | Wekkerimage |
+
+Deze settings horen in de standaard OPI-configmap, niet ad-hoc als env. Ze staan in de
+overlays `bootstrap/rig-system/kustomize/operations-manager/overlays/*/configmap.yaml`:
+de sandbox zet de pinned `:sandbox`-tag + `SLEEP_MODE_SWEEP_MINUTES=1` (snelle cyclus voor
+de E2E), productie zet de RCR-mirror-ref (sleep-mode zelf blijft daar uit tot gevalideerd).
 
 ## Afhankelijkheden
 
