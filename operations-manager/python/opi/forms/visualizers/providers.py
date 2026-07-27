@@ -8,7 +8,7 @@ for populating select/radio fields with dynamic data from OPI's domain.
 import re
 from typing import Any, ClassVar, Protocol
 
-from opi.core.cluster_config import CLUSTER_CONFIG
+from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
 from opi.services.services import ServiceAdapter
 from opi.services.services_enums import ServiceType
 
@@ -65,7 +65,10 @@ class ClusterOptionsProvider:
             "odcn-production": "Productie Cluster (ODC-Noord)",
         }
 
-        for cluster_name in CLUSTER_CONFIG:
+        # Only the clusters this environment offers as a deployment target: production
+        # shows just odcn-production, development a configurable set. Driven by the
+        # managing cluster's config, not by every cluster that happens to be defined.
+        for cluster_name in get_selectable_clusters():
             label = cluster_labels.get(cluster_name, cluster_name.title())
             options.append(
                 {
