@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 from opi.services.catalog.sleep_mode.actions import sleep_actions
-from opi.services.catalog.sleep_mode.scheduler import REVERT, SLEEP, decide_action, plan_sweep
+from opi.services.catalog.sleep_mode.scheduler import REVERT, SLEEP, STAMP, decide_action, plan_sweep
 
 NOW = datetime(2026, 7, 28, 12, 0, 0, tzinfo=UTC)
 PAST = (NOW - timedelta(minutes=1)).isoformat()
@@ -20,8 +20,12 @@ class TestDecideAction:
     def test_awake_not_matching_no_action(self) -> None:
         assert decide_action("awake", PAST, matches=False, now=NOW) is None
 
-    def test_awake_without_deadline_no_action(self) -> None:
-        assert decide_action("awake", None, matches=True, now=NOW) is None
+    def test_awake_without_deadline_stamps(self) -> None:
+        # A matching awake deployment with no deadline yet gets one stamped.
+        assert decide_action("awake", None, matches=True, now=NOW) == STAMP
+
+    def test_awake_without_deadline_not_matching_no_action(self) -> None:
+        assert decide_action("awake", None, matches=False, now=NOW) is None
 
     def test_waking_expired_reverts(self) -> None:
         assert decide_action("waking", PAST, matches=True, now=NOW) == REVERT
