@@ -561,9 +561,7 @@ class TestTerminalConditionMessage:
         from opi.manager.argo_manager import terminal_condition_message
 
         # OrphanedResourceWarning is not terminal; a bare healthy status has no conditions.
-        status_data = {
-            "status": {"conditions": [{"type": "OrphanedResourceWarning", "message": "an orphan"}]}
-        }
+        status_data = {"status": {"conditions": [{"type": "OrphanedResourceWarning", "message": "an orphan"}]}}
         assert terminal_condition_message(status_data) is None
         assert terminal_condition_message({"status": {}}) is None
 
