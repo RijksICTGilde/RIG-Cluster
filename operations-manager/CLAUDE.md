@@ -114,6 +114,10 @@ Manifest templates (Jinja2 for K8s YAML generation) are at: `operations-manager/
 
 ## Key Design Patterns
 
+Working on a service (keycloak, postgres, storage, ...)? Read `instructions/services.md`
+first: it holds the service/manager/connector split, the package layout, and every hook a
+service declares.
+
 1. **Connector Pattern**: ALL external system calls go through connector classes. Never call `subprocess`, `kubectl`, or external APIs directly outside connectors.
 2. **Project Manager as Orchestrator**: `project_manager.py` coordinates multi-step deployments by calling managers and connectors in sequence.
 3. **Distributed Model**: Each OPI instance manages only its `CLUSTER_MANAGER` cluster. Use `get_deployments(cluster_filter=True)` (default) for filtering.
