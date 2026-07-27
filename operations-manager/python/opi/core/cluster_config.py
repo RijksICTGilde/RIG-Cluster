@@ -10,6 +10,10 @@ from pathlib import Path
 # TODO: In the future, read this configuration from YAML file
 CLUSTER_CONFIG = {
     "local": {
+        # Development offers a choice of target clusters in the create wizard; production
+        # (odcn-production) omits this key and so offers only itself. See
+        # get_selectable_clusters().
+        "create_wizard_clusters": ["local", "sandboxed-local", "odcn-production"],
         "ingress_postfix": ".kind",
         "namespace_prefix": "rig-",
         "argo_namespace": "rig-system",
@@ -203,6 +207,22 @@ def get_cluster_config(cluster_name: str) -> dict:
         raise ValueError(f"Cluster '{cluster_name}' not found in configuration")
 
     return CLUSTER_CONFIG[cluster_name]
+
+
+def get_selectable_clusters() -> list[str]:
+    """Clusters offered as a target in the create-project wizard.
+
+    Driven by the managing cluster's own config key ``create_wizard_clusters``, and it
+    defaults to just the managing cluster. So production (CLUSTER_MANAGER =
+    odcn-production) offers only odcn-production and can never list a dev cluster by
+    accident, while a development overlay sets the key to offer several. Unknown names
+    are dropped, so a typo in the config cannot surface a non-existent cluster.
+    """
+    from opi.core.config import settings
+
+    manager = settings.CLUSTER_MANAGER
+    configured = get_cluster_config(manager).get("create_wizard_clusters", [manager])
+    return [c for c in configured if c in CLUSTER_CONFIG]
 
 
 def get_ingress_postfix(cluster_name: str) -> str:
