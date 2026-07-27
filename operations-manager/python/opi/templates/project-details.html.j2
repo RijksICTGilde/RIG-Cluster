@@ -1913,6 +1913,24 @@
 
     /* Job runner: same modal shell, loads the job body (form / status / logs link)
        from the jobs endpoint; the body drives itself via HTMX. */
+    // Generic runner for service-contributed deployment actions (e.g. sleep-mode wake).
+    // Confirms, POSTs to the action endpoint with the CSRF header, then reloads so the
+    // page reflects the new state (and the button disappears once awake).
+    function runDeploymentAction(endpoint, confirmMessage) {
+        if (confirmMessage && !window.confirm(confirmMessage)) return;
+        fetch(endpoint, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'X-CSRF-Token': '{{ request.state.csrf_token }}', 'X-Requested-With': 'XMLHttpRequest' },
+        })
+        .then(function(response) {
+            if (!response.ok) throw new Error('Actie mislukt (' + response.status + ')');
+            return response.json().catch(function() { return {}; });
+        })
+        .then(function() { window.location.reload(); })
+        .catch(function(err) { window.alert(err.message || 'Actie mislukt'); });
+    }
+
     function openJobModal(deployment) {
         document.getElementById('edit-section-title-text').textContent = 'Job uitvoeren - ' + deployment;
         var errorEl = document.getElementById('edit-section-error');

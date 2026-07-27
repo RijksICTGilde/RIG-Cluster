@@ -102,6 +102,22 @@ def manifest_services() -> list[Service]:
     return sorted(contributing, key=lambda s: s.manifest_order)
 
 
+def collect_deployment_actions(project_data: dict, deployment_name: str) -> list:
+    """All deployment-level action buttons the project's services contribute.
+
+    Iterates every service whose ``ServiceDefinition`` declares an ``actions_provider``
+    and flattens their visible ``DeploymentAction``s, so the deployment-actions template
+    loops over data instead of hardcoding per-service conditions.
+    """
+    actions: list = []
+    for service in SERVICES.values():
+        provider = service.definition.actions_provider
+        if provider is None:
+            continue
+        actions.extend(action for action in provider(project_data, deployment_name) if action.visible)
+    return actions
+
+
 def component_service_editables() -> list[Editable]:
     """Component-level editables every service contributes to the component form,
     flattened in ``config_component_order`` (RC-5). This replaces the hand-synced tail
