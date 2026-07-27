@@ -39,9 +39,7 @@ class TestReorderLike:
         assert list(merged["outer"].keys()) == ["x", "y"]
 
     def test_preserves_comments_on_commented_map(self):
-        data = load_yaml_from_string(
-            "root:\n  reference: a  # keep me\n  image: i\n  services:\n    - s\n"
-        )
+        data = load_yaml_from_string("root:\n  reference: a  # keep me\n  image: i\n  services:\n    - s\n")
         item = data["root"]
         # Simulate the churn: pop + reassign pushes image to the end.
         item["image"] = item.pop("image")

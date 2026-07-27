@@ -365,7 +365,7 @@ class PVCManager:
         Returns:
             True if a marked twin was found and removed.
         """
-        base = manifest_filename[: -len(".yaml")] if manifest_filename.endswith(".yaml") else manifest_filename
+        base = manifest_filename.removesuffix(".yaml")
         marked_path = os.path.join(full_output_dir, f"{base}{MARKED_FOR_DELETION_SUFFIX}")
 
         if not os.path.exists(marked_path):
