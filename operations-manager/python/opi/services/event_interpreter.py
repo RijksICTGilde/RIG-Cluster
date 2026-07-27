@@ -497,6 +497,19 @@ def interpret_argocd_errors(
 def _enrich_argocd_error(error: dict[str, str]) -> dict[str, str]:
     """Enrich an ArgoCD error with pattern-matched translation if possible."""
     message = error.get("message", "")
+    # A ComparisonError is ArgoCD saying it could not generate or compare the manifests -
+    # the render/CMP failure this whole feature is about. Give it a readable heading with the
+    # raw kustomize/CMP message underneath, so it does not read as a cryptic condition name.
+    if error.get("resource") == "ComparisonError":
+        enriched = dict(error)
+        # No "/" in the label: interpret_argocd_errors later strips a Kind/ prefix on "/".
+        enriched["resource"] = "Configuratiefout (kustomize CMP)"
+        enriched["suggestion"] = (
+            "De manifesten konden niet worden gegenereerd of vergeleken. Vaak staan er twee "
+            "resources met dezelfde naam in de deployment, of is een manifest ongeldig."
+        )
+        enriched["severity"] = EventSeverity.ACTIONABLE.value
+        return enriched
     if _IMAGE_PULL_RE.search(message):
         enriched = dict(error)
         enriched["message"] = "Container image kan niet worden opgehaald"

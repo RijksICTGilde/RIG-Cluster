@@ -100,14 +100,18 @@
                 {{ health }}
             </span>
 
-            {# Sync Badge #}
-            {% set sync_bg = '#c8e6c9' if sync == 'Synced' else ('#ffe0b2' if sync == 'OutOfSync' else 'var(--rvo-color-grijs-200)') %}
-            {% set sync_color = '#1b5e20' if sync == 'Synced' else ('#e65100' if sync == 'OutOfSync' else 'var(--rvo-color-grijs-700)') %}
+            {# Sync Badge. Unknown means ArgoCD cannot compare desired vs live state (often a
+               render/CMP error) - show it red, not neutral grey, so it does not read as
+               "still working on it". #}
+            {% set sync_bg = '#c8e6c9' if sync == 'Synced' else ('#ffe0b2' if sync == 'OutOfSync' else ('#ffebee' if sync == 'Unknown' else 'var(--rvo-color-grijs-200)')) %}
+            {% set sync_color = '#1b5e20' if sync == 'Synced' else ('#e65100' if sync == 'OutOfSync' else ('#c62828' if sync == 'Unknown' else 'var(--rvo-color-grijs-700)')) %}
             <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 16px; font-size: 0.8rem; font-weight: 500; background: {{ sync_bg }}; color: {{ sync_color }};">
                 {% if sync == 'Synced' %}
                 <c-icon icon="vinkje" size="sm" />
                 {% elif sync == 'OutOfSync' %}
                 <c-icon icon="waarschuwing" size="sm" />
+                {% elif sync == 'Unknown' %}
+                <c-icon icon="foutmelding" size="sm" />
                 {% else %}
                 <c-icon icon="info" size="sm" />
                 {% endif %}

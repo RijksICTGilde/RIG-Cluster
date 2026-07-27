@@ -226,6 +226,22 @@ class TestInterpretArgocdErrors:
         assert len(result) == 1
         assert result[0]["timestamp"] == "2025-01-01T12:00:00Z"
 
+    def test_comparison_error_gets_readable_heading(self):
+        raw = (
+            "Failed to load target state: failed to generate manifests in 'x': exit status 1: "
+            "may not add resource with an already registered id: PersistentVolumeClaim.v1.[noGrp]/web-data.ns"
+        )
+        errors = [{"resource": "ComparisonError", "message": raw}]
+        result = interpret_argocd_errors(errors, deployment_name="prod", component_names=["web"])
+        assert len(result) == 1
+        # Friendly, slash-free heading (the deployment-name simplifier splits on "/").
+        assert result[0]["resource"] == "Configuratiefout (kustomize CMP)"
+        # The raw kustomize/CMP message is kept as the description, with a suggestion.
+        assert "already registered id" in result[0]["message"]
+        assert result[0].get("suggestion")
+        assert result[0]["severity"] == "actionable"
+        assert result[0].get("orphaned") is None
+
     def test_empty_list(self):
         assert interpret_argocd_errors([]) == []
 
