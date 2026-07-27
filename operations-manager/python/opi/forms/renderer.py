@@ -29,6 +29,7 @@ from opi.forms.layout import (
     Submit,
     TemplatePartial,
 )
+from opi.services.services import service_entry_name
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.visualizer import EditableVisualizer
@@ -438,15 +439,14 @@ class FormRenderer:
 
         context: dict[str, Any] = {}
 
-        # Extract project services
+        # Extract project services. Read the identity through service_entry_name so every
+        # entry form resolves: bare string, uniform record ({name, config}) and the legacy
+        # single-key dict. Reading a record's raw keys yielded "name"/"config" and dropped
+        # the service itself, so any service carrying config vanished from the component
+        # services picker -- a new component came up with only the config-less half ticked.
         services = yaml_data.get("services", [])
         if isinstance(services, list):
-            names: list[str] = []
-            for svc in services:
-                if isinstance(svc, str):
-                    names.append(svc)
-                elif isinstance(svc, dict):
-                    names.extend(svc.keys())
+            names = [name for svc in services if (name := service_entry_name(svc)) is not None]
             context["project_services"] = names
 
         # Extract cluster (for ClusterBaseDomainOptionsProvider)

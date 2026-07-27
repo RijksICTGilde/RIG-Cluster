@@ -1205,6 +1205,16 @@ async def project_details(request: Request, project_name: str):
         from opi.manager.backup import BackupManager
 
         current_cluster = settings.CLUSTER_MANAGER
+        # Ungranted approvals per deployment, asked of the catalog (each service writes
+        # its own notice) so this page holds no domain knowledge.
+        from opi.services.approvals import collect_deployment_approval_notices
+
+        approval_notices: dict[str, list[dict[str, Any]]] = {}
+        for deployment in project_details["deployments"]:
+            notices = collect_deployment_approval_notices(project_data_decrypted, deployment)
+            if notices:
+                approval_notices[deployment.get("name", "")] = notices
+
         try:
             BackupManager()
             backups_available = True
@@ -1352,6 +1362,7 @@ async def project_details(request: Request, project_name: str):
                 "ServiceAdapter": ServiceAdapter,
                 "prometheus_available": prometheus_available,
                 "argocd_available": argocd_available,
+                "approval_notices": approval_notices,
                 "backups_available": backups_available,
                 "current_cluster": current_cluster,
                 "cluster_base_domains": cluster_base_domains,
