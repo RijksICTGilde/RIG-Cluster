@@ -20,3 +20,11 @@ class SleepModeService(Service):
     service_type = ServiceType.SLEEP_MODE
     config_model = SleepModeConfig
     config_schema_version = "1.0"
+
+
+# Bind the wake button onto the bound ServiceDefinition. Done here (not in services.py)
+# so services.py never imports the catalog package -- the definition is a mutable
+# dataclass, and the registry imports this module at startup, before any request.
+from opi.services.catalog.sleep_mode.actions import sleep_actions  # noqa: E402
+
+SleepModeService.definition.actions_provider = sleep_actions
