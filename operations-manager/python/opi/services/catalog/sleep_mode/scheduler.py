@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 SLEEP = "sleep"
 REVERT = "revert"
+STAMP = "stamp"
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -40,10 +41,18 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 
 def decide_action(state: str, expires_at: str | None, matches: bool, now: datetime) -> str | None:
-    """Pure per-deployment decision: SLEEP, REVERT, or None (leave it alone)."""
+    """Pure per-deployment decision: STAMP, SLEEP, REVERT, or None (leave it alone).
+
+    A matching awake deployment with no deadline yet gets one stamped (this is how a
+    freshly created deployment acquires its first sleep deadline, without hooking every
+    create path); once the deadline passes it sleeps.
+    """
     expiry = _parse_iso(expires_at)
-    if state == STATE_AWAKE and matches and expiry is not None and expiry < now:
-        return SLEEP
+    if state == STATE_AWAKE and matches:
+        if expiry is None:
+            return STAMP
+        if expiry < now:
+            return SLEEP
     if state == STATE_WAKING and expiry is not None and expiry < now:
         return REVERT
     return None
@@ -142,7 +151,16 @@ class SleepModeScheduler:
                 )
                 if deployment is None:
                     continue
-                if action == SLEEP:
+                if action == STAMP:
+                    config = sleep_config.load(project_data, deployment.get("cluster", ""))
+                    if config is not None and service.set_sleep_deadline(
+                        project_data, deployment_name, now, config.sleep_after_deploy_delta
+                    ):
+                        applied.append(deployment_name)
+                        logger.info(
+                            "sleep-mode: stamped initial sleep deadline for %s/%s", project_name, deployment_name
+                        )
+                elif action == SLEEP:
                     config = sleep_config.load(project_data, deployment.get("cluster", ""))
                     encrypted_token = None
                     if config is not None and config.waker:
