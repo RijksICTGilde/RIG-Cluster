@@ -23,6 +23,15 @@
                 </div>
             </div>
 
+            {# Ungranted approvals, as reported by the owning service #}
+            {% for notice in approval_notices.get(deployment.name, []) %}
+            <c-alert kind="{{ 'error' if notice.status == 'denied' else 'warning' }}">
+                {{ notice.text }}
+                {% if notice.by %}<br />Besluit door {{ notice.by }}{% if notice.date %} op {{ notice.date[:10] }}{% endif %}.{% endif %}
+                {% if notice.message %}<br />Toelichting: {{ notice.message }}{% endif %}
+            </c-alert>
+            {% endfor %}
+
             {# Components in this deployment #}
             {% if deployment.components %}
             <div class="deployment-components">

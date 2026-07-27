@@ -68,3 +68,40 @@ def test_get_merged_data_deselect_drops_service() -> None:
         active_sections=["services-edit"],
     )
     assert _names(state.get_merged_data()["services"]) == ["publish-on-web"]
+
+
+def test_merge_collapses_a_name_repeated_within_one_list() -> None:
+    """The picker can post the same name twice (locked card: disabled checkbox plus
+    hidden carrier). Folding entry by entry collapses it on the same rules."""
+    merged = merge_service_lists(["publish-on-web", "keycloak", "keycloak", "redis"], [])
+    assert _names(merged) == ["publish-on-web", "keycloak", "redis"]
+
+
+def test_merge_collapses_repeat_onto_the_config_carrying_entry() -> None:
+    """A bare repeat must not survive next to the entry that carries the config."""
+    record = {"name": "keycloak", "config": {"template": "sso-support"}}
+    merged = merge_service_lists([record, "keycloak"], [])
+    assert merged == [record]
+
+
+def test_get_merged_data_keeps_config_of_a_record_entry() -> None:
+    """Config carried on a ``{name, config}`` record survives devirtualization.
+
+    The lookup used to be keyed on the raw dict keys, which only matched the legacy
+    ``{keycloak: {...}}`` form, so a record's config was dropped on every merge and
+    keycloak/db config edits silently disappeared.
+    """
+    record = {"name": "keycloak", "config": {"restrict-access": {"enabled": True}}}
+    state = WizardState(
+        flow_id="create-project",
+        current_step="keycloak-config",
+        step_data={
+            "services": {"services": ["publish-on-web", "keycloak"]},
+            "keycloak-config": {"_services-config": ["publish-on-web", record]},
+        },
+        active_sections=["services", "keycloak-config"],
+        virt_mappings={"_services-config": "services"},
+    )
+    services = state.get_merged_data()["services"]
+    assert _names(services) == ["publish-on-web", "keycloak"]
+    assert services[1] == record

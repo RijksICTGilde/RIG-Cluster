@@ -1318,12 +1318,24 @@ def _empty_sequence_item(editable: Any | None) -> Any:
         rel = _relative(child_ed.yaml_path)
         if not rel:
             continue
+        if _is_service_config_child(rel):
+            # A service's config default (tls, metrics port, storage mount) belongs to a
+            # service the item HAS. Seeding it materialises that service into the item's
+            # services list, which both picks services the user never chose and -- because
+            # the list is then no longer unset -- suppresses the "select all project
+            # services" default a new component is supposed to start with.
+            continue
         if str(child.widget) == "sequence" and child_ed.min_items:
             # Seed nested sequences with min_items empty entries
             set_value(item, rel, ["" for _ in range(child_ed.min_items)])
         elif child_ed.default is not None:
             set_value(item, rel, child_ed.default)
     return item
+
+
+def _is_service_config_child(relative_path: str) -> bool:
+    """Whether a sequence child's path targets a service's config (``services{X}/...``)."""
+    return relative_path.startswith("services{")
 
 
 # ---------------------------------------------------------------------------

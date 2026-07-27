@@ -364,7 +364,11 @@ class RedisVariables(Enum):
     )
     PREFIX = VariableDefinition(
         name="REDIS_PREFIX",
-        description="Redis key/channel prefix for this project",
+        description=(
+            "Prefix voor Redis-sleutels en -kanalen van dit project, zonder scheidingsteken. "
+            "Bouw je sleutels en kanalen als <prefix>:<naam>. De ACL geeft alleen toegang "
+            "tot sleutels en kanalen die met <prefix>: beginnen"
+        ),
         source="secret",
         secret_key="key_prefix",
         aliases=["APP_REDIS_PREFIX"],

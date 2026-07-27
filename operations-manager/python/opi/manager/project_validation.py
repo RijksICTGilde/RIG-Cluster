@@ -152,6 +152,29 @@ def validate_component_references(project_data: dict, components: list, context:
     return {"success": True, "error": None, "invalid_references": None}
 
 
+def _validate_services_listed_once(services: Any, project_name: str, where: str) -> None:
+    """A services list may name each service at most once.
+
+    The list is a selection set keyed by service name, so a repeat has no meaning: a
+    second entry either says the same thing or silently contradicts the first, and
+    every reader (config lookup, provisioning, manifest generation) sees only one of
+    them. A hand-edited project file can still contain one, which is why this is a
+    check that rejects rather than something that quietly collapses the list.
+    """
+    if not isinstance(services, list):
+        return
+    seen: set[str] = set()
+    for entry in services:
+        name = service_entry_name(entry)
+        if name is None:
+            continue
+        if name in seen:
+            raise ProjectIntegrityError(
+                f"Project '{project_name}': service '{name}' staat meerdere keren in de services-lijst op {where}"
+            )
+        seen.add(name)
+
+
 async def validate_project_structure(project_data: dict[str, Any]) -> None:
     """Validate cross-field structural integrity of a complete project dict.
 
@@ -172,6 +195,23 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
         if cname in seen_components:
             raise ProjectIntegrityError(f"Project '{project_name}': component '{cname}' is meervoudig gedefinieerd")
         seen_components.add(cname)
+
+    # A services list is a selection set: each service at most once
+    _validate_services_listed_once(project_data.get("services"), project_name, "projectniveau")
+    for comp in components:
+        if isinstance(comp, dict):
+            _validate_services_listed_once(comp.get("services"), project_name, f"component '{comp.get('name')}'")
+    for dep in deployments:
+        if not isinstance(dep, dict):
+            continue
+        _validate_services_listed_once(dep.get("services"), project_name, f"deployment '{dep.get('name')}'")
+        for ref in dep.get("components", []) or []:
+            if isinstance(ref, dict):
+                _validate_services_listed_once(
+                    ref.get("services"),
+                    project_name,
+                    f"deployment '{dep.get('name')}' component '{ref.get('reference')}'",
+                )
 
     project_service_names = set(
         ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", []))
@@ -232,8 +272,14 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
         # Hard domain-config violations. A FieldWarning (e.g. an unapproved
         # custom domain) is non-fatal: the UI handles it via domain-request
         # entries, so only a ValueError/FieldError is a structural rejection.
+        # ``denied_blocks=False``: a revoked approval on a domain a deployment already
+        # uses must be saveable, otherwise the approver cannot record their own verdict.
+        # The revocation takes effect at publication (apply_domain_approval_fallback),
+        # not by refusing the write.
         try:
-            await DomainConfigEnforcer(deployment_index=index).enforce(project_data, {"project_name": project_name})
+            await DomainConfigEnforcer(deployment_index=index, denied_blocks=False).enforce(
+                project_data, {"project_name": project_name}
+            )
         except FieldWarning:
             pass
         except ValueError as e:

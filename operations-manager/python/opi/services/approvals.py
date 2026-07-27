@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 from opi.services.registry import approval_services
 
 if TYPE_CHECKING:
-    from opi.services.catalog.approval import ApprovalItem, ApprovalSpec
+    from opi.services.catalog.approval import ApprovalItem, ApprovalNotice, ApprovalSpec
 
 
 def _spec_indexes() -> tuple[dict[tuple[str, str], ApprovalSpec], dict[str, ApprovalSpec]]:
@@ -61,6 +61,32 @@ def collect_approval_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
                 item.setdefault("type", spec.key)
                 items.append(item)
     return items
+
+
+def collect_deployment_approval_notices(
+    project_data: dict[str, Any],
+    deployment: dict[str, Any],
+) -> list[ApprovalNotice]:
+    """What the owner of ``deployment`` must be told about ungranted approvals.
+
+    The applicant-facing counterpart of :func:`collect_approval_items`: same catalog
+    walk, but asking each spec what its state means for one deployment instead of what
+    is open for the approver. Each spec writes its own sentence, because the consequence
+    is service knowledge (an unapproved domain does not block the deployment -- it
+    publishes on the cluster address instead), so no caller has to know which service
+    owns which effect. Specs without a ``notices_for`` contribute none.
+    """
+    notices: list[ApprovalNotice] = []
+    for service in approval_services():
+        for spec in service.approval_specs():
+            if spec.notices_for is None:
+                continue
+            for notice in spec.notices_for(project_data, deployment):
+                notice.setdefault("service", service.service_type.value)
+                notice.setdefault("type", spec.key)
+                notice.setdefault("label", spec.label)
+                notices.append(notice)
+    return notices
 
 
 def apply_approval_verdicts(

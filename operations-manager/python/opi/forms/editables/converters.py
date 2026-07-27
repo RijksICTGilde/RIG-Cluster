@@ -181,10 +181,19 @@ class ServiceListConverter:
         ``attachments`` entry; otherwise saving the services list would silently drop
         every uploaded attachment.
         """
+        from opi.forms.wizard.services_merge import dedupe_service_list
+
         if isinstance(value, str) and value:
             value = [value]
         if not isinstance(value, list):
             return []
+
+        # The picker can post the same service twice: a locked service renders both a
+        # disabled checkbox and a hidden input, and unlocking it client-side re-enables
+        # the checkbox while the hidden input stays behind. The selection is a set keyed
+        # by service name, so collapse it here rather than letting the duplicate reach
+        # the project file (where only the first entry gets promoted to a config record).
+        value = dedupe_service_list(value)
 
         if self._preserve_catalog_data:
             existing_data = self._existing_attachments_data(context_data)
