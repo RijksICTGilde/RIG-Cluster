@@ -224,7 +224,7 @@ async def roos_project_form(request: Request):
         HTML response with the ROOS component-based form
     """
     try:
-        from opi.core.cluster_config import CLUSTER_CONFIG
+        from opi.core.cluster_config import get_selectable_clusters
 
         templates = get_templates()
         user = get_current_user(request)
@@ -233,7 +233,9 @@ async def roos_project_form(request: Request):
             {
                 "request": request,
                 "title": "Project Aanmaken - ROOS",
-                "clusters": list(CLUSTER_CONFIG.keys()),
+                # Only the clusters this environment offers: production shows just
+                # odcn-production, development a configurable set.
+                "clusters": get_selectable_clusters(),
                 "menu_items": get_menu_items(user),
             },
         )
