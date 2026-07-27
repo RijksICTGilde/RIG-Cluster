@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.task_supersede import raise_if_superseded
+from opi.services.event_interpreter import condense_render_error
 from opi.utils.age import decrypt_password_smart
 from opi.utils.naming import (
     generate_argocd_application_name,
@@ -945,11 +946,13 @@ class ArgoManager:
                     # instead of waiting for the timeout.
                     condition_error = terminal_condition_message(status_data)
                     if condition_error:
-                        error_msg = (
-                            f"Infrastructure application '{app_name}' cannot be rendered/compared: {condition_error}"
+                        logger.error(
+                            "Infrastructure application '%s' terminal condition: %s", app_name, condition_error
                         )
-                        logger.error(error_msg)
-                        raise RuntimeError(error_msg)
+                        raise RuntimeError(
+                            f"Infrastructure application '{app_name}' cannot be rendered/compared: "
+                            f"{condense_render_error(condition_error)}"
+                        )
 
                     # Check for sync operation failures (unrecoverable errors)
                     operation_state = status_data.get("status", {}).get("operationState", {})
@@ -1111,9 +1114,14 @@ class ArgoManager:
                     # was never rendered. Raising here surfaces the real message instead.
                     condition_error = terminal_condition_message(status_data)
                     if condition_error:
-                        error_msg = f"Application '{app_name}' cannot be rendered/compared: {condition_error}"
-                        logger.error(error_msg)
-                        raise RuntimeError(error_msg)
+                        # Log the full condition (helpful for debugging), but raise the
+                        # condensed tail: ArgoCD's message can be kBs of echoed script source
+                        # with the real error at the very end.
+                        logger.error("Application '%s' terminal condition: %s", app_name, condition_error)
+                        raise RuntimeError(
+                            f"Application '{app_name}' cannot be rendered/compared: "
+                            f"{condense_render_error(condition_error)}"
+                        )
 
                     # Check for terminal sync failures
                     operation_state = status_data.get("status", {}).get("operationState", {})

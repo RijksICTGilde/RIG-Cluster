@@ -30,6 +30,13 @@ This feature makes that error visible in three places.
   only channel that covers helm/helmfile deployments, which render only inside the CMP. A
   transport/auth error (network, 401) is logged and the deploy continues to the normal wait.
 
+> **Measured on the sandbox:** a real `ComparisonError` condition can be ~15 kB, because
+> ArgoCD echoes the entire failed `/bin/bash -c "<CMP script>"` command; the actual error is
+> the last line, after `exit status N:` (e.g. `ERROR: Namespace 'rig-x' does not exist`).
+> `event_interpreter.condense_render_error` extracts that tail (falling back to the
+> `Manifest generation error (cached):` marker) for both the deploy-task error and the status
+> card, keeping the full message available under "Origineel bericht".
+
 ### 2. In the project status card
 
 `_fetch_argocd_deployment_status` reads the cheap app-level conditions
