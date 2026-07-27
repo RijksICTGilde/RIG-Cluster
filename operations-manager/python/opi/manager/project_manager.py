@@ -326,6 +326,7 @@ def _is_image_pull_auth_error(message: str | None) -> bool:
 # 401/404/network hiccup) that must not block the deploy.
 _RENDER_FAILURE_MARKERS = (
     "failed to generate manifests",
+    "error generating manifests",
     "manifest generation error",
     "rpc error",
 )

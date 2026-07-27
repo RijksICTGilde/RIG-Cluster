@@ -21,6 +21,17 @@ class TestLooksLikeRenderFailure:
         )
         assert _looks_like_render_failure(body) is True
 
+    def test_real_manifests_endpoint_body_is_render_failure(self):
+        # Exact shape from a live sandbox 500 manifests-endpoint response.
+        from opi.manager.project_manager import _looks_like_render_failure
+
+        body = (
+            '{"error":"plugin sidecar failed. error generating manifests in cmp: rpc error: '
+            'code = Unknown desc = error generating manifests: `/bin/bash -c ...` failed exit status 1: '
+            "ERROR: Namespace 'rig-x' does not exist\"}"
+        )
+        assert _looks_like_render_failure(body) is True
+
     def test_auth_or_network_error_is_not_render_failure(self):
         from opi.manager.project_manager import _looks_like_render_failure
 
