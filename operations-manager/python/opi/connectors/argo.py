@@ -392,6 +392,47 @@ class ArgoConnector:
             logger.error(f"Error getting application status: {e}")
             raise RuntimeError(f"Error getting application status: {e}")
 
+    async def get_application_manifests(
+        self, app_name: str | None = None, revision: str | None = None
+    ) -> tuple[bool, str]:
+        """Ask ArgoCD to render an application's manifests, to detect generation failures.
+
+        This is the API behind ``argocd app manifests``. On a broken kustomization / CMP
+        render ArgoCD returns the generation error (including the plugin stderr) instead of
+        manifests, so calling it right after our own push fails fast with the real message
+        instead of waiting for the controller to reconcile.
+
+        Args:
+            app_name: Application name. If None, uses default_app_name.
+            revision: Optional git revision to render. When omitted, ArgoCD renders the
+                application's current target revision.
+
+        Returns:
+            ``(ok, body)`` where ``ok`` is True on HTTP 200 (the render succeeded; the
+            manifests themselves are not needed, only that it worked). On any other status
+            or a transport error ``ok`` is False and ``body`` is the response body or error
+            text - which for a generation failure contains the underlying cause. The caller
+            decides whether the body indicates a render failure worth blocking on.
+        """
+        app_name = app_name or self.default_app_name
+        manifests_url = f"{self._actual_base_url}/api/v1/applications/{app_name}/manifests"
+        if revision:
+            manifests_url += f"?revision={revision}"
+
+        try:
+            status_code, response_text = await self._make_authenticated_request(
+                "GET", manifests_url, timeout_seconds=120
+            )
+            if status_code == 200:
+                logger.debug(f"Application '{app_name}' rendered successfully")
+                return True, response_text
+            logger.warning(f"Manifest render for '{app_name}' returned status {status_code}")
+            return False, response_text
+        except Exception as e:
+            reason = str(e) or repr(e)
+            logger.error(f"Error rendering manifests for application '{app_name}': {reason}")
+            return False, reason
+
     async def get_application_resource_tree(self, app_name: str | None = None) -> list[dict[str, Any]]:
         """
         Get the resource tree for an ArgoCD application.
