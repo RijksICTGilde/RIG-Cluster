@@ -70,7 +70,6 @@ from opi.services.catalog.base import ManifestContext, ProvisionContext, SecretF
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.project import Project
 from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
-from opi.services.project_store import get_project_store
 from opi.services.registry import manifest_services, provisioning_services
 from opi.services.services import service_entry_name
 from opi.utils.age import (
