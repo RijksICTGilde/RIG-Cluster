@@ -27,6 +27,7 @@ from opi.services.catalog.platform import PlatformService
 from opi.services.catalog.postgresql_database import PostgresqlDatabaseService
 from opi.services.catalog.publish_on_web import PublishOnWebService
 from opi.services.catalog.redis import RedisService
+from opi.services.catalog.sleep_mode import SleepModeService
 from opi.services.catalog.temp_storage import TempStorageService
 from opi.services.services_enums import ServiceType
 
@@ -49,6 +50,7 @@ SERVICES: dict[ServiceType, Service] = {
     ServiceType.NAMESPACE_REDIS: NamespaceRedisService(),
     ServiceType.PLATFORM: PlatformService(),
     ServiceType.ATTACHMENTS: AttachmentsService(),
+    ServiceType.SLEEP_MODE: SleepModeService(),
 }
 
 
