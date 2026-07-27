@@ -1146,7 +1146,9 @@ class ProjectManager:
         logger.info(f"Successfully resolved {len(resolved)} aliases")
         return resolved
 
-    def _reset_sleep_deadline_on_activity(self, project_data: dict[str, Any], deployment_name: str, cluster: str) -> None:
+    def _reset_sleep_deadline_on_activity(
+        self, project_data: dict[str, Any], deployment_name: str, cluster: str
+    ) -> None:
         """Reset a matching deployment's sleep deadline (and wake it) on fresh activity.
 
         Called on image update: sets the deployment awake with ``expires-at = now +
@@ -1202,9 +1204,7 @@ class ProjectManager:
         current = sleep_state.read(project_data, deployment_name)
         if current.state not in (STATE_SLEEPING, STATE_WAKING):
             return
-        selected = sleep_manifests.select_waker_component(
-            project_data, deployment, config, self._project_file_handler
-        )
+        selected = sleep_manifests.select_waker_component(project_data, deployment, config, self._project_file_handler)
         if selected != component_reference:
             return
         if not current.wake_token:
@@ -1274,7 +1274,9 @@ class ProjectManager:
             template_path=secret_template,
             created_files=created_files,
         )
-        logger.info("sleep-mode: emitted waker for %s/%s (component %s)", project_name, deployment_name, component_reference)
+        logger.info(
+            "sleep-mode: emitted waker for %s/%s (component %s)", project_name, deployment_name, component_reference
+        )
 
     def _write_secret_file(
         self,
@@ -5072,7 +5074,9 @@ class ProjectManager:
             if is_disabled:
                 logger.info(f"Component '{component_name}' is disabled (reason: {disabled_reason}), setting replicas=0")
             elif is_sleeping:
-                logger.info(f"Deployment '{deployment_name}' is sleeping, setting component '{component_name}' replicas=0")
+                logger.info(
+                    f"Deployment '{deployment_name}' is sleeping, setting component '{component_name}' replicas=0"
+                )
 
             # Extract user environment variables from component definition
             user_env_vars = await self._project_file_handler.extract_component_user_env_vars(
@@ -6753,7 +6757,7 @@ class ProjectManager:
                     result_create["warnings"] = normalized_warnings_create
                 return result_create
 
-        except (ConflictError, ConcurrencyError):
+        except ConflictError, ConcurrencyError:
             # Retried by upsert_deployment on a fresh read. Must propagate, not become a
             # generic error dict, or the retry never sees it.
             raise
