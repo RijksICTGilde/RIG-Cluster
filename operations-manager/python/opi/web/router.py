@@ -1430,7 +1430,7 @@ async def _fetch_argocd_deployment_status(
     project_name: str, deployment: dict[str, Any], argo: Any, kubectl: Any
 ) -> dict[str, Any]:
     """Fetch ArgoCD status for one deployment, with interpreted errors when unhealthy."""
-    from opi.services.deployment_diagnostics import gather_deployment_errors
+    from opi.services.deployment_diagnostics import conditions_to_errors, gather_deployment_errors
     from opi.services.event_interpreter import interpret_argocd_errors
     from opi.utils.naming import generate_argocd_application_name
 
@@ -1447,8 +1447,9 @@ async def _fetch_argocd_deployment_status(
         operation_state = status.get("operationState", {})
         app_health = health.get("status", "Unknown")
 
-        raw_errors: list[dict[str, str]] = []
         if app_health != "Healthy":
+            # Not healthy: the full (more expensive) diagnostics, which already include the
+            # app-level conditions along with the resource tree and namespace events.
             raw_errors = await gather_deployment_errors(
                 argo=argo,
                 kubectl=kubectl,
@@ -1458,6 +1459,11 @@ async def _fetch_argocd_deployment_status(
                 deployment_name=deployment_name,
                 status_data=status_data,
             )
+        else:
+            # Healthy last-known state can still hide a fresh ComparisonError (sync=Unknown):
+            # read the cheap app-level conditions unconditionally - no extra API call - so a
+            # render/compare error is not filtered out on precisely the moment it matters.
+            raw_errors = conditions_to_errors(status_data)
 
         component_names = [c.get("reference") for c in deployment.get("components", []) or [] if c.get("reference")]
         errors = interpret_argocd_errors(raw_errors, deployment_name=deployment_name, component_names=component_names)
