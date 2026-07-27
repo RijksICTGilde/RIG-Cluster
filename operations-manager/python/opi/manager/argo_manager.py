@@ -945,7 +945,9 @@ class ArgoManager:
                     # instead of waiting for the timeout.
                     condition_error = terminal_condition_message(status_data)
                     if condition_error:
-                        error_msg = f"Infrastructure application '{app_name}' cannot be rendered/compared: {condition_error}"
+                        error_msg = (
+                            f"Infrastructure application '{app_name}' cannot be rendered/compared: {condition_error}"
+                        )
                         logger.error(error_msg)
                         raise RuntimeError(error_msg)
 

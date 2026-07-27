@@ -768,7 +768,11 @@ class EditableFormProcessor:
         originals_nested = original_nested if isinstance(original_nested, list) else []
         if isinstance(result_nested, list):
             for idx, res_item in enumerate(result_nested):
-                if idx < len(originals_nested) and isinstance(res_item, dict) and isinstance(originals_nested[idx], dict):
+                if (
+                    idx < len(originals_nested)
+                    and isinstance(res_item, dict)
+                    and isinstance(originals_nested[idx], dict)
+                ):
                     _reorder_like(originals_nested[idx], res_item)
 
     # ------------------------------------------------------------------

@@ -60,7 +60,8 @@ async def test_remove_then_recreate_keeps_single_pvc_and_renders(tmp_path):
     os.rename(plain, marked)
     marked_name = f"webapp-data-pvc{MARKED_FOR_DELETION_SUFFIX}"
     mark_row = {"id": "m1", "resource_type": "pvc", "resource_name": marked_name}
-    assert os.path.exists(marked) and not os.path.exists(plain)
+    assert os.path.exists(marked)
+    assert not os.path.exists(plain)
 
     # 3. Storage re-added: recreate. The marked twin must be removed and the stale mark
     #    (its file now gone) deleted.
