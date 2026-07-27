@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 from opi.services.catalog.sleep_mode import flow
 from opi.services.catalog.sleep_mode.flow import DeploymentNotFound, InvalidWakeToken, WakeResult
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
-from opi.web.router import wake_deployment_web
+from opi.web.router import sleep_deployment_web, wake_deployment_web
 
 PROJECT = "demo"
 DEPLOYMENT = "PR-1"
@@ -168,4 +168,59 @@ async def test_web_wake_unknown_deployment_404() -> None:
         pytest.raises(HTTPException) as exc,
     ):
         await wake_deployment_web(_request(), PROJECT, DEPLOYMENT)
+    assert exc.value.status_code == 404
+
+
+# --- Web router: manual sleep (the other half of the toggle) --------------------------
+
+
+@pytest.mark.parametrize("role", ["member", "developer", "viewer"])
+async def test_web_sleep_non_privileged_role_forbidden(role: str) -> None:
+    with (
+        patch("opi.web.router.get_current_user", return_value={"email": "user@example.com"}),
+        patch("opi.web.router.is_user_authorized_for_project", return_value=True),
+        patch("opi.web.router.get_user_role_for_project", return_value=role),
+        patch.object(flow, "sleep", AsyncMock()) as sleep_mock,
+        pytest.raises(HTTPException) as exc,
+    ):
+        await sleep_deployment_web(_request(), PROJECT, DEPLOYMENT)
+    assert exc.value.status_code == 403
+    sleep_mock.assert_not_called()
+
+
+async def test_web_sleep_unauthorized_project_forbidden() -> None:
+    with (
+        patch("opi.web.router.get_current_user", return_value={"email": "stranger@example.com"}),
+        patch("opi.web.router.is_user_authorized_for_project", return_value=False),
+        patch.object(flow, "sleep", AsyncMock()) as sleep_mock,
+        pytest.raises(HTTPException) as exc,
+    ):
+        await sleep_deployment_web(_request(), PROJECT, DEPLOYMENT)
+    assert exc.value.status_code == 403
+    sleep_mock.assert_not_called()
+
+
+@pytest.mark.parametrize("role", ["admin", "owner"])
+async def test_web_sleep_privileged_role_sleeps(role: str) -> None:
+    result = WakeResult(changed=True, state="sleeping")
+    with (
+        patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
+        patch("opi.web.router.is_user_authorized_for_project", return_value=True),
+        patch("opi.web.router.get_user_role_for_project", return_value=role),
+        patch.object(flow, "sleep", AsyncMock(return_value=result)) as sleep_mock,
+    ):
+        resp = await sleep_deployment_web(_request(), PROJECT, DEPLOYMENT)
+    assert resp.status_code == 200
+    sleep_mock.assert_awaited_once_with(PROJECT, DEPLOYMENT)
+
+
+async def test_web_sleep_unknown_deployment_404() -> None:
+    with (
+        patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
+        patch("opi.web.router.is_user_authorized_for_project", return_value=True),
+        patch("opi.web.router.get_user_role_for_project", return_value="admin"),
+        patch.object(flow, "sleep", AsyncMock(side_effect=DeploymentNotFound("Deployment 'PR-1' not found"))),
+        pytest.raises(HTTPException) as exc,
+    ):
+        await sleep_deployment_web(_request(), PROJECT, DEPLOYMENT)
     assert exc.value.status_code == 404

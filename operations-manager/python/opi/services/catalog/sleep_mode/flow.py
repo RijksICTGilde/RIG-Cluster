@@ -115,6 +115,65 @@ async def wake(
         await project_manager.close()
 
 
+async def sleep(project_name: str, deployment_name: str) -> WakeResult:
+    """Manually move a matching, awake deployment to ``sleeping`` and reprocess it.
+
+    The counterpart of ``wake``: the same load -> transition -> commit -> reprocess
+    sequence, but ``awake -> sleeping`` (minting a wake token when a waker will exist,
+    exactly like the sweeper's automatic SLEEP). Idempotent: only ``awake`` applies;
+    already sleeping/waking, or a non-matching deployment, is a no-op with no commit.
+    This is session-authenticated (admin/owner), so there is no wake token to verify.
+    """
+    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.manager.project_manager import ProjectManager
+    from opi.services.catalog.sleep_mode import config as sleep_config
+    from opi.services.catalog.sleep_mode import manifests, service
+    from opi.services.catalog.sleep_mode import state as sleep_state
+    from opi.services.catalog.sleep_mode import token as token_mod
+    from opi.services.project_store import get_project_store
+    from opi.services.resource_tuning_service import trigger_reprocessing
+
+    project = get_project_store().get(project_name)
+    if not project:
+        raise DeploymentNotFound(f"Project '{project_name}' not found")
+    filename = project.filename
+
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
+    try:
+        project_data = await project_manager.get_contents()
+        deployment = _find_deployment(project_data, deployment_name)
+        if deployment is None:
+            raise DeploymentNotFound(f"Deployment '{deployment_name}' not found in project '{project_name}'")
+
+        cluster = deployment.get("cluster", "")
+        config = sleep_config.load(project_data, cluster)
+        current = sleep_state.read(project_data, deployment_name)
+        if config is None or not config.matches(deployment_name):
+            return WakeResult(changed=False, state=current.state)
+
+        # Mint a wake token only when a waker will actually be generated, mirroring the
+        # sweeper's SLEEP branch, so the deployment can be woken from its own page later.
+        encrypted_token = None
+        if config.waker:
+            component = manifests.select_waker_component(project_data, deployment, config, ProjectFileHandler())
+            if component is not None:
+                encrypted_token = token_mod.encrypt(token_mod.mint(), project_data)
+
+        if not service.to_sleeping(project_data, deployment_name, encrypted_token):
+            new = sleep_state.read(project_data, deployment_name)
+            return WakeResult(changed=False, state=new.state)
+
+        await project_manager.save_and_commit_project(
+            project_data, f"sleep-mode: sleep {deployment_name} in {project_name}"
+        )
+        # Only this one deployment is regenerated; Application/AppProject are untouched.
+        await trigger_reprocessing(project_name, filename, deployment_name, argocd_resources_changed=False)
+        logger.info("sleep-mode: manually put %s/%s to sleep", project_name, deployment_name)
+        return WakeResult(changed=True, state=sleep_state.STATE_SLEEPING)
+    finally:
+        await project_manager.close()
+
+
 async def status(project_name: str, deployment_name: str, *, presented_token: str | None = None) -> dict:
     """Read-only status the waker polls: ``{"state": "starting" | "ready"}``.
 

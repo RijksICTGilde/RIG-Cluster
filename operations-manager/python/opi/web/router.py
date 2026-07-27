@@ -586,6 +586,38 @@ async def wake_deployment_web(request: Request, project_name: str, deployment_na
     return JSONResponse({"state": result.state, "changed": result.changed})
 
 
+@web_router.post("/projects/{project_name}/deployments/{deployment_name}/sleep")
+@requires_sso
+async def sleep_deployment_web(request: Request, project_name: str, deployment_name: str) -> JSONResponse:
+    """Manually put a deployment to sleep from the UI (session + CSRF + role auth).
+
+    The other half of the wake toggle: same one implementation in ``sleep_mode.flow.sleep``,
+    gated to admin/owner exactly like the wake action.
+    """
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    if not is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+
+    user_role = get_user_role_for_project(project_name, user_email)
+    if user_role not in ["admin", "owner"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Alleen admin of owner rollen kunnen een deployment slapen. Uw rol: {user_role}",
+        )
+
+    from opi.services.catalog.sleep_mode import flow
+
+    try:
+        result = await flow.sleep(project_name, deployment_name)
+    except flow.DeploymentNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    logger.info(f"Web sleep for '{project_name}/{deployment_name}' by {user_email}: state={result.state}")
+    return JSONResponse({"state": result.state, "changed": result.changed})
+
+
 @web_router.get("/test-architecture", response_class=HTMLResponse)
 @requires_sso
 async def test_architecture(request: Request):

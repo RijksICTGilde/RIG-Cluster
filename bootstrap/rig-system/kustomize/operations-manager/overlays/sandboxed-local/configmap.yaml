@@ -61,3 +61,10 @@ data:
     PROMETHEUS_EXTERNAL_URL=https://prometheus.sandbox.rijksapp.dev
 
     LOG_TO_FILE=false
+
+    # Sleep-mode: the waker image is kind-loaded (task build-waker-image) under this
+    # pinned tag, so the manifest's IfNotPresent policy uses it without pulling from ghcr.
+    # A short sweep interval keeps the sleep/wake cycle observable for the sandbox E2E.
+    SLEEP_MODE_SCHEDULER_ENABLED=true
+    SLEEP_MODE_SWEEP_MINUTES=1
+    SLEEP_MODE_WAKER_IMAGE=ghcr.io/minbzk/base-images/zad-waker:sandbox
