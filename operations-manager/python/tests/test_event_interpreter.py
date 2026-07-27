@@ -1,8 +1,43 @@
 from opi.services.event_interpreter import (
     EventSeverity,
+    condense_render_error,
     interpret_argocd_errors,
     interpret_events,
 )
+
+
+class TestCondenseRenderError:
+    """condense_render_error extracts the meaningful tail from ArgoCD's verbose messages.
+
+    Both shapes are taken from real sandbox ComparisonError conditions.
+    """
+
+    def test_extracts_stderr_after_exit_status(self):
+        # ArgoCD echoes the whole /bin/bash -c "<script>" command; the real error is the tail.
+        raw = (
+            "Failed to load target state: failed to generate manifest for source 1 of 1: rpc error: "
+            'code = Unknown desc = error generating manifests: `/bin/bash -c "set -e ... 2000 chars of '
+            "script ...\"` failed exit status 1: ERROR: Namespace 'rig-insp1-nmy' does not exist"
+        )
+        assert condense_render_error(raw) == "ERROR: Namespace 'rig-insp1-nmy' does not exist"
+
+    def test_falls_back_to_cached_generation_marker(self):
+        raw = (
+            "Failed to load target state: failed to generate manifest for source 1 of 1: rpc error: "
+            "code = Unknown desc = Manifest generation error (cached): ./sandboxed-local/alls7-fa2/productie: "
+            "app path does not exist"
+        )
+        assert condense_render_error(raw) == "./sandboxed-local/alls7-fa2/productie: app path does not exist"
+
+    def test_short_message_passthrough(self):
+        assert condense_render_error("some short error") == "some short error"
+        assert condense_render_error("") == ""
+
+    def test_caps_very_long_message_without_markers(self):
+        raw = "x" * 2000
+        out = condense_render_error(raw)
+        assert out.endswith("...(truncated)")
+        assert len(out) < len(raw)
 
 
 class TestInterpretEvents:
@@ -236,8 +271,12 @@ class TestInterpretArgocdErrors:
         assert len(result) == 1
         # Friendly, slash-free heading (the deployment-name simplifier splits on "/").
         assert result[0]["resource"] == "Configuratiefout (kustomize CMP)"
-        # The raw kustomize/CMP message is kept as the description, with a suggestion.
-        assert "already registered id" in result[0]["message"]
+        # The message is condensed to the meaningful tail (after "exit status 1:"); the full
+        # message is kept under original_message.
+        assert result[0]["message"] == (
+            "may not add resource with an already registered id: PersistentVolumeClaim.v1.[noGrp]/web-data.ns"
+        )
+        assert result[0].get("original_message") == raw
         assert result[0].get("suggestion")
         assert result[0]["severity"] == "actionable"
         assert result[0].get("orphaned") is None
