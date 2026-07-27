@@ -2798,9 +2798,12 @@ class ProjectManager:
                         # the wait loop.
                         render_ok, render_detail = await argo_connector.get_application_manifests(app_name)
                         if not render_ok and _looks_like_render_failure(render_detail):
-                            error_msg = f"Manifest render failed for '{app_name}': {render_detail}"
-                            logger.error(error_msg)
-                            raise RuntimeError(error_msg)
+                            from opi.services.event_interpreter import condense_render_error
+
+                            logger.error("Manifest render failed for '%s': %s", app_name, render_detail)
+                            raise RuntimeError(
+                                f"Manifest render failed for '{app_name}': {condense_render_error(render_detail)}"
+                            )
                         if not render_ok:
                             logger.warning(
                                 "Could not verify render for '%s' (not a render error), proceeding to wait: %s",
@@ -6637,7 +6640,7 @@ class ProjectManager:
                     result_create["warnings"] = normalized_warnings_create
                 return result_create
 
-        except (ConflictError, ConcurrencyError):
+        except ConflictError, ConcurrencyError:
             # Retried by upsert_deployment on a fresh read. Must propagate, not become a
             # generic error dict, or the retry never sees it.
             raise
