@@ -450,7 +450,18 @@
         },
         "root-component": { "type": "string" },
         "clone-from": { "$ref": "#/$defs/clone-from" },
-        "backup": { "$ref": "#/$defs/deployment-backup" }
+        "backup": { "$ref": "#/$defs/deployment-backup" },
+        "sleep": { "$ref": "#/$defs/deployment-sleep" }
+      }
+    },
+
+    "deployment-sleep": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": { "type": "string", "enum": ["awake", "sleeping", "waking"] },
+        "expires-at": { "type": "string", "format": "date-time" },
+        "wake-token": { "$ref": "#/$defs/age-encrypted" }
       }
     },
 
