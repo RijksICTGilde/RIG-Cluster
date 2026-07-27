@@ -21,6 +21,22 @@ class TestCondenseRenderError:
         )
         assert condense_render_error(raw) == "ERROR: Namespace 'rig-insp1-nmy' does not exist"
 
+    def test_extracts_last_error_line_past_debug_noise(self):
+        # Real sandbox duplicate-identity failure: the stderr after "exit status 1:" leads with
+        # the CMP script's DEBUG lines; the real error is the last "Error:" line.
+        raw = (
+            '... rpc error: ... `/bin/bash -c "..."` failed exit status 1: '
+            "Extracting SOPS age key from secret 'sops-age-key'\n"
+            "DEBUG: Checking folder: '.'\nDEBUG: Kustomization has no helmCharts, skipping dependency build\n"
+            "Error: accumulating resources: accumulation err='merging resources from 'web-service.yaml': "
+            "may not add resource with an already registered id: Service.v1.[noGrp]/productie-web.rig-alls1-3bm'"
+        )
+        condensed = condense_render_error(raw)
+        assert condensed.startswith("Error: accumulating resources")
+        assert "already registered id" in condensed
+        assert "DEBUG:" not in condensed
+        assert "SOPS age key" not in condensed
+
     def test_falls_back_to_cached_generation_marker(self):
         raw = (
             "Failed to load target state: failed to generate manifest for source 1 of 1: rpc error: "

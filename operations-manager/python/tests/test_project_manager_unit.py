@@ -27,7 +27,7 @@ class TestLooksLikeRenderFailure:
 
         body = (
             '{"error":"plugin sidecar failed. error generating manifests in cmp: rpc error: '
-            'code = Unknown desc = error generating manifests: `/bin/bash -c ...` failed exit status 1: '
+            "code = Unknown desc = error generating manifests: `/bin/bash -c ...` failed exit status 1: "
             "ERROR: Namespace 'rig-x' does not exist\"}"
         )
         assert _looks_like_render_failure(body) is True

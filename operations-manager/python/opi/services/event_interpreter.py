@@ -242,19 +242,26 @@ def condense_render_error(message: str) -> str:
     """
     if not message:
         return message
-    # Real plugin stderr sits after the last "exit status N:".
+    # Real plugin stderr sits after the last "exit status N:"; fall back to the whole message.
     exec_matches = list(re.finditer(r"exit status \d+:\s*", message))
-    if exec_matches:
-        tail = message[exec_matches[-1].end() :].strip()
-        if tail:
-            return tail
+    tail = message[exec_matches[-1].end() :].strip() if exec_matches else message
+
+    # The stderr still leads with the CMP script's DEBUG noise; the real error is the last
+    # explicit error line - kustomize prints "Error:", the CMP script prints "ERROR:".
+    # (Measured on the sandbox for a duplicate-identity and a missing-namespace failure.)
+    best = max(tail.rfind("Error:"), tail.rfind("ERROR:"))
+    if best != -1:
+        return tail[best:].strip()
+
+    if exec_matches and tail:
+        return tail
     # No exec wrapper: take what follows the cached-generation marker.
     marker = "Manifest generation error (cached):"
     idx = message.rfind(marker)
     if idx != -1:
-        tail = message[idx + len(marker) :].strip()
-        if tail:
-            return tail
+        cached_tail = message[idx + len(marker) :].strip()
+        if cached_tail:
+            return cached_tail
     return message if len(message) <= 800 else message[:800] + " ...(truncated)"
 
 
