@@ -23,6 +23,7 @@ from opi.services.catalog.sleep_mode import config as sleep_config
 from opi.services.catalog.sleep_mode import service
 from opi.services.catalog.sleep_mode import state as sleep_state
 from opi.services.catalog.sleep_mode.state import STATE_AWAKE, STATE_WAKING
+from opi.services.project_store import ConflictError
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,13 @@ class SleepModeScheduler:
             plan = plan_sweep(data, self._cluster, now)
             if not plan:
                 continue
-            changed = await self._apply(project.name, project.filename, plan, now)
+            try:
+                changed = await self._apply(project.name, project.filename, plan, now)
+            except ConflictError:
+                # A concurrent write touched the same project file. This is expected
+                # occasionally (another edit lands mid-sweep); the next sweep retries.
+                logger.info("sleep-mode: sweep of '%s' hit a write conflict, retrying next round", project.name)
+                continue
             if changed:
                 # Pace between projects so many expiries do not fire many commits at once.
                 await asyncio.sleep(settings.SLEEP_MODE_PACE_SECONDS)
