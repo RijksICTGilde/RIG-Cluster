@@ -1,4 +1,5 @@
 {# Deployment Actions Section - quick actions per deployment #}
+{% set deployment_service_actions = deployment_service_actions | default({}) %}
 {% if user_role in ["admin", "owner"] and project.deployments %}
     {# Database console only makes sense when the project has a PostgreSQL service. #}
     {% set service_values = project.services | default([]) | map(attribute='value') | list %}
@@ -41,6 +42,18 @@
                     showIcon="before"
                     icon="uitvoering"
                     @click="openJobModal('{{ deployment.name }}')" />
+                {# Service-contributed action buttons (e.g. sleep-mode "wake"). A service
+                   owns its own button via ServiceDefinition.actions_provider instead of
+                   this template hardcoding the condition. #}
+                {% for action in deployment_service_actions.get(deployment.name, []) if action.visible %}
+                <c-button
+                    label="{{ action.label }}"
+                    kind="{{ action.kind }}"
+                    size="sm"
+                    showIcon="before"
+                    icon="{{ action.icon }}"
+                    @click="runDeploymentAction('{{ action.endpoint }}', '{{ action.confirm_message }}')" />
+                {% endfor %}
             </c-layout-row>
         </c-layout-flow>
     </c-card>

@@ -37,6 +37,7 @@ from opi.core.git_monitor import start_git_monitoring, stop_git_monitoring
 from opi.core.startup import run_startup_tasks
 from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
 from opi.middleware.authorization import AuthorizationMiddleware
+from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
 from opi.web.router import web_router
 
@@ -238,6 +239,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         except Exception as e:
             logger.error("Failed to start log watcher scheduler: %s", e)
 
+    # Start the sleep-mode sweeper if enabled
+    if settings.SLEEP_MODE_SCHEDULER_ENABLED:
+        try:
+            from opi.services.catalog.sleep_mode.scheduler import SleepModeScheduler
+
+            _sleep_mode_scheduler = SleepModeScheduler(cluster=settings.CLUSTER_MANAGER)
+            await _sleep_mode_scheduler.start()
+            app.state.sleep_mode_scheduler = _sleep_mode_scheduler
+        except Exception as e:
+            logger.error("Failed to start sleep-mode sweeper: %s", e)
+
     yield
 
     # Begin graceful drain: reject new task creation via API immediately
@@ -259,6 +271,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     db_console_reaper = getattr(app.state, "db_console_reaper", None)
     if db_console_reaper is not None:
         await db_console_reaper.stop()
+
+    # Stop sleep-mode sweeper
+    sleep_mode_scheduler = getattr(app.state, "sleep_mode_scheduler", None)
+    if sleep_mode_scheduler is not None:
+        await sleep_mode_scheduler.stop()
 
     # Stop log watcher scheduler
     logwatcher_scheduler = getattr(app.state, "logwatcher_scheduler", None)
@@ -452,6 +469,7 @@ def create_app() -> FastAPI:
     app.include_router(logs_router, include_in_schema=True)  # Include in OpenAPI docs
     app.include_router(logs_websocket_router, include_in_schema=False)  # WebSocket for log streaming
     app.include_router(resource_router, include_in_schema=True)  # Resource tuning & sanitization
+    app.include_router(sleep_mode_router, include_in_schema=True)  # Sleep-mode wake/status (waker pod)
     app.include_router(v2_router, include_in_schema=True)  # V2 async API endpoints
     app.include_router(task_router, include_in_schema=True)  # Async task status API
     app.include_router(federation_router, include_in_schema=True)  # Federation peers/health
