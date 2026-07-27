@@ -105,6 +105,17 @@ class TestBuildWakerDeploymentValues:
         assert values["env_from_configmaps"] == ["PR-1-frontend-waker-config"]
         assert values["env_from_secrets"] == ["PR-1-frontend-waker-token"]
         assert values["probe_readiness_failure_threshold"] == 1
+        # :latest default -> Always
+        assert values["imagePullPolicy"] == "Always"
+
+    def test_pinned_image_tag_uses_ifnotpresent(self, monkeypatch) -> None:
+        from opi.core.config import settings
+
+        monkeypatch.setattr(settings, "SLEEP_MODE_WAKER_IMAGE", "zad-waker:test")
+        values = manifests.build_waker_deployment_values(
+            app_name="a", namespace="ns", project_name="p", deployment_name="PR-1", cluster="local"
+        )
+        assert values["imagePullPolicy"] == "IfNotPresent"
 
     def test_renders_valid_deployment(self) -> None:
         values = manifests.build_waker_deployment_values(
