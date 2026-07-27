@@ -262,6 +262,34 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     return await _do_submit(request, wizard_token, user, project_name)
 
 
+def _reseed_approval_items(merged_data: dict[str, Any], project_name: str) -> dict[str, Any]:
+    """Rebuild ``_approval_items`` from the project, keeping the submitted verdicts.
+
+    The items travel through the form as hidden fields carrying only routing + identity,
+    so a re-render off the submission alone loses the verdict history (it is server
+    state, never posted back) and the approver sees the items without their past. Read
+    the items fresh and re-apply the approver's in-flight choices on top.
+    """
+    submitted = merged_data.get("_approval_items")
+    if not isinstance(submitted, list):
+        return merged_data
+
+    project = get_project_store().get(project_name)
+    if not project:
+        return merged_data
+    fresh = collect_approval_items(project.data or {})
+    chosen = {
+        (item.get("type"), item.get("domain"), item.get("name")): item for item in submitted if isinstance(item, dict)
+    }
+    for item in fresh:
+        pick = chosen.get((item.get("type"), item.get("domain"), item.get("name")))
+        if pick:
+            item["status"] = pick.get("status", "skip")
+            item["message"] = pick.get("message", "")
+
+    return {**merged_data, "_approval_items": fresh}
+
+
 async def _do_submit(request: Request, wizard_token: str | None, user: dict, project_name: str) -> HTMLResponse:
     """Execute the final approval submission."""
     state = get_modal_state_by_token(wizard_token)
@@ -332,9 +360,14 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
         except (ProjectSchemaError, ProjectIntegrityError) as e:
             logger.warning("Domain approval save rejected by validation for %s: %s", project_name, e)
             first_section = active_sections[0]
-            step_html = _render_section_html(first_section, state.get_merged_data())
+            render_data = _reseed_approval_items(state.get_merged_data(), project_name)
+            step_html = _render_section_html(first_section, render_data)
+            # Say what was blocked. The bare validation message describes the resulting
+            # state ("het subdomein is afgewezen"), which reads as a report of the
+            # approver's own action instead of a refusal to record it.
+            message = f"Het besluit is niet opgeslagen, want het project is daarna niet geldig: {e}"
             rendered = _render_modal_step(
-                request, wizard_token, state, first_section, step_html, project_name, global_errors=[str(e)]
+                request, wizard_token, state, first_section, step_html, project_name, global_errors=[message]
             )
             return HTMLResponse(content=rendered)
     finally:

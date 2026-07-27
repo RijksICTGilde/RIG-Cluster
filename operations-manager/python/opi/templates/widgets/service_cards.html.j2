@@ -12,9 +12,6 @@
                 {{ bool_attr("checked", card.checked) }}
                 {{ bool_attr("disabled", card.disabled) }}
             />
-            {% if card.checked and card.disabled %}
-            <input type="hidden" name="{{ field.path|e }}[]" value="{{ card.value|e }}" />
-            {% endif %}
             <div class="service-card__content">
                 <div class="service-card__header">
                     <c-icon icon="{{ card.icon|e }}" color="{{ card.color|e }}" size="lg" />

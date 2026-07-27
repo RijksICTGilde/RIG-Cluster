@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from opi.forms.wizard.services_merge import merge_service_lists
+from opi.forms.wizard.services_merge import merge_service_lists, service_name
 
 CLEARED_FIELD = "__wizard-field-cleared__"
 """Tombstone marker for fields the user cleared in a wizard step.
@@ -232,16 +232,24 @@ class WizardState:
                 continue
             real_data = merged.get(real_key)
             if isinstance(virt_data, list) and isinstance(real_data, list):
-                # Build lookup from virtual list entries
+                # Build lookup from virtual list entries, keyed by service identity so
+                # BOTH entry forms resolve: the uniform record ({name, config}) and the
+                # legacy single-key dict ({keycloak: {config}}). Keying on the raw dict
+                # keys understood only the legacy form, so a record's config was dropped
+                # here and every keycloak/db config edit silently vanished on merge.
                 config_by_name: dict[str, dict[str, Any]] = {}
                 for entry in virt_data:
                     if isinstance(entry, dict):
-                        for name in entry:
+                        name = service_name(entry)
+                        if name is not None:
                             config_by_name[name] = entry
-                # Replace plain string entries with config dicts
+                # Fold each carried config onto its selected entry. Only names already in
+                # the selection are touched: a service the user deselected must not come
+                # back from a stale carrier.
                 for i, entry in enumerate(real_data):
-                    if isinstance(entry, str) and entry in config_by_name:
-                        real_data[i] = config_by_name[entry]
+                    name = service_name(entry)
+                    if name is not None and name in config_by_name:
+                        real_data[i] = merge_service_lists([entry], [config_by_name[name]])[0]
             elif isinstance(virt_data, dict) and isinstance(real_data, list):
                 # Virtual data is a dict (name -> config), real data is a
                 # mixed list.  Replace matching plain-string entries with

@@ -67,6 +67,22 @@ class ApproverScope(StrEnum):
 ApprovalItem = dict[str, Any]
 
 
+#: Wire shape of an approval **notice** -- what the OWNER of a deployment must be told
+#: about an approval that is not granted. The counterpart of ApprovalItem: that one
+#: faces the approver ("decide this"), this one faces the applicant ("this is where
+#: your request stands, and this is what it means for your deployment"). The consequence
+#: is service knowledge (publish-on-web falls back to the cluster address), so the spec
+#: writes the sentence and generic code only renders it. Keys:
+#:   ``service``  -- the ServiceType value of the owning service
+#:   ``type``     -- the owning ``ApprovalSpec.key``
+#:   ``label``    -- the spec's human label ("Domein", "Subdomein")
+#:   ``subject``  -- what was requested, for display (e.g. "test2.example.nl")
+#:   ``status``   -- the stored status ("requested" / "denied" / "none")
+#:   ``text``     -- what this means for the deployment, in the owner's words
+#:   ``by`` / ``date`` / ``message`` -- the last verdict's approver, date and note
+ApprovalNotice = dict[str, Any]
+
+
 @dataclass(frozen=True)
 class ApprovalSpec:
     """A service's declaration that a value it manages requires approval.
@@ -93,6 +109,11 @@ class ApprovalSpec:
         record: The RECORD ("leg het oordeel vast"). Applies one approver verdict --
             writes the new status + appends ``history_entry`` to the stored state for
             the given item. ``None`` if the spec is not approver-writable.
+        notices_for: The NOTICE ("wat merkt de aanvrager hiervan?"). Given a deployment,
+            returns what its owner must be told about this approval when it is not
+            granted -- including the consequence, which only the service knows. Returns
+            an empty list when there is nothing to report. ``None`` for a spec whose
+            state has no visible effect on a deployment.
     """
 
     key: str
@@ -101,6 +122,7 @@ class ApprovalSpec:
     status_of: Callable[[dict[str, Any], Any], ApprovalStatus]
     list_items: Callable[[dict[str, Any]], list[ApprovalItem]] | None = None
     record: Callable[[dict[str, Any], ApprovalItem, dict[str, Any]], None] | None = None
+    notices_for: Callable[[dict[str, Any], dict[str, Any]], list[ApprovalNotice]] | None = None
 
     def status(self, project_data: dict[str, Any], value: Any) -> ApprovalStatus:
         """The approval status of ``value`` given the current project state."""

@@ -70,7 +70,7 @@
                         <select id="status-{{ loop.index0 }}"
                                 name="_approval_items[{{ loop.index0 }}][status]"
                                 class="rvo-select approval-select">
-                            <option value="skip" {% if item.status == 'skip' %}selected{% endif %}>Overslaan</option>
+                            <option value="skip" {% if item.status == 'skip' %}selected{% endif %}>Niet wijzigen</option>
                             <option value="approved" {% if item.status == 'approved' %}selected{% endif %}>Goedkeuren</option>
                             <option value="denied" {% if item.status == 'denied' %}selected{% endif %}>Afwijzen</option>
                         </select>
