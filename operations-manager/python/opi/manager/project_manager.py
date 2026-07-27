@@ -1146,6 +1146,136 @@ class ProjectManager:
         logger.info(f"Successfully resolved {len(resolved)} aliases")
         return resolved
 
+    def _reset_sleep_deadline_on_activity(self, project_data: dict[str, Any], deployment_name: str, cluster: str) -> None:
+        """Reset a matching deployment's sleep deadline (and wake it) on fresh activity.
+
+        Called on image update: sets the deployment awake with ``expires-at = now +
+        sleep-after-deploy`` so active development keeps pushing the deadline out. No-op
+        when sleep-mode is off or the deployment does not match.
+        """
+        from datetime import UTC, datetime
+
+        from opi.services.catalog.sleep_mode import config as sleep_config
+        from opi.services.catalog.sleep_mode import service as sleep_service
+
+        config = sleep_config.load(project_data, cluster)
+        if config is None or not config.matches(deployment_name):
+            return
+        sleep_service.set_sleep_deadline(
+            project_data, deployment_name, datetime.now(UTC), config.sleep_after_deploy_delta
+        )
+        logger.info("sleep-mode: reset deadline for %s on image update", deployment_name)
+
+    async def _emit_waker_manifests(
+        self,
+        *,
+        project_data: dict[str, Any],
+        deployment: dict[str, Any],
+        component_name: str,
+        component_reference: str,
+        unique_name: str,
+        namespace: str,
+        cluster: str,
+        project_name: str,
+        output_dir: str,
+        created_files: list[str],
+    ) -> None:
+        """Emit the sleep-mode waker for one component, or nothing.
+
+        Renders the waker Deployment + ConfigMap and its SOPS token Secret behind the
+        component's Service (same ``app`` label, ``zad-role: waker``) when the deployment
+        is asleep/waking and this is the chosen waker component. The token comes from the
+        deployment's own ``sleep.wake-token`` (minted by the sweeper). All files go into
+        ``created_files`` so the obsolete-manifest prune removes them once awake.
+        """
+        from opi.services.catalog.sleep_mode import config as sleep_config
+        from opi.services.catalog.sleep_mode import manifests as sleep_manifests
+        from opi.services.catalog.sleep_mode import state as sleep_state
+        from opi.services.catalog.sleep_mode import token as sleep_token
+        from opi.services.catalog.sleep_mode.secret import WakeTokenSecret
+        from opi.services.catalog.sleep_mode.state import STATE_SLEEPING, STATE_WAKING
+
+        deployment_name = deployment.get("name", "")
+        config = sleep_config.load(project_data, cluster)
+        if config is None or not config.waker:
+            return
+        current = sleep_state.read(project_data, deployment_name)
+        if current.state not in (STATE_SLEEPING, STATE_WAKING):
+            return
+        selected = sleep_manifests.select_waker_component(
+            project_data, deployment, config, self._project_file_handler
+        )
+        if selected != component_reference:
+            return
+        if not current.wake_token:
+            logger.warning(
+                "sleep-mode: no wake token stored for %s/%s; skipping waker manifests",
+                project_name,
+                deployment_name,
+            )
+            return
+
+        generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # Waker Deployment
+        deployment_values = sleep_manifests.build_waker_deployment_values(
+            app_name=unique_name,
+            namespace=namespace,
+            project_name=project_name,
+            deployment_name=deployment_name,
+            cluster=cluster,
+            generated_at=generated_at,
+        )
+        deployment_template = os.path.join(os.path.dirname(__file__), "..", "..", "manifests", "deployment.yaml.jinja")
+        deployment_manifest_name = generate_manifest_name(component_name, "waker-deployment")
+        self._manifest_generator.create_manifest_file(
+            template_path=deployment_template,
+            values=deployment_values,
+            output_dir=output_dir,
+            output_filename=deployment_manifest_name,
+            use_sops=False,
+        )
+        created_files.append(f"{deployment_manifest_name}.yaml")
+
+        # Waker ConfigMap
+        configmap_values = sleep_manifests.build_waker_configmap_values(
+            app_name=unique_name,
+            namespace=namespace,
+            project_name=project_name,
+            deployment_name=deployment_name,
+            component_reference=component_reference,
+            config=config,
+            cluster=cluster,
+        )
+        configmap_template = os.path.join(os.path.dirname(__file__), "..", "..", "manifests", "configmap.yaml.jinja")
+        configmap_manifest_name = generate_manifest_name(component_name, "waker-config")
+        self._manifest_generator.create_manifest_file(
+            template_path=configmap_template,
+            values=configmap_values,
+            output_dir=output_dir,
+            output_filename=configmap_manifest_name,
+            use_sops=False,
+        )
+        created_files.append(f"{configmap_manifest_name}.yaml")
+
+        # Waker token Secret (SOPS), from the deployment's stored wake token
+        plain_token = await sleep_token.decrypt(current.wake_token, project_data)
+        secret_template = os.path.join(
+            os.path.dirname(__file__), "..", "..", "manifests", "generic-secret.yaml.to-sops.jinja"
+        )
+        self._write_secret_file(
+            SecretFileSpec(
+                secret_name=sleep_manifests.waker_token_secret_name(unique_name),
+                secret_pairs=WakeTokenSecret(token=plain_token).to_k8s_secret_data(),
+            ),
+            deployment_name=deployment_name,
+            namespace=namespace,
+            output_dir=output_dir,
+            template_path=secret_template,
+            created_files=created_files,
+        )
+        logger.info("sleep-mode: emitted waker for %s/%s (component %s)", project_name, deployment_name, component_reference)
+
     def _write_secret_file(
         self,
         spec: SecretFileSpec,
@@ -4930,9 +5060,19 @@ class ProjectManager:
             is_disabled, disabled_reason = self._project_file_handler.extract_deployment_component_disabled(
                 project_data, deployment_name, component_reference
             )
-            replicas = 0 if is_disabled else 1
+            # Sleep-mode: a sleeping deployment scales every component to zero (a broken
+            # image `disabled` always wins). `waking` keeps the app at 1 so it cold-starts
+            # while the waker still serves the loading page. Applies to every component,
+            # endpoint or not.
+            from opi.services.catalog.sleep_mode import state as sleep_mode_state
+
+            sleep_state = sleep_mode_state.read(project_data, deployment_name).state
+            is_sleeping = sleep_state == sleep_mode_state.STATE_SLEEPING
+            replicas = 0 if (is_disabled or is_sleeping) else 1
             if is_disabled:
                 logger.info(f"Component '{component_name}' is disabled (reason: {disabled_reason}), setting replicas=0")
+            elif is_sleeping:
+                logger.info(f"Deployment '{deployment_name}' is sleeping, setting component '{component_name}' replicas=0")
 
             # Extract user environment variables from component definition
             user_env_vars = await self._project_file_handler.extract_component_user_env_vars(
@@ -5679,6 +5819,23 @@ class ProjectManager:
                     # Add to the list of created files with component name for uniqueness
                     created_files.append(f"{unique_manifest_name}.yaml")
                     logger.info(f"Successfully created {manifest_file} manifest: {manifest_file_path}")
+
+            # Sleep-mode: emit the waker (Deployment + ConfigMap + token Secret) behind
+            # this component's Service when the deployment sleeps and this is the chosen
+            # waker component. No-op otherwise. Pruned by the obsolete-manifest sweep like
+            # any other component file once the deployment is awake again.
+            await self._emit_waker_manifests(
+                project_data=project_data,
+                deployment=deployment,
+                component_name=component_name,
+                component_reference=component_reference,
+                unique_name=unique_name,
+                namespace=namespace,
+                cluster=cluster,
+                project_name=project_name,
+                output_dir=full_output_dir,
+                created_files=created_files,
+            )
 
             # Create PVC manifests for persistent storage using PVCManager
             persistent_storage = self._project_file_handler.get_persistent_storage(processed_storage_configs)
@@ -7340,6 +7497,11 @@ class ProjectManager:
                     logger.info(
                         f"Incremented generation for {component_name}/{storage_name}: {current_gen} -> {new_gen}"
                     )
+
+        # Sleep-mode: an image update is fresh activity, so reset the sleep deadline
+        # (and wake a sleeping deployment) for a matching deployment. This is what pushes
+        # the deadline out while a preview is actively developed.
+        self._reset_sleep_deadline_on_activity(project_data, deployment_name, deployment.get("cluster", ""))
 
         # 5 + 6. Validate (schema + structural), save and commit through the single path
         commit_msg = f"Update {component_name} image to {new_image_url}"
