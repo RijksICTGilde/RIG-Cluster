@@ -118,6 +118,9 @@ def build_waker_deployment_values(
     minimal and never mounts the app's resources.
     """
     image = settings.SLEEP_MODE_WAKER_IMAGE
+    # A moving :latest tag must be re-pulled; a pinned tag (incl. a kind-loaded local
+    # image on the sandbox) must use the present image, so IfNotPresent.
+    image_pull_policy = "Always" if image.endswith(":latest") else "IfNotPresent"
     return {
         "object_name": waker_object_name(app_name),
         "name": app_name,  # app label + Service match
@@ -129,7 +132,7 @@ def build_waker_deployment_values(
         "pod_replacement_mode": pod_replacement_mode,
         "generated_at": generated_at,
         "imageURL": image,
-        "imagePullPolicy": "Always",
+        "imagePullPolicy": image_pull_policy,
         "imagePullSecretsMap": image_pull_secrets_map or {},
         "replicas": 1,
         "inbound_ports": [WAKER_PORT],
