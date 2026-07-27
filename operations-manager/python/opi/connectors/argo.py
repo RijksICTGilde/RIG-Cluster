@@ -498,7 +498,21 @@ class ArgoConnector:
 
             if status_code == 200:
                 logger.info(f"Successfully triggered {refresh_type} refresh for application: {app_name}")
-                reconciled_at = json.loads(response_text).get("status", {}).get("reconciledAt")
+                response_data = json.loads(response_text)
+                status = response_data.get("status", {}) or {}
+                # Surface a render/compare error the moment it appears, at the source. ArgoCD
+                # sets an *Error condition (e.g. ComparisonError) when it cannot generate or
+                # compare the manifests; logging it here puts the real cause in the OPI logs
+                # instead of only in the ArgoCD UI.
+                for condition in status.get("conditions", []) or []:
+                    if str(condition.get("type", "")).endswith("Error"):
+                        logger.warning(
+                            "Application '%s' has condition %s: %s",
+                            app_name,
+                            condition.get("type"),
+                            condition.get("message", ""),
+                        )
+                reconciled_at = status.get("reconciledAt")
                 logger.debug(f"Application '{app_name}' reconciledAt after refresh: {reconciled_at}")
                 return reconciled_at
             elif status_code == 404:

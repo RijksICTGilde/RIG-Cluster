@@ -26,6 +26,29 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ArgoCD condition types that mean the application can never reach a healthy synced state
+# on its own - the desired manifests could not be generated or compared (this is where a
+# broken kustomization / CMP render surfaces), or the spec/sync is invalid. When ArgoCD
+# hits one of these it sets sync.status=Unknown and does NOT start a sync operation, so
+# there is no operationState.phase to key off; the message lives only in status.conditions.
+_TERMINAL_CONDITION_TYPES = frozenset({"ComparisonError", "InvalidSpecError", "SyncError", "UnknownError"})
+
+
+def terminal_condition_message(status_data: dict[str, Any]) -> str | None:
+    """Return the message of the first terminal ArgoCD condition, or ``None``.
+
+    Reads ``status.conditions[]`` and looks for a type in :data:`_TERMINAL_CONDITION_TYPES`
+    (ComparisonError etc.). The message carries the underlying cause - for a broken
+    kustomization it includes the plugin stderr, e.g. "Failed to load target state: failed
+    to generate manifests in '<path>': ... exit status 1: <kustomize error>".
+    """
+    conditions = status_data.get("status", {}).get("conditions", []) or []
+    for condition in conditions:
+        if condition.get("type") in _TERMINAL_CONDITION_TYPES:
+            message = condition.get("message") or condition.get("type", "")
+            return f"{condition.get('type')}: {message}"
+    return None
+
 
 class ArgoManager:
     """Manager for ArgoCD-related operations and resources."""
@@ -916,6 +939,16 @@ class ArgoManager:
                         )
 
                 if status_is_fresh:
+                    # A terminal ArgoCD condition (ComparisonError etc.) means the manifests
+                    # could not be generated or compared - independent of health, which may
+                    # still read Healthy from the last good reconciliation. Surface it now
+                    # instead of waiting for the timeout.
+                    condition_error = terminal_condition_message(status_data)
+                    if condition_error:
+                        error_msg = f"Infrastructure application '{app_name}' cannot be rendered/compared: {condition_error}"
+                        logger.error(error_msg)
+                        raise RuntimeError(error_msg)
+
                     # Check for sync operation failures (unrecoverable errors)
                     operation_state = status_data.get("status", {}).get("operationState", {})
                     operation_phase = operation_state.get("phase")
@@ -1069,6 +1102,17 @@ class ArgoManager:
                         )
 
                 if status_is_fresh:
+                    # Check for a terminal ArgoCD condition (ComparisonError etc.). This is
+                    # where a broken kustomization / CMP render shows up: sync goes to
+                    # Unknown with no sync operation, so without this the poll loop would run
+                    # to the full timeout and report a generic time-out for a deployment that
+                    # was never rendered. Raising here surfaces the real message instead.
+                    condition_error = terminal_condition_message(status_data)
+                    if condition_error:
+                        error_msg = f"Application '{app_name}' cannot be rendered/compared: {condition_error}"
+                        logger.error(error_msg)
+                        raise RuntimeError(error_msg)
+
                     # Check for terminal sync failures
                     operation_state = status_data.get("status", {}).get("operationState", {})
                     operation_phase = operation_state.get("phase")
