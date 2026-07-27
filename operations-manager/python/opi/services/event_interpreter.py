@@ -229,6 +229,35 @@ def _image_pull_suggestion(message: str) -> str:
     )
 
 
+def condense_render_error(message: str) -> str:
+    """Reduce a verbose ArgoCD generation-error message to its meaningful tail.
+
+    Measured against the sandbox: ArgoCD echoes the whole failed ``/bin/bash -c "<script>"``
+    command, so a CMP render failure produces a multi-kB message dominated by the plugin
+    script source, with the real error (the plugin stderr) at the very end after
+    ``exit status N:``. This extracts that tail so the user sees the actual cause instead of
+    the 14 kB script dump. Falls back to the cached-generation marker (for errors without an
+    exec wrapper, e.g. "app path does not exist"), then to the original message (length
+    capped so a giant message never floods logs or the UI).
+    """
+    if not message:
+        return message
+    # Real plugin stderr sits after the last "exit status N:".
+    exec_matches = list(re.finditer(r"exit status \d+:\s*", message))
+    if exec_matches:
+        tail = message[exec_matches[-1].end() :].strip()
+        if tail:
+            return tail
+    # No exec wrapper: take what follows the cached-generation marker.
+    marker = "Manifest generation error (cached):"
+    idx = message.rfind(marker)
+    if idx != -1:
+        tail = message[idx + len(marker) :].strip()
+        if tail:
+            return tail
+    return message if len(message) <= 800 else message[:800] + " ...(truncated)"
+
+
 def _interpret_by_reason(reason: str, message: str) -> tuple[str, str, EventSeverity] | None:
     """Look up translation by event reason, then fall back to message patterns."""
     if reason in _NOISE_REASONS:
@@ -504,6 +533,12 @@ def _enrich_argocd_error(error: dict[str, str]) -> dict[str, str]:
         enriched = dict(error)
         # No "/" in the label: interpret_argocd_errors later strips a Kind/ prefix on "/".
         enriched["resource"] = "Configuratiefout (kustomize CMP)"
+        # ArgoCD dumps the whole failed CMP command (kBs of script source) into the message;
+        # show only the meaningful tail, keep the raw under "Origineel bericht".
+        condensed = condense_render_error(message)
+        enriched["message"] = condensed
+        if condensed != message:
+            enriched["original_message"] = message
         enriched["suggestion"] = (
             "De manifesten konden niet worden gegenereerd of vergeleken. Vaak staan er twee "
             "resources met dezelfde naam in de deployment, of is een manifest ongeldig."
