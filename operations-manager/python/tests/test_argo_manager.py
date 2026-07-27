@@ -566,3 +566,56 @@ class TestTerminalConditionMessage:
         }
         assert terminal_condition_message(status_data) is None
         assert terminal_condition_message({"status": {}}) is None
+
+
+class TestGetApplicationManifests:
+    """Tests for ArgoConnector.get_application_manifests (active render check)."""
+
+    @pytest.fixture
+    def connector(self) -> ArgoConnector:
+        return ArgoConnector(server_host="localhost", server_port=8080, username="admin", password="admin")
+
+    @pytest.mark.asyncio
+    async def test_ok_on_200(self, connector: ArgoConnector):
+        body = json.dumps({"manifests": ["{}"]})
+        with patch.object(
+            connector, "_make_authenticated_request", new_callable=AsyncMock, return_value=(200, body)
+        ) as req:
+            ok, detail = await connector.get_application_manifests("my-app")
+
+        assert ok is True
+        assert detail == body
+        # No revision -> plain manifests URL.
+        assert req.call_args.args[1].endswith("/applications/my-app/manifests")
+
+    @pytest.mark.asyncio
+    async def test_returns_body_on_generation_error(self, connector: ArgoConnector):
+        with patch.object(
+            connector,
+            "_make_authenticated_request",
+            new_callable=AsyncMock,
+            return_value=(500, _KUSTOMIZE_RENDER_ERROR),
+        ):
+            ok, detail = await connector.get_application_manifests("my-app")
+
+        assert ok is False
+        assert "already registered id" in detail
+
+    @pytest.mark.asyncio
+    async def test_revision_is_passed_as_query(self, connector: ArgoConnector):
+        with patch.object(
+            connector, "_make_authenticated_request", new_callable=AsyncMock, return_value=(200, "{}")
+        ) as req:
+            await connector.get_application_manifests("my-app", revision="abc123")
+
+        assert "revision=abc123" in req.call_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_transport_error_is_not_ok(self, connector: ArgoConnector):
+        with patch.object(
+            connector, "_make_authenticated_request", new_callable=AsyncMock, side_effect=Exception("boom")
+        ):
+            ok, detail = await connector.get_application_manifests("my-app")
+
+        assert ok is False
+        assert "boom" in detail
