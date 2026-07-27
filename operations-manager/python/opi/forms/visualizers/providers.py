@@ -769,7 +769,7 @@ class ApprovalStatusOptionsProvider:
 
     def get_options(self) -> list[dict[str, Any]]:
         return [
-            {"value": "skip", "label": "Overslaan"},
+            {"value": "skip", "label": "Niet wijzigen"},
             {"value": "approved", "label": "Goedkeuren"},
             {"value": "denied", "label": "Afwijzen"},
         ]
