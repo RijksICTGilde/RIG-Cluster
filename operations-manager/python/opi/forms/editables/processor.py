@@ -89,6 +89,39 @@ def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]
     return base
 
 
+def _reorder_like(original: Any, merged: Any) -> Any:
+    """Reorder ``merged``'s keys in place to follow ``original``'s order, recursively.
+
+    Keeps the keys that already existed in ``original`` first, in their original order, then
+    the genuinely new keys (present in ``merged`` but not ``original``) in their current
+    order. Recurses into nested dicts.
+
+    The prune-then-merge in the sequence processors, and the virtualize re-set, both push
+    managed keys to the end of the item, so without this every modal save rotates the field
+    order and inflates the diff far beyond the actual change. Reordering happens in place -
+    on a ruamel ``CommentedMap`` via ``move_to_end`` so comments and anchors survive;
+    rebuilding a new dict would drop them. Non-dicts are returned unchanged.
+    """
+    if not isinstance(original, dict) or not isinstance(merged, dict):
+        return merged
+
+    # Order nested dicts too, before reordering this level's keys.
+    for key, value in merged.items():
+        if key in original:
+            _reorder_like(original[key], value)
+
+    ordered_keys = [k for k in original if k in merged] + [k for k in merged if k not in original]
+    if hasattr(merged, "move_to_end"):
+        for key in ordered_keys:
+            merged.move_to_end(key)
+    else:
+        # Plain dict: no comments/anchors at stake, so reinsert in place preserving identity.
+        snapshot = {k: merged[k] for k in ordered_keys}
+        merged.clear()
+        merged.update(snapshot)
+    return merged
+
+
 def _prune_empty_ancestors(data: dict[str, Any], path: str) -> None:
     """After deleting a leaf, remove now-empty ancestor dicts (noise like ``config: {}``).
 
@@ -640,6 +673,17 @@ class EditableFormProcessor:
                         if isinstance(parent, dict):
                             parent.pop(virtual_key, None)
 
+        # Field-order stability: after all managed writes and virtual-key removals, reorder
+        # each processed item to match its pre-edit counterpart. This runs last so it also
+        # absorbs the virtualize re-set (which reappends the real key), keeping the diff to
+        # the actual change instead of a rotation of reference/image/services/resources.
+        result_items = smart_get_value(result, ed.yaml_path)
+        if isinstance(result_items, list):
+            for idx, res_item in enumerate(result_items):
+                orig = _match_original_item(res_item, originals, idx)
+                if isinstance(res_item, dict) and isinstance(orig, dict):
+                    _reorder_like(orig, res_item)
+
     def _process_nested_sequence_json(
         self,
         vis: EditableVisualizer,
@@ -674,6 +718,9 @@ class EditableFormProcessor:
             items = get_value(submitted, real_seq_path)
         if not isinstance(items, list):
             items = []
+
+        # Capture the pre-edit list as the field-order reference before overwriting it.
+        original_nested = smart_get_value(result, real_seq_path)
 
         # Write to real path in result
         smart_set_value(result, real_seq_path, copy.deepcopy(items))
@@ -714,6 +761,15 @@ class EditableFormProcessor:
                     value = get_value(submitted, real_child_path)
                 self._validate_field(child_vis, real_child_path, value, errors, context)
                 self._write_field(child_ed, real_child_path, value, result)
+
+        # Field-order stability: reorder each replaced nested item to match its pre-edit
+        # counterpart (see _process_sequence_json), matched by index within the nested list.
+        result_nested = smart_get_value(result, real_seq_path)
+        originals_nested = original_nested if isinstance(original_nested, list) else []
+        if isinstance(result_nested, list):
+            for idx, res_item in enumerate(result_nested):
+                if idx < len(originals_nested) and isinstance(res_item, dict) and isinstance(originals_nested[idx], dict):
+                    _reorder_like(originals_nested[idx], res_item)
 
     # ------------------------------------------------------------------
     # Deferral and transient field handling
