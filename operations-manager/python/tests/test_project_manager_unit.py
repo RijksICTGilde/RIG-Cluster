@@ -9,6 +9,27 @@ import pytest
 from opi.manager.project_manager import ProjectManager
 
 
+class TestLooksLikeRenderFailure:
+    """The manifests-endpoint body classifier that decides whether to block the deploy."""
+
+    def test_generation_error_is_render_failure(self):
+        from opi.manager.project_manager import _looks_like_render_failure
+
+        body = (
+            "Failed to load target state: failed to generate manifests in 'x': rpc error: "
+            "code = Unknown desc = kustomize build failed exit status 1: may not add resource ..."
+        )
+        assert _looks_like_render_failure(body) is True
+
+    def test_auth_or_network_error_is_not_render_failure(self):
+        from opi.manager.project_manager import _looks_like_render_failure
+
+        assert _looks_like_render_failure("401 Unauthorized") is False
+        assert _looks_like_render_failure("connection refused") is False
+        assert _looks_like_render_failure("") is False
+        assert _looks_like_render_failure(None) is False
+
+
 class TestAsyncCorrectness:
     """All calls to async functions must use await - missing await silently returns a coroutine object."""
 
