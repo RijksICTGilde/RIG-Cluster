@@ -102,9 +102,7 @@ def test_sleep_mode_service_entry_passes() -> None:
     is validated by the service model, not here.
     """
     project = _valid_project()
-    project["services"] = [
-        {"name": "sleep-mode", "config": {"enabled": True, "match": ["PR-*"], "wake-mode": "auto"}}
-    ]
+    project["services"] = [{"name": "sleep-mode", "config": {"enabled": True, "match": ["PR-*"], "wake-mode": "auto"}}]
 
     validate_project_schema(project)
 
