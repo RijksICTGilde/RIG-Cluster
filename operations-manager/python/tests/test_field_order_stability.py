@@ -103,6 +103,6 @@ async def test_editing_one_field_changes_exactly_one_line():
     changed = [
         line
         for line in difflib.unified_diff(before.splitlines(), after.splitlines(), lineterm="")
-        if (line.startswith("+") or line.startswith("-")) and not line.startswith(("+++", "---"))
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
     ]
     assert changed == ["-    image: img:1", "+    image: img:2"], changed
