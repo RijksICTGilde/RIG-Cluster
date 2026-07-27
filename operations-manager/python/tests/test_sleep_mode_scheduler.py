@@ -76,14 +76,28 @@ class TestPlanSweep:
 
 
 class TestSleepActions:
-    def test_button_shown_when_not_awake(self) -> None:
-        project = {"name": "proj", "deployments": [{"name": "PR-1", "sleep": {"state": "sleeping"}}]}
-        actions = sleep_actions(project, "PR-1")
+    # The toggle now needs sleep-mode enabled + the deployment in scope; the awake/sleeping
+    # split is exercised in depth in test_sleep_mode_actions.py.
+    @staticmethod
+    def _project(state: str | None) -> dict:
+        deployment: dict = {"name": "PR-1", "cluster": "sandboxed-local"}
+        if state is not None:
+            deployment["sleep"] = {"state": state}
+        return {
+            "name": "proj",
+            "deployments": [deployment],
+            "services": [{"name": "sleep-mode", "config": {"match": ["PR-1"]}}],
+        }
+
+    def test_wake_button_when_not_awake(self) -> None:
+        actions = sleep_actions(self._project("sleeping"), "PR-1")
         assert len(actions) == 1
         assert actions[0].label == "Applicatie wekken"
         assert actions[0].endpoint == "/projects/proj/deployments/PR-1/wake"
         assert actions[0].kind == "primary"
 
-    def test_no_button_when_awake(self) -> None:
-        project = {"name": "proj", "deployments": [{"name": "PR-1"}]}
-        assert sleep_actions(project, "PR-1") == []
+    def test_sleep_button_when_awake(self) -> None:
+        actions = sleep_actions(self._project(None), "PR-1")
+        assert len(actions) == 1
+        assert actions[0].label == "Deployment slapen"
+        assert actions[0].endpoint == "/projects/proj/deployments/PR-1/sleep"
