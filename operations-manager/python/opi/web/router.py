@@ -8,7 +8,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
