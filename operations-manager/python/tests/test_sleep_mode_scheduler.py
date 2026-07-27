@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 from opi.services.catalog.sleep_mode.actions import sleep_actions
-from opi.services.catalog.sleep_mode.scheduler import REVERT, SLEEP, STAMP, decide_action, plan_sweep
+from opi.services.catalog.sleep_mode.scheduler import CHECK_AWAKE, REVERT, SLEEP, STAMP, decide_action, plan_sweep
 
 NOW = datetime(2026, 7, 28, 12, 0, 0, tzinfo=UTC)
 PAST = (NOW - timedelta(minutes=1)).isoformat()
@@ -30,8 +30,9 @@ class TestDecideAction:
     def test_waking_expired_reverts(self) -> None:
         assert decide_action("waking", PAST, matches=True, now=NOW) == REVERT
 
-    def test_waking_not_expired_no_action(self) -> None:
-        assert decide_action("waking", FUTURE, matches=True, now=NOW) is None
+    def test_waking_not_expired_checks_app(self) -> None:
+        # Not timed out yet: check whether the app is back so we can finish promptly.
+        assert decide_action("waking", FUTURE, matches=True, now=NOW) == CHECK_AWAKE
 
     def test_sleeping_no_action(self) -> None:
         assert decide_action("sleeping", PAST, matches=True, now=NOW) is None
