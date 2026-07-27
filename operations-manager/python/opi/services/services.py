@@ -6,6 +6,7 @@ the entire application, from form submission to project processing.
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar
@@ -17,6 +18,34 @@ logger = logging.getLogger(__name__)
 
 class ServiceValidationError(ValueError):
     """Raised for user-facing service validation failures."""
+
+
+@dataclass
+class DeploymentAction:
+    """A deployment-level action button a service contributes to the UI.
+
+    ``section-deployment-actions.html.j2`` renders one button per action after its
+    own hardcoded buttons. This is the generic hook so a service (sleep-mode's
+    "wake", tomorrow the database console) owns its own button instead of the
+    template deriving the condition itself.
+    """
+
+    label: str
+    icon: str
+    #: ROOS button kind: "primary" | "secondary" | "warning" | "subtle" | ...
+    kind: str
+    #: Web-route path the htmx POST targets (CSRF handled by the template).
+    endpoint: str
+    #: Optional confirm dialog text; None means no confirmation.
+    confirm_message: str | None = None
+    #: Whether the button should render for this deployment.
+    visible: bool = True
+
+
+#: A service's action provider: given (project_data, deployment_name) it returns the
+#: deployment-level buttons that service wants shown. Kept as a plain callable so
+#: services.py stays free of forms/web imports.
+ActionsProvider = Callable[[dict[str, Any], str], list[DeploymentAction]]
 
 
 def service_entry_name(entry: Any) -> str | None:
@@ -154,6 +183,13 @@ class ServiceDefinition:
     ``NAMESPACE_POSTGRESQL_DATABASE`` both use ``"database"``).
     The label is used as the ``resource_type`` value in backup runs and
     as the form field value in the backup wizard.
+    """
+    actions_provider: ActionsProvider | None = None
+    """Optional provider of deployment-level action buttons (see ``DeploymentAction``).
+
+    The deployment-actions template collects these across the services a project
+    uses, so a service owns its own button instead of the template hardcoding the
+    condition. ``None`` means the service contributes no buttons.
     """
 
 
@@ -569,6 +605,22 @@ class ServiceAdapter:
             color="hemelblauw",
             scope="component",
             variables=[v.value for v in MetricsScraperVariables],
+        ),
+        ServiceType.SLEEP_MODE: ServiceDefinition(
+            name="Slaapstand",
+            description=(
+                "Zet inactieve preview-deployments na een deadline in slaapstand (replicas 0) "
+                "en wekt ze op verzoek weer op. De applicatie start koud op."
+            ),
+            icon="klok",
+            color="paars",
+            scope="deployment",
+            # Not a wizard checkbox: it is configured through the project file plus a
+            # cluster-wide default (owned by the service package), keyed by `match`.
+            hidden=True,
+            variables=[],
+            # actions_provider is bound by opi/services/catalog/sleep_mode/__init__.py
+            # (the wake button); services.py must not import the catalog package.
         ),
     }
 
