@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ name | tojson }}
+  namespace: {{ namespace | tojson }}
+  labels:
+    app: {{ app_label | default(name) | tojson }}
+    project: {{ project.name | tojson }}
+data:
+{% for k, v in (data or {}).items() %}
+  {{ k }}: {{ v | tojson }}
+{% endfor %}
