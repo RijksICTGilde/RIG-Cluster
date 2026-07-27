@@ -162,10 +162,11 @@ def test_second_component_offers_every_project_service(app_server: str, auth_pag
             box.uncheck()
     auth_page.wait_for_timeout(200)
 
-    # Add a second component
+    # Add a second component. Wait for its checkboxes to exist rather than for a fixed
+    # delay: under a full-suite run the htmx swap outlasts any timeout worth hardcoding,
+    # and reading too early sees the pre-swap DOM and asserts on nothing.
     auth_page.locator("button:has-text('Toevoegen'), button:has-text('Component toevoegen')").last.click()
-    auth_page.wait_for_load_state("networkidle")
-    auth_page.wait_for_timeout(500)
+    auth_page.wait_for_selector("input[name='components[1]/services[]']", timeout=15000)
 
     ticked = auth_page.eval_on_selector_all(
         "input[name='components[1]/services[]']",
