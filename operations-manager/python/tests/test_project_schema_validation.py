@@ -78,6 +78,46 @@ def test_deployment_with_scheduled_backup_passes() -> None:
     validate_project_schema(project)
 
 
+def test_deployment_with_sleep_state_passes() -> None:
+    """Sleep-mode writes OPI-managed runtime state under deployments[].sleep.
+
+    A fail-closed schema (additionalProperties: false on the deployment) would
+    reject every deployment carrying this state on the next reprocess, so the
+    schema must model it explicitly.
+    """
+    project = _valid_project()
+    project["deployments"][0]["sleep"] = {
+        "state": "sleeping",
+        "expires-at": "2026-07-28T14:03:00+02:00",
+        "wake-token": "-----BEGIN AGE ENCRYPTED FILE-----\nabc\n-----END AGE ENCRYPTED FILE-----",
+    }
+
+    validate_project_schema(project)
+
+
+def test_sleep_mode_service_entry_passes() -> None:
+    """A project may select sleep-mode with config in the project services list.
+
+    The global schema validates only the entry envelope; the config shape itself
+    is validated by the service model, not here.
+    """
+    project = _valid_project()
+    project["services"] = [
+        {"name": "sleep-mode", "config": {"enabled": True, "match": ["PR-*"], "wake-mode": "auto"}}
+    ]
+
+    validate_project_schema(project)
+
+
+def test_deployment_with_invalid_sleep_state_is_rejected() -> None:
+    """An unknown sleep state is rejected by the schema enum."""
+    project = _valid_project()
+    project["deployments"][0]["sleep"] = {"state": "napping"}
+
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
 def test_registry_with_secret_name_and_image_host_passes() -> None:
     """A private image registry referenced by a pull secret is a real feature.
 
