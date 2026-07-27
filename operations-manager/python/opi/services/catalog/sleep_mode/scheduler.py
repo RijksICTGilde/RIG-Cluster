@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 SLEEP = "sleep"
 REVERT = "revert"
 STAMP = "stamp"
+#: A waking deployment that has not timed out: check if the app is back and, if so,
+#: finish the wake (waking -> awake) promptly so the waker is pruned instead of
+#: lingering until the timeout.
+CHECK_AWAKE = "check-awake"
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -53,8 +57,12 @@ def decide_action(state: str, expires_at: str | None, matches: bool, now: dateti
             return STAMP
         if expiry < now:
             return SLEEP
-    if state == STATE_WAKING and expiry is not None and expiry < now:
-        return REVERT
+    if state == STATE_WAKING:
+        # Timed out (image never came back) -> revert. Otherwise check whether the app
+        # is back so we can finish the wake promptly instead of waiting out the timeout.
+        if expiry is not None and expiry < now:
+            return REVERT
+        return CHECK_AWAKE
     return None
 
 
@@ -134,6 +142,27 @@ class SleepModeScheduler:
                 # Pace between projects so many expiries do not fire many commits at once.
                 await asyncio.sleep(settings.SLEEP_MODE_PACE_SECONDS)
 
+    async def _app_is_ready(self, project_data: dict, deployment: dict, config) -> bool:
+        """Whether the app behind the waker has a ready pod (so waking can finish)."""
+        from opi.connectors.kubectl import KubectlConnector
+        from opi.core.cluster_config import get_prefixed_namespace
+        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.catalog.sleep_mode import manifests
+        from opi.utils.naming import generate_unique_name
+
+        component = manifests.select_waker_component(project_data, deployment, config, ProjectFileHandler())
+        if component is None:
+            # No waker component: nothing serves a page, so a bare wake is done immediately.
+            return True
+        unique_name = generate_unique_name(deployment.get("name", ""), component)
+        namespace = get_prefixed_namespace(deployment.get("cluster", ""), deployment.get("namespace", ""))
+        statuses = await KubectlConnector().get_deployment_status(namespace, unique_name)
+        if not statuses:
+            return False
+        raw = statuses[0].get("ready", "0")
+        ready = int(raw.split("/")[0]) if "/" in raw else int(raw)
+        return ready > 0
+
     async def _apply(self, project_name: str, filename: str, plan: list[tuple[str, str]], now: datetime) -> bool:
         from opi.handlers.project_file_handler import ProjectFileHandler
         from opi.manager.project_manager import ProjectManager
@@ -179,6 +208,19 @@ class SleepModeScheduler:
                         applied.append(deployment_name)
                         logger.warning(
                             "sleep-mode: reverting stuck waking %s/%s to awake", project_name, deployment_name
+                        )
+                elif action == CHECK_AWAKE:
+                    config = sleep_config.load(project_data, deployment.get("cluster", ""))
+                    if config is None:
+                        continue
+                    if not await self._app_is_ready(project_data, deployment, config):
+                        continue
+                    if service.to_awake(project_data, deployment_name, now, config.sleep_after_wake_delta):
+                        applied.append(deployment_name)
+                        logger.info(
+                            "sleep-mode: finished waking %s/%s (app is back), pruning waker",
+                            project_name,
+                            deployment_name,
                         )
 
             if not applied:
