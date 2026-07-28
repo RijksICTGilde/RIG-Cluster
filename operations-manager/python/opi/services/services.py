@@ -613,11 +613,11 @@ class ServiceAdapter:
                 "en wekt ze op verzoek weer op. De applicatie start koud op."
             ),
             icon="klok",
-            color="paars",
+            color="donkerblauw",
             scope="deployment",
-            # Not a wizard checkbox: it is configured through the project file plus a
-            # cluster-wide default (owned by the service package), keyed by `match`.
-            hidden=True,
+            # Selectable in the wizard with its own project-level config section
+            # (SleepModeService.config_form_section). A cluster-wide default still
+            # applies, and `match` scopes which deployments it affects.
             variables=[],
             # actions_provider is bound by opi/services/catalog/sleep_mode/__init__.py
             # (the wake button); services.py must not import the catalog package.
