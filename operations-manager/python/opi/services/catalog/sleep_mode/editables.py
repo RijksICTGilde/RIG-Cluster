@@ -7,7 +7,7 @@ text, because it holds glob patterns for future deployment names (e.g. ``PR-*``)
 
 from __future__ import annotations
 
-from opi.forms.editables.converters import BooleanConverter, EmptyToNoneConverter, NewlineSeparatedListConverter
+from opi.forms.editables.converters import BooleanConverter, CommaSeparatedListConverter, EmptyToNoneConverter
 from opi.forms.editables.editable import Editable
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.services_enums import ServiceType
@@ -36,7 +36,7 @@ SLEEP_WAKE_MODE_EDITABLE = Editable(
 
 SLEEP_MATCH_EDITABLE = Editable(
     yaml_path=_path("match"),
-    converter=NewlineSeparatedListConverter(),
+    converter=CommaSeparatedListConverter(),
     virtualize=_VIRTUALIZE,
 )
 

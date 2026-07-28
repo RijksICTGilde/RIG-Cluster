@@ -8,7 +8,8 @@ real YAML booleans, the match textarea becomes a list).
 
 from __future__ import annotations
 
-from opi.forms.editables.converters import BooleanConverter, NewlineSeparatedListConverter
+import pytest
+from opi.forms.editables.converters import BooleanConverter, CommaSeparatedListConverter
 from opi.forms.visualizers.providers import (
     SleepAfterDeployOptionsProvider,
     SleepAfterWakeOptionsProvider,
@@ -17,7 +18,7 @@ from opi.forms.visualizers.providers import (
     YesNoOptionsProvider,
 )
 from opi.services.catalog.base import ConfigLayer
-from opi.services.catalog.sleep_mode.config_model import SleepModeConfig
+from opi.services.catalog.sleep_mode.config_model import SleepModeConfig, validate_match_pattern
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 
@@ -122,17 +123,17 @@ class TestConverterRoundTrip:
         assert conv.read(True) == "true"
         assert conv.read(False) == "false"
 
-    def test_match_textarea_becomes_list(self) -> None:
-        conv = NewlineSeparatedListConverter()
-        assert conv.write("PR-*\nfeature-*\n") == ["PR-*", "feature-*"]
-        assert conv.read(["PR-*", "feature-*"]) == "PR-*\nfeature-*"
+    def test_match_is_comma_separated(self) -> None:
+        conv = CommaSeparatedListConverter()
+        assert conv.write("pr-*, *-preview") == ["pr-*", "*-preview"]
+        assert conv.read(["pr-*", "*-preview"]) == "pr-*, *-preview"
 
     def test_form_values_validate_against_the_model(self) -> None:
         # The exact shape the section's write-converters produce for a submitted form.
         config = {
             "enabled": BooleanConverter().write("true"),
             "wake-mode": "confirm",
-            "match": NewlineSeparatedListConverter().write("PR-*"),
+            "match": CommaSeparatedListConverter().write("pr-*, *-preview"),
             "sleep-after-deploy": "48h",
             "sleep-after-wake": "1h",
             "waker": BooleanConverter().write("false"),
@@ -140,5 +141,19 @@ class TestConverterRoundTrip:
         model = SleepModeConfig.model_validate(config)
         assert model.enabled is True
         assert model.waker is False
-        assert model.match == ["PR-*"]
+        assert model.match == ["pr-*", "*-preview"]
         assert model.wake_mode == "confirm"
+
+
+class TestMatchValidation:
+    @pytest.mark.parametrize("pattern", ["pr-*", "*-preview", "main", "*"])
+    def test_simple_patterns_allowed(self, pattern: str) -> None:
+        assert validate_match_pattern(pattern) == pattern
+        assert SleepModeConfig.model_validate({"match": [pattern]}).match == [pattern]
+
+    @pytest.mark.parametrize("pattern", ["pr-*-x", "pr?", "a[b]", "*mid*", "**"])
+    def test_fancy_patterns_rejected(self, pattern: str) -> None:
+        with pytest.raises(ValueError, match="Invalid match pattern"):
+            validate_match_pattern(pattern)
+        with pytest.raises(ValueError, match="Invalid match pattern"):
+            SleepModeConfig.model_validate({"match": [pattern]})
