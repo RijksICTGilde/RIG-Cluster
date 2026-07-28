@@ -637,29 +637,6 @@ class ProjectFileHandler:
                 return [p for p in inbound if isinstance(p, int)]
         return []
 
-    def extract_component_probe(self, project_data: dict[str, Any], component_name: str) -> dict[str, str]:
-        """
-        Extract the health-probe configuration for a component by name.
-
-        Returns a dict with resolved defaults:
-            scheme: "tcp" (default) | "http" | "https"
-            readiness_path: HTTP path for the readiness probe (default "/")
-            liveness_path: HTTP path for the liveness/startup probes (default "/")
-
-        When no probe block is present, or scheme is "tcp", the paths are still
-        returned but are ignored by the template (which renders a tcpSocket probe).
-        """
-        base = f"$.components[?(@.name='{component_name}')].probe"
-        scheme = self.extract_value_by_path(project_data, f"{base}.scheme", "tcp")
-        readiness_path = self.extract_value_by_path(project_data, f"{base}.readiness-path", "/")
-        liveness_path = self.extract_value_by_path(project_data, f"{base}.liveness-path", "/")
-
-        return {
-            "scheme": scheme,
-            "readiness_path": readiness_path,
-            "liveness_path": liveness_path,
-        }
-
     def component_has_ports(self, project_data: dict[str, Any], component_name: str) -> bool:
         """
         Check if a component has at least one inbound port configured.

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from opi.services.catalog.attachments import AttachmentsService
 from opi.services.catalog.authorization_wall import AuthorizationWallService
 from opi.services.catalog.base import ConfigLayer, Service
+from opi.services.catalog.health_check import HealthCheckService
 from opi.services.catalog.keycloak import KeycloakService
 from opi.services.catalog.metrics_scraper import MetricsScraperService
 from opi.services.catalog.minio import MinioStorageService
@@ -40,6 +41,7 @@ SERVICES: dict[ServiceType, Service] = {
     ServiceType.KEYCLOAK: KeycloakService(),
     ServiceType.AUTHORIZATION_WALL: AuthorizationWallService(),
     ServiceType.METRICS_SCRAPER: MetricsScraperService(),
+    ServiceType.HEALTH_CHECK: HealthCheckService(),
     ServiceType.PERSISTENT_STORAGE: PersistentStorageService(),
     ServiceType.TEMP_STORAGE: TempStorageService(),
     ServiceType.POSTGRESQL_DATABASE: PostgresqlDatabaseService(),

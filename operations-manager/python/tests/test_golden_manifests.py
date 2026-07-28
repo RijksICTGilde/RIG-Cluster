@@ -75,9 +75,11 @@ def _deployment_vars(**overrides: object) -> dict[str, object]:
         "application_port": 8080,
         "service_port": 8080,
         "inbound_ports": [8080],
+        # Base probe mirrors project_manager: tcp scheme, probe_port None (falls back to
+        # application_port). The health-check service overrides these; the template keeps
+        # its own path defaults (| default('/')), so no probe_*_path key in the base.
         "probe_scheme": "tcp",
-        "probe_readiness_path": "/",
-        "probe_liveness_path": "/",
+        "probe_port": None,
         "path": "/",
         "storage_configs": [],
         "env_vars": {},
@@ -156,6 +158,20 @@ SCENARIOS: list[tuple[str, str, dict[str, object]]] = [
         _deployment_vars(
             env_from_secrets=["prod-metrics-auth", "prod-web-platform"],
             metrics_config={"port": 9464, "path": "/actuator/prometheus"},
+        ),
+    ),
+    (
+        # health-check service: an http probe on a separate monitoring port (8081, not
+        # the mTLS application_port 8080) with distinct liveness/readiness paths. This is
+        # what health_check.contribute_manifest_context puts in template_vars. Locks that
+        # the six probe port lines target probe_port, and paths + scheme render.
+        "deployment-health-check-http",
+        "deployment.yaml.jinja",
+        _deployment_vars(
+            probe_scheme="http",
+            probe_port=8081,
+            probe_liveness_path="/health/live",
+            probe_readiness_path="/health/ready",
         ),
     ),
     (
