@@ -348,20 +348,21 @@ class RedisManager:
         Returns:
             Config dict or None if service not configured or no config block
         """
+        from opi.services.services import service_entry_config, service_entry_name
+
         services = project_data.get("services", [])
 
+        # Format-agnostic: the redis entry may be a bare string, a legacy single-key
+        # dict, or a uniform record ({name, config}). ``next(iter(keys))`` returned
+        # "name"/"reference" for a record, so a configured redis was read as unconfigured.
         for service in services:
-            if isinstance(service, str):
-                if service in (ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value):
-                    return None
-            elif isinstance(service, dict):
-                service_name = next(iter(service.keys())) if service else None
-                if service_name in (ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value):
-                    config = service.get(service_name, {}).get("config")
-                    if config:
-                        logger.debug(f"Found redis config: {config}")
-                        return config
-                    return None
+            if service_entry_name(service) not in (ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value):
+                continue
+            config = service_entry_config(service)
+            if config:
+                logger.debug(f"Found redis config: {config}")
+                return config
+            return None
 
         return None
 

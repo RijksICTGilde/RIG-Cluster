@@ -73,7 +73,9 @@ class KeycloakService(Service):
         from opi.services.catalog.base import DetailPageSection
         from opi.services.project import Project
 
-        realms = Project(project_data).get(config_path(ConfigLayer.PROJECT, self.service_type, "config", "realms")) or []
+        realms = (
+            Project(project_data).get(config_path(ConfigLayer.PROJECT, self.service_type, "config", "realms")) or []
+        )
         if not realms:
             return []
         return [DetailPageSection(template="keycloak/section-detail.html.j2", context={"realms": realms})]

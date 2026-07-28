@@ -53,6 +53,7 @@ from opi.forms.visualizers.sections import FormSection
 from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.services.catalog.base import ConfigLayer
 from opi.services.registry import get_service
+from opi.services.services import service_entry_name
 from opi.services.services_enums import ServiceType
 
 
@@ -368,26 +369,10 @@ def _strip_removed_services_from_components(
         comp_services = comp.get("services")
         if not isinstance(comp_services, list):
             continue
-        comp["services"] = [svc for svc in comp_services if _service_entry_name(svc) in project_services]
-
-
-def _service_entry_name(entry: Any) -> str | None:
-    """Return the service name from a component services entry.
-
-    Handles plain strings (``"keycloak"``), service-keyed dicts
-    (``{"persistent-storage": {...}}``), and legacy name dicts
-    (``{"name": "keycloak"}``).
-    """
-    if isinstance(entry, str):
-        return entry
-    if isinstance(entry, dict):
-        if "name" in entry:
-            return entry["name"]
-        # Single-key service dict
-        keys = list(entry.keys())
-        if len(keys) == 1:
-            return keys[0]
-    return None
+        # Use the canonical helper: the previous local reader ignored the component
+        # ``{reference: X, config: Y}`` two-key record and returned None for it, so a
+        # storage/config-carrying entry was stripped out as "not a project service".
+        comp["services"] = [svc for svc in comp_services if service_entry_name(svc) in project_services]
 
 
 # Wire the same component-reconciliation hook onto the create-wizard services
