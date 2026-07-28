@@ -858,12 +858,12 @@ class WakeModeOptionsProvider:
             {
                 "value": "confirm",
                 "label": "Met bevestiging",
-                "description": "De bezoeker ziet een knop 'Applicatie starten'",
+                "description": "De bezoeker ziet een knop om de applicatie zelf te starten",
             },
             {
                 "value": "manual",
                 "label": "Alleen handmatig",
-                "description": "Uitlegpagina zonder knop; alleen een beheerder wekt (UI/API)",
+                "description": "Uitlegpagina zonder knop; alleen een beheerder wekt via de UI of API",
             },
         ]
 

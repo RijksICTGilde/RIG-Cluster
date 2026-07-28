@@ -21,6 +21,7 @@ def _path(*segments: str) -> str:
 
 SLEEP_ENABLED_EDITABLE = Editable(
     yaml_path=_path("enabled"),
+    values_provider="YesNoOptionsProvider",
     converter=BooleanConverter(),
     default="true",
     virtualize=_VIRTUALIZE,
@@ -55,6 +56,7 @@ SLEEP_AFTER_WAKE_EDITABLE = Editable(
 
 SLEEP_WAKER_EDITABLE = Editable(
     yaml_path=_path("waker"),
+    values_provider="YesNoOptionsProvider",
     converter=BooleanConverter(),
     default="true",
     virtualize=_VIRTUALIZE,
