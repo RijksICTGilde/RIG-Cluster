@@ -32,10 +32,10 @@ SLEEP_WAKE_MODE = EditableVisualizer(
 
 SLEEP_MATCH = EditableVisualizer(
     editable=SLEEP_MATCH_EDITABLE,
-    widget=WidgetType.TEXTAREA,
+    widget=WidgetType.TEXT,
     label="Van toepassing op",
-    help_text="Deployment-patronen, een per regel. Bijvoorbeeld PR-* voor alle preview-deployments.",
-    placeholder="PR-*",
+    help_text="Comma-gescheiden. Alleen begint-met (pr-*) of eindigt-met (*-preview), geen andere patronen.",
+    placeholder="pr-*, *-preview",
 )
 
 SLEEP_AFTER_DEPLOY = EditableVisualizer(

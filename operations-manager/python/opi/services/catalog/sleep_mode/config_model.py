@@ -36,6 +36,23 @@ def parse_duration(value: str) -> timedelta:
     return timedelta(seconds=amount * _DURATION_UNIT_SECONDS[unit])
 
 
+def validate_match_pattern(pattern: str) -> str:
+    """Validate a single match pattern, kept deliberately simple: an exact name, or a
+    single ``*`` at the start ("ends with") or end ("starts with"). No mid-string ``*``,
+    no ``?`` or character classes. Returns the trimmed pattern, or raises ``ValueError``.
+    """
+    p = pattern.strip()
+    if not p:
+        raise ValueError("A match pattern may not be empty")
+    if any(c in p for c in "?[]"):
+        raise ValueError(f"Invalid match pattern '{p}': ? and [ ] are not allowed")
+    if p.count("*") > 1 or (p.count("*") == 1 and not (p.startswith("*") or p.endswith("*"))):
+        raise ValueError(
+            f"Invalid match pattern '{p}': use 'prefix*' (starts with), '*suffix' (ends with) or an exact name"
+        )
+    return p
+
+
 class SleepModeConfig(BaseModel):
     """Sleep-mode config for a project, after the cluster default is merged in.
 
@@ -63,6 +80,12 @@ class SleepModeConfig(BaseModel):
         # Validate but keep the original string; callers parse on demand.
         parse_duration(value)
         return value
+
+    @field_validator("match")
+    @classmethod
+    def _validate_match(cls, value: list[str]) -> list[str]:
+        # Keep matching simple (starts-with / ends-with / exact); fail loud on fancy globs.
+        return [validate_match_pattern(pattern) for pattern in value]
 
     def matches(self, deployment_name: str) -> bool:
         """Whether ``deployment_name`` is in scope, per the ``match`` globs (case-sensitive)."""
