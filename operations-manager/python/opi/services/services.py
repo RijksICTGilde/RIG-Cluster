@@ -90,6 +90,26 @@ def service_entry_schema_version(entry: Any) -> str | None:
     return None
 
 
+def service_entry_type(entry: Any) -> str | None:
+    """Return the ``type`` of a service entry, format-agnostic (None if none).
+
+    ``type`` marks a service as externally provided (e.g. keycloak ``type: external``)
+    and sits next to ``config``, not inside it. New record: on the entry itself. Legacy
+    ``{X: {type: ..., config: ...}}``: inside the name-keyed body, which is why this
+    cannot simply read the top level the way ``service_entry_schema_version`` does.
+    """
+    if not isinstance(entry, dict):
+        return None
+    if "name" in entry or "reference" in entry:
+        value = entry.get("type")
+        return str(value) if value is not None else None
+    name = service_entry_name(entry)
+    body = entry.get(name) if name is not None else None
+    if isinstance(body, dict) and body.get("type") is not None:
+        return str(body["type"])
+    return None
+
+
 def service_entry_config(entry: Any) -> Any:
     """Return the ``config`` of a service entry, format-agnostic (None if none).
 
@@ -894,13 +914,10 @@ class ServiceAdapter:
             ServiceType.NAMESPACE_REDIS.value,
         }
         project_services = project_data.get("services", [])
-        for service_item in project_services:
-            if isinstance(service_item, str):
-                if service_item in namespace_services:
-                    return True
-            elif isinstance(service_item, dict) and any(svc in service_item for svc in namespace_services):
-                return True
-        return False
+        # service_entry_name resolves all three entry formats. Matching on the raw dict
+        # keys only saw the legacy single-key form, so a namespace service carrying
+        # config (which makes it a {name, config} record) went undetected.
+        return any(service_entry_name(entry) in namespace_services for entry in project_services)
 
     @classmethod
     def get_variables(cls, service: ServiceType) -> list[VariableDefinition]:

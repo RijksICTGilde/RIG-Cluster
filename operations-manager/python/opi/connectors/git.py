@@ -1618,6 +1618,37 @@ class GitConnector:
         logger.debug(f"File {clean_file_path} not present at {ref}: {stderr}")
         return None
 
+    async def get_blob_sha(self, file_path: str, ref: str = "HEAD") -> str | None:
+        """Return the git blob SHA of ``file_path`` at ``ref``, or None if absent.
+
+        The blob names the file's exact content, so it identifies a version of ONE
+        project file rather than of the whole repository: unrelated commits for other
+        projects leave it unchanged. Unlike a plain hash it is also a git object, so
+        ``read_blob`` can hand the very content back later.
+        """
+        await self.ensure_repo_cloned()
+        clean_file_path = self._get_full_path(file_path)
+
+        stdout, stderr, code = await self._run_git_command(["rev-parse", f"{ref}:{clean_file_path}"])
+        if code == 0:
+            return stdout.strip()
+        logger.debug(f"No blob for {clean_file_path} at {ref}: {stderr}")
+        return None
+
+    async def read_blob(self, blob_sha: str) -> str | None:
+        """Return the content of a blob object, or None if it is not in this clone.
+
+        Blobs stay reachable through the history of the branch, so a version read
+        earlier can still be reconstructed after later commits landed on top.
+        """
+        await self.ensure_repo_cloned()
+
+        stdout, stderr, code = await self._run_git_command(["cat-file", "blob", blob_sha])
+        if code == 0:
+            return stdout
+        logger.debug(f"Blob {blob_sha} not available: {stderr}")
+        return None
+
     async def list_file_revisions(self, file_path: str, limit: int = 50) -> list[dict[str, str]]:
         """Return the commits that touched ``file_path``, newest first.
 

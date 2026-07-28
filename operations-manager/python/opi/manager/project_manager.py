@@ -1097,6 +1097,48 @@ class ProjectManager:
 
         return categorized_aliases
 
+    @staticmethod
+    def _scope_direct_aliases_to_component(
+        direct_aliases: dict[str, dict[str, str]],
+        project_data: dict[str, Any],
+        component_name: str,
+    ) -> dict[str, dict[str, str]]:
+        """Narrow deployment-wide direct aliases to those *component_name* declares.
+
+        Aliases are collected per deployment because secret-sourced ones merge into a
+        single shared secret per service. Direct ones are different: they resolve
+        against the component's OWN env vars (PUBLIC_HOSTNAME from publish-on-web,
+        DATA_PATH from storage). Handing every component the deployment-wide set made
+        a sibling with neither service resolve another component's aliases against an
+        empty context, which raises "Variable references not found in context".
+
+        Args:
+            direct_aliases: service_category -> {alias_name: template}, deployment-wide.
+            project_data: The project file, used to read the component's own aliases.
+            component_name: Component currently being processed.
+
+        Returns:
+            The same structure, containing only aliases this component declares.
+            Empty service categories are dropped.
+        """
+        own_aliases = next(
+            (
+                component.get("aliases", {})
+                for component in project_data.get("components", [])
+                if component.get("name") == component_name
+            ),
+            {},
+        )
+        if not own_aliases:
+            return {}
+
+        scoped: dict[str, dict[str, str]] = {}
+        for service_category, service_aliases in direct_aliases.items():
+            selected = {name: template for name, template in service_aliases.items() if name in own_aliases}
+            if selected:
+                scoped[service_category] = selected
+        return scoped
+
     def _resolve_aliases(self, aliases: dict[str, str], context: dict[str, str]) -> dict[str, str]:
         """
         Resolve variable references in aliases using the provided context.
@@ -1532,6 +1574,7 @@ class ProjectManager:
         *,
         refresh_cache: bool = True,
         enforce_validation: bool = True,
+        base: dict[str, Any] | None = None,
     ) -> None:
         """The ONLY validated way to persist a mutated project file.
 
@@ -1553,6 +1596,14 @@ class ProjectManager:
         block a recovery/optimization/credential write (which would otherwise
         leave on-disk and live state out of sync). It never introduces a
         less-validated write path: the same checks run either way.
+
+        base: the version ``project_data`` was built from, for callers that did not
+        read it through this instance. The task worker is that case: it receives a
+        finished project dict from a form submission, so ``get_contents()`` never ran,
+        ``__contents_as_read`` is None, and the store falls back to last-writer-wins --
+        silently dropping whatever landed in between. Passing the version the form was
+        rendered from restores the compare-and-swap, so the store merges the two
+        changes instead of overwriting one.
         """
         filename = (
             os.path.basename(self._project_file_relative_path)
@@ -1577,7 +1628,7 @@ class ProjectManager:
             enforce_validation=enforce_validation,
             filename=filename,
             refresh_cache=refresh_cache,
-            base=self.__contents_as_read,
+            base=base if base is not None else self.__contents_as_read,
         )
 
         # This manager now knows the current state, so a second save from the same
@@ -5214,9 +5265,16 @@ class ProjectManager:
                 if web_env_vars:
                     env_vars.update(web_env_vars)
 
-            # Resolve and add direct aliases (aliases that reference direct env vars)
-            # These are resolved per-component using the env_vars available to this component
-            direct_aliases = self._deployment_aliases.get(deployment_name, {}).get("direct", {})
+            # Resolve and add direct aliases (aliases that reference direct env vars).
+            # Scoped to the declaring component: the context below holds only THIS
+            # component's storage and publish-on-web variables, so a sibling without
+            # those services would resolve another component's aliases against an
+            # empty context and fail.
+            direct_aliases = self._scope_direct_aliases_to_component(
+                self._deployment_aliases.get(deployment_name, {}).get("direct", {}),
+                project_data,
+                component_name,
+            )
             for service_category, service_aliases in direct_aliases.items():
                 if service_aliases:
                     logger.debug(

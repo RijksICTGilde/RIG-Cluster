@@ -439,12 +439,18 @@ def ensure_domain_requests(project_data: dict[str, Any], cluster: str) -> None:
         if not isinstance(dep, dict):
             continue
 
-        base_domain = dep.get("base-domain")
+        # An absent base-domain means the cluster's own domain: the wizard hook
+        # deliberately does not persist it when it equals the cluster default
+        # (``_resolve_missing_base_domains`` in opi/forms/editables/hooks.py).
+        # Treating that emptiness as "nothing to do" skipped the whole deployment,
+        # including the subdomain branch below that is written for exactly this
+        # case, so every subdomain request on the cluster domain vanished silently.
+        base_domain = dep.get("base-domain") or cluster_domain
         subdomain = dep.get("subdomain")
         domain_format = dep.get("domain-format", "")
         template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
 
-        if not base_domain or base_domain == "__custom__":
+        if base_domain == "__custom__":
             continue
 
         is_cluster_default = base_domain == cluster_domain
