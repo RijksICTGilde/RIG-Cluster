@@ -1,8 +1,13 @@
 # Configurable Health & Readiness Probes
 
-**Status**: Proposed (not implemented)
+**Status**: Superseded -- implemented as the `health-check` service
+(see `features/health-check-service.md`)
 **Priority**: Medium
 **Created**: 2026-06-24
+
+> This design is delivered by the component-level `health-check` service, which
+> adds the port targeting the earlier `probe:` block lacked and moves the config
+> into the service system. The rest of this document is kept for its rationale.
 
 ## Overview
 
