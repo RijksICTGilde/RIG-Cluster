@@ -609,8 +609,8 @@ class ServiceAdapter:
         ServiceType.SLEEP_MODE: ServiceDefinition(
             name="Slaapstand",
             description=(
-                "Zet inactieve preview-deployments na een deadline in slaapstand (replicas 0) "
-                "en wekt ze op verzoek weer op. De applicatie start koud op."
+                "Zet bepaalde deployments, op basis van matching, na een deadline in slaapstand "
+                "en wek ze op verzoek weer op. De deployment doet een koude start."
             ),
             icon="klok",
             color="donkerblauw",
