@@ -147,6 +147,50 @@ def test_unknown_health_check_field_rejected():
         validate_service_configs(data)
 
 
+def test_health_check_path_with_yaml_injection_rejected():
+    # The paths reach the pod spec interpolated unquoted, so they carry the same
+    # absolute-path pattern every other manifest-bound string in project_v2.json has.
+    # A newline + a forged sibling key must not pass validation.
+    data = {
+        "name": "p",
+        "components": [
+            {
+                "name": "dirmgr",
+                "services": [
+                    {
+                        "name": "health-check",
+                        "config": {"scheme": "http", "liveness-path": "/health/live\n              privileged: true"},
+                    }
+                ],
+            }
+        ],
+    }
+    with pytest.raises(ProjectIntegrityError, match="health-check"):
+        validate_service_configs(data)
+
+
+def test_health_check_readiness_path_without_leading_slash_rejected():
+    # The pattern requires a leading slash; a relative path is rejected.
+    data = {
+        "name": "p",
+        "components": [
+            {"name": "dirmgr", "services": [{"name": "health-check", "config": {"readiness-path": "health/ready"}}]}
+        ],
+    }
+    with pytest.raises(ProjectIntegrityError, match="health-check"):
+        validate_service_configs(data)
+
+
+def test_health_check_port_out_of_range_rejected():
+    # port carries a 1-65535 bound so an out-of-range value fails early with a clear error.
+    data = {
+        "name": "p",
+        "components": [{"name": "dirmgr", "services": [{"name": "health-check", "config": {"port": 70000}}]}],
+    }
+    with pytest.raises(ProjectIntegrityError, match="health-check"):
+        validate_service_configs(data)
+
+
 def test_entry_schema_version_is_threaded_to_validate_config(monkeypatch):
     """The entry's stamped schema-version must reach the provider's validate_config.
 
