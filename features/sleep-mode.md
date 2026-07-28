@@ -43,7 +43,14 @@ applicatie starten.
 
 ## Gebruik
 
-Sleep-mode is een service: zet hem aan in het projectbestand onder `services:`.
+Sleep-mode is een selecteerbare wizard-service met een eigen configuratiestap
+("Slaapstand configuratie"). Kies hem in de wizard en vul de sectie in; bijna alle velden
+zijn selectielijsten (wektype, de twee slaap-deadlines, wekker-component en de Ja/Nee-
+schakelaars), alleen `match` is vrije tekst (glob-patronen, een per regel). De service
+declareert die velden zelf (`catalog/sleep_mode/editables.py` + `visualizers.py`), zoals de
+andere services. Onder water schrijft dat exact hetzelfde config-blok als hieronder.
+
+Handmatig in het projectbestand kan ook, onder `services:`.
 
 ```yaml
 services:
