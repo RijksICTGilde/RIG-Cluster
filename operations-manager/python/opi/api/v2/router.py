@@ -238,6 +238,12 @@ async def _fetch_one_live_status(
     if live.status not in _PROBLEM_STATUSES:
         return live
 
+    # Disabled components (scaled to zero) must not surface as live errors (WP6).
+    disabled_components = frozenset(
+        ref
+        for comp in deployment.get("components", []) or []
+        if comp.get("disabled") and (ref := comp.get("reference"))
+    )
     raw_errors = await gather_deployment_errors(
         argo=argo,
         kubectl=kubectl,
@@ -246,6 +252,7 @@ async def _fetch_one_live_status(
         cluster=deployment.get("cluster", ""),
         deployment_name=deployment_name,
         status_data=status_data or {},
+        disabled_components=disabled_components,
     )
     typed_errors = [
         StatusError(**raw, category=cat, explanation=expl)
