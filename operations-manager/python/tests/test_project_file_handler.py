@@ -235,40 +235,6 @@ class TestExtractComponentSecurity:
         assert handler.extract_component_security(project_data, "web") is None
 
 
-class TestExtractComponentProbe:
-    """Tests for the per-component ``probe`` block extractor."""
-
-    def test_defaults_to_tcp_when_component_missing(self) -> None:
-        handler = ProjectFileHandler()
-        result = handler.extract_component_probe({"components": []}, "missing")
-        assert result == {"scheme": "tcp", "readiness_path": "/", "liveness_path": "/"}
-
-    def test_defaults_to_tcp_when_no_probe_block(self) -> None:
-        handler = ProjectFileHandler()
-        project_data = {"components": [{"name": "web"}]}
-        result = handler.extract_component_probe(project_data, "web")
-        assert result == {"scheme": "tcp", "readiness_path": "/", "liveness_path": "/"}
-
-    def test_https_with_explicit_paths(self) -> None:
-        handler = ProjectFileHandler()
-        project_data = {
-            "components": [
-                {
-                    "name": "web",
-                    "probe": {"scheme": "https", "readiness-path": "/readyz", "liveness-path": "/healthz"},
-                }
-            ]
-        }
-        result = handler.extract_component_probe(project_data, "web")
-        assert result == {"scheme": "https", "readiness_path": "/readyz", "liveness_path": "/healthz"}
-
-    def test_http_scheme_defaults_paths_to_root(self) -> None:
-        handler = ProjectFileHandler()
-        project_data = {"components": [{"name": "web", "probe": {"scheme": "http"}}]}
-        result = handler.extract_component_probe(project_data, "web")
-        assert result == {"scheme": "http", "readiness_path": "/", "liveness_path": "/"}
-
-
 class TestExtractComponentCommand:
     """Tests for the hidden per-component ``command`` extractors (component + deployment levels)."""
 
