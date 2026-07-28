@@ -797,3 +797,20 @@ class BooleanConverter:
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
         return "Ja" if value in (True, "true", "on", "yes", "1") else "Nee"
+
+
+class CommaSeparatedListConverter:
+    """Converts a list to/from a comma-separated string (trimmed, empties dropped)."""
+
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        if isinstance(value, list):
+            return ", ".join(str(v) for v in value)
+        return str(value or "")
+
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str]:
+        if isinstance(value, list):
+            return value
+        return [part.strip() for part in str(value).split(",") if part.strip()]
+
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        return self.read(value, context_data=context_data)
