@@ -74,7 +74,7 @@ spec:
           startupProbe:
             httpGet:
               port: 8081
-              path: /health/live
+              path: "/health/live"
               scheme: HTTP
             initialDelaySeconds: 5
             periodSeconds: 5
@@ -82,7 +82,7 @@ spec:
           livenessProbe:
             httpGet:
               port: 8081
-              path: /health/live
+              path: "/health/live"
               scheme: HTTP
             initialDelaySeconds: 5
             periodSeconds: 30
@@ -90,7 +90,7 @@ spec:
           readinessProbe:
             httpGet:
               port: 8081
-              path: /health/ready
+              path: "/health/ready"
               scheme: HTTP
             initialDelaySeconds: 0
             periodSeconds: 5

@@ -85,6 +85,11 @@ services:
 | `liveness-path` | No | `/` | Path for the liveness and startup probes; ignored when scheme is `tcp`/`none` |
 | `readiness-path` | No | `/` | Path for the readiness probe; ignored when scheme is `tcp`/`none` |
 
+Both paths must be absolute and built from URL-safe characters only
+(`^/[A-Za-z0-9/_.\-]*$`); `port` must be in `1-65535`. These values are
+interpolated into the generated pod spec, so the config is rejected on save if a
+path carries YAML control characters or a port is out of range.
+
 The config uses the `config:` wrapper (like `publish-on-web` and `attachments`).
 `port` is an integer, not a named port: ZAD generates container-port names itself
 (`http` for the first inbound port, `p<number>` for the rest), so a number is
