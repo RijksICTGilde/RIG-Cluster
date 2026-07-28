@@ -626,7 +626,8 @@ class EditableFormProcessor:
                         value = get_value(submitted, concrete_path)
                     self._validate_field(child_vis, concrete_path, value, errors, context)
                     self._write_field(child_ed, concrete_path, value, result)
-                    # Clean up virtual key from result
+                    # Clean up virtual key from result (see _process_nested_sequence_json
+                    # for why this strip is live, not dead: yaml_data can carry the key).
                     if virt and read_path != concrete_path:
                         virtual_key = virt[1]
                         virtual_parts = read_path.split("/")
@@ -680,6 +681,12 @@ class EditableFormProcessor:
 
         # Strip the virtual key (e.g. _services-config) from result so it
         # does not leak into step_data or the final project YAML.
+        # (WP3) This is NOT dead: when the incoming yaml_data still carries the virtual
+        # key (the direct process_json_submission path, e.g. tests/test_storage_virtualize
+        # and router_detail_edit which seeds step_data from raw submitted data), ``result``
+        # -- a deepcopy of yaml_data -- inherits it, and this is what removes it. The
+        # ``_devirtualize`` boundary pass covers the callers that pre-merge; both together
+        # guarantee the key never reaches project YAML.
         # We delete the entire virtual container key from the parent, not
         # just the leaf - otherwise empty dicts remain.
         # The virtual key lives under the component dict, so we find the
