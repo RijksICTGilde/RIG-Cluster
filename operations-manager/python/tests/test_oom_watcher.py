@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -61,6 +62,48 @@ def _make_pods_json(
 
 
 # ---------------------------------------------------------------------------
+# Helper: pods and replicasets across generations
+# ---------------------------------------------------------------------------
+
+
+def _generation_pod(*, pod_name: str, pod_template_hash: str, crash_loop: bool) -> dict:
+    """One pod of a given generation, either crash-looping or healthy and Ready."""
+    state = {"waiting": {"reason": "CrashLoopBackOff", "message": "back-off 5m0s"}} if crash_loop else {"running": {}}
+    return {
+        "metadata": {"name": pod_name, "labels": {"app": "prod-api", "pod-template-hash": pod_template_hash}},
+        "status": {"containerStatuses": [{"name": "app", "ready": not crash_loop, "lastState": {}, "state": state}]},
+    }
+
+
+def _replicaset(*, pod_template_hash: str, revision: str, deployment_name: str = "prod-api") -> dict:
+    return {
+        "metadata": {
+            "name": f"{deployment_name}-{pod_template_hash}",
+            "labels": {"app": deployment_name, "pod-template-hash": pod_template_hash},
+            "annotations": {"deployment.kubernetes.io/revision": revision},
+            "ownerReferences": [{"kind": "Deployment", "name": deployment_name}],
+        }
+    }
+
+
+def _kubectl_returning(pods: list[dict], replicasets: list[dict] | None) -> AsyncMock:
+    """kubectl mock that answers 'get pods' and 'get replicasets' separately.
+
+    ``replicasets=None`` simulates a cluster where the replicaset lookup fails,
+    which must trigger the fallback path.
+    """
+
+    async def _run(args, *_a, **_kw):
+        if args[1] == "replicasets":
+            if replicasets is None:
+                return "", "the server could not find the requested resource", 1
+            return json.dumps({"items": replicasets}), "", 0
+        return json.dumps({"items": pods}), "", 0
+
+    return AsyncMock(side_effect=_run)
+
+
+# ---------------------------------------------------------------------------
 # check_pod_health
 # ---------------------------------------------------------------------------
 
@@ -110,6 +153,79 @@ class TestCheckPodHealth:
         result = await check_pod_health("rig-prd-ns", "prod-api")
 
         assert result.oom_detected is False
+
+    @patch("opi.services.oom_watcher.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_crash_loop_on_superseded_generation_is_ignored(self, mock_kubectl_cls):
+        # Production case: after a config fix the new ReplicaSet's pod runs 1/1, while
+        # the old ReplicaSet's crash-looping pod is not yet reaped. It has NO
+        # deletionTimestamp, so only the pod-template-hash tells the generations apart.
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        mock_kubectl_cls.isConnected = True
+        mock_kubectl.run_command = _kubectl_returning(
+            pods=[
+                _generation_pod(pod_name="prod-api-54475c7986-xcw7r", pod_template_hash="54475c7986", crash_loop=True),
+                _generation_pod(pod_name="prod-api-6c444ccf9c-kl7l8", pod_template_hash="6c444ccf9c", crash_loop=False),
+            ],
+            replicasets=[
+                _replicaset(pod_template_hash="54475c7986", revision="7"),
+                _replicaset(pod_template_hash="6c444ccf9c", revision="8"),
+            ],
+        )
+
+        result = await check_pod_health("rig-prd-ns", "prod-api")
+
+        assert result.crash_loop_detected is False
+        assert result.oom_detected is False
+        assert result.image_pull_error is None
+
+    @patch("opi.services.oom_watcher.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_crash_loop_on_current_generation_is_reported(self, mock_kubectl_cls):
+        # The generation filter must not blind the detection: a pod of the current
+        # ReplicaSet that crash-loops is a real failure.
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        mock_kubectl_cls.isConnected = True
+        mock_kubectl.run_command = _kubectl_returning(
+            pods=[
+                _generation_pod(pod_name="prod-api-54475c7986-xcw7r", pod_template_hash="54475c7986", crash_loop=False),
+                _generation_pod(pod_name="prod-api-6c444ccf9c-kl7l8", pod_template_hash="6c444ccf9c", crash_loop=True),
+            ],
+            replicasets=[
+                _replicaset(pod_template_hash="54475c7986", revision="7"),
+                _replicaset(pod_template_hash="6c444ccf9c", revision="8"),
+            ],
+        )
+
+        result = await check_pod_health("rig-prd-ns", "prod-api")
+
+        assert result.crash_loop_detected is True
+        assert result.crash_loop_message is not None
+        assert "CrashLoopBackOff" in result.crash_loop_message
+
+    @patch("opi.services.oom_watcher.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_falls_back_to_all_pods_when_hash_undeterminable(self, mock_kubectl_cls, caplog):
+        # No determinable current generation (kubectl error, no Deployment-owned
+        # ReplicaSet, ...): keep the previous behaviour and say so at WARNING.
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        mock_kubectl_cls.isConnected = True
+        mock_kubectl.run_command = _kubectl_returning(
+            pods=[
+                _generation_pod(pod_name="prod-api-54475c7986-xcw7r", pod_template_hash="54475c7986", crash_loop=True),
+                _generation_pod(pod_name="prod-api-6c444ccf9c-kl7l8", pod_template_hash="6c444ccf9c", crash_loop=False),
+            ],
+            replicasets=None,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="opi.services.oom_watcher"):
+            result = await check_pod_health("rig-prd-ns", "prod-api")
+
+        assert result.crash_loop_detected is True
+        assert "pod-template-hash" in caplog.text
 
     @patch("opi.services.oom_watcher.KubectlConnector")
     @pytest.mark.asyncio
