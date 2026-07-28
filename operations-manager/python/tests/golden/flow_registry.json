@@ -55,6 +55,22 @@
       "section_id": "services-edit",
       "title": "Services beheren"
     },
+    "sleep-mode-config": {
+      "editables": [
+        "services/sleep-mode/config/enabled",
+        "services/sleep-mode/config/wake-mode",
+        "services/sleep-mode/config/match",
+        "services/sleep-mode/config/sleep-after-deploy",
+        "services/sleep-mode/config/sleep-after-wake",
+        "services/sleep-mode/config/waker",
+        "services/sleep-mode/config/waker-component",
+        "services/sleep-mode/config/title",
+        "services/sleep-mode/config/description"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "sleep-mode-config",
+      "title": "Slaapstand configuratie"
+    },
     "team-edit": {
       "editables": [
         "users"
@@ -167,7 +183,8 @@
   "service_config_modal_flows": {
     "authorization-wall": "modal-edit-auth-wall-config",
     "keycloak": "modal-edit-keycloak-config",
-    "namespace-postgresql-database": "modal-edit-postgresql-config"
+    "namespace-postgresql-database": "modal-edit-postgresql-config",
+    "sleep-mode": "modal-edit-sleep-mode-config"
   },
   "service_config_sections": {
     "authorization-wall": {
@@ -199,6 +216,22 @@
       "post_save_action": "process_project",
       "section_id": "postgresql-config",
       "title": "Database configuratie"
+    },
+    "sleep-mode": {
+      "editables": [
+        "services/sleep-mode/config/enabled",
+        "services/sleep-mode/config/wake-mode",
+        "services/sleep-mode/config/match",
+        "services/sleep-mode/config/sleep-after-deploy",
+        "services/sleep-mode/config/sleep-after-wake",
+        "services/sleep-mode/config/waker",
+        "services/sleep-mode/config/waker-component",
+        "services/sleep-mode/config/title",
+        "services/sleep-mode/config/description"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "sleep-mode-config",
+      "title": "Slaapstand configuratie"
     }
   }
 }
