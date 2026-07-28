@@ -62,6 +62,22 @@ class KeycloakService(Service):
             KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE,
         ]
 
+    def detail_page_sections(self, project_data: dict[str, Any], user_role: str):
+        # Realm admin details (host / realm / admin credentials) for the detail page.
+        # Admin-only, and only when realms exist. Read from the service config where
+        # RC-5 relocated them; the general template used to read the old project-level
+        # ``config.keycloak``, which no longer exists, so the section silently stopped
+        # rendering. Owning the block here keeps it pinned to the config's real home.
+        if user_role not in ("admin", "owner"):
+            return []
+        from opi.services.catalog.base import DetailPageSection
+        from opi.services.project import Project
+
+        realms = Project(project_data).get(config_path(ConfigLayer.PROJECT, self.service_type, "config", "realms")) or []
+        if not realms:
+            return []
+        return [DetailPageSection(template="keycloak/section-detail.html.j2", context={"realms": realms})]
+
     def config_form_section(self, layer: ConfigLayer):
         if layer is not ConfigLayer.PROJECT:
             return None
