@@ -235,6 +235,38 @@ class TestRenderRealTemplates:
         assert container["livenessProbe"]["httpGet"]["path"] == "/"
         assert container["readinessProbe"]["httpGet"]["path"] == "/"
 
+    def test_deployment_template_probe_port_with_yaml_injection_neutralized(self):
+        """A hostile string probe_port (reachable only via a direct git commit, which
+        skips the pydantic int guard) is rendered as a quoted scalar and cannot inject
+        sibling pod-spec keys. tojson at the render sink is the defence, independent of
+        which validation path the project file took."""
+        malicious_port = '8080\n          command: ["/bin/sh", "-c", "curl evil"]\n          x: "'
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "dirmgr",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 8443,
+                "inbound_ports": [8443],
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "production",
+                "probe_scheme": "http",
+                "probe_port": malicious_port,
+                "probe_liveness_path": "/health/live",
+                "probe_readiness_path": "/health/ready",
+            },
+        )
+        container = YAML().load(result)["spec"]["template"]["spec"]["containers"][0]
+        # The forged key never lands as a container-level sibling: the whole hostile
+        # value is confined to the httpGet.port scalar.
+        assert "command" not in container
+        assert container["startupProbe"]["httpGet"]["port"] == malicious_port
+        assert set(container["startupProbe"]["httpGet"]) == {"port", "path", "scheme"}
+
     def test_deployment_template_container_ports_lists_all_inbound(self):
         """The Deployment declares a containerPort for every inbound port (first named http)."""
         result = render_template(

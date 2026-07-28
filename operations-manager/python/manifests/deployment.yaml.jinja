@@ -154,12 +154,12 @@ spec:
           startupProbe:
             {% if probe_scheme in ('http', 'https') %}
             httpGet:
-              port: {{ probe_port | default(application_port, true) }}
+              port: {{ probe_port | default(application_port, true) | tojson }}
               path: {{ probe_liveness_path | default('/') | tojson }}
               scheme: {{ probe_scheme | upper }}
             {% else %}
             tcpSocket:
-              port: {{ probe_port | default(application_port, true) }}
+              port: {{ probe_port | default(application_port, true) | tojson }}
             {% endif %}
             initialDelaySeconds: 5
             periodSeconds: 5
@@ -167,12 +167,12 @@ spec:
           livenessProbe:
             {% if probe_scheme in ('http', 'https') %}
             httpGet:
-              port: {{ probe_port | default(application_port, true) }}
+              port: {{ probe_port | default(application_port, true) | tojson }}
               path: {{ probe_liveness_path | default('/') | tojson }}
               scheme: {{ probe_scheme | upper }}
             {% else %}
             tcpSocket:
-              port: {{ probe_port | default(application_port, true) }}
+              port: {{ probe_port | default(application_port, true) | tojson }}
             {% endif %}
             initialDelaySeconds: 5
             periodSeconds: 30
@@ -180,12 +180,12 @@ spec:
           readinessProbe:
             {% if probe_scheme in ('http', 'https') %}
             httpGet:
-              port: {{ probe_port | default(application_port, true) }}
+              port: {{ probe_port | default(application_port, true) | tojson }}
               path: {{ probe_readiness_path | default('/') | tojson }}
               scheme: {{ probe_scheme | upper }}
             {% else %}
             tcpSocket:
-              port: {{ probe_port | default(application_port, true) }}
+              port: {{ probe_port | default(application_port, true) | tojson }}
             {% endif %}
             initialDelaySeconds: 0
             periodSeconds: 5
