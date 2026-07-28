@@ -1418,12 +1418,18 @@ async def project_details(request: Request, project_name: str):
         # Deployment-level action buttons contributed by the project's services
         # (e.g. sleep-mode "wake"), keyed by deployment name. Built from the decrypted
         # project data so it can read the OPI-managed sleep state.
-        from opi.services.registry import collect_deployment_actions
+        from opi.services.registry import collect_deployment_actions, collect_detail_page_sections
 
         deployment_service_actions = {
             dep.get("name"): collect_deployment_actions(project_data_decrypted, dep.get("name", ""))
             for dep in project_data_decrypted.get("deployments", [])
         }
+
+        # Read-only detail-page sections the project's services deliver (WP2): each
+        # service owns its own block instead of the general template hardcoding an
+        # include. Built from the decrypted data so a service can surface its managed
+        # credentials (e.g. keycloak realm admin details).
+        service_detail_sections = collect_detail_page_sections(project_data_decrypted, user_role)
 
         return templates.TemplateResponse(
             "project-details.html.j2",
@@ -1444,12 +1450,11 @@ async def project_details(request: Request, project_name: str):
                 "csrf_token": csrf_token,
                 "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
                 "deployment_service_actions": deployment_service_actions,
-                # Realm admin details for the Keycloak section. Read from the service
-                # config, where RC-5 relocated them; the template used to read the old
-                # project-level ``config.keycloak``, which no longer exists, so the
-                # section silently stopped rendering and admins lost their realm URL
-                # and credentials.
-                "keycloak_realms": Project(project_data_decrypted).get("services/keycloak/config/realms") or [],
+                # Detail-page sections the project's services own (WP2). Replaces the
+                # hardcoded per-service includes (e.g. the Keycloak realm block, which
+                # after RC-5's config move kept reading the old project-level
+                # ``config.keycloak`` and silently stopped rendering).
+                "service_detail_sections": service_detail_sections,
             },
         )
 
