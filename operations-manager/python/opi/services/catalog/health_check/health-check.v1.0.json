@@ -4,6 +4,7 @@
     "liveness-path": {
       "anyOf": [
         {
+          "pattern": "^/[A-Za-z0-9/_.\\-]*\\Z",
           "type": "string"
         },
         {
@@ -16,6 +17,8 @@
     "port": {
       "anyOf": [
         {
+          "maximum": 65535,
+          "minimum": 1,
           "type": "integer"
         },
         {
@@ -28,6 +31,7 @@
     "readiness-path": {
       "anyOf": [
         {
+          "pattern": "^/[A-Za-z0-9/_.\\-]*\\Z",
           "type": "string"
         },
         {

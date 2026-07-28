@@ -155,7 +155,7 @@ spec:
             {% if probe_scheme in ('http', 'https') %}
             httpGet:
               port: {{ probe_port | default(application_port, true) }}
-              path: {{ probe_liveness_path | default('/') }}
+              path: {{ probe_liveness_path | default('/') | tojson }}
               scheme: {{ probe_scheme | upper }}
             {% else %}
             tcpSocket:
@@ -168,7 +168,7 @@ spec:
             {% if probe_scheme in ('http', 'https') %}
             httpGet:
               port: {{ probe_port | default(application_port, true) }}
-              path: {{ probe_liveness_path | default('/') }}
+              path: {{ probe_liveness_path | default('/') | tojson }}
               scheme: {{ probe_scheme | upper }}
             {% else %}
             tcpSocket:
@@ -181,7 +181,7 @@ spec:
             {% if probe_scheme in ('http', 'https') %}
             httpGet:
               port: {{ probe_port | default(application_port, true) }}
-              path: {{ probe_readiness_path | default('/') }}
+              path: {{ probe_readiness_path | default('/') | tojson }}
               scheme: {{ probe_scheme | upper }}
             {% else %}
             tcpSocket:
