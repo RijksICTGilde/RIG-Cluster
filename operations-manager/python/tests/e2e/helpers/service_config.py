@@ -18,7 +18,10 @@ unchanged.
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING
+
+from playwright.sync_api import Error as PlaywrightError
 
 if TYPE_CHECKING:
     from playwright.sync_api import Locator, Page
@@ -57,21 +60,55 @@ def modal_heading(page: Page) -> str:
     return (heading.text_content() or "").strip() if heading.count() else ""
 
 
-def modal_next(page: Page) -> None:
-    """Press the modal's 'Volgende'/'Opslaan' submit and wait for the step to swap in."""
-    submit = page.locator(f"{_INNER} button[type='submit']").last
-    submit.scroll_into_view_if_needed()
-    submit.click()
-    page.wait_for_timeout(500)
-    page.wait_for_load_state("networkidle")
-
-
 def modal_advance_to_field(page: Page, name_contains: str, *, max_steps: int = 8) -> bool:
-    """Press 'Volgende' until a field whose name contains ``name_contains`` is on screen."""
+    """Press 'Volgende' until a field whose name contains ``name_contains`` is on screen.
+
+    After each click it waits for the step to actually swap (the target field appears, or
+    the heading changes) before re-checking, so a slow HTMX swap cannot make the loop click
+    'Volgende' twice and skip the target step.
+    """
     for _ in range(max_steps):
         if modal_field(page, name_contains).count() > 0:
             return True
-        if page.locator(f"{_INNER} button[type='submit']").count() == 0:
+        submit = page.locator(f"{_INNER} button[type='submit']")
+        if submit.count() == 0:
             return False
-        modal_next(page)
+        before_heading = modal_heading(page)
+        submit.last.scroll_into_view_if_needed()
+        submit.last.click()
+        with contextlib.suppress(PlaywrightError):
+            page.wait_for_function(
+                """([inner, prev, target]) => {
+                    const root = document.querySelector(inner);
+                    if (!root) return false;
+                    if (root.querySelector(`[name*='${target}']`)) return true;
+                    const h = root.querySelector('h1, h2, h3');
+                    return !!(h && h.textContent.trim() && h.textContent.trim() !== prev);
+                }""",
+                arg=[_INNER, before_heading, name_contains],
+                timeout=15000,
+            )
     return modal_field(page, name_contains).count() > 0
+
+
+def open_deployments_tab(page: Page) -> None:
+    """Click the 'Deployments' tab, where the per-deployment action buttons live."""
+    page.get_by_text("Deployments", exact=True).first.click()
+    page.wait_for_timeout(800)
+
+
+def deployment_action(page: Page, label: str) -> Locator:
+    """A deployment action button by its label (e.g. 'Deployment slapen', 'Applicatie wekken')."""
+    return page.locator(f"button:has-text('{label}'), a:has-text('{label}')")
+
+
+def click_deployment_action(page: Page, label: str) -> None:
+    """Accept the confirm dialog and press a deployment action button.
+
+    The button POSTs to the action endpoint, which commits to git and reprocesses -- several
+    seconds -- before the page reloads. Callers should poll the source of truth (the project
+    file) for the new state rather than trusting a fixed wait here.
+    """
+    page.once("dialog", lambda dialog: dialog.accept())
+    deployment_action(page, label).first.click()
+    page.wait_for_timeout(1000)
