@@ -118,8 +118,11 @@ class TestServiceConfigSectionsLookup:
     def test_auth_wall_in_lookup(self):
         assert "authorization-wall" in SERVICE_CONFIG_SECTIONS
 
+    def test_sleep_mode_present(self):
+        assert "sleep-mode" in SERVICE_CONFIG_SECTIONS
+
     def test_lookup_count(self):
-        assert len(SERVICE_CONFIG_SECTIONS) == 3
+        assert len(SERVICE_CONFIG_SECTIONS) == 4
 
 
 class TestFlowDefinitions:
