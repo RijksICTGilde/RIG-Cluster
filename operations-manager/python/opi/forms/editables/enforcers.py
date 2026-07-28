@@ -14,6 +14,7 @@ from opi.core import config as opi_config
 from opi.core.cluster_config import get_domain_supports_dots
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+from opi.services.services import service_entry_name
 from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
 
 
@@ -99,21 +100,16 @@ class UniqueReferencesEnforcer:
 def extract_service_names(services: list[Any]) -> list[str]:
     """Extract service names from the mixed services list format.
 
-    Handles all formats in the services list:
-      - strings: "keycloak"
-      - service-keyed dicts: {"keycloak": {"config": ...}}
-      - legacy name dicts: {"name": "keycloak"}
+    Delegates to ``service_entry_name``, which resolves every on-disk format: a bare
+    string, the legacy service-keyed dict ({"keycloak": {...}}), and the uniform record
+    keyed by ``name`` **or** ``reference``.
+
+    Component entries use ``reference``. Falling back to the raw dict keys returned the
+    literal strings "reference" and "config" as service names, which then failed
+    validation as unknown services -- so a component with any configured service could
+    not be saved at all.
     """
-    result: list[str] = []
-    for svc in services:
-        if isinstance(svc, str):
-            result.append(svc)
-        elif isinstance(svc, dict):
-            if "name" in svc:
-                result.append(svc["name"])
-            else:
-                result.extend(svc.keys())
-    return result
+    return [name for name in (service_entry_name(svc) for svc in services) if name is not None]
 
 
 def _validate_memory_request_limit(comp_index: int, request_val: str, limit_val: str) -> None:

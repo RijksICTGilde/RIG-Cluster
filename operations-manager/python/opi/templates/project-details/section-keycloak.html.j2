@@ -1,12 +1,15 @@
 {# Keycloak Section #}
-{% if user_role in ["admin", "owner"] and project.config and project.config.get('keycloak') %}
+{# TODO: dit blok hoort bij de keycloak-service zelf (naast config_editables /
+   config_form_section), niet hardgecodeerd in een algemene template. Zolang het hier
+   staat drijft het weg bij elke verhuizing van de config, zoals bij RC-5 gebeurde. #}
+{% if user_role in ["admin", "owner"] and keycloak_realms %}
 <c-card outline="true" padding="xl" backgroundColor="wit">
     <c-layout-flow gap="lg">
         <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="beveiligingsscan" size="xl" color="hemelblauw" />Keycloak</c-heading>
         <p class="rvo-text--subtle">Keycloak realm configuratie en admin toegang</p>
 
         <div class="config-section">
-            {% for kc_config in project.config.keycloak %}
+            {% for kc_config in keycloak_realms %}
             {% if not loop.first %}
             <div style="margin-top: var(--rvo-space-lg); padding-top: var(--rvo-space-lg); border-top: 1px solid var(--rvo-color-grijs-200);"></div>
             {% endif %}
