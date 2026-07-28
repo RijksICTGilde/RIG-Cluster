@@ -118,6 +118,30 @@ def collect_deployment_actions(project_data: dict, deployment_name: str) -> list
     return actions
 
 
+def collect_detail_page_sections(project_data: dict, user_role: str) -> list:
+    """Read-only detail-page sections contributed by the services a project uses (WP2).
+
+    Only services the project actually selects (project-level or referenced by a
+    component) contribute, in registry order, so the project-details template loops
+    over data instead of hardcoding a per-service ``{% include %}``. ``project_data``
+    must be the DECRYPTED project dict (a service may surface managed credentials).
+    """
+    from opi.services.catalog.base import DetailPageSection
+    from opi.services.services import service_entry_name
+
+    selected: set[str | None] = {service_entry_name(entry) for entry in project_data.get("services", []) or []}
+    for component in project_data.get("components", []) or []:
+        for entry in component.get("services", []) or []:
+            selected.add(service_entry_name(entry))
+
+    sections: list[DetailPageSection] = []
+    for service in SERVICES.values():
+        if service.service_type.value not in selected:
+            continue
+        sections.extend(service.detail_page_sections(project_data, user_role))
+    return sections
+
+
 def component_service_editables() -> list[Editable]:
     """Component-level editables every service contributes to the component form,
     flattened in ``config_component_order`` (RC-5). This replaces the hand-synced tail
