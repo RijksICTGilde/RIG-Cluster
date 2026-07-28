@@ -64,7 +64,32 @@ class TestSection:
         }
 
 
+class TestBooleanFields:
+    def test_enabled_and_waker_are_yes_no_selects(self) -> None:
+        # Without a values_provider the Ja/Nee select renders empty and submits false, so
+        # a wizard-selected sleep-mode would come out disabled (regression guard).
+        from opi.services.catalog.sleep_mode.editables import SLEEP_ENABLED_EDITABLE, SLEEP_WAKER_EDITABLE
+
+        assert SLEEP_ENABLED_EDITABLE.values_provider == "YesNoOptionsProvider"
+        assert SLEEP_WAKER_EDITABLE.values_provider == "YesNoOptionsProvider"
+
+
 class TestProviders:
+    def test_option_text_is_jinja_safe(self) -> None:
+        # The wizard re-renders step content as a template, so a quote or brace in an
+        # option label/description breaks parsing (a single-quoted word did, once).
+        providers = [
+            WakeModeOptionsProvider(),
+            YesNoOptionsProvider(),
+            SleepAfterDeployOptionsProvider(),
+            SleepAfterWakeOptionsProvider(),
+            WakerComponentOptionsProvider(),
+        ]
+        for provider in providers:
+            for option in provider.get_options():
+                text = f"{option.get('label', '')} {option.get('description', '')}"
+                assert not any(c in text for c in ("'", "{", "}", "%")), f"unsafe option text: {text!r}"
+
     def test_wake_mode_options(self) -> None:
         assert [o["value"] for o in WakeModeOptionsProvider().get_options()] == ["auto", "confirm", "manual"]
 
