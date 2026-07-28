@@ -2182,15 +2182,20 @@ async def _update_keycloak_redirect_uris_for_deployment(
         # Get HTTP support setting and additional redirect URIs from config
         support_http = get_keycloak_support_http(cluster)
 
-        # Get additional redirect URIs from project keycloak service config
+        # Get additional redirect URIs from project keycloak service config.
+        # Format-agnostic: ``"keycloak" in service_item`` only matched the legacy
+        # single-key form, so extra redirect URIs were dropped for record-form projects.
+        from opi.services.services import service_entry_config, service_entry_name
+
         additional_redirect_uris = None
         project_services = project_data.get("services", [])
         for service_item in project_services:
-            if isinstance(service_item, dict) and "keycloak" in service_item:
-                service_data = service_item["keycloak"]
-                if isinstance(service_data, dict) and "config" in service_data:
-                    additional_redirect_uris = service_data["config"].get("additional_redirect_uris")
-                    break
+            if service_entry_name(service_item) != ServiceType.KEYCLOAK.value:
+                continue
+            config = service_entry_config(service_item)
+            if isinstance(config, dict):
+                additional_redirect_uris = config.get("additional_redirect_uris")
+            break
 
         # Create Keycloak connector and update redirect URIs
         keycloak = await create_keycloak_connector(

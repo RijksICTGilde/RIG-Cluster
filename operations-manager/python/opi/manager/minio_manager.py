@@ -78,27 +78,24 @@ class MinioManager:
             logger.debug(f"Deployment {deployment_name} not found in project data")
             return None
 
+        from opi.services.services import service_entry_config, service_entry_name
+
         # Get services list for this deployment
         services = project_data.get("services", [])
 
-        # Look for minio-storage service
+        # Look for minio-storage service. Format-agnostic: the entry may be a bare
+        # string, a legacy single-key dict, or a uniform record ({name, config}).
+        # ``next(iter(keys))`` returned "name"/"reference" for a record, so a configured
+        # minio-storage was silently read as unconfigured.
         for service in services:
-            if isinstance(service, str):
-                # Simple format: "- minio-storage"
-                if service == ServiceType.MINIO_STORAGE.value:
-                    logger.debug(f"Found simple minio-storage service for {deployment_name}, no config")
-                    return None
-            elif isinstance(service, dict):
-                # Configured format: "- minio-storage: ..."
-                service_name = next(iter(service.keys())) if service else None
-                if service_name == ServiceType.MINIO_STORAGE.value:
-                    config = service.get(service_name, {}).get("config")
-                    if config:
-                        logger.debug(f"Found minio-storage config for {deployment_name}: {config}")
-                        return config
-                    else:
-                        logger.debug(f"Found minio-storage service for {deployment_name}, but no config block")
-                        return None
+            if service_entry_name(service) != ServiceType.MINIO_STORAGE.value:
+                continue
+            config = service_entry_config(service)
+            if config:
+                logger.debug(f"Found minio-storage config for {deployment_name}: {config}")
+                return config
+            logger.debug(f"Found minio-storage service for {deployment_name}, but no config block")
+            return None
 
         logger.debug(f"No minio-storage service found for {deployment_name}")
         return None
