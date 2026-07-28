@@ -142,6 +142,16 @@ Editables at the project level use `virtualize=("services", "_services-config")`
 posts under the virtual key so per-service config cannot collide with the service *selection*
 list, and `WizardState.get_merged_data` folds it back onto the real `services` list.
 
+A project-level config section reaches the user through three places, and all three must be
+wired: the create/edit wizard (`CREATE_FLOW`/`EDIT_FLOW` in `flows.py`), the "Services
+beheren" modal (`MODAL_EDIT_SERVICES_FLOW`, so add-then-configure works), and its own
+`modal_flow_id` flow behind the service card's "Configureer" button. If a step needs data
+from an earlier step (e.g. a component-name select), place its section *after* that step in
+the flow. Cover the three flows with a **user-based** sandbox E2E test -- real button
+clicks and field fills, no `page.evaluate` shortcuts and no direct modal-fragment URLs.
+`tests/e2e/test_sandbox_sleep_mode_ui.py` + `tests/e2e/helpers/service_config.py` are the
+pattern to copy.
+
 ## Provisioning and cleanup
 
 ```python
