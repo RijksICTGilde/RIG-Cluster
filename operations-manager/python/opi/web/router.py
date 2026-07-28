@@ -1444,6 +1444,12 @@ async def project_details(request: Request, project_name: str):
                 "csrf_token": csrf_token,
                 "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
                 "deployment_service_actions": deployment_service_actions,
+                # Realm admin details for the Keycloak section. Read from the service
+                # config, where RC-5 relocated them; the template used to read the old
+                # project-level ``config.keycloak``, which no longer exists, so the
+                # section silently stopped rendering and admins lost their realm URL
+                # and credentials.
+                "keycloak_realms": Project(project_data_decrypted).get("services/keycloak/config/realms") or [],
             },
         )
 

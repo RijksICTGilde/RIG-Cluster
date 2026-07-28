@@ -212,6 +212,9 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     )
     state.step_data = {first_section.section_id: seed_data}
     state.template_data = {"_admin_email": user.get("email", "")}
+    # The version this approval decision is being taken on; it travels with the save so
+    # a change made elsewhere in the meantime is merged instead of overwritten.
+    state.base_version = await get_project_store().version_of(f"projects/{project_name}.yaml")
     save_modal_state_by_token(wizard_token, state)
 
     yaml_data = state.get_merged_data()
@@ -389,6 +392,7 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
             "project_name": project_name,
             "yaml_content": yaml_content,
             "deployment_names": deployment_names,
+            "base_version": state.base_version,
         },
         max_attempts=1,
     )

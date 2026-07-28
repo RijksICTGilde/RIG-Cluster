@@ -34,6 +34,69 @@ def _strip_cleared_fields(value: Any) -> None:
             _strip_cleared_fields(item)
 
 
+def _fold_virtual(container: dict[str, Any], real_key: str, virt_data: Any) -> None:
+    """Fold one virtual payload onto its real sibling inside *container*."""
+    real_data = container.get(real_key)
+    if isinstance(virt_data, list) and isinstance(real_data, list):
+        # Build lookup from virtual list entries, keyed by service identity so
+        # BOTH entry forms resolve: the uniform record ({name, config}) and the
+        # legacy single-key dict ({keycloak: {config}}). Keying on the raw dict
+        # keys understood only the legacy form, so a record's config was dropped
+        # here and every keycloak/db config edit silently vanished on merge.
+        config_by_name: dict[str, dict[str, Any]] = {}
+        for entry in virt_data:
+            if isinstance(entry, dict):
+                name = service_name(entry)
+                if name is not None:
+                    config_by_name[name] = entry
+        # Fold each carried config onto its selected entry. Only names already in
+        # the selection are touched: a service the user deselected must not come
+        # back from a stale carrier.
+        for i, entry in enumerate(real_data):
+            name = service_name(entry)
+            if name is not None and name in config_by_name:
+                real_data[i] = merge_service_lists([entry], [config_by_name[name]])[0]
+    elif isinstance(virt_data, dict) and isinstance(real_data, list):
+        # Virtual data is a dict (name -> config), real data is a
+        # mixed list.  Replace matching plain-string entries with
+        # their config dict equivalents.
+        for i, entry in enumerate(real_data):
+            if isinstance(entry, str) and entry in virt_data:
+                real_data[i] = {entry: virt_data[entry]}
+    elif isinstance(virt_data, dict):
+        if isinstance(real_data, dict):
+            real_data.update(virt_data)
+        else:
+            container[real_key] = virt_data
+
+
+def _devirtualize(value: Any, virt_mappings: dict[str, str]) -> None:
+    """Fold virtual keys onto their real siblings at every level, then drop them.
+
+    A virtual key (e.g. ``_services-config``) is a form-transport concern: it
+    exists so a config section does not collide with the selection list it
+    configures. It must never reach project data.
+
+    The fold walks the whole structure rather than only the root because
+    ``services`` occurs both project-wide and per component. Popping at the root
+    only left ``components[i]._services-config`` behind, which the schema rejects
+    (``additionalProperties: false`` on ``component``). Components whose service
+    editable happened to run were cleaned as a side effect during field
+    processing; a component with no services at all never was.
+    """
+    if isinstance(value, list):
+        for item in value:
+            _devirtualize(item, virt_mappings)
+        return
+    if not isinstance(value, dict):
+        return
+    for virt_key, real_key in virt_mappings.items():
+        if virt_key in value:
+            _fold_virtual(value, real_key, value.pop(virt_key))
+    for child in value.values():
+        _devirtualize(child, virt_mappings)
+
+
 @dataclass
 class WizardSteps:
     """Structured navigation context for wizard templates.
@@ -137,6 +200,14 @@ class WizardState:
     project_name: str | None = None
     """None for create wizard, set for edit wizard."""
 
+    base_version: str | None = None
+    """Version of the project file this wizard was seeded from (ProjectStore token).
+
+    Travels with the resulting write so it is applied as a change relative to what
+    the user saw, and a change someone else made in the meantime is merged rather
+    than overwritten. None for the create wizard: there is no earlier version.
+    """
+
     template_data: dict[str, Any] = field(default_factory=dict)
     """Static project template data (repositories, etc.) - lowest priority layer."""
 
@@ -226,42 +297,7 @@ class WizardState:
 
         # Devirtualize: fold virtual keys back into real keys so that
         # smart_get_value can find config at real yaml_paths.
-        for virt_key, real_key in self.virt_mappings.items():
-            virt_data = merged.pop(virt_key, None)
-            if virt_data is None:
-                continue
-            real_data = merged.get(real_key)
-            if isinstance(virt_data, list) and isinstance(real_data, list):
-                # Build lookup from virtual list entries, keyed by service identity so
-                # BOTH entry forms resolve: the uniform record ({name, config}) and the
-                # legacy single-key dict ({keycloak: {config}}). Keying on the raw dict
-                # keys understood only the legacy form, so a record's config was dropped
-                # here and every keycloak/db config edit silently vanished on merge.
-                config_by_name: dict[str, dict[str, Any]] = {}
-                for entry in virt_data:
-                    if isinstance(entry, dict):
-                        name = service_name(entry)
-                        if name is not None:
-                            config_by_name[name] = entry
-                # Fold each carried config onto its selected entry. Only names already in
-                # the selection are touched: a service the user deselected must not come
-                # back from a stale carrier.
-                for i, entry in enumerate(real_data):
-                    name = service_name(entry)
-                    if name is not None and name in config_by_name:
-                        real_data[i] = merge_service_lists([entry], [config_by_name[name]])[0]
-            elif isinstance(virt_data, dict) and isinstance(real_data, list):
-                # Virtual data is a dict (name -> config), real data is a
-                # mixed list.  Replace matching plain-string entries with
-                # their config dict equivalents.
-                for i, entry in enumerate(real_data):
-                    if isinstance(entry, str) and entry in virt_data:
-                        real_data[i] = {entry: virt_data[entry]}
-            elif isinstance(virt_data, dict):
-                if isinstance(real_data, dict):
-                    real_data.update(virt_data)
-                else:
-                    merged[real_key] = virt_data
+        _devirtualize(merged, self.virt_mappings)
 
         if strip_cleared:
             _strip_cleared_fields(merged)
@@ -315,6 +351,7 @@ class WizardState:
             "step_data": self.step_data,
             "active_sections": self.active_sections,
             "project_name": self.project_name,
+            "base_version": self.base_version,
             "template_data": self.template_data,
             "stashed_data": self.stashed_data,
             "locked_services": self.locked_services,
@@ -353,6 +390,7 @@ class WizardState:
             step_data=data.get("step_data", {}),
             active_sections=data.get("active_sections", []),
             project_name=data.get("project_name"),
+            base_version=data.get("base_version"),
             template_data=data.get("template_data", {}),
             stashed_data=data.get("stashed_data", {}),
             locked_services=data.get("locked_services", []),
