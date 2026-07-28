@@ -1534,6 +1534,14 @@ async def _fetch_argocd_deployment_status(
         operation_state = status.get("operationState", {})
         app_health = health.get("status", "Unknown")
 
+        # Components intentionally scaled to zero (auto-disabled by the watcher or manually):
+        # their resources must not be reported as a live "busy"/problem (WP6).
+        disabled_components = frozenset(
+            ref
+            for comp in deployment.get("components", []) or []
+            if comp.get("disabled") and (ref := comp.get("reference"))
+        )
+
         raw_errors: list[dict[str, str]] = []
         if app_health != "Healthy":
             raw_errors = await gather_deployment_errors(
@@ -1544,6 +1552,7 @@ async def _fetch_argocd_deployment_status(
                 cluster=deployment.get("cluster", ""),
                 deployment_name=deployment_name,
                 status_data=status_data,
+                disabled_components=disabled_components,
             )
 
         component_names = [c.get("reference") for c in deployment.get("components", []) or [] if c.get("reference")]
