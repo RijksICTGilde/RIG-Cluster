@@ -171,6 +171,7 @@
         "keycloak-config",
         "postgresql-config",
         "auth-wall-config",
+        "sleep-mode-config",
         "attachments"
       ]
     },
