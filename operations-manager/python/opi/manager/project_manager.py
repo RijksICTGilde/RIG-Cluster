@@ -4864,15 +4864,11 @@ class ProjectManager:
             has_inbound_port = bool(inbound_ports)
             application_port = inbound_ports[0] if has_inbound_port else None
 
-            # Extract health-probe configuration (scheme + readiness/liveness paths).
-            # scheme=tcp keeps the plain tcpSocket probe; http/https switch to httpGet
-            # so a TLS-serving app completes the handshake instead of logging a failed one.
-            probe_config = self._project_file_handler.extract_component_probe(project_data, component_reference)
-
-            # A component without an inbound port cannot be probed by the kubelet; force
-            # scheme=none so no startup/liveness/readiness probe is rendered.
-            if not has_inbound_port:
-                probe_config = {**probe_config, "scheme": "none"}
+            # Base health-probe scheme: a plain TCP probe on the first inbound port.
+            # A component without an inbound port cannot be probed by the kubelet, so
+            # scheme=none disables all probes. The optional health-check service
+            # overrides scheme/port/paths from here via its manifest contribution.
+            probe_scheme = "tcp" if has_inbound_port else "none"
 
             # Extract publication paths: deployment-level overrides component-level
             component_paths = self._project_file_handler.extract_deployment_component_paths(
@@ -5208,9 +5204,12 @@ class ProjectManager:
                 # The full inbound-port list. Both the Deployment (containerPorts) and the
                 # Service render every port; the first is the primary (ingress + probe).
                 "inbound_ports": inbound_ports,
-                "probe_scheme": probe_config["scheme"],  # tcp | http | https
-                "probe_readiness_path": probe_config["readiness_path"],
-                "probe_liveness_path": probe_config["liveness_path"],
+                # Base probe: tcp on the application port (or none when there is no
+                # inbound port). The health-check service overrides these via its
+                # manifest contribution; the template keeps its own path defaults
+                # (| default('/')) and falls probe_port back to application_port.
+                "probe_scheme": probe_scheme,  # none | tcp | http | https
+                "probe_port": None,  # None -> template falls back to application_port
                 "path": component_path,  # Publication path for ingress routing
                 "storage_configs": processed_storage_configs,
                 "env_vars": env_vars,

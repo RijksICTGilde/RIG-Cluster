@@ -1,0 +1,61 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "liveness-path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Liveness-Path"
+    },
+    "port": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Port"
+    },
+    "readiness-path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Readiness-Path"
+    },
+    "scheme": {
+      "anyOf": [
+        {
+          "enum": [
+            "none",
+            "tcp",
+            "http",
+            "https"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Scheme"
+    }
+  },
+  "title": "HealthCheckConfig",
+  "type": "object"
+}

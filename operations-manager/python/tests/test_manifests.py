@@ -176,6 +176,65 @@ class TestRenderRealTemplates:
         assert container["startupProbe"]["tcpSocket"]["port"] == 3000
         assert container["readinessProbe"]["tcpSocket"]["port"] == 3000
 
+    def test_deployment_template_http_probe_targets_probe_port_and_paths(self):
+        """An http probe (health-check service) probes probe_port, not the application
+        port, and renders the configured liveness/readiness paths + HTTP scheme."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "dirmgr",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                # Functional mTLS port; the probe must NOT target this one.
+                "application_port": 8443,
+                "inbound_ports": [8443],
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "production",
+                "probe_scheme": "http",
+                "probe_port": 8080,
+                "probe_liveness_path": "/health/live",
+                "probe_readiness_path": "/health/ready",
+            },
+        )
+        container = YAML().load(result)["spec"]["template"]["spec"]["containers"][0]
+        assert container["startupProbe"]["httpGet"] == {
+            "port": 8080,
+            "path": "/health/live",
+            "scheme": "HTTP",
+        }
+        assert container["livenessProbe"]["httpGet"]["port"] == 8080
+        assert container["livenessProbe"]["httpGet"]["path"] == "/health/live"
+        assert container["readinessProbe"]["httpGet"]["port"] == 8080
+        assert container["readinessProbe"]["httpGet"]["path"] == "/health/ready"
+
+    def test_deployment_template_probe_port_falls_back_to_application_port(self):
+        """With an http scheme but no probe_port, the probe falls back to the app port
+        and paths fall back to '/' (a half-filled health-check config)."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 3000,
+                "inbound_ports": [3000],
+                "imageURL": "registry.example.com/app:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "production",
+                "probe_scheme": "http",
+                "probe_port": None,
+            },
+        )
+        container = YAML().load(result)["spec"]["template"]["spec"]["containers"][0]
+        assert container["livenessProbe"]["httpGet"]["port"] == 3000
+        assert container["livenessProbe"]["httpGet"]["path"] == "/"
+        assert container["readinessProbe"]["httpGet"]["path"] == "/"
+
     def test_deployment_template_container_ports_lists_all_inbound(self):
         """The Deployment declares a containerPort for every inbound port (first named http)."""
         result = render_template(

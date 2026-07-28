@@ -103,6 +103,50 @@ def test_bare_component_service_reference_is_skipped():
     )
 
 
+def test_valid_health_check_component_config_passes():
+    # health-check uses the config: wrapper (like publish-on-web/attachments).
+    data = {
+        "name": "p",
+        "components": [
+            {
+                "name": "dirmgr",
+                "services": [
+                    {
+                        "name": "health-check",
+                        "config": {
+                            "scheme": "http",
+                            "port": 8080,
+                            "liveness-path": "/health/live",
+                            "readiness-path": "/health/ready",
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    validate_service_configs(data)  # must not raise
+
+
+def test_invalid_health_check_scheme_rejected():
+    # scheme is a closed set; an unknown value fails HealthCheckConfig and names the component.
+    data = {
+        "name": "p",
+        "components": [{"name": "dirmgr", "services": [{"name": "health-check", "config": {"scheme": "grpc"}}]}],
+    }
+    with pytest.raises(ProjectIntegrityError, match="component 'dirmgr'"):
+        validate_service_configs(data)
+
+
+def test_unknown_health_check_field_rejected():
+    # extra="forbid": an unknown key is rejected rather than silently ignored.
+    data = {
+        "name": "p",
+        "components": [{"name": "dirmgr", "services": [{"name": "health-check", "config": {"timeout": 5}}]}],
+    }
+    with pytest.raises(ProjectIntegrityError, match="health-check"):
+        validate_service_configs(data)
+
+
 def test_entry_schema_version_is_threaded_to_validate_config(monkeypatch):
     """The entry's stamped schema-version must reach the provider's validate_config.
 

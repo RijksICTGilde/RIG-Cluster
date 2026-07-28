@@ -835,6 +835,20 @@ class PublishTlsOverrideOptionsProvider:
         return [{"value": "", "label": "Erven (geen override)"}, *_PUBLISH_TLS_MODE_OPTIONS]
 
 
+class HealthCheckSchemeOptionsProvider:
+    """Probe scheme options for the health-check service. The empty value means
+    'default': fall back to a plain TCP probe on the first inbound port."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": "", "label": "Standaard (tcp op eerste poort)"},
+            {"value": "tcp", "label": "TCP (socket open)"},
+            {"value": "http", "label": "HTTP (httpGet op pad)"},
+            {"value": "https", "label": "HTTPS (httpGet op pad)"},
+            {"value": "none", "label": "Geen (alle probes uit)"},
+        ]
+
+
 PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterOptionsProvider": ClusterOptionsProvider,
     "ServiceOptionsProvider": ServiceOptionsProvider,
@@ -870,6 +884,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "AttachmentProvideAsOptionsProvider": AttachmentProvideAsOptionsProvider,
     "PublishTlsModeOptionsProvider": PublishTlsModeOptionsProvider,
     "PublishTlsOverrideOptionsProvider": PublishTlsOverrideOptionsProvider,
+    "HealthCheckSchemeOptionsProvider": HealthCheckSchemeOptionsProvider,
 }
 
 
