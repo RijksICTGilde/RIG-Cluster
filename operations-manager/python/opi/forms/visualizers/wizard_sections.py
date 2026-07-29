@@ -290,6 +290,10 @@ def build_deployment_wizard_section(deployment_index: int) -> FormSection:
 # (keycloak / postgres sections still live hand-authored above until they follow.)
 AUTH_WALL_CONFIG_SECTION = get_service(ServiceType.AUTHORIZATION_WALL).config_form_section(ConfigLayer.PROJECT)
 
+# sleep-mode owns its project-level config section (SleepModeService.config_form_section),
+# re-exported here so the derived SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
+SLEEP_MODE_CONFIG_SECTION = get_service(ServiceType.SLEEP_MODE).config_form_section(ConfigLayer.PROJECT)
+
 # ---------------------------------------------------------------------------
 # Lookup for conditional sections keyed by service name
 # ---------------------------------------------------------------------------
@@ -300,7 +304,12 @@ AUTH_WALL_CONFIG_SECTION = get_service(ServiceType.AUTHORIZATION_WALL).config_fo
 # config_section_id on its provider.
 _CONFIG_SECTIONS_BY_ID: dict[str, FormSection] = {
     section.section_id: section
-    for section in (KEYCLOAK_CONFIG_SECTION, POSTGRESQL_CONFIG_SECTION, AUTH_WALL_CONFIG_SECTION)
+    for section in (
+        KEYCLOAK_CONFIG_SECTION,
+        POSTGRESQL_CONFIG_SECTION,
+        AUTH_WALL_CONFIG_SECTION,
+        SLEEP_MODE_CONFIG_SECTION,
+    )
 }
 
 # service name -> config FormSection, derived by iterating the provider registry.

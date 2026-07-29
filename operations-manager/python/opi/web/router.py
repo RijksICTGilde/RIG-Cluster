@@ -8,7 +8,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
@@ -551,6 +551,71 @@ async def refresh_deployment_web(request: Request, project_name: str, deployment
         current_step=f"Deployment '{deployment_name}' herverwerken gestart...",
         success_message=f"Deployment '{deployment_name}' succesvol herverwerkt!",
     )
+
+
+@web_router.post("/projects/{project_name}/deployments/{deployment_name}/wake")
+@requires_sso
+async def wake_deployment_web(request: Request, project_name: str, deployment_name: str) -> JSONResponse:
+    """Wake a sleeping deployment from the UI (session + CSRF + role auth).
+
+    The counterpart of the API wake endpoint: same one implementation in
+    ``sleep_mode.flow.wake``, but authenticated by the session (no wake token) and
+    gated to admin/owner, like the other deployment actions.
+    """
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    if not is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+
+    user_role = get_user_role_for_project(project_name, user_email)
+    if user_role not in ["admin", "owner"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Alleen admin of owner rollen kunnen een deployment wekken. Uw rol: {user_role}",
+        )
+
+    from opi.services.catalog.sleep_mode import flow
+
+    try:
+        result = await flow.wake(project_name, deployment_name)
+    except flow.DeploymentNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    logger.info(f"Web wake for '{project_name}/{deployment_name}' by {user_email}: state={result.state}")
+    return JSONResponse({"state": result.state, "changed": result.changed})
+
+
+@web_router.post("/projects/{project_name}/deployments/{deployment_name}/sleep")
+@requires_sso
+async def sleep_deployment_web(request: Request, project_name: str, deployment_name: str) -> JSONResponse:
+    """Manually put a deployment to sleep from the UI (session + CSRF + role auth).
+
+    The other half of the wake toggle: same one implementation in ``sleep_mode.flow.sleep``,
+    gated to admin/owner exactly like the wake action.
+    """
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    if not is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+
+    user_role = get_user_role_for_project(project_name, user_email)
+    if user_role not in ["admin", "owner"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Alleen admin of owner rollen kunnen een deployment slapen. Uw rol: {user_role}",
+        )
+
+    from opi.services.catalog.sleep_mode import flow
+
+    try:
+        result = await flow.sleep(project_name, deployment_name)
+    except flow.DeploymentNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    logger.info(f"Web sleep for '{project_name}/{deployment_name}' by {user_email}: state={result.state}")
+    return JSONResponse({"state": result.state, "changed": result.changed})
 
 
 @web_router.get("/test-architecture", response_class=HTMLResponse)
@@ -1370,6 +1435,16 @@ async def project_details(request: Request, project_name: str):
 
         from opi.forms.visualizers.flows import SERVICE_CONFIG_MODAL_FLOWS
 
+        # Deployment-level action buttons contributed by the project's services
+        # (e.g. sleep-mode "wake"), keyed by deployment name. Built from the decrypted
+        # project data so it can read the OPI-managed sleep state.
+        from opi.services.registry import collect_deployment_actions
+
+        deployment_service_actions = {
+            dep.get("name"): collect_deployment_actions(project_data_decrypted, dep.get("name", ""))
+            for dep in project_data_decrypted.get("deployments", [])
+        }
+
         return templates.TemplateResponse(
             "project-details.html.j2",
             {
@@ -1388,6 +1463,13 @@ async def project_details(request: Request, project_name: str):
                 "cluster_base_domains": cluster_base_domains,
                 "csrf_token": csrf_token,
                 "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
+                "deployment_service_actions": deployment_service_actions,
+                # Realm admin details for the Keycloak section. Read from the service
+                # config, where RC-5 relocated them; the template used to read the old
+                # project-level ``config.keycloak``, which no longer exists, so the
+                # section silently stopped rendering and admins lost their realm URL
+                # and credentials.
+                "keycloak_realms": Project(project_data_decrypted).get("services/keycloak/config/realms") or [],
             },
         )
 

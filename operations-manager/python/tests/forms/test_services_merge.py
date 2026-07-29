@@ -105,3 +105,41 @@ def test_get_merged_data_keeps_config_of_a_record_entry() -> None:
     services = state.get_merged_data()["services"]
     assert _names(services) == ["publish-on-web", "keycloak"]
     assert services[1] == record
+
+
+def test_get_merged_data_devirtualizes_component_level_services() -> None:
+    """Component-level ``_services-config`` must be folded and removed too.
+
+    Devirtualization only popped the virtual key at the top level, so
+    ``components[i]._services-config`` was left behind. It survived into the
+    project YAML and was rejected by the schema (``additionalProperties: false``
+    on ``component``). Components whose service editable happened to run were
+    cleaned as a side effect in the processor; a component with no services at
+    all never was.
+    """
+    record = {"name": "persistent-storage", "config": [{"name": "data", "mount-path": "/data"}]}
+    state = WizardState(
+        flow_id="create-project",
+        current_step="components",
+        step_data={
+            "components": {
+                "components": [
+                    {
+                        "name": "headscale",
+                        "services": ["publish-on-web", "persistent-storage"],
+                        "_services-config": ["publish-on-web", record],
+                    },
+                    # No services at all: nothing ever strips the carrier.
+                    {"name": "vlam-gateway", "_services-config": []},
+                ]
+            },
+        },
+        active_sections=["components"],
+        virt_mappings={"_services-config": "services"},
+    )
+    components = state.get_merged_data()["components"]
+
+    assert "_services-config" not in components[0]
+    assert "_services-config" not in components[1]
+    assert _names(components[0]["services"]) == ["publish-on-web", "persistent-storage"]
+    assert components[0]["services"][1] == record

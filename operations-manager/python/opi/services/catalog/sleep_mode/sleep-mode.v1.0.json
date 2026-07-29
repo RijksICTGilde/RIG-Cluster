@@ -1,0 +1,74 @@
+{
+  "additionalProperties": false,
+  "description": "Sleep-mode config for a project, after the cluster default is merged in.\n\nThis doubles as the runtime object callers use: ``matches(name)`` answers whether\na deployment is in scope, and the parsed durations drive the deadlines.",
+  "properties": {
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "enabled": {
+      "default": false,
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "match": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Match",
+      "type": "array"
+    },
+    "sleep-after-deploy": {
+      "default": "48h",
+      "title": "Sleep-After-Deploy",
+      "type": "string"
+    },
+    "sleep-after-wake": {
+      "default": "1h",
+      "title": "Sleep-After-Wake",
+      "type": "string"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Title"
+    },
+    "wake-mode": {
+      "default": "auto",
+      "enum": [
+        "auto",
+        "confirm",
+        "manual"
+      ],
+      "title": "Wake-Mode",
+      "type": "string"
+    },
+    "waker": {
+      "default": true,
+      "title": "Waker",
+      "type": "boolean"
+    },
+    "waker-component": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Waker-Component"
+    }
+  },
+  "title": "SleepModeConfig",
+  "type": "object"
+}

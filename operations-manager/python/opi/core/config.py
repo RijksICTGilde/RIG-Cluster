@@ -434,6 +434,16 @@ class Settings(BaseSettings):
     BACKUP_SWEEP_DRY_RUN: bool = True
     BACKUP_ORPHAN_RETENTION_DAYS: int = 30
 
+    # Sleep-mode: scale idle preview deployments to zero after a deadline and wake
+    # them on request. These are operational toggles (env-overridable); the actual
+    # sleep-mode config and its cluster-wide default are owned by the service package
+    # (opi/services/catalog/sleep_mode).
+    SLEEP_MODE_SCHEDULER_ENABLED: bool = True
+    SLEEP_MODE_SWEEP_MINUTES: int = 30  # how often the sweeper checks deadlines
+    SLEEP_MODE_PACE_SECONDS: int = 15  # delay between changed projects, to spread commits
+    SLEEP_MODE_WAKING_TIMEOUT_MINUTES: int = 10  # revert a stuck `waking` back to `awake`
+    SLEEP_MODE_WAKER_IMAGE: str = "ghcr.io/minbzk/base-images/zad-waker:latest"
+
     # Ephemeral database console (on-request, auto-expiring web DB client).
     # OPI applies/removes these directly (outside git/ArgoCD); a reaper enforces
     # the TTL and a per-pod activeDeadlineSeconds is the hard backstop.

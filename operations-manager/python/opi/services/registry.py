@@ -27,6 +27,7 @@ from opi.services.catalog.platform import PlatformService
 from opi.services.catalog.postgresql_database import PostgresqlDatabaseService
 from opi.services.catalog.publish_on_web import PublishOnWebService
 from opi.services.catalog.redis import RedisService
+from opi.services.catalog.sleep_mode import SleepModeService
 from opi.services.catalog.temp_storage import TempStorageService
 from opi.services.services_enums import ServiceType
 
@@ -49,6 +50,7 @@ SERVICES: dict[ServiceType, Service] = {
     ServiceType.NAMESPACE_REDIS: NamespaceRedisService(),
     ServiceType.PLATFORM: PlatformService(),
     ServiceType.ATTACHMENTS: AttachmentsService(),
+    ServiceType.SLEEP_MODE: SleepModeService(),
 }
 
 
@@ -98,6 +100,22 @@ def manifest_services() -> list[Service]:
     """
     contributing = [s for s in SERVICES.values() if type(s).contributes_to_manifests()]
     return sorted(contributing, key=lambda s: s.manifest_order)
+
+
+def collect_deployment_actions(project_data: dict, deployment_name: str) -> list:
+    """All deployment-level action buttons the project's services contribute.
+
+    Iterates every service whose ``ServiceDefinition`` declares an ``actions_provider``
+    and flattens their visible ``DeploymentAction``s, so the deployment-actions template
+    loops over data instead of hardcoding per-service conditions.
+    """
+    actions: list = []
+    for service in SERVICES.values():
+        provider = service.definition.actions_provider
+        if provider is None:
+            continue
+        actions.extend(action for action in provider(project_data, deployment_name) if action.visible)
+    return actions
 
 
 def component_service_editables() -> list[Editable]:

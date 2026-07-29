@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from opi.handlers.bootstrap_api_handler import BootstrapApiHandler
+from opi.services import ServiceType
 from opi.services.project import Project
+from opi.services.services import service_entry_name
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
@@ -149,7 +151,11 @@ class BootstrapManager:
         # Check if keycloak service is used
         services = project_data.get("services", [])
         for service in services:
-            if isinstance(service, dict) and "keycloak" in service:
+            # Format-agnostic: a bare string, the legacy single-key dict, or the uniform
+            # record. The old `isinstance(dict) and "keycloak" in service` matched only
+            # the legacy form, so a plain "keycloak" selection or a record with config
+            # left oidc_url/oidc_realm unset even though the service was in use.
+            if service_entry_name(service) == ServiceType.KEYCLOAK.value:
                 oidc_url = get_keycloak_discovery_url(cluster)
                 oidc_realm = generate_project_realm_name(project_name, cluster)
 

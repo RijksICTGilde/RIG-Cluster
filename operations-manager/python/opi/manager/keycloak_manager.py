@@ -21,6 +21,7 @@ from opi.core.startup import keycloak_operation_with_retry
 from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.project import Project
+from opi.services.services import service_entry_config, service_entry_name, service_entry_type
 from opi.utils.age import encrypt_age_content, get_project_public_key
 from opi.utils.naming import (
     HostnameFormat,
@@ -426,22 +427,27 @@ class KeycloakManager:
             logger.debug("No services defined, using default Keycloak config")
             return DEFAULT_CONFIG.copy()
 
-        # Find keycloak service config
+        # Find keycloak service config. Read format-agnostically: an entry is a bare
+        # string, the legacy single-key dict ({keycloak: {...}}), or the uniform record
+        # ({name: keycloak, config: {...}}) that the wizard writes today. The previous
+        # `"keycloak" in service_item` test only matched the legacy form -- a record has
+        # the keys `name` and `config` -- so every project in the current format fell
+        # back to DEFAULT_CONFIG. restrict-access therefore did nothing at all: no realm
+        # role created, no restriction applied, and no error to show for it.
         user_config = None
         keycloak_type = None
         for service_item in project_services:
-            if isinstance(service_item, dict) and "keycloak" in service_item:
-                service_data = service_item["keycloak"]
-                if not isinstance(service_data, dict):
+            if service_entry_name(service_item) != ServiceType.KEYCLOAK.value:
+                continue
+            if isinstance(service_item, dict):
+                body = service_item.get(ServiceType.KEYCLOAK.value) if "name" not in service_item else service_item
+                if body is not None and not isinstance(body, dict):
                     raise ValueError(
-                        f"Invalid keycloak service format. Expected dict with 'config' key, "
-                        f"got {type(service_data).__name__}"
+                        f"Invalid keycloak service format. Expected dict with 'config' key, got {type(body).__name__}"
                     )
-                # Extract type from service_data (not config)
-                keycloak_type = service_data.get("type")
-                if "config" in service_data:
-                    user_config = service_data["config"]
-                break
+            keycloak_type = service_entry_type(service_item)
+            user_config = service_entry_config(service_item)
+            break
 
         # If no config specified, use defaults
         if user_config is None:

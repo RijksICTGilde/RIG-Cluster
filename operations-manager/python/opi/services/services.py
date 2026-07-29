@@ -6,6 +6,7 @@ the entire application, from form submission to project processing.
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar
@@ -17,6 +18,34 @@ logger = logging.getLogger(__name__)
 
 class ServiceValidationError(ValueError):
     """Raised for user-facing service validation failures."""
+
+
+@dataclass
+class DeploymentAction:
+    """A deployment-level action button a service contributes to the UI.
+
+    ``section-deployment-actions.html.j2`` renders one button per action after its
+    own hardcoded buttons. This is the generic hook so a service (sleep-mode's
+    "wake", tomorrow the database console) owns its own button instead of the
+    template deriving the condition itself.
+    """
+
+    label: str
+    icon: str
+    #: ROOS button kind: "primary" | "secondary" | "warning" | "subtle" | ...
+    kind: str
+    #: Web-route path the htmx POST targets (CSRF handled by the template).
+    endpoint: str
+    #: Optional confirm dialog text; None means no confirmation.
+    confirm_message: str | None = None
+    #: Whether the button should render for this deployment.
+    visible: bool = True
+
+
+#: A service's action provider: given (project_data, deployment_name) it returns the
+#: deployment-level buttons that service wants shown. Kept as a plain callable so
+#: services.py stays free of forms/web imports.
+ActionsProvider = Callable[[dict[str, Any], str], list[DeploymentAction]]
 
 
 def service_entry_name(entry: Any) -> str | None:
@@ -58,6 +87,26 @@ def service_entry_schema_version(entry: Any) -> str | None:
         version = entry.get("schema-version")
         if version is not None:
             return str(version)
+    return None
+
+
+def service_entry_type(entry: Any) -> str | None:
+    """Return the ``type`` of a service entry, format-agnostic (None if none).
+
+    ``type`` marks a service as externally provided (e.g. keycloak ``type: external``)
+    and sits next to ``config``, not inside it. New record: on the entry itself. Legacy
+    ``{X: {type: ..., config: ...}}``: inside the name-keyed body, which is why this
+    cannot simply read the top level the way ``service_entry_schema_version`` does.
+    """
+    if not isinstance(entry, dict):
+        return None
+    if "name" in entry or "reference" in entry:
+        value = entry.get("type")
+        return str(value) if value is not None else None
+    name = service_entry_name(entry)
+    body = entry.get(name) if name is not None else None
+    if isinstance(body, dict) and body.get("type") is not None:
+        return str(body["type"])
     return None
 
 
@@ -154,6 +203,13 @@ class ServiceDefinition:
     ``NAMESPACE_POSTGRESQL_DATABASE`` both use ``"database"``).
     The label is used as the ``resource_type`` value in backup runs and
     as the form field value in the backup wizard.
+    """
+    actions_provider: ActionsProvider | None = None
+    """Optional provider of deployment-level action buttons (see ``DeploymentAction``).
+
+    The deployment-actions template collects these across the services a project
+    uses, so a service owns its own button instead of the template hardcoding the
+    condition. ``None`` means the service contributes no buttons.
     """
 
 
@@ -570,6 +626,22 @@ class ServiceAdapter:
             scope="component",
             variables=[v.value for v in MetricsScraperVariables],
         ),
+        ServiceType.SLEEP_MODE: ServiceDefinition(
+            name="Slaapstand",
+            description=(
+                "Zet bepaalde deployments, op basis van matching, na een deadline in slaapstand "
+                "en wek ze op verzoek weer op. De deployment doet een koude start."
+            ),
+            icon="klok",
+            color="donkerblauw",
+            scope="deployment",
+            # Selectable in the wizard with its own project-level config section
+            # (SleepModeService.config_form_section). A cluster-wide default still
+            # applies, and `match` scopes which deployments it affects.
+            variables=[],
+            # actions_provider is bound by opi/services/catalog/sleep_mode/__init__.py
+            # (the wake button); services.py must not import the catalog package.
+        ),
     }
 
     @classmethod
@@ -842,13 +914,10 @@ class ServiceAdapter:
             ServiceType.NAMESPACE_REDIS.value,
         }
         project_services = project_data.get("services", [])
-        for service_item in project_services:
-            if isinstance(service_item, str):
-                if service_item in namespace_services:
-                    return True
-            elif isinstance(service_item, dict) and any(svc in service_item for svc in namespace_services):
-                return True
-        return False
+        # service_entry_name resolves all three entry formats. Matching on the raw dict
+        # keys only saw the legacy single-key form, so a namespace service carrying
+        # config (which makes it a {name, config} record) went undetected.
+        return any(service_entry_name(entry) in namespace_services for entry in project_services)
 
     @classmethod
     def get_variables(cls, service: ServiceType) -> list[VariableDefinition]:
