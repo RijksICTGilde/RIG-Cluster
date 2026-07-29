@@ -3,7 +3,10 @@
 **Status**: Voorstel (niet geïmplementeerd)
 **Prioriteit**: Hoog, en het tijdvenster sluit (zie "Waarom nu")
 **Aangemaakt**: 2026-07-28
-**Branch**: nog te kiezen, hoort niet thuis in de sleep-mode-branch
+**Basisbranch**: `uniform-declarative-platform-services`. Dat is de enige branch
+waar het servicesysteem (`opi/services/catalog/`) leeft; op `main` bestaat het
+niet, en dus ook niet in het draaiende productie-image. Bouw hier niet op main,
+en niet op de sleep-mode-branch.
 
 ## Samenvatting
 
@@ -264,10 +267,12 @@ Volgt de checklist uit `instructions/services.md` ("Adding a service").
    vervangen door `{{ probe_port | default(application_port, true) }}`. De
    `true` is nodig zodat ook `None` op de default valt, niet alleen
    "niet gedefinieerd".
-   *Verifieer*: de sleep-mode-waker
-   (`opi/services/catalog/sleep_mode/manifests.py:138`) zet zelf
-   `application_port` en géén `probe_port`, en moet ongewijzigd renderen.
-   Afgedekt door `tests/test_sleep_mode_manifests.py`.
+   *Verifieer*: de golden manifests blijven ongewijzigd, want geen enkel
+   testproject selecteert de service.
+   Let op: de sleep-mode-waker bestaat nog niet op deze basisbranch. Hij zet
+   straks zelf `application_port` en géén `probe_port`, dus met de
+   `default(application_port, true)` blijft hij vanzelf correct renderen zodra
+   die branch merget. Ga er in dit werk niet naar zoeken.
 
 6. **Opruimen.** Verwijder het `probe:` blok uit `opi/schemas/project_v2.json:407`
    en `extract_component_probe()` uit
@@ -300,6 +305,14 @@ een projectbestand terwijl het draaiende OPI-image hem nog niet kent, dan faalt
 `validate_project_schema` en zijn **alle** deploys van dat project stil
 geblokkeerd. Dat is exact het dp-bn7-scenario: een schemagat dat elke reprocess
 liet falen zonder dat iemand het merkte.
+
+Daar komt een tweede horde bij die groter is dan de eerste: het servicesysteem
+zelf zit nog niet in productie. `opi/services/catalog/` bestaat niet op `main`
+en niet in het gepinde image (`2026.07.27.0941-9d9c0764`). Deze service kan dus
+pas naar productie als `uniform-declarative-platform-services` (RC-5) gemerged
+en uitgerold is. Voor mft-tp9 betekent dat: de tussenoplossing hieronder is
+voorlopig het enige dat helpt, en die werkt juist omdat het oude `probe:` blok
+wél op main staat.
 
 Dus: code, image, pin in de odcn-overlay, uitrollen via ArgoCD, en pas daarna
 `mft-tp9.yaml`. Nooit andersom.
