@@ -21,6 +21,7 @@ class TestServiceType:
             "namespace-redis",
             "authorization-wall",
             "metrics-scraper",
+            "health-check",
             "platform",
             "attachments",
             "sleep-mode",
@@ -29,7 +30,7 @@ class TestServiceType:
         assert actual == expected
 
     def test_enum_count(self):
-        assert len(ServiceType) == 14
+        assert len(ServiceType) == 15
 
 
 class TestGetAllServices:

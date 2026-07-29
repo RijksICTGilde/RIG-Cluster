@@ -1,15 +1,13 @@
 # Configurable Health & Readiness Probes
 
-**Status**: Partially implemented (commit 8b91f13c, 2026-07-02)
+**Status**: Superseded -- implemented as the `health-check` service
+(see `features/health-check-service.md`)
 **Priority**: Medium
 **Created**: 2026-06-24
 
-> **Let op**: wat er gebouwd is, is een afgeslankte versie van onderstaand
-> ontwerp: een `probe:` blok met `scheme` (`none`/`tcp`/`http`/`https`),
-> `liveness-path` en `readiness-path`, op componentniveau. Niet gebouwd zijn:
-> de veldnaam `health`, de override per deployment-component, en de `port` per
-> probe. Zie [health-check-service.md](health-check-service.md) voor het plan om
-> het `probe:` blok te vervangen door een `health-check` service, mét poort.
+> This design is delivered by the component-level `health-check` service, which
+> adds the port targeting the earlier `probe:` block lacked and moves the config
+> into the service system. The rest of this document is kept for its rationale.
 
 ## Overview
 

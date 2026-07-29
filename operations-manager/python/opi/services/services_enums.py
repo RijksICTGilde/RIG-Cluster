@@ -9,6 +9,7 @@ class ServiceType(Enum):
     KEYCLOAK = "keycloak"
     AUTHORIZATION_WALL = "authorization-wall"
     METRICS_SCRAPER = "metrics-scraper"
+    HEALTH_CHECK = "health-check"
 
     # Storage services
     PERSISTENT_STORAGE = "persistent-storage"
