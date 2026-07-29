@@ -1,0 +1,160 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "prod-web"
+  namespace: "rig-myproject"
+  labels:
+    app: "prod-web"
+    deployment: "prod"
+    project: "myproject"
+    component: application
+spec:
+  strategy:
+    type: RollingUpdate
+  replicas: 1
+  revisionHistoryLimit: 3
+  # Cap how long Kubernetes reports a stalled rollout as "Progressing" before
+  # flipping it to ProgressDeadlineExceeded (default is 600s). ArgoCD's health
+  # gate waits out this window, so a broken rollout (e.g. ImagePullBackOff) would
+  # otherwise hang the sync for 10 minutes. 300s leaves room for genuinely slow
+  # starts while failing visibly faster.
+  progressDeadlineSeconds: 300
+  selector:
+    matchLabels:
+      app: "prod-web"
+      component: application
+  template:
+    metadata:
+      labels:
+        app: "prod-web"
+        deployment: "prod"
+        project: "myproject"
+        component: application
+        network-policy: allow-db-access
+    spec:
+      # Pod-level security context (OpenShift compatible)
+      securityContext:
+        # For OpenShift, let SCCs assign user/group IDs automatically.
+        # Per-component security overrides are intentionally ignored here:
+        # SCC admission injects a UID per namespace and would conflict.
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: "ghcr.io/org/web:1.2.3"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          # Container-level security context (OpenShift compatible)
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          envFrom:
+            - secretRef:
+                name: prod-keycloak
+            - secretRef:
+                name: prod-web-platform
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          startupProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 36  # 5 + (36 × 5) = 185 seconds max startup time
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            failureThreshold: 3
+        - name: authorization-wall
+          image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+          args:
+            - --provider=oidc
+            - "--oidc-issuer-url=https://keycloak.example.com/realms/myproject-odcn-production"
+            - "--client-id=prod-web"
+            - "--upstream=http://localhost:8080"
+            - --http-address=0.0.0.0:4180
+            - "--redirect-url=https://web.example.com/oauth2/callback"
+            - --email-domain=*
+            - --cookie-secure=true
+            - --skip-provider-button=false
+            - --custom-templates-dir=/etc/oauth2-proxy/templates
+            # Require a verified email address: reject any token whose email_verified is not true.
+            # Explicit (this is oauth2-proxy's default, but the security intent must be visible).
+            - --insecure-oidc-allow-unverified-email=false
+            - --scope=openid profile email
+          env:
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: "prod-keycloak"
+                  key: OIDC_CLIENT_SECRET
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: "prod-web-oauth2-cookie"
+                  key: cookie-secret
+          ports:
+            - containerPort: 4180
+              name: oauth2-proxy
+          volumeMounts:
+            - name: oauth2-signin-templates
+              mountPath: /etc/oauth2-proxy/templates
+              readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "50m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 4180
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 4180
+            initialDelaySeconds: 3
+            periodSeconds: 30
+      volumes:
+        - name: oauth2-signin-templates
+          configMap:
+            name: "prod-web-oauth2-signin"

@@ -11,7 +11,7 @@ import copy
 
 from opi.forms.editables.path import resolve_path
 from opi.forms.visualizers.bridge import should_render_editable
-from opi.forms.visualizers.fields.components import (
+from opi.services.catalog.attachments.visualizers import (
     ATTACHMENT_USE_ENV_NAME,
     ATTACHMENT_USE_PATH,
     ATTACHMENT_USE_SEQUENCE,

@@ -17,7 +17,6 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_admin_api_key
 from opi.core.config import settings
-from opi.core.database_pools import get_database_pool
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
 from opi.services.project_store import get_project_store
 
@@ -36,9 +35,8 @@ admin_router: APIRouter = APIRouter(
 
 
 def _get_marked_for_deletion_service() -> MarkedForDeletionService:
-    """Get a MarkedForDeletionService instance using the main database pool."""
-    pool = get_database_pool("main")
-    return MarkedForDeletionService(pool)
+    """Get a MarkedForDeletionService instance (ORM-backed)."""
+    return MarkedForDeletionService()
 
 
 @admin_router.get("/marked-for-deletion")
@@ -96,9 +94,7 @@ async def trigger_cleanup(
     """
     from opi.jobs.reconciliation import cleanup_project
 
-    pool = get_database_pool("main")
     results = await cleanup_project(
-        pool=pool,
         project_name=project_name,
         grace_period_days=grace_period_days,
         dry_run=dry_run,
@@ -134,14 +130,11 @@ async def trigger_reconciliation(
     """
     from opi.jobs.reconciliation import reconcile
 
-    pool = get_database_pool("main")
-
     # Build project YAML list from all loaded projects
     all_projects = get_project_store().get_all()
     project_yamls: list[dict[str, Any]] = [p.data for p in all_projects if p.data]
 
     results = await reconcile(
-        pool=pool,
         project_yamls=project_yamls,
         grace_period_days=grace_period_days,
         dry_run=dry_run,
@@ -205,11 +198,10 @@ async def orphan_sweep_report(request: Request) -> JSONResponse:
     """
     from opi.jobs.service_orphan_sweep import sweep
 
-    pool = get_database_pool("main")
     all_projects = get_project_store().get_all()
     project_yamls: list[dict[str, Any]] = [p.data for p in all_projects if p.data]
 
-    report = await sweep(pool, project_yamls, cluster=settings.CLUSTER_MANAGER)
+    report = await sweep(project_yamls, cluster=settings.CLUSTER_MANAGER)
     return JSONResponse(content=report, status_code=200)
 
 
@@ -240,12 +232,11 @@ async def confirm_orphans(request: Request) -> JSONResponse:
     if not isinstance(items, list) or not items:
         raise HTTPException(status_code=400, detail="Body must contain a non-empty 'items' list")
 
-    pool = get_database_pool("main")
     all_projects = get_project_store().get_all()
     project_yamls: list[dict[str, Any]] = [p.data for p in all_projects if p.data]
     cluster = settings.CLUSTER_MANAGER
 
-    report = await sweep(pool, project_yamls, cluster=cluster)
+    report = await sweep(project_yamls, cluster=cluster)
 
     # Index the fresh report by (type, name[, realm]) -> classification
     candidates: dict[tuple, dict[str, Any]] = {}

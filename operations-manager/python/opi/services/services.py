@@ -19,6 +19,67 @@ class ServiceValidationError(ValueError):
     """Raised for user-facing service validation failures."""
 
 
+def service_entry_name(entry: Any) -> str | None:
+    """Return the service name from a ``services``-list entry, format-agnostic.
+
+    Handles every form a services list may hold (RC-5 A):
+    - bare string: ``"publish-on-web"``
+    - new record (project): ``{"name": "keycloak", "config": {...}}``
+    - new record (component reference): ``{"reference": "keycloak", "config": ...}``
+    - legacy single-key dict: ``{"keycloak": {"config": {...}}}``
+
+    Returns None for an unrecognisable entry. The ``name``/``reference`` keys take
+    precedence, so a two-key record is handled where the legacy single-key logic
+    (``next(iter(dict))``) would break.
+    """
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        name = entry.get("name") or entry.get("reference")
+        if name is not None:
+            return name
+        # Legacy: the service name is the sole key (excluding record metadata).
+        keys = [key for key in entry if key not in ("config", "schema-version")]
+        if len(keys) == 1:
+            return keys[0]
+    return None
+
+
+def service_entry_schema_version(entry: Any) -> str | None:
+    """Return the ``schema-version`` stamped on a service entry, or None.
+
+    The version is a sibling of ``config`` on the entry record
+    (``{"name": "keycloak", "config": {...}, "schema-version": "2.0"}``). It tells
+    the provider which config version the stored block is at, so ``validate_config``
+    can migrate it forward before validating. None means the entry predates
+    versioning (treated as the service's current version).
+    """
+    if isinstance(entry, dict):
+        version = entry.get("schema-version")
+        if version is not None:
+            return str(version)
+    return None
+
+
+def service_entry_config(entry: Any) -> Any:
+    """Return the ``config`` of a service entry, format-agnostic (None if none).
+
+    New record: the ``config`` field on the entry. Legacy ``{X: {config: ...}}``: the
+    ``config`` under the name key, or -- for services whose legacy value carries the
+    config inline without a ``config`` wrapper (e.g. metrics-scraper
+    ``{metrics-scraper: {port, path}}``) -- that inline body itself.
+    """
+    if not isinstance(entry, dict):
+        return None
+    if "name" in entry or "reference" in entry:
+        return entry.get("config")
+    name = service_entry_name(entry)
+    body = entry.get(name) if name is not None else None
+    if isinstance(body, dict):
+        return body.get("config", body) if "config" in body else body
+    return body
+
+
 @dataclass
 class VariableDefinition:
     """
@@ -303,7 +364,11 @@ class RedisVariables(Enum):
     )
     PREFIX = VariableDefinition(
         name="REDIS_PREFIX",
-        description="Redis key/channel prefix for this project",
+        description=(
+            "Prefix voor Redis-sleutels en -kanalen van dit project, zonder scheidingsteken. "
+            "Bouw je sleutels en kanalen als <prefix>:<naam>. De ACL geeft alleen toegang "
+            "tot sleutels en kanalen die met <prefix>: beginnen"
+        ),
         source="secret",
         secret_key="key_prefix",
         aliases=["APP_REDIS_PREFIX"],
@@ -519,17 +584,10 @@ class ServiceAdapter:
         Returns a new list with missing dependency names prepended, preserving order.
         """
 
-        def _name(entry: Any) -> str | None:
-            if isinstance(entry, str):
-                return entry
-            if isinstance(entry, dict):
-                return next(iter(entry), None)
-            return None
-
-        selected_set = {name for entry in selected if (name := _name(entry)) is not None}
+        selected_set = {name for entry in selected if (name := service_entry_name(entry)) is not None}
         to_add: list[str] = []
         for entry in selected:
-            svc_name = _name(entry)
+            svc_name = service_entry_name(entry)
             if svc_name is None:
                 continue
             try:
@@ -655,10 +713,10 @@ class ServiceAdapter:
     def build_component_service_entries(cls, service_names: list[str]) -> list[str | dict[str, Any]]:
         """Build a component-level services list with storage configs embedded.
 
-        Converts a flat list of service name strings into the v2 mixed format
-        where storage services carry their config inline::
+        Converts a flat list of service name strings into the uniform component
+        format where storage services carry their config as a reference record::
 
-            ["publish-on-web", {"persistent-storage": {"config": [...]}}]
+            ["publish-on-web", {"reference": "persistent-storage", "config": [...]}]
         """
         parsed = cls.parse_services_from_strings(service_names)
         storage_configs = cls.create_storage_configs(parsed)
@@ -675,7 +733,7 @@ class ServiceAdapter:
         entries: list[str | dict[str, Any]] = []
         for svc in parsed:
             if svc.value in storage_by_svc:
-                entries.append({svc.value: {"config": storage_by_svc[svc.value]}})
+                entries.append({"reference": svc.value, "config": storage_by_svc[svc.value]})
             else:
                 entries.append(svc.value)
         return entries
@@ -701,20 +759,12 @@ class ServiceAdapter:
         service_names: list[str] = []
 
         for service_item in project_services:
-            if isinstance(service_item, str):
-                # Simple string format
-                service_names.append(service_item)
-            elif isinstance(service_item, dict):
-                # Dict format: {"service-name": {"config": {...}}}
-                # Extract the key (service name)
-                if len(service_item) == 0:
-                    raise ValueError(f"Service dict is empty: {service_item}")
-                if len(service_item) > 1:
-                    raise ValueError(f"Service dict should have exactly one key (service name): {service_item}")
-                service_name = next(iter(service_item.keys()))
-                service_names.append(service_name)
-            else:
+            if not isinstance(service_item, str | dict):
                 raise TypeError(f"Invalid service item type {type(service_item)}, must be str or dict: {service_item}")
+            name = service_entry_name(service_item)
+            if name is None:
+                raise ValueError(f"Cannot determine service name from entry: {service_item}")
+            service_names.append(name)
 
         return service_names
 
@@ -918,9 +968,7 @@ class ServiceAdapter:
                 existing_comp_svc_names = set(cls.extract_service_names_from_project_services(existing_comp_services))
 
                 entries_to_add = [
-                    entry
-                    for entry in new_entries
-                    if (entry if isinstance(entry, str) else next(iter(entry))) not in existing_comp_svc_names
+                    entry for entry in new_entries if service_entry_name(entry) not in existing_comp_svc_names
                 ]
 
                 if entries_to_add:
