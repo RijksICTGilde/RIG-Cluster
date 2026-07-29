@@ -78,6 +78,36 @@ def _project_namespaces(project_name: str) -> list[str]:
     return [ns for ns in names if project_name in ns]
 
 
+def wait_for_project_apps_healthy(project_name: str, *, timeout: float, interval: float = 5.0) -> bool:
+    """Wait until the project's ArgoCD app(s) exist and report health ``Healthy``.
+
+    This is the same condition ``create_project`` blocks on, so a create fixture
+    that waits for it no longer returns (and tears down) while the async
+    create_project task is still provisioning - which would otherwise delete the
+    app out from under the running task and jam the worker.
+
+    Best-effort: returns True immediately when kubectl is unavailable (so tests in
+    a kubectl-less environment keep their previous behaviour) and False on timeout
+    (the caller proceeds either way - this only paces teardown, it is not an
+    assertion).
+    """
+    if not kubectl_available():
+        return True
+
+    def _healthy() -> bool:
+        result = _run(
+            ["get", "applications", "-n", "rig-system", "-l", f"project={project_name}", "-o", "json"]
+        )
+        if result.returncode != 0:
+            return False
+        items = json.loads(result.stdout or '{"items": []}').get("items", [])
+        if not items:
+            return False
+        return all((app.get("status", {}).get("health", {}).get("status") == "Healthy") for app in items)
+
+    return wait_for(_healthy, timeout=timeout, interval=interval)
+
+
 def force_cleanup_project(project_name: str) -> None:
     """Best-effort teardown net: remove any namespace / ArgoCD app the project
     delete left behind. Never raises - teardown must not fail a test.
