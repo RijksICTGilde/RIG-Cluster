@@ -116,3 +116,127 @@ class TestComponentServiceNameExtraction:
 
         # Must not raise: both referenced services are selected at project level.
         asyncio.run(ComponentServicesEnforcer().enforce(value, {}))
+
+
+# ---------------------------------------------------------------------------
+# Guard (WP1): every consumer swept in the audit must read a *configured* service
+# in all three formats. Each test below reverts to red if its fix is undone,
+# because it exercises the record form -- the one the old raw-structure reads
+# (``next(iter(keys))``, ``"x" in entry``, membership-on-dict) silently missed.
+# ---------------------------------------------------------------------------
+
+
+class TestConfiguredServiceReaders:
+    """Manager/handler readers that fetch a service's config block by service type."""
+
+    def test_minio_config_read_in_every_format(self) -> None:
+        from opi.manager.minio_manager import MinioManager
+
+        cfg = {"buckets": ["a"]}
+        for entry in _formats(ServiceType.MINIO_STORAGE.value, config=cfg):
+            if entry is None:
+                continue
+            project = {"services": [entry], "deployments": [{"name": "dep"}]}
+            # self is unused by the reader; pass None to avoid the manager's I/O deps.
+            assert MinioManager._get_minio_service_config(None, project, "dep") == cfg
+
+    def test_redis_config_read_in_every_format(self) -> None:
+        from opi.manager.redis_manager import RedisManager
+
+        cfg = {"maxmemory": "64mb"}
+        for entry in _formats(ServiceType.REDIS.value, config=cfg):
+            if entry is None:
+                continue
+            assert RedisManager._get_redis_service_config({"services": [entry]}) == cfg
+
+    def test_bootstrap_keycloak_config_read_in_every_format(self) -> None:
+        from opi.bootstrap.keycloak_setup import KeycloakSetup
+
+        cfg = {"template": "algoritmeregister", "restrict_access": {"enabled": True}}
+        for entry in _formats(ServiceType.KEYCLOAK.value, config=cfg):
+            if entry is None:
+                continue
+            extracted = KeycloakSetup._extract_keycloak_service_config(None, {"services": [entry]})
+            assert extracted["template"] == "algoritmeregister"
+            assert extracted["restrict_access"] == {"enabled": True}
+
+
+class TestPublishOnWebCertificateGuard:
+    """The attachment delete-guard scans publish-on-web ``provided`` certificates; a
+    record-form entry must not slip past it (else an in-use cert looks deletable)."""
+
+    def test_provided_certificate_detected_in_every_format(self) -> None:
+        from opi.handlers.project_file_handler import attachment_is_referenced
+
+        cfg = {"tls": "provided", "attachment": "my-cert"}
+        for entry in _formats(ServiceType.PUBLISH_ON_WEB.value, config=cfg):
+            if entry is None:
+                continue
+            project = {"services": [entry], "components": [], "deployments": []}
+            assert attachment_is_referenced(project, "my-cert") is True
+
+
+class TestComponentsUsingServiceGuard:
+    """Backup discovery resolves which components use a storage/db service; a storage
+    service in the component *record* form (``{reference, config}``) must be found."""
+
+    def test_storage_component_found_in_record_form(self) -> None:
+        from opi.handlers.project_file_handler import ProjectFileHandler
+
+        project = {
+            "components": [
+                {
+                    "name": "app",
+                    "services": [{"reference": ServiceType.PERSISTENT_STORAGE.value, "config": [{"name": "data"}]}],
+                }
+            ],
+            "deployments": [{"name": "dep", "components": [{"reference": "app"}]}],
+        }
+        results = ProjectFileHandler().get_components_using_service(
+            project, "dep", [ServiceType.PERSISTENT_STORAGE.value]
+        )
+        assert [r["component_name"] for r in results] == ["app"]
+
+
+class TestFilterEmptyServiceEntries:
+    """The empty-entry filter must keep a uniform record and still drop empties, without
+    the single-key assumption its ``break`` used to make."""
+
+    def test_keeps_record_and_bare_string_drops_empty(self) -> None:
+        from opi.handlers.project_file_handler import _filter_empty_service_entries
+
+        kept = _filter_empty_service_entries(
+            [
+                "publish-on-web",
+                {"name": "keycloak", "config": {"template": "sso-only"}},
+                {"reference": "persistent-storage", "config": [{"name": "data"}]},
+                {"metrics-scraper": None},
+                {"redis": {}},
+            ]
+        )
+        assert "publish-on-web" in kept
+        assert {"name": "keycloak", "config": {"template": "sso-only"}} in kept
+        assert {"reference": "persistent-storage", "config": [{"name": "data"}]} in kept
+        assert {"metrics-scraper": None} not in kept
+        assert {"redis": {}} not in kept
+
+
+# (file, forbidden substring) pairs -- each is a raw-structure read the audit removed.
+_FORBIDDEN_RAW_READS = [
+    ("opi/manager/minio_manager.py", "next(iter(service.keys()))"),
+    ("opi/manager/redis_manager.py", "next(iter(service.keys()))"),
+    ("opi/bootstrap/keycloak_setup.py", '"keycloak" in service'),
+    ("opi/handlers/project_file_handler.py", "next(iter(service.keys()))"),
+]
+
+
+class TestNoRawEntryReadsReintroduced:
+    """Source guard: the swept files must not reintroduce the raw-structure reads that
+    miss the record form. This fails loudly if a fix is reverted to the old shape."""
+
+    def test_forbidden_patterns_absent(self) -> None:
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent.parent
+        offenders = [f"{rel}: {needle}" for rel, needle in _FORBIDDEN_RAW_READS if needle in (root / rel).read_text()]
+        assert not offenders, "raw service-entry read reintroduced:\n" + "\n".join(offenders)

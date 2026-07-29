@@ -206,6 +206,28 @@ class ManifestContribution:
     secret_files: list[SecretFileSpec] = field(default_factory=list)
 
 
+@dataclass
+class DetailPageSection:
+    """A read-only section a service renders on the project-details page (WP2).
+
+    The service owns both the template and its data; the detail page loops over what
+    the project's selected services return instead of hardcoding a per-service
+    ``{% include %}``. This is the read-only counterpart of ``config_form_section``:
+    without it a section (like the Keycloak realm block) drifts away from its config
+    whenever that config moves, because the template still points at the old location.
+
+    ``template`` is any path the app Jinja environment can resolve. Service-owned
+    templates live next to the service under ``opi/services/catalog/<svc>/`` and are
+    addressed as ``<svc>/<file>`` -- the catalog directory is on the template search
+    path (see ``opi/core/templates.py``).
+    """
+
+    #: Template path resolvable by the app Jinja env (e.g. ``keycloak/section-detail.html.j2``).
+    template: str
+    #: Data the template reads, exposed to the include as ``section.context``.
+    context: dict[str, Any] = field(default_factory=dict)
+
+
 class Service(ABC):
     """One subclass per ``ServiceType``; the single declarative home for a service.
 
@@ -353,6 +375,21 @@ class Service(ABC):
         None. The forms layer sources its per-service sections from here instead of
         hand-authoring them."""
         return None
+
+    def detail_page_sections(self, project_data: dict[str, Any], user_role: str) -> list[DetailPageSection]:
+        """Read-only project-details sections this service contributes (default none).
+
+        The read-only counterpart of ``config_form_section``: the detail view
+        (``collect_detail_page_sections``) gathers these across the services the
+        project actually uses and renders each, so the presentation of a service's own
+        data lives with the service instead of hardcoded in the general template.
+
+        ``project_data`` is the DECRYPTED project dict, so a service can surface its
+        managed credentials; ``user_role`` lets the service gate on the viewer's role
+        (a section that returns nothing for a role simply omits itself). A service with
+        nothing to show on the detail page returns ``[]``.
+        """
+        return []
 
     def config_component_layout(self) -> list[Any]:
         """Layout node(s) this service HOOKS INTO the per-component form (default none).

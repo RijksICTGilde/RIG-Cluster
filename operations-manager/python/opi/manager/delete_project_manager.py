@@ -1951,17 +1951,17 @@ class DeleteProjectManager:
                 [ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value],
             )
         else:
-            # Legacy fallback: unreliable but kept for backward compatibility
+            # Legacy fallback: unreliable but kept for backward compatibility. Resolve
+            # entries via the canonical helper (bare string / legacy / record) and match
+            # the same canonical service types the primary path uses, instead of reading
+            # only ``reference`` against non-canonical name literals.
             services = deployment_data.get("services", [])
-            has_database = any(
-                s.get("reference") in ("database", "postgresql") for s in services if isinstance(s, dict)
+            service_names = {service_entry_name(s) for s in services}
+            has_database = bool(
+                service_names & {ServiceType.POSTGRESQL_DATABASE.value, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value}
             )
-            has_minio = any(
-                s.get("reference") in ("minio", "minio-storage", "object-storage")
-                for s in services
-                if isinstance(s, dict)
-            )
-            has_redis = False  # Legacy path didn't handle Redis
+            has_minio = ServiceType.MINIO_STORAGE.value in service_names
+            has_redis = bool(service_names & {ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value})
 
         # 3. Delete Keycloak resources (ephemeral)
         # Uses service_check_yaml so the deployment's component references are found

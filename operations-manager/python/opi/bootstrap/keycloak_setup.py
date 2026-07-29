@@ -172,17 +172,24 @@ class KeycloakSetup:
         Returns:
             Dictionary with template, variables, and users config
         """
+        from opi.services.services import service_entry_config, service_entry_name
+        from opi.services.services_enums import ServiceType
+
         default: dict[str, Any] = {"template": "sso-support", "variables": {}, "users": []}
         services = project_data.get("services", [])
         for service in services:
-            if isinstance(service, dict) and "keycloak" in service:
-                config = service["keycloak"].get("config", {})
-                return {
-                    "template": config.get("template", "sso-support"),
-                    "variables": config.get("variables", {}),
-                    "restrict_access": config.get("restrict_access"),
-                    "users": config.get("users", []),
-                }
+            # Format-agnostic: the keycloak entry may be a record ({name, config}), a
+            # legacy single-key dict, or a bare string. Matching on ``"keycloak" in dict``
+            # only saw the legacy form and silently missed the uniform record.
+            if service_entry_name(service) != ServiceType.KEYCLOAK.value:
+                continue
+            config = service_entry_config(service) or {}
+            return {
+                "template": config.get("template", "sso-support"),
+                "variables": config.get("variables", {}),
+                "restrict_access": config.get("restrict_access"),
+                "users": config.get("users", []),
+            }
         return default
 
     async def setup_operations_client(self, realm_name: str | None = None) -> bool:

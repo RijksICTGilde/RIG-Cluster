@@ -207,3 +207,41 @@ async def test_re_saving_what_was_just_committed_is_not_a_conflict(store_and_rem
     assert result["status"] == "success", result.get("error")
     assert _committed(remote)["display-name"] == "via de modal bewerkt"
     progress.fail_project.assert_not_called()
+
+
+async def test_third_write_between_the_two_modal_saves_is_not_a_spurious_conflict(store_and_remote: Any) -> None:
+    """WP4 #1 guard: the modal edit saves in-request, then the deploy task re-saves the
+    SAME content against the render snapshot. Even when a third write lands *between*
+    those two saves, the task's re-save must not raise a conflict for a change it already
+    committed -- the three-way merge folds its own already-applied delta cleanly.
+
+    Interleaving: save #1 commits the modal edit; user C commits a change to a different
+    field on top of it; the deploy task's redundant re-save (base = the render snapshot,
+    which predates both) runs last. Verified: C's change and the modal edit both survive,
+    no conflict. (This is the scenario audited as a possible spurious-conflict risk; the
+    store already handles it, so no code change was needed -- this pins that.)
+    """
+    store, remote = store_and_remote
+
+    version = await store.version_of(RELATIVE_PATH)
+    assert version is not None
+    as_rendered = await store.read_version(version)
+    assert as_rendered is not None
+
+    edited = copy.deepcopy(as_rendered)
+    edited["display-name"] = "via de modal bewerkt"
+
+    # Save #1: the request handler commits the modal edit (base = what it read).
+    await store.save(PROJECT_NAME, edited, message="modal edit", actor="tester", base=as_rendered)
+
+    # A third writer changes a DIFFERENT field on top of the just-committed edit.
+    _external_edit(remote, lambda d: d.update({"description": "aangepast door C"}))
+
+    # Save #2: the deploy task re-saves the modal content against the render snapshot.
+    result, progress = await _run_task(_submission(edited, version))
+
+    assert result["status"] == "success", result.get("error")
+    landed = _committed(remote)
+    assert landed["display-name"] == "via de modal bewerkt", "the modal edit was lost"
+    assert landed["description"] == "aangepast door C", "the third writer's change was overwritten"
+    progress.fail_project.assert_not_called()

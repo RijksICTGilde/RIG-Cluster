@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import markupsafe
 from fastapi.templating import Jinja2Templates
+from jinja2 import FileSystemLoader
 from jinja_roos_components import setup_components
 from jinja_roos_components.extension import ComponentExtension
 
@@ -135,9 +136,21 @@ def get_service_name(service: str | dict[str, Any]) -> str:
 # Get the opi package directory (operations-manager/python/opi)
 OPI_DIR = Path(__file__).parent.parent
 TEMPLATES_DIR = OPI_DIR / "templates"
+# Service-owned templates live next to their service under services/catalog/<svc>/ and
+# are addressed as "<svc>/<file>". Putting the catalog dir on the search path lets a
+# service deliver its own detail-page section (WP2) instead of the general template
+# hardcoding an include (see Service.detail_page_sections / DetailPageSection).
+CATALOG_DIR = OPI_DIR / "services" / "catalog"
 
 # Create templates instance
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+# Add service-owned catalog templates to the SAME FileSystemLoader search path, so a
+# service can deliver its own detail-page section. It must stay a FileSystemLoader:
+# setup_components (below) registers the ROOS component templates by appending to
+# loader.searchpath, which only a FileSystemLoader has.
+if not isinstance(templates.env.loader, FileSystemLoader):
+    raise TypeError("templates env loader must be a FileSystemLoader for catalog + ROOS search paths")
+templates.env.loader.searchpath.append(str(CATALOG_DIR))
 
 # Setup ROOS components immediately on the global templates instance
 # Enable strict validation in development/debug mode
