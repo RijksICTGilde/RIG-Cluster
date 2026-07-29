@@ -23,12 +23,13 @@ class TestServiceType:
             "metrics-scraper",
             "platform",
             "attachments",
+            "sleep-mode",
         }
         actual = {st.value for st in ServiceType}
         assert actual == expected
 
     def test_enum_count(self):
-        assert len(ServiceType) == 13
+        assert len(ServiceType) == 14
 
 
 class TestGetAllServices:

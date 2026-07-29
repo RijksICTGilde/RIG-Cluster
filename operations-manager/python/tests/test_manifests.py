@@ -750,6 +750,141 @@ class TestRenderRealTemplates:
         assert len(containers) == 1
         assert containers[0]["name"] == "app"
 
+    def test_deployment_template_object_name_overrides_metadata_name(self):
+        """``object_name`` renames the Deployment while ``name`` still drives the app label.
+
+        This is how the sleep-mode waker lands a ``<name>-waker`` Deployment behind the
+        same Service: the metadata name is unique, but ``app: <name>`` matches the Service.
+        """
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "object_name": "api-waker",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 8080,
+                "imageURL": "registry.example.com/waker:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["metadata"]["name"] == "api-waker"
+        # The app label and both selectors still use ``name`` so the waker sits behind the Service.
+        assert doc["metadata"]["labels"]["app"] == "api"
+        assert doc["spec"]["selector"]["matchLabels"]["app"] == "api"
+        assert doc["spec"]["template"]["metadata"]["labels"]["app"] == "api"
+
+    def test_deployment_template_extra_selector_labels_in_selector_and_pod(self):
+        """``extra_selector_labels`` appear in both the selector and the pod labels."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "object_name": "api-waker",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 8080,
+                "imageURL": "registry.example.com/waker:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+                "extra_selector_labels": {"zad-role": "waker"},
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["spec"]["selector"]["matchLabels"]["zad-role"] == "waker"
+        assert doc["spec"]["template"]["metadata"]["labels"]["zad-role"] == "waker"
+
+    def test_deployment_template_readiness_failure_threshold_override(self):
+        """``probe_readiness_failure_threshold`` overrides the default 3."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 8080,
+                "imageURL": "registry.example.com/waker:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+                "probe_scheme": "http",
+                "probe_readiness_failure_threshold": 1,
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        probe = doc["spec"]["template"]["spec"]["containers"][0]["readinessProbe"]
+        assert probe["failureThreshold"] == 1
+
+    def test_deployment_template_env_from_configmaps(self):
+        """``env_from_configmaps`` add configMapRef entries to envFrom alongside secrets."""
+        result = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "api",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "pod_replacement_mode": "RollingUpdate",
+                "generated_at": "2024-01-01T00:00:00Z",
+                "application_port": 8080,
+                "imageURL": "registry.example.com/waker:latest",
+                "imagePullPolicy": "Always",
+                "cluster": "local",
+                "env_from_secrets": ["api-waker-token"],
+                "env_from_configmaps": ["api-waker-config"],
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        env_from = doc["spec"]["template"]["spec"]["containers"][0]["envFrom"]
+        assert {"secretRef": {"name": "api-waker-token"}} in env_from
+        assert {"configMapRef": {"name": "api-waker-config"}} in env_from
+
+    def test_configmap_template_renders_data(self):
+        """The generic configmap template emits labels and every data key."""
+        result = render_template(
+            "configmap.yaml.jinja",
+            {
+                "name": "api-waker-config",
+                "namespace": "rig-proj",
+                "app_label": "api",
+                "project": {"name": "myproj"},
+                "data": {"ZAD_APP_TITLE": "My App", "ZAD_POLL_INTERVAL_SEC": "3"},
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["kind"] == "ConfigMap"
+        assert doc["metadata"]["name"] == "api-waker-config"
+        assert doc["metadata"]["labels"]["app"] == "api"
+        assert doc["metadata"]["labels"]["project"] == "myproj"
+        assert doc["data"]["ZAD_APP_TITLE"] == "My App"
+        assert doc["data"]["ZAD_POLL_INTERVAL_SEC"] == "3"
+
+    def test_configmap_template_app_label_defaults_to_name(self):
+        """Without ``app_label`` the configmap labels fall back to ``name``."""
+        result = render_template(
+            "configmap.yaml.jinja",
+            {
+                "name": "cfg",
+                "namespace": "rig-proj",
+                "project": {"name": "myproj"},
+                "data": {},
+            },
+        )
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["metadata"]["labels"]["app"] == "cfg"
+
     def test_service_template_with_authorization_wall_port(self):
         result = render_template(
             "service.yaml.jinja",

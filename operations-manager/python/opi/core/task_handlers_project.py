@@ -28,7 +28,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     """
     from opi.core.simple_background import _monitor_argocd_and_deployment
     from opi.manager.project_manager import ProjectManager
-    from opi.services.project_store import get_project_store
+    from opi.services.project_store import ConflictError, get_project_store
     from opi.utils.project_utils import generate_self_service_project_yaml, validate_project_name
 
     start_time = time.time()
@@ -143,10 +143,44 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
         # No connector injected on purpose. Injecting one makes ProjectManager skip
         # the store's warm copy (see get_git_connector_for_project_files), so the
         # processing step below would read a clone taken before this very write.
+        # What arrives here is a COMPLETE project file, built from what the user saw
+        # when the form was rendered. Publishing it as-is overwrites anything that
+        # landed in between -- another portal user, another cluster, a direct push --
+        # without anyone noticing. ``base_version`` names the version the form started
+        # from, so the store can treat this as a change relative to that version and
+        # merge it with the newer state instead. A caller that does not send one keeps
+        # the old last-writer-wins behaviour; it is logged so the gap stays visible.
+        base: dict[str, Any] | None = None
+        if not is_new_project:
+            base_version: str | None = payload.get("base_version")
+            if base_version:
+                base = await store.read_version(base_version)
+                if base is None:
+                    logger.warning(
+                        "Version %s of %s is no longer readable; saving without a concurrency check",
+                        base_version,
+                        project_file_path,
+                    )
+            else:
+                logger.warning(
+                    "No base_version in the create_project payload for %s; that caller is not wired up yet, "
+                    "so a concurrent change to this project would be overwritten",
+                    project_name,
+                )
+
         project_manager = ProjectManager(project_file_relative_path=project_file_path)
-        await project_manager.save_and_commit_project(project_data_dict, commit_message)
+        await project_manager.save_and_commit_project(project_data_dict, commit_message, base=base)
         logger.info("Project file created and pushed at %s", project_file_path)
         progress.complete_task(git_task)
+    except ConflictError as exc:
+        logger.warning("Concurrent change blocked the save of %s: %s", project_name, exc)
+        error_msg = (
+            "Dit project is ondertussen door iemand anders gewijzigd en de wijzigingen konden niet "
+            "automatisch worden samengevoegd. Herlaad de pagina en probeer het opnieuw."
+        )
+        progress.fail_task(git_task, error_msg)
+        progress.fail_project(error_msg)
+        return {"project_name": project_name, "status": "failed", "error": error_msg}
     except Exception as exc:
         error_msg = f"Failed Git operations: {exc}"
         progress.fail_task(git_task, error_msg)

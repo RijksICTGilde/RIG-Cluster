@@ -32,6 +32,7 @@ from opi.forms.visualizers.wizard_sections import (
     RESTORE_TARGET_SECTION,
     SERVICES_EDIT_SECTION,
     SERVICES_SECTION,
+    SLEEP_MODE_CONFIG_SECTION,
     TEAM_SECTION,
     build_deployment_wizard_section,
     build_domain_section,
@@ -78,6 +79,9 @@ CREATE_FLOW = FormFlow(
         TEAM_SECTION,
         ATTACHMENTS_SECTION,
         COMPONENTS_SECTION,
+        # After COMPONENTS_SECTION so the waker-component select is populated from the
+        # components already entered into the draft project (empty earlier in the flow).
+        SLEEP_MODE_CONFIG_SECTION,
         build_deployment_wizard_section(0),
         build_domain_section(0),
     ],
@@ -98,6 +102,7 @@ EDIT_FLOW = FormFlow(
         AUTH_WALL_CONFIG_SECTION,
         TEAM_SECTION,
         COMPONENTS_SECTION,
+        SLEEP_MODE_CONFIG_SECTION,
         DEPLOYMENTS_SECTION,
         CONFIG_DISPLAY_SECTION,
     ],
@@ -145,6 +150,7 @@ MODAL_EDIT_SERVICES_FLOW = FormFlow(
         KEYCLOAK_CONFIG_SECTION,
         POSTGRESQL_CONFIG_SECTION,
         AUTH_WALL_CONFIG_SECTION,
+        SLEEP_MODE_CONFIG_SECTION,
         ATTACHMENTS_SECTION,
     ],
 )
@@ -179,6 +185,14 @@ MODAL_EDIT_AUTH_WALL_FLOW = FormFlow(
     mode=FlowMode.WIZARD,
     show_review=False,
     sections=[AUTH_WALL_CONFIG_SECTION],
+)
+
+MODAL_EDIT_SLEEP_MODE_FLOW = FormFlow(
+    flow_id="modal-edit-sleep-mode-config",
+    title="Slaapstand configuratie",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[SLEEP_MODE_CONFIG_SECTION],
 )
 
 # ---------------------------------------------------------------------------
@@ -220,6 +234,7 @@ FLOW_REGISTRY: dict[str, FormFlow] = {
     MODAL_EDIT_KEYCLOAK_FLOW.flow_id: MODAL_EDIT_KEYCLOAK_FLOW,
     MODAL_EDIT_POSTGRESQL_FLOW.flow_id: MODAL_EDIT_POSTGRESQL_FLOW,
     MODAL_EDIT_AUTH_WALL_FLOW.flow_id: MODAL_EDIT_AUTH_WALL_FLOW,
+    MODAL_EDIT_SLEEP_MODE_FLOW.flow_id: MODAL_EDIT_SLEEP_MODE_FLOW,
     MODAL_BACKUP_FLOW.flow_id: MODAL_BACKUP_FLOW,
 }
 
