@@ -16,6 +16,7 @@ from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
 
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.project import Project
 from opi.services.resource_analyzer import _k8s_memory_to_mb
 from opi.services.schema_migration import migrate_to_latest
 from opi.utils.age import decrypt_age_block_to_bytes, decrypt_password_smart_sync, get_decoded_project_private_key
@@ -818,11 +819,13 @@ class ProjectFileHandler:
         return storage_configs
 
     def _find_component(self, project_data: dict[str, Any], component_name: str) -> dict[str, Any] | None:
-        """Find a component dict by name in project data."""
-        for comp in project_data.get("components", []):
-            if isinstance(comp, dict) and comp.get("name") == component_name:
-                return comp
-        return None
+        """Find a component dict by name in project data.
+
+        Delegates to the shared Project (RC-5 consolidation) so this
+        reference lookup uses the one reference-aware access layer instead of a
+        hand-rolled scan.
+        """
+        return Project(project_data).find("components", name=component_name)
 
     def _decrypt_and_clean_env_vars(self, env_vars: dict[str, Any], private_key: str | None) -> dict[str, str]:
         """Decrypt individual env var values.
@@ -2193,11 +2196,10 @@ class ProjectFileHandler:
             Remote source configuration or None if not found
         """
         remote_sources = self.extract_remote_sources(project_data)
-        for source in remote_sources:
-            if source.get("name") == name:
-                logger.debug(f"Found remote source: {name}")
-                return source
-
+        source = Project.locate(remote_sources, name=name)
+        if source is not None:
+            logger.debug(f"Found remote source: {name}")
+            return source
         logger.warning(f"Remote source '{name}' not found")
         return None
 
@@ -2418,11 +2420,10 @@ class ProjectFileHandler:
             Helm-chart configuration or None if not found
         """
         helm_charts = self.extract_helm_charts(project_data)
-        for chart in helm_charts:
-            if chart.get("name") == name:
-                logger.debug(f"Found helm chart: {name}")
-                return chart
-
+        chart = Project.locate(helm_charts, name=name)
+        if chart is not None:
+            logger.debug(f"Found helm chart: {name}")
+            return chart
         logger.warning(f"Helm chart '{name}' not found")
         return None
 
@@ -2669,11 +2670,10 @@ class ProjectFileHandler:
             Helmfile configuration or None if not found
         """
         helmfiles = self.extract_helmfiles(project_data)
-        for helmfile in helmfiles:
-            if helmfile.get("name") == name:
-                logger.debug(f"Found helmfile: {name}")
-                return helmfile
-
+        helmfile = Project.locate(helmfiles, name=name)
+        if helmfile is not None:
+            logger.debug(f"Found helmfile: {name}")
+            return helmfile
         logger.warning(f"Helmfile '{name}' not found")
         return None
 
@@ -2994,12 +2994,10 @@ class ProjectFileHandler:
         """
         invites = self.extract_invites_config(project_data)
         active_invites = invites.get("active", [])
-
-        for invite in active_invites:
-            if invite.get("key") == key:
-                logger.debug(f"Found invite with key: {key}")
-                return invite
-
+        invite = Project.locate(active_invites, key=key)
+        if invite is not None:
+            logger.debug(f"Found invite with key: {key}")
+            return invite
         logger.debug(f"Invite with key '{key}' not found")
         return None
 
@@ -3146,23 +3144,23 @@ def extract_storage_from_component_services(component: dict[str, Any]) -> list[d
         List of storage config dicts with keys: name, size, mount-path, type
     """
     from opi.services.schema_migration import _STORAGE_SERVICE_TO_TYPE
+    from opi.services.services import service_entry_config, service_entry_name
 
     storage_configs: list[dict[str, Any]] = []
-    services = component.get("services", [])
-
-    for entry in services:
-        if not isinstance(entry, dict):
+    for entry in component.get("services", []):
+        # Format-agnostic (bare string / legacy name-as-key / new {reference, config}).
+        name = service_entry_name(entry)
+        if name not in _STORAGE_SERVICE_TO_TYPE:
             continue
-        for service_name, service_data in entry.items():
-            if service_name not in _STORAGE_SERVICE_TO_TYPE:
-                continue
-            storage_type = _STORAGE_SERVICE_TO_TYPE[service_name]
-            config_items = service_data.get("config", []) if isinstance(service_data, dict) else []
-            for item in config_items:
-                if isinstance(item, dict):
-                    config = dict(item)
-                    config["type"] = storage_type
-                    storage_configs.append(config)
+        storage_type = _STORAGE_SERVICE_TO_TYPE[name]
+        config_items = service_entry_config(entry)
+        if not isinstance(config_items, list):
+            continue
+        for item in config_items:
+            if isinstance(item, dict):
+                config = dict(item)
+                config["type"] = storage_type
+                storage_configs.append(config)
 
     return storage_configs
 
@@ -3239,16 +3237,18 @@ def extract_component_attachment_uses(component: dict[str, Any]) -> list[dict[st
     Reads the ``config`` key (``use`` is the pre-rename name, still accepted for any
     not-yet-migrated data).
     """
+    from opi.services.services import service_entry_config, service_entry_name
+
     uses: list[dict[str, Any]] = []
     for entry in component.get("services", []):
-        if not isinstance(entry, dict):
+        # Format-agnostic (legacy {attachments: {config}} / new {reference: attachments, config}).
+        if service_entry_name(entry) != "attachments":
             continue
-        service_data = entry.get("attachments")
-        if not isinstance(service_data, dict):
-            continue
-        coupling = service_data.get("config")
-        if coupling is None:
-            coupling = service_data.get("use", [])
+        coupling = service_entry_config(entry)
+        if coupling is None and isinstance(entry, dict):
+            # Legacy pre-rename 'use' key (only on the legacy name-as-key form).
+            body = entry.get("attachments")
+            coupling = body.get("use", []) if isinstance(body, dict) else []
         uses.extend(item for item in (coupling or []) if isinstance(item, dict) and item.get("reference"))
     return uses
 

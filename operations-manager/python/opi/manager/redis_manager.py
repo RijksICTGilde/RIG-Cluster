@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 from opi.core.cluster_config import get_redis_server
 from opi.core.config import settings
 from opi.services import ServiceType
+from opi.services.services import service_entry_name
 from opi.utils.naming import generate_redis_key_prefix, generate_redis_username
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import RedisSecret
@@ -327,17 +328,10 @@ class RedisManager:
     def _project_uses_namespace_redis(self, project_data: dict[str, Any]) -> bool:
         """Check if project uses namespace-specific Redis service."""
         project_services = project_data.get("services", [])
-        if not project_services:
-            return False
-
-        for service_item in project_services:
-            if isinstance(service_item, str):
-                if service_item == ServiceType.NAMESPACE_REDIS.value:
-                    return True
-            elif isinstance(service_item, dict) and ServiceType.NAMESPACE_REDIS.value in service_item:
-                return True
-
-        return False
+        # Format-agnostic (bare string / legacy name-as-key / new {name, config} record).
+        return any(
+            service_entry_name(service_item) == ServiceType.NAMESPACE_REDIS.value for service_item in project_services
+        )
 
     @staticmethod
     def _get_redis_service_config(project_data: dict[str, Any]) -> dict[str, Any] | None:

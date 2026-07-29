@@ -1,7 +1,9 @@
 # Uniform, Declarative Platform Services
 
-Status: Idea / design brief (2026-07-19). No code yet — this is the target
-architecture and migration roadmap for making platform services uniform.
+Status: Implemented (2026-07-24). This was the design brief and phased migration
+roadmap; the delivered architecture is documented in
+`features/service-provider-registry.md`. Kept here for the rationale and the
+phase-by-phase history.
 
 ## Why
 
@@ -54,17 +56,17 @@ carries `# TODO: specific definitions should not be here`
 | 7 | Removal manager map `_SERVICE_TYPE_MANAGER_ATTR` | `delete_project_manager.py:2239` |
 | 8 | Label map + `component_uses_*` manifest flags + context assembly | `project_manager.py:836`, `:5128-5138`, `~4877-5364` |
 
-## Target abstraction: one `ServiceProvider` per service
+## Target abstraction: one `Service` per service
 
-Introduce a `ServiceProvider` base class, one subclass per `ServiceType`,
-registered in a single `SERVICE_PROVIDERS` registry. The provider **carries** its
+Introduce a `Service` base class, one subclass per `ServiceType`,
+registered in a single `SERVICES` registry. The provider **carries** its
 existing `ServiceDefinition` (metadata unchanged) and adds behavior + config-shape
 hooks with no-op defaults. Generic code iterates the registry instead of the
 hand-maintained lists.
 
 ```python
-# opi/services/provider.py  (new)
-class ServiceProvider(ABC):
+# opi/services/catalog/base.py  (new)
+class Service(ABC):
     service_type: ClassVar[ServiceType]
     definition: ClassVar[ServiceDefinition]          # the existing dataclass, unchanged
 
@@ -84,8 +86,8 @@ class ServiceProvider(ABC):
 
 ```python
 # opi/services/registry.py  (new)
-SERVICE_PROVIDERS: dict[ServiceType, ServiceProvider] = {...}
-def get_provider(t: ServiceType) -> ServiceProvider: ...
+SERVICES: dict[ServiceType, Service] = {...}
+def get_service(t: ServiceType) -> Service: ...
 ```
 
 ### Why a provider class, not just more `ServiceDefinition` fields
@@ -118,10 +120,10 @@ byte-identical. Manager internals are **not** refactored as part of this work.
 | 1 | Untyped config; validation in 3 layers | `provider.config_model` (Pydantic). JSON-schema `$defs` and editables derive from it. Managers use `config_model.model_validate(raw)` instead of `dict.get()`. |
 | 2 | Per-service `FormSection` + `visible` (`wizard_sections.py`) | `provider.config_section()`; generic assembly wires `visible`/`post_save_action` from the service name. |
 | 3 | Per-service editables (`fields/services.py`) | `provider.config_editables()`; paths derived from `services/<name>/config/...` + config-model fields. |
-| 4 | `SERVICE_CONFIG_SECTIONS`, `EDIT_SECTIONS`, `SERVICE_CONFIG_MODAL_FLOWS` + flow section lists | `for t in ServiceType: get_provider(t).config_section()` — all four become derived. |
+| 4 | `SERVICE_CONFIG_SECTIONS`, `EDIT_SECTIONS`, `SERVICE_CONFIG_MODAL_FLOWS` + flow section lists | `for t in ServiceType: get_service(t).config_section()` — all four become derived. |
 | 5 | Per-service `MODAL_EDIT_*_FLOW` + `FLOW_REGISTRY` | Generic `build_service_config_modal_flow(name)` factory; registry gains service flows by iteration. |
 | 6 | Fixed 4 calls (`project_manager.py:4485`) | `for p in ordered_providers(...): await p.provision(ctx)`. |
-| 7 | `_SERVICE_TYPE_MANAGER_ATTR` (`delete_project_manager.py:2239`) | `get_provider(t).handle_service_removal(ctx)`; the map disappears. |
+| 7 | `_SERVICE_TYPE_MANAGER_ATTR` (`delete_project_manager.py:2239`) | `get_service(t).handle_service_removal(ctx)`; the map disappears. |
 | 8 | `component_uses_*` flags + inline context + label map | `for p in providers_used_by(component): ctx |= p.contribute_manifest_context(...)`; label from `definition.backup_label`. |
 
 ## Typed config (single source of truth)
@@ -160,7 +162,7 @@ into the first.
   `ProjectManager.__init__` (`project_manager.py:407`); providers reach them lazily
   via the context, preserving `_ensure_database_manager` semantics.
 - **Cleanup** swaps the `_SERVICE_TYPE_MANAGER_ATTR` lookup for
-  `get_provider(t).handle_service_removal(...)`. The diff-driven
+  `get_service(t).handle_service_removal(...)`. The diff-driven
   `was_used and not still_used` gate and the deferred/immediate `cleanup_strategy`
   are unchanged; both postgres providers delegate to the same `database_manager`
   (idempotent), preserving the "check once per manager" behavior.
@@ -177,9 +179,9 @@ one at a time. Every phase keeps all services working and is a shippable PR.
 - **Phase 0 — Guardrails first (no behavior change).** Golden-manifest byte-diff
   harness over representative project YAMLs; provider-coverage CI check (warn).
   Baseline established against the `tests/e2e` sandbox lifecycle.
-- **Phase 1 — `ServiceProvider` + registry, metadata-only.** One thin subclass per
+- **Phase 1 — `Service` + registry, metadata-only.** One thin subclass per
   `ServiceType` holding its existing definition; nothing consumes providers yet.
-  Flip the coverage check to hard-fail. Verify: `get_provider(t).definition is
+  Flip the coverage check to hard-fail. Verify: `get_service(t).definition is
   SERVICE_DEFINITIONS[t]` for all types; suite green.
 - **Phase 2 — Typed config + schema generation (highest leverage).** Pydantic
   models for the configurable services, starting with **namespace-postgres** (no
@@ -209,7 +211,7 @@ one at a time. Every phase keeps all services working and is a shippable PR.
 - **Schema-equality CI test** — generated `project_v2.json` must equal the
   committed file (phase 2+).
 - **Provider-coverage CI guard (the key one)** — a test iterating `ServiceType`
-  asserting `get_provider(t)` exists. Adding a `ServiceType` without a provider
+  asserting `get_service(t)` exists. Adding a `ServiceType` without a provider
   fails CI; this is what keeps the registry the single source of truth.
 - **Form/section snapshot tests** — `tests/forms/` section counts + visibility per
   flow.

@@ -14,6 +14,8 @@ from opi.connectors.postgres import PostgresConnector, create_postgres_connector
 from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
 from opi.services import CloneFromType, ServiceType
+from opi.services.project import Project
+from opi.services.registry import get_service
 from opi.utils.naming import generate_database_name
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import DatabaseSecret
@@ -1228,21 +1230,8 @@ class DatabaseManager:
         Returns:
             True if project uses namespace-specific PostgreSQL, False otherwise
         """
-        # Check project-level services
-        project_services = project_data.get("services", [])
-        if not project_services:
-            return False
-
-        # Services can be strings or dicts with service name as key
-        for service_item in project_services:
-            if isinstance(service_item, str):
-                if service_item == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value:
-                    return True
-            elif isinstance(service_item, dict) and ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item:
-                # Dict format: {"namespace-postgresql-database": {"config": {...}}}
-                return True
-
-        return False
+        # Form-agnostic (bare string / legacy name-as-key / new {name, config} record).
+        return Project(project_data).uses_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value)
 
     def _get_database_service_config(self, project_data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -1286,141 +1275,20 @@ class DatabaseManager:
         Raises:
             ValueError: If service configuration is invalid or missing required fields
         """
-        # Hardcoded defaults
-        # Note: Must use CNPG-compatible image (has postgres user with UID 26)
-        DEFAULT_CONFIG = {
-            "image": "ghcr.io/cloudnative-pg/postgresql:17",
-            "instances": 1,
-            "storage": "10Gi",
-            "privileges": [],  # Default: no extra privileges (regular user)
-            "postInitSQL": [],  # Default: no custom init SQL (only vector extension)
-            "resources": {
-                "requests": {
-                    "memory": "256Mi",
-                    "cpu": "100m",
-                },
-                "limits": {
-                    "memory": "512Mi",
-                    "cpu": "500m",
-                },
-            },
-        }
-
-        # Get project-level services
-        project_services = project_data.get("services", [])
-        if not project_services:
-            # Service not defined in project, return defaults
-            return DEFAULT_CONFIG.copy()
-
-        # Find namespace-postgresql-database service and extract config
+        # RC-5 Phase 2: defaults + validation live in the typed config model
+        # (NamespacePostgresConfig via the provider), replacing the previous
+        # hand-rolled DEFAULT_CONFIG merge and manual field/privilege checks. We
+        # still read the legacy project-level service-entry shape here (bare string
+        # or {name-as-key: {config}}); RC-5 Phase 3 normalises that shape.
         service_name = ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-        user_config = None
-
-        for service_item in project_services:
-            if isinstance(service_item, dict):
-                # Dict format: {"namespace-postgresql-database": {"config": {...}}}
-                if service_name in service_item:
-                    service_data = service_item[service_name]
-                    if isinstance(service_data, dict) and "config" in service_data:
-                        config = service_data["config"]
-                        if not isinstance(config, dict):
-                            raise ValueError(f"Service config for '{service_name}' must be a dict, got {type(config)}")
-                        user_config = config
-                        break
-                    # Service defined but no config - use defaults
-                    user_config = {}
-                    break
-            elif isinstance(service_item, str) and service_item == service_name:
-                # String format: just the service name, no config - use defaults
-                user_config = {}
-                break
-
-        if user_config is None:
-            # Service not found in project services
-            return DEFAULT_CONFIG.copy()
-
-        # Merge user config with defaults (user config takes precedence)
-        merged_config = DEFAULT_CONFIG.copy()
-
-        # Merge top-level fields
-        for key in ["image", "instances", "storage", "privileges", "postInitSQL", "registry"]:
-            if key in user_config:
-                merged_config[key] = user_config[key]
-
-        # Merge resources (nested dict)
-        if "resources" in user_config:
-            if not isinstance(user_config["resources"], dict):
-                raise ValueError(f"Service config 'resources' must be a dict, got {type(user_config['resources'])}")
-
-            # Deep merge resources
-            for resource_type in ["requests", "limits"]:
-                if resource_type in user_config["resources"]:
-                    if not isinstance(user_config["resources"][resource_type], dict):
-                        raise ValueError(
-                            f"Service config 'resources.{resource_type}' must be a dict, "
-                            f"got {type(user_config['resources'][resource_type])}"
-                        )
-                    merged_config["resources"][resource_type].update(user_config["resources"][resource_type])
-
-        # Validate all required fields are present
-        required_fields = ["image", "instances", "storage"]
-        for field in required_fields:
-            if field not in merged_config or merged_config[field] is None:
-                raise ValueError(
-                    f"Database service config missing required field '{field}'. "
-                    f"Provide in services: - namespace-postgresql-database: config: {field}: <value>"
-                )
-
-        # Validate resources structure
-        if "resources" not in merged_config:
-            raise ValueError("Database service config missing required field 'resources'")
-        for resource_type in ["requests", "limits"]:
-            if resource_type not in merged_config["resources"]:
-                raise ValueError(f"Database service config missing required field 'resources.{resource_type}'")
-            for metric in ["memory", "cpu"]:
-                if metric not in merged_config["resources"][resource_type]:
-                    raise ValueError(
-                        f"Database service config missing required field 'resources.{resource_type}.{metric}'"
-                    )
-
-        # Validate privileges if specified
-        if "privileges" in merged_config:
-            privileges = merged_config["privileges"]
-            if not isinstance(privileges, list):
-                raise ValueError(f"Service config 'privileges' must be a list, got {type(privileges)}")
-            # Valid PostgreSQL user privileges
-            valid_privileges = {
-                "SUPERUSER",
-                "NOSUPERUSER",
-                "CREATEDB",
-                "NOCREATEDB",
-                "CREATEROLE",
-                "NOCREATEROLE",
-                "LOGIN",
-                "NOLOGIN",
-                "REPLICATION",
-                "NOREPLICATION",
-                "BYPASSRLS",
-                "NOBYPASSRLS",
-            }
-            for priv in privileges:
-                if not isinstance(priv, str):
-                    raise TypeError(f"Database privilege must be a string, got {type(priv)}: {priv}")
-                if priv.upper() not in valid_privileges:
-                    raise ValueError(
-                        f"Invalid database privilege '{priv}'. Valid privileges: {', '.join(sorted(valid_privileges))}"
-                    )
-
-        # Validate postInitSQL if specified
-        if "postInitSQL" in merged_config:
-            post_init_sql = merged_config["postInitSQL"]
-            if not isinstance(post_init_sql, list):
-                raise ValueError(f"Service config 'postInitSQL' must be a list, got {type(post_init_sql)}")
-            for idx, sql in enumerate(post_init_sql):
-                if not isinstance(sql, str):
-                    raise TypeError(f"postInitSQL[{idx}] must be a string, got {type(sql)}: {sql}")
-
-        logger.debug(f"Database config (merged with defaults): {merged_config}")
+        # Form-agnostic read via the Project aggregate root (bare string / legacy
+        # name-as-key / new {name, config} record). None when the service is absent
+        # or has no config block -> validate_config supplies the model defaults, and
+        # fails closed on a malformed (non-dict) config.
+        raw_config = Project(project_data).service_config(service_name)
+        provider = get_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE)
+        merged_config = provider.validate_config(raw_config).model_dump(mode="json")
+        logger.debug(f"Database config (validated via provider): {merged_config}")
         return merged_config
 
     def _get_database_cluster_config(self, project_data: dict[str, Any], cluster_name: str) -> dict[str, Any]:

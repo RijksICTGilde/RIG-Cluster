@@ -4,7 +4,6 @@ from typing import Any
 
 from opi.connectors.subdomain import (
     BARE_DOMAIN_SUBDOMAIN,
-    SubdomainConnector,
     get_project_allowed_domain_config,
     get_subdomain_status,
     get_supported_base_domains,
@@ -13,6 +12,7 @@ from opi.connectors.subdomain import (
 )
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_domain_supports_dots
+from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
 
@@ -200,10 +200,19 @@ class DomainConfigEnforcer:
     - subdomain is required for formats containing '{subdomain}'
     - custom domain is set when base-domain is the sentinel value
     - subdomain + base-domain combination is available (async DB check)
+
+    ``denied_blocks`` says whether a ``denied`` (sub)domain is a hard failure. It is,
+    for the form: a user picking a rejected domain must be stopped at the field. It is
+    not for the save gate, where the same state also arises the other way round -- an
+    admin revoking an approval on a domain a deployment already uses. Blocking there
+    made the revocation unsaveable, which left the approver unable to act on their own
+    decision. Publication is what enforces it: ``apply_domain_approval_fallback`` moves
+    an unapproved deployment back to the cluster domain on the next process run.
     """
 
-    def __init__(self, deployment_index: int = 0) -> None:
+    def __init__(self, deployment_index: int = 0, denied_blocks: bool = True) -> None:
         self.deployment_index = deployment_index
+        self.denied_blocks = denied_blocks
 
     async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
         deployments = value.get("deployments", [])
@@ -293,8 +302,9 @@ class DomainConfigEnforcer:
                 elif status == "requested":
                     pass  # Already requested — allow through
                 elif status == "denied":
-                    msg = error_msg or f"Het domein '{actual_domain}' is afgewezen."
-                    raise FieldError(domain_field, msg)
+                    if self.denied_blocks:
+                        msg = error_msg or f"Het domein '{actual_domain}' is afgewezen."
+                        raise FieldError(domain_field, msg)
                 else:
                     raise FieldWarning(
                         domain_field,
@@ -313,7 +323,8 @@ class DomainConfigEnforcer:
                 elif status == "requested":
                     pass  # Already requested — allow through
                 elif status == "denied":
-                    raise FieldError(subdomain_field, error_msg)
+                    if self.denied_blocks:
+                        raise FieldError(subdomain_field, error_msg)
                 else:
                     raise FieldWarning(
                         subdomain_field,

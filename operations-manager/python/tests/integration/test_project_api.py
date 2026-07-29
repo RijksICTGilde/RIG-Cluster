@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from opi.services.project_service import Project, ProjectUser
+from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.project_store import GitProjectStore
 
 if TYPE_CHECKING:
@@ -27,14 +27,14 @@ def mock_auth_project_service() -> Any:
     with patch("opi.api.endpoint_util.get_project_store") as mock_get_service:
         mock_service = MagicMock(spec=GitProjectStore)
 
-        test_project = Project(
+        test_project = ProjectSummary(
             name="test-project",
             api_key="test-api-key-12345",
             filename="test-project.yaml",
             users=[ProjectUser(email="user@example.com", role="Developer")],
         )
 
-        def get_project(name: str) -> Project | None:
+        def get_project(name: str) -> ProjectSummary | None:
             if name == "test-project":
                 return test_project
             return None
@@ -50,7 +50,7 @@ def mock_router_project_service() -> Any:
     with patch("opi.api.router.get_project_store") as mock_get_service:
         mock_service = MagicMock(spec=GitProjectStore)
 
-        test_project = Project(
+        test_project = ProjectSummary(
             name="test-project",
             api_key="test-api-key-12345",
             filename="test-project.yaml",

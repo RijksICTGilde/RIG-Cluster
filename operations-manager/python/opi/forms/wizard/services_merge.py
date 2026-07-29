@@ -25,11 +25,9 @@ from typing import Any
 
 def service_name(entry: Any) -> str | None:
     """The service identity for a services-list entry, or None if unrecognised."""
-    if isinstance(entry, str):
-        return entry
-    if isinstance(entry, dict) and len(entry) == 1:
-        return next(iter(entry))
-    return None
+    from opi.services.services import service_entry_name
+
+    return service_entry_name(entry)
 
 
 def _deep_update(base: dict[str, Any], overlay: dict[str, Any]) -> None:
@@ -40,35 +38,52 @@ def _deep_update(base: dict[str, Any], overlay: dict[str, Any]) -> None:
             base[key] = copy.deepcopy(value)
 
 
+def _absorb(result: list[Any], index: dict[str, int], entry: Any) -> None:
+    """Fold one entry into *result*, merging onto the entry that shares its name.
+
+    ``index`` maps service name -> position in *result* and is kept in sync. An entry
+    whose name is unrecognisable has no identity to merge on and is appended as-is.
+    """
+    name = service_name(entry)
+    if name is None:
+        result.append(copy.deepcopy(entry))
+        return
+    if name not in index:
+        result.append(copy.deepcopy(entry))
+        index[name] = len(result) - 1
+        return
+
+    i = index[name]
+    current = result[i]
+    if isinstance(current, dict) and isinstance(entry, dict):
+        _deep_update(current, entry)
+    elif isinstance(entry, dict):
+        # current is a bare string; the later entry carries the config dict -> take it.
+        result[i] = copy.deepcopy(entry)
+    # else: the later entry is a bare string and current already holds the dict -> keep current.
+
+
 def merge_service_lists(existing: list[Any], incoming: list[Any]) -> list[Any]:
     """Merge two services lists by service name.
 
     ``existing`` order is preserved; services only in ``incoming`` are appended. For a
     service in both, config is deep-merged (``incoming`` overlays); a bare string is
     promoted to ``incoming``'s dict form when only ``incoming`` carries the config.
-    """
-    result: list[Any] = [copy.deepcopy(entry) for entry in existing]
-    index: dict[str, int] = {}
-    for i, entry in enumerate(result):
-        name = service_name(entry)
-        if name is not None:
-            index[name] = i
 
-    for entry in incoming:
-        name = service_name(entry)
-        if name is None:
-            result.append(copy.deepcopy(entry))
-            continue
-        if name in index:
-            i = index[name]
-            current = result[i]
-            if isinstance(current, dict) and isinstance(entry, dict):
-                _deep_update(current, entry)
-            elif isinstance(entry, dict):
-                # current is a bare string; incoming carries the config dict -> take it.
-                result[i] = copy.deepcopy(entry)
-            # else: incoming is a bare string and current already holds the dict -> keep current.
-        else:
-            result.append(copy.deepcopy(entry))
-            index[name] = len(result) - 1
+    Folding one entry at a time means a name occurring twice *within* a single list
+    collapses on the same rules. The services picker can post a name twice (a locked
+    service renders both a disabled checkbox and a hidden input; unlocking it client-side
+    re-enables the checkbox while the hidden input stays), and nothing downstream would
+    have caught it: the duplicate reached the project file as a config record plus a
+    stray bare string.
+    """
+    result: list[Any] = []
+    index: dict[str, int] = {}
+    for entry in [*existing, *incoming]:
+        _absorb(result, index, entry)
     return result
+
+
+def dedupe_service_list(entries: list[Any]) -> list[Any]:
+    """Collapse repeated service names in a single list, first position wins."""
+    return merge_service_lists([], entries)

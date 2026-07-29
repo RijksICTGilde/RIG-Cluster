@@ -14,11 +14,17 @@ from opi.forms.editables.validators import (
     ComponentNameValidator,
     ContainerImageValidator,
     KeyValueValidator,
-    KubernetesNameValidator,
     MemoryRangeValidator,
     MemoryRequestRangeValidator,
     PathValidator,
 )
+
+# The component form's service-specific fields are contributed by each service via
+# config_editables(ConfigLayer.COMPONENT) and gathered here in config_component_order,
+# so the tail of COMPONENTS_SEQUENCE_EDITABLE is not a hand-synced list. (The service
+# editable definitions still authored below move into their service packages one
+# service at a time; temp-storage already lives in catalog/temp_storage/editables.py.)
+from opi.services.registry import component_service_editables
 
 # ===========================================================================
 # Pure Editable definitions (data logic only)
@@ -131,153 +137,6 @@ COMPONENT_USER_ENV_VARS_EDITABLE = Editable(
     remove_when_none=True,
 )
 
-PERSISTENT_STORAGE_NAME_EDITABLE = Editable(
-    yaml_path="components[*]/services{persistent-storage}/config[*]/name",
-    validator=KubernetesNameValidator("Opslagnaam"),
-    required=True,
-    default="data",
-)
-
-PERSISTENT_STORAGE_SIZE_EDITABLE = Editable(
-    yaml_path="components[*]/services{persistent-storage}/config[*]/size",
-    values_provider="StorageSizeOptionsProvider",
-    default="100Mi",
-)
-
-PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE = Editable(
-    yaml_path="components[*]/services{persistent-storage}/config[*]/mount-path",
-    validator=PathValidator(),
-    required=True,
-    default="/data",
-)
-
-PERSISTENT_STORAGE_SEQUENCE_EDITABLE = Editable(
-    yaml_path="components[*]/services{persistent-storage}/config",
-    depends_on="components[*]/services",
-    show_when={"contains": "persistent-storage"},
-    virtualize=("services", "_services-config"),
-    min_items=1,
-    children=[
-        PERSISTENT_STORAGE_NAME_EDITABLE,
-        PERSISTENT_STORAGE_SIZE_EDITABLE,
-        PERSISTENT_STORAGE_MOUNT_PATH_EDITABLE,
-    ],
-)
-
-TEMP_STORAGE_NAME_EDITABLE = Editable(
-    yaml_path="components[*]/services{temp-storage}/config[*]/name",
-    validator=KubernetesNameValidator("Opslagnaam"),
-    required=True,
-    default="tmp",
-)
-
-TEMP_STORAGE_SIZE_EDITABLE = Editable(
-    yaml_path="components[*]/services{temp-storage}/config[*]/size",
-    values_provider="StorageSizeOptionsProvider",
-    default="100Mi",
-)
-
-TEMP_STORAGE_MOUNT_PATH_EDITABLE = Editable(
-    yaml_path="components[*]/services{temp-storage}/config[*]/mount-path",
-    validator=PathValidator(),
-    required=True,
-    default="/tmp",
-)
-
-TEMP_STORAGE_SEQUENCE_EDITABLE = Editable(
-    yaml_path="components[*]/services{temp-storage}/config",
-    depends_on="components[*]/services",
-    show_when={"contains": "temp-storage"},
-    virtualize=("services", "_services-config"),
-    min_items=1,
-    children=[
-        TEMP_STORAGE_NAME_EDITABLE,
-        TEMP_STORAGE_SIZE_EDITABLE,
-        TEMP_STORAGE_MOUNT_PATH_EDITABLE,
-    ],
-)
-
-ATTACHMENT_USE_REFERENCE_EDITABLE = Editable(
-    yaml_path="components[*]/services{attachments}/config[*]/reference",
-    values_provider="AttachmentOptionsProvider",
-    required=True,
-)
-
-ATTACHMENT_USE_PROVIDE_AS_EDITABLE = Editable(
-    yaml_path="components[*]/services{attachments}/config[*]/provide-as",
-    values_provider="AttachmentProvideAsOptionsProvider",
-    required=True,
-    default="file",
-)
-
-ATTACHMENT_USE_PATH_EDITABLE = Editable(
-    yaml_path="components[*]/services{attachments}/config[*]/path",
-    validator=PathValidator(),
-    remove_when_none=True,
-    depends_on="components[*]/services{attachments}/config[*]/provide-as",
-    show_when={"value": ["file"]},
-)
-
-ATTACHMENT_USE_ENV_NAME_EDITABLE = Editable(
-    yaml_path="components[*]/services{attachments}/config[*]/env-name",
-    remove_when_none=True,
-    depends_on="components[*]/services{attachments}/config[*]/provide-as",
-    show_when={"value": ["env-var"]},
-)
-
-ATTACHMENT_USE_SEQUENCE_EDITABLE = Editable(
-    yaml_path="components[*]/services{attachments}/config",
-    depends_on="components[*]/services",
-    show_when={"contains": "attachments"},
-    virtualize=("services", "_services-config"),
-    min_items=0,
-    remove_when_none=True,
-    children=[
-        ATTACHMENT_USE_REFERENCE_EDITABLE,
-        ATTACHMENT_USE_PROVIDE_AS_EDITABLE,
-        ATTACHMENT_USE_PATH_EDITABLE,
-        ATTACHMENT_USE_ENV_NAME_EDITABLE,
-    ],
-)
-
-PUBLISH_ON_WEB_TLS_EDITABLE = Editable(
-    yaml_path="components[*]/services{publish-on-web}/config/tls",
-    values_provider="PublishTlsModeOptionsProvider",
-    default="standard",
-    virtualize=("services", "_services-config"),
-    depends_on="components[*]/services",
-    show_when={"contains": "publish-on-web"},
-)
-
-PUBLISH_ON_WEB_ATTACHMENT_EDITABLE = Editable(
-    yaml_path="components[*]/services{publish-on-web}/config/attachment",
-    values_provider="AttachmentOptionsProvider",
-    virtualize=("services", "_services-config"),
-    remove_when_none=True,
-    depends_on="components[*]/services{publish-on-web}/config/tls",
-    show_when={"value": ["provided"]},
-)
-
-METRICS_PORT_EDITABLE = Editable(
-    yaml_path="components[*]/services{metrics-scraper}/port",
-    converter=IntegerConverter(),
-    required=True,
-    default=8080,
-    depends_on="components[*]/services",
-    show_when={"contains": "metrics-scraper"},
-    virtualize=("services", "_services-config"),
-)
-
-METRICS_PATH_EDITABLE = Editable(
-    yaml_path="components[*]/services{metrics-scraper}/path",
-    default="/metrics",
-    validator=PathValidator(),
-    required=True,
-    depends_on="components[*]/services",
-    show_when={"contains": "metrics-scraper"},
-    virtualize=("services", "_services-config"),
-)
-
 COMPONENTS_SEQUENCE_EDITABLE = Editable(
     yaml_path="components",
     min_items=1,
@@ -294,12 +153,8 @@ COMPONENTS_SEQUENCE_EDITABLE = Editable(
         COMPONENT_PATH_EDITABLE,
         COMPONENT_ALIASES_EDITABLE,
         COMPONENT_USER_ENV_VARS_EDITABLE,
-        PERSISTENT_STORAGE_SEQUENCE_EDITABLE,
-        TEMP_STORAGE_SEQUENCE_EDITABLE,
-        ATTACHMENT_USE_SEQUENCE_EDITABLE,
-        PUBLISH_ON_WEB_TLS_EDITABLE,
-        PUBLISH_ON_WEB_ATTACHMENT_EDITABLE,
-        METRICS_PORT_EDITABLE,
-        METRICS_PATH_EDITABLE,
+        # Per-service component fields, gathered from the registry in config_component_order
+        # (persistent-storage, temp-storage, attachments, publish-on-web, metrics-scraper).
+        *component_service_editables(),
     ],
 )

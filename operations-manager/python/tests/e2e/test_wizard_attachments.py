@@ -64,3 +64,24 @@ def test_attachments_upload_then_unstage(app_server: str, auth_page: Page, tmp_p
     # Unstage it again -> list returns to empty.
     auth_page.locator("#wiz-att-list button:has-text('Verwijderen')").first.click()
     auth_page.wait_for_selector("#wiz-att-list:has-text('Nog geen bijlagen')", timeout=10000)
+
+
+def test_attachment_id_on_change_validation_shows_error(app_server: str, auth_page: Page) -> None:
+    """On-change identifier validation still fires after the regression fix.
+
+    The validation htmx wiring lives on the #wiz-att-id-field WRAPPER, not on the
+    #wiz-att-id input itself - the input must stay a plain field so htmx includes it in
+    the upload button's hx-include (an htmx request-source input is omitted from another
+    element's hx-include, which previously dropped ``attachment_id`` from the stage POST;
+    that half is guarded by test_attachments_upload_then_unstage). Here we guard that
+    moving the wiring to the wrapper kept the live validation working.
+    """
+    wizard = WizardHelper(auth_page, app_server)
+    _goto_attachments_step(wizard)
+
+    # Invalid slug (uppercase + space) -> inline error appears on change (validate-id
+    # fired from the wrapper's `change from:#wiz-att-id` trigger).
+    id_input = auth_page.locator("#wiz-att-id")
+    id_input.fill("Bad Id")
+    id_input.press("Tab")
+    auth_page.wait_for_selector("#wiz-att-id-field:has-text('kleine letter')", timeout=10000)
