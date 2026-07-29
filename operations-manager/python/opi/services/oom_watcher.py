@@ -26,7 +26,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from opi.connectors.kubectl import KubectlConnector
+from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import IMAGE_PULL_REASONS as _IMAGE_PULL_REASONS
@@ -133,13 +133,69 @@ _CRASH_LOOP_REASONS = {"CrashLoopBackOff"}
 # which must be reported (and remediated) differently.
 MAIN_CONTAINER_NAME = "app"
 
+# Label Kubernetes puts on every ReplicaSet and its pods to identify the pod
+# template generation they belong to. Used to evaluate only the current generation.
+POD_TEMPLATE_HASH_LABEL = "pod-template-hash"
+
+# Annotation the Deployment controller stamps on each ReplicaSet; the highest
+# value is the ReplicaSet the Deployment currently rolls out (also after a
+# rollback, which re-stamps the reused ReplicaSet with a new, higher revision).
+_REVISION_ANNOTATION = "deployment.kubernetes.io/revision"
+
+
+async def _get_current_pod_template_hash(kubectl: KubectlConnector, namespace: str, unique_name: str) -> str | None:
+    """
+    Return the ``pod-template-hash`` of the Deployment's current ReplicaSet.
+
+    Lists the ReplicaSets carrying ``app={unique_name}`` and picks the one owned
+    by the Deployment with the highest ``deployment.kubernetes.io/revision``.
+
+    Returns None when the hash cannot be determined (no Deployment-owned
+    ReplicaSet, kubectl failure, unparsable output). The caller then falls back
+    to evaluating every pod.
+    """
+    try:
+        args = ["get", "replicasets", "-n", namespace, "-l", f"app={unique_name}", "-o", "json"]
+        stdout, stderr, code = await kubectl.run_command(args)
+        if code != 0:
+            logger.warning("Failed to list replicasets for %s/%s: %s", namespace, unique_name, stderr)
+            return None
+        items = json.loads(stdout).get("items", [])
+    except (KubectlConnectionError, KubectlExecutionError, json.JSONDecodeError) as e:
+        logger.warning("Error listing replicasets for %s/%s: %s", namespace, unique_name, e)
+        return None
+
+    best_revision = -1
+    best_hash: str | None = None
+    for replica_set in items:
+        metadata = replica_set.get("metadata", {})
+        owners = metadata.get("ownerReferences", [])
+        if not any(o.get("kind") == "Deployment" and o.get("name") == unique_name for o in owners):
+            continue
+        pod_template_hash = metadata.get("labels", {}).get(POD_TEMPLATE_HASH_LABEL)
+        if not pod_template_hash:
+            continue
+        try:
+            revision = int(metadata.get("annotations", {}).get(_REVISION_ANNOTATION, ""))
+        except ValueError:
+            continue
+        if revision > best_revision:
+            best_revision = revision
+            best_hash = pod_template_hash
+
+    return best_hash
+
 
 async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
     """
-    Single kubectl call to detect OOM, ImagePullBackOff, and CrashLoopBackOff.
+    Detect OOM, ImagePullBackOff, and CrashLoopBackOff for one component.
 
-    Runs ``kubectl get pods -o json`` once and inspects each container's
-    state for all three failure types:
+    Runs ``kubectl get pods -o json`` and inspects each container's state for
+    all three failure types. Only pods of the Deployment's current generation
+    are evaluated (see ``_get_current_pod_template_hash``); pods of a replaced
+    ReplicaSet report a problem that no longer exists.
+
+    Failure types:
     - OOM: ``lastState.terminated.reason == "OOMKilled"`` (the cgroup OOM-killer
       signal). A bare ``exitCode == 137`` is NOT treated as OOM: 137 is
       ``128 + SIGKILL`` and is also produced by failed startup/liveness probes,
@@ -170,8 +226,24 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
             logger.warning("Failed to get pods for health check (%s/%s): %s", namespace, unique_name, stderr)
             return result
 
-        pods_data = json.loads(stdout)
-        for pod in pods_data.get("items", []):
+        pods = json.loads(stdout).get("items", [])
+        if not pods:
+            return result
+
+        # Only the current pod generation says anything about this rollout. Pods of a
+        # replaced ReplicaSet keep running (and keep their CrashLoop/OOM/image-pull
+        # state) until the controller reaps them, and they carry no deletionTimestamp
+        # while doing so, so the check below cannot catch them.
+        current_pod_template_hash = await _get_current_pod_template_hash(kubectl, namespace, unique_name)
+        if current_pod_template_hash is None:
+            logger.warning(
+                "Could not determine the current pod-template-hash for %s/%s; "
+                "evaluating all pods, so a pod from a replaced ReplicaSet may be reported",
+                namespace,
+                unique_name,
+            )
+
+        for pod in pods:
             metadata = pod.get("metadata", {})
             pod_name = metadata.get("name", "unknown")
             pod_created = metadata.get("creationTimestamp", "")
@@ -182,6 +254,19 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
             # OOM/CrashLoop that fails the deploy for a problem that no longer exists.
             if metadata.get("deletionTimestamp"):
                 logger.debug("Skipping terminating pod %s for health check in %s", pod_name, namespace)
+                continue
+
+            # Skip pods of a superseded generation (they outlive their ReplicaSet's
+            # replacement without ever getting a deletionTimestamp).
+            pod_template_hash = metadata.get("labels", {}).get(POD_TEMPLATE_HASH_LABEL, "")
+            if current_pod_template_hash is not None and pod_template_hash != current_pod_template_hash:
+                logger.debug(
+                    "Skipping pod %s from superseded generation %s (current %s) in %s",
+                    pod_name,
+                    pod_template_hash or "unknown",
+                    current_pod_template_hash,
+                    namespace,
+                )
                 continue
 
             for container_status in pod.get("status", {}).get("containerStatuses", []):

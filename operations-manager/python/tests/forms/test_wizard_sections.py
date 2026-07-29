@@ -118,22 +118,29 @@ class TestServiceConfigSectionsLookup:
     def test_auth_wall_in_lookup(self):
         assert "authorization-wall" in SERVICE_CONFIG_SECTIONS
 
+    def test_sleep_mode_present(self):
+        assert "sleep-mode" in SERVICE_CONFIG_SECTIONS
+
     def test_lookup_count(self):
-        assert len(SERVICE_CONFIG_SECTIONS) == 3
+        assert len(SERVICE_CONFIG_SECTIONS) == 4
 
 
 class TestFlowDefinitions:
     def test_create_flow(self):
         assert CREATE_FLOW.flow_id == "create-project"
         assert CREATE_FLOW.show_review is True
-        assert len(CREATE_FLOW.sections) == 10
+        assert len(CREATE_FLOW.sections) == 11
         assert "attachments" in [s.section_id for s in CREATE_FLOW.sections]
+        # sleep-mode-config sits after the components step so its waker-component select
+        # is populated from the components already in the draft project.
+        section_ids = [s.section_id for s in CREATE_FLOW.sections]
+        assert section_ids.index("sleep-mode-config") > section_ids.index("components")
 
     def test_edit_flow(self):
         assert EDIT_FLOW.flow_id == "edit-project"
         assert EDIT_FLOW.show_review is False
         assert EDIT_FLOW.save_per_section is True
-        assert len(EDIT_FLOW.sections) == 9
+        assert len(EDIT_FLOW.sections) == 10
         # Attachments are edited via a modal/service-edit flow in edit mode,
         # so the edit wizard has no dedicated attachments section (unlike create).
         assert "attachments" not in [s.section_id for s in EDIT_FLOW.sections]

@@ -31,6 +31,9 @@ class ServiceType(Enum):
     # File attachments (uploaded files mounted into a pod or exposed as env-var)
     ATTACHMENTS = "attachments"
 
+    # Sleep mode: scale idle preview deployments to zero after a deadline, wake on request
+    SLEEP_MODE = "sleep-mode"
+
 
 class CloneFromType(Enum):
     """Type of clone-from source for deployment cloning."""

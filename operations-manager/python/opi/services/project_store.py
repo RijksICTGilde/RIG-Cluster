@@ -44,6 +44,7 @@ import contextlib
 import copy
 import logging
 import os
+import re
 import shutil
 import time
 from abc import ABC, abstractmethod
@@ -82,6 +83,10 @@ MAX_MUTATION_ATTEMPTS = 5
 _LOCK_WAIT_WARN_SECONDS = 2.0
 _PERSIST_WARN_SECONDS = 3.0
 AGE_HEADER = "-----BEGIN AGE ENCRYPTED FILE-----"
+
+# Version tokens travel to the browser and back, so they are validated before they
+# reach git: a blob SHA is exactly 40 hex characters, anything else is not asked for.
+_BLOB_SHA_RE = re.compile(r"[0-9a-f]{40}")
 
 
 class ProjectStoreError(RuntimeError):
@@ -622,6 +627,14 @@ class GitProjectStore(ProjectStore):
         if current is None or current == base:
             return data
 
+        # Our change IS the committed state already: a request handler saved it and a
+        # follow-up re-writes the same content against the version it started from (the
+        # modal edit hands its result to the deployment task, which saves it again).
+        # There is nothing to merge, and re-applying a delta that is already applied
+        # would be reported as a conflict.
+        if current == data:
+            return data
+
         logger.info("Project '%s' changed since it was read; re-applying our change on top of it", name)
 
         merged = _apply_our_change_to(base=base, ours=data, theirs=current)
@@ -822,6 +835,38 @@ class GitProjectStore(ProjectStore):
     async def read_at(self, name: str, ref: str) -> dict[str, Any] | None:
         connector = await self.get_connector()
         return await self._read_committed(connector, self._relative_path(name), ref=ref)
+
+    async def version_of(self, relative_path: str) -> str | None:
+        """Version token for a project file: its git blob SHA at HEAD.
+
+        Handed to a client that is about to build an edit from what it just read
+        (a form, a wizard step). Sent back with the resulting write it becomes the
+        compare-and-swap base, so an edit is applied as a *change* relative to the
+        version the user actually saw, not as a wholesale overwrite of whatever is
+        there by then. None when the file does not exist yet.
+        """
+        connector = await self.get_connector()
+        return await connector.get_blob_sha(relative_path)
+
+    async def read_version(self, version: str) -> dict[str, Any] | None:
+        """Project data exactly as it was in the given ``version_of`` token.
+
+        None when the token is malformed or its blob is not in the clone, so the
+        caller falls back rather than merging against a guess.
+        """
+        if not _BLOB_SHA_RE.fullmatch(version):
+            logger.warning("Rejected malformed project version token: %r", version)
+            return None
+
+        connector = await self.get_connector()
+        content = await connector.read_blob(version)
+        if content is None:
+            return None
+        data = load_yaml_from_string(content)
+        if data is None:
+            return None
+        migrated, _ = migrate_to_latest(data)
+        return migrated
 
     async def read_path(self, relative_path: str, ref: str = "HEAD") -> dict[str, Any] | None:
         """Read a project file by its repo-relative path (``projects/<file>.yaml``).

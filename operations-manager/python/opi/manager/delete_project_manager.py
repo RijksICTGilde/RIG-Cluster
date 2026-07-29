@@ -18,6 +18,7 @@ from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.project import Project
 from opi.services.project_store import get_project_store
 from opi.services.registry import get_service
+from opi.services.services import service_entry_name
 
 if TYPE_CHECKING:
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
@@ -401,15 +402,12 @@ class DeleteProjectManager:
 
         # Check if project uses any namespace-specific service
         project_services = project_data.get("services", [])
-        uses_namespace_infrastructure = False
-        for service_item in project_services:
-            if isinstance(service_item, str):
-                if service_item in NAMESPACE_SERVICES:
-                    uses_namespace_infrastructure = True
-                    break
-            elif isinstance(service_item, dict) and any(svc in service_item for svc in NAMESPACE_SERVICES):
-                uses_namespace_infrastructure = True
-                break
+        # service_entry_name resolves all three entry formats. Matching on the raw dict
+        # keys only saw the legacy single-key form, so a namespace service carrying
+        # config went undetected here and its infrastructure was left behind on delete.
+        uses_namespace_infrastructure = any(
+            service_entry_name(entry) in NAMESPACE_SERVICES for entry in project_services
+        )
 
         if not uses_namespace_infrastructure:
             logger.debug(

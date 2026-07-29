@@ -777,3 +777,40 @@ class RRuleMonthDayConverter:
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
         return self.read(value, context_data=context_data)
+
+
+class BooleanConverter:
+    """Maps a Ja/Nee select (values "true"/"false") to a real YAML boolean.
+
+    Use on boolean config fields whose cluster-wide default may be True: a form value
+    that merely omits the key would inherit that default, so this always writes an
+    explicit ``true``/``false`` instead.
+    """
+
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        if value is None or value == "":
+            return ""
+        return "true" if value in (True, "true", "on", "yes", "1") else "false"
+
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> bool:
+        return value in (True, "true", "on", "yes", "1")
+
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        return "Ja" if value in (True, "true", "on", "yes", "1") else "Nee"
+
+
+class CommaSeparatedListConverter:
+    """Converts a list to/from a comma-separated string (trimmed, empties dropped)."""
+
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        if isinstance(value, list):
+            return ", ".join(str(v) for v in value)
+        return str(value or "")
+
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str]:
+        if isinstance(value, list):
+            return value
+        return [part.strip() for part in str(value).split(",") if part.strip()]
+
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        return self.read(value, context_data=context_data)

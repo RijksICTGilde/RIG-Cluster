@@ -91,7 +91,10 @@ class TestEditSectionDefinitions:
         assert "auth-wall-config" in EDIT_SECTIONS
 
     def test_edit_sections_registry_count(self):
-        assert len(EDIT_SECTIONS) == 7
+        assert len(EDIT_SECTIONS) == 8
+
+    def test_sleep_mode_config_section_present(self):
+        assert "sleep-mode-config" in EDIT_SECTIONS
 
     def test_edit_sections_reference_same_config_section_objects(self):
         assert EDIT_SECTIONS["keycloak-config"] is KEYCLOAK_CONFIG_SECTION
