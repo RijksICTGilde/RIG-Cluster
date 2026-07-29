@@ -83,14 +83,14 @@ def compute_url_preview(yaml_data: dict[str, Any], context: dict[str, Any]) -> d
             continue
         # Filter to components with publish-on-web service (skip filter during create wizard)
         if any_services_configured:
+            from opi.services.services import service_entry_name
+            from opi.services.services_enums import ServiceType
+
             comp_services = comp.get("services", []) + comp.get("uses-services", [])
-            service_names = []
-            for s in comp_services:
-                if isinstance(s, str):
-                    service_names.append(s)
-                elif isinstance(s, dict):
-                    service_names.extend(s.keys())
-            if "publish-on-web" not in service_names:
+            # Format-agnostic: ``s.keys()`` on a record yields name/reference/config, so a
+            # component whose publish-on-web carried config was dropped from the preview.
+            service_names = [svc_name for s in comp_services if (svc_name := service_entry_name(s)) is not None]
+            if ServiceType.PUBLISH_ON_WEB.value not in service_names:
                 continue
         component_names.append(name)
 

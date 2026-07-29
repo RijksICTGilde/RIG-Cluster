@@ -30,6 +30,7 @@ from opi.manager.backup import (
 from opi.manager.project_manager import ProjectManager
 from opi.services import ServiceType
 from opi.services.project_store import get_project_store
+from opi.services.services import service_entry_name
 from opi.utils.naming import (
     generate_bucket_name,
     generate_database_name,
@@ -1145,10 +1146,11 @@ def _set_generation(
         case ResourceType.DATABASE:
             # Database is deployment-level - determine service type from project config
             project_services = project_data.get("services", [])
+            # Format-agnostic: ``VALUE in service_item`` tested dict keys, so a
+            # namespace-postgres entry carrying config (a record) was missed and the
+            # wrong service type was chosen for the DB restore.
             uses_namespace_postgresql = any(
-                service_item == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-                if isinstance(service_item, str)
-                else ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item
+                service_entry_name(service_item) == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
                 for service_item in (project_services or [])
             )
             service_type = (
@@ -1715,10 +1717,11 @@ async def restore_deployment_resource(
         elif body.resource_type == "database":
             # Database is deployment-level - determine service type from project config
             project_services = project_data.get("services", [])
+            # Format-agnostic: ``VALUE in service_item`` tested dict keys, so a
+            # namespace-postgres entry carrying config (a record) was missed and the
+            # wrong service type was chosen for the DB restore.
             uses_namespace_postgresql = any(
-                service_item == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-                if isinstance(service_item, str)
-                else ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service_item
+                service_entry_name(service_item) == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
                 for service_item in (project_services or [])
             )
             service_type = (
