@@ -219,6 +219,11 @@ def create_test_app():
                 return_value=None,
             ),
             patch("opi.core.config.settings.SOPS_AGE_PRIVATE_KEY", TEST_AGE_PRIVATE_KEY),
+            # The wizard-create generators encrypt the project's AGE private key and
+            # API key with SOPS_AGE_PUBLIC_KEY; without it, creating a project raises
+            # "Missing public age key for encryption". The matching public key is
+            # already defined above but was never wired to settings.
+            patch("opi.core.config.settings.SOPS_AGE_PUBLIC_KEY", TEST_AGE_PUBLIC_KEY),
             patch(
                 "opi.connectors.prometheus.get_metrics_connector",
                 return_value=SimpleNamespace(is_connected=False),
@@ -229,6 +234,16 @@ def create_test_app():
             ),
             patch("opi.handlers.project_file_handler.save_project_file"),
             patch("opi.services.project_store.GitProjectStore.save", _fake_store_save),
+            # version_of() clones the real zad-projects repo to read a blob SHA -
+            # unavailable here, same reason save is faked above. The edit-modal init
+            # records this as the compare-and-swap base_version, so without a stand-in
+            # every edit-modal open would fail decrypting the git creds. Return a fixed
+            # valid blob SHA (40 hex chars, per _BLOB_SHA_RE); the faked save ignores it.
+            patch(
+                "opi.services.project_store.GitProjectStore.version_of",
+                new_callable=AsyncMock,
+                return_value="0" * 40,
+            ),
             patch("opi.web.router_user_admin._get_service", _mock_get_service),
             patch(
                 "opi.manager.backup.BackupManager",
