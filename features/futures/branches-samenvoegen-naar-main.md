@@ -158,11 +158,10 @@ vaststellen of dat werk al via een andere weg op main is beland; zo niet, apart 
 **`services-audit-en-herstelplan`** (0 vooruit) is de branch van de afgewezen taak RC-8 en bevat
 niets. Kan weg.
 
-**`forgejo`, `zad-task-details`, `om-1`, `om-2`, `rig-8`, `rig-9`, `rig-10`, `sandbox-dev-server-fixes`,
-`test-create-project-wizard-...` en de `claude/*`-branches** lopen honderden commits achter en
-zijn vermoedelijk afgerond of verlaten. Per branch één vraag: zit dit werk al op main? Zo ja,
-verwijderen. Zo nee, benoemen als openstaand en niet stilzwijgend laten liggen.
-→ verify: een lijst met per branch "zit op main" of "nog openstaand, reden".
+**De oude branches blijven buiten scope.** `forgejo`, `zad-task-details`, `om-1`, `om-2`,
+`rig-8`, `rig-9`, `rig-10`, `sandbox-dev-server-fixes`, `test-create-project-wizard-...` en de
+`claude/*`-branches lopen honderden commits achter en zijn afgerond of verlaten. Die worden
+bewust genegeerd: niet nalopen, niet mergen, niet verwijderen.
 
 ## Wat er níet gebeurt
 
