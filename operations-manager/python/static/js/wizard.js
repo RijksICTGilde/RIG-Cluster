@@ -27,6 +27,19 @@ function _sequenceDispatch(action, path, index) {
     var form = document.getElementById('wizard-step-form')
             || document.getElementById('modal-wizard-form');
     if (form) {
+        /* A [data-rerender] change (e.g. toggling a service) fires its own re-render
+           submit on this form. While that request is in flight, htmx drops a second
+           submit triggered here, so the sequence action would be silently lost and the
+           in-flight re-render would then swap the form out from under it. Wait for the
+           in-flight request to settle, then re-dispatch against the fresh form. */
+        if (form.classList.contains('htmx-request')) {
+            document.body.addEventListener(
+                'htmx:afterSettle',
+                function () { _sequenceDispatch(action, path, index); },
+                { once: true }
+            );
+            return;
+        }
         /* Wizard / modal-wizard context: inject hidden fields and trigger HTMX submit */
         _seqHidden(form, '_seq_action', action);
         _seqHidden(form, '_seq_path', path);
