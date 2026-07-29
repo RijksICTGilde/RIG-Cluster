@@ -350,10 +350,10 @@ class ArgoConnector:
             app_name: Name of the application. If None, uses default_app_name
 
         Returns:
-            Application status dictionary if successful, None if application doesn't exist (404)
+            Application status dictionary if successful, None if the application does not
+            exist (ArgoCD returns 404, or 403 for a non-existent app)
 
         Raises:
-            PermissionError: If access to the application is denied (403)
             RuntimeError: If an unexpected error occurs
         """
         app_name = app_name or self.default_app_name
@@ -372,14 +372,16 @@ class ArgoConnector:
                 logger.info(f"Application {app_name} not found (404)")
                 return None
             elif status_code == 403:
-                # Expected transient right after creating an app/AppProject (ArgoCD RBAC
-                # still propagating). Logged at debug; callers decide severity - retry loops
-                # warn while retrying and only error if it never resolves.
-                logger.debug(
-                    f"Permission denied accessing application {app_name} - this is OK, the app may "
-                    f"not exist yet / ArgoCD RBAC may still be propagating: {response_text}"
-                )
-                raise PermissionError(f"Permission denied accessing application '{app_name}'")
+                # ArgoCD returns 403 (not 404) for an application that does not exist, to
+                # avoid leaking which apps are present. OPI authenticates as the ArgoCD
+                # admin, so a 403 here never means a real authorization failure - it means
+                # the app is not there yet (just created, AppProject still propagating) or
+                # already gone. Treat it as not-found; every caller already handled the old
+                # PermissionError exactly like the None/404 case (poll-and-wait, or
+                # "already deleted"), so this centralizes that and drops the misleading
+                # "permission denied" error noise.
+                logger.debug(f"Application {app_name} not found (403 - does not exist yet or already gone)")
+                return None
             else:
                 logger.error(f"Status request failed with status {status_code}: {response_text}")
                 raise RuntimeError(f"Failed to get application status: HTTP {status_code}")
