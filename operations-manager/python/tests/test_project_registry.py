@@ -72,7 +72,9 @@ class TestSequenceEditables:
     def test_components_sequence_has_children(self):
         assert str(COMPONENTS_SEQUENCE.widget) == "sequence"
         assert COMPONENTS_SEQUENCE.children is not None
-        assert len(COMPONENTS_SEQUENCE.children) == 19
+        # +4 over the base for the health-check service's component fields
+        # (scheme, port, liveness-path, readiness-path).
+        assert len(COMPONENTS_SEQUENCE.children) == 23
         assert COMPONENTS_SEQUENCE.editable.min_items == 1
 
     def test_deployments_sequence_has_children(self):

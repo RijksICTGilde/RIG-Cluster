@@ -307,7 +307,8 @@ def test_namespace_variants_are_not_separate_contributors():
 
 
 def test_manifest_providers_includes_auth_wall_after_secrets():
-    # The override provider (auth-wall) joins the contributor set, ordered last.
+    # The override providers (health-check, auth-wall) join the contributor set after
+    # the envFrom-secret services, ordered by manifest_order.
     order = [p.service_type.value for p in manifest_services()]
     assert order == [
         "postgresql-database",
@@ -315,6 +316,7 @@ def test_manifest_providers_includes_auth_wall_after_secrets():
         "keycloak",
         "redis",
         "metrics-scraper",
+        "health-check",
         "authorization-wall",
     ]
 
@@ -505,6 +507,113 @@ def test_metrics_contributes_nulls_when_unconfigured():
     assert contribution.template_vars["metrics_config"] == {"port": None, "path": None}
 
 
+# --- health-check service (component-level probe override) -----------------------
+
+
+def test_health_check_overrides_only_the_keys_the_user_set():
+    # A full config: scheme + a separate monitoring port + both paths must all reach the
+    # deployment template as probe_* overrides. The service adds no secret (behaviour-only).
+    component_def = {
+        "ports": {"inbound": [8443]},
+        "services": [
+            {
+                "reference": "health-check",
+                "config": {
+                    "scheme": "http",
+                    "port": 8080,
+                    "liveness-path": "/health/live",
+                    "readiness-path": "/health/ready",
+                },
+            }
+        ],
+    }
+    ctx = _manifest_ctx(component_def=component_def)
+    contribution = get_service(ServiceType.HEALTH_CHECK).contribute_manifest_context(ctx)
+    assert contribution.template_vars == {
+        "probe_scheme": "http",
+        "probe_port": 8080,
+        "probe_liveness_path": "/health/live",
+        "probe_readiness_path": "/health/ready",
+    }
+    assert contribution.env_from_secrets == []
+
+
+def test_health_check_partial_config_sets_only_present_keys():
+    # dirui-style: paths but no explicit port. Only the keys the user filled in are
+    # overridden; the rest fall back to the generic base / template defaults.
+    component_def = {
+        "ports": {"inbound": [8080]},
+        "services": [
+            {
+                "reference": "health-check",
+                "config": {"scheme": "http", "liveness-path": "/health/live", "readiness-path": "/health/ready"},
+            }
+        ],
+    }
+    ctx = _manifest_ctx(component_def=component_def)
+    contribution = get_service(ServiceType.HEALTH_CHECK).contribute_manifest_context(ctx)
+    assert "probe_port" not in contribution.template_vars
+    assert contribution.template_vars == {
+        "probe_scheme": "http",
+        "probe_liveness_path": "/health/live",
+        "probe_readiness_path": "/health/ready",
+    }
+
+
+def test_health_check_disables_probes_with_scheme_none():
+    # Disabling probes is done by ADDING the service with scheme: none.
+    component_def = {
+        "ports": {"inbound": [8443]},
+        "services": [{"reference": "health-check", "config": {"scheme": "none"}}],
+    }
+    ctx = _manifest_ctx(component_def=component_def)
+    contribution = get_service(ServiceType.HEALTH_CHECK).contribute_manifest_context(ctx)
+    assert contribution.template_vars == {"probe_scheme": "none"}
+
+
+def test_health_check_no_inbound_port_contributes_nothing():
+    # A component without an inbound port cannot be probed by the kubelet; the service
+    # must not resurrect a probe even when it is selected (generic code forces none).
+    component_def = {
+        "ports": {"inbound": []},
+        "services": [{"reference": "health-check", "config": {"scheme": "http", "port": 8080}}],
+    }
+    ctx = _manifest_ctx(component_def=component_def)
+    contribution = get_service(ServiceType.HEALTH_CHECK).contribute_manifest_context(ctx)
+    assert contribution.template_vars == {}
+
+
+def test_health_check_hooks_into_component_form():
+    """health-check is a component-level service: no standalone wizard section, it HOOKS
+    its probe fieldset into the per-component form via config_component_layout()."""
+    provider = get_service(ServiceType.HEALTH_CHECK)
+
+    assert provider.config_form_section(ConfigLayer.PROJECT) is None
+    nodes = provider.config_component_layout()
+    assert len(nodes) == 1
+    assert nodes[0].legend == "Health check configuratie"
+    assert nodes[0].children == [
+        "services{health-check}/config/scheme",
+        "services{health-check}/config/port",
+        "services{health-check}/config/liveness-path",
+        "services{health-check}/config/readiness-path",
+    ]
+    # component-level api fields come from the config model (alias-aware).
+    assert provider.config_api_fields(ConfigLayer.COMPONENT) == provider.config_model_field_names()
+    assert set(provider.config_api_fields(ConfigLayer.COMPONENT)) == {
+        "scheme",
+        "port",
+        "liveness-path",
+        "readiness-path",
+    }
+    assert [e.yaml_path for e in provider.config_editables(ConfigLayer.COMPONENT)] == [
+        "components[*]/services{health-check}/config/scheme",
+        "components[*]/services{health-check}/config/port",
+        "components[*]/services{health-check}/config/liveness-path",
+        "components[*]/services{health-check}/config/readiness-path",
+    ]
+
+
 # --- config field ownership (RC-5 prototype: auth-wall owns its fields) ----------
 
 
@@ -617,6 +726,7 @@ def test_component_layout_collection_is_ordered_by_config_component_order():
         "services{attachments}/config",
         "Publicatie op het web",
         "Prometheus metrics scraper configuratie",
+        "Health check configuratie",
     ]
 
 
