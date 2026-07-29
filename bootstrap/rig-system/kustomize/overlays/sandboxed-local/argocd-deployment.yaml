@@ -70,6 +70,15 @@ spec:
         value: "3"
       - name: ARGOCD_HELM_ALLOW_CONCURRENCY
         value: "true"
+      # Stream only the app's manifest-generate-paths dir to the CMP instead of
+      # tarring the whole monorepo per render (odcn measured ~27s of a 28.5s
+      # render was repo streaming; the kustomize+sops render itself is ~1s). The
+      # child apps carry manifest-generate-paths: '.', so this makes their syncs
+      # (add-component, redeploys) fast on the sandbox too - it was previously only
+      # set on odcn-production, leaving the sandbox streaming the whole repo every
+      # render. See issue #130.
+      - name: ARGOCD_REPO_SERVER_PLUGIN_USE_MANIFEST_GENERATE_PATHS
+        value: "true"
     resources:
       limits:
         cpu: 5
