@@ -15,6 +15,7 @@ import time
 from typing import TYPE_CHECKING
 
 import httpx
+from tests.e2e.helpers import cluster
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -189,6 +190,12 @@ def delete_project_via_api(
             if task_id:
                 with contextlib.suppress(AssertionError):
                     _wait_for_task(client, base, task_id, headers, timeout=timeout)
+
+    # Belt-and-suspenders: the project delete only drops the namespace once the
+    # ArgoCD app deletion is confirmed, which frequently times out on a busy
+    # sandbox and leaves an empty namespace + dangling app that pile up across
+    # runs. Reclaim them directly so test projects never accumulate.
+    cluster.force_cleanup_project(project_name)
 
 
 def _wait_for_task(
