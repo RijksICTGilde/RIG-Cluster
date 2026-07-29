@@ -1,8 +1,59 @@
 from opi.services.event_interpreter import (
     EventSeverity,
+    condense_render_error,
     interpret_argocd_errors,
     interpret_events,
 )
+
+
+class TestCondenseRenderError:
+    """condense_render_error extracts the meaningful tail from ArgoCD's verbose messages.
+
+    Both shapes are taken from real sandbox ComparisonError conditions.
+    """
+
+    def test_extracts_stderr_after_exit_status(self):
+        # ArgoCD echoes the whole /bin/bash -c "<script>" command; the real error is the tail.
+        raw = (
+            "Failed to load target state: failed to generate manifest for source 1 of 1: rpc error: "
+            'code = Unknown desc = error generating manifests: `/bin/bash -c "set -e ... 2000 chars of '
+            "script ...\"` failed exit status 1: ERROR: Namespace 'rig-insp1-nmy' does not exist"
+        )
+        assert condense_render_error(raw) == "ERROR: Namespace 'rig-insp1-nmy' does not exist"
+
+    def test_extracts_last_error_line_past_debug_noise(self):
+        # Real sandbox duplicate-identity failure: the stderr after "exit status 1:" leads with
+        # the CMP script's DEBUG lines; the real error is the last "Error:" line.
+        raw = (
+            '... rpc error: ... `/bin/bash -c "..."` failed exit status 1: '
+            "Extracting SOPS age key from secret 'sops-age-key'\n"
+            "DEBUG: Checking folder: '.'\nDEBUG: Kustomization has no helmCharts, skipping dependency build\n"
+            "Error: accumulating resources: accumulation err='merging resources from 'web-service.yaml': "
+            "may not add resource with an already registered id: Service.v1.[noGrp]/productie-web.rig-alls1-3bm'"
+        )
+        condensed = condense_render_error(raw)
+        assert condensed.startswith("Error: accumulating resources")
+        assert "already registered id" in condensed
+        assert "DEBUG:" not in condensed
+        assert "SOPS age key" not in condensed
+
+    def test_falls_back_to_cached_generation_marker(self):
+        raw = (
+            "Failed to load target state: failed to generate manifest for source 1 of 1: rpc error: "
+            "code = Unknown desc = Manifest generation error (cached): ./sandboxed-local/alls7-fa2/productie: "
+            "app path does not exist"
+        )
+        assert condense_render_error(raw) == "./sandboxed-local/alls7-fa2/productie: app path does not exist"
+
+    def test_short_message_passthrough(self):
+        assert condense_render_error("some short error") == "some short error"
+        assert condense_render_error("") == ""
+
+    def test_caps_very_long_message_without_markers(self):
+        raw = "x" * 2000
+        out = condense_render_error(raw)
+        assert out.endswith("...(truncated)")
+        assert len(out) < len(raw)
 
 
 class TestInterpretEvents:
@@ -225,6 +276,26 @@ class TestInterpretArgocdErrors:
         result = interpret_argocd_errors(errors)
         assert len(result) == 1
         assert result[0]["timestamp"] == "2025-01-01T12:00:00Z"
+
+    def test_comparison_error_gets_readable_heading(self):
+        raw = (
+            "Failed to load target state: failed to generate manifests in 'x': exit status 1: "
+            "may not add resource with an already registered id: PersistentVolumeClaim.v1.[noGrp]/web-data.ns"
+        )
+        errors = [{"resource": "ComparisonError", "message": raw}]
+        result = interpret_argocd_errors(errors, deployment_name="prod", component_names=["web"])
+        assert len(result) == 1
+        # Friendly, slash-free heading (the deployment-name simplifier splits on "/").
+        assert result[0]["resource"] == "Configuratiefout (kustomize CMP)"
+        # The message is condensed to the meaningful tail (after "exit status 1:"); the full
+        # message is kept under original_message.
+        assert result[0]["message"] == (
+            "may not add resource with an already registered id: PersistentVolumeClaim.v1.[noGrp]/web-data.ns"
+        )
+        assert result[0].get("original_message") == raw
+        assert result[0].get("suggestion")
+        assert result[0]["severity"] == "actionable"
+        assert result[0].get("orphaned") is None
 
     def test_empty_list(self):
         assert interpret_argocd_errors([]) == []

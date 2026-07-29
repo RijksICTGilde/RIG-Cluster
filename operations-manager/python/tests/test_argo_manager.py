@@ -32,6 +32,26 @@ def _make_status(
     return status
 
 
+def _status_with_condition(
+    sync: str,
+    health: str,
+    condition_type: str,
+    condition_message: str,
+    reconciled_at: str | None = None,
+) -> dict:
+    """Build a status dict carrying a single app-level condition."""
+    status = _make_status(sync, health, reconciled_at=reconciled_at)
+    status["status"]["conditions"] = [{"type": condition_type, "message": condition_message}]
+    return status
+
+
+_KUSTOMIZE_RENDER_ERROR = (
+    "Failed to load target state: failed to generate manifests in 'prd/x/deploy-1': "
+    "rpc error: code = Unknown desc = `kustomize build ...` failed exit status 1: "
+    "may not add resource with an already registered id: PersistentVolumeClaim.v1.[noGrp]/web-data.rig-prd-x"
+)
+
+
 @pytest.fixture
 def argo_manager() -> ArgoManager:
     project_manager = MagicMock()
@@ -116,6 +136,45 @@ class TestWaitForApplicationSynced:
         with (
             patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
             pytest.raises(RuntimeError, match="is degraded"),
+        ):
+            await argo_manager.wait_for_application_synced("my-app", timeout=10, poll_interval=1)
+
+    @pytest.mark.asyncio
+    async def test_comparison_error_condition_raises_immediately(
+        self, argo_manager: ArgoManager, mock_connector: AsyncMock
+    ):
+        """A ComparisonError condition (broken render) must fail fast with the real message.
+
+        Sync goes to Unknown with no sync operation, so the old code polled to the timeout.
+        The condition is read on the first fresh poll and raised - no long wait.
+        """
+        mock_connector.get_application_status = AsyncMock(
+            return_value=_status_with_condition("Unknown", "Missing", "ComparisonError", _KUSTOMIZE_RENDER_ERROR)
+        )
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            pytest.raises(RuntimeError, match="cannot be rendered/compared"),
+        ):
+            await argo_manager.wait_for_application_synced("my-app", timeout=300, poll_interval=5)
+
+        # Raised on the first poll: the kustomize error is in the message, and there was no wait.
+        mock_connector.get_application_status.assert_called_once_with("my-app")
+        mock_sleep.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_comparison_error_message_includes_kustomize_error(
+        self, argo_manager: ArgoManager, mock_connector: AsyncMock
+    ):
+        """The raised message carries the plugin stderr so the user sees the real cause."""
+        mock_connector.get_application_status = AsyncMock(
+            return_value=_status_with_condition("Unknown", "Missing", "ComparisonError", _KUSTOMIZE_RENDER_ERROR)
+        )
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            pytest.raises(RuntimeError, match="already registered id"),
         ):
             await argo_manager.wait_for_application_synced("my-app", timeout=10, poll_interval=1)
 
@@ -262,6 +321,35 @@ class TestStaleStatusProtection:
                 # First poll: stale Degraded (reconciledAt == refreshed_after)
                 _make_status("Synced", "Degraded", reconciled_at="2026-03-17T10:00:00Z"),
                 # Second poll: fresh and healthy
+                _make_status("Synced", "Healthy", reconciled_at="2026-03-17T10:01:00Z"),
+            ]
+        )
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await argo_manager.wait_for_application_synced(
+                "my-app", timeout=30, poll_interval=2, refreshed_after="2026-03-17T10:00:00Z"
+            )
+
+        assert result is True
+        assert mock_connector.get_application_status.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_comparison_error_ignored_while_stale(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
+        """A ComparisonError from a previous reconciliation must not be treated as terminal.
+
+        While the status is stale (reconciledAt <= refreshed_after) the condition belongs to
+        the old state, so the loop keeps polling until a fresh status arrives.
+        """
+        mock_connector.get_application_status = AsyncMock(
+            side_effect=[
+                # Stale ComparisonError (reconciledAt == refreshed_after) -> ignored
+                _status_with_condition(
+                    "Unknown", "Missing", "ComparisonError", "old render error", reconciled_at="2026-03-17T10:00:00Z"
+                ),
+                # Fresh and healthy
                 _make_status("Synced", "Healthy", reconciled_at="2026-03-17T10:01:00Z"),
             ]
         )
@@ -429,3 +517,103 @@ class TestRefreshApplicationReturnsReconciledAt:
         # String is truthy, so `if not result` is False — same as old `True` return
         assert result
         assert result
+
+    @pytest.mark.asyncio
+    async def test_logs_warning_on_error_condition(self, connector: ArgoConnector, caplog):
+        """A render/compare error condition in the refresh response is logged at WARNING."""
+        response_body = json.dumps(
+            {
+                "status": {
+                    "reconciledAt": "2026-03-17T10:00:00Z",
+                    "conditions": [{"type": "ComparisonError", "message": _KUSTOMIZE_RENDER_ERROR}],
+                }
+            }
+        )
+
+        import logging
+
+        with (
+            patch.object(
+                connector, "_make_authenticated_request", new_callable=AsyncMock, return_value=(200, response_body)
+            ),
+            caplog.at_level(logging.WARNING),
+        ):
+            result = await connector.refresh_application("my-app")
+
+        # The reconciledAt is still returned, and the error surfaced in the logs.
+        assert result == "2026-03-17T10:00:00Z"
+        assert any("ComparisonError" in rec.message for rec in caplog.records)
+
+
+class TestTerminalConditionMessage:
+    """Tests for the module-level terminal_condition_message helper."""
+
+    def test_returns_message_for_comparison_error(self):
+        from opi.manager.argo_manager import terminal_condition_message
+
+        status_data = {"status": {"conditions": [{"type": "ComparisonError", "message": _KUSTOMIZE_RENDER_ERROR}]}}
+        message = terminal_condition_message(status_data)
+        assert message is not None
+        assert "ComparisonError" in message
+        assert "already registered id" in message
+
+    def test_returns_none_without_terminal_condition(self):
+        from opi.manager.argo_manager import terminal_condition_message
+
+        # OrphanedResourceWarning is not terminal; a bare healthy status has no conditions.
+        status_data = {"status": {"conditions": [{"type": "OrphanedResourceWarning", "message": "an orphan"}]}}
+        assert terminal_condition_message(status_data) is None
+        assert terminal_condition_message({"status": {}}) is None
+
+
+class TestGetApplicationManifests:
+    """Tests for ArgoConnector.get_application_manifests (active render check)."""
+
+    @pytest.fixture
+    def connector(self) -> ArgoConnector:
+        return ArgoConnector(server_host="localhost", server_port=8080, username="admin", password="admin")
+
+    @pytest.mark.asyncio
+    async def test_ok_on_200(self, connector: ArgoConnector):
+        body = json.dumps({"manifests": ["{}"]})
+        with patch.object(
+            connector, "_make_authenticated_request", new_callable=AsyncMock, return_value=(200, body)
+        ) as req:
+            ok, detail = await connector.get_application_manifests("my-app")
+
+        assert ok is True
+        assert detail == body
+        # No revision -> plain manifests URL.
+        assert req.call_args.args[1].endswith("/applications/my-app/manifests")
+
+    @pytest.mark.asyncio
+    async def test_returns_body_on_generation_error(self, connector: ArgoConnector):
+        with patch.object(
+            connector,
+            "_make_authenticated_request",
+            new_callable=AsyncMock,
+            return_value=(500, _KUSTOMIZE_RENDER_ERROR),
+        ):
+            ok, detail = await connector.get_application_manifests("my-app")
+
+        assert ok is False
+        assert "already registered id" in detail
+
+    @pytest.mark.asyncio
+    async def test_revision_is_passed_as_query(self, connector: ArgoConnector):
+        with patch.object(
+            connector, "_make_authenticated_request", new_callable=AsyncMock, return_value=(200, "{}")
+        ) as req:
+            await connector.get_application_manifests("my-app", revision="abc123")
+
+        assert "revision=abc123" in req.call_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_transport_error_is_not_ok(self, connector: ArgoConnector):
+        with patch.object(
+            connector, "_make_authenticated_request", new_callable=AsyncMock, side_effect=Exception("boom")
+        ):
+            ok, detail = await connector.get_application_manifests("my-app")
+
+        assert ok is False
+        assert "boom" in detail

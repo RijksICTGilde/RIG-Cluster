@@ -320,6 +320,26 @@ def _is_image_pull_auth_error(message: str | None) -> bool:
     return any(marker in lowered for marker in _IMAGE_PULL_AUTH_MARKERS)
 
 
+# Markers that identify an ArgoCD manifest-generation failure in a manifests-endpoint body.
+# These are the phrases ArgoCD's repo-server uses when a plugin (our SOPS/kustomize CMP)
+# cannot render, so they distinguish a real render failure from a transport/auth error (a
+# 401/404/network hiccup) that must not block the deploy.
+_RENDER_FAILURE_MARKERS = (
+    "failed to generate manifests",
+    "error generating manifests",
+    "manifest generation error",
+    "rpc error",
+)
+
+
+def _looks_like_render_failure(detail: str | None) -> bool:
+    """True when a failed manifests-endpoint body indicates a generation/render error."""
+    if not detail:
+        return False
+    lowered = detail.lower()
+    return any(marker in lowered for marker in _RENDER_FAILURE_MARKERS)
+
+
 @dataclass
 class DeploymentResult:
     """Result information for a processed deployment."""
@@ -2767,6 +2787,30 @@ class ProjectManager:
 
                     try:
                         reconciled_at = await argo_connector.refresh_application(app_name)
+
+                        # Actively fetch the render right after our push (and the refresh
+                        # above, so the repo-server has re-checked the source). A broken
+                        # kustomization returns the generation error here - including the
+                        # plugin stderr - so the deploy fails fast with the real cause
+                        # instead of a 300s time-out. This also covers helm/helmfile
+                        # deployments, which only render inside the CMP. A non-render failure
+                        # (network, 401) must not block the deploy: log and fall through to
+                        # the wait loop.
+                        render_ok, render_detail = await argo_connector.get_application_manifests(app_name)
+                        if not render_ok and _looks_like_render_failure(render_detail):
+                            from opi.services.event_interpreter import condense_render_error
+
+                            logger.error("Manifest render failed for '%s': %s", app_name, render_detail)
+                            raise RuntimeError(
+                                f"Manifest render failed for '{app_name}': {condense_render_error(render_detail)}"
+                            )
+                        if not render_ok:
+                            logger.warning(
+                                "Could not verify render for '%s' (not a render error), proceeding to wait: %s",
+                                app_name,
+                                render_detail,
+                            )
+
                         await self._argo_manager.wait_for_application_synced(
                             app_name=app_name,
                             timeout=300,
@@ -6596,7 +6640,7 @@ class ProjectManager:
                     result_create["warnings"] = normalized_warnings_create
                 return result_create
 
-        except (ConflictError, ConcurrencyError):
+        except ConflictError, ConcurrencyError:
             # Retried by upsert_deployment on a fresh read. Must propagate, not become a
             # generic error dict, or the retry never sees it.
             raise

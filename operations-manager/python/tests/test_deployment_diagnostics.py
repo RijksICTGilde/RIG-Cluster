@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.api.v2.models import ErrorCategory
-from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
+from opi.services.deployment_diagnostics import (
+    categorize_error,
+    conditions_to_errors,
+    gather_deployment_errors,
+)
 
 
 def _argo_mock(tree_nodes: list[dict[str, Any]] | None = None, raises: bool = False) -> MagicMock:
@@ -37,6 +41,31 @@ def _kubectl_mock(
 
 
 @pytest.mark.asyncio
+class TestConditionsToErrors:
+    """The cheap, always-run app-level conditions reader."""
+
+    def test_comparison_error_condition_becomes_error(self) -> None:
+        status_data = {
+            "status": {
+                "health": {"status": "Healthy"},
+                "sync": {"status": "Unknown"},
+                "conditions": [
+                    {"type": "ComparisonError", "message": "failed to generate manifests: exit status 1"},
+                ],
+            }
+        }
+        errors = conditions_to_errors(status_data)
+        assert errors == [{"resource": "ComparisonError", "message": "failed to generate manifests: exit status 1"}]
+
+    def test_conditions_without_message_are_skipped(self) -> None:
+        status_data = {"status": {"conditions": [{"type": "ComparisonError", "message": ""}]}}
+        assert conditions_to_errors(status_data) == []
+
+    def test_no_conditions_is_empty(self) -> None:
+        assert conditions_to_errors({"status": {}}) == []
+        assert conditions_to_errors({}) == []
+
+
 class TestGatherDeploymentErrors:
     """Behaviour of gather_deployment_errors."""
 

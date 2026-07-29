@@ -16,7 +16,10 @@ from ruamel.yaml import YAML
 
 def _write(directory: str, name: str) -> None:
     with open(os.path.join(directory, name), "w") as f:
-        f.write("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n")
+        # Distinct resource name per file so each manifest has a unique kustomize identity
+        # (create_kustomization_files now rejects two files sharing one identity).
+        resource = name.rsplit(".", 1)[0]
+        f.write(f"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {resource}\n")
 
 
 class TestSelectObsoleteComponentManifests:

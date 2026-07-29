@@ -79,6 +79,25 @@ def categorize_error(resource: str, message: str) -> tuple[ErrorCategory, str | 
     return category, _CATEGORY_EXPLANATIONS.get(category)
 
 
+def conditions_to_errors(status_data: dict[str, Any]) -> list[dict[str, str]]:
+    """App-level ArgoCD conditions as error entries - the cheap part of the diagnostics.
+
+    Reads only ``status.conditions[]`` from ``status_data`` (no extra API calls), so it can
+    run unconditionally - even for a deployment whose health still reads ``Healthy`` from the
+    last good reconciliation while a fresh ``ComparisonError`` blocks the current compare.
+    ``gather_deployment_errors`` already includes these conditions in its (more expensive)
+    output, so callers use one or the other, not both.
+    """
+    errors: list[dict[str, str]] = []
+    status = status_data.get("status", {}) or {}
+    for condition in status.get("conditions", []) or []:
+        condition_msg = condition.get("message", "")
+        if not condition_msg:
+            continue
+        errors.append({"resource": condition.get("type", "Unknown"), "message": condition_msg})
+    return errors
+
+
 async def gather_deployment_errors(
     *,
     argo: ArgoConnector,
