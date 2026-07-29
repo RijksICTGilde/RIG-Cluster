@@ -12,7 +12,7 @@ rules:
   # Tenant-namespace lifecycle: OPI creëert en label't tenant-namespaces.
   - apiGroups: [""]
     resources: [namespaces]
-    verbs: [create, get, list, patch]
+    verbs: [create, get, list, patch, delete]
   # Secrets cluster-breed: OPI plaatst SOPS-age-keys en Keycloak-secrets per
   # tenant-ns; delete voor key-rotation (zie project_manager._ensure_sops_secret).
   - apiGroups: [""]
