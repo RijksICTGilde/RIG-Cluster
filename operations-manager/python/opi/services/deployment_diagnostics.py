@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from opi.api.v2.models import ErrorCategory
 from opi.core.cluster_config import get_prefixed_namespace
+from opi.services.event_interpreter import _friendly_resource_name
 
 if TYPE_CHECKING:
     from opi.connectors.argo import ArgoConnector
@@ -107,6 +108,7 @@ async def gather_deployment_errors(
     cluster: str,
     deployment_name: str,
     status_data: dict[str, Any],
+    disabled_components: frozenset[str] = frozenset(),
 ) -> list[dict[str, str]]:
     """Collect raw error entries for a deployment.
 
@@ -125,6 +127,14 @@ async def gather_deployment_errors(
     resolved hiccups (e.g. a FailedScheduling or ProvisioningFailed while a
     volume was still provisioning) are not shown as live errors. When the
     tree fetch failed, events pass unverified.
+
+    ``disabled_components`` (WP6): the friendly names (= references) of components
+    intentionally scaled to zero -- the OOM/image-pull watcher's auto-disable and
+    manual disables both write ``disabled`` per deployment-component. Their resources
+    are at their intended end state (0 replicas), so any lingering "waiting for
+    rollout"/"pods being created" (Progressing) or old-pod message they carry is state,
+    not a live problem; the deployment card already surfaces them as *disabled*. These
+    entries are dropped so a disabled component is not reported as busy.
 
     Each entry: ``{"resource": str, "message": str, "timestamp": str?}``.
     All sub-fetches are best-effort: failures log at debug, never raise.
@@ -234,5 +244,16 @@ async def gather_deployment_errors(
         if finished_at:
             op_entry["timestamp"] = finished_at
         errors.append(op_entry)
+
+    if disabled_components:
+        # Drop entries for a disabled component's own resources (Deployment/ReplicaSet/
+        # Pod/Event named ``{deployment}-{reference}-...``). App-level entries
+        # (SyncOperation, conditions) do not carry the deployment prefix, so their
+        # friendly name never matches a reference and they are kept.
+        errors = [
+            entry
+            for entry in errors
+            if _friendly_resource_name(entry["resource"], deployment_name) not in disabled_components
+        ]
 
     return errors

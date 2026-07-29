@@ -17,9 +17,9 @@ from opi.forms.visualizers.wizard_sections import (
     SERVICES_EDIT_SECTION,
     SERVICES_SECTION,
     TEAM_SECTION,
-    _service_entry_name,
     _strip_removed_services_from_components,
 )
+from opi.services.services import service_entry_name
 
 
 class TestSectionDefinitions:
@@ -177,20 +177,26 @@ class TestFlowRegistry:
 
 
 class TestServiceEntryName:
+    """The component-service reconciliation now uses the canonical helper (which also
+    resolves the ``{reference: X}`` record the old local reader ignored)."""
+
     def test_string_entry(self):
-        assert _service_entry_name("keycloak") == "keycloak"
+        assert service_entry_name("keycloak") == "keycloak"
 
     def test_dict_with_name(self):
-        assert _service_entry_name({"name": "keycloak"}) == "keycloak"
+        assert service_entry_name({"name": "keycloak"}) == "keycloak"
+
+    def test_dict_with_reference(self):
+        assert service_entry_name({"reference": "persistent-storage", "config": []}) == "persistent-storage"
 
     def test_single_key_dict(self):
-        assert _service_entry_name({"persistent-storage": {"config": []}}) == "persistent-storage"
+        assert service_entry_name({"persistent-storage": {"config": []}}) == "persistent-storage"
 
     def test_none_for_invalid(self):
-        assert _service_entry_name(42) is None
+        assert service_entry_name(42) is None
 
     def test_none_for_multi_key_dict(self):
-        assert _service_entry_name({"a": 1, "b": 2}) is None
+        assert service_entry_name({"a": 1, "b": 2}) is None
 
 
 class TestStripRemovedServicesFromComponents:

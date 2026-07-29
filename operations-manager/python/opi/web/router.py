@@ -1438,12 +1438,18 @@ async def project_details(request: Request, project_name: str):
         # Deployment-level action buttons contributed by the project's services
         # (e.g. sleep-mode "wake"), keyed by deployment name. Built from the decrypted
         # project data so it can read the OPI-managed sleep state.
-        from opi.services.registry import collect_deployment_actions
+        from opi.services.registry import collect_deployment_actions, collect_detail_page_sections
 
         deployment_service_actions = {
             dep.get("name"): collect_deployment_actions(project_data_decrypted, dep.get("name", ""))
             for dep in project_data_decrypted.get("deployments", [])
         }
+
+        # Read-only detail-page sections the project's services deliver (WP2): each
+        # service owns its own block instead of the general template hardcoding an
+        # include. Built from the decrypted data so a service can surface its managed
+        # credentials (e.g. keycloak realm admin details).
+        service_detail_sections = collect_detail_page_sections(project_data_decrypted, user_role)
 
         return templates.TemplateResponse(
             "project-details.html.j2",
@@ -1464,12 +1470,11 @@ async def project_details(request: Request, project_name: str):
                 "csrf_token": csrf_token,
                 "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
                 "deployment_service_actions": deployment_service_actions,
-                # Realm admin details for the Keycloak section. Read from the service
-                # config, where RC-5 relocated them; the template used to read the old
-                # project-level ``config.keycloak``, which no longer exists, so the
-                # section silently stopped rendering and admins lost their realm URL
-                # and credentials.
-                "keycloak_realms": Project(project_data_decrypted).get("services/keycloak/config/realms") or [],
+                # Detail-page sections the project's services own (WP2). Replaces the
+                # hardcoded per-service includes (e.g. the Keycloak realm block, which
+                # after RC-5's config move kept reading the old project-level
+                # ``config.keycloak`` and silently stopped rendering).
+                "service_detail_sections": service_detail_sections,
             },
         )
 
@@ -1549,6 +1554,14 @@ async def _fetch_argocd_deployment_status(
         operation_state = status.get("operationState", {})
         app_health = health.get("status", "Unknown")
 
+        # Components intentionally scaled to zero (auto-disabled by the watcher or manually):
+        # their resources must not be reported as a live "busy"/problem (WP6).
+        disabled_components = frozenset(
+            ref
+            for comp in deployment.get("components", []) or []
+            if comp.get("disabled") and (ref := comp.get("reference"))
+        )
+
         if app_health != "Healthy":
             # Not healthy: the full (more expensive) diagnostics, which already include the
             # app-level conditions along with the resource tree and namespace events.
@@ -1560,6 +1573,7 @@ async def _fetch_argocd_deployment_status(
                 cluster=deployment.get("cluster", ""),
                 deployment_name=deployment_name,
                 status_data=status_data,
+                disabled_components=disabled_components,
             )
         else:
             # Healthy last-known state can still hide a fresh ComparisonError (sync=Unknown):
@@ -2203,15 +2217,20 @@ async def _update_keycloak_redirect_uris_for_deployment(
         # Get HTTP support setting and additional redirect URIs from config
         support_http = get_keycloak_support_http(cluster)
 
-        # Get additional redirect URIs from project keycloak service config
+        # Get additional redirect URIs from project keycloak service config.
+        # Format-agnostic: ``"keycloak" in service_item`` only matched the legacy
+        # single-key form, so extra redirect URIs were dropped for record-form projects.
+        from opi.services.services import service_entry_config, service_entry_name
+
         additional_redirect_uris = None
         project_services = project_data.get("services", [])
         for service_item in project_services:
-            if isinstance(service_item, dict) and "keycloak" in service_item:
-                service_data = service_item["keycloak"]
-                if isinstance(service_data, dict) and "config" in service_data:
-                    additional_redirect_uris = service_data["config"].get("additional_redirect_uris")
-                    break
+            if service_entry_name(service_item) != ServiceType.KEYCLOAK.value:
+                continue
+            config = service_entry_config(service_item)
+            if isinstance(config, dict):
+                additional_redirect_uris = config.get("additional_redirect_uris")
+            break
 
         # Create Keycloak connector and update redirect URIs
         keycloak = await create_keycloak_connector(

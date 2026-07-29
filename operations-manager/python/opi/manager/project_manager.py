@@ -478,11 +478,11 @@ class ProjectManager:
         project_name = project_data.get("name")
         project_services = project_data.get("services", [])
 
-        # Check if project uses namespace-specific PostgreSQL
+        # Check if project uses namespace-specific PostgreSQL. Format-agnostic:
+        # ``value in service`` tested dict keys, so a namespace-postgres entry carrying
+        # config (a {name, config} record) was undetected and this wrongly read False.
         uses_namespace_db = any(
-            ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in service
-            if isinstance(service, dict)
-            else service == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
+            service_entry_name(service) == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
             for service in project_services
         )
 
