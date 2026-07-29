@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from tests.e2e.helpers import sandbox_api
+from tests.e2e.helpers import cluster, sandbox_api
 from tests.e2e.helpers.wizard import WizardHelper
 
 if TYPE_CHECKING:
@@ -247,6 +247,12 @@ def create_project_with_services(
     assert name, f"No new project file appeared in Forgejo for display-name '{display_name}'"
     deployment_name = forgejo.get_first_deployment_name(name)
     api_key = read_api_key_with_retry(page, base_url, name)
+    # The project file appears early in the create_project task, but the task then
+    # keeps running (app-of-apps refresh, waiting for the app to go Healthy). Wait
+    # for that to finish before handing the project to the test: otherwise a fast
+    # test that adds/deletes and tears down would delete the app mid-provision,
+    # leaving create_project hung on a now-missing app and jamming the worker.
+    cluster.wait_for_project_apps_healthy(name, timeout=create_timeout)
     return CreatedProject(name=name, display_name=display_name, api_key=api_key, deployment_name=deployment_name)
 
 
@@ -271,7 +277,7 @@ def create_project_via_wizard(
     user_email: str,
     component_name: str = "web",
     image: str = RUNNABLE_IMAGE,
-    create_timeout: float = 180.0,
+    create_timeout: float = 240.0,
 ) -> CreatedProject:
     """Create one project through the real wizard and resolve its identity.
 
@@ -287,4 +293,9 @@ def create_project_via_wizard(
 
     deployment_name = forgejo.get_first_deployment_name(name)
     api_key = read_api_key_with_retry(page, base_url, name)
+    # Wait out the rest of the create_project task (app-of-apps refresh, app going
+    # Healthy) before handing the project over, so a fast add/delete + teardown does
+    # not race the still-running create and delete the app from under it. See
+    # create_project_with_services for the full rationale.
+    cluster.wait_for_project_apps_healthy(name, timeout=create_timeout)
     return CreatedProject(name=name, display_name=display_name, api_key=api_key, deployment_name=deployment_name)
