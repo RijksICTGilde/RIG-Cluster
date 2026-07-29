@@ -479,11 +479,9 @@ async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: 
 
         # Load platform users from the users database table into the allowlist
         try:
-            from opi.core.database_pools import get_database_pool
             from opi.services.user_admin_service import UserAdminService
 
-            pool = get_database_pool("main")
-            admin_service = UserAdminService(pool)
+            admin_service = UserAdminService()
             db_users = await admin_service.list_users()
             if db_users:
                 db_emails = [u["email"] for u in db_users if u.get("email")]

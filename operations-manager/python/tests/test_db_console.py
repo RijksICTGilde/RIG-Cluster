@@ -282,50 +282,11 @@ def test_reaper_expiry_detection():
 # ------------------------------------------------------------- runs registry
 
 
-class _FakePool:
-    """Minimal DatabasePool stand-in that returns one canned row and records SQL."""
-
-    def __init__(self, row: dict | None) -> None:
-        self.row = row
-        self.calls: list[tuple[str, str, tuple]] = []
-
-    async def acquire(self):
-        pool = self
-
-        class _Conn:
-            async def fetchrow(self, sql, *args):
-                pool.calls.append(("fetchrow", sql, args))
-                return pool.row
-
-            async def fetch(self, sql, *args):
-                pool.calls.append(("fetch", sql, args))
-                return [pool.row] if pool.row else []
-
-            async def execute(self, sql, *args):
-                pool.calls.append(("execute", sql, args))
-
-        return _Conn()
-
-    async def release(self, conn) -> None:
-        return None
-
-
 @pytest.mark.asyncio
-async def test_runs_service_create_and_end():
+async def test_runs_service_create_and_end(orm_db):
     from opi.services.runs_service import RunKind, RunsService, RunStatus
 
-    row = {
-        "id": "11111111-1111-1111-1111-111111111111",
-        "kind": "db-console",
-        "session_id": "abcd1234",
-        "project": "proj",
-        "deployment": "dep",
-        "spec": {"tool": "pgweb", "mode": "ro"},
-        "status": "starting",
-    }
-    pool = _FakePool(row)
-    svc = RunsService(pool)  # type: ignore[arg-type]
-
+    svc = RunsService()
     result = await svc.create_run(
         kind=RunKind.DB_CONSOLE,
         session_id="abcd1234",
@@ -341,22 +302,35 @@ async def test_runs_service_create_and_end():
     )
     assert result["session_id"] == "abcd1234"
     assert result["spec"] == {"tool": "pgweb", "mode": "ro"}
-    assert any(kind == "fetchrow" and "INSERT INTO runs" in sql for kind, sql, _ in pool.calls)
+    assert result["status"] == "starting"
 
     await svc.mark_ended("abcd1234", RunStatus.EXPIRED, ended_by="reaper")
-    assert any(kind == "execute" and "status = $2" in sql for kind, sql, _ in pool.calls)
+    latest = await svc.get_latest_run("proj", "dep", RunKind.DB_CONSOLE)
+    assert latest["status"] == "expired"
+    assert latest["ended_by"] == "reaper"
 
 
 @pytest.mark.asyncio
-async def test_get_latest_run_queries_newest():
+async def test_get_latest_run_queries_newest(orm_db):
     from opi.services.runs_service import RunKind, RunsService
 
-    row = {"id": "1", "kind": "db-console", "session_id": "abcd1234", "deployment": "dep", "status": "starting"}
-    pool = _FakePool(row)
-    svc = RunsService(pool)  # type: ignore[arg-type]
-    result = await svc.get_latest_run("proj", "dep", RunKind.DB_CONSOLE)
-    assert result["session_id"] == "abcd1234"
-    assert any(kind == "fetchrow" and "ORDER BY started_at DESC" in sql for kind, sql, _ in pool.calls)
+    svc = RunsService()
+    for sid, nm in (("s1", "n1"), ("s2", "n2")):
+        await svc.create_run(
+            kind=RunKind.DB_CONSOLE,
+            session_id=sid,
+            cluster="c",
+            project="proj",
+            deployment="dep",
+            namespace="ns",
+            name=nm,
+            spec={},
+            url=None,
+            started_by=None,
+            expires_at=None,
+        )
+    latest = await svc.get_latest_run("proj", "dep", RunKind.DB_CONSOLE)
+    assert latest["session_id"] == "s2"  # newest by started_at
 
 
 def test_is_stale_starting():

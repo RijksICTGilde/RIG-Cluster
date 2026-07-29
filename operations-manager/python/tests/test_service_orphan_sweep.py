@@ -231,7 +231,6 @@ class TestConfirmEndpointSafety:
         with (
             patch("opi.jobs.service_orphan_sweep.sweep", AsyncMock(return_value=self._canned_report())),
             patch("opi.services.project_service.get_project_service", return_value=mock_project_service),
-            patch.object(admin_module, "get_database_pool", return_value=AsyncMock()),
             patch.object(admin_module, "_get_marked_for_deletion_service", return_value=mock_service),
         ):
             response = await confirm_orphans(request=mock_request)

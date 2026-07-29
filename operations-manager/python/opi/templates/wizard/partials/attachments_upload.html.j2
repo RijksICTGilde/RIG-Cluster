@@ -26,7 +26,17 @@
             <c-heading type="h3" textContent="Nieuwe bijlage uploaden" />
             <p class="rvo-text--sm rvo-text--subtle">Max 256 KB (bijvoorbeeld een certificaat). Koppelen doe je per component.</p>
             <input type="hidden" id="wiz-att-token" name="_wizard_token" value="{{ _wizard_token | default('', true) }}">
-            <div id="wiz-att-id-field">
+            {# On-change identifier validation lives on this wrapper, NOT on the #wiz-att-id
+               input itself: htmx omits a request-source input from another element's
+               hx-include, so an htmx-controlled id input would drop attachment_id from the
+               upload below. The change event bubbles from the plain input to this wrapper. #}
+            <div id="wiz-att-id-field"
+                 hx-post="/forms/wizard/create-project/attachments/validate-id"
+                 hx-ext="ignore:json-enc"
+                 hx-trigger="change from:#wiz-att-id"
+                 hx-include="#wiz-att-id, #wiz-att-token"
+                 hx-target="this"
+                 hx-swap="innerHTML">
                 {% include "wizard/partials/attachments_id_field.html.j2" %}
             </div>
             <label class="utrecht-form-label" for="wiz-att-file" style="margin-top:0.5rem;">Bestand</label>

@@ -11,16 +11,21 @@ import logging
 from typing import Any
 
 from opi.services.services_enums import ServiceType
+from opi.utils.naming import generate_storage_name
 
 logger = logging.getLogger(__name__)
 
-LATEST_SCHEMA_VERSION = 2.2
+LATEST_SCHEMA_VERSION = 2.5
 
 # NOTE: Domain restriction changes (task-1) introduced:
 # - domains.allowed-subdomains entries changed from list[str] to list[{name, status, history}]
 # - domains.custom-domains renamed to domains.allowed-domains
 # No migration needed yet — all existing projects predate the domain restriction feature.
 # When migrating existing projects, add a v2.2→v2.3 migration that converts the old formats.
+#
+# v2.4 -> v2.5 (RC-5): the domain-approval block moved from the project root (`domains:`)
+# to the publish-on-web service config (`services/[publish-on-web]/config/domains`).
+# See ``normalize_domains_location`` below.
 
 # Storage service types and their corresponding storage type values
 _STORAGE_SERVICE_TO_TYPE = {
@@ -91,6 +96,15 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
         migrated = True
 
     if version < 2.2 and _migrate_v2_1_to_v2_2(project_data):
+        migrated = True
+
+    if version < 2.3 and _migrate_v2_2_to_v2_3(project_data):
+        migrated = True
+
+    if version < 2.4 and normalize_service_entries(project_data):
+        migrated = True
+
+    if version < 2.5 and normalize_domains_location(project_data):
         migrated = True
 
     if migrated:
@@ -170,8 +184,18 @@ def _migrate_component_v1_to_v2(component: dict[str, Any]) -> None:
             continue
         storage_type = item.get("type", "persistent")
         service_name = _STORAGE_TYPE_TO_SERVICE.get(storage_type)
-        if service_name:
-            storage_by_service.setdefault(service_name, []).append({k: v for k, v in item.items() if k != "type"})
+        if not service_name:
+            continue
+        entry = {k: v for k, v in item.items() if k != "type"}
+        bucket = storage_by_service.setdefault(service_name, [])
+        # The v2 storage config (StorageEntry) requires a name per mount, but v1
+        # entries often carried none. Synthesize the same name the renderer derives
+        # from the mount path (generate_storage_name) so a migrated legacy project
+        # stays valid under the config-validation gate instead of failing on the
+        # required `name` field.
+        if not entry.get("name"):
+            entry["name"] = generate_storage_name(entry.get("mount-path", ""), len(bucket))
+        bucket.append(entry)
 
     # Start from existing v2 services (if any) and merge in v1 data
     existing_services: list[str | dict[str, Any]] = component.get("services", [])
@@ -551,6 +575,126 @@ def _fixup_flat_resources(entity: dict[str, Any]) -> bool:
         changed = True
 
     return changed
+
+
+def _normalize_service_entry(entry: Any, id_key: str) -> Any:
+    """Convert a legacy name-as-key service entry to the uniform record form.
+
+    ``{X: {config: ...}}`` -> ``{id_key: X, config: ...}``. Bare strings and entries
+    already in record form (they carry ``name``/``reference``) are returned as-is.
+    ``id_key`` is ``"name"`` for project-level definitions, ``"reference"`` for
+    component-level references.
+    """
+    if not isinstance(entry, dict):
+        return entry
+    if "name" in entry or "reference" in entry:
+        return entry
+    keys = [key for key in entry if key not in ("config", "schema-version")]
+    if len(keys) != 1:
+        return entry
+    name = keys[0]
+    if name == "attachments":
+        # Deferred hard case: attachments has its own project-level 'data' catalog and
+        # dedicated $defs. Leave it in the legacy name-as-key form (readers handle it).
+        return entry
+    body = entry[name]
+    record: dict[str, Any] = {id_key: name}
+    if isinstance(body, dict):
+        if "config" in body:
+            record.update(body)  # config-wrapped legacy (+ any siblings like 'type')
+        else:
+            # Inline config with no wrapper (e.g. metrics-scraper {port, path}).
+            record["config"] = body
+    elif body is not None:
+        record["config"] = body
+    return record
+
+
+def normalize_service_entries(project_data: dict[str, Any]) -> bool:
+    """Normalize service entries to the uniform record form (RC-5 A):
+    project-level definitions -> ``{name, config}``, component-level references ->
+    ``{reference, config}``. Bare strings stay bare; already-normalized entries and
+    attachments (deferred) are untouched. Deployment-level services are OPI-managed
+    and already in ``{reference, config}`` form.
+
+    Idempotent and version-independent. This is both the v2.3 -> v2.4 migration step
+    AND the canonical shape used on the create/wizard save path, so newly created
+    project files are born in the current uniform form (the wizard editables still
+    write the legacy name-as-key/inline shape for component services). One normalizer,
+    one canonical shape - the editables and the migration no longer each hand-encode it.
+    """
+    changed = False
+
+    services = project_data.get("services")
+    if isinstance(services, list):
+        for i, entry in enumerate(services):
+            normalized = _normalize_service_entry(entry, "name")
+            if normalized is not entry:
+                services[i] = normalized
+                changed = True
+
+    for component in project_data.get("components", []) or []:
+        if not isinstance(component, dict):
+            continue
+        comp_services = component.get("services")
+        if not isinstance(comp_services, list):
+            continue
+        for i, entry in enumerate(comp_services):
+            normalized = _normalize_service_entry(entry, "reference")
+            if normalized is not entry:
+                comp_services[i] = normalized
+                changed = True
+
+    return changed
+
+
+def normalize_domains_location(project_data: dict[str, Any]) -> bool:
+    """Relocate the root ``domains:`` approval block under the publish-on-web service
+    config: ``services/[publish-on-web]/config/domains`` (v2.4 -> v2.5, RC-5).
+
+    The block is project-global and publish-on-web is a root-level service definition,
+    so the service-definition config is its home. Placement is delegated to
+    ``ensure_domains_config`` -- the single authority on where the block lives -- so
+    this migration and the runtime read/write path (connectors/subdomain.py) never
+    disagree. Idempotent: a no-op once the block already lives under the service (or
+    there is no block at all).
+
+    Readers accept both locations (``get_domains_config``), so a file that has not been
+    migrated yet keeps working and relocates on its next load/save.
+    """
+    if not isinstance(project_data.get("domains"), dict):
+        return False
+    from opi.connectors.subdomain import ensure_domains_config
+
+    ensure_domains_config(project_data)
+    return True
+
+
+def _migrate_v2_2_to_v2_3(project_data: dict[str, Any]) -> bool:
+    """Relocate the per-cluster Keycloak admin connections from the project-level
+    ``config.keycloak`` list to the keycloak service's ``config.realms`` (RC-5 B).
+
+    Verbatim move: entries are unchanged (host/realm/username/password/...), still
+    matched by ``realm`` downstream as before. The keycloak service entry is
+    find-or-created (a project with keycloak connections uses the keycloak service).
+
+    Returns True if any change was made. Idempotent: once ``config.keycloak`` is
+    gone, it is a no-op.
+    """
+    config = project_data.get("config")
+    if not isinstance(config, dict) or "keycloak" not in config:
+        return False
+
+    kc_list = config.get("keycloak")
+    # Lazy import avoids any module-load ordering issues (schema_migration is imported early).
+    from opi.services.project import Project
+
+    if kc_list:
+        # Move verbatim into services[keycloak].config.realms (find-or-creates the
+        # keycloak service entry, preserving any existing keycloak config + order).
+        Project(project_data).set("services/keycloak/config/realms", kc_list)
+    del config["keycloak"]
+    return True
 
 
 def _migrate_v2_1_to_v2_2(project_data: dict[str, Any]) -> bool:

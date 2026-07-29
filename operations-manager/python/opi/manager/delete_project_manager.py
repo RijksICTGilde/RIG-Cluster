@@ -5,16 +5,19 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 
 from opi.connectors import create_argo_connector
-from opi.connectors.subdomain import SubdomainConnector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.catalog.base import RemovalContext
+from opi.services.persistence.subdomain_registry import SubdomainConnector
+from opi.services.project import Project
 from opi.services.project_store import get_project_store
+from opi.services.registry import get_service
 
 if TYPE_CHECKING:
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
@@ -145,7 +148,7 @@ class DeleteProjectManager:
 
             # Also check for orphaned AppProjects
             # AppProjects typically follow pattern: {project_name}-{deployment_name} or {project_name}-infrastructure
-            appproject_prefix = generate_argocd_appproject_prefix(project_name)
+            # (matched by `project_name in line` below).
             argo_namespace = get_argo_namespace(settings.CLUSTER_MANAGER)
 
             # Use kubectl to list AppProjects matching the pattern
@@ -323,13 +326,15 @@ class DeleteProjectManager:
             # 4. Remove keycloak config entry from project.yaml
             try:
                 project_data = await self.project_manager.get_contents()
-                keycloak_list = project_data.get("config", {}).get("keycloak", [])
+                # RC-5 B: keycloak connections live under the keycloak service config.
+                view = Project(project_data)
+                keycloak_list = view.get("services/keycloak/config/realms") or []
 
                 # Remove entry matching this realm
                 updated_list = [kc for kc in keycloak_list if kc.get("realm") != realm_name]
 
                 if updated_list != keycloak_list:
-                    project_data["config"]["keycloak"] = updated_list
+                    view.set("services/keycloak/config/realms", updated_list)
                     # Central save: writes and commits as one locked operation. This used
                     # to be save_project_data(), which wrote the file into the shared warm
                     # working copy and never committed it -- leaving it to be swept up by
@@ -1421,8 +1426,8 @@ class DeleteProjectManager:
                     from opi.core.database_pools import get_database_pool
                     from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
-                    pool = get_database_pool("main")
-                    marked_for_deletion_service = MarkedForDeletionService(pool)
+                    get_database_pool("main")  # guard: raises if the DB is unavailable -> immediate delete
+                    marked_for_deletion_service = MarkedForDeletionService()
                     logger.info(
                         f"Using deferred deletion for {project_name}/{deployment_name} "
                         f"(data-retention-period: {retention_period}, {retention_hours}h)"
@@ -2243,17 +2248,10 @@ class DeleteProjectManager:
         )
         return deletion_results
 
-    # -- Service-type → manager mapping -----------------------------------
-
-    _SERVICE_TYPE_MANAGER_ATTR: ClassVar[dict[ServiceType, str]] = {
-        ServiceType.POSTGRESQL_DATABASE: "database",
-        ServiceType.NAMESPACE_POSTGRESQL_DATABASE: "database",
-        ServiceType.MINIO_STORAGE: "minio",
-        ServiceType.REDIS: "redis",
-        ServiceType.NAMESPACE_REDIS: "redis",
-        ServiceType.KEYCLOAK: "keycloak",
-        ServiceType.PERSISTENT_STORAGE: "pvc",
-    }
+    # -- Manager-key → manager instance resolution ------------------------
+    # The service-type → manager-key mapping now lives on each provider as
+    # `cleanup_manager_key` (RC-5 Phase 5); this only resolves a key to its
+    # manager instance, invoked via RemovalContext.get_manager.
 
     async def _get_manager_for_service(self, manager_key: str) -> Any:
         """Resolve the manager instance for a given manager key."""
@@ -2331,8 +2329,11 @@ class DeleteProjectManager:
                 # Group related service types that share a manager
                 # (e.g., namespace-postgresql-database is handled by database manager)
                 # We only need to check once per manager per deployment
-                manager_key = self._SERVICE_TYPE_MANAGER_ATTR.get(svc_type)
-                if manager_key is None:
+                # RC-5 Phase 5: dispatch cleanup through the provider registry instead
+                # of the _SERVICE_TYPE_MANAGER_ATTR map. Byte-identical -- the provider
+                # resolves the same manager by key and delegates handle_service_removal.
+                provider = get_service(svc_type)
+                if provider.cleanup_manager_key is None:
                     continue
 
                 was_used = file_handler.deployment_uses_service(previous_yaml, dep_name, svc_values)
@@ -2348,13 +2349,15 @@ class DeleteProjectManager:
                     results["services_removed"] += 1
 
                     try:
-                        manager = await self._get_manager_for_service(manager_key)
-                        svc_result = await manager.handle_service_removal(
-                            project_name=project_name,
-                            deployment_name=dep_name,
-                            deployment_data=prev_dep_data,
-                            project_data=previous_yaml,
-                            marked_for_deletion_service=marked_for_deletion_service,
+                        svc_result = await provider.handle_service_removal(
+                            RemovalContext(
+                                project_name=project_name,
+                                deployment_name=dep_name,
+                                deployment_data=prev_dep_data,
+                                project_data=previous_yaml,
+                                marked_for_deletion_service=marked_for_deletion_service,
+                                get_manager=self._get_manager_for_service,
+                            )
                         )
                         results["service_results"].append(svc_result)
                         if svc_result.get("errors"):

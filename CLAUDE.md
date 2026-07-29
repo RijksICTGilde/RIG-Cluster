@@ -60,6 +60,7 @@ RIG-Cluster/
 |   +-- rig-system/         #   OPI deployment, secrets, overlays per cluster type
 |
 |-- projects/               # Example project definition files (YAML)
+|-- instructions/           # How to work in the code (read before changing a subsystem)
 |-- features/               # Feature documentation (one .md per feature)
 |-- docs/                   # Setup guides, known issues, post-mortems
 |-- architecture/           # Architectural diagrams and overviews
@@ -149,7 +150,14 @@ task requirements-check                # Verify all tools installed
 - Use SOPS + AGE exclusively for secret management
 - Keep local development workflow simple and repeatable
 
-## Feature Documentation
+## Documentation
+
+Read `instructions/` before changing a subsystem it covers - it holds the contracts and the
+step-by-step, and saves you reverse-engineering them. Start with `instructions/README.md`,
+which also states which folder is for what (`instructions/` vs `features/` vs `docs/`).
+
+- `instructions/services.md` - the service system: what a service owns, how config, forms,
+  provisioning, manifests and approvals hook in, and how to add one.
 
 When introducing a new feature, create a markdown document in `features/` with: what it is, how to use it, configuration, examples, dependencies. Use kebab-case filenames.
 

@@ -12,13 +12,111 @@ and BEFORE any write or commit. Fails closed on the first violation.
 import logging
 from typing import Any
 
+from pydantic import ValidationError
+
 from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
 from opi.services import ServiceAdapter
+from opi.services.catalog.base import ConfigLayer, Service
+from opi.services.project import Project
+from opi.services.registry import get_service
+from opi.services.services import service_entry_config, service_entry_name, service_entry_schema_version
+from opi.services.services_enums import ServiceType
 from opi.utils.project_utils import ComponentValidationError, validate_component_paths, validate_root_component
 
 logger = logging.getLogger(__name__)
+
+
+def _accepted_config_fields(provider: Service, layer: ConfigLayer) -> list[str]:
+    """The config field names a service accepts at ``layer``, for error guidance.
+
+    Sources the service's own declarative field metadata: ``config_api_fields``
+    (the API/YAML-accepted keys, derived from ``config_model_field_names`` for
+    modelled services), falling back to the leaf names of ``config_editables`` for
+    services whose config is a sequence with no flat field set (storage). Returns []
+    when the service declares neither.
+    """
+    fields = provider.config_api_fields(layer)
+    if fields:
+        return fields
+    # Sequence configs (storage) declare no flat field set, so read the leaf names off
+    # the config_editables: the per-entry child fields (name/size/mount-path) when the
+    # editable is a sequence, else the editable's own leaf.
+    names: list[str] = []
+    for editable in provider.config_editables(layer):
+        leaves = editable.children or [editable]
+        names.extend(child.yaml_path.rsplit("/", 1)[-1] for child in leaves)
+    return names
+
+
+def _validate_one_config(
+    name: str, raw: Any, layer: ConfigLayer, where: str, project_name: str, from_version: str | None = None
+) -> None:
+    """Validate one service config block against its provider's typed model.
+
+    Shared by the project-level and component-level walks. Skips services that are
+    unknown or take no typed config. ``from_version`` is the entry's stamped
+    ``schema-version``, threaded through so the provider migrates an older config
+    block forward before validating (None = current version). Fails closed: raises
+    ProjectIntegrityError, with the service's own accepted-field list
+    (config_api_fields / config_editables) appended so the message tells the user
+    which keys the service accepts.
+    """
+    try:
+        service_type = ServiceType(name)
+    except ValueError:
+        return  # unknown service name -- other validation handles it
+    provider = get_service(service_type)
+    if provider.config_model is None:
+        return  # service takes no typed config
+    try:
+        provider.validate_config(raw, from_version=from_version)
+    except ValidationError as e:
+        accepted = _accepted_config_fields(provider, layer)
+        hint = f" Geaccepteerde velden: {', '.join(accepted)}." if accepted else ""
+        raise ProjectIntegrityError(
+            f"Project '{project_name}': configuratie van service '{name}' {where} is ongeldig: {e}.{hint}"
+        ) from e
+
+
+def validate_service_configs(project_data: dict[str, Any]) -> None:
+    """Validate every service's config against its provider's typed model (RC-5 A:
+    the per-service config-validation chokepoint).
+
+    Covers BOTH layers a config can live at: project-level service definitions
+    (keycloak, namespace-postgres, auth-wall) and component-level service references
+    (persistent-storage / temp-storage mounts, metrics-scraper port/path). Services
+    without a config block, or without a typed model, are skipped. Fails closed:
+    raises ProjectIntegrityError on the first invalid service config.
+    """
+    view = Project(project_data)
+    project_name = project_data.get("name", "(onbekend)")
+
+    # Project-level service definitions.
+    for name in ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", [])):
+        raw = view.service_config(name)
+        if raw is None:
+            continue  # bare service / no project-level config to validate
+        from_version = service_entry_schema_version(view.service_entry(name))
+        _validate_one_config(name, raw, ConfigLayer.PROJECT, "op projectniveau", project_name, from_version)
+
+    # Component-level service references (storage mounts, metrics port/path). Their
+    # config lives on the component's service entry, not at project level, so the
+    # project-level walk above never sees it.
+    for component in project_data.get("components", []) or []:
+        if not isinstance(component, dict):
+            continue
+        comp_name = component.get("name", "(onbekend)")
+        for entry in component.get("services", []) or []:
+            name = service_entry_name(entry)
+            config = service_entry_config(entry)
+            if name is None or config is None:
+                continue  # bare reference / no config to validate
+            from_version = service_entry_schema_version(entry)
+            _validate_one_config(
+                name, config, ConfigLayer.COMPONENT, f"in component '{comp_name}'", project_name, from_version
+            )
 
 
 def validate_component_references(project_data: dict, components: list, context: str = "deployment") -> dict[str, Any]:
@@ -54,6 +152,29 @@ def validate_component_references(project_data: dict, components: list, context:
     return {"success": True, "error": None, "invalid_references": None}
 
 
+def _validate_services_listed_once(services: Any, project_name: str, where: str) -> None:
+    """A services list may name each service at most once.
+
+    The list is a selection set keyed by service name, so a repeat has no meaning: a
+    second entry either says the same thing or silently contradicts the first, and
+    every reader (config lookup, provisioning, manifest generation) sees only one of
+    them. A hand-edited project file can still contain one, which is why this is a
+    check that rejects rather than something that quietly collapses the list.
+    """
+    if not isinstance(services, list):
+        return
+    seen: set[str] = set()
+    for entry in services:
+        name = service_entry_name(entry)
+        if name is None:
+            continue
+        if name in seen:
+            raise ProjectIntegrityError(
+                f"Project '{project_name}': service '{name}' staat meerdere keren in de services-lijst op {where}"
+            )
+        seen.add(name)
+
+
 async def validate_project_structure(project_data: dict[str, Any]) -> None:
     """Validate cross-field structural integrity of a complete project dict.
 
@@ -74,6 +195,23 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
         if cname in seen_components:
             raise ProjectIntegrityError(f"Project '{project_name}': component '{cname}' is meervoudig gedefinieerd")
         seen_components.add(cname)
+
+    # A services list is a selection set: each service at most once
+    _validate_services_listed_once(project_data.get("services"), project_name, "projectniveau")
+    for comp in components:
+        if isinstance(comp, dict):
+            _validate_services_listed_once(comp.get("services"), project_name, f"component '{comp.get('name')}'")
+    for dep in deployments:
+        if not isinstance(dep, dict):
+            continue
+        _validate_services_listed_once(dep.get("services"), project_name, f"deployment '{dep.get('name')}'")
+        for ref in dep.get("components", []) or []:
+            if isinstance(ref, dict):
+                _validate_services_listed_once(
+                    ref.get("services"),
+                    project_name,
+                    f"deployment '{dep.get('name')}' component '{ref.get('reference')}'",
+                )
 
     project_service_names = set(
         ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", []))
@@ -134,8 +272,14 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
         # Hard domain-config violations. A FieldWarning (e.g. an unapproved
         # custom domain) is non-fatal: the UI handles it via domain-request
         # entries, so only a ValueError/FieldError is a structural rejection.
+        # ``denied_blocks=False``: a revoked approval on a domain a deployment already
+        # uses must be saveable, otherwise the approver cannot record their own verdict.
+        # The revocation takes effect at publication (apply_domain_approval_fallback),
+        # not by refusing the write.
         try:
-            await DomainConfigEnforcer(deployment_index=index).enforce(project_data, {"project_name": project_name})
+            await DomainConfigEnforcer(deployment_index=index, denied_blocks=False).enforce(
+                project_data, {"project_name": project_name}
+            )
         except FieldWarning:
             pass
         except ValueError as e:
@@ -155,3 +299,7 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
     coupling_errors = validate_attachment_couplings(project_data)
     if coupling_errors:
         raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(coupling_errors)}")
+
+    # Per-service typed config validation (RC-5 A). Runs last: the envelope and
+    # cross-field structure are valid by here, so this only judges the config values.
+    validate_service_configs(project_data)

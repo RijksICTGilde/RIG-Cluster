@@ -19,13 +19,13 @@ from opi.connectors.subdomain import (
     BaseDomainValidationError,
     SubdomainNotAvailableError,
     SubdomainValidationError,
-    create_subdomain_connector,
     validate_base_domain,
     validate_subdomain,
 )
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.manager.project_manager import ProjectManager, create_project_manager
+from opi.services.persistence.subdomain_registry import create_subdomain_connector
 from opi.services.project_store import get_project_store
 from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
 from opi.utils.project_utils import generate_self_service_project_yaml, normalize_container_image, validate_project_name

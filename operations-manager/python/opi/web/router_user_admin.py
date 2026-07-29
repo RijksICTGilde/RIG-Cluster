@@ -5,15 +5,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from asyncpg import UniqueViolationError
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy.exc import IntegrityError
 
 if TYPE_CHECKING:
     from starlette.responses import Response
 
 from opi.core.auth_decorators import get_current_user, requires_sso
-from opi.core.database_pools import get_database_pool
 from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
@@ -34,8 +33,7 @@ user_admin_router = APIRouter(prefix="/admin/users", tags=["user-admin"])
 
 
 def _get_service() -> UserAdminService:
-    pool = get_database_pool("main")
-    return UserAdminService(pool)
+    return UserAdminService()
 
 
 def _require_admin(request: Request) -> dict:
@@ -170,7 +168,7 @@ async def create_user_submit(request: Request) -> Response:
             email=new_email,
             full_name=result.get("full_name", "").strip(),
         )
-    except UniqueViolationError:
+    except IntegrityError:
         errors = {"email": ["Er bestaat al een gebruiker met dit e-mailadres"]}
         form_html = _render_form_html(data=submitted, errors=errors)
         templates = get_templates()
@@ -269,7 +267,7 @@ async def edit_user_submit(request: Request, user_id: str) -> Response:
             email=new_email,
             full_name=result.get("full_name", "").strip(),
         )
-    except UniqueViolationError:
+    except IntegrityError:
         errors = {"email": ["Er bestaat al een gebruiker met dit e-mailadres"]}
         form_html = _render_form_html(data=submitted, errors=errors, edit_mode=True)
         templates = get_templates()

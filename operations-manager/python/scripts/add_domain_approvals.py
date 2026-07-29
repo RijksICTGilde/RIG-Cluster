@@ -31,6 +31,89 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
+PUBLISH_ON_WEB = "publish-on-web"
+
+
+def _service_entry_name(entry: object) -> str | None:
+    """Return the service name of a ``services``-list entry, format-agnostic.
+
+    Stdlib-only mirror of ``opi.services.services.service_entry_name`` (bare string,
+    ``{name, config}`` record, ``{reference, config}`` record, legacy single-key dict)
+    so this script stays free of the opi import chain.
+    """
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        name = entry.get("name") or entry.get("reference")
+        if name is not None:
+            return name
+        keys = [key for key in entry if key not in ("config", "schema-version")]
+        if len(keys) == 1:
+            return keys[0]
+    return None
+
+
+def _find_publish_on_web(project_data: dict) -> object:
+    """Return the root ``services:`` entry defining publish-on-web, or None."""
+    for entry in project_data.get("services") or []:
+        if _service_entry_name(entry) == PUBLISH_ON_WEB:
+            return entry
+    return None
+
+
+def read_domains_config(project_data: dict) -> dict:
+    """Read the approval block, preferring the service path, root as fallback.
+
+    Stdlib-only mirror of ``opi.connectors.subdomain.get_domains_config``. Never mutates.
+    Returns an empty dict when no block exists yet.
+    """
+    entry = _find_publish_on_web(project_data)
+    if isinstance(entry, dict):
+        config = entry.get("config")
+        if isinstance(config, dict) and isinstance(config.get("domains"), dict):
+            return config["domains"]
+    root = project_data.get("domains")
+    return root if isinstance(root, dict) else {}
+
+
+def ensure_domains_config(project_data: dict) -> dict:
+    """Return the writable service ``config/domains`` block, creating it as needed.
+
+    Stdlib-only mirror of ``opi.connectors.subdomain.ensure_domains_config``: absorbs a
+    legacy root ``domains:`` block into the publish-on-web service config, drops the root
+    copy so state never splits, promotes a bare ``- publish-on-web`` string to a
+    ``{name, config}`` record, and adds the service definition if it is absent. This is
+    where OPI reads and writes the block after the v2.5 migration, so writing here keeps
+    bulk-added approvals visible instead of silently discarded on the next reconcile.
+    """
+    services = project_data.get("services")
+    if not isinstance(services, list):
+        services = []
+        project_data["services"] = services
+
+    entry = _find_publish_on_web(project_data)
+    if not isinstance(entry, dict):
+        record = {"name": PUBLISH_ON_WEB, "config": {}}
+        if entry is None:
+            services.append(record)
+        else:  # bare string definition -> promote in place
+            services[services.index(entry)] = record
+        entry = record
+
+    config = entry.get("config")
+    if not isinstance(config, dict):
+        config = {}
+        entry["config"] = config
+
+    domains = config.get("domains")
+    if not isinstance(domains, dict):
+        legacy_root = project_data.get("domains")
+        domains = legacy_root if isinstance(legacy_root, dict) else {}
+        config["domains"] = domains
+    project_data.pop("domains", None)
+    return domains
+
+
 def collect_domain_usage(project_data: dict) -> dict[str, set[str]]:
     """Scan deployments and return {domain: set(subdomains)} for non-empty domains."""
     usage: dict[str, set[str]] = defaultdict(set)
@@ -59,10 +142,13 @@ def add_domain_approvals(project_data: dict, dry_run: bool = False) -> dict[str,
 
     changes: dict[str, list[str]] = {}
 
-    # Ensure domains section exists
-    if "domains" not in project_data and not dry_run:
-        project_data["domains"] = {}
-    domains = project_data.get("domains", {})
+    # RC-5: the approval state lives under the publish-on-web service config
+    # (services/[publish-on-web]/config/domains) after the v2.5 migration. Read the
+    # existing block from either location, but WRITE to the service path -- writing the
+    # legacy root ``domains:`` block instead would be silently discarded on a migrated
+    # project (get_domains_config prefers the service path; ensure_domains_config pops
+    # the root copy on the next reconcile write). In dry-run we only read.
+    domains = read_domains_config(project_data) if dry_run else ensure_domains_config(project_data)
 
     # --- allowed-domains ---
     existing_domains = set()

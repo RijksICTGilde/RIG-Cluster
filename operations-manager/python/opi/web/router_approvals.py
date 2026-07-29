@@ -1,4 +1,9 @@
-"""Admin routes for domain and subdomain approval management.
+"""Admin routes for the generic, catalog-driven approver interface (RC-5).
+
+Lists pending approval items across all projects and drives the approve/deny modal.
+The items + verdicts flow through the catalog ApprovalSpecs (opi/services/approvals.py),
+so this router is not domain-specific; domains are simply the only approvable today.
+Historically ``router_subdomain_admin`` at ``/admin/subdomains``.
 
 Provides a listing page of all domain/subdomain requests across projects,
 and admin-scoped modal wizard endpoints for approving/denying requests.
@@ -28,6 +33,7 @@ from opi.forms.wizard.session import (
     init_modal_state_tokenized,
     save_modal_state_by_token,
 )
+from opi.services.approvals import collect_approval_items
 from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
 from opi.web.menu import get_menu_items
@@ -35,9 +41,9 @@ from opi.web.router_wizard import _apply_literal_scalars
 
 logger = logging.getLogger(__name__)
 
-subdomain_admin_router = APIRouter(prefix="/admin/subdomains", tags=["subdomain-admin"])
+approvals_router = APIRouter(prefix="/admin/approvals", tags=["approvals"])
 
-FLOW_ID = "admin-domain-approval"
+FLOW_ID = "admin-approval"
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +119,7 @@ def _render_modal_step(
         "wizard_token": wizard_token,
         "errors": errors or {},
         "global_errors": global_errors or [],
-        "step_base_url": f"/admin/subdomains/{project_name}/modal-wizard/{FLOW_ID}/step/",
+        "step_base_url": f"/admin/approvals/{project_name}/modal-wizard/{FLOW_ID}/step/",
         "step_target": "#edit-section-inner",
         "step_push_url": False,
         "step_query_params": "",
@@ -125,50 +131,6 @@ def _render_modal_step(
     return rendered
 
 
-def _collect_approval_items(project_data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract all domain and subdomain entries from a project as flat approval items."""
-    items: list[dict[str, Any]] = []
-    domains = project_data.get("domains")
-    if not domains or not isinstance(domains, dict):
-        return items
-
-    # Allowed domains (custom/non-default domains)
-    for entry in domains.get("allowed-domains", []):
-        if not isinstance(entry, dict):
-            continue
-        items.append(
-            {
-                "type": "domain",
-                "domain": entry.get("domain", ""),
-                "name": entry.get("domain", ""),
-                "current_status": entry.get("status", ""),
-                "status": "skip",
-                "history": entry.get("history", []),
-            }
-        )
-
-    # Allowed subdomains
-    for entry in domains.get("allowed-subdomains", []):
-        if not isinstance(entry, dict):
-            continue
-        base_domain = entry.get("domain", "")
-        for sub in entry.get("subdomains", []):
-            if not isinstance(sub, dict):
-                continue
-            items.append(
-                {
-                    "type": "subdomain",
-                    "domain": base_domain,
-                    "name": sub.get("name", ""),
-                    "current_status": sub.get("status", ""),
-                    "status": "skip",
-                    "history": sub.get("history", []),
-                }
-            )
-
-    return items
-
-
 def _collect_all_projects_approval_data() -> list[dict[str, Any]]:
     """Collect domain/subdomain data across all projects for the listing page."""
     all_projects = get_project_store().get_all()
@@ -177,7 +139,7 @@ def _collect_all_projects_approval_data() -> list[dict[str, Any]]:
     for project in sorted(all_projects, key=lambda p: p.name):
         project_name = project.name
         project_data = project.data or {}
-        items = _collect_approval_items(project_data)
+        items = collect_approval_items(project_data)
         if items:
             result.append(
                 {
@@ -193,7 +155,7 @@ def _collect_all_projects_approval_data() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-@subdomain_admin_router.get("", response_class=HTMLResponse)
+@approvals_router.get("", response_class=HTMLResponse)
 @requires_sso
 async def list_subdomains(request: Request) -> HTMLResponse:
     """List all domain/subdomain requests across all projects."""
@@ -208,7 +170,7 @@ async def list_subdomains(request: Request) -> HTMLResponse:
 
     templates = get_templates()
     return templates.TemplateResponse(
-        "admin/subdomains.html.j2",
+        "admin/approvals.html.j2",
         {
             "request": request,
             "menu_items": get_menu_items(user),
@@ -218,7 +180,7 @@ async def list_subdomains(request: Request) -> HTMLResponse:
     )
 
 
-@subdomain_admin_router.get("/{project_name}/modal-wizard/{flow_id}", response_class=HTMLResponse)
+@approvals_router.get("/{project_name}/modal-wizard/{flow_id}", response_class=HTMLResponse)
 @requires_sso
 async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """Initialize the domain approval modal wizard for a project."""
@@ -232,7 +194,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
 
     project_data = project.data or {}
-    approval_items = _collect_approval_items(project_data)
+    approval_items = collect_approval_items(project_data)
     if not approval_items:
         raise HTTPException(status_code=400, detail="Geen domein- of subdomeinaanvragen voor dit project")
 
@@ -259,7 +221,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     return HTMLResponse(content=rendered)
 
 
-@subdomain_admin_router.post(
+@approvals_router.post(
     "/{project_name}/modal-wizard/{flow_id}/step/{section_id}",
     response_class=HTMLResponse,
 )
@@ -298,6 +260,34 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
 
     # Single-section flow: no review, go straight to submit
     return await _do_submit(request, wizard_token, user, project_name)
+
+
+def _reseed_approval_items(merged_data: dict[str, Any], project_name: str) -> dict[str, Any]:
+    """Rebuild ``_approval_items`` from the project, keeping the submitted verdicts.
+
+    The items travel through the form as hidden fields carrying only routing + identity,
+    so a re-render off the submission alone loses the verdict history (it is server
+    state, never posted back) and the approver sees the items without their past. Read
+    the items fresh and re-apply the approver's in-flight choices on top.
+    """
+    submitted = merged_data.get("_approval_items")
+    if not isinstance(submitted, list):
+        return merged_data
+
+    project = get_project_store().get(project_name)
+    if not project:
+        return merged_data
+    fresh = collect_approval_items(project.data or {})
+    chosen = {
+        (item.get("type"), item.get("domain"), item.get("name")): item for item in submitted if isinstance(item, dict)
+    }
+    for item in fresh:
+        pick = chosen.get((item.get("type"), item.get("domain"), item.get("name")))
+        if pick:
+            item["status"] = pick.get("status", "skip")
+            item["message"] = pick.get("message", "")
+
+    return {**merged_data, "_approval_items": fresh}
 
 
 async def _do_submit(request: Request, wizard_token: str | None, user: dict, project_name: str) -> HTMLResponse:
@@ -370,9 +360,14 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
         except (ProjectSchemaError, ProjectIntegrityError) as e:
             logger.warning("Domain approval save rejected by validation for %s: %s", project_name, e)
             first_section = active_sections[0]
-            step_html = _render_section_html(first_section, state.get_merged_data())
+            render_data = _reseed_approval_items(state.get_merged_data(), project_name)
+            step_html = _render_section_html(first_section, render_data)
+            # Say what was blocked. The bare validation message describes the resulting
+            # state ("het subdomein is afgewezen"), which reads as a report of the
+            # approver's own action instead of a refusal to record it.
+            message = f"Het besluit is niet opgeslagen, want het project is daarna niet geldig: {e}"
             rendered = _render_modal_step(
-                request, wizard_token, state, first_section, step_html, project_name, global_errors=[str(e)]
+                request, wizard_token, state, first_section, step_html, project_name, global_errors=[message]
             )
             return HTMLResponse(content=rendered)
     finally:
