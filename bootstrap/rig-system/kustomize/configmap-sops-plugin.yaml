@@ -23,14 +23,12 @@ data:
             # This allows deployments to pass configuration to the CMP
             # Use set -a to auto-export all variables for child processes (like helmfile)
             if [ -f ".cmp-env" ]; then
+              # Do NOT dump the contents of .cmp-env: it holds configuration secrets that
+              # would otherwise end up in the repo-server logs. Log only that it was sourced.
               echo "Sourcing environment variables from .cmp-env" >&2
-              echo "DEBUG: .cmp-env contents:" >&2
-              cat .cmp-env >&2
               set -a
               source .cmp-env
               set +a
-              echo "DEBUG: ENVIRONMENT=$ENVIRONMENT" >&2
-              echo "DEBUG: MIJNBUREAU_MASTER_PASSWORD length: ${#MIJNBUREAU_MASTER_PASSWORD}" >&2
             fi
 
             SOPS_KEY_SECRET="${ARGOCD_ENV_SOPS_KEY_SECRET:-sops-age-key}"
@@ -292,9 +290,19 @@ data:
               # Decrypt SOPS-encrypted Helm values files before kustomize/helmfile build
               decrypt_helm_values "$folder"
 
-              # Generate manifests for this folder (with Helm support)
+              # Generate manifests for this folder (with Helm support).
+              # Capture kustomize's stderr so that on failure we can emit ONE clear, final
+              # stderr line: ArgoCD truncates long plugin errors and this script writes a lot
+              # of DEBUG noise, so without this the real kustomize error can drown or be cut
+              # off. On success stdout is appended to the output file as before; kustomize's
+              # own stderr (normally empty) is dropped to keep the log clean.
               echo "---" >> "$output_file"
-              SOPS_AGE_KEY="$SOPS_AGE_KEY" kustomize build --enable-alpha-plugins --enable-exec --enable-helm "$folder" >> "$output_file"
+              local kustomize_stderr kustomize_rc=0
+              kustomize_stderr=$(SOPS_AGE_KEY="$SOPS_AGE_KEY" kustomize build --enable-alpha-plugins --enable-exec --enable-helm "$folder" 2>&1 1>>"$output_file") || kustomize_rc=$?
+              if [ "$kustomize_rc" -ne 0 ]; then
+                echo "KUSTOMIZE BUILD FAILED in $folder: $kustomize_stderr" >&2
+                exit "$kustomize_rc"
+              fi
             }
 
             # Determine folders to process

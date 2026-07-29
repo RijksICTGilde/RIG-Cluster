@@ -615,6 +615,34 @@ async def formulier_demo_form(request: Request):
         raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
 
 
+def _deployment_dashboard_status(status_data: dict[str, Any] | None) -> str:
+    """The health bucket a deployment contributes to its project's dashboard tile.
+
+    A terminal ArgoCD condition (ComparisonError etc.) means the manifests cannot be
+    rendered or compared; health may still read ``Healthy`` from the last good sync, so a
+    tile keyed on health alone would be misleadingly green. Treat that as ``Degraded`` so a
+    broken render is visible at the top level.
+    """
+    from opi.manager.argo_manager import terminal_condition_message
+
+    if not status_data:
+        return "Unknown"
+    if terminal_condition_message(status_data):
+        return "Degraded"
+    return status_data.get("status", {}).get("health", {}).get("status", "Unknown")
+
+
+def _derive_project_health(statuses: list[str]) -> str:
+    """Worst-status-wins aggregation of a project's deployment statuses."""
+    if "Degraded" in statuses:
+        return "Degraded"
+    if "Progressing" in statuses:
+        return "Progressing"
+    if "Healthy" in statuses:
+        return "Healthy"
+    return "Unknown"
+
+
 @web_router.get("/dashboard", response_class=HTMLResponse)
 @requires_sso
 async def dashboard(request: Request):
@@ -881,8 +909,7 @@ async def dashboard(request: Request):
                             app_name = generate_argocd_application_name(project["name"], deployment_name)
                             status_data = await argo_connector.get_application_status(app_name)
                             if status_data:
-                                health = status_data.get("status", {}).get("health", {}).get("status", "Unknown")
-                                deployment_statuses.append(health)
+                                deployment_statuses.append(_deployment_dashboard_status(status_data))
                                 # Extract last deployed timestamp
                                 operation_state = status_data.get("status", {}).get("operationState", {})
                                 finished_at = operation_state.get("finishedAt") or status_data.get("status", {}).get(
@@ -897,14 +924,7 @@ async def dashboard(request: Request):
                             deployment_statuses.append("Unknown")
 
                     # Derive overall project health (worst status wins)
-                    if "Degraded" in deployment_statuses:
-                        project["health"] = "Degraded"
-                    elif "Progressing" in deployment_statuses:
-                        project["health"] = "Progressing"
-                    elif "Healthy" in deployment_statuses:
-                        project["health"] = "Healthy"
-                    else:
-                        project["health"] = "Unknown"
+                    project["health"] = _derive_project_health(deployment_statuses)
                     project["last_deployed"] = latest_deploy
         except Exception as e:
             logger.warning(f"Dashboard: failed to connect to ArgoCD: {e}")
@@ -1430,7 +1450,7 @@ async def _fetch_argocd_deployment_status(
     project_name: str, deployment: dict[str, Any], argo: Any, kubectl: Any
 ) -> dict[str, Any]:
     """Fetch ArgoCD status for one deployment, with interpreted errors when unhealthy."""
-    from opi.services.deployment_diagnostics import gather_deployment_errors
+    from opi.services.deployment_diagnostics import conditions_to_errors, gather_deployment_errors
     from opi.services.event_interpreter import interpret_argocd_errors
     from opi.utils.naming import generate_argocd_application_name
 
@@ -1447,8 +1467,9 @@ async def _fetch_argocd_deployment_status(
         operation_state = status.get("operationState", {})
         app_health = health.get("status", "Unknown")
 
-        raw_errors: list[dict[str, str]] = []
         if app_health != "Healthy":
+            # Not healthy: the full (more expensive) diagnostics, which already include the
+            # app-level conditions along with the resource tree and namespace events.
             raw_errors = await gather_deployment_errors(
                 argo=argo,
                 kubectl=kubectl,
@@ -1458,6 +1479,11 @@ async def _fetch_argocd_deployment_status(
                 deployment_name=deployment_name,
                 status_data=status_data,
             )
+        else:
+            # Healthy last-known state can still hide a fresh ComparisonError (sync=Unknown):
+            # read the cheap app-level conditions unconditionally - no extra API call - so a
+            # render/compare error is not filtered out on precisely the moment it matters.
+            raw_errors = conditions_to_errors(status_data)
 
         component_names = [c.get("reference") for c in deployment.get("components", []) or [] if c.get("reference")]
         errors = interpret_argocd_errors(raw_errors, deployment_name=deployment_name, component_names=component_names)

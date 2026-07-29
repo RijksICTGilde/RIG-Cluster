@@ -229,6 +229,42 @@ def _image_pull_suggestion(message: str) -> str:
     )
 
 
+def condense_render_error(message: str) -> str:
+    """Reduce a verbose ArgoCD generation-error message to its meaningful tail.
+
+    Measured against the sandbox: ArgoCD echoes the whole failed ``/bin/bash -c "<script>"``
+    command, so a CMP render failure produces a multi-kB message dominated by the plugin
+    script source, with the real error (the plugin stderr) at the very end after
+    ``exit status N:``. This extracts that tail so the user sees the actual cause instead of
+    the 14 kB script dump. Falls back to the cached-generation marker (for errors without an
+    exec wrapper, e.g. "app path does not exist"), then to the original message (length
+    capped so a giant message never floods logs or the UI).
+    """
+    if not message:
+        return message
+    # Real plugin stderr sits after the last "exit status N:"; fall back to the whole message.
+    exec_matches = list(re.finditer(r"exit status \d+:\s*", message))
+    tail = message[exec_matches[-1].end() :].strip() if exec_matches else message
+
+    # The stderr still leads with the CMP script's DEBUG noise; the real error is the last
+    # explicit error line - kustomize prints "Error:", the CMP script prints "ERROR:".
+    # (Measured on the sandbox for a duplicate-identity and a missing-namespace failure.)
+    best = max(tail.rfind("Error:"), tail.rfind("ERROR:"))
+    if best != -1:
+        return tail[best:].strip()
+
+    if exec_matches and tail:
+        return tail
+    # No exec wrapper: take what follows the cached-generation marker.
+    marker = "Manifest generation error (cached):"
+    idx = message.rfind(marker)
+    if idx != -1:
+        cached_tail = message[idx + len(marker) :].strip()
+        if cached_tail:
+            return cached_tail
+    return message if len(message) <= 800 else message[:800] + " ...(truncated)"
+
+
 def _interpret_by_reason(reason: str, message: str) -> tuple[str, str, EventSeverity] | None:
     """Look up translation by event reason, then fall back to message patterns."""
     if reason in _NOISE_REASONS:
@@ -497,6 +533,25 @@ def interpret_argocd_errors(
 def _enrich_argocd_error(error: dict[str, str]) -> dict[str, str]:
     """Enrich an ArgoCD error with pattern-matched translation if possible."""
     message = error.get("message", "")
+    # A ComparisonError is ArgoCD saying it could not generate or compare the manifests -
+    # the render/CMP failure this whole feature is about. Give it a readable heading with the
+    # raw kustomize/CMP message underneath, so it does not read as a cryptic condition name.
+    if error.get("resource") == "ComparisonError":
+        enriched = dict(error)
+        # No "/" in the label: interpret_argocd_errors later strips a Kind/ prefix on "/".
+        enriched["resource"] = "Configuratiefout (kustomize CMP)"
+        # ArgoCD dumps the whole failed CMP command (kBs of script source) into the message;
+        # show only the meaningful tail, keep the raw under "Origineel bericht".
+        condensed = condense_render_error(message)
+        enriched["message"] = condensed
+        if condensed != message:
+            enriched["original_message"] = message
+        enriched["suggestion"] = (
+            "De manifesten konden niet worden gegenereerd of vergeleken. Vaak staan er twee "
+            "resources met dezelfde naam in de deployment, of is een manifest ongeldig."
+        )
+        enriched["severity"] = EventSeverity.ACTIONABLE.value
+        return enriched
     if _IMAGE_PULL_RE.search(message):
         enriched = dict(error)
         enriched["message"] = "Container image kan niet worden opgehaald"
