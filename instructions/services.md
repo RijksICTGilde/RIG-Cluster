@@ -152,6 +152,42 @@ clicks and field fills, no `page.evaluate` shortcuts and no direct modal-fragmen
 `tests/e2e/test_sandbox_sleep_mode_ui.py` + `tests/e2e/helpers/service_config.py` are the
 pattern to copy.
 
+## Detail page (read-only presentation)
+
+A service owns not only its *input* (`config_form_section`) but also its read-only
+*presentation* on the project-details page. Without this, a service's block sits hardcoded
+in the general template and drifts away from its config on every move -- exactly what
+happened to the Keycloak realm block when RC-5 relocated the realms into the service.
+
+| Hook | Returns | Collected by |
+|---|---|---|
+| `detail_page_sections(project_data, user_role)` | `DetailPageSection`s (a template + its context) | `registry.collect_detail_page_sections()` |
+
+- `project_data` is the **decrypted** project dict, so a service can surface managed
+  credentials; `user_role` lets the service gate on the viewer (return `[]` to omit).
+- Only services the project actually uses (project-level or referenced by a component)
+  are asked; sections render in registry order, in place of a hardcoded `{% include %}`.
+- Put the template **next to the service** under `opi/services/catalog/<svc>/` and address
+  it as `<svc>/<file>` -- the catalog directory is on the Jinja search path (see
+  `opi/core/templates.py`). The include gets the `DetailPageSection` as `section`, so the
+  template reads its data from `section.context`.
+
+`KeycloakService.detail_page_sections` is the reference implementation.
+
+## Hooks at a glance
+
+Every hook a service may implement, so a new service knows what it can own:
+
+| Hook | Purpose |
+|---|---|
+| `config_editables(layer)` / `config_api_fields(layer)` | config data + accepted API fields |
+| `config_form_section(layer)` | project-level wizard/edit config step |
+| `config_component_layout()` / `config_component_visualizers()` | per-component form fields |
+| `detail_page_sections(project_data, user_role)` | read-only detail-page block |
+| `config_approvals(layer)` | values that need approval before taking effect |
+| `provision(ctx)` / `handle_service_removal(ctx)` | server-side resources |
+| `contribute_manifest_context(ctx)` / `build_secret_files(ctx)` | manifest + secret contributions |
+
 ## Provisioning and cleanup
 
 ```python

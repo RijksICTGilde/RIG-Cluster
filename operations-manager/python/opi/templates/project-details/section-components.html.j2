@@ -63,15 +63,12 @@
                         {% if component.services %}
                         <div class="spec-item">
                             <strong>Services:</strong>
+                            {# Use the format-agnostic ``service_name`` filter: iterating a
+                               record's keys rendered a service as "Reference, Config". #}
                             {% set svc_names = [] %}
                             {% for svc in component.services %}
-                                {% if svc is string %}
-                                    {% set _ = svc_names.append(svc) %}
-                                {% elif svc is mapping %}
-                                    {% for key in svc %}
-                                        {% set _ = svc_names.append(key) %}
-                                    {% endfor %}
-                                {% endif %}
+                                {% set name = svc|service_name %}
+                                {% if name %}{% set _ = svc_names.append(name) %}{% endif %}
                             {% endfor %}
                             {{ svc_names|join(", ")|replace("-", " ")|title }}
                         </div>

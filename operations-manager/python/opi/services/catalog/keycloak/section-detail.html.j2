@@ -1,15 +1,17 @@
-{# Keycloak Section #}
-{# TODO: dit blok hoort bij de keycloak-service zelf (naast config_editables /
-   config_form_section), niet hardgecodeerd in een algemene template. Zolang het hier
-   staat drijft het weg bij elke verhuizing van de config, zoals bij RC-5 gebeurde. #}
-{% if user_role in ["admin", "owner"] and keycloak_realms %}
+{# Keycloak detail-page section (WP2).
+
+   Owned by the keycloak service: KeycloakService.detail_page_sections builds the
+   ``realms`` context and gates on the viewer's role, so this block no longer lives
+   hardcoded in the general project-details template and no longer drifts away from the
+   config when it moves (as it did in RC-5). Rendered via a ``section`` loop var, so it
+   reads its data from ``section.context``. #}
 <c-card outline="true" padding="xl" backgroundColor="wit">
     <c-layout-flow gap="lg">
         <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="beveiligingsscan" size="xl" color="hemelblauw" />Keycloak</c-heading>
         <p class="rvo-text--subtle">Keycloak realm configuratie en admin toegang</p>
 
         <div class="config-section">
-            {% for kc_config in keycloak_realms %}
+            {% for kc_config in section.context.realms %}
             {% if not loop.first %}
             <div style="margin-top: var(--rvo-space-lg); padding-top: var(--rvo-space-lg); border-top: 1px solid var(--rvo-color-grijs-200);"></div>
             {% endif %}
@@ -86,4 +88,3 @@
         </div>
     </c-layout-flow>
 </c-card>
-{% endif %}

@@ -42,6 +42,8 @@ from pathlib import Path
 from typing import Any
 
 import jsonschema
+from opi.services.services import service_entry_config, service_entry_name
+from opi.services.services_enums import ServiceType
 from opi.utils.age import decrypt_age_content_sync, encrypt_age_content_sync
 from opi.utils.yaml_util import load_yaml_from_path, save_yaml_to_path
 from ruamel.yaml.scalarstring import LiteralScalarString
@@ -277,31 +279,24 @@ def migrate(
     fold_env_vars_into_user_env_vars(project, project_private_key, project_public_key, extra_env, host_rewrites)
 
     # Keycloak realm block is cluster-specific (host, realm name, admin password).
-    # OPI recreates it on the target, so it must not travel.
+    # OPI recreates it on the target, so it must not travel. Use the canonical helpers
+    # (format-agnostic across bare string / legacy / record) instead of hand-rolled name
+    # resolution that ignored ``schema-version`` and duplicated the helper logic.
     for entry in project.get("services", []) or []:
-        if not isinstance(entry, dict):
+        if service_entry_name(entry) != ServiceType.KEYCLOAK.value:
             continue
-        entry_name = entry.get("name") or next((k for k in entry if k != "config"), None)
-        if entry_name != "keycloak":
-            continue
-        body = entry.get("config") if "name" in entry else entry.get("keycloak", {}).get("config", {})
+        body = service_entry_config(entry)
         if isinstance(body, dict) and body.pop("realms", None) is not None:
             logger.info("  [%s] dropped keycloak realms (recreated on the target)", name)
 
     # Domain approvals are per base domain: an approved subdomain on the sandbox domain
     # says nothing about the target and would present itself as already granted.
     for entry in project.get("services", []) or []:
-        if not isinstance(entry, dict):
+        if service_entry_name(entry) != ServiceType.PUBLISH_ON_WEB.value:
             continue
-        entry_name = entry.get("name") or next((k for k in entry if k != "config"), None)
-        if entry_name != "publish-on-web":
-            continue
-        body = entry.get("config") if "name" in entry else (entry.get("publish-on-web") or {}).get("config", {})
+        body = service_entry_config(entry)
         if isinstance(body, dict) and body.pop("domains", None) is not None:
             logger.info("  [%s] dropped domain approvals (re-request on the target)", name)
-
-    changed = downgrade_service_entries(project)
-    logger.info("  [%s] %d service entries downgraded to the legacy form", name, changed)
 
     if admins:
         project["users"] = [{"email": email, "role": "admin"} for email in admins]
@@ -356,8 +351,15 @@ def main() -> None:
 
     result = migrate(data, sandbox_private_key, prod_public_key, args.base_domain, args.admin, extra_env)
 
+    # Validate the uniform-record form against project_v2.json BEFORE downgrading. The
+    # downgrade rewrites entries to the legacy shape the pre-RC-5 production OPI reads,
+    # which is not what project_v2.json (the new schema) describes -- validating the
+    # downgraded output against it checked the wrong shape.
     schema_path = Path(__file__).parent.parent / "opi" / "schemas" / "project_v2.json"
     validate(result, schema_path)
+
+    changed = downgrade_service_entries(result)
+    logger.info("  %d service entries downgraded to the legacy form", changed)
 
     output = Path(args.output) if args.output else source.with_suffix(".prod.yaml")
     save_yaml_to_path(str(output), result)

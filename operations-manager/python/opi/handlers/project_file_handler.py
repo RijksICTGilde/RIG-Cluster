@@ -1026,20 +1026,23 @@ class ProjectFileHandler:
                             return cfg
                 break
 
-        # 2. Component-level
+        # 2. Component-level. Format-agnostic: the legacy-only read (isinstance
+        # entry.get("publish-on-web")) missed a {reference: publish-on-web, config} record.
+        from opi.services.services import service_entry_config, service_entry_name
+
         component = self._find_component(project_data, component_name)
         if component:
             for entry in component.get("services", []):
-                if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
-                    cfg = entry["publish-on-web"].get("config") or {}
-                    if cfg.get("tls") in valid:
+                if service_entry_name(entry) == ServiceType.PUBLISH_ON_WEB.value:
+                    cfg = service_entry_config(entry) or {}
+                    if isinstance(cfg, dict) and cfg.get("tls") in valid:
                         return cfg
 
         # 3. Root (project services) default
         for entry in project_data.get("services", []):
-            if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
-                cfg = entry["publish-on-web"].get("config") or {}
-                if cfg.get("tls") in valid:
+            if service_entry_name(entry) == ServiceType.PUBLISH_ON_WEB.value:
+                cfg = service_entry_config(entry) or {}
+                if isinstance(cfg, dict) and cfg.get("tls") in valid:
                     return cfg
 
         return {}
@@ -2912,17 +2915,24 @@ class ProjectFileHandler:
             if not component:
                 continue
 
+            from opi.services.services import service_entry_name
+
             service_list = component.get("services", [])
             for service in service_list:
-                if isinstance(service, str):
-                    service_name = service
-                    service_ref = f"{deployment_name}-{service_name.split('-')[0]}"
-                elif isinstance(service, dict):
-                    service_name = next(iter(service.keys()))
-                    service_config = service[service_name]
-                    service_ref = service_config.get("reference", f"{deployment_name}-{service_name.split('-')[0]}")
-                else:
+                # Format-agnostic: ``next(iter(keys))`` returned "reference"/"name" for a
+                # uniform record, so a storage service in record form (the PVC case for
+                # backups) never matched service_types and its component was missed.
+                service_name = service_entry_name(service)
+                if service_name is None:
                     continue
+                default_ref = f"{deployment_name}-{service_name.split('-')[0]}"
+                service_ref = default_ref
+                # Only a legacy single-key body ({svc: {reference: ...}}) carries an
+                # explicit generation reference; the uniform record does not.
+                if isinstance(service, dict) and "name" not in service and "reference" not in service:
+                    body = service.get(service_name)
+                    if isinstance(body, dict):
+                        service_ref = body.get("reference", default_ref)
 
                 if service_name in service_types:
                     results.append(
@@ -3393,6 +3403,8 @@ def extract_attachment_usage(project_data: dict[str, Any]) -> dict[str, list[str
     level. Used both as the delete-guard (``attachment_is_referenced``) and by the
     delete-confirmation modal, so the two never disagree.
     """
+    from opi.services.services import service_entry_config, service_entry_name
+
     usage: dict[str, list[str]] = {}
 
     def add(ref: Any, label: str) -> None:
@@ -3403,6 +3415,8 @@ def extract_attachment_usage(project_data: dict[str, Any]) -> dict[str, list[str
             names.append(label)
 
     # Component level: attachment couplings + publish-on-web provided certificate.
+    # Format-agnostic: the legacy-only read missed a {reference: publish-on-web, config}
+    # record, so a certificate provided by a record-form entry escaped the delete-guard.
     for component in project_data.get("components", []):
         if not isinstance(component, dict):
             continue
@@ -3410,8 +3424,8 @@ def extract_attachment_usage(project_data: dict[str, Any]) -> dict[str, list[str
         for use in extract_component_attachment_uses(component):
             add(use.get("reference"), name)
         for entry in component.get("services", []):
-            if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
-                add(_publish_on_web_provided_ref(entry["publish-on-web"].get("config")), name)
+            if service_entry_name(entry) == ServiceType.PUBLISH_ON_WEB.value:
+                add(_publish_on_web_provided_ref(service_entry_config(entry)), name)
 
     # Deployment-component overrides: attachment couplings + publish-on-web provided cert.
     for dep in project_data.get("deployments", []):
@@ -3430,8 +3444,8 @@ def extract_attachment_usage(project_data: dict[str, Any]) -> dict[str, list[str
 
     # Root publish-on-web default certificate.
     for entry in project_data.get("services", []):
-        if isinstance(entry, dict) and isinstance(entry.get("publish-on-web"), dict):
-            add(_publish_on_web_provided_ref(entry["publish-on-web"].get("config")), "publicatie (project-breed)")
+        if service_entry_name(entry) == ServiceType.PUBLISH_ON_WEB.value:
+            add(_publish_on_web_provided_ref(service_entry_config(entry)), "publicatie (project-breed)")
 
     return usage
 
@@ -3480,19 +3494,20 @@ def _filter_empty_service_entries(services: list[str | dict]) -> list[str | dict
     when a service was selected but not configured. These should not be treated
     as active services.
 
-    String entries are always kept. Dict entries are kept only when their
-    value is not None and not an empty dict/list.
+    String entries are always kept. Dict entries are kept only when they carry a
+    non-empty value (a name/reference or a non-empty config).
     """
-    result: list[str | dict] = []
-    for entry in services:
+
+    def keep(entry: str | dict) -> bool:
         if isinstance(entry, str):
-            result.append(entry)
-        elif isinstance(entry, dict):
-            for value in entry.values():
-                if value is not None and value != {} and value != []:
-                    result.append(entry)
-                break  # single-key dicts
-    return result
+            return True
+        # Scan every value: the old ``break  # single-key dicts`` assumed exactly one
+        # key, but a uniform record ({name/reference, config}) has more than one.
+        return isinstance(entry, dict) and any(
+            value is not None and value != {} and value != [] for value in entry.values()
+        )
+
+    return [entry for entry in services if keep(entry)]
 
 
 def save_project_file(file_path: str, project_data: dict[str, Any]) -> None:
