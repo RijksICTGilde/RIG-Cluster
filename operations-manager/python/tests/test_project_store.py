@@ -20,6 +20,7 @@ tests/test_git_store_primitives.py.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from typing import Any
 
 import pytest
@@ -119,6 +120,23 @@ class FakeGitConnector:
         for commit in self.remote.commits:
             if commit["ref"] == ref:
                 return commit["files"].get(path)
+        return None
+
+    @staticmethod
+    def _blob_sha(content: str) -> str:
+        """Content-addressed like a real git blob: same content, same 40-hex name."""
+        return hashlib.sha1(content.encode(), usedforsecurity=False).hexdigest()
+
+    async def get_blob_sha(self, path: str, ref: str = "HEAD") -> str | None:
+        content = await self.show_file_at(ref, path)
+        return None if content is None else self._blob_sha(content)
+
+    async def read_blob(self, blob_sha: str) -> str | None:
+        # Every version ever committed stays reachable, as it does in a real clone.
+        for commit in self.remote.commits:
+            for content in commit["files"].values():
+                if self._blob_sha(content) == blob_sha:
+                    return content
         return None
 
     async def list_file_revisions(self, path: str, limit: int = 50) -> list[dict[str, str]]:
@@ -554,6 +572,37 @@ async def test_previous_returns_version_before_head(harness: StoreHarness) -> No
 
     assert previous is not None
     assert [d["name"] for d in previous["deployments"]] == ["dep-1"]
+
+
+# ----------------------------------------------------------------------------
+# version_of / read_version
+# ----------------------------------------------------------------------------
+
+
+async def test_version_token_reads_back_the_version_it_named(harness: StoreHarness) -> None:
+    """A form is rendered from a version; the token must still resolve to it later."""
+    version = await harness.store.version_of(RELATIVE_PATH)
+    assert version is not None
+
+    await harness.store.mutate(PROJECT_NAME, _add_deployment("dep-1"), message="add dep-1", actor="tester")
+
+    as_rendered = await harness.store.read_version(version)
+    assert as_rendered is not None
+    assert as_rendered["deployments"] == [], "the token resolved to the current version, not the one it named"
+
+
+async def test_version_token_changes_when_the_file_changes(harness: StoreHarness) -> None:
+    before = await harness.store.version_of(RELATIVE_PATH)
+    await harness.store.mutate(PROJECT_NAME, _add_deployment("dep-1"), message="add dep-1", actor="tester")
+    after = await harness.store.version_of(RELATIVE_PATH)
+
+    assert before != after
+
+
+async def test_a_malformed_version_token_never_reaches_git(harness: StoreHarness) -> None:
+    """Tokens come back from the browser, so they are validated, not passed through."""
+    assert await harness.store.read_version("../../etc/passwd") is None
+    assert await harness.store.read_version("HEAD") is None
 
 
 # ----------------------------------------------------------------------------

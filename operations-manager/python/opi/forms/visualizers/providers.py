@@ -835,6 +835,88 @@ class PublishTlsOverrideOptionsProvider:
         return [{"value": "", "label": "Erven (geen override)"}, *_PUBLISH_TLS_MODE_OPTIONS]
 
 
+class YesNoOptionsProvider:
+    """Ja/Nee options for boolean config fields (stored as an explicit YAML boolean)."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": "true", "label": "Ja"},
+            {"value": "false", "label": "Nee"},
+        ]
+
+
+class WakeModeOptionsProvider:
+    """The three sleep-mode wake modes: how a sleeping deployment is woken."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "value": "auto",
+                "label": "Automatisch",
+                "description": "Wekt bij het eerste bezoek; de bezoeker ziet een laadpagina",
+            },
+            {
+                "value": "confirm",
+                "label": "Met bevestiging",
+                "description": "De bezoeker ziet een knop om de applicatie zelf te starten",
+            },
+            {
+                "value": "manual",
+                "label": "Alleen handmatig",
+                "description": "Uitlegpagina zonder knop; alleen een beheerder wekt via de UI of API",
+            },
+        ]
+
+
+class SleepAfterDeployOptionsProvider:
+    """Preset deadlines for putting a deployment to sleep after deploy/activity."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": "4h", "label": "4 uur"},
+            {"value": "8h", "label": "8 uur"},
+            {"value": "12h", "label": "12 uur"},
+            {"value": "24h", "label": "1 dag"},
+            {"value": "48h", "label": "2 dagen"},
+            {"value": "72h", "label": "3 dagen"},
+            {"value": "168h", "label": "7 dagen"},
+        ]
+
+
+class SleepAfterWakeOptionsProvider:
+    """Preset deadlines for putting a deployment back to sleep after a wake."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": "30m", "label": "30 minuten"},
+            {"value": "1h", "label": "1 uur"},
+            {"value": "2h", "label": "2 uur"},
+            {"value": "4h", "label": "4 uur"},
+            {"value": "8h", "label": "8 uur"},
+            {"value": "24h", "label": "1 dag"},
+        ]
+
+
+class WakerComponentOptionsProvider:
+    """The project's components, for picking which one serves the waker page.
+
+    Reads the components from the surrounding form data (``yaml_data``), so it is
+    populated in the edit flow and empty (only the auto option) in the create wizard,
+    where components are not defined yet. Empty = let sleep-mode pick automatically.
+    """
+
+    def __init__(self, yaml_data: dict[str, Any] | None = None) -> None:
+        self.yaml_data = yaml_data or {}
+
+    def get_options(self) -> list[dict[str, Any]]:
+        options: list[dict[str, Any]] = [{"value": "", "label": "Automatisch"}]
+        for component in self.yaml_data.get("components", []) or []:
+            name = component.get("name") if isinstance(component, dict) else None
+            if name:
+                options.append({"value": name, "label": name})
+        return options
+
+
 PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterOptionsProvider": ClusterOptionsProvider,
     "ServiceOptionsProvider": ServiceOptionsProvider,
@@ -870,6 +952,11 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "AttachmentProvideAsOptionsProvider": AttachmentProvideAsOptionsProvider,
     "PublishTlsModeOptionsProvider": PublishTlsModeOptionsProvider,
     "PublishTlsOverrideOptionsProvider": PublishTlsOverrideOptionsProvider,
+    "YesNoOptionsProvider": YesNoOptionsProvider,
+    "WakeModeOptionsProvider": WakeModeOptionsProvider,
+    "SleepAfterDeployOptionsProvider": SleepAfterDeployOptionsProvider,
+    "SleepAfterWakeOptionsProvider": SleepAfterWakeOptionsProvider,
+    "WakerComponentOptionsProvider": WakerComponentOptionsProvider,
 }
 
 
