@@ -125,6 +125,11 @@ def test_add_component_via_api(
         image=_RUNNABLE_IMAGE,
         deployment_names=[lifecycle_project.deployment_name],
         verify_ssl=_API_VERIFY_SSL,
+        # Adding a component re-syncs the deployment, which re-refreshes the
+        # user-applications app-of-apps (~90 child apps, issue #130) and waits for
+        # the app to go Healthy again - minutes on the busy Kind sandbox, past the
+        # 180s default.
+        timeout=360.0,
     )
     assert forgejo.wait_for_component(lifecycle_project.name, component_name, timeout=120), (
         f"Component '{component_name}' did not appear in the Forgejo project file"
