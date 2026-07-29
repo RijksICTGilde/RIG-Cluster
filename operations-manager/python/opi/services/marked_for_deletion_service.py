@@ -128,6 +128,29 @@ class MarkedForDeletionService:
             )
             return [row.to_dict() for row in result.scalars().all()]
 
+    async def get_marks_for_deployment(
+        self, project_name: str, deployment_name: str, cluster: str, resource_type: str
+    ) -> list[dict]:
+        """Marks for one ``(project, deployment, cluster)`` of a given ``resource_type``.
+
+        This is the deployment-scoped selector used to reconcile file-backed marks (e.g.
+        PVCs) against the manifests actually on disk: the caller drops the rows whose
+        backing file is gone. Selecting on project + deployment + type keeps it independent
+        of how the individual resource name is encoded.
+        """
+        async with session_scope() as session:
+            result = await session.execute(
+                select(MarkedForDeletion)
+                .where(
+                    MarkedForDeletion.project_name == project_name,
+                    MarkedForDeletion.deployment_name == deployment_name,
+                    MarkedForDeletion.cluster == cluster,
+                    MarkedForDeletion.resource_type == resource_type,
+                )
+                .order_by(MarkedForDeletion.marked_at.asc())
+            )
+            return [row.to_dict() for row in result.scalars().all()]
+
     async def delete_mark(self, mark_id: str) -> bool:
         """Delete a mark after the resource has been purged."""
         async with session_scope() as session:

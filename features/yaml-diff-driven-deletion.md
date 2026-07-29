@@ -54,12 +54,36 @@ PVCs require special handling because they are managed by ArgoCD through manifes
 3. Normal manifest generation won't touch the renamed file (it uses different filenames)
 4. A record is inserted into `marked_for_deletion` with the exact filename and deployment path in metadata
 
+**Recovery phase** (`PVCManager.create_pvc_manifests_for_component`):
+
+If the same storage is re-added before the purge, the PVC comes back. When OPI regenerates
+the PVC manifest it would write `webapp-data-pvc.yaml` next to the leftover
+`webapp-data-pvc.marked-for-deletion.yaml`, leaving two files with the **same** PVC resource
+identity in `kustomization.yaml` - which makes kustomize refuse to render the whole
+deployment. So the marked twin is cancelled at recreation time:
+
+1. The `.marked-for-deletion.yaml` twin of the manifest being written is removed (this is the
+   hard requirement that repairs the render). The live volume is unaffected: ArgoCD re-adopts
+   the existing PVC through the restored plain manifest, so nothing is pruned.
+2. The `marked_for_deletion` rows are reconciled against the files on disk. The **file is the
+   source of truth**: any `pvc` mark for this `(project, deployment, cluster)` whose
+   `.marked-for-deletion.yaml` no longer exists is deleted. A sibling storage that is still
+   genuinely marked (its file is still present) is left untouched.
+
+As a failsafe against any leftover duplicate identity from other sources, `create_
+kustomization_files` scans the on-disk manifests and raises before commit/push if two files
+declare the same `(apiVersion, kind, namespace, name)`.
+
 **Purge phase** (reconciliation `_purge_pvc`):
 1. After the grace period, the reconciliation job loads the project via `ProjectManager`
 2. Checks out the deployment git repo
 3. Deletes the `.marked-for-deletion.yaml` file
 4. Regenerates `kustomization.yaml` (so the file is no longer listed as a resource)
 5. Commits and pushes - ArgoCD syncs and prunes the PVC
+
+> Note: the reconciliation job is only run on demand via the admin API (see below); it is not
+> scheduled. A marked PVC therefore stays until the storage is re-added (recovery phase above)
+> or the mark/file is cleaned up by hand or a manual reconciliation run.
 
 ### Reconciliation
 
@@ -120,9 +144,12 @@ A unique index on `(resource_type, resource_name, cluster)` prevents duplicate m
 ## Accident Recovery
 
 If a deployment is accidentally removed from YAML and the user reverts the git commit:
-- The reconciliation job detects the resource is back in the expected set
-- It automatically unmarks the resource, preserving all data
-- No data is lost as long as the revert happens within the grace period
+- For database/MinIO resources, the reconciliation job detects the resource is back in the
+  expected set and automatically unmarks it, preserving all data.
+- For PVCs, recovery happens at manifest regeneration instead of via the reconciliation job
+  (PVCs are not in the expected-set builder): re-adding the storage removes the marked twin
+  and clears the stale mark (see the recovery phase above).
+- No data is lost as long as the revert happens within the grace period.
 
 ## Dependencies
 
