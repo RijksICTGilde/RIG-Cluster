@@ -30,7 +30,6 @@ from opi.utils.naming import (
 )
 
 if TYPE_CHECKING:
-    from opi.core.database_pool import DatabasePool
     from opi.handlers.project_file_handler import ProjectFileHandler
 
 logger = logging.getLogger(__name__)
@@ -47,19 +46,16 @@ def _deployment_level_service_names(deployment: dict[str, Any]) -> set[str]:
     hold the database generation metadata). Entries are plain strings,
     ``{reference: name, ...}`` dicts, or ``{name: {config}}`` dicts.
     """
+    from opi.services.services import service_entry_name
+
     names: set[str] = set()
     services = deployment.get("services")
     if not isinstance(services, list):
         return names
     for svc in services:
-        if isinstance(svc, str):
-            names.add(svc)
-        elif isinstance(svc, dict):
-            ref = svc.get("reference")
-            if ref:
-                names.add(ref)
-            elif svc:
-                names.add(next(iter(svc)))
+        name = service_entry_name(svc)
+        if name is not None:
+            names.add(name)
     return names
 
 
@@ -166,7 +162,6 @@ def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, 
 
 
 async def cleanup_project(
-    pool: DatabasePool,
     project_name: str,
     grace_period_days: int | None = None,
     dry_run: bool = False,
@@ -177,7 +172,6 @@ async def cleanup_project(
     admin API. It reuses the same purge helpers as the full reconciliation job.
 
     Args:
-        pool: Database pool for accessing the marked_for_deletion table.
         project_name: Project whose expired marks should be purged.
         grace_period_days: Override for the grace period. Uses config default if None.
         dry_run: If True, log actions but do not actually purge resources.
@@ -188,7 +182,7 @@ async def cleanup_project(
     if grace_period_days is None:
         grace_period_days = settings.DELETION_GRACE_PERIOD_DAYS
 
-    service = MarkedForDeletionService(pool)
+    service = MarkedForDeletionService()
 
     project_expired = await service.get_expired_marks(grace_period_days, project_name=project_name)
 
@@ -209,7 +203,7 @@ async def cleanup_project(
     all_projects = get_project_store().get_all()
     expected = _build_expected_resources([p.data for p in all_projects if p.data])
 
-    await _purge_marks(project_expired, service, pool, results, dry_run, expected=expected)
+    await _purge_marks(project_expired, service, results, dry_run, expected=expected)
 
     logger.info(
         "Cleanup for project '%s': purged=%d, errors=%d, dry_run=%s",
@@ -225,7 +219,6 @@ async def cleanup_project(
 async def _purge_marks(
     marks: list[dict],
     service: MarkedForDeletionService,
-    pool: DatabasePool,
     results: dict[str, Any],
     dry_run: bool,
     expected: dict[str, set[tuple[str, str]]] | None = None,
@@ -329,11 +322,10 @@ async def _purge_marks(
 
     # Namespaces (only when all conditions met)
     for mark in namespace_marks:
-        await _purge_namespace(mark, service, pool, results, dry_run)
+        await _purge_namespace(mark, service, results, dry_run)
 
 
 async def reconcile(
-    pool: DatabasePool,
     project_yamls: list[dict[str, Any]],
     grace_period_days: int | None = None,
     dry_run: bool = False,
@@ -349,7 +341,6 @@ async def reconcile(
        - Marked but now in expected set (restored) -> unmark.
 
     Args:
-        pool: Database pool for accessing the marked_for_deletion table.
         project_yamls: List of all parsed project YAML dicts.
         grace_period_days: Override for the grace period. Uses config default if None.
         dry_run: If True, log actions but do not actually purge resources.
@@ -360,7 +351,7 @@ async def reconcile(
     if grace_period_days is None:
         grace_period_days = settings.DELETION_GRACE_PERIOD_DAYS
 
-    service = MarkedForDeletionService(pool)
+    service = MarkedForDeletionService()
     expected = _build_expected_resources(project_yamls)
 
     results: dict[str, Any] = {
@@ -391,7 +382,7 @@ async def reconcile(
 
     # --- Step 2: Purge expired marks (re-protected against the expected set) ---
     expired_marks = await service.get_expired_marks(grace_period_days)
-    await _purge_marks(expired_marks, service, pool, results, dry_run, expected=expected)
+    await _purge_marks(expired_marks, service, results, dry_run, expected=expected)
 
     # --- Step 3: Orphan detection is deliberately NOT automated here ---
     # Actual-resource scanning lives in opi.jobs.service_orphan_sweep (report-
@@ -940,7 +931,6 @@ async def _purge_deployment_manifests(
 async def _purge_namespace(
     mark: dict,
     service: MarkedForDeletionService,
-    pool: DatabasePool,
     results: dict[str, list],
     dry_run: bool,
 ) -> None:

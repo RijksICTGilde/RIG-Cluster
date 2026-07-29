@@ -6,19 +6,21 @@ for the nice URL feature.
 """
 
 from typing import ClassVar
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from opi.connectors.subdomain import (
     BARE_DOMAIN_SUBDOMAIN,
     RESERVED_SUBDOMAINS,
-    SUBDOMAIN_REGISTRY_TABLE_SQL,
-    SubdomainConnector,
     SubdomainNotAvailableError,
     SubdomainValidationError,
-    create_subdomain_connector,
     find_deployments_for_domain_item,
     validate_subdomain,
+)
+from opi.services.persistence.subdomain_registry import (
+    SUBDOMAIN_REGISTRY_TABLE_SQL,
+    SubdomainConnector,
+    create_subdomain_connector,
 )
 
 
@@ -42,290 +44,6 @@ class TestSubdomainConnectorBasics:
     def test_table_sql_has_unique_constraint(self):
         """SUBDOMAIN_REGISTRY_TABLE_SQL has unique constraint on subdomain+base_domain."""
         assert "UNIQUE (subdomain, base_domain)" in SUBDOMAIN_REGISTRY_TABLE_SQL
-
-
-class TestSubdomainConnectorCheckAvailability:
-    """Tests for SubdomainConnector.check_availability method."""
-
-    @pytest.mark.asyncio
-    async def test_check_availability_returns_true_when_available(self):
-        """check_availability returns True when subdomain is not registered."""
-        connector = SubdomainConnector()
-
-        # Mock the database pool and connection
-        mock_conn = AsyncMock()
-        mock_conn.fetchval.return_value = None  # Not found = available
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with patch.object(connector, "_get_pool", return_value=mock_pool):
-            result = await connector.check_availability("myapp", "rijks.app")
-
-        assert result is True
-        mock_conn.fetchval.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_check_availability_returns_false_when_taken(self):
-        """check_availability returns False when subdomain is already registered."""
-        connector = SubdomainConnector()
-
-        # Mock the database pool and connection
-        mock_conn = AsyncMock()
-        mock_conn.fetchval.return_value = 1  # Found = not available
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with patch.object(connector, "_get_pool", return_value=mock_pool):
-            result = await connector.check_availability("myapp", "rijks.app")
-
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_check_availability_lowercases_input(self):
-        """check_availability lowercases subdomain and base_domain."""
-        connector = SubdomainConnector()
-
-        mock_conn = AsyncMock()
-        mock_conn.fetchval.return_value = None
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with patch.object(connector, "_get_pool", return_value=mock_pool):
-            await connector.check_availability("MyApp", "RIJKS.APP")
-
-        # Verify the query was called with lowercase values
-        call_args = mock_conn.fetchval.call_args
-        assert call_args[0][1] == "myapp"  # subdomain
-        assert call_args[0][2] == "rijks.app"  # base_domain
-
-
-class TestSubdomainConnectorRegister:
-    """Tests for SubdomainConnector.register method."""
-
-    @pytest.mark.asyncio
-    async def test_register_creates_new_registration(self):
-        """register creates a new subdomain registration."""
-        connector = SubdomainConnector()
-
-        mock_result = {
-            "id": 1,
-            "subdomain": "myapp",
-            "base_domain": "rijks.app",
-            "project_name": "my-project",
-            "deployment_name": "prod",
-            "cluster": "odcn-production",
-            "created_at": "2024-01-01T00:00:00Z",
-            "created_by": "user@example.com",
-        }
-
-        mock_conn = AsyncMock()
-        mock_conn.fetchval.return_value = None  # Available
-        mock_conn.fetchrow.return_value = mock_result
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with patch.object(connector, "_get_pool", return_value=mock_pool):
-            result = await connector.register(
-                subdomain="myapp",
-                base_domain="rijks.app",
-                project_name="my-project",
-                deployment_name="prod",
-                cluster="odcn-production",
-                created_by="user@example.com",
-            )
-
-        assert result["subdomain"] == "myapp"
-        assert result["project_name"] == "my-project"
-
-    @pytest.mark.asyncio
-    async def test_register_raises_error_when_not_available(self):
-        """register raises SubdomainNotAvailableError when subdomain is taken."""
-        connector = SubdomainConnector()
-
-        mock_conn = AsyncMock()
-        mock_conn.fetchval.return_value = 1  # Not available
-        mock_conn.fetchrow.return_value = {"project_name": "other-project"}
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with (
-            patch.object(connector, "_get_pool", return_value=mock_pool),
-            pytest.raises(SubdomainNotAvailableError) as exc_info,
-        ):
-            await connector.register(
-                subdomain="myapp",
-                base_domain="rijks.app",
-                project_name="my-project",
-                deployment_name="prod",
-                cluster="odcn-production",
-            )
-
-        assert "niet beschikbaar" in str(exc_info.value).lower()  # Dutch: "is niet beschikbaar"
-
-
-class TestSubdomainConnectorGetBySubdomain:
-    """Tests for SubdomainConnector.get_by_subdomain method."""
-
-    @pytest.mark.asyncio
-    async def test_get_by_subdomain_returns_registration(self):
-        """get_by_subdomain returns registration details when found."""
-        connector = SubdomainConnector()
-
-        mock_result = {
-            "id": 1,
-            "subdomain": "myapp",
-            "base_domain": "rijks.app",
-            "project_name": "my-project",
-            "deployment_name": "prod",
-            "cluster": "odcn-production",
-            "created_at": "2024-01-01T00:00:00Z",
-            "created_by": "user@example.com",
-        }
-
-        mock_conn = AsyncMock()
-        mock_conn.fetchrow.return_value = mock_result
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with patch.object(connector, "_get_pool", return_value=mock_pool):
-            result = await connector.get_by_subdomain("myapp", "rijks.app")
-
-        assert result is not None
-        assert result["subdomain"] == "myapp"
-        assert result["project_name"] == "my-project"
-
-    @pytest.mark.asyncio
-    async def test_get_by_subdomain_returns_none_when_not_found(self):
-        """get_by_subdomain returns None when subdomain is not registered."""
-        connector = SubdomainConnector()
-
-        mock_conn = AsyncMock()
-        mock_conn.fetchrow.return_value = None
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with patch.object(connector, "_get_pool", return_value=mock_pool):
-            result = await connector.get_by_subdomain("nonexistent", "rijks.app")
-
-        assert result is None
-
-
-class TestSubdomainConnectorGetByProject:
-    """Tests for SubdomainConnector.get_by_project method."""
-
-    @pytest.mark.asyncio
-    async def test_get_by_project_returns_registrations(self):
-        """get_by_project returns all registrations for a project."""
-        connector = SubdomainConnector()
-
-        mock_results = [
-            {
-                "id": 1,
-                "subdomain": "myapp",
-                "base_domain": "rijks.app",
-                "project_name": "my-project",
-                "deployment_name": "prod",
-                "cluster": "odcn-production",
-                "created_at": None,
-                "created_by": None,
-            },
-            {
-                "id": 2,
-                "subdomain": "myapp",
-                "base_domain": "rijksapps.nl",
-                "project_name": "my-project",
-                "deployment_name": "staging",
-                "cluster": "local",
-                "created_at": None,
-                "created_by": None,
-            },
-        ]
-
-        mock_conn = AsyncMock()
-        mock_conn.fetch.return_value = mock_results
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with patch.object(connector, "_get_pool", return_value=mock_pool):
-            result = await connector.get_by_project("my-project")
-
-        assert len(result) == 2
-        assert all(r["project_name"] == "my-project" for r in result)
-
-
-class TestSubdomainConnectorDelete:
-    """Tests for SubdomainConnector.delete method."""
-
-    @pytest.mark.asyncio
-    async def test_delete_returns_true_when_deleted(self):
-        """delete returns True when registration is deleted."""
-        connector = SubdomainConnector()
-
-        mock_conn = AsyncMock()
-        mock_conn.execute.return_value = "DELETE 1"
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with patch.object(connector, "_get_pool", return_value=mock_pool):
-            result = await connector.delete("myapp", "rijks.app")
-
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_delete_returns_false_when_not_found(self):
-        """delete returns False when registration is not found."""
-        connector = SubdomainConnector()
-
-        mock_conn = AsyncMock()
-        mock_conn.execute.return_value = "DELETE 0"
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with patch.object(connector, "_get_pool", return_value=mock_pool):
-            result = await connector.delete("nonexistent", "rijks.app")
-
-        assert result is False
-
-
-class TestSubdomainConnectorDeleteByProject:
-    """Tests for SubdomainConnector.delete_by_project method."""
-
-    @pytest.mark.asyncio
-    async def test_delete_by_project_returns_count(self):
-        """delete_by_project returns the number of deleted registrations."""
-        connector = SubdomainConnector()
-
-        mock_conn = AsyncMock()
-        mock_conn.execute.return_value = "DELETE 3"
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with patch.object(connector, "_get_pool", return_value=mock_pool):
-            result = await connector.delete_by_project("my-project")
-
-        assert result == 3
 
 
 class TestValidateSubdomain:
@@ -549,328 +267,12 @@ class TestBaseDomainValidationInRegister:
         assert "ondersteund" in str(exc_info.value).lower()
 
 
-class TestRegisterOrUpdateForDeployment:
-    """Tests for SubdomainConnector.register_or_update_for_deployment method."""
-
-    @pytest.mark.asyncio
-    async def test_register_new_subdomain(self):
-        """register_or_update creates new registration when none exists."""
-        connector = SubdomainConnector()
-
-        mock_result = {
-            "id": 1,
-            "subdomain": "myapp",
-            "base_domain": "kind",
-            "project_name": "my-project",
-            "deployment_name": "prod",
-            "cluster": "local",
-            "created_at": "2024-01-01T00:00:00Z",
-            "created_by": None,
-        }
-
-        mock_conn = AsyncMock()
-        mock_conn.fetchrow.side_effect = [
-            None,  # get_by_deployment returns None
-            mock_result,  # register returns result
-        ]
-        mock_conn.fetchval.return_value = None  # check_availability returns available
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with patch.object(connector, "_get_pool", return_value=mock_pool):
-            result = await connector.register_or_update_for_deployment(
-                subdomain="myapp",
-                base_domain="kind",
-                project_name="my-project",
-                deployment_name="prod",
-                cluster="local",
-            )
-
-        assert result["subdomain"] == "myapp"
-
-    @pytest.mark.asyncio
-    async def test_returns_existing_when_unchanged(self):
-        """register_or_update returns existing registration when subdomain unchanged."""
-        connector = SubdomainConnector()
-
-        existing_result = {
-            "id": 1,
-            "subdomain": "myapp",
-            "base_domain": "kind",
-            "project_name": "my-project",
-            "deployment_name": "prod",
-            "cluster": "local",
-            "created_at": "2024-01-01T00:00:00Z",
-            "created_by": None,
-        }
-
-        mock_conn = AsyncMock()
-        mock_conn.fetchrow.return_value = existing_result  # get_by_deployment returns existing
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with patch.object(connector, "_get_pool", return_value=mock_pool):
-            result = await connector.register_or_update_for_deployment(
-                subdomain="myapp",
-                base_domain="kind",
-                project_name="my-project",
-                deployment_name="prod",
-                cluster="local",
-            )
-
-        assert result["subdomain"] == "myapp"
-        # Should only call fetchrow once for get_by_deployment
-        assert mock_conn.fetchrow.call_count == 1
-
-
-class TestRegisterRaceCondition:
-    """Tests for race condition handling in register method."""
-
-    @pytest.mark.asyncio
-    async def test_register_handles_conflict_same_project(self):
-        """register returns existing registration on conflict from same project."""
-        connector = SubdomainConnector()
-
-        existing_result = {
-            "id": 1,
-            "subdomain": "myapp",
-            "base_domain": "kind",
-            "project_name": "my-project",
-            "deployment_name": "prod",
-            "cluster": "local",
-            "created_at": "2024-01-01T00:00:00Z",
-            "created_by": None,
-        }
-
-        mock_conn = AsyncMock()
-        mock_conn.fetchval.return_value = None  # check_availability says available
-        mock_conn.fetchrow.side_effect = [
-            None,  # INSERT ... ON CONFLICT returns None (conflict)
-            existing_result,  # get_by_subdomain returns existing
-        ]
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with patch.object(connector, "_get_pool", return_value=mock_pool):
-            result = await connector.register(
-                subdomain="myapp",
-                base_domain="kind",
-                project_name="my-project",
-                deployment_name="prod",
-                cluster="local",
-            )
-
-        assert result["subdomain"] == "myapp"
-
-    @pytest.mark.asyncio
-    async def test_register_raises_on_conflict_different_project(self):
-        """register raises error on conflict from different project."""
-        from opi.connectors.subdomain import SubdomainNotAvailableError
-
-        connector = SubdomainConnector()
-
-        existing_result = {
-            "id": 1,
-            "subdomain": "myapp",
-            "base_domain": "kind",
-            "project_name": "other-project",  # Different project
-            "deployment_name": "prod",
-            "cluster": "local",
-            "created_at": "2024-01-01T00:00:00Z",
-            "created_by": None,
-        }
-
-        mock_conn = AsyncMock()
-        mock_conn.fetchval.return_value = None  # check_availability says available
-        mock_conn.fetchrow.side_effect = [
-            None,  # INSERT ... ON CONFLICT returns None (conflict)
-            existing_result,  # get_by_subdomain returns existing from other project
-        ]
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with (
-            patch.object(connector, "_get_pool", return_value=mock_pool),
-            pytest.raises(SubdomainNotAvailableError) as exc_info,
-        ):
-            await connector.register(
-                subdomain="myapp",
-                base_domain="kind",
-                project_name="my-project",
-                deployment_name="prod",
-                cluster="local",
-            )
-
-        assert "niet beschikbaar" in str(exc_info.value).lower()  # Dutch: "is niet beschikbaar"
-
-
-class TestSubdomainAuditLogging:
-    """Tests for audit logging in subdomain operations."""
-
-    @pytest.mark.asyncio
-    async def test_register_logs_audit_event(self):
-        """register() logs audit event on successful registration."""
-        from unittest.mock import patch
-
-        connector = SubdomainConnector()
-
-        mock_result = {
-            "id": 1,
-            "subdomain": "myapp",
-            "base_domain": "kind",
-            "project_name": "my-project",
-            "deployment_name": "prod",
-            "cluster": "local",
-            "created_at": "2024-01-01T00:00:00Z",
-            "created_by": None,
-        }
-
-        mock_conn = AsyncMock()
-        mock_conn.fetchval.return_value = None
-        mock_conn.fetchrow.return_value = mock_result
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with (
-            patch.object(connector, "_get_pool", return_value=mock_pool),
-            patch("opi.connectors.subdomain.audit_logger") as mock_audit_logger,
-        ):
-            await connector.register(
-                subdomain="myapp",
-                base_domain="kind",
-                project_name="my-project",
-                deployment_name="prod",
-                cluster="local",
-            )
-
-            # Verify audit log was called with correct format
-            mock_audit_logger.info.assert_called_once()
-            log_message = mock_audit_logger.info.call_args[0][0]
-            assert "SUBDOMAIN_REGISTERED" in log_message
-            assert "myapp.kind" in log_message
-            assert "my-project" in log_message
-
-    @pytest.mark.asyncio
-    async def test_delete_logs_audit_event(self):
-        """delete() logs audit event on successful deletion."""
-        from unittest.mock import patch
-
-        connector = SubdomainConnector()
-
-        mock_conn = AsyncMock()
-        mock_conn.execute.return_value = "DELETE 1"
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with (
-            patch.object(connector, "_get_pool", return_value=mock_pool),
-            patch("opi.connectors.subdomain.audit_logger") as mock_audit_logger,
-        ):
-            await connector.delete("myapp", "kind")
-
-            # Verify audit log was called
-            mock_audit_logger.info.assert_called_once()
-            log_message = mock_audit_logger.info.call_args[0][0]
-            assert "SUBDOMAIN_DELETED" in log_message
-            assert "myapp.kind" in log_message
-
-    @pytest.mark.asyncio
-    async def test_delete_by_project_logs_audit_event(self):
-        """delete_by_project() logs audit event on successful deletion."""
-        from unittest.mock import patch
-
-        connector = SubdomainConnector()
-
-        mock_conn = AsyncMock()
-        mock_conn.execute.return_value = "DELETE 3"
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with (
-            patch.object(connector, "_get_pool", return_value=mock_pool),
-            patch("opi.connectors.subdomain.audit_logger") as mock_audit_logger,
-        ):
-            await connector.delete_by_project("my-project")
-
-            # Verify audit log was called
-            mock_audit_logger.info.assert_called_once()
-            log_message = mock_audit_logger.info.call_args[0][0]
-            assert "SUBDOMAINS_DELETED_BY_PROJECT" in log_message
-            assert "my-project" in log_message
-            assert "count=3" in log_message
-
-    @pytest.mark.asyncio
-    async def test_delete_by_deployment_logs_audit_event(self):
-        """delete_by_deployment() logs audit event on successful deletion."""
-        from unittest.mock import patch
-
-        connector = SubdomainConnector()
-
-        mock_conn = AsyncMock()
-        mock_conn.execute.return_value = "DELETE 1"
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with (
-            patch.object(connector, "_get_pool", return_value=mock_pool),
-            patch("opi.connectors.subdomain.audit_logger") as mock_audit_logger,
-        ):
-            await connector.delete_by_deployment("my-project", "prod")
-
-            # Verify audit log was called
-            mock_audit_logger.info.assert_called_once()
-            log_message = mock_audit_logger.info.call_args[0][0]
-            assert "SUBDOMAINS_DELETED_BY_DEPLOYMENT" in log_message
-            assert "my-project" in log_message
-            assert "prod" in log_message
-
-    @pytest.mark.asyncio
-    async def test_no_audit_log_when_nothing_deleted(self):
-        """delete operations don't log when nothing is deleted."""
-        from unittest.mock import patch
-
-        connector = SubdomainConnector()
-
-        mock_conn = AsyncMock()
-        mock_conn.execute.return_value = "DELETE 0"
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with (
-            patch.object(connector, "_get_pool", return_value=mock_pool),
-            patch("opi.connectors.subdomain.audit_logger") as mock_audit_logger,
-        ):
-            await connector.delete_by_project("nonexistent-project")
-
-            # Audit log should not be called when nothing was deleted
-            mock_audit_logger.info.assert_not_called()
-
-
 class TestSubdomainRollbackHelper:
     """Tests for subdomain rollback functionality in ProjectManager."""
 
     @pytest.mark.asyncio
     async def test_rollback_helper_clears_pending_rollback(self):
         """_rollback_subdomain_if_needed clears pending rollback after success."""
-        from unittest.mock import AsyncMock
 
         # Create a mock ProjectManager-like object
         class MockProjectManager:
@@ -954,110 +356,6 @@ class TestBareDomainConstant:
         assert BARE_DOMAIN_SUBDOMAIN == "@"
 
 
-class TestRegisterBareDomain:
-    """Tests for SubdomainConnector.register_bare_domain method."""
-
-    @pytest.mark.asyncio
-    async def test_register_bare_domain_success(self):
-        """register_bare_domain inserts '@' as subdomain for the base domain."""
-        connector = SubdomainConnector()
-
-        mock_conn = AsyncMock()
-        mock_conn.fetchval.return_value = None  # Available
-        mock_conn.fetchrow.return_value = {
-            "id": 1,
-            "subdomain": "@",
-            "base_domain": "voorbeeld.nl",
-            "project_name": "myproject",
-            "deployment_name": "prod",
-            "cluster": "local",
-            "created_at": "2026-01-01",
-            "created_by": None,
-        }
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with patch.object(connector, "_get_pool", return_value=mock_pool):
-            result = await connector.register_bare_domain(
-                base_domain="voorbeeld.nl",
-                project_name="myproject",
-                deployment_name="prod",
-                cluster="local",
-            )
-
-        assert result["subdomain"] == "@"
-        assert result["base_domain"] == "voorbeeld.nl"
-
-    @pytest.mark.asyncio
-    async def test_register_bare_domain_already_taken(self):
-        """register_bare_domain raises SubdomainNotAvailableError when taken by another project."""
-        connector = SubdomainConnector()
-
-        mock_conn = AsyncMock()
-        mock_conn.fetchval.return_value = 1  # Not available
-        mock_conn.fetchrow.return_value = {
-            "id": 1,
-            "subdomain": "@",
-            "base_domain": "voorbeeld.nl",
-            "project_name": "other-project",
-            "deployment_name": "prod",
-            "cluster": "local",
-            "created_at": "2026-01-01",
-            "created_by": None,
-        }
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with (
-            patch.object(connector, "_get_pool", return_value=mock_pool),
-            pytest.raises(SubdomainNotAvailableError, match="niet beschikbaar"),
-        ):
-            await connector.register_bare_domain(
-                base_domain="voorbeeld.nl",
-                project_name="myproject",
-                deployment_name="prod",
-                cluster="local",
-            )
-
-    @pytest.mark.asyncio
-    async def test_register_bare_domain_same_project_returns_existing(self):
-        """register_bare_domain returns existing when same project owns it."""
-        connector = SubdomainConnector()
-
-        existing = {
-            "id": 1,
-            "subdomain": "@",
-            "base_domain": "voorbeeld.nl",
-            "project_name": "myproject",
-            "deployment_name": "prod",
-            "cluster": "local",
-            "created_at": "2026-01-01",
-            "created_by": None,
-        }
-
-        mock_conn = AsyncMock()
-        mock_conn.fetchval.return_value = 1  # Not available
-        mock_conn.fetchrow.return_value = existing
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = AsyncMock(return_value=mock_conn)
-        mock_pool.release = AsyncMock()
-
-        with patch.object(connector, "_get_pool", return_value=mock_pool):
-            result = await connector.register_bare_domain(
-                base_domain="voorbeeld.nl",
-                project_name="myproject",
-                deployment_name="prod",
-                cluster="local",
-            )
-
-        assert result["project_name"] == "myproject"
-
-
 class TestFindDeploymentsForDomainItem:
     """find_deployments_for_domain_item maps an approval item to deployment names."""
 
@@ -1099,3 +397,150 @@ class TestFindDeploymentsForDomainItem:
         }
         item = {"type": "domain", "domain": "voorbeeld.nl"}
         assert find_deployments_for_domain_item(project, item) == ["ok"]
+
+
+# ---------------------------------------------------------------------------
+# Real-Postgres connector tests (RC-5 persistence phase 2)
+#
+# These replace the former asyncpg-mock tests. The connector now runs ORM queries on a
+# real throwaway Postgres (the `orm_db` fixture), so ON CONFLICT uniqueness, transactions
+# and CRUD are exercised for real instead of asserting mock call args.
+# ---------------------------------------------------------------------------
+
+_BASE = "rijks.app"
+_CLUSTER = "odcn-production"
+
+
+async def _register(conn, sub, *, project="p1", deployment="d1", base=_BASE, cluster=_CLUSTER, created_by=None):
+    return await conn.register(sub, base, project, deployment, cluster, created_by)
+
+
+class TestConnectorAvailabilityAndRegister:
+    async def test_check_availability_reflects_registration(self, orm_db):
+        c = SubdomainConnector()
+        assert await c.check_availability("app", _BASE) is True
+        await _register(c, "app")
+        assert await c.check_availability("app", _BASE) is False
+
+    async def test_register_persists_and_returns_row(self, orm_db):
+        c = SubdomainConnector()
+        row = await _register(c, "app", project="proj-a", deployment="prod", created_by="u@example.nl")
+        assert row["subdomain"] == "app"
+        assert row["base_domain"] == _BASE
+        assert row["project_name"] == "proj-a"
+        assert row["deployment_name"] == "prod"
+        assert row["created_by"] == "u@example.nl"
+        assert row["id"] is not None
+        assert row["created_at"] is not None  # server default filled
+
+    async def test_register_duplicate_raises_unavailable(self, orm_db):
+        # A taken subdomain is rejected at layer 1 (check_availability), whichever project
+        # re-registers it. (The same-project "return existing" path is layer-2 race
+        # idempotency for a concurrent insert, not reachable sequentially.)
+        c = SubdomainConnector()
+        await _register(c, "app", project="proj-a")
+        with pytest.raises(SubdomainNotAvailableError):
+            await _register(c, "app", project="proj-a")
+        with pytest.raises(SubdomainNotAvailableError):
+            await _register(c, "app", project="proj-b")
+
+    async def test_register_invalid_subdomain_raises(self, orm_db):
+        with pytest.raises(SubdomainValidationError):
+            await _register(SubdomainConnector(), "Not_Valid")
+
+
+class TestConnectorReads:
+    async def test_get_by_subdomain_deployment_and_project(self, orm_db):
+        c = SubdomainConnector()
+        await _register(c, "a", project="p1", deployment="d1")
+        await _register(c, "b", project="p1", deployment="d2")
+        assert (await c.get_by_subdomain("a", _BASE))["deployment_name"] == "d1"
+        assert await c.get_by_subdomain("missing", _BASE) is None
+        assert (await c.get_by_deployment("p1", "d2"))["subdomain"] == "b"
+        assert await c.get_by_deployment("p1", "nope") is None
+        rows = await c.get_by_project("p1")
+        assert [r["subdomain"] for r in rows] == ["a", "b"]  # ordered
+
+    async def test_count_and_list_all_ordered(self, orm_db):
+        c = SubdomainConnector()
+        await _register(c, "b")
+        await _register(c, "a", deployment="d2")
+        assert await c.count_all() == 2
+        assert [r["subdomain"] for r in await c.list_all()] == ["a", "b"]
+
+
+class TestConnectorDeletes:
+    async def test_delete_single(self, orm_db):
+        c = SubdomainConnector()
+        await _register(c, "app")
+        assert await c.delete("app", _BASE) is True
+        assert await c.delete("app", _BASE) is False  # already gone
+        assert await c.check_availability("app", _BASE) is True
+
+    async def test_delete_by_deployment_and_project(self, orm_db):
+        c = SubdomainConnector()
+        await _register(c, "a", project="p1", deployment="d1")
+        await _register(c, "b", project="p1", deployment="d2")
+        await _register(c, "c", project="p2", deployment="d1")
+        assert await c.delete_by_deployment("p1", "d1") == 1  # only p1/a
+        assert await c.delete_by_project("p1") == 1  # only p1/b remains
+        assert await c.count_all() == 1  # p2/c
+
+
+class TestConnectorUpdate:
+    async def test_update_changes_fields(self, orm_db):
+        c = SubdomainConnector()
+        await _register(c, "app", deployment="d1", cluster=_CLUSTER)
+        updated = await c.update("app", _BASE, deployment_name="d2")
+        assert updated["deployment_name"] == "d2"
+        assert (await c.get_by_subdomain("app", _BASE))["deployment_name"] == "d2"
+
+    async def test_update_missing_returns_none(self, orm_db):
+        assert await SubdomainConnector().update("nope", _BASE, deployment_name="x") is None
+
+
+class TestConnectorBareDomain:
+    async def test_register_and_delete_bare_domain(self, orm_db):
+        c = SubdomainConnector()
+        row = await c.register_bare_domain("voorbeeld.nl", "p1", "d1", _CLUSTER)
+        assert row["subdomain"] == BARE_DOMAIN_SUBDOMAIN
+        assert row["base_domain"] == "voorbeeld.nl"
+        assert await c.check_availability(BARE_DOMAIN_SUBDOMAIN, "voorbeeld.nl") is False
+        assert await c.delete_bare_domain("voorbeeld.nl") is True
+        assert await c.check_availability(BARE_DOMAIN_SUBDOMAIN, "voorbeeld.nl") is True
+
+
+class TestConnectorRegisterOrUpdateAtomic:
+    async def test_unchanged_returns_existing(self, orm_db):
+        c = SubdomainConnector()
+        first = await c.register_or_update_for_deployment("app", _BASE, "p1", "d1", _CLUSTER)
+        same = await c.register_or_update_for_deployment("app", _BASE, "p1", "d1", _CLUSTER)
+        assert same["id"] == first["id"]
+
+    async def test_changed_moves_subdomain(self, orm_db):
+        c = SubdomainConnector()
+        await c.register_or_update_for_deployment("old", _BASE, "p1", "d1", _CLUSTER)
+        await c.register_or_update_for_deployment("new", _BASE, "p1", "d1", _CLUSTER)
+        assert await c.check_availability("old", _BASE) is True  # old released
+        assert (await c.get_by_deployment("p1", "d1"))["subdomain"] == "new"
+        assert await c.count_all() == 1
+
+    async def test_change_to_taken_preserves_old(self, orm_db):
+        c = SubdomainConnector()
+        await c.register_or_update_for_deployment("mine", _BASE, "p1", "d1", _CLUSTER)
+        await _register(c, "taken", project="p2", deployment="d9")  # taken by another
+        with pytest.raises(SubdomainNotAvailableError):
+            await c.register_or_update_for_deployment("taken", _BASE, "p1", "d1", _CLUSTER)
+        # the atomic change rolled back -> the old subdomain is preserved
+        assert (await c.get_by_deployment("p1", "d1"))["subdomain"] == "mine"
+
+
+class TestConnectorAuditLogging:
+    async def test_register_and_delete_emit_audit(self, orm_db):
+        with patch("opi.services.persistence.subdomain_registry.audit_logger") as audit:
+            c = SubdomainConnector()
+            await _register(c, "app")
+            await c.delete("app", _BASE)
+        messages = [call.args[0] for call in audit.info.call_args_list]
+        assert any("SUBDOMAIN_REGISTERED" in m for m in messages)
+        assert any("SUBDOMAIN_DELETED" in m for m in messages)

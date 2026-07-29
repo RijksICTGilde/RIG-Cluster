@@ -6,6 +6,7 @@ the allowed-domains entry on PRE_SAVE.
 """
 
 import pytest
+from opi.connectors.subdomain import get_domains_config
 from opi.forms.editables.conditions import DomainNeedsRequestCondition
 from opi.forms.editables.editable import FormState
 from opi.forms.editables.hooks import DomainRequestHook
@@ -88,8 +89,9 @@ class TestDomainRequestHook:
         }
         await hook.execute(yaml_data, {})
 
-        assert "domains" in yaml_data
-        allowed = yaml_data["domains"]["allowed-domains"]
+        domains = get_domains_config(yaml_data)
+        assert domains is not None
+        allowed = domains["allowed-domains"]
         assert len(allowed) == 1
         assert allowed[0]["domain"] == "rijks.app"
         assert allowed[0]["status"] == "requested"

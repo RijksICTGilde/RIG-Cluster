@@ -29,8 +29,6 @@ from opi.forms.visualizers.fields.components import (
     COMPONENT_SERVICES,
     COMPONENT_USER_ENV_VARS,
     COMPONENTS_SEQUENCE,
-    PERSISTENT_STORAGE_SEQUENCE,
-    TEMP_STORAGE_SEQUENCE,
 )
 from opi.forms.visualizers.fields.config_display import (
     AGE_PRIVATE_KEY,
@@ -57,12 +55,6 @@ from opi.forms.visualizers.fields.identity import (
     DISPLAY_NAME,
 )
 from opi.forms.visualizers.fields.services import (
-    AUTH_WALL_BANNER,
-    KEYCLOAK_REDIRECT_URIS,
-    KEYCLOAK_RESTRICT_ACCESS,
-    KEYCLOAK_TEMPLATE,
-    POSTGRESQL_INSTANCES,
-    POSTGRESQL_STORAGE,
     SERVICES,
 )
 from opi.forms.visualizers.fields.team import (
@@ -79,7 +71,6 @@ __all__ = [
     "AGE_PRIVATE_KEY",
     "AGE_PUBLIC_KEY",
     "API_KEY",
-    "AUTH_WALL_BANNER",
     "CLUSTERS",
     "COMPONENTS_SEQUENCE",
     "COMPONENT_ALIASES",
@@ -107,14 +98,7 @@ __all__ = [
     "DEPLOYMENT_SUBDOMAIN",
     "DESCRIPTION",
     "DISPLAY_NAME",
-    "KEYCLOAK_REDIRECT_URIS",
-    "KEYCLOAK_RESTRICT_ACCESS",
-    "KEYCLOAK_TEMPLATE",
-    "PERSISTENT_STORAGE_SEQUENCE",
-    "POSTGRESQL_INSTANCES",
-    "POSTGRESQL_STORAGE",
     "SERVICES",
-    "TEMP_STORAGE_SEQUENCE",
     "USERS_SEQUENCE",
     "USER_EMAIL",
     "USER_ROLE",

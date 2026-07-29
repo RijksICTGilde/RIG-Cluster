@@ -20,6 +20,7 @@ from opi.core.config import settings
 from opi.core.startup import keycloak_operation_with_retry
 from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.project import Project
 from opi.utils.age import encrypt_age_content, get_project_public_key
 from opi.utils.naming import (
     HostnameFormat,
@@ -1736,18 +1737,10 @@ class KeycloakManager:
         await keycloak.assign_realm_admin_from_master(target_realm_name=realm_name, user_id=user_info["id"])
         logger.info(f"Assigned realm management permissions for {realm_name} to {admin_username}")
 
-        # Store in project config
-        if "config" not in project_data:
-            project_data["config"] = {}
-        if "keycloak" not in project_data["config"]:
-            project_data["config"]["keycloak"] = []
-
-        # Check if this realm config already exists
-        existing_config = None
-        for idx, kc_entry in enumerate(project_data["config"]["keycloak"]):
-            if kc_entry.get("realm") == realm_name:
-                existing_config = idx
-                break
+        # Store under the keycloak service config (RC-5 B: relocated from the old
+        # project-level config.keycloak). Still keyed by realm.
+        view = Project(project_data)
+        realms = view.get("services/keycloak/config/realms") or []
 
         config_entry = {
             "host": keycloak_url,
@@ -1756,14 +1749,16 @@ class KeycloakManager:
             "password": encrypted_password_str,
         }
 
+        existing_config = next((i for i, kc in enumerate(realms) if kc.get("realm") == realm_name), None)
         if existing_config is not None:
-            # Update existing entry
-            project_data["config"]["keycloak"][existing_config] = config_entry
+            realms[existing_config] = config_entry
             logger.info(f"Updated existing Keycloak config for realm {realm_name}")
         else:
-            # Add new entry
-            project_data["config"]["keycloak"].append(config_entry)
+            realms.append(config_entry)
             logger.info(f"Added new Keycloak config for realm {realm_name}")
+
+        # set find-or-creates the keycloak service entry and preserves order.
+        view.set("services/keycloak/config/realms", realms)
 
         # Persist immediately: the generated admin password exists nowhere else.
         # Waiting for the end-of-run commit means any later failure in the task

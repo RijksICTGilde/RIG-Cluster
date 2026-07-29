@@ -2,10 +2,13 @@
 
 import copy
 
+from opi.connectors.subdomain import get_domains_config
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION,
     detect_schema_version,
     migrate_to_latest,
+    normalize_domains_location,
+    normalize_service_entries,
 )
 
 # ---------------------------------------------------------------------------
@@ -166,6 +169,30 @@ def _v1_project_persistent_only() -> dict:
     }
 
 
+def _v1_project_nameless_storage() -> dict:
+    """V1 project whose storage entries carry NO name.
+
+    Older real project files predate the ``name`` field on storage mounts. The
+    v2 storage config (StorageEntry) requires a name, so the migration must
+    synthesize one from the mount path.
+    """
+    return {
+        "name": "nameless-storage",
+        "services": ["persistent-storage", "temp-storage"],
+        "components": [
+            {
+                "name": "app",
+                "type": "deployment",
+                "uses-services": ["persistent-storage", "temp-storage"],
+                "storage": [
+                    {"type": "persistent", "size": "10Gi", "mount-path": "/app/data"},
+                    {"type": "ephemeral", "size": "2Gi", "mount-path": "/tmp"},
+                ],
+            }
+        ],
+    }
+
+
 def _v2_project() -> dict:
     """Already-migrated v2 project."""
     return {
@@ -267,8 +294,8 @@ class TestMigrateV1ToV2:
         # persistent-storage should be a dict with config
         persistent = services[1]
         assert isinstance(persistent, dict)
-        assert "persistent-storage" in persistent
-        config = persistent["persistent-storage"]["config"]
+        assert persistent["reference"] == "persistent-storage"
+        config = persistent["config"]
         assert len(config) == 1
         assert config[0]["name"] == "data"
         assert config[0]["size"] == "250Mi"
@@ -278,8 +305,8 @@ class TestMigrateV1ToV2:
         # temp-storage should be a dict with config
         temp = services[2]
         assert isinstance(temp, dict)
-        assert "temp-storage" in temp
-        config = temp["temp-storage"]["config"]
+        assert temp["reference"] == "temp-storage"
+        config = temp["config"]
         assert len(config) == 1
         assert config[0]["name"] == "temp"
         assert config[0]["size"] == "250Mi"
@@ -299,10 +326,10 @@ class TestMigrateV1ToV2:
 
         assert services[0] == "publish-on-web"
         assert services[1] == "keycloak"
-        # Dict entry preserved
+        # Dict entry normalized to the component reference record.
         assert isinstance(services[2], dict)
-        assert "authorization-wall" in services[2]
-        assert services[2]["authorization-wall"]["config"]["banner"] == "Welcome!"
+        assert services[2]["reference"] == "authorization-wall"
+        assert services[2]["config"]["banner"] == "Welcome!"
 
     def test_helm_chart_rename(self):
         data = _v1_project_with_helm_chart()
@@ -343,11 +370,38 @@ class TestMigrateV1ToV2:
 
         persistent = services[1]
         assert isinstance(persistent, dict)
-        assert "persistent-storage" in persistent
-        config = persistent["persistent-storage"]["config"]
+        assert persistent["reference"] == "persistent-storage"
+        config = persistent["config"]
         assert len(config) == 1
         assert config[0]["name"] == "data"
         assert config[0]["size"] == "500Mi"
+
+    def test_nameless_v1_storage_gets_synthesized_name(self):
+        """v1 storage without a name must migrate to a valid, named v2 config.
+
+        The v2 storage config requires a name per mount; a nameless legacy entry
+        would otherwise fail the config-validation gate. The synthesized name must
+        match what the renderer derives from the mount path (generate_storage_name),
+        and the resulting config must validate against the service's config_model.
+        """
+        from opi.services.registry import get_service
+        from opi.services.services_enums import ServiceType
+
+        result, was_migrated = migrate_to_latest(_v1_project_nameless_storage())
+
+        assert was_migrated is True
+        services = result["components"][0]["services"]
+
+        persistent = next(s for s in services if isinstance(s, dict) and s["reference"] == "persistent-storage")
+        assert persistent["config"][0]["name"] == "appdata"  # from /app/data
+        assert persistent["config"][0]["mount-path"] == "/app/data"
+
+        temp = next(s for s in services if isinstance(s, dict) and s["reference"] == "temp-storage")
+        assert temp["config"][0]["name"] == "tmp"  # from /tmp
+
+        # The migrated config must pass the per-service typed-config gate.
+        get_service(ServiceType.PERSISTENT_STORAGE).validate_config(persistent["config"])
+        get_service(ServiceType.TEMP_STORAGE).validate_config(temp["config"])
 
     def test_component_without_uses_services_preserved(self):
         """Component without uses-services should not have services wiped."""
@@ -442,7 +496,7 @@ class TestMigrateV1ToV2:
         assert upload["services"][0] == "publish-on-web"
         persistent = upload["services"][1]
         assert isinstance(persistent, dict)
-        assert "persistent-storage" in persistent
+        assert persistent["reference"] == "persistent-storage"
         assert upload["services"][2] == "postgresql-database"
 
 
@@ -778,3 +832,242 @@ class TestMigrateV2_1ToV2_2:
 
         assert was_migrated is False
         assert result["schema-version"] == 2.2
+
+
+# ---------------------------------------------------------------------------
+# v2.2 -> v2.3: relocate config.keycloak -> keycloak service config.realms (RC-5 B)
+# ---------------------------------------------------------------------------
+
+
+def _v22_with_keycloak_connections() -> dict:
+    return {
+        "schema-version": 2.2,
+        "name": "wies",
+        "services": [{"keycloak": {"config": {"template": "sso-only"}}}],
+        "config": {
+            "age-public-key": "age1x",
+            "api-key": "k",
+            "keycloak": [
+                {
+                    "host": "https://keycloak.rijksapp.nl",
+                    "realm": "wies-odcn-production",
+                    "username": "wies_odcn_production_admin",
+                    "password": "ENCRYPTED",
+                }
+            ],
+        },
+    }
+
+
+def test_v23_relocates_keycloak_connections_to_service_config():
+    out, migrated = migrate_to_latest(_v22_with_keycloak_connections())
+    assert migrated is True
+    assert out["schema-version"] == LATEST_SCHEMA_VERSION
+    # moved verbatim under the keycloak service, project-level config.keycloak gone.
+    # The keycloak entry is now the normalized {name, config} record (v2.4 also runs).
+    assert "keycloak" not in out["config"]
+    entry = out["services"][0]
+    assert entry["name"] == "keycloak"
+    assert entry["config"]["realms"] == [
+        {
+            "host": "https://keycloak.rijksapp.nl",
+            "realm": "wies-odcn-production",
+            "username": "wies_odcn_production_admin",
+            "password": "ENCRYPTED",
+        }
+    ]
+    # existing keycloak config (template) preserved
+    assert entry["config"]["template"] == "sso-only"
+
+
+def test_v23_is_idempotent():
+    once, _ = migrate_to_latest(_v22_with_keycloak_connections())
+    twice, migrated_again = migrate_to_latest(copy.deepcopy(once))
+    assert migrated_again is False
+    assert twice["services"] == once["services"]
+    assert "keycloak" not in twice["config"]
+
+
+def test_v23_promotes_bare_string_keycloak_service():
+    data = {
+        "schema-version": 2.2,
+        "name": "x",
+        "services": ["keycloak"],
+        "config": {"keycloak": [{"realm": "x-prod", "host": "h", "username": "u", "password": "p"}]},
+    }
+    out, _ = migrate_to_latest(data)
+    # relocated + normalized to the {name, config} record (v2.4 also runs).
+    assert out["services"] == [
+        {"name": "keycloak", "config": {"realms": [{"realm": "x-prod", "host": "h", "username": "u", "password": "p"}]}}
+    ]
+
+
+# ---------------------------------------------------------------------------
+# v2.3 -> v2.4: normalize project-level service definitions to {name, config} (RC-5 A)
+# ---------------------------------------------------------------------------
+
+
+def test_v24_normalizes_project_services_to_name_records():
+    data = {
+        "schema-version": 2.3,
+        "name": "p",
+        "services": [
+            "publish-on-web",  # bare string stays bare
+            {"keycloak": {"config": {"template": "sso-only"}}},
+            {"namespace-postgresql-database": {"config": {"instances": 1}}},
+        ],
+    }
+    out, migrated = migrate_to_latest(data)
+    assert migrated is True
+    assert out["schema-version"] == LATEST_SCHEMA_VERSION
+    assert out["services"] == [
+        "publish-on-web",
+        {"name": "keycloak", "config": {"template": "sso-only"}},
+        {"name": "namespace-postgresql-database", "config": {"instances": 1}},
+    ]
+
+
+def test_v24_is_idempotent():
+    data = {"schema-version": 2.3, "name": "p", "services": [{"keycloak": {"config": {"template": "x"}}}]}
+    once, _ = migrate_to_latest(data)
+    twice, again = migrate_to_latest(copy.deepcopy(once))
+    assert again is False
+    assert twice["services"] == once["services"]
+
+
+def test_v24_leaves_already_normalized_and_bare():
+    data = {
+        "schema-version": 2.4,
+        "name": "p",
+        "services": ["publish-on-web", {"name": "keycloak", "config": {"template": "x"}}],
+    }
+    out, _ = migrate_to_latest(copy.deepcopy(data))
+    assert out["services"] == data["services"]
+
+
+# ---------------------------------------------------------------------------
+# v2.4: component-level services -> {reference, config} (RC-5 A2b)
+# ---------------------------------------------------------------------------
+
+
+def test_v24_normalizes_component_services_to_reference_records():
+    data = {
+        "schema-version": 2.3,
+        "name": "p",
+        "components": [
+            {
+                "name": "api",
+                "services": [
+                    "publish-on-web",
+                    {"persistent-storage": {"config": [{"name": "data", "size": "1Gi", "mount-path": "/data"}]}},
+                    {"metrics-scraper": {"port": 8000, "path": "/metrics"}},  # inline config -> wrapped
+                ],
+            }
+        ],
+    }
+    out, migrated = migrate_to_latest(data)
+    assert migrated is True
+    assert out["components"][0]["services"] == [
+        "publish-on-web",
+        {"reference": "persistent-storage", "config": [{"name": "data", "size": "1Gi", "mount-path": "/data"}]},
+        {"reference": "metrics-scraper", "config": {"port": 8000, "path": "/metrics"}},
+    ]
+
+
+def test_normalize_service_entries_standalone():
+    """The public normalizer canonicalizes project + component (incl. inline metrics)
+    services to the uniform record form, version-independently - this is what the
+    create/wizard save path calls so new files are born current."""
+    data = {
+        "name": "p",
+        "services": [{"keycloak": {"config": {"template": "sso-only"}}}, "publish-on-web"],
+        "components": [
+            {
+                "name": "web",
+                "services": [
+                    {"persistent-storage": {"config": [{"name": "data", "mount-path": "/data"}]}},
+                    {"metrics-scraper": {"port": 8080, "path": "/metrics"}},
+                ],
+            }
+        ],
+    }
+    changed = normalize_service_entries(data)
+    assert changed is True
+    assert data["services"][0] == {"name": "keycloak", "config": {"template": "sso-only"}}
+    assert data["services"][1] == "publish-on-web"
+    assert data["components"][0]["services"] == [
+        {"reference": "persistent-storage", "config": [{"name": "data", "mount-path": "/data"}]},
+        {"reference": "metrics-scraper", "config": {"port": 8080, "path": "/metrics"}},
+    ]
+    # Idempotent: a second pass changes nothing.
+    assert normalize_service_entries(data) is False
+
+
+# ---------------------------------------------------------------------------
+# v2.4 -> v2.5: relocate root domains: block under the publish-on-web service (RC-5)
+# ---------------------------------------------------------------------------
+
+
+def test_v25_relocates_root_domains_under_publish_on_web_service():
+    """The root domains: approval block moves under the publish-on-web service config;
+    the root key is removed and a bare service string is promoted to a record."""
+    data = {
+        "schema-version": 2.4,
+        "name": "p",
+        "services": ["publish-on-web"],
+        "domains": {
+            "allowed-domains": [{"domain": "mijn-app.nl", "status": "approved"}],
+            "allowed-subdomains": [{"domain": "sandbox.dev", "subdomains": [{"name": "a", "status": "requested"}]}],
+        },
+    }
+    out, migrated = migrate_to_latest(data)
+    assert migrated is True
+    assert out["schema-version"] == LATEST_SCHEMA_VERSION
+    # root block is gone, relocated under the promoted publish-on-web service record
+    assert "domains" not in out
+    assert out["services"] == [
+        {
+            "name": "publish-on-web",
+            "config": {
+                "domains": {
+                    "allowed-domains": [{"domain": "mijn-app.nl", "status": "approved"}],
+                    "allowed-subdomains": [
+                        {"domain": "sandbox.dev", "subdomains": [{"name": "a", "status": "requested"}]}
+                    ],
+                }
+            },
+        }
+    ]
+    # and the runtime resolver reads it back from the new home
+    assert get_domains_config(out)["allowed-domains"][0]["domain"] == "mijn-app.nl"
+
+
+def test_v25_is_idempotent_and_noop_without_domains():
+    """A file with no root domains block is untouched; a second pass changes nothing."""
+    assert normalize_domains_location({"name": "p", "services": ["publish-on-web"]}) is False
+
+    data = {"schema-version": 2.4, "name": "p", "domains": {"allowed-domains": []}}
+    once, _ = migrate_to_latest(data)
+    twice, again = migrate_to_latest(copy.deepcopy(once))
+    assert again is False
+    assert get_domains_config(twice) == {"allowed-domains": []}
+
+
+def test_v24_leaves_attachments_legacy():
+    # attachments is the deferred hard case (project 'data' catalog + own $defs).
+    data = {
+        "schema-version": 2.3,
+        "name": "p",
+        "services": [{"attachments": {"data": [{"id": "x", "filename": "f", "content": "c"}]}}],
+        "components": [
+            {
+                "name": "api",
+                "services": [{"attachments": {"config": [{"reference": "x", "provide-as": "file", "path": "/x"}]}}],
+            }
+        ],
+    }
+    out, _ = migrate_to_latest(data)
+    assert out["services"][0] == {"attachments": {"data": [{"id": "x", "filename": "f", "content": "c"}]}}
+    assert out["components"][0]["services"][0] == {
+        "attachments": {"config": [{"reference": "x", "provide-as": "file", "path": "/x"}]}
+    }

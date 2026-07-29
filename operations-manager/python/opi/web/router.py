@@ -17,6 +17,7 @@ from datetime import UTC
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates import get_templates
+from opi.services.project import Project
 from opi.services.project_authorization import (
     get_user_role_for_project,
     is_user_authorized_for_project,
@@ -29,12 +30,12 @@ from opi.web.menu import get_menu_items
 
 from ..utils.age import decrypt_age_content
 from .metrics_explorer_router import metrics_explorer_router
+from .router_approvals import approvals_router
 from .router_attachments import attachments_router
 from .router_db_console import db_console_router
 from .router_detail_edit import detail_edit_router
 from .router_jobs import jobs_router
 from .router_self_service import check_subdomain_availability_web
-from .router_subdomain_admin import subdomain_admin_router
 from .router_usage import usage_router
 from .router_user_admin import user_admin_router
 from .router_wizard import wizard_router
@@ -54,7 +55,7 @@ web_router.include_router(detail_edit_router)
 web_router.include_router(wizard_router)
 web_router.include_router(user_admin_router)
 web_router.include_router(usage_router)
-web_router.include_router(subdomain_admin_router)
+web_router.include_router(approvals_router)
 web_router.include_router(attachments_router)
 web_router.include_router(wizard_attachments_router)
 web_router.include_router(db_console_router)
@@ -1014,15 +1015,15 @@ async def project_details(request: Request, project_name: str):
         # Store decrypted private key for display (admins only see this in UI)
         project_data_decrypted["config"]["age-private-key"] = project_private_key
 
-        # Decrypt Keycloak passwords
-        if project_data_decrypted["config"].get("keycloak"):
-            for kc_config in project_data_decrypted["config"]["keycloak"]:
-                if kc_config.get("password"):
-                    try:
-                        kc_config["password"] = await decrypt_password_smart(kc_config["password"], project_private_key)
-                    except Exception as e:
-                        logger.warning(f"Failed to decrypt Keycloak password for realm {kc_config.get('realm')}: {e}")
-                        kc_config["password"] = None
+        # Decrypt Keycloak passwords (RC-5 B: connections live under the keycloak
+        # service config now, relocated from the old project-level config.keycloak).
+        for kc_config in Project(project_data_decrypted).get("services/keycloak/config/realms") or []:
+            if kc_config.get("password"):
+                try:
+                    kc_config["password"] = await decrypt_password_smart(kc_config["password"], project_private_key)
+                except Exception as e:
+                    logger.warning(f"Failed to decrypt Keycloak password for realm {kc_config.get('realm')}: {e}")
+                    kc_config["password"] = None
 
         for deployment in project_data_decrypted.get("deployments", []):
             # Decrypt deployment-component-level user-env-vars
@@ -1204,6 +1205,16 @@ async def project_details(request: Request, project_name: str):
         from opi.manager.backup import BackupManager
 
         current_cluster = settings.CLUSTER_MANAGER
+        # Ungranted approvals per deployment, asked of the catalog (each service writes
+        # its own notice) so this page holds no domain knowledge.
+        from opi.services.approvals import collect_deployment_approval_notices
+
+        approval_notices: dict[str, list[dict[str, Any]]] = {}
+        for deployment in project_details["deployments"]:
+            notices = collect_deployment_approval_notices(project_data_decrypted, deployment)
+            if notices:
+                approval_notices[deployment.get("name", "")] = notices
+
         try:
             BackupManager()
             backups_available = True
@@ -1351,6 +1362,7 @@ async def project_details(request: Request, project_name: str):
                 "ServiceAdapter": ServiceAdapter,
                 "prometheus_available": prometheus_available,
                 "argocd_available": argocd_available,
+                "approval_notices": approval_notices,
                 "backups_available": backups_available,
                 "current_cluster": current_cluster,
                 "cluster_base_domains": cluster_base_domains,
@@ -2149,11 +2161,11 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
     from fastapi.responses import JSONResponse
 
     from opi.connectors.subdomain import (
-        create_subdomain_connector,
         validate_base_domain,
         validate_subdomain,
     )
     from opi.manager.project_manager import ProjectManager
+    from opi.services.persistence.subdomain_registry import create_subdomain_connector
 
     # Track state for rollback
     original_data: dict[str, Any] | None = None

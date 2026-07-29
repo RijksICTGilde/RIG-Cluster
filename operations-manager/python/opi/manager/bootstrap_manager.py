@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from opi.handlers.bootstrap_api_handler import BootstrapApiHandler
+from opi.services.project import Project
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
@@ -152,8 +153,9 @@ class BootstrapManager:
                 oidc_url = get_keycloak_discovery_url(cluster)
                 oidc_realm = generate_project_realm_name(project_name, cluster)
 
-                # Try to get service client secret from project config
-                keycloak_configs = project_data.get("config", {}).get("keycloak", [])
+                # Try to get service client secret from the keycloak service config
+                # (RC-5 B: relocated from the old project-level config.keycloak).
+                keycloak_configs = Project(project_data).get("services/keycloak/config/realms") or []
                 for kc_config in keycloak_configs:
                     if isinstance(kc_config, dict):
                         host = kc_config.get("host", "")

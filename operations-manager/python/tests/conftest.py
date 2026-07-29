@@ -235,3 +235,32 @@ def reset_readiness_state() -> Any:
     yield
     # Clean up after test
     readiness_module._state = None
+
+
+# --- Real Postgres for ORM-backed repository tests (RC-5 persistence phase 2) --------
+# A throwaway Postgres (testcontainers) so service-owned ORM repositories are tested
+# against real SQL -- ON CONFLICT uniqueness, transactions -- not mocks. Session-scoped
+# container; each `orm_db` test starts from a truncated schema.
+
+
+@pytest.fixture(scope="session")
+def _orm_pg_container():
+    from testcontainers.postgres import PostgresContainer
+
+    with PostgresContainer("postgres:16-alpine") as container:
+        yield container
+
+
+@pytest.fixture
+async def orm_db(_orm_pg_container):
+    from opi.core.db import Base, configure_engine, create_all_orm_tables, dispose_engine, session_scope
+    from sqlalchemy import text
+
+    url = _orm_pg_container.get_connection_url().replace("+psycopg2", "+asyncpg")
+    configure_engine(url)
+    await create_all_orm_tables()
+    tables = ", ".join(Base.metadata.tables)
+    async with session_scope() as session:
+        await session.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+    yield
+    await dispose_engine()

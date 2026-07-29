@@ -159,22 +159,7 @@
       "properties": {
         "age-public-key": { "type": "string" },
         "age-private-key": { "$ref": "#/$defs/age-encrypted" },
-        "api-key": { "$ref": "#/$defs/age-encrypted" },
-        "keycloak": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/keycloak-config" }
-        }
-      }
-    },
-
-    "keycloak-config": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "host": { "type": "string" },
-        "realm": { "type": "string" },
-        "username": { "type": "string" },
-        "password": { "$ref": "#/$defs/age-encrypted-or-plain" }
+        "api-key": { "$ref": "#/$defs/age-encrypted" }
       }
     },
 
@@ -207,14 +192,16 @@
     },
 
     "service-entry": {
-      "description": "A service reference: either a plain string name or a single-key dict with config.",
+      "description": "A service entry: a bare string, the uniform record ({name|reference, config}), or the legacy single-key dict. The config shape is validated per-service by the provider models, not here.",
       "oneOf": [
         { "type": "string" },
         {
           "type": "object",
-          "minProperties": 1,
-          "maxProperties": 1,
-          "additionalProperties": {}
+          "anyOf": [
+            { "required": ["name"] },
+            { "required": ["reference"] },
+            { "minProperties": 1, "maxProperties": 1 }
+          ]
         }
       ]
     },

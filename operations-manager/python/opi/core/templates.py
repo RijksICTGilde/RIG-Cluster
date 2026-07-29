@@ -127,12 +127,9 @@ def get_service_name(service: str | dict[str, Any]) -> str:
     Returns:
         Service name as string
     """
-    if isinstance(service, str):
-        return service
-    if isinstance(service, dict):
-        # Return the first key as the service name
-        return next(iter(service.keys()), "")
-    return str(service)
+    from opi.services.services import service_entry_name
+
+    return service_entry_name(service) or ""
 
 
 # Get the opi package directory (operations-manager/python/opi)

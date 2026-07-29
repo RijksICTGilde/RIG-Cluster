@@ -1,0 +1,204 @@
+{
+  "edit_sections": {
+    "auth-wall-config": {
+      "editables": [
+        "services/authorization-wall/config/banner"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "auth-wall-config",
+      "title": "Authorization wall configuratie"
+    },
+    "components-edit": {
+      "editables": [
+        "components"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "components-edit",
+      "title": "Components beheren"
+    },
+    "identity-edit": {
+      "editables": [
+        "display-name",
+        "description"
+      ],
+      "post_save_action": "save_only",
+      "section_id": "identity-edit",
+      "title": "Projectgegevens bewerken"
+    },
+    "keycloak-config": {
+      "editables": [
+        "services/keycloak/config/template",
+        "services/keycloak/config/additional_redirect_uris",
+        "services/keycloak/config/restrict-access/enabled",
+        "services/keycloak/config/restrict-access/realm-role",
+        "services/keycloak/config/restrict-access/error-message",
+        "services/keycloak/config/additional-clients"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "keycloak-config",
+      "title": "Keycloak configuratie"
+    },
+    "postgresql-config": {
+      "editables": [
+        "services/namespace-postgresql-database/config/instances",
+        "services/namespace-postgresql-database/config/storage"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "postgresql-config",
+      "title": "Database configuratie"
+    },
+    "services-edit": {
+      "editables": [
+        "services"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "services-edit",
+      "title": "Services beheren"
+    },
+    "team-edit": {
+      "editables": [
+        "users"
+      ],
+      "post_save_action": "save_only",
+      "section_id": "team",
+      "title": "Projectleden"
+    }
+  },
+  "flow_registry": {
+    "create-project": {
+      "flow_id": "create-project",
+      "mode": "wizard",
+      "sections": [
+        "identity",
+        "services",
+        "keycloak-config",
+        "postgresql-config",
+        "auth-wall-config",
+        "team",
+        "attachments",
+        "components",
+        "deployment",
+        "domains"
+      ]
+    },
+    "edit-project": {
+      "flow_id": "edit-project",
+      "mode": "wizard",
+      "sections": [
+        "identity",
+        "services",
+        "keycloak-config",
+        "postgresql-config",
+        "auth-wall-config",
+        "team",
+        "components",
+        "deployments",
+        "config"
+      ]
+    },
+    "modal-backup": {
+      "flow_id": "modal-backup",
+      "mode": "wizard",
+      "sections": [
+        "backup-select"
+      ]
+    },
+    "modal-edit-attachments": {
+      "flow_id": "modal-edit-attachments",
+      "mode": "wizard",
+      "sections": [
+        "attachments"
+      ]
+    },
+    "modal-edit-auth-wall-config": {
+      "flow_id": "modal-edit-auth-wall-config",
+      "mode": "wizard",
+      "sections": [
+        "auth-wall-config"
+      ]
+    },
+    "modal-edit-components": {
+      "flow_id": "modal-edit-components",
+      "mode": "wizard",
+      "sections": [
+        "components-edit"
+      ]
+    },
+    "modal-edit-identity": {
+      "flow_id": "modal-edit-identity",
+      "mode": "wizard",
+      "sections": [
+        "identity-edit"
+      ]
+    },
+    "modal-edit-keycloak-config": {
+      "flow_id": "modal-edit-keycloak-config",
+      "mode": "wizard",
+      "sections": [
+        "keycloak-config"
+      ]
+    },
+    "modal-edit-postgresql-config": {
+      "flow_id": "modal-edit-postgresql-config",
+      "mode": "wizard",
+      "sections": [
+        "postgresql-config"
+      ]
+    },
+    "modal-edit-services": {
+      "flow_id": "modal-edit-services",
+      "mode": "wizard",
+      "sections": [
+        "services-edit",
+        "keycloak-config",
+        "postgresql-config",
+        "auth-wall-config",
+        "attachments"
+      ]
+    },
+    "modal-edit-team": {
+      "flow_id": "modal-edit-team",
+      "mode": "wizard",
+      "sections": [
+        "team"
+      ]
+    }
+  },
+  "service_config_modal_flows": {
+    "authorization-wall": "modal-edit-auth-wall-config",
+    "keycloak": "modal-edit-keycloak-config",
+    "namespace-postgresql-database": "modal-edit-postgresql-config"
+  },
+  "service_config_sections": {
+    "authorization-wall": {
+      "editables": [
+        "services/authorization-wall/config/banner"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "auth-wall-config",
+      "title": "Authorization wall configuratie"
+    },
+    "keycloak": {
+      "editables": [
+        "services/keycloak/config/template",
+        "services/keycloak/config/additional_redirect_uris",
+        "services/keycloak/config/restrict-access/enabled",
+        "services/keycloak/config/restrict-access/realm-role",
+        "services/keycloak/config/restrict-access/error-message",
+        "services/keycloak/config/additional-clients"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "keycloak-config",
+      "title": "Keycloak configuratie"
+    },
+    "namespace-postgresql-database": {
+      "editables": [
+        "services/namespace-postgresql-database/config/instances",
+        "services/namespace-postgresql-database/config/storage"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "postgresql-config",
+      "title": "Database configuratie"
+    }
+  }
+}

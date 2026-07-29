@@ -58,6 +58,7 @@
             {# Action fields #}
             <div class="approval-item-actions">
                 {# Hidden context fields #}
+                <input type="hidden" name="_approval_items[{{ loop.index0 }}][service]" value="{{ item.service }}" />
                 <input type="hidden" name="_approval_items[{{ loop.index0 }}][type]" value="{{ item.type }}" />
                 <input type="hidden" name="_approval_items[{{ loop.index0 }}][domain]" value="{{ item.domain }}" />
                 <input type="hidden" name="_approval_items[{{ loop.index0 }}][name]" value="{{ item.name }}" />
@@ -69,7 +70,7 @@
                         <select id="status-{{ loop.index0 }}"
                                 name="_approval_items[{{ loop.index0 }}][status]"
                                 class="rvo-select approval-select">
-                            <option value="skip" {% if item.status == 'skip' %}selected{% endif %}>Overslaan</option>
+                            <option value="skip" {% if item.status == 'skip' %}selected{% endif %}>Niet wijzigen</option>
                             <option value="approved" {% if item.status == 'approved' %}selected{% endif %}>Goedkeuren</option>
                             <option value="denied" {% if item.status == 'denied' %}selected{% endif %}>Afwijzen</option>
                         </select>

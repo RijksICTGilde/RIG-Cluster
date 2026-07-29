@@ -1,0 +1,31 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Path"
+    },
+    "port": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Port"
+    }
+  },
+  "title": "MetricsScraperConfig",
+  "type": "object"
+}

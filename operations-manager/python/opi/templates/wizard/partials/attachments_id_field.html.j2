@@ -5,11 +5,4 @@
     helperText="Kleine letters, cijfers en streepjes, max 40."
     value="{{ attachment_id | default('', true) }}"
     invalid="{{ 'true' if error else '' }}"
-    errorText="{{ error | default('', true) }}"
-    hx-post="/forms/wizard/create-project/attachments/validate-id"
-    hx-ext="ignore:json-enc"
-    hx-trigger="change"
-    hx-include="#wiz-att-id, #wiz-att-token"
-    hx-target="#wiz-att-id-field"
-    hx-swap="innerHTML"
-    hx-disabled-elt="this" />
+    errorText="{{ error | default('', true) }}" />

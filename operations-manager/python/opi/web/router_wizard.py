@@ -27,6 +27,7 @@ from opi.forms.wizard.session import (
     save_wizard_state,
 )
 from opi.forms.wizard.state import CLEARED_FIELD
+from opi.services.schema_migration import normalize_service_entries
 from opi.utils.csrf import reject_misfired_form_get
 from opi.web.menu import get_menu_items
 
@@ -1317,12 +1318,24 @@ def _empty_sequence_item(editable: Any | None) -> Any:
         rel = _relative(child_ed.yaml_path)
         if not rel:
             continue
+        if _is_service_config_child(rel):
+            # A service's config default (tls, metrics port, storage mount) belongs to a
+            # service the item HAS. Seeding it materialises that service into the item's
+            # services list, which both picks services the user never chose and -- because
+            # the list is then no longer unset -- suppresses the "select all project
+            # services" default a new component is supposed to start with.
+            continue
         if str(child.widget) == "sequence" and child_ed.min_items:
             # Seed nested sequences with min_items empty entries
             set_value(item, rel, ["" for _ in range(child_ed.min_items)])
         elif child_ed.default is not None:
             set_value(item, rel, child_ed.default)
     return item
+
+
+def _is_service_config_child(relative_path: str) -> bool:
+    """Whether a sequence child's path targets a service's config (``services{X}/...``)."""
+    return relative_path.startswith("services{")
 
 
 # ---------------------------------------------------------------------------
@@ -2028,6 +2041,13 @@ async def _start_project_creation(
     project_name = data.get("name", "")
     if not project_name:
         raise HTTPException(status_code=400, detail="Projectnaam is verplicht")
+
+    # The wizard editables still write component-level service config in the legacy
+    # name-as-key / inline shape ({persistent-storage: {config: ...}}, metrics inline);
+    # normalize to the uniform {reference, config} form so the created file is born in
+    # the current schema and needs no migration on first process. Same normalizer the
+    # v2.3->v2.4 migration uses - one canonical shape, no drift.
+    normalize_service_entries(data)
 
     # Ensure multiline AGE-encrypted values use literal block scalars
     _apply_literal_scalars(data)
