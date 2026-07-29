@@ -642,6 +642,19 @@ class ServiceAdapter:
             # actions_provider is bound by opi/services/catalog/sleep_mode/__init__.py
             # (the wake button); services.py must not import the catalog package.
         ),
+        ServiceType.HEALTH_CHECK: ServiceDefinition(
+            name="Health check",
+            description=(
+                "Bepaalt hoe Kubernetes de gezondheid van het component controleert (scheme, poort en "
+                "paden). Zonder deze service wordt het component ook gecontroleerd, maar alleen op "
+                "TCP-niveau op de eerste inbound-poort. Kies deze service om een HTTP(S)-probe op een "
+                "aparte poort en paden te richten, of om probes uit te zetten met scheme: none."
+            ),
+            icon="stethoscoop",
+            color="rood",
+            scope="component",
+            variables=[],
+        ),
     }
 
     @classmethod
