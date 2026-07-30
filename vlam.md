@@ -227,10 +227,27 @@ automatisch bijgewerkt, dus een wijziging komt via een redeploy.
 ```
 TS_USERSPACE=true
 TS_EXTRA_ARGS=--login-server=https://<hostname>
+TS_TAILSCALED_EXTRA_ARGS=--no-logs-no-support
 TS_HOSTNAME=vlam-gateway
 TS_KUBE_SECRET=
 TS_STATE_DIR=/data
 ```
+
+**`--no-logs-no-support` zet het uploaden van logs naar `log.tailscale.com` uit.** Dat staat bij
+tailscaled standaard aan, en je moet er dus actief vanaf. Twee redenen. We willen geen metadata
+over deze tunnel naar een externe logdienst sturen, en de pod kan niet bij internet, dus het
+mislukt toch. Wat je in de logs zag als het niet uitstaat, eindeloos herhaald:
+
+```
+trying bootstrapDNS("derp2e.tailscale.com", ...) for "log.tailscale.com" ...
+bootstrapDNS(...) for "log.tailscale.com" error: ... context deadline exceeded
+```
+
+Dat is de client die, nadat DNS voor `log.tailscale.com` faalt, terugvalt op een in het binair
+meegebakken lijst DERP-servers om die naam alsnog te resolven. Die zijn net zo onbereikbaar. Het
+kost niets aan functionaliteit: lokaal loggen naar stderr blijft werken, je verspeelt alleen
+technische ondersteuning van Tailscale, en die gebruiken we niet want we draaien onze eigen
+coördinatieserver.
 
 De **preauthkey hoort niet in git als platte tekst**. Zet `TS_AUTHKEY` in `user-env-vars`, dan
 staat hij AGE-versleuteld. Maak hem herbruikbaar met een ruime looptijd:
@@ -413,6 +430,38 @@ staan, dus na de omdoping meldt hij zich als dezelfde node en houdt hij zijn adr
 want de records in `config.yaml` wijzen naar dat adres. Gemeten na de omdoping naar
 `vonk.rijksapp.dev`: node 6 nog steeds op `100.80.0.1`.
 
+**Nodes heten `invalid-<willekeurig>` als de hostnaam van de laptop niet DNS-veilig is.** Een Mac
+heet standaard iets als `MacBook Pro van Robbert`, en headscale weigert dat:
+
+```
+WRN Rejecting invalid hostname update from hostinfo
+    error="hostname \"macbook pro van robbert\" contains invalid characters,
+    only lowercase letters, numbers, hyphens and dots are allowed"
+```
+
+Dit is cosmetisch en niet functioneel: de node krijgt een adres en werkt. Het raakt ook de
+administratie niet, want headscale koppelt elke node aan de OIDC-gebruiker. In
+`headscale nodes list` staat naast het onleesbare `invalid-iujlqapo` het e-mailadres uit SSO Rijk,
+dus toegang intrekken per persoon kan gewoon.
+
+Headscale *heeft* saneringslogica, maar niet op het pad dat hier langskomt. `NormaliseHostname` in
+`hscontrol/util/dns.go` maakt kleine letters, strookt ongeldige tekens en kapt af op 63 tekens, en
+die wordt gebruikt bij registratie. Een hostnaam die daarna via hostinfo wordt *bijgewerkt* gaat
+langs strikte validatie en wordt geweigerd, waarna de node zijn bestaande naam houdt. Zit een node
+dus eenmaal op `invalid-*`, dan komt hij daar niet meer vanaf door de naam van de laptop te
+wijzigen: elke reauth biedt hem opnieuw aan en krijgt opnieuw nul op het rekest. Een
+configuratieoptie hiervoor bestaat niet, `config-example.yaml` van v0.28.0 kent niets over
+hostnaambehandeling.
+
+Twee manieren om het wel goed te krijgen. De gebruiker geeft een DNS-veilige naam mee, en die
+passeert de strikte validatie wel:
+
+```
+tailscale up --login-server=https://<hostname> --hostname=voornaam-machine
+```
+
+Of jij doet het achteraf zelf met `headscale nodes rename -i <id> <naam>`.
+
 **Kies een publieke naam die niets zegt.** Elke uitgegeven hostnaam staat in de certificate
 transparency logs en is dus openbaar. Een functiewoord (`relay`, `vpn`, `gateway`, `agent`)
 vertelt een scanner wat hij moet proberen, en de naam van het achterliggende systeem vertelt hem
@@ -509,6 +558,5 @@ Vier dingen die erbij horen:
       serve-config weg kunnen
 - [ ] Het juiste pad op `vlam-api.rijksweb.nl` bij VLAM navragen; `/health` bestaat daar niet
 - [ ] Instructie voor gebruikers: de Rijksdienst-CA vertrouwen, en wat te doen bij een tweede VPN
-- [ ] `auto-tune-resources: false` op `vlam-gateway`, die staat nog op een tuner-limiet van 68Mi
 - [ ] Doet de MetalLB-pool op ODCN UDP? Dan kan tailscale directe verbindingen maken in plaats
       van alles via de relay
