@@ -4,7 +4,7 @@ De VLAM-API staat in het beveiligde RON-netwerk. Onbeheerde laptops kunnen daar 
 
 #### De oplossing in het kort
 
-Gebruikers komen via een geauthenticeerde VPN uit op een reverse proxy die uitsluitend naar één vastgezet adres kan verbinden. Er bestaat daardoor geen netwerkpad van de gebruiker naar RON. We lussen één API door, we ontsluiten geen netwerk.
+Gebruikers komen via een geauthenticeerde VPN uit op een reverse proxy die uitsluitend naar een vaste, vooraf vastgelegde lijst adressen kan verbinden. Er bestaat daardoor geen netwerkpad van de gebruiker naar RON. We lussen een paar benoemde endpoints door, we ontsluiten geen netwerk.
 
 ```
 laptop  ->  VPN  ->  reverse proxy  ->  VLAM-API
