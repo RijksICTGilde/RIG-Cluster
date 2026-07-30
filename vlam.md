@@ -1,7 +1,7 @@
 # VLAM-gateway: runbook
 
-Werkende opzet van de proefopstelling in de sandbox (`vlam-wt8`, 2026-07-28), plus de valkuilen
-die we onderweg zijn tegengekomen en wat er op ODCN anders gaat.
+De werkende opzet op `odcn-production` (project `vlam-wt8`), met een echte RON-bestemming. Plus de
+valkuilen die bij een volgende opzet opnieuw bijten.
 
 De onderbouwing (waarom een VPN, waarom headscale, wat er is afgevallen) staat in
 `features/futures/vlam-api-vpn-proxy.md`. Dit document is het bouwverslag.
@@ -9,18 +9,42 @@ De onderbouwing (waarom een VPN, waarom headscale, wat er is afgevallen) staat i
 ## Wat we bouwen
 
 ```
-client → https://vlam-api.rijksweb.nl:443
-       → (DNS gepusht via de tunnel) tailnet-IP van de gateway :443
-       → tailscaled userspace, doorzetten naar vlam-proxy
-       → HAProxy mode tcp, luistert op 8080
-       → de echte VLAM-API :443
+laptop → https://vlam-api.rijksweb.nl        (DNS via de tunnel)
+       → tailnet-IP van de gateway :443
+       → tailscaled userspace, TCPForward naar vlam-proxy:8080
+       → HAProxy mode tcp, routeert op SNI
+       → vlam-api.rijksweb.nl:443  of  chat.rijksweb.nl:443   over RON
 ```
 
 TLS wordt **niet** getermineerd. HAProxy kopieert bytes, dus de TLS-sessie loopt van de laptop
-tot aan VLAM met VLAM's eigen certificaat. Wij hebben nooit een sleutel en kunnen het verkeer
-niet lezen.
+tot aan de bestemming met diens eigen certificaat. Wij hebben nooit een sleutel en kunnen het
+verkeer niet lezen.
 
-In de proefopstelling staat de HAProxy-upstream op **headscale zelf**, dat speelt voor nep-VLAM.
+## De RON-koppeling
+
+Egress naar RON wordt gekozen met een **annotatie op de namespace**, geen label:
+
+```
+egress.projectcalico.org/egressGatewayPolicy: rig-ron
+```
+
+OPI zet die standaard op `internet`. De handmatige wijziging naar `rig-ron` **overleefde een
+refresh**, dus OPI raakt bestaande annotaties niet aan. Tot ZAD dit in het projectbestand kan
+uitdrukken, blijft het wel een handmatige stap die je bij een nieuwe namespace moet herhalen.
+
+**`rig-ron` vervangt internet, het komt er niet bij.** Gemeten in de namespace: github HTTP 000,
+`chat.rijksweb.nl` HTTP 200. Dat is voor dit project geen bezwaar en zelfs gewenst:
+
+| Bestemming | Via | Werkt met rig-ron |
+|---|---|---|
+| RON (vlam-api, chat) | egressgateway | ja |
+| Keycloak (`keycloak.rijksapp.nl`) | ODCN-router, niet internet | ja, HTTP 200 |
+| Database | in-cluster | ja |
+| DERP-relay | eigen pod | ja |
+| Image pulls | node-niveau, geen pod-egress | onaangetast |
+
+Wie internet **en** RON in dezelfde namespace nodig heeft, moet bij Quattro zijn: de annotatie
+neemt één waarde en de documentatie noemt alleen `internet` of `<customer-name>.*`.
 
 ## Services op projectniveau
 
@@ -28,85 +52,168 @@ In de proefopstelling staat de HAProxy-upstream op **headscale zelf**, dat speel
 |---|---|
 | `publish-on-web` | publieke HTTPS-route voor headscale |
 | `postgresql-database` | database van headscale |
-| `persistent-storage` | sleutels en unix socket, mount op `/data` |
+| `persistent-storage` | sleutels en unix socket van headscale, **en de state van de gateway** |
 | `keycloak` | OIDC-client, inclusief de rolfilter |
+| `attachments` | het headscale-configbestand (zie DNS) |
 
 ```yaml
+account-link: automatic
 restrict-access:
   enabled: true
   realm-role: allowed-user
 ```
 
-Dit staat al als preset in `opi/configs/presets/keycloak-config.yaml`. De rolfilter wordt **per
-client** toegepast, niet op de authenticatieflow van de realm; zonder dit blok kan iedereen in
-de project-realm zich als node registreren.
+De rolfilter wordt **per client** toegepast, niet op de authenticatieflow van de realm. Staat
+`restrict-access` niet aan, dan kan iedereen in de project-realm zich als node registreren.
 
-Redirect-URI's hoef je niet op te geven: `opi/connectors/keycloak.py:483` zet per ingress-host
-een wildcard (`https://{host}/*`), dus het callback-pad van headscale valt daar al onder.
+`account-link: automatic` is nodig voor accounts die wij vooraf hebben aangemaakt. Standaard
+stuurt Keycloak iemand met een bestaand maar nog niet gekoppeld account langs "Confirm link
+existing account" plus verificatie via e-mail of wachtwoord, en een vooraf aangemaakt account
+heeft geen wachtwoord. Met deze instelling bouwt OPI een eigen first-broker-login-flow met
+`idp-auto-link` en koppelt hij de SSO-identiteit meteen aan het bestaande account. Alleen die ene
+tak verandert; nieuwe en al gekoppelde gebruikers merken niets, en de rolfilter blijft gelden.
+Redirect-URI's hoef je niet op te geven: `opi/connectors/keycloak.py:483` zet per ingress-host een
+wildcard.
 
 ## Component 1: headscale
 
 | | |
 |---|---|
-| image | `ghcr.io/juanfont/headscale:v0.28.0` |
+| image | `ghcr.io/juanfont/headscale:v0.28.0` (niet Docker Hub) |
 | ports | inbound `[8080]`, outbound `[443, 5432]` |
-| services | `publish-on-web`, `postgresql-database`, `persistent-storage` (`/data`), `keycloak` |
+| services | `publish-on-web`, `postgresql-database`, `persistent-storage` (`/data`), `keycloak`, `attachments` |
 | probe | `scheme: http`, `liveness-path: /health` |
-| security | **niets zetten**, zie valkuilen |
+| security | **niets zetten**, ZAD regelt de UID |
 
-**`command` is verplicht.** Het image heeft entrypoint `/ko-app/headscale` en geen CMD, dus
-zonder subcommando print het zijn help en stopt. ZAD kent geen `args:`, alleen `command:` (dat
-de entrypoint overschrijft), dus het volledige pad moet mee:
+`command` is verplicht, want het image heeft geen CMD:
 
 ```yaml
-command:
-  - /ko-app/headscale
-  - serve
+command: [/ko-app/headscale, serve]
 ```
 
-**`aliases`** op het component, voor waarden die ZAD injecteert:
+**`aliases`** (afgeleid van wat ZAD injecteert):
 
 ```yaml
-aliases:
-  HEADSCALE_SERVER_URL: https://${PUBLIC_HOSTNAME}
-  HEADSCALE_DATABASE_POSTGRES_HOST: ${DATABASE_SERVER_HOST}
-  HEADSCALE_DATABASE_POSTGRES_PORT: ${DATABASE_SERVER_PORT}
-  HEADSCALE_DATABASE_POSTGRES_NAME: ${DATABASE_DB}
-  HEADSCALE_DATABASE_POSTGRES_USER: ${DATABASE_SERVER_USER}
-  HEADSCALE_DATABASE_POSTGRES_PASS: ${DATABASE_PASSWORD}
-  HEADSCALE_OIDC_ISSUER: ${OIDC_URL}/realms/${OIDC_REALM}
-  HEADSCALE_OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
-  HEADSCALE_OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
-  HEADSCALE_NOISE_PRIVATE_KEY_PATH: ${DATA_PATH}/noise_private.key
-  HEADSCALE_UNIX_SOCKET: ${DATA_PATH}/headscale.sock
+HEADSCALE_DATABASE_POSTGRES_HOST: ${DATABASE_SERVER_HOST}
+HEADSCALE_DATABASE_POSTGRES_PORT: ${DATABASE_SERVER_PORT}
+HEADSCALE_DATABASE_POSTGRES_NAME: ${DATABASE_DB}
+HEADSCALE_DATABASE_POSTGRES_USER: ${DATABASE_SERVER_USER}
+HEADSCALE_DATABASE_POSTGRES_PASS: ${DATABASE_PASSWORD}
+HEADSCALE_OIDC_ISSUER: ${OIDC_URL}/realms/${OIDC_REALM}
+HEADSCALE_OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
+HEADSCALE_OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
 ```
 
-`HEADSCALE_UNIX_SOCKET` niet vergeten. Standaard staat die op `/var/run/headscale/`, wat een
-rootless container niet kan aanmaken. Dan draait de server wel, maar kunnen
-`headscale users list` en `headscale preauthkeys create` er niet mee praten.
+Op een OPI zonder de alias-scoping-fix moeten `HEADSCALE_SERVER_URL`,
+`HEADSCALE_NOISE_PRIVATE_KEY_PATH` en `HEADSCALE_UNIX_SOCKET` **niet** als alias maar als
+env-var, zie valkuilen.
 
-**`env-vars`** op de deployment-component (plat, geen geheimen, en zo direct leesbaar in git):
+**Scalaire instellingen** (plat in `env-vars`, of in `user-env-vars` op een oudere OPI):
+
+```
+HEADSCALE_SERVER_URL=https://<hostname>
+HEADSCALE_LISTEN_ADDR=0.0.0.0:8080
+HEADSCALE_NOISE_PRIVATE_KEY_PATH=/data/noise_private.key
+HEADSCALE_UNIX_SOCKET=/data/headscale.sock
+HEADSCALE_DATABASE_TYPE=postgres
+HEADSCALE_PREFIXES_V4=100.80.0.0/16
+HEADSCALE_PREFIXES_V6=fd7a:115c:a1e0::/48
+HEADSCALE_DNS_OVERRIDE_LOCAL_DNS=false
+HEADSCALE_DNS_BASE_DOMAIN=vlam.internal
+HEADSCALE_OIDC_EXPIRY=24h
+HEADSCALE_DERP_SERVER_ENABLED=true
+HEADSCALE_DERP_SERVER_VERIFY_CLIENTS=true
+HEADSCALE_DERP_SERVER_PRIVATE_KEY_PATH=/data/derp_server_private.key
+HEADSCALE_DERP_SERVER_STUN_LISTEN_ADDR=0.0.0.0:3478
+HEADSCALE_DERP_SERVER_REGION_ID=999
+HEADSCALE_DERP_SERVER_REGION_CODE=headscale
+HEADSCALE_DERP_SERVER_REGION_NAME=Headscale Embedded DERP
+HEADSCALE_DERP_SERVER_AUTOMATICALLY_ADD_EMBEDDED_DERP_REGION=true
+```
+
+`HEADSCALE_UNIX_SOCKET` niet vergeten; standaard staat die in `/var/run/`, wat een rootless
+container niet kan aanmaken, en dan werken `headscale users list` en `preauthkeys create` niet.
+
+`HEADSCALE_DERP_SERVER_VERIFY_CLIENTS=true` zorgt dat de relay alleen verkeer doorzet voor nodes
+die headscale kent. Zonder die instelling kan een willekeurige derde onze relay als doorgeefluik
+gebruiken. Dat is misbruik van middelen en een attributieprobleem, geen inbraakrisico: DERP ziet
+alleen ciphertext, geeft geen tailnet-lidmaatschap en routeert niet naar RON.
+
+`HEADSCALE_OIDC_EXPIRY` gaat over hoe lang een node die via SSO inlogde geautoriseerd blijft, dus
+de SSO-sessie voor mensen. Een preauthkey-node (de gateway) verloopt daar niet van; dat is een
+aparte verlooptijd op de sleutel zelf.
+
+## DNS in de tunnel
+
+Dit is de enige plek waar een bestand nodig is. `dns.extra_records` en `dns.nameservers.split`
+zijn een lijst van objecten en een map, en die passen niet in een env-var: viper splitst de
+waarde op komma's en probeert daar objecten van te maken. Dat is een **harde fout**, headscale
+start dan niet.
+
+De namen resolveren niet publiek (NOERROR zonder A-record), dus de tunnel moet ze aanleveren.
+
+Oplossing: een **minimaal** `config.yaml` via de `attachments`-service, met alleen wat een env-var
+niet kan. De scalairen blijven env-vars.
+
+Projectniveau:
 
 ```yaml
-env-vars:
-  HEADSCALE_LISTEN_ADDR: 0.0.0.0:8080
-  HEADSCALE_DATABASE_TYPE: postgres
-  HEADSCALE_PREFIXES_V4: 100.64.0.0/10
-  HEADSCALE_PREFIXES_V6: fd7a:115c:a1e0::/48
-  HEADSCALE_DNS_OVERRIDE_LOCAL_DNS: 'false'
-  HEADSCALE_DNS_BASE_DOMAIN: vlam.internal
-  HEADSCALE_DERP_SERVER_ENABLED: 'true'
-  HEADSCALE_DERP_SERVER_PRIVATE_KEY_PATH: /data/derp_server_private.key
-  HEADSCALE_DERP_SERVER_STUN_LISTEN_ADDR: 0.0.0.0:3478
-  HEADSCALE_DERP_SERVER_REGION_ID: '999'
-  HEADSCALE_DERP_SERVER_REGION_CODE: headscale
-  HEADSCALE_DERP_SERVER_REGION_NAME: Headscale Embedded DERP
-  HEADSCALE_DERP_SERVER_AUTOMATICALLY_ADD_EMBEDDED_DERP_REGION: 'true'
+- attachments:
+    data:
+      - id: headscale-config
+        filename: config.yaml
+        content: <AGE-versleuteld>
 ```
 
-Neem dit blok integraal over. Elke ontbrekende waarde kost een deploy-ronde, zie valkuilen.
+Op het component:
 
-`base_domain` mag niet samenvallen met het domein van `server_url`, vandaar `vlam.internal`.
+```yaml
+- attachments:
+    config:
+      - reference: headscale-config
+        provide-as: file
+        path: /etc/headscale/config.yaml
+```
+
+De inhoud:
+
+```yaml
+dns:
+  extra_records:
+    - name: vlam-api.rijksweb.nl
+      type: A
+      value: <tailnet-IP van de gateway>
+    - name: chat.rijksweb.nl
+      type: A
+      value: <tailnet-IP van de gateway>
+  nameservers:
+    split:
+      rijksweb.nl:
+        - 100.100.100.100
+```
+
+Die split-route is de kern: zonder een route voor die suffix stuurt de client zijn
+`rijksweb.nl`-vragen nooit naar de tunnel-resolver en blijven de extra records ongebruikt. Met
+`override_local_dns: false` pusht headscale namelijk geen resolvers.
+
+Controleren of het aankomt, van binnenuit:
+
+```
+kubectl exec deploy/productie-vlam-gateway -- tailscale --socket=/tmp/tailscaled.sock dns status
+```
+
+Daar hoort te staan:
+
+```
+Split DNS Routes:
+  - rijksweb.nl  ->  100.100.100.100
+```
+
+De gateway is zelf een tailnet-client en krijgt dezelfde configuratie als een laptop, dus dit is
+een geldige proxy voor wat een gebruiker ziet.
+
+**Niet mounten binnen `/data`**, dat is het PVC-mountpunt. En een subPath-Secret-mount wordt niet
+automatisch bijgewerkt, dus een wijziging komt via een redeploy.
 
 ## Component 2: vlam-gateway
 
@@ -114,33 +221,29 @@ Neem dit blok integraal over. Elke ontbrekende waarde kost een deploy-ronde, zie
 |---|---|
 | image | `docker.io/tailscale/tailscale:v1.98.9` |
 | ports | inbound geen, outbound `[443]` |
-| uses-components | `[vlam-proxy]` |
-| probe | `scheme: none` (userspace tailscaled luistert nergens op) |
+| services | `persistent-storage` (`/data`) |
+| probe | `scheme: none` |
 
-Plat in `env-vars` op de deployment-component, want dit zijn geen geheimen:
-
-```yaml
-env-vars:
-  TS_USERSPACE: 'true'
-  TS_EXTRA_ARGS: --login-server=https://<headscale-hostname>
-  TS_HOSTNAME: vlam-gateway
-  TS_KUBE_SECRET: ''
-  TS_STATE_DIR: /tmp/tailscale
+```
+TS_USERSPACE=true
+TS_EXTRA_ARGS=--login-server=https://<hostname>
+TS_HOSTNAME=vlam-gateway
+TS_KUBE_SECRET=
+TS_STATE_DIR=/data
 ```
 
-De **preauthkey hoort niet in git**. Zet `TS_AUTHKEY` via de portal in `user-env-vars`, dan
-staat hij AGE-versleuteld.
+De **preauthkey hoort niet in git als platte tekst**. Zet `TS_AUTHKEY` in `user-env-vars`, dan
+staat hij AGE-versleuteld. Maak hem herbruikbaar met een ruime looptijd:
 
-**`TS_DEST_IP` werkt niet.** Containerboot weigert die in userspace-modus
-(`TS_DEST_IP is not supported with TS_USERSPACE`), want dat is destination-NAT en dat vraagt
-kernel-modus met `NET_ADMIN` en een tun-device. ZAD dropt alle capabilities, dus kernel-modus is
-daar sowieso uitgesloten.
+```
+headscale preauthkeys create --user 1 --reusable --expiration 4380h
+```
 
-Wat wél werkt is een **serve-config met `TCPForward`**: tailscaled zet die verbinding zelf op, en
-dat mag userspace prima. Geen hostmatching (anders dan bij een HTTP-handler, die op de Host van
-de request matcht en dus 404 geeft als je met een IP verbindt), en het blijft laag 4, dus de
-TLS-sessie gaat straks ongebroken door naar VLAM. Het is dus niet alleen een omweg maar de
-productievorm.
+**`TS_DEST_IP` werkt niet.** Containerboot weigert die in userspace-modus, want dat is
+destination-NAT en dat vraagt kernel-modus met `NET_ADMIN`. ZAD dropt alle capabilities, dus
+kernel-modus is uitgesloten. Wat wel werkt is een serve-config met `TCPForward`: tailscaled zet
+die verbinding zelf op. Geen hostmatching, en het blijft laag 4, dus de TLS-sessie gaat ongebroken
+door.
 
 Serve-config wil een bestand en ZAD kan die niet mounten, dus schrijven via `command`:
 
@@ -151,25 +254,28 @@ command:
   - |
     cat > /tmp/serve.json <<'JSON'
     {
-      "TCP": {"8080": {"TCPForward": "productie-vlam-proxy:8080"}}
+      "TCP": {"443": {"TCPForward": "productie-vlam-proxy:8080"}}
     }
     JSON
     export TS_SERVE_CONFIG=/tmp/serve.json
     exec /usr/local/bin/containerboot
 ```
 
-`TCPForward` neemt een `host:poort`, dus de **DNS-naam van de Service**. Geen ClusterIP
-hardcoden, die is niet stabiel als de Service opnieuw wordt aangemaakt.
+Let op: **luisteren op 443, doorzetten naar 8080.** `TCPForward` neemt een volledig `host:poort`,
+dus de gateway doet de poortvertaling. Daarmee werkt `https://naam/pad` zonder poortnummer, en is
+de losse handmatige 443-Service niet meer nodig.
 
-**`TS_STATE_DIR` op `/tmp` is een wegwerpkeuze.** Containerboot wil zijn state standaard in een
-Kubernetes Secret bewaren en vraagt daar RBAC voor, wat ZAD per component niet kan verlenen.
-`TS_KUBE_SECRET: ''` zet dat uit. Gevolg: bij elke herstart raakt de gateway zijn identiteit
-kwijt, registreert opnieuw met de herbruikbare preauthkey en **krijgt een nieuw tailnet-adres**,
-terwijl de oude node als dode entry achterblijft. Voor productie hoort daar `persistent-storage`
-op, anders verwijst je DNS-record naar een adres dat bij de volgende deploy verdwijnt.
+`TS_STATE_DIR=/data` op de PVC is niet optioneel. Containerboot wil zijn state anders in een
+Kubernetes Secret bewaren en vraagt daar RBAC voor, wat ZAD per component niet kan verlenen;
+`TS_KUBE_SECRET=` zet dat uit. Zonder persistente opslag verliest de gateway bij elke herstart
+zijn identiteit, **krijgt hij een nieuw tailnet-adres** en blijft de oude node als dode entry
+achter. Dan verlopen ook de DNS-records bij elke deploy.
 
-Zet dit component op `disabled: true` tot headscale draait en er een preauthkey is. Anders
-crashloopt hij en vervuilt hij de logs.
+Opruimen van dode nodes:
+
+```
+headscale nodes delete --identifier <id> --force
+```
 
 ## Component 3: vlam-proxy
 
@@ -177,11 +283,8 @@ crashloopt hij en vervuilt hij de logs.
 |---|---|
 | image | `docker.io/library/haproxy:lts-alpine` |
 | ports | inbound `[8080]`, outbound `[443, 8080]` |
-| uses-components | `[headscale]` in de test, later het VLAM-adres |
 
-ZAD kan nog geen configbestand mounten, en een handmatige ConfigMap helpt niet omdat ArgoCD de
-Deployment beheert en de volumeMount terugdraait. Tussenoplossing: het alpine-image heeft een
-shell, dus schrijf de config in het commando.
+Geen standaard `nginx`: dat image bindt poort 80 en schrijft zijn pid als root.
 
 ```yaml
 command:
@@ -189,164 +292,223 @@ command:
   - -c
   - |
     cat > /tmp/haproxy.cfg <<'CFG'
+    global
+      maxconn 2000
     defaults
       timeout connect 5s
       timeout client  1m
       timeout server  1m
-    frontend vlam_in
+    frontend ron_in
       bind :8080
       mode tcp
+      tcp-request inspect-delay 5s
+      acl is_vlam req.ssl_sni -i vlam-api.rijksweb.nl
+      acl is_chat req.ssl_sni -i chat.rijksweb.nl
+      tcp-request content reject unless is_vlam or is_chat
+      use_backend chat_out if is_chat
       default_backend vlam_out
     backend vlam_out
       mode tcp
-      server vlam <UPSTREAM>:443
+      server vlam vlam-api.rijksweb.nl:443
+    backend chat_out
+      mode tcp
+      server chat chat.rijksweb.nl:443
     CFG
     exec haproxy -f /tmp/haproxy.cfg -db
 ```
 
-Frontend en backend mogen sinds HAProxy 3.3 **niet dezelfde naam** hebben.
+**Twee bestemmingen op een allowlist, gekozen op SNI.** De client kiest de bestemming niet; hij
+kiest alleen welke van de twee toegestane namen hij aanroept, en alles daarbuiten wordt geweigerd
+voordat er verbinding is. Frontend en backend mogen sinds HAProxy 3.3 niet dezelfde naam hebben.
 
-Voor productie kan de SNI-controle erbij, die weigert niet-TLS-verkeer meteen en documenteert
-zichzelf. In de test met headscale als upstream moet die eruit, want dan klopt de SNI niet:
+**`maxconn` is niet optioneel.** Zonder die regel leidt HAProxy zijn maximum af van de fd-limiet
+van de container en schaalt hij zijn interne structuren daarop, wat in rust al 196Mi kostte. In
+`mode tcp` houdt hij ongeveer 32Kb aan buffers per verbinding aan, dus 2000 verbindingen is zo'n
+64Mb. Dat is ruim voor vijftig gelijktijdige gebruikers, en loop je er toch tegenaan dan zie je
+wachtende verbindingen in plaats van een OOMKill. Vastgezet op requests 64Mi/25m en limits
+256Mi/500m.
+
+## Verificatie
+
+De test die de hele keten dekt, vanaf een laptop:
 
 ```
-tcp-request inspect-delay 5s
-tcp-request content reject unless { req.ssl_sni -i vlam-api.rijksweb.nl }
+curl -v https://chat.rijksweb.nl/health
+  → HTTP 200, certificaatvalidatie geslaagd
 ```
 
-Geen standaard `nginx` gebruiken: dat image bindt poort 80 en schrijft zijn pid als root.
+Die geslaagde validatie is het bewijs dat de TLS-sessie ongebroken doorloopt, want dat certificaat
+komt van chat zelf.
 
-## Met de hand aanplakken
+De negatieve test, minstens zo belangrijk:
 
-**Extra Service voor vlam-proxy, 443 naar 8080.** `manifests/service.yaml.jinja` zet `port` en
-`targetPort` altijd gelijk, dus ZAD kan die mapping niet maken, en rootless kan HAProxy geen
-443 binden. Dus een losse Service met `port: 443`, `targetPort: 8080`, en `TS_DEST_IP` wijst
-naar díe ClusterIP.
+```
+curl -v https://google.com:8080/ --resolve google.com:8080:<tailnet-IP>
+  → TLS connect error
+```
 
-## Stappen
+De proxy weigert alles wat niet op de allowlist staat. Hij is geen doorgeefluik.
 
-1. **Alleen headscale uitrollen**, gateway op `disabled`. Controleer:
-   ```
-   curl https://<hostname>/health          → {"status":"pass"}
-   kubectl exec deploy/productie-headscale -- /ko-app/headscale users list
-   ```
-   De tweede bewijst dat de unix socket klopt.
-2. **Logintest** vanaf een laptop: `tailscale up --login-server=https://<hostname>`. Er hoort een
-   browser open te gaan met de Keycloak-login van de project-realm.
-3. **Negatieve test** met een account zonder de rol `allowed-user`. Dat moet geweigerd worden.
-   Dit is het eigenlijke bewijs dat de VPN dicht zit; stap 2 alleen zegt niets.
-4. **Infra-gebruiker en preauthkey** aanmaken. De gateway kan geen browser openen, dus die heeft
-   een preauthkey nodig, en die hangt in headscale altijd aan een gebruiker:
-   ```
-   headscale users create infra
-   headscale preauthkeys create --user 1 --reusable --expiration 24h
-   ```
-   Bewust een niet-menselijke gebruiker: hangt de gateway aan een persoon, dan valt hij om zodra
-   die persoon vertrekt of zijn toegang wordt ingetrokken.
-
-   **Een preauthkey hoort bij één headscale-instantie en reist niet mee.** Kopieer je een project
-   naar een ander cluster, dan draait daar een andere headscale met een eigen database, en de
-   meegereisde sleutel geeft `handling register with auth key: auth-key not found`. Maak op het
-   doelcluster dus altijd een nieuwe gebruiker en sleutel aan.
-5. **Gateway aanzetten** met de key en `TS_DEST_IP`, `disabled` eraf. Test:
-   `curl http://<tailnet-IP>/` geeft de headscale-pagina terug via haproxy.
-6. **DNS pushen** (`extra_records` met `vlam-api.rijksweb.nl` naar het tailnet-IP van de gateway)
-   en de upstream vervangen door het echte VLAM-adres.
+Verder te controleren: de RON-egress via de namespace-annotatie, de Keycloak-login met rolfilter
+inclusief een account **zonder** de rol (moet geweigerd worden), de split-DNS die bij clients
+aankomt, en een gateway-adres dat een herstart overleeft.
 
 ## Valkuilen
 
-Alles hieronder heeft ons in de sandbox tijd gekost. Op productie zijn ze te vermijden.
+**Het certificaat van vlam-api komt van een interne CA.** Uitgever is `Rijksdienst Issuing CA2`
+van SSC-ICT, en die zit in geen publieke bundel. Gemeten: met validatie `verify=19`, met `-k`
+HTTP 200. Onze passthrough raakt dat certificaat niet aan en kan dat ook niet. Gebruikers moeten
+die root vertrouwen; op beheerde laptops zit hij erin, op onbeheerde niet. Dat is een regel in de
+gebruikersinstructie, en een handige splitsing bij support: faalt het op `verify`, dan is het de
+CA; faalt het op `connect`, dan zijn wij het.
+
+**Een tweede VPN die DNS globaal overneemt sloopt de split-route.** OpenVPN Connect had `dhcp-option DNS 10.200.1.2` in het profiel staan en maakte dat de
+globale resolver van de Mac. Tailscale plaatst zijn route juist *scoped*, en verliest dan.
+
+Het herkenbare symptoom: `nslookup naam` **werkt** (die leest `/etc/resolv.conf`, waar tailscale
+in staat) en `curl naam` zegt `Could not resolve host` (die gebruikt `getaddrinfo`, en dus de
+systeemconfiguratie waar de andere VPN de baas is). Eerste diagnosestap:
+
+```
+scutil --dns | grep -E "resolver #|domain|nameserver\[0\]"
+```
+
+Oplossing aan de clientkant, in het `.ovpn`-profiel:
+
+```
+#dhcp-option DNS 10.200.1.2
+pull-filter ignore "dhcp-option DNS"
+```
+
+De ODCN-namen (`cluster-api.apps...quattro.rijksapps.nl`, de router) resolveren publiek, dus die
+DNS is niet nodig; alleen de routes zijn dat. Moet je hem toch terug, dan scoped in plaats van
+globaal via `/etc/resolver/<domein>`.
+
+Voor de doelgroep speelt dit niet: een ontwikkelaar op een onbeheerde laptop heeft geen tweede
+VPN naar ODCN. Maar wie er wél een van zijn eigen organisatie heeft, loopt hier tegenaan, en het
+faalt onduidelijk. Dit hoort in de gebruikersdocumentatie.
+
+**De publieke hostnaam staat op twee plekken en beide moeten mee.** `HEADSCALE_SERVER_URL` staat
+op `https://${PUBLIC_HOSTNAME}` en volgt de `subdomain` van de deployment automatisch, maar de
+gateway is zelf óók een tailscale-client en heeft de naam letterlijk in zijn eigen instellingen
+staan:
+
+```
+TS_EXTRA_ARGS=--login-server=https://<hostname>
+```
+
+Vergeet je die bij een omdoping, dan komt de gateway in een herstartlus met
+`fetch control key: ... failed to resolve <oude naam>`, gevolgd door
+`failed to auth tailscale: tailscale up failed: signal: killed`. Het verraderlijke is wat
+gebruikers zien: DNS blijft werken uit de gecachte netmap, dus `curl` resolveert netjes naar het
+gateway-adres en blijft daarna hangen op `Trying`. Bij een omdoping moet iedere client ook opnieuw
+`tailscale up --login-server=<nieuwe naam>` doen, want de oude URL zit in zijn lokale staat.
+
+Wat níet mee hoeft: `HEADSCALE_DNS_BASE_DOMAIN`. Dat is het MagicDNS-achtervoegsel binnen de
+tunnel, staat niet in publieke DNS en niet in de certificate transparency logs, en is alleen
+zichtbaar voor wie al is ingelogd.
+
+De nodesleutel van de gateway staat op de PVC in `/data` en de database van headscale blijft
+staan, dus na de omdoping meldt hij zich als dezelfde node en houdt hij zijn adres. Dat is nodig,
+want de records in `config.yaml` wijzen naar dat adres. Gemeten na de omdoping naar
+`vonk.rijksapp.dev`: node 6 nog steeds op `100.80.0.1`.
+
+**Kies een publieke naam die niets zegt.** Elke uitgegeven hostnaam staat in de certificate
+transparency logs en is dus openbaar. Een functiewoord (`relay`, `vpn`, `gateway`, `agent`)
+vertelt een scanner wat hij moet proberen, en de naam van het achterliggende systeem vertelt hem
+waar het over gaat. Vandaar `vonk.rijksapp.dev`. Dat is geen beveiliging, alleen niet adverteren:
+de bescherming zit in SSO Rijk plus de rol `allowed-user`, en achter de tunnel in de SNI-allowlist.
 
 **Headscale past zonder configbestand géén enkele default toe.** Niet de prefixes, niet
-`base_domain`, niet de DERP-instellingen, ook al staan die allemaal in `config-example.yaml`. Je
-bouwt zijn defaults dus zelf na met env-vars, en je merkt dat één fout per deploy-ronde. Neem
-het `env-vars`-blok hierboven integraal over in plaats van te wachten op de foutmeldingen.
+`base_domain`, niet de DERP-instellingen, ook al staan die in `config-example.yaml`. Neem het
+env-var-blok integraal over in plaats van fout voor fout te ontdekken.
 
-**Het headscale-image is een ko-build zonder shell.** De truc om een configbestand via `command`
-weg te schrijven werkt daar dus niet. Dat kan, omdat env-vars volstaan, maar als dat ooit
-verandert is een echte config-mount nodig.
+**`configtest` leest geen env-vars.** Alleen `serve` doet dat. Als probe om te kijken of een
+instelling aankomt is `configtest` dus ongeschikt; hij klaagt over precies de velden die je als
+env-var hebt meegegeven.
 
-**Env-vars gaan per stuk, één sleutel en één waarde.** Dat werkt gewoon, maar het loopt mis als
-je een heel blok tekst in het waardeveld plakt: dan krijg je één variabele met die hele tekst
-als waarde. Zo werd `HEADSCALE_LISTEN_ADDR` letterlijk
-`0.0.0.0:8080 HEADSCALE_DATABASE_TYPE = postgres HEADSCALE_PREFIXES_V4 = ...`, en dat kostte
-enkele deploy-rondes aan foutmeldingen die de verkeerde kant op wezen (ontbrekende prefixes,
-ontbrekend database-type). Schrijf specificaties dus niet als uitgelijnd `KEY = value`-blok, en
-zet niet-geheime waarden liever plat in `env-vars` in het projectbestand.
+**Het headscale-image is een ko-build zonder shell.** De truc waarmee we bij haproxy en tailscale
+een bestand wegschrijven werkt daar niet, en `kubectl cp` ook niet (geen `tar`). Vandaar de
+attachments-route.
 
-**Een portal-save kan een gelijktijdige wijziging stil overschrijven.** Het aanroeppad in
-`opi/core/task_handlers_project.py` maakt een verse ProjectManager en geeft geen
-compare-and-swap-basis mee, dus het is last-writer-wins. Werk niet tegelijk in de portal en in
-git aan hetzelfde project. (Fix in behandeling.)
+**De alias-scoping-bug.** Op een OPI zonder de fix van 2026-07-28 worden deployment-brede
+direct-aliases geresolved tegen de context van elk component. Een component zonder
+`publish-on-web` of storage krijgt dan een lege context en de verwerking breekt af met
+`Variable references not found in context: PUBLIC_HOSTNAME`. Omweg: zet de drie direct-sourced
+waarden als env-var in plaats van als alias.
 
-**Comments in het projectbestand overleven een portal-bewerking niet.** Elke YAML-round-trip
-strijkt ze weg. De waarden zelf blijven wel staan.
+**Env-vars gaan per stuk.** Plak geen blok tekst in een waardeveld; dan krijg je één variabele met
+die hele tekst erin. Het gevolg is een waarde als
+`0.0.0.0:8080 HEADSCALE_DATABASE_TYPE = postgres ...`, en dan wijzen alle foutmeldingen daarna de
+verkeerde kant op.
 
-**`security` op het component niet zetten.** ZAD zet op Kind zelf `runAsNonRoot: true` met
-`runAsUser`, `runAsGroup` en `fsGroup` op 1001 (`manifests/deployment.yaml.jinja:56-64`). Dat
-overschrijft de root-user uit het headscale-image en maakt het volume schrijfbaar. Een eigen
-`fs-group` is niet nodig.
+**Een portal-save kan een gelijktijdige git-wijziging overschrijven** op een OPI zonder de
+compare-and-swap-fix. Werk niet tegelijk in de portal en in git aan hetzelfde project.
 
-**Een uitgeschakeld component wordt gemeld als "pods worden aangemaakt".** De statusmelding leest
-0 van 0 replicas als een wachtstatus in plaats van als eindtoestand. Verwarrend, niet kapot.
+**NetworkPolicies worden afgedwongen, ook in de sandbox.** Een pod zonder het
+`deployment=<naam>`-label krijgt time-outs, met dat label HTTP 200. Gemeten, niet afgeleid. Een
+ontbrekende `ports.outbound` laat zich dus zien als een time-out en niet als een foutmelding.
 
-## Wat er op ODCN anders gaat
+**`security` op het component niet zetten.** ZAD zet zelf `runAsNonRoot` met UID, GID en fsGroup,
+en dat overschrijft de root-user uit een image.
 
-**De SCC kent de UID toe.** Op `restricted-v2` worden per-component security-overrides genegeerd
-en injecteert admission zelf een UID uit het namespace-bereik. Het headscale-image heeft `User:
-0` in zijn metadata, maar dat wordt overschreven. Als statische Go-binary zou het met een
-willekeurige UID overweg moeten kunnen, maar dat is op ODCN nog niet aangetoond.
+**Zet `auto-tune-resources: false` op deze componenten.** De tuner heeft headscale een keer op
+`request == limit == 25Mi` gezet, afgeleid van één meting van 15Mi op een lege, net gestarte
+instantie. De eerste keer dat er iets gebeurde volgde een OOMKill, en daarna een cirkel: gekilde
+pod, clients die harder pollen, opnieuw gekild. Van buiten zag je alleen `HTTP 503`. Richtlijn hier:
+headscale 128Mi/512Mi, en let ook op de proxy, want HAProxy alloceert buffers per verbinding en
+klimt onder gebruik ruim boven de 100Mi. Zie `plans/oom-auto-tune-deployment-scoped.md`.
 
-**NetworkPolicies worden afgedwongen, ook in de sandbox.** Dat is anders dan lang is aangenomen.
-ZAD zet een `<deployment>-tenant-baseline-network-policy` op pods met label
-`deployment=<naam>`; een pod zonder die labels krijgt time-outs, met die labels HTTP 200. Op
-`sandboxed-local` gemeten, niet afgeleid.
+Staat nu uit op headscale en de proxy. Op `vlam-gateway` staat hij nog aan, met een door de tuner
+gezette limiet van 68Mi. Dat is dezelfde vorm die headscale de kop kostte.
 
-Gevolg: `ports.outbound` is functioneel, geen cosmetiek. Zorg dat headscale 443 en 5432 uit mag,
-de gateway 443, en de proxy 443 plus de poort van de upstream. Een ontbrekende outbound-poort
-laat zich zien als een **time-out**, niet als een duidelijke foutmelding, en dat kost uren als
-je het niet verwacht.
+## Wat er op ODCN anders gaat dan in de sandbox
 
-**MetalLB voor DERP.** Zonder inkomende UDP loopt al het tunnelverkeer via een relay. Wil je
-directe verbindingen, dan heeft de DERP-server een eigen publiek IP met UDP 3478 nodig. Vraag
-het platformteam of hun pool UDP aankan.
+**De SCC kent de UID toe.** Per-component security-overrides worden genegeerd; admission
+injecteert een UID uit het namespace-bereik.
+
+**Sockets wijken uit naar `/tmp`.** UID uit het namespace-bereik mag niet in `/var/run/`
+schrijven. De tailscale-CLI in de pod heeft daarom `--socket=/tmp/tailscaled.sock` nodig.
 
 **`timeout-tunnel` op de Route.** De ingress-template zet `timeout: 300s` maar geen
-`timeout-tunnel`. Voor de control-verbinding volstaat dat; zodra DERP-verkeer over dezelfde
-Route loopt is `haproxy.router.openshift.io/timeout-tunnel` wel nodig, anders breken
-overdrachten af.
+`timeout-tunnel`. Voor de control-verbinding volstaat dat; loopt DERP-verkeer over dezelfde Route,
+dan is `haproxy.router.openshift.io/timeout-tunnel` wel nodig.
 
-**Node-verlooptijd niet op de gateway toepassen.** Voor mensen willen we een korte `node.expiry`
-(24 uur) als intrekkingsmechanisme. Geldt die ook voor de gateway, dan valt de tunnel elke dag
-om. Die node moet uitgezonderd worden.
+**De egress-annotatie is handwerk.** Zie de RON-sectie.
 
-**Beeldsignaturen.** ODCN weigert bepaalde images. Eerder bleken UBI-gebaseerde images te falen
-en docker.io-images te passeren. `ghcr.io` is nog niet getoetst.
-
-## Aangetoond op 2026-07-28
-
-End-to-end gemeten vanaf een laptop, niet afgeleid:
+## Instructie voor gebruikers
 
 ```
-curl -v http://<tailnet-IP van de gateway>:8080/health
-  → HTTP 200, {"status":"pass"}
+tailscale up --login-server=https://vonk.rijksapp.dev
 ```
 
-De volledige keten: laptop, WireGuard over de DERP-relay (`netcheck: UDP is blocked, trying
-HTTPS`), gateway in userspace met `TCPForward`, haproxy met vastgezette backend, headscale als
-nep-VLAM. Dat is dezelfde vorm als productie, met alleen de backend vervangen.
+Er opent een browser, inloggen met SSO Rijk, klaar. Daarna werkt `https://vlam-api.rijksweb.nl`
+zonder verdere ingrepen: geen hosts-regel, geen poortnummer, geen `--resolve`.
 
-Ook aangetoond: headscale ondersteunt serve-config prima, en de login loopt via Keycloak met
-node-registratie in headscale.
+`--accept-routes` is **niet** nodig; wij adverteren geen subnet-routes. `--force-reauth` alleen als
+iemand een bestaande sessie omzet.
+
+Vier dingen die erbij horen:
+
+- **De rol `allowed-user` in onze Keycloak is vereist.** Zonder die rol mislukt het inloggen, en
+  dat is de bedoeling.
+- **Voor `vlam-api` moet de Rijksdienst-CA vertrouwd zijn**, zie valkuilen. Zonder die root volgt
+  een certificaatfout, geen verbindingsfout.
+- **Wie al Tailscale gebruikt, raakt zijn eigen tailnet kwijt.** De officiële client kan maar één
+  tailnet tegelijk; `tailscale switch --list` toont de profielen om terug te gaan. Er zijn
+  third-party clients die meerdere tailnets tegelijk kunnen, maar die zijn bewust buiten scope: dan
+  vraag je gebruikers extra netwerksoftware te vertrouwen.
+- **DNS accepteren moet aan staan** (standaard zo). Controleren met `tailscale dns status`; daar
+  hoort `rijksweb.nl -> 100.100.100.100` bij de split-routes te staan.
 
 ## Open
 
-- [ ] Negatieve test: een account zonder `allowed-user` moet geweigerd worden
-- [ ] `persistent-storage` op de gateway, zodat het tailnet-adres stabiel blijft
-- [ ] `node.expiry` kort zetten voor mensen, met de gateway uitgezonderd
-- [ ] DNS-push met `extra_records` beproeven
-- [ ] `config-files` op een component in ZAD, zodat de haproxy-omweg weg kan
-- [ ] Meerdere containers per component in ZAD, zodat de gateway naast de proxy kan draaien en
-      `TS_DEST_IP` gewoon `127.0.0.1` wordt
-- [ ] De gehardcodeerde ClusterIP vervangen voordat dit richting productie gaat
-- [ ] Doet de MetalLB-pool op ODCN UDP?
+- [ ] `egress.projectcalico.org/egressGatewayPolicy` in het projectbestand kunnen zetten, of een
+      service die dat regelt (nu handmatig per namespace)
+- [ ] `config-files` op een component in ZAD, zodat de `command`-heredocs voor haproxy en de
+      serve-config weg kunnen
+- [ ] Het juiste pad op `vlam-api.rijksweb.nl` bij VLAM navragen; `/health` bestaat daar niet
+- [ ] Instructie voor gebruikers: de Rijksdienst-CA vertrouwen, en wat te doen bij een tweede VPN
+- [ ] `auto-tune-resources: false` op `vlam-gateway`, die staat nog op een tuner-limiet van 68Mi
+- [ ] Doet de MetalLB-pool op ODCN UDP? Dan kan tailscale directe verbindingen maken in plaats
+      van alles via de relay
