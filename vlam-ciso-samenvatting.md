@@ -15,7 +15,9 @@ laptop  ->  VPN  ->  reverse proxy  ->  VLAM-API
 
 De gebruiker logt in op de VPN via SSO Rijk, met onze Keycloak ertussen. Toegang is beperkt tot mensen met een specifieke rol in die Keycloak; zonder die rol mislukt het inloggen. Toegang is dus per gebruiker te verlenen en in te trekken.
 
-Eenmaal binnen kan de gebruiker precies één adres bereiken: de reverse proxy. Die proxy heeft één vastgezette bestemming, het VLAM-endpoint, en de gebruiker kan die bestemming niet beïnvloeden.
+Eenmaal binnen kan de gebruiker precies één adres bereiken: de reverse proxy. Die proxy verbindt alleen met de vooraf vastgelegde bestemmingen, en de gebruiker kan die niet beïnvloeden.
+
+Gebruikers kunnen elkaar daarbij niet bereiken en zien elkaar ook niet. Het VPN-netwerk deelt aan elke deelnemer een filter uit dat maar één bestemming toestaat, de proxy op één poort. Er ontstaat dus geen gedeeld netwerk waarin laptops elkaar kunnen benaderen; iedere gebruiker heeft in de praktijk een eigen verbinding naar diezelfde ene voordeur.
 
 #### De proxy kent maar één route, en die gaat naar de VLAM-API
 

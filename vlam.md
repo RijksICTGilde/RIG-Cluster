@@ -405,6 +405,50 @@ Voor de doelgroep speelt dit niet: een ontwikkelaar op een onbeheerde laptop hee
 VPN naar ODCN. Maar wie er wél een van zijn eigen organisatie heeft, loopt hier tegenaan, en het
 faalt onduidelijk. Dit hoort in de gebruikersdocumentatie.
 
+**Zonder ACL-beleid deelt headscale `FilterAllowAll` uit.** Dit is de belangrijkste valkuil van
+allemaal, want je ziet er niets van: alles werkt, en ondertussen kan elke deelnemer bij elke
+andere deelnemer op alle poorten. Met een groep ontwikkelaars op onbeheerde laptops is dat een
+gedeeld netwerk waarin iedereen bij iedereen kan. In `hscontrol/policy/v2/filter.go`:
+
+```go
+if pol == nil || pol.ACLs == nil {
+    return tailcfg.FilterAllowAll, nil
+}
+```
+
+Eén regel beleid is genoeg. Die gaat als tweede bijlage mee via de `attachments`-service, naast
+`config.yaml`, en wordt aangezet met `HEADSCALE_POLICY_MODE=file` en `HEADSCALE_POLICY_PATH`:
+
+```json
+{
+  "hosts": { "gateway": "100.80.0.1/32" },
+  "acls": [
+    { "action": "accept", "src": ["*"], "dst": ["gateway:443"] }
+  ]
+}
+```
+
+Alles wat er niet in staat wordt geweigerd, en headscale snoeit bovendien de netmap per node, dus
+deelnemers zien elkaar ook niet meer in `tailscale status`.
+
+**Rol het in twee stappen uit.** In `file`-modus laadt headscale het beleid bij het opstarten, en
+een ongeldig bestand betekent geen coördinatieserver meer en dus niemand die er nog bij kan, jij
+incluis. Koppel het bestand eerst aan zonder `HEADSCALE_POLICY_PATH` te zetten, laat headscale
+zelf oordelen, en zet het pas daarna aan:
+
+```
+headscale policy check -f /etc/headscale/acl.json
+  → Policy is valid
+```
+
+Controleer na activering niet of het beleid *geladen* is maar of het *aankomt*, want dat is iets
+anders. Het pakketfilter in de netmap van een node is de grond van waarheid:
+
+```
+tailscale --socket=/tmp/tailscaled.sock debug netmap
+  → PacketFilter: Dsts 100.80.0.1/32 poort 443, Srcs 0.0.0.0/0
+```
+
 **De publieke hostnaam staat op twee plekken en beide moeten mee.** `HEADSCALE_SERVER_URL` staat
 op `https://${PUBLIC_HOSTNAME}` en volgt de `subdomain` van de deployment automatisch, maar de
 gateway is zelf óók een tailscale-client en heeft de naam letterlijk in zijn eigen instellingen
