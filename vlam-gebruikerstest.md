@@ -63,6 +63,36 @@ Daar hoort `HTTP 200, verify=0` uit te komen.
 
 Installeer deze root **niet** in je systeemsleutelhanger. Dan kan die CA namelijk voor elk willekeurig domein een geldig certificaat uitgeven en vertrouwt je machine dat, ook voor je bank of je mail. Met de aanpak hierboven geldt het vertrouwen alleen voor de gereedschappen waar je het nodig hebt.
 
+#### 5. De API zelf uitproberen
+
+Hiervoor heb je een API-sleutel van VLAM nodig. Zet die eerst in je omgeving, dan hoef je hem niet in elk commando te herhalen. Deze regel komt niet in je shell-geschiedenis als je hem laat voorafgaan door een spatie:
+
+```
+ export VLAM_KEY="jouw-sleutel"
+```
+
+Welke modellen er zijn, dit werkt zonder sleutel:
+
+```
+curl https://vlam-api.rijksweb.nl/v1/models
+```
+
+Een echte aanroep. Dit is de vorm die werkt:
+
+```
+curl https://vlam-api.rijksweb.nl/v1/chat/completions -H "Authorization: Bearer $VLAM_KEY" -H "content-type: application/json" -d '{"model":"vlam-medium-vast","messages":[{"role":"user","content":"zeg hallo"}]}'
+```
+
+En de vorm die Claude Code gebruikt. Deze geeft op dit moment een `403`, want de route staat niet open voor onze sleutels:
+
+```
+curl https://vlam-api.rijksweb.nl/v1/messages -H "Authorization: Bearer $VLAM_KEY" -H "content-type: application/json" -d '{"model":"vlam-medium-vast","max_tokens":64,"messages":[{"role":"user","content":"zeg hallo"}]}'
+```
+
+Heb je sectie 4 nog niet gedaan, zet er dan `-k` bij, anders weigert curl vanwege het certificaat.
+
+Twee dingen om te weten als er iets misgaat. Een `401` betekent dat je sleutel niet meekomt of niet klopt. Een `500` heeft in ons geval niet aan VLAM gelegen maar aan onze eigen proxy die naar een verouderd adres wees, dus meld die bij ons voordat je hem bij VLAM meldt.
+
 #### Als het niet werkt
 
 Laat het in Mattermost weten.
