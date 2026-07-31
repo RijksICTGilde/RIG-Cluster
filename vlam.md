@@ -405,6 +405,33 @@ Voor de doelgroep speelt dit niet: een ontwikkelaar op een onbeheerde laptop hee
 VPN naar ODCN. Maar wie er wél een van zijn eigen organisatie heeft, loopt hier tegenaan, en het
 faalt onduidelijk. Dit hoort in de gebruikersdocumentatie.
 
+**HAProxy lost een backend-hostnaam eenmalig op, bij het starten.** Zonder `resolvers`-sectie blijft hij dat ene adres gebruiken zolang de pod draait. Toen VLAM van IP wisselde stuurden wij het verkeer een dag lang naar het oude adres, en dat gaf `HTTP 500` met een LiteLLM-fout die de modelnaam netjes bij naam noemde. Dat leest als een storing bij de leverancier, en we stonden op het punt die bij hen te melden.
+
+Wat het extra verraderlijk maakte: het oude adres was `chat.rijksweb.nl`. Onze eigen tweede bestemming dus. Die draait dezelfde software met dezelfde modelnamen erin, en gaf daarom een geloofwaardige maar verkeerde fout in plaats van een duidelijke afwijzing.
+
+```
+resolvers dns
+  parse-resolv-conf
+  hold valid 30s
+  hold other 30s
+  hold refused 30s
+  hold nx 30s
+  hold timeout 30s
+
+backend vlam_out
+  server vlam vlam-api.rijksweb.nl:443 resolvers dns init-addr last,libc,none
+```
+
+`init-addr last,libc,none` zorgt dat HAProxy ook opstart als DNS even niet meewerkt, in plaats van te weigeren te starten.
+
+De diagnose die dit blootlegde is algemener bruikbaar: doe dezelfde aanroep één keer door de keten en één keer rechtstreeks vanuit de proxy-pod. Krijg je twee verschillende antwoorden op hetzelfde verzoek, dan praat je met twee verschillende bestemmingen. Vergelijk daarna wat DNS nu teruggeeft met waar de verbindingen feitelijk heen gaan:
+
+```
+kubectl exec deployment/productie-vlam-proxy -- /bin/sh -c 'netstat -tn | grep :443; nslookup vlam-api.rijksweb.nl'
+```
+
+**`timeout server` moet ruim staan voor taalmodellen.** Stond op `1m`, wat een model dat langer nadenkt middenin zijn antwoord afkapt. Nu `10m`. Dit had zich pas gewroken bij het eerste echte gebruik, en dan als een willekeurig afgebroken verbinding.
+
 **Zonder ACL-beleid deelt headscale `FilterAllowAll` uit.** Dit is de belangrijkste valkuil van
 allemaal, want je ziet er niets van: alles werkt, en ondertussen kan elke deelnemer bij elke
 andere deelnemer op alle poorten. Met een groep ontwikkelaars op onbeheerde laptops is dat een
