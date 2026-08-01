@@ -28,7 +28,7 @@ import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from opi.core.config import settings
+from opi.services.catalog.resource_tuning.config import resource_tuning_config
 from opi.services.project_store import get_project_store
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ class ResourceTuningScheduler:
         logger.info(
             "Resource tuning scheduler started (cluster=%s, nightly at %02d:00 %s)",
             self._cluster,
-            settings.RESOURCE_TUNING_HOUR,
+            resource_tuning_config().hour,
             _TZ.key,
         )
 
@@ -80,7 +80,7 @@ class ResourceTuningScheduler:
         """Sleep until the nightly hour, run a sweep, repeat."""
         while self._running:
             try:
-                delay = _seconds_until_next_run(settings.RESOURCE_TUNING_HOUR, datetime.now(_TZ))
+                delay = _seconds_until_next_run(resource_tuning_config().hour, datetime.now(_TZ))
                 await asyncio.sleep(delay)
             except asyncio.CancelledError:
                 break
@@ -119,8 +119,9 @@ class ResourceTuningScheduler:
                     changed += 1
                     logger.info("Resource tuning: %s - %d component(s) changed", name, len(result.changes))
                     # Pace rollouts so a convergence night doesn't bounce the whole fleet at once.
-                    if settings.RESOURCE_TUNING_PACE_SECONDS > 0:
-                        await asyncio.sleep(settings.RESOURCE_TUNING_PACE_SECONDS)
+                    pace_seconds = resource_tuning_config().pace_seconds
+                    if pace_seconds > 0:
+                        await asyncio.sleep(pace_seconds)
             except asyncio.CancelledError:
                 raise
             except Exception:
