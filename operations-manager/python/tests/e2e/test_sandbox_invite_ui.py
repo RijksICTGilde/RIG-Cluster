@@ -223,10 +223,16 @@ def test_configure_via_api_writes_invite(
     # file back, the same submit-and-read rule the wizard test uses (checklist section 13).
     # PUT replaces the whole invite config, so this runs last: it overwrites the keys the
     # earlier tests added on this shared throwaway project.
+    #
+    # We assert on the committed file, not on full task completion: the config write commits
+    # early (the "Service-config schrijven" subtask), and the task then reconciles the whole
+    # project through ArgoCD -- a slow deploy wait that is not what "did the config land"
+    # depends on, and matches the invite's save_only nature (configuring an invite triggers
+    # no manifest change). So we start the task and poll the project file for the key.
     api_key = read_api_key_with_retry(sandbox_page, sandbox_url, invite_project)
     api_invite_key = f"probe-invite-api-{_RUN}"
     body = {"default-language": "nl", "active": [{"key": api_invite_key, "contact-email": _CONTACT}]}
-    task_id = sandbox_api.start_task(
+    sandbox_api.start_task(
         sandbox_url,
         "PUT",
         f"/api/v2/projects/{invite_project}/services/invite/config/project",
@@ -234,8 +240,7 @@ def test_configure_via_api_writes_invite(
         body,
         verify_ssl=_API_VERIFY_SSL,
     )
-    sandbox_api.wait_for_task(sandbox_url, task_id, api_key, verify_ssl=_API_VERIFY_SSL, timeout=240)
-    keys = _invite_keys(forgejo, invite_project)
+    keys = _poll(lambda: _invite_keys(forgejo, invite_project), lambda ks: api_invite_key in ks)
     assert api_invite_key in keys, f"invite configured via API not persisted to the project file: {keys}"
 
 
