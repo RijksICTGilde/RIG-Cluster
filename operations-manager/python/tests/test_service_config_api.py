@@ -331,6 +331,7 @@ EXPECTED_API_TARGETS: dict[str, list[str]] = {
     "attachments": ["component"],
     "authorization-wall": ["project"],
     "health-check": ["component"],
+    "invite": ["project"],
     "keycloak": ["project"],
     "metrics-scraper": ["component"],
     "minio-storage": ["project", "deployment"],
