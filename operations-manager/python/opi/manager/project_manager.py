@@ -3110,7 +3110,12 @@ class ProjectManager:
                                 f"OOM detected for {oom_components} in {app_name}, tuning resources...",
                             )
                         try:
-                            result = await tune_deployment_resources(project_name, dep_name, skip_reprocessing=True)
+                            result = await tune_deployment_resources(
+                                project_name,
+                                dep_name,
+                                skip_reprocessing=True,
+                                oom_components=[f.component_reference or f.component_name for f in oom_failures],
+                            )
                             if result.changes:
                                 logger.info(
                                     "OOM auto-tune applied %d change(s) for %s/%s (components: %s), queuing refresh task",
