@@ -4,6 +4,7 @@ Shared pytest fixtures for all tests.
 This module provides common fixtures used across unit and integration tests.
 """
 
+import os
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
@@ -245,6 +246,12 @@ def reset_readiness_state() -> Any:
 
 @pytest.fixture(scope="session")
 def _orm_pg_container():
+    # Ryuk is testcontainers' reaper sidecar; on Docker Desktop it fails to start with a
+    # 500 from the daemon, which takes every container-backed test down with it. The
+    # container is stopped by the context manager below either way, so the reaper is
+    # belt-and-braces here. ``setdefault`` so CI can still force it back on.
+    os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
+
     from testcontainers.postgres import PostgresContainer
 
     with PostgresContainer("postgres:16-alpine") as container:
