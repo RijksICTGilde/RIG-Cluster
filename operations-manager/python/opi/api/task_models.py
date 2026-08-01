@@ -211,6 +211,19 @@ class AddServiceResult(BaseModel):
     error_type: str | None = None
 
 
+class ConfigureServiceResult(BaseModel):
+    """Result of a configure_service task (unified service-config endpoint)."""
+
+    status: str
+    service: str | None = None
+    target: str | None = None
+    removed: bool | None = None
+    processing: ProcessingStatus | None = None
+    # Failure fields
+    error: str | None = None
+    error_type: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Registry: TaskType -> result model class
 # ---------------------------------------------------------------------------
@@ -228,6 +241,7 @@ TASK_RESULT_MODELS: dict[TaskType, type[BaseModel]] = {
     TaskType.UPDATE_COMPONENT: AddComponentResult,
     TaskType.ADD_COMPONENT_TO_DEPLOYMENT: AddComponentToDeploymentResult,
     TaskType.ADD_SERVICE: AddServiceResult,
+    TaskType.CONFIGURE_SERVICE: ConfigureServiceResult,
 }
 
 

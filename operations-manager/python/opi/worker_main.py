@@ -39,6 +39,7 @@ async def main() -> None:
         handle_add_component,
         handle_add_component_to_deployment,
         handle_add_service,
+        handle_configure_service,
         handle_update_component,
     )
     from opi.core.task_handlers_deployment import (
@@ -68,6 +69,7 @@ async def main() -> None:
     worker.register_handler(TaskType.UPDATE_COMPONENT, handle_update_component)
     worker.register_handler(TaskType.ADD_COMPONENT_TO_DEPLOYMENT, handle_add_component_to_deployment)
     worker.register_handler(TaskType.ADD_SERVICE, handle_add_service)
+    worker.register_handler(TaskType.CONFIGURE_SERVICE, handle_configure_service)
 
     # Handle graceful shutdown
     loop = asyncio.get_running_loop()
