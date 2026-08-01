@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.services_enums import CleanupStrategy
 
 # ---------------------------------------------------------------------------
 # ServiceDefinition.cleanup_strategy tests
@@ -30,7 +31,7 @@ class TestCleanupStrategyDefinitions:
         ]
         for svc_type in deferred:
             defn = ServiceAdapter.get_service_definition(svc_type)
-            assert defn.cleanup_strategy == "deferred", f"{svc_type.value} should be deferred"
+            assert defn.cleanup_strategy is CleanupStrategy.DEFERRED, f"{svc_type.value} should be deferred"
 
     def test_immediate_services(self) -> None:
         immediate = [
@@ -40,7 +41,7 @@ class TestCleanupStrategyDefinitions:
         ]
         for svc_type in immediate:
             defn = ServiceAdapter.get_service_definition(svc_type)
-            assert defn.cleanup_strategy == "immediate", f"{svc_type.value} should be immediate"
+            assert defn.cleanup_strategy is CleanupStrategy.IMMEDIATE, f"{svc_type.value} should be immediate"
 
     def test_none_services(self) -> None:
         none_services = [
@@ -50,7 +51,7 @@ class TestCleanupStrategyDefinitions:
         ]
         for svc_type in none_services:
             defn = ServiceAdapter.get_service_definition(svc_type)
-            assert defn.cleanup_strategy == "none", f"{svc_type.value} should be none"
+            assert defn.cleanup_strategy is CleanupStrategy.NONE, f"{svc_type.value} should be none"
 
     def test_get_cleanable_service_types(self) -> None:
         cleanable = ServiceAdapter.get_cleanable_service_types()
