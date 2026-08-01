@@ -129,3 +129,45 @@ def test_template_only_keys_without_virtualization() -> None:
     stripped = _template_only_keys(step_data, template_data, {})
 
     assert stripped == {"config"}
+
+
+def test_single_section_modal_does_not_stash_away_its_own_step() -> None:
+    """A single-section service-config modal must keep its just-submitted step data.
+
+    Regression for the third RC-13 blocker: after storing the invite step, the modal submit
+    re-resolved active sections with ``resolve_active_section_ids``, whose visibility lambda
+    (``_config_selected``) reads the real ``services`` list -- absent from the modal's
+    virtual-key-only step_data. So the invite section resolved as INACTIVE and
+    ``stash_inactive_sections`` moved its data to the stash, leaving ``_modal_do_submit`` with
+    empty step_data (every real key then popped as template-only -> whole save reverted).
+
+    The fix mirrors ``modal_wizard_init``: single-section flows treat their one section as
+    active. This test proves the resolver-based path drops the data and the single-section
+    path keeps it.
+    """
+    from opi.forms.visualizers.flows import get_flow
+    from opi.forms.wizard.resolver import resolve_active_section_ids
+    from opi.forms.wizard.state import WizardState
+
+    flow = get_flow("modal-edit-invite-config")
+    sid = flow.sections[0].section_id
+    stored = {"_services-config": [{"name": "invite", "config": {"active": [{"key": "k"}]}}]}
+
+    # The resolver-based path (the old bug): visibility can't see `services`, so it stashes.
+    state_bug = WizardState(flow_id=flow.flow_id, current_step=sid, active_sections=[sid])
+    state_bug.step_data = {sid: dict(stored)}
+    resolved = resolve_active_section_ids(flow, state_bug.step_data)
+    state_bug.stash_inactive_sections(resolved)
+    assert sid not in state_bug.step_data, "precondition: resolver wrongly deems the section inactive"
+
+    # The single-section bypass (the fix): the section stays active, data is preserved.
+    state_fix = WizardState(flow_id=flow.flow_id, current_step=sid, active_sections=[sid])
+    state_fix.step_data = {sid: dict(stored)}
+    active_ids = (
+        [flow.sections[0].section_id]
+        if len(flow.sections) == 1
+        else resolve_active_section_ids(flow, state_fix.step_data)
+    )
+    state_fix.stash_inactive_sections(active_ids)
+    assert sid in state_fix.step_data
+    assert state_fix.step_data[sid] == stored
