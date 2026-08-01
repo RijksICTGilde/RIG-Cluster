@@ -216,7 +216,7 @@
     },
 
     "attachment-data-entry": {
-      "description": "A stored attachment in the project-level attachments catalog.",
+      "description": "A stored attachment in the project-level attachments catalog. NOT referenced from anywhere: the project-level services list validates its envelope only, and validate_service_configs skips this entry because the catalog lives under 'data' rather than 'config'. So this shape is currently validated by nothing. Kept as the only written record of it until the attachments service models its own catalog; deleting it would make the gap invisible rather than fix it.",
       "type": "object",
       "required": ["id", "filename", "content"],
       "additionalProperties": false,
@@ -227,33 +227,7 @@
       }
     },
 
-    "attachment-use-entry": {
-      "description": "A component-level reference to a catalog attachment plus how it is delivered.",
-      "type": "object",
-      "required": ["reference", "provide-as"],
-      "additionalProperties": false,
-      "properties": {
-        "reference": { "type": "string", "pattern": "^[a-z]([a-z0-9-]*[a-z0-9])?\\Z", "maxLength": 40 },
-        "provide-as": { "type": "string", "enum": ["file", "env-var"] },
-        "path": { "type": "string", "pattern": "^/[^\\u0000]*\\Z" },
-        "env-name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\Z" }
-      },
-      "if": { "properties": { "provide-as": { "const": "file" } } },
-      "then": { "required": ["path"] },
-      "else": { "required": ["env-name"] }
-    },
 
-    "publish-on-web-config": {
-      "description": "TLS handling for a published component. standard = platform certificate (Let's Encrypt); passthrough = the pod presents its own certificate (couple it separately as an attachment, mounted in the pod); provided = own certificate terminated on the ingress (reference the catalog attachment PEM via 'attachment'). Applies at root (project services), per component (component services), and as a per-deployment-component override; resolution is deployment > component > root > standard.",
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "tls": { "type": "string", "enum": ["standard", "passthrough", "provided"] },
-        "attachment": { "type": "string", "pattern": "^[a-z]([a-z0-9-]*[a-z0-9])?\\Z", "maxLength": 40 }
-      },
-      "if": { "properties": { "tls": { "const": "provided" } }, "required": ["tls"] },
-      "then": { "required": ["attachment"] }
-    },
 
     "component-path": {
       "type": "object",
@@ -371,7 +345,10 @@
             { "type": "object" }
           ]
         },
-        "publish-on-web": { "type": "boolean" },
+        "publish-on-web": {
+          "comment": "v0 shape. _fixup_v2_data deletes it, but git_monitor validates a file straight from git BEFORE any migration runs, so the schema must keep accepting it or that gate rejects legacy files outright. Not a service contract: that lives in the service's config_model.",
+          "type": "boolean"
+        },
         "sso-rijk": { "type": "boolean" },
         "disabled": { "type": "boolean" },
         "disabled-reason": { "type": "string" },
@@ -480,30 +457,9 @@
           "items": { "$ref": "#/$defs/component-path" }
         },
         "services": {
+          "comment": "Envelope only, keyed by service name. Two shapes occur: a record carrying a config (publish-on-web, attachments) and a list of per-mount records (the storage services, which track a PVC generation per mount). What may be inside config is the service's own business, validated against its config_model_for(DEPLOYMENT_COMPONENT) by validate_service_configs. This used to name attachments and publish-on-web explicitly, which put their field lists in two places at once.",
           "type": "object",
-          "properties": {
-            "attachments": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "config": {
-                  "type": "array",
-                  "items": { "$ref": "#/$defs/attachment-use-entry" }
-                }
-              }
-            },
-            "publish-on-web": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "config": { "$ref": "#/$defs/publish-on-web-config" }
-              }
-            }
-          },
-          "additionalProperties": {
-            "type": "array",
-            "items": { "$ref": "#/$defs/deployment-service" }
-          }
+          "additionalProperties": { "$ref": "#/$defs/deployment-component-service" }
         },
         "user-env-vars": {
           "oneOf": [
@@ -529,17 +485,40 @@
     },
 
     "deployment-service": {
+      "comment": "Envelope only: {name|reference, schema-version?, config?}. What may appear inside config is the service's own business, checked against its config_model by validate_service_configs. Closing this here once meant no service other than the clone-state pair could use the deployment layer at all.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "name": { "type": "string" },
         "reference": { "type": "string" },
+        "schema-version": { "type": "string" },
         "config": { "$ref": "#/$defs/deployment-service-config" }
       }
     },
 
+    "deployment-component-service": {
+      "comment": "Either a record with a config, or a list of per-reference records.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "reference": { "type": "string" },
+            "schema-version": { "type": "string" },
+            "config": {}
+          }
+        },
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/deployment-service" }
+        }
+      ]
+    },
+
     "deployment-service-config": {
+      "comment": "Deliberately open: per-service models validate the contents. generation/revisions are named only so the shared clone-state shape stays documented in one place.",
       "type": "object",
-      "additionalProperties": false,
       "properties": {
         "generation": { "type": "integer" },
         "revisions": {

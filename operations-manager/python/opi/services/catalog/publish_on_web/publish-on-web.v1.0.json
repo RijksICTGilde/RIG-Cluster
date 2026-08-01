@@ -1,0 +1,241 @@
+{
+  "$defs": {
+    "AllowedDomainEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "title": "Domain",
+          "type": "string"
+        },
+        "history": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/DomainHistoryEntry"
+          },
+          "title": "History",
+          "type": "array"
+        },
+        "issuer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Issuer"
+        },
+        "restricted-subdomains": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Restricted-Subdomains"
+        },
+        "status": {
+          "enum": [
+            "requested",
+            "approved",
+            "denied"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "supports-dots": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Supports-Dots"
+        }
+      },
+      "required": [
+        "domain",
+        "status"
+      ],
+      "title": "AllowedDomainEntry",
+      "type": "object"
+    },
+    "AllowedSubdomainDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "history": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/DomainHistoryEntry"
+          },
+          "title": "History",
+          "type": "array"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "requested",
+            "approved",
+            "denied"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "status"
+      ],
+      "title": "AllowedSubdomainDetail",
+      "type": "object"
+    },
+    "AllowedSubdomainEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "title": "Domain",
+          "type": "string"
+        },
+        "subdomains": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AllowedSubdomainDetail"
+          },
+          "title": "Subdomains",
+          "type": "array"
+        }
+      },
+      "required": [
+        "domain"
+      ],
+      "title": "AllowedSubdomainEntry",
+      "type": "object"
+    },
+    "DomainHistoryEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "By"
+        },
+        "date": {
+          "title": "Date",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "status": {
+          "enum": [
+            "requested",
+            "approved",
+            "denied"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "date",
+        "status"
+      ],
+      "title": "DomainHistoryEntry",
+      "type": "object"
+    },
+    "DomainsConfig": {
+      "additionalProperties": false,
+      "description": "The project-wide domain approval block.",
+      "properties": {
+        "allowed-domains": {
+          "items": {
+            "$ref": "#/$defs/AllowedDomainEntry"
+          },
+          "title": "Allowed-Domains",
+          "type": "array"
+        },
+        "allowed-subdomains": {
+          "items": {
+            "$ref": "#/$defs/AllowedSubdomainEntry"
+          },
+          "title": "Allowed-Subdomains",
+          "type": "array"
+        }
+      },
+      "title": "DomainsConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "attachment": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Attachment"
+    },
+    "domains": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DomainsConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "tls": {
+      "anyOf": [
+        {
+          "enum": [
+            "standard",
+            "passthrough",
+            "provided"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tls"
+    }
+  },
+  "title": "PublishOnWebConfig",
+  "type": "object"
+}

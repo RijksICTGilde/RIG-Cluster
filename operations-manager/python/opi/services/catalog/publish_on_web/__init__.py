@@ -25,6 +25,7 @@ from opi.services.catalog.approval import (
     ApproverScope,
 )
 from opi.services.catalog.base import ConfigLayer, Service
+from opi.services.catalog.publish_on_web.config_model import PublishOnWebConfig
 from opi.services.services_enums import ServiceType
 
 
@@ -223,10 +224,13 @@ def _subdomain_record(project_data: dict[str, Any], item: ApprovalItem, history_
 
 class PublishOnWebService(Service):
     service_type = ServiceType.PUBLISH_ON_WEB
+    config_model = PublishOnWebConfig
+    config_schema_version = "1.0"
     config_component_order = 30
 
-    # Component-level config: TLS mode + attachment. No config_model yet (tls/attachment
-    # are not modelled as Pydantic), so config_api_fields stays default.
+    # One model covers both layers this service carries config on: tls/attachment per
+    # component, and the domains approval block at project level (relocated there by the
+    # v2.5 migration). Every field is optional, so each layer validates on its own.
 
     def config_editables(self, layer: ConfigLayer):
         if layer is not ConfigLayer.COMPONENT:

@@ -1,0 +1,59 @@
+{
+  "$defs": {
+    "AttachmentUse": {
+      "additionalProperties": false,
+      "description": "One coupling: which catalog attachment, and how it reaches the component.",
+      "properties": {
+        "env-name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Env-Name"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "provide-as": {
+          "enum": [
+            "file",
+            "env-var"
+          ],
+          "title": "Provide-As",
+          "type": "string"
+        },
+        "reference": {
+          "maxLength": 40,
+          "title": "Reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reference",
+        "provide-as"
+      ],
+      "title": "AttachmentUse",
+      "type": "object"
+    }
+  },
+  "description": "The component-level attachments config: a list of couplings.",
+  "items": {
+    "$ref": "#/$defs/AttachmentUse"
+  },
+  "title": "AttachmentsConfig",
+  "type": "array"
+}
