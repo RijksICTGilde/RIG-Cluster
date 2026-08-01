@@ -66,6 +66,15 @@ Adding a service touches exactly three places:
 forget step 3. Why the enum is hand-maintained rather than auto-discovered is argued in
 `features/service-provider-registry.md`.
 
+**Registration alone yields no UI.** Steps 1-3 make a service *exist* and be dispatchable;
+they do not put it on any screen. A user-selectable service must NOT set `hidden=True` on its
+`ServiceDefinition` -- `hidden` drops the service card from the wizard's services step, so the
+service is fully wired yet invisible and unselectable. That is the intended state for
+internal, always-on or namespace-variant services (`platform`, `namespace-redis`), and it is
+exactly what once left `sleep-mode` working end to end while never appearing in the wizard.
+If your service is meant to be chosen by a user, leave `hidden` off and give it its form
+section (below).
+
 ## Reading a service entry from a project file
 
 The `services:` list is a *selection set keyed by service name*, and an entry has three
@@ -281,6 +290,66 @@ the flow. Cover the three flows with a **user-based** sandbox E2E test -- real b
 clicks and field fills, no `page.evaluate` shortcuts and no direct modal-fragment URLs.
 `tests/e2e/test_sandbox_sleep_mode_ui.py` + `tests/e2e/helpers/service_config.py` are the
 pattern to copy.
+
+### Editables: validators, enforcers and closed sets
+
+An `Editable` declares three things: **where** the value lives (`yaml_path`, built with
+`config_path` so the layer and service are enums, not a literal), **which** values are valid
+(`validator`), and **how** a submitted string becomes a stored value (`converter`). A field
+with no validator leans on the JSON schema, which fires at *process* time, not at *save*
+time -- exactly how a project once got silently blocked (a value the schema forbade sailed
+through the form and only failed later, invisibly).
+
+1. **Pick a select when the set of valid values is known and closed** (cluster, template,
+   probe scheme, duration, role); pick free text when the value is genuinely open (a name, a
+   glob, a URL, a message). `opi/services/catalog/sleep_mode/editables.py` is the model: eight
+   of nine fields are selects, only `match` is free text (it holds glob patterns for
+   deployments that do not exist yet).
+2. **Every select has an `OptionsProvider`** registered in
+   `PROVIDER_REGISTRY` (`opi/forms/visualizers/providers.py`). A provider that depends on the
+   surrounding form data takes `yaml_data` in its constructor -- the bridge injects it (and
+   `current_value`) by matching the provider's `__init__` params.
+   `WakerComponentOptionsProvider` and `InviteRealmRoleOptionsProvider` are the examples.
+3. **A select is not validation.** The browser can post anything, and the API and YAML paths
+   never go through the form at all. Behind a closed set put *either* an `AllowedValuesValidator`
+   (`validators.py`) *or* a `Literal` in the config model (`WakeMode` in
+   `sleep_mode/config_model.py`, `AuthMethod` in `invite/config_model.py`). A value's
+   membership must be checked regardless of which widget the user saw.
+4. **A select must never silently drop a value it does not recognise.** If the stored value is
+   not in the current options (a role removed from the keycloak config, a renamed component),
+   add it back as a flagged option; otherwise the next save falls back to the first option and
+   the configuration changes with nobody touching it. `InviteRealmRoleOptionsProvider` keeps
+   the stored value, marked "(bestaat niet meer)".
+5. **Validator vs enforcer.** A `validator` is per-field, synchronous, and returns messages
+   (`EditableValidator`, `opi/forms/editables/editable.py`). An enforcer is for rules across
+   fields or with I/O, is async, and raises `ValueError`, `FieldError` or `FieldWarning`
+   (`AsyncEditableEnforcer`). It hangs off the `FormSection` (`section.enforcer`), gets the
+   merged data, and receives `enforcer_context` (e.g. `project_name`). Always tie a
+   `FieldError` to a field the user actually sees -- an error on an invisible path arrives as
+   a step that will not advance with no explanation. `UniqueInviteKeyEnforcer` is the model:
+   cross-project, async, `FieldError` on the key field.
+6. **Optional fields** carry `remove_when_none=True` so an emptied field drops the key instead
+   of writing `null` (`KEYCLOAK_RESTRICT_ACCESS_EDITABLE`). Keep an editable `default=` equal
+   to the model default; the model is the guardrail, the default is only what the empty form
+   shows, and a default must never be sown into a project that did not select the service.
+
+Existing building blocks, so nobody writes a fifth name validator:
+
+| Need | Use | Where (`opi/forms/editables/`) |
+|---|---|---|
+| Kubernetes-resource name | `KubernetesNameValidator` | `validators.py` |
+| Component name (incl. uniqueness) | `ComponentNameValidator` | `validators.py` |
+| Keycloak realm-role name | `RealmRoleValidator` | `validators.py` |
+| URL | `UrlValidator` | `validators.py` |
+| Email | `EmailValidator` | `validators.py` |
+| Closed value set | `AllowedValuesValidator` | `validators.py` |
+| Required field | `required=True` + `RequiredValidator` | `validators.py` |
+| Uniqueness within a sequence | `UniqueNamesEnforcer` | `enforcers.py` |
+| Cross-field rule with I/O | `DomainConfigEnforcer` (example) | `enforcers.py` |
+
+**Checklist for a new field:** a `yaml_path` built with `config_path`, a field in the config
+model, a validator or a closed select with `AllowedValues`/`Literal`, a visualizer with a
+label and help text, and a line in the section layout.
 
 ## API (configuring via REST)
 
