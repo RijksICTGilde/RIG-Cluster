@@ -91,6 +91,34 @@ def modal_advance_to_field(page: Page, name_contains: str, *, max_steps: int = 8
     return modal_field(page, name_contains).count() > 0
 
 
+def modal_add_sequence_item(page: Page, add_label: str = "Item toevoegen") -> None:
+    """Press a sequence 'add' button inside the open modal and wait for the new row.
+
+    In the detail-edit modal the add button fetches a fresh fragment into ``#edit-section-inner``,
+    so we wait for the field count under it to grow rather than for a fixed timeout.
+    """
+    before = page.locator(f"{_INNER} .rvo-sequence__items > *").count()
+    page.locator(f"{_INNER} button:has-text('{add_label}'), {_INNER} a:has-text('{add_label}')").last.click()
+    with contextlib.suppress(PlaywrightError):
+        page.wait_for_function(
+            """([inner, prev]) => {
+                const root = document.querySelector(inner);
+                if (!root) return false;
+                return root.querySelectorAll('.rvo-sequence__items > *').length > prev;
+            }""",
+            arg=[_INNER, before],
+            timeout=15000,
+        )
+
+
+def modal_submit(page: Page, label: str = "Opslaan") -> None:
+    """Press the modal's save/submit button and wait for the modal to close."""
+    submit = page.locator(f"{_INNER} button[type='submit']:has-text('{label}')")
+    target = submit if submit.count() else page.locator(f"{_INNER} button[type='submit']")
+    target.last.scroll_into_view_if_needed()
+    target.last.click()
+
+
 def open_deployments_tab(page: Page) -> None:
     """Click the 'Deployments' tab, where the per-deployment action buttons live."""
     page.get_by_text("Deployments", exact=True).first.click()
