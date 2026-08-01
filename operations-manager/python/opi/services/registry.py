@@ -96,7 +96,9 @@ def deployment_manifest_services() -> list[Service]:
     deployment, after the component loop, and writes the returned specs.
     """
     overriding = [
-        s for s in SERVICES.values() if type(s).contribute_deployment_manifests is not Service.contribute_deployment_manifests
+        s
+        for s in SERVICES.values()
+        if type(s).contribute_deployment_manifests is not Service.contribute_deployment_manifests
     ]
     return sorted(overriding, key=lambda s: s.manifest_order)
 
