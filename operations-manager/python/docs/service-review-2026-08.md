@@ -678,7 +678,20 @@ config dragen); hun beschrijving verwijst nu naar het config-endpoint. De
 add-service-endpoints (v1 + v2) zijn `deprecated` gemarkeerd omdat de uniforme PUT
 selectie + config in één doet.
 
+**Poort-validatie aangescherpt (gedragswijziging, met akkoord).** Het exposen van
+config via de getypeerde API bracht aan het licht dat de poort-range te ruim was:
+`health-check.port` en `metrics-scraper.port` stonden op `1..65535`, terwijl een
+non-root container (images draaien niet als root) een privileged poort (<1024) nooit
+kan binden of bereiken. Beide zijn naar `1024..65535` gebracht, model én editable
+gespiegeld; `metrics-scraper` had de bound alleen op de editable, niet op het model,
+dus de API accepteerde daar elke int — nu ook in het model. Fragmenten
+geregenereerd.
+- [FINDING/vervolg] De poort hoort idealiter een op de component *gedefinieerde*
+  inbound-poort te zijn (cross-veld-validatie). Dat kent de service-config nu niet en
+  is bewust uitgesteld; los op te pakken.
+
 **Tests:** `tests/test_service_config_api.py` (pure kern, round-trip door het
-validatie-chokepoint, endpoint-helpers, en een gemeten dekkings-guard over álle services)
-en `tests/test_v2_flow.py::TestConfigureServiceFlow` (het HTTP-oppervlak: descriptors,
-upsert/clear-payloads, auth, en de 404/422-poorten). Alle falende-eerst geverifieerd.
+validatie-chokepoint, endpoint-helpers, een gemeten dekkings-guard over álle services,
+en de privileged-poort-afwijzing) en `tests/test_v2_flow.py::TestConfigureServiceFlow`
+(het HTTP-oppervlak: catalogus, getypeerde upsert/clear-payloads, OpenAPI-per-service,
+auth, en de 404/422-poorten). Alle falende-eerst geverifieerd.

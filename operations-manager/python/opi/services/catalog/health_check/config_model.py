@@ -31,7 +31,9 @@ class HealthCheckConfig(BaseModel):
     # the component has no inbound port the kubelet could reach).
     scheme: Literal["none", "tcp", "http", "https"] | None = None
     # Port to probe. None -> the component's first inbound port (application port).
-    port: int | None = Field(default=None, ge=1, le=65535)
+    # Non-privileged only (>=1024): images run non-root, so an application port
+    # below 1024 can never be bound or reached.
+    port: int | None = Field(default=None, ge=1024, le=65535)
     # Path for the liveness and startup probes; ignored when scheme is tcp/none.
     # None -> the template default "/". The pattern matches every other manifest-bound
     # string in project_v2.json (match/rewrite/env-name): the value is interpolated
