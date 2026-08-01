@@ -21,6 +21,7 @@ only routes to the specs.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -28,6 +29,8 @@ from opi.services.registry import approval_services
 
 if TYPE_CHECKING:
     from opi.services.catalog.approval import ApprovalItem, ApprovalNotice, ApprovalSpec
+
+logger = logging.getLogger(__name__)
 
 
 def _spec_indexes() -> tuple[dict[tuple[str, str], ApprovalSpec], dict[str, ApprovalSpec]]:
@@ -125,3 +128,11 @@ def apply_approval_verdicts(
             history_entry["message"] = message
 
         spec.record(project_data, item, history_entry)
+
+        # A verdict is a state change: name the actor, the subject and the new status so
+        # the audit log can reconstruct which item was approved/denied by whom (checklist 10).
+        subject = item.get("domain") or item.get("name") or "(onbekend)"
+        logger.info(
+            f"Approval recorded: {spec.key} '{subject}' -> {new_status} in project "
+            f"'{project_data.get('name', '(onbekend)')}' by {admin_email or '(onbekend)'}"
+        )

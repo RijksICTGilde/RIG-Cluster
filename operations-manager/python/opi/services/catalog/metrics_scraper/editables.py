@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from opi.forms.editables.converters import IntegerConverter
 from opi.forms.editables.editable import Editable
-from opi.forms.editables.validators import PathValidator
+from opi.forms.editables.validators import PathValidator, RangeValidator
 
 METRICS_PORT_EDITABLE = Editable(
     yaml_path="components[*]/services{metrics-scraper}/port",
     converter=IntegerConverter(),
+    validator=RangeValidator(min_value=1, max_value=65535),
     required=True,
     default=8080,
     depends_on="components[*]/services",
