@@ -257,9 +257,7 @@ def _template_only_keys(
     return set(template_data or {}) - produced
 
 
-def _build_cross_domain_context(
-    project_name: str, project_data: dict[str, Any], user_email: str
-) -> dict[str, Any]:
+def _build_cross_domain_context(project_name: str, project_data: dict[str, Any], user_email: str) -> dict[str, Any]:
     """Precompute cross-domain-access select options (RC-15).
 
     ``_cross_domain_projects``: peer projects the user is authorized for, excluding the own
