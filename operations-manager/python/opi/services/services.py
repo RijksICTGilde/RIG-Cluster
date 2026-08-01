@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from opi.services.services_enums import ServiceType
+from opi.services.services_enums import ServiceKind, ServiceType
 
 if TYPE_CHECKING:
     from opi.services.catalog.base import ConfigLayer
@@ -173,6 +173,11 @@ class ServiceDefinition:
     storage_config: dict[str, Any] | None = None
     component_flag: str | None = None
     hidden: bool = False
+    kind: ServiceKind = ServiceKind.USER
+    """Whether a project chooses this service (``USER``) or the platform always runs it
+    (``SYSTEM``). Distinct from ``hidden``: ``hidden`` means "not in the service picker"
+    (a namespace variant OPI selects itself), ``SYSTEM`` means "always on, never in the
+    project file". A ``SYSTEM`` service is also kept out of the picker."""
     help_template: str | None = None
     """Optional Jinja2 template name (relative to ``templates/help/``) with a
     long-form explanation shown in a popup when the user clicks the info icon."""
@@ -597,7 +602,9 @@ class ServiceAdapter:
             scope="component",
             secret_class="PlatformSecret",
             variables=[var.value for var in PlatformVariables],
-            hidden=True,
+            # Always on, never chosen by a project -> a system service. kind=SYSTEM
+            # also keeps it out of the picker, so an explicit hidden is not needed.
+            kind=ServiceKind.SYSTEM,
         ),
         ServiceType.ATTACHMENTS: ServiceDefinition(
             name="Bijlagen",
@@ -662,6 +669,20 @@ class ServiceAdapter:
             # at submit that keycloak is present. An invite assigns a realm role, so keycloak
             # must exist. Do NOT build a second dependency mechanism next to this.
             requires=["services/keycloak"],
+        ),
+        ServiceType.RESOURCE_TUNING: ServiceDefinition(
+            name="Resource tuning",
+            description=(
+                "Systeemdienst: houdt draaiende deployments in de gaten na een sync en hoogt "
+                "het geheugen op van een component dat OOM'd. Draait altijd, is niet kiesbaar."
+            ),
+            icon="grafiek",
+            color="grijs-600",
+            scope="deployment",
+            variables=[],
+            # Always on, never in the project file -> a system service (kind=SYSTEM also
+            # keeps it out of the picker, so no explicit hidden is needed).
+            kind=ServiceKind.SYSTEM,
         ),
         ServiceType.HEALTH_CHECK: ServiceDefinition(
             name="Health check",

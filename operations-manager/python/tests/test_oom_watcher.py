@@ -838,7 +838,7 @@ class TestRunOomCheck:
     """Tests for the internal health check coroutine."""
 
     @patch("opi.services.oom_watcher._queue_refresh_task", new_callable=AsyncMock)
-    @patch("opi.services.oom_watcher.tune_deployment_resources", new_callable=AsyncMock)
+    @patch("opi.services.deployment_observation.run_after_sync_observation", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.get_project_data")
     @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
@@ -865,7 +865,7 @@ class TestRunOomCheck:
         mock_queue.assert_not_called()
 
     @patch("opi.services.oom_watcher._queue_refresh_task", new_callable=AsyncMock)
-    @patch("opi.services.oom_watcher.tune_deployment_resources", new_callable=AsyncMock)
+    @patch("opi.services.deployment_observation.run_after_sync_observation", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.get_project_data")
     @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
@@ -885,13 +885,17 @@ class TestRunOomCheck:
             "myproject.yaml",
         )
         mock_check.return_value = PodHealthResult("production-api", oom_detected=True)
-        mock_tune.return_value = MagicMock(changes=[{"component": "api"}])
+        mock_tune.return_value = MagicMock(requeue_refresh=True, failures=[])
 
         await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
 
-        mock_tune.assert_called_once_with(
-            "myproject", "production", skip_reprocessing=True, oom_components=["api"]
-        )
+        # Routed through the generic after-sync scan with the OOM'd component's health.
+        mock_tune.assert_called_once()
+        args = mock_tune.call_args.args
+        assert args[0] == "myproject"
+        assert args[1] == "production"
+        assert set(args[2]) == {"api"}
+        assert args[2]["api"].oom_detected is True
         mock_queue.assert_called_once_with("myproject", "production")
 
     @patch("opi.services.oom_watcher._queue_refresh_task", new_callable=AsyncMock)
@@ -927,7 +931,7 @@ class TestRunOomCheck:
         )
         mock_queue.assert_called_once_with("myproject", "production")
 
-    @patch("opi.services.oom_watcher.tune_deployment_resources", new_callable=AsyncMock)
+    @patch("opi.services.deployment_observation.run_after_sync_observation", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.get_project_data")
     @pytest.mark.asyncio
@@ -1061,7 +1065,7 @@ class TestRunOomCheckTuneFailure:
     """Tests for error handling when tune_deployment_resources raises."""
 
     @patch("opi.services.oom_watcher._queue_refresh_task", new_callable=AsyncMock)
-    @patch("opi.services.oom_watcher.tune_deployment_resources", new_callable=AsyncMock)
+    @patch("opi.services.deployment_observation.run_after_sync_observation", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.get_project_data")
     @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
