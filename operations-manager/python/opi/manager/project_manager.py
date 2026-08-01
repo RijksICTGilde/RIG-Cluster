@@ -2824,6 +2824,8 @@ class ProjectManager:
             health_warnings: list[str] = []
 
             if deployments and project_name:
+                from opi.services.catalog.base import ComponentHealth
+                from opi.services.deployment_observation import run_after_sync_observation
                 from opi.services.oom_watcher import (
                     MAIN_CONTAINER_NAME,
                     STALL_NOTICE_SECONDS,
@@ -2832,7 +2834,6 @@ class ProjectManager:
                     describe_components_waiting,
                     disable_components_for_image_pull,
                 )
-                from opi.services.resource_tuning_service import tune_deployment_resources
                 from opi.utils.naming import generate_unique_name
 
                 # Build (app_name, deployment) pairs
@@ -3101,50 +3102,42 @@ class ProjectManager:
                         else None
                     )
 
-                    # Handle OOM: tune resources, queue refresh (existing behavior)
+                    # Handle OOM via the generic after-sync hook scan (no per-service
+                    # branch here): build the observed health for the OOM'd components
+                    # and let the registry decide. The resource-tuning system service
+                    # tunes and asks for a refresh; the runner commits once.
                     if oom_failures:
-                        oom_components = ", ".join(f.component_reference or f.component_name for f in oom_failures)
+                        oom_names = ", ".join(f.component_reference or f.component_name for f in oom_failures)
                         if progress_manager and argo_task:
                             progress_manager.update_task(
                                 argo_task,
-                                f"OOM detected for {oom_components} in {app_name}, tuning resources...",
+                                f"OOM detected for {oom_names} in {app_name}, tuning resources...",
                             )
+                        component_health = {
+                            (f.component_reference or f.component_name): ComponentHealth(oom_detected=True)
+                            for f in oom_failures
+                        }
                         try:
-                            result = await tune_deployment_resources(
-                                project_name,
-                                dep_name,
-                                skip_reprocessing=True,
-                                oom_components=[f.component_reference or f.component_name for f in oom_failures],
-                            )
-                            if result.changes:
+                            observation = await run_after_sync_observation(project_name, dep_name, component_health)
+                            if observation.requeue_refresh:
                                 logger.info(
-                                    "OOM auto-tune applied %d change(s) for %s/%s (components: %s), queuing refresh task",
-                                    len(result.changes),
+                                    "OOM auto-tune committed changes for %s/%s (components: %s), queuing refresh task",
                                     project_name,
                                     dep_name,
-                                    oom_components,
+                                    oom_names,
                                 )
                                 await self._queue_refresh_task(task_service, project_name, dep_name)
-                            else:
-                                logger.warning(
-                                    "OOM auto-tune found no actionable changes for %s/%s (components: %s)",
-                                    project_name,
-                                    dep_name,
-                                    oom_components,
-                                )
-                                sync_failures.append(
-                                    f"{app_name}: OOM detected for {oom_components} but auto-tune could not determine new limits"
-                                )
+                            sync_failures.extend(f"{app_name}: {msg}" for msg in observation.failures)
                         except Exception as tune_err:
                             logger.error(
-                                "OOM auto-tune failed for %s/%s (components: %s): %s",
+                                "OOM after-sync observation failed for %s/%s (components: %s): %s",
                                 project_name,
                                 dep_name,
-                                oom_components,
+                                oom_names,
                                 tune_err,
                             )
                             sync_failures.append(
-                                f"{app_name}: OOM detected for {oom_components}, auto-tune failed: {tune_err}"
+                                f"{app_name}: OOM detected for {oom_names}, auto-tune failed: {tune_err}"
                             )
 
                     # Handle ImagePullBackOff: disable component, queue refresh. A pod
