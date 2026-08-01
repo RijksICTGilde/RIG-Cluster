@@ -38,6 +38,10 @@ class ServiceType(Enum):
     # Invitations: onboard users into the project's Keycloak realm via a shared link
     INVITE = "invite"
 
+    # Cross-domain network access: allow this project's pods to reach, and be reached by,
+    # named deployments/components of other projects on explicit ports (NetworkPolicy).
+    CROSS_DOMAIN_ACCESS = "cross-domain-access"
+
 
 class CloneFromType(Enum):
     """Type of clone-from source for deployment cloning."""
