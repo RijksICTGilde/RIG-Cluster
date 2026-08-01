@@ -18,6 +18,7 @@ from opi.services.catalog.attachments import AttachmentsService
 from opi.services.catalog.authorization_wall import AuthorizationWallService
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.health_check import HealthCheckService
+from opi.services.catalog.invite import InviteService
 from opi.services.catalog.keycloak import KeycloakService
 from opi.services.catalog.metrics_scraper import MetricsScraperService
 from opi.services.catalog.minio import MinioStorageService
@@ -53,6 +54,7 @@ SERVICES: dict[ServiceType, Service] = {
     ServiceType.PLATFORM: PlatformService(),
     ServiceType.ATTACHMENTS: AttachmentsService(),
     ServiceType.SLEEP_MODE: SleepModeService(),
+    ServiceType.INVITE: InviteService(),
 }
 
 

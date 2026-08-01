@@ -164,6 +164,29 @@ class AttachmentIdValidator:
         return []
 
 
+class InviteKeyValidator:
+    """Validates an invite key: lowercase letters, digits, hyphens and underscores,
+    starting with a letter or digit, 3 to 64 characters.
+
+    The key becomes a URL path segment (``/invite/{key}``), so spaces, slashes and
+    percent signs are rejected. Emptiness is allowed here (an empty key is filled with a
+    generated random key at save time); only a non-empty, malformed key is rejected.
+    """
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return []  # empty is generated at save time
+        value_str = str(value)
+        if len(value_str) < 3 or len(value_str) > 64:
+            return ["Uitnodigingssleutel moet tussen 3 en 64 tekens bevatten"]
+        if not re.match(r"^[a-z0-9][a-z0-9_-]*$", value_str):
+            return [
+                "Uitnodigingssleutel mag alleen kleine letters, cijfers, streepjes en "
+                "onderstrepingstekens bevatten en moet met een letter of cijfer beginnen"
+            ]
+        return []
+
+
 class ContainerImageValidator:
     """Validates container image references.
 

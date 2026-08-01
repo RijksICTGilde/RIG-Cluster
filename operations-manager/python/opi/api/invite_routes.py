@@ -23,7 +23,6 @@ from opi.manager.invite_manager import (
     InviteAuthMethodError,
     InviteDomainError,
     InviteError,
-    InviteExpiredError,
     InviteManager,
     UserExistsError,
 )
@@ -260,7 +259,6 @@ def _get_error_messages(language: str) -> dict[str, str]:
     messages = {
         "nl": {
             "invite_not_found": "Uitnodiging niet gevonden",
-            "invite_expired": "Uitnodiging verlopen",
             "domain_mismatch": "E-mailadres komt niet overeen met vereiste domein",
             "auth_method_not_allowed": "Authenticatiemethode niet beschikbaar voor deze uitnodiging",
             "user_exists": "Account bestaat al. Gebruik SSO login.",
@@ -278,7 +276,6 @@ def _get_error_messages(language: str) -> dict[str, str]:
         },
         "en": {
             "invite_not_found": "Invitation not found",
-            "invite_expired": "Invitation expired",
             "domain_mismatch": "Email address does not match required domain",
             "auth_method_not_allowed": "Authentication method not available for this invitation",
             "user_exists": "Account already exists. Use SSO login.",
@@ -331,21 +328,7 @@ async def invite_landing(request: Request, key: str) -> Response:
     project_name, project_data, invite, cluster = result
     language = _get_language(request, project_data)
 
-    # Validate invite
     invite_manager = InviteManager()
-    try:
-        invite_manager.validate_invite(project_data, invite)
-    except InviteExpiredError as e:
-        error_messages = _get_error_messages(language)
-        return templates.TemplateResponse(
-            "invite-error.html.j2",
-            {
-                "request": request,
-                "error_title": error_messages["invite_expired"],
-                "error_message": f"Verlopen op: {e.expired_at}" if language == "nl" else f"Expired on: {e.expired_at}",
-                "language": language,
-            },
-        )
 
     # Get the project's realm name
     realm_name = generate_project_realm_name(project_name, cluster)
@@ -409,7 +392,6 @@ async def invite_sso_start(request: Request, key: str) -> Response:
     invite_manager = InviteManager()
 
     try:
-        invite_manager.validate_invite(project_data, invite)
         invite_manager.validate_auth_method(project_data, invite, "sso")
     except InviteError as e:
         raise HTTPException(status_code=400, detail=e.message) from e
@@ -478,7 +460,6 @@ async def invite_idp_start(request: Request, key: str, idp_alias: str) -> Respon
     invite_manager = InviteManager()
 
     try:
-        invite_manager.validate_invite(project_data, invite)
         invite_manager.validate_auth_method(project_data, invite, "sso")
     except InviteError as e:
         raise HTTPException(status_code=400, detail=e.message) from e
@@ -678,18 +659,7 @@ async def invite_register_form(request: Request, key: str) -> Response:
     invite_manager = InviteManager()
 
     try:
-        invite_manager.validate_invite(project_data, invite)
         invite_manager.validate_auth_method(project_data, invite, "local")
-    except InviteExpiredError as e:
-        return templates.TemplateResponse(
-            "invite-error.html.j2",
-            {
-                "request": request,
-                "error_title": error_messages["invite_expired"],
-                "error_message": f"Verlopen op: {e.expired_at}" if language == "nl" else f"Expired on: {e.expired_at}",
-                "language": language,
-            },
-        )
     except InviteAuthMethodError:
         if language == "nl":
             auth_error_msg = "Account aanmaken is niet beschikbaar voor deze uitnodiging."
@@ -760,7 +730,6 @@ async def invite_register_submit(request: Request, key: str) -> Response:
     invite_manager = InviteManager()
 
     try:
-        invite_manager.validate_invite(project_data, invite)
         invite_manager.validate_auth_method(project_data, invite, "local")
     except InviteError as e:
         return templates.TemplateResponse(
