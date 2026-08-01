@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from opi.forms.visualizers.sections import FormSection
     from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.services.catalog.approval import ApprovalSpec
-    from opi.services.services_enums import HookPoint, ServiceType
+    from opi.services.services_enums import HookPoint, ManagerKey, ServiceType
     from opi.utils.secrets import BaseSecret
 
 
@@ -352,7 +352,7 @@ class Service(ABC):
     #: Manager key for server-side cleanup on removal (RC-5 Phase 5), or None if the
     #: service has no server-side resources to clean up. Resolved via
     #: RemovalContext.get_manager; replaces the _SERVICE_TYPE_MANAGER_ATTR map.
-    cleanup_manager_key: ClassVar[str | None] = None
+    cleanup_manager_key: ClassVar[ManagerKey | None] = None
 
     #: Per-deployment secret whose name is added to the pod's ``envFrom`` when a
     #: component uses this service (RC-5 Phase 6a), or None. The base

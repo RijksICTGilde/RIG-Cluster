@@ -19,7 +19,7 @@
                         {% set service_def = ServiceAdapter.get_service_definition(service.enum) %}
                         <div>
                             <c-heading type="h3"><c-icon icon="{{ service_def.icon }}" size="xl" color="{{ service_def.color }}" />{{ service_def.name }}</c-heading>
-                            <div class="service-scope">{{ service_def.scope|title }} scope</div>
+                            <div class="service-scope">{{ service_def.scope.value|title }} scope</div>
                         </div>
                     </div>
                     <p class="rvo-text--sm">{{ service_def.description }}</p>

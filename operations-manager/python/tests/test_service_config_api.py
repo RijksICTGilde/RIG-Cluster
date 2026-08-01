@@ -342,6 +342,7 @@ EXPECTED_API_TARGETS: dict[str, list[str]] = {
     "postgresql-database": [],
     "publish-on-web": ["component"],
     "redis": ["project"],
+    "resource-tuning": [],
     "sleep-mode": ["project"],
     "temp-storage": ["component"],
 }

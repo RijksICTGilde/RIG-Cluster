@@ -89,7 +89,7 @@ The `oom_watch_attempt` field in the task payload tracks which attempt number th
 
 ### OOM detected but not fixed
 
-- Check logs for `OOM watcher: auto-tune applied N change(s)`
+- Check logs for `Health watcher: auto-tune committed changes` (the tune now runs through the generic after-sync hook scan; see auto-resource-tuning.md)
 - If max attempts reached, you'll see: `OOM watcher: max attempts (3) reached ... manual intervention required`
 - Verify the metrics backend (Prometheus) is available - the tune service needs it to compute recommendations
 
