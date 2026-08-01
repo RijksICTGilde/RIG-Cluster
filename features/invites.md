@@ -89,6 +89,22 @@ Advanced pass-through fields (`groups`, `client-roles`, and the deprecated `role
 for `realm-roles`) validate but are not offered in the UI. Keys are hyphenated on disk; the
 service model also accepts the underscore spelling that predates this service.
 
+## Configuring via the API
+
+Because the service owns a config model (`InviteConfig`), it is configurable through the
+unified per-service REST endpoint without any dedicated code -- the route is generated from
+the registry with the model as its typed body:
+
+```
+PUT /api/v2/projects/{project}/services/invite/config/project     # body = InviteConfig
+GET /api/v2/projects/{project}/services/invite/config             # read current config
+```
+
+The body is validated by the same `InviteConfig` the wizard save runs through, so a rejected
+value fails at request time (422). A write reconciles the project like any other config
+change; the invite contributes no manifests, so that reconcile is a no-op for its own
+resources. See `features/service-config-api.md` for the shared endpoint.
+
 ## What happens when a role disappears
 
 If a realm role that an invite grants is later removed from the Keycloak config:
