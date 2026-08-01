@@ -1071,3 +1071,71 @@ def test_v24_leaves_attachments_legacy():
     assert out["components"][0]["services"][0] == {
         "attachments": {"config": [{"reference": "x", "provide-as": "file", "path": "/x"}]}
     }
+
+
+# ---------------------------------------------------------------------------
+# Invite relocation (v2.5 -> v2.6, RC-13)
+# ---------------------------------------------------------------------------
+
+
+def _project_with_top_level_invites(version: float = 2.5) -> dict:
+    """A v2.5 project in the exact shape of the four production invite files."""
+    return {
+        "schema-version": version,
+        "name": "asses-k2n",
+        "services": ["publish-on-web", "keycloak"],
+        "invites": {
+            "settings": {"default_language": "nl"},
+            "active": [
+                {
+                    "key": "invulhulpen",
+                    "realm_roles": ["allowed-user"],
+                    "application_url": "https://app.example.nl",
+                    "contact_email": "help@example.nl",
+                    "message": {"nl": "Welkom", "en": "Welcome"},
+                    "success_title": {"nl": "Klaar", "en": "Done"},
+                    "success_button": {"nl": "Ga", "en": "Go"},
+                }
+            ],
+        },
+    }
+
+
+def test_relocate_invites_moves_the_block_and_validates():
+    from opi.core.project_schema import validate_project_schema
+
+    out, was_migrated = migrate_to_latest(_project_with_top_level_invites())
+    assert was_migrated is True
+    assert "invites" not in out
+    assert out["schema-version"] == LATEST_SCHEMA_VERSION
+    invite_service = next(s for s in out["services"] if isinstance(s, dict) and s.get("name") == "invite")
+    config = invite_service["config"]
+    assert config["default-language"] == "nl"
+    assert config["active"][0]["key"] == "invulhulpen"
+    assert config["active"][0]["realm-roles"] == ["allowed-user"]  # hyphenated on disk
+    # The migrated file passes the JSON schema gate (validate raises on failure).
+    validate_project_schema(out)
+
+
+def test_relocate_invites_is_idempotent():
+    out, _ = migrate_to_latest(_project_with_top_level_invites())
+    out2, was_migrated = migrate_to_latest(copy.deepcopy(out))
+    assert was_migrated is False
+    assert out == out2
+
+
+def test_unconditional_fixup_relocates_a_stamped_file():
+    # A file already stamped at the latest version but still carrying a top-level invites block
+    # (e.g. written by an old pod mid-rollout) is repaired by the always-run fixup.
+    data = _project_with_top_level_invites(version=LATEST_SCHEMA_VERSION)
+    out, was_migrated = migrate_to_latest(data)
+    assert was_migrated is True
+    assert "invites" not in out
+    assert any(isinstance(s, dict) and s.get("name") == "invite" for s in out["services"])
+
+
+def test_empty_invites_block_is_removed_without_a_service():
+    data = {"schema-version": 2.5, "name": "x", "services": ["keycloak"], "invites": {}}
+    out, _ = migrate_to_latest(data)
+    assert "invites" not in out
+    assert not any(isinstance(s, dict) and s.get("name") == "invite" for s in out["services"])
