@@ -353,6 +353,44 @@ class KeycloakYamlHandler:
                 admin_events_enabled=item.get("adminEventsEnabled"),
                 admin_events_details_enabled=item.get("adminEventsDetailsEnabled"),
             )
+            await self._apply_realm_self_service(realm_name, item)
+
+    async def _apply_realm_self_service(self, realm_name: str, item: dict[str, Any]) -> None:
+        """Apply the identity self-service restrictions from a realms item.
+
+        Only these two keys are read from the blueprint; the rest of the realm representation
+        is still hardcoded in ``create_realm()``. That gap is deliberate and tracked separately,
+        so a new line in a blueprint does not silently do nothing here either: everything this
+        method understands is listed below.
+
+        Both calls are idempotent, so this runs on the create path and on reconcile alike.
+        """
+        for alias in item.get("disabledRequiredActions") or []:
+            await self.keycloak.set_required_action_enabled(realm_name, alias, enabled=False)
+
+        for entry in item.get("removeFromDefaultRoles") or []:
+            client_id, _, role_name = str(entry).partition(":")
+            if not role_name:
+                logger.warning(f"removeFromDefaultRoles entry '{entry}' is not 'client:role', skipping")
+                continue
+            await self.keycloak.remove_default_role(realm_name, client_id, role_name)
+
+    async def ensure_realm_self_service(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
+        """Ensure the identity self-service restrictions are applied (idempotent).
+
+        Reconcile counterpart of the create path: ``create_realm()`` only runs when a realm is
+        actually created, so without this an existing realm would never pick these up. That is
+        exactly why the identity-field lock never reached any pre-existing realm.
+        """
+        config = self._load_yaml(yaml_path)
+        variables = {**config.get("variables", {}), **context}
+
+        for item in self._expand_list(config.get("realms"), variables):
+            realm_name = item.get("name")
+            if not realm_name:
+                logger.warning("Realm missing 'name' field, skipping self-service restrictions")
+                continue
+            await self._apply_realm_self_service(realm_name, item)
 
     async def _process_identity_providers(self, idp_section: Any, variables: dict[str, Any]) -> None:
         """Process identityProviders section.
