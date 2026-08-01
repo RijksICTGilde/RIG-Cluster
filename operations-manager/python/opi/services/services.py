@@ -645,6 +645,24 @@ class ServiceAdapter:
             # actions_provider is bound by opi/services/catalog/sleep_mode/__init__.py
             # (the wake button); services.py must not import the catalog package.
         ),
+        ServiceType.INVITE: ServiceDefinition(
+            name="Uitnodiging",
+            description=(
+                "Nodig gebruikers uit voor het Keycloak-realm van dit project via een deelbare link. "
+                "De link is de enige toegangsdrempel: wie hem heeft kan een account aanmaken. "
+                "Vereist de Keycloak-service."
+            ),
+            icon="envelop",
+            color="lichtblauw",
+            # scope is not meaningful here (an invite provisions nothing), but the field is
+            # required; "component" matches keycloak/attachments.
+            scope="component",
+            variables=[],
+            # Path-syntax requirement: auto-selects keycloak, locks it in the UI, and validates
+            # at submit that keycloak is present. An invite assigns a realm role, so keycloak
+            # must exist. Do NOT build a second dependency mechanism next to this.
+            requires=["services/keycloak"],
+        ),
         ServiceType.HEALTH_CHECK: ServiceDefinition(
             name="Health check",
             description=(

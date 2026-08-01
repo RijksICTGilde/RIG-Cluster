@@ -15,7 +15,7 @@ from opi.utils.naming import generate_storage_name
 
 logger = logging.getLogger(__name__)
 
-LATEST_SCHEMA_VERSION = 2.5
+LATEST_SCHEMA_VERSION = 2.6
 
 # NOTE: Domain restriction changes (task-1) introduced:
 # - domains.allowed-subdomains entries changed from list[str] to list[{name, status, history}]
@@ -26,6 +26,11 @@ LATEST_SCHEMA_VERSION = 2.5
 # v2.4 -> v2.5 (RC-5): the domain-approval block moved from the project root (`domains:`)
 # to the publish-on-web service config (`services/[publish-on-web]/config/domains`).
 # See ``normalize_domains_location`` below.
+#
+# v2.5 -> v2.6 (RC-13): the top-level `invites:` block moved to the invite service config
+# (`services/invite/config`), its `settings.default_language` flattened to `default-language`
+# next to `active`, and its keys hyphenated to match the service model. See
+# ``relocate_invites_to_service`` below.
 
 # Storage service types and their corresponding storage type values
 _STORAGE_SERVICE_TO_TYPE = {
@@ -105,6 +110,9 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
         migrated = True
 
     if version < 2.5 and normalize_domains_location(project_data):
+        migrated = True
+
+    if version < 2.6 and relocate_invites_to_service(project_data):
         migrated = True
 
     if migrated:
@@ -474,6 +482,12 @@ def _fixup_v2_data(project_data: dict[str, Any]) -> bool:
     if _fixup_catalog_root(project_data):
         cleaned = True
 
+    # Relocate a stray top-level `invites:` even on a file already stamped at the latest
+    # version (e.g. written by an old pod mid-rollout). The version-gated step above skips
+    # such a file; this unconditional fixup repairs it, exactly like _fixup_catalog_root.
+    if relocate_invites_to_service(project_data):
+        cleaned = True
+
     if cleaned:
         project_name = project_data.get("name", "unknown")
         logger.info(f"Cleaned up stale data in project '{project_name}'")
@@ -667,6 +681,60 @@ def normalize_domains_location(project_data: dict[str, Any]) -> bool:
     from opi.connectors.subdomain import ensure_domains_config
 
     ensure_domains_config(project_data)
+    return True
+
+
+def relocate_invites_to_service(project_data: dict[str, Any]) -> bool:
+    """Relocate the top-level ``invites:`` block to the invite service config (v2.5 -> v2.6, RC-13).
+
+    ``invites.settings.default_language`` + ``invites.active`` move to
+    ``services/invite/config`` (find-or-creates the invite service entry, like the keycloak
+    ``config.keycloak`` -> ``service realms`` move in ``_migrate_v2_2_to_v2_3``). The block is
+    normalized through ``InviteConfig`` and dumped ``by_alias`` so the on-disk result is the
+    hyphenated key spelling of the service model and matches the committed schema fragment.
+
+    ``invites`` is a TOP-LEVEL key, so this reads ``project_data`` directly rather than walking
+    ``components`` / ``deployments``. Idempotent: once ``invites`` is gone, a no-op. An empty
+    ``invites`` block is simply removed (no invite service is created for it).
+
+    Returns True if any change was made.
+    """
+    invites = project_data.get("invites")
+    if not isinstance(invites, dict):
+        return False
+
+    from pydantic import ValidationError
+
+    from opi.services.catalog.invite.config_model import InviteConfig
+    from opi.services.project import Project
+
+    settings = invites.get("settings") if isinstance(invites.get("settings"), dict) else {}
+    active = invites.get("active") or []
+    default_language = settings.get("default_language") if isinstance(settings, dict) else None
+
+    if not active and not default_language:
+        # Empty legacy block: nothing worth a service entry, just drop it.
+        del project_data["invites"]
+        return True
+
+    config_input: dict[str, Any] = {"active": active}
+    if default_language:
+        config_input["default-language"] = default_language
+
+    try:
+        model = InviteConfig.model_validate(config_input)
+        dumped: dict[str, Any] = model.model_dump(by_alias=True, exclude_unset=True)
+    except ValidationError:
+        # Defensive: never hard-fail a whole project migration on one odd invite. Relocate the
+        # raw block (flattening settings) so the file stays loadable; the config-validation gate
+        # surfaces the real problem on the next save.
+        logger.warning("Invite block failed model validation during relocation; relocating raw")
+        dumped = {"active": active}
+        if default_language:
+            dumped["default-language"] = default_language
+
+    Project(project_data).set("services/invite/config", dumped)
+    del project_data["invites"]
     return True
 
 

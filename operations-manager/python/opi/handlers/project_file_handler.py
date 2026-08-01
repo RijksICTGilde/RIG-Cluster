@@ -2933,45 +2933,67 @@ class ProjectFileHandler:
 
     def extract_invites_config(self, project_data: dict[str, Any]) -> dict[str, Any]:
         """
-        Extract the invites configuration section from project data.
+        Extract the invite config from project data, normalized through the invite model.
+
+        Reads the invite service config at ``services/invite/config`` (RC-13), falling back
+        to the legacy top-level ``invites:`` block for files not yet migrated -- exactly the
+        both-locations read that ``get_domains_config`` does for publish-on-web. The result is
+        normalized through ``InviteConfig`` so every downstream reader (invite_manager,
+        invite_routes, the public templates) sees stable underscore field names (``realm_roles``,
+        ``restrict_domain``, ...) regardless of whether the file stores hyphen or underscore keys.
 
         Args:
             project_data: The parsed project data
 
         Returns:
-            Invites configuration dict with 'settings' and 'active' keys,
-            or empty dict if no invites configured
+            Config dict with 'default_language' and 'active' keys, or empty dict if no
+            invites are configured.
         """
-        invites = project_data.get("invites", {})
-        if invites:
-            logger.debug(f"Found invites config with {len(invites.get('active', []))} active invite(s)")
-        else:
-            logger.debug("No invites configuration found in project data")
-        return invites
+        from pydantic import ValidationError
+
+        from opi.services.catalog.invite.config_model import InviteConfig
+
+        raw = Project(project_data).service_config("invite")
+        if raw is None:
+            # Legacy top-level `invites:` block: flatten settings.default_language into the
+            # config shape so both locations read identically downstream.
+            legacy = project_data.get("invites")
+            if not isinstance(legacy, dict) or not legacy:
+                logger.debug("No invites configuration found in project data")
+                return {}
+            raw = {"active": legacy.get("active", []) or []}
+            settings = legacy.get("settings")
+            if isinstance(settings, dict) and settings.get("default_language"):
+                raw["default-language"] = settings["default_language"]
+
+        if not isinstance(raw, dict):
+            return {}
+        try:
+            config = InviteConfig.model_validate(raw)
+        except ValidationError:
+            logger.warning("Invite config failed model validation; returning raw config")
+            return raw
+        normalized = config.model_dump(exclude_none=True)
+        logger.debug(f"Found invites config with {len(normalized.get('active', []))} active invite(s)")
+        return normalized
 
     def get_invite_settings(self, project_data: dict[str, Any]) -> dict[str, Any]:
         """
-        Extract invite settings from project data.
+        Extract project-level invite settings.
+
+        Since RC-13 the only project-wide invite setting is ``default_language``. The former
+        allow-sso / allow-local / default-expiry settings were never accepted by the schema;
+        their behaviour is folded into ``get_invite_auth_methods`` (both methods allowed unless
+        an invite restricts them), and the expiry feature was removed.
 
         Args:
             project_data: The parsed project data
 
         Returns:
-            Settings dict with defaults applied:
-            - allow_sso: bool (default True)
-            - allow_local: bool (default True)
-            - default_expiration_days: int (default 7)
-            - default_language: str (default 'nl')
+            ``{"default_language": str}`` (default 'nl').
         """
         invites = self.extract_invites_config(project_data)
-        settings = invites.get("settings", {})
-
-        return {
-            "allow_sso": settings.get("allow_sso", True),
-            "allow_local": settings.get("allow_local", True),
-            "default_expiration_days": settings.get("default_expiration_days", 7),
-            "default_language": settings.get("default_language", "nl"),
-        }
+        return {"default_language": invites.get("default_language", "nl")}
 
     def get_invite_by_key(self, project_data: dict[str, Any], key: str) -> dict[str, Any] | None:
         """
@@ -3021,8 +3043,6 @@ class ProjectFileHandler:
         Returns:
             Dict with 'sso' and 'local' boolean values
         """
-        settings = self.get_invite_settings(project_data)
-
         # Check invite-specific auth_methods override
         invite_auth_methods = invite.get("auth_methods")
 
@@ -3033,11 +3053,9 @@ class ProjectFileHandler:
                 "local": "local" in invite_auth_methods,
             }
 
-        # Fall back to project-level settings
-        return {
-            "sso": settings.get("allow_sso", True),
-            "local": settings.get("allow_local", True),
-        }
+        # No per-invite restriction: fall back to "both allowed" (the project-level default;
+        # the realm and the invite-level auth-methods are the actual restrictions).
+        return {"sso": True, "local": True}
 
     def get_invite_message(self, invite: dict[str, Any], language: str = "nl") -> str:
         """

@@ -26,6 +26,7 @@ from opi.forms.visualizers.wizard_sections import (
     DEPLOYMENTS_SECTION,
     IDENTITY_EDIT_SECTION,
     IDENTITY_SECTION,
+    INVITE_CONFIG_SECTION,
     KEYCLOAK_CONFIG_SECTION,
     POSTGRESQL_CONFIG_SECTION,
     RESTORE_SELECT_SECTION,
@@ -74,6 +75,9 @@ CREATE_FLOW = FormFlow(
         IDENTITY_SECTION,
         SERVICES_SECTION,
         KEYCLOAK_CONFIG_SECTION,
+        # After KEYCLOAK_CONFIG_SECTION: the realm-role picker reads the keycloak config
+        # (realm-roles + authorization-wall role) from the draft entered in the step before.
+        INVITE_CONFIG_SECTION,
         POSTGRESQL_CONFIG_SECTION,
         AUTH_WALL_CONFIG_SECTION,
         TEAM_SECTION,
@@ -98,6 +102,7 @@ EDIT_FLOW = FormFlow(
         IDENTITY_SECTION,
         SERVICES_SECTION,
         KEYCLOAK_CONFIG_SECTION,
+        INVITE_CONFIG_SECTION,
         POSTGRESQL_CONFIG_SECTION,
         AUTH_WALL_CONFIG_SECTION,
         TEAM_SECTION,
@@ -148,6 +153,7 @@ MODAL_EDIT_SERVICES_FLOW = FormFlow(
     sections=[
         SERVICES_EDIT_SECTION,
         KEYCLOAK_CONFIG_SECTION,
+        INVITE_CONFIG_SECTION,
         POSTGRESQL_CONFIG_SECTION,
         AUTH_WALL_CONFIG_SECTION,
         SLEEP_MODE_CONFIG_SECTION,
@@ -195,6 +201,14 @@ MODAL_EDIT_SLEEP_MODE_FLOW = FormFlow(
     sections=[SLEEP_MODE_CONFIG_SECTION],
 )
 
+MODAL_EDIT_INVITES_FLOW = FormFlow(
+    flow_id="modal-edit-invite-config",
+    title="Uitnodigingen",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[INVITE_CONFIG_SECTION],
+)
+
 # ---------------------------------------------------------------------------
 # Backup & Restore modal flows
 # ---------------------------------------------------------------------------
@@ -235,6 +249,7 @@ FLOW_REGISTRY: dict[str, FormFlow] = {
     MODAL_EDIT_POSTGRESQL_FLOW.flow_id: MODAL_EDIT_POSTGRESQL_FLOW,
     MODAL_EDIT_AUTH_WALL_FLOW.flow_id: MODAL_EDIT_AUTH_WALL_FLOW,
     MODAL_EDIT_SLEEP_MODE_FLOW.flow_id: MODAL_EDIT_SLEEP_MODE_FLOW,
+    MODAL_EDIT_INVITES_FLOW.flow_id: MODAL_EDIT_INVITES_FLOW,
     MODAL_BACKUP_FLOW.flow_id: MODAL_BACKUP_FLOW,
 }
 

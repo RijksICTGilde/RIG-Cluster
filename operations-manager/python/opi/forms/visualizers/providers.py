@@ -917,6 +917,70 @@ class WakerComponentOptionsProvider:
         return options
 
 
+class InviteLanguageOptionsProvider:
+    """The two languages an invite's default-language can take."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": "nl", "label": "Nederlands"},
+            {"value": "en", "label": "Engels"},
+        ]
+
+
+class InviteAuthMethodOptionsProvider:
+    """The auth methods an invite may allow. Empty selection = fall back to the project's
+    methods (both allowed today)."""
+
+    def get_options(self) -> list[dict[str, Any]]:
+        return [
+            {"value": "sso", "label": "Single sign-on (SSO)"},
+            {"value": "local", "label": "Lokaal account"},
+        ]
+
+
+class InviteRealmRoleOptionsProvider:
+    """Keycloak realm roles an invite can assign, gathered from the surrounding form data.
+
+    Two sources, deduped in order:
+    1. ``services/keycloak/config/realm-roles[*]/name`` -- custom realm roles.
+    2. ``services/keycloak/config/restrict-access/realm-role`` -- the authorization-wall role
+       (default ``allowed-user``). This matters: every live project uses ``allowed-user`` and
+       it is NOT listed under ``realm-roles``; a provider reading only ``realm-roles`` would be
+       empty in practice.
+
+    A first, explicit "no role" option lets an invite deliberately grant only a bare account
+    (a first-class choice, not an omission). The currently stored value is always kept as an
+    option -- marked "(bestaat niet meer)" when it is no longer in the sources -- so a select
+    never silently drops a role that was removed from the keycloak config on the next save.
+    """
+
+    def __init__(self, yaml_data: dict[str, Any] | None = None, current_value: str | None = None) -> None:
+        self.yaml_data = yaml_data or {}
+        self.current_value = current_value
+
+    def get_options(self) -> list[dict[str, Any]]:
+        from opi.forms.editables.service_path import smart_get_value
+
+        roles: list[str] = []
+        realm_roles = smart_get_value(self.yaml_data, "services/keycloak/config/realm-roles") or []
+        if isinstance(realm_roles, list):
+            for entry in realm_roles:
+                name = entry.get("name") if isinstance(entry, dict) else None
+                if name and name not in roles:
+                    roles.append(str(name))
+        wall_role = smart_get_value(self.yaml_data, "services/keycloak/config/restrict-access/realm-role")
+        if wall_role and str(wall_role) not in roles:
+            roles.append(str(wall_role))
+
+        options: list[dict[str, Any]] = [{"value": "", "label": "Geen rol toekennen"}]
+        options.extend({"value": role, "label": role} for role in roles)
+
+        # Keep a stored-but-now-unknown value selectable, flagged, so saving does not drop it.
+        if self.current_value and self.current_value not in roles:
+            options.append({"value": self.current_value, "label": f"{self.current_value} (bestaat niet meer)"})
+        return options
+
+
 class HealthCheckSchemeOptionsProvider:
     """Probe scheme options for the health-check service. The empty value means
     'default': fall back to a plain TCP probe on the first inbound port."""
@@ -972,6 +1036,9 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "SleepAfterWakeOptionsProvider": SleepAfterWakeOptionsProvider,
     "WakerComponentOptionsProvider": WakerComponentOptionsProvider,
     "HealthCheckSchemeOptionsProvider": HealthCheckSchemeOptionsProvider,
+    "InviteLanguageOptionsProvider": InviteLanguageOptionsProvider,
+    "InviteAuthMethodOptionsProvider": InviteAuthMethodOptionsProvider,
+    "InviteRealmRoleOptionsProvider": InviteRealmRoleOptionsProvider,
 }
 
 

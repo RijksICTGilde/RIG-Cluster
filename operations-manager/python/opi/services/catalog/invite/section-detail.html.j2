@@ -1,0 +1,64 @@
+{# Invite detail-page section (RC-13).
+
+   Owned by the invite service: InviteService.detail_page_sections builds the ``invites``
+   context and gates on the viewer's role (admin/owner only -- the link is the secret), so
+   this block lives with the service instead of hardcoded in the general project-details
+   template. Rendered via a ``section`` loop var, so it reads from ``section.context``.
+
+   The full invite link is built with ``url_for`` (absolute, request-derived) rather than a
+   configured base URL. The copy button uses single-quoted string args only: <c-button>
+   re-encodes attribute values to double quotes, so JSON / brackets in @click would break. #}
+<c-card outline="true" padding="xl" backgroundColor="wit">
+    <c-layout-flow gap="lg">
+        <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="envelop" size="xl" color="lichtblauw" />Uitnodigingen</c-heading>
+        <p class="rvo-text--subtle">Deel een link om gebruikers toegang te geven tot het Keycloak-realm. De link is de enige toegangsdrempel.</p>
+
+        <div class="config-section">
+            {% for invite in section.context.invites %}
+            {% if not loop.first %}
+            <div style="margin-top: var(--rvo-space-lg); padding-top: var(--rvo-space-lg); border-top: 1px solid var(--rvo-color-grijs-200);"></div>
+            {% endif %}
+            <c-heading type="h3" style="margin-bottom: var(--rvo-space-md);"><c-icon icon="envelop" size="md" color="lichtblauw" />Sleutel: {{ invite.key }}</c-heading>
+            <div class="config-item">
+                <div class="config-label">
+                    <c-icon icon="externe-link" size="md" color="lichtblauw" />
+                    <strong>Uitnodigingslink</strong>
+                </div>
+                <div class="config-value config-value--inline">
+                    <code class="config-code">{{ url_for('invite_landing', key=invite.key) }}</code>
+                    <c-button
+                        kind="tertiary"
+                        size="sm"
+                        label="Kopieer"
+                        showIcon="before"
+                        icon="document-blanco"
+                        class="copy-btn"
+                        @click="copyToClipboard('.config-code', event, '.config-item')" />
+                </div>
+            </div>
+            {% if invite.realm_roles %}
+            <div class="config-item">
+                <div class="config-label">
+                    <c-icon icon="sleutel" size="md" color="grijs-600" />
+                    <strong>Toegekende rollen</strong>
+                </div>
+                <div class="config-value">
+                    <code class="config-code">{{ invite.realm_roles | join(', ') }}</code>
+                </div>
+            </div>
+            {% endif %}
+            {% if invite.contact_email %}
+            <div class="config-item">
+                <div class="config-label">
+                    <c-icon icon="user" size="md" color="grijs-600" />
+                    <strong>Contact</strong>
+                </div>
+                <div class="config-value">
+                    <code class="config-code">{{ invite.contact_email }}</code>
+                </div>
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+    </c-layout-flow>
+</c-card>
