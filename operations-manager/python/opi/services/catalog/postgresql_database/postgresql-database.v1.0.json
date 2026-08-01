@@ -1,0 +1,105 @@
+{
+  "$defs": {
+    "Revision": {
+      "additionalProperties": false,
+      "description": "One generation's resource, with the actions that produced and changed it.",
+      "properties": {
+        "actions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RevisionAction"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "generation": {
+          "title": "Generation",
+          "type": "integer"
+        },
+        "resource": {
+          "title": "Resource",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "superseded_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Superseded At"
+        }
+      },
+      "required": [
+        "generation",
+        "resource",
+        "status",
+        "created_at"
+      ],
+      "title": "Revision",
+      "type": "object"
+    },
+    "RevisionAction": {
+      "additionalProperties": false,
+      "description": "One entry in a revision's audit trail (created, cloned, restored, ...).",
+      "properties": {
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "timestamp"
+      ],
+      "title": "RevisionAction",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Clone state for a shared-instance PostgreSQL database.",
+  "properties": {
+    "generation": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Generation"
+    },
+    "revisions": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Revision"
+      },
+      "title": "Revisions",
+      "type": "array"
+    }
+  },
+  "title": "PostgresqlDatabaseConfig",
+  "type": "object"
+}

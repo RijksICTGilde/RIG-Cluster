@@ -254,9 +254,9 @@ class Service(ABC):
       current version, so no down-conversion is needed. Convert-then-validate: an
       older config is migrated forward, then validated against ``config_model``.
 
-    Services without config (publish-on-web, minio, redis, platform, shared
-    postgresql-database, ...) leave ``config_model`` as ``None`` and inherit the
-    no-op defaults.
+    A service that takes no config (``namespace-redis``, ``platform``) leaves both
+    ``config_model`` and ``config_schema_version`` as ``None`` and inherits the no-op
+    defaults. Every service that does carry config declares both.
     """
 
     #: The service this provider handles. Set by each concrete subclass.
@@ -266,8 +266,11 @@ class Service(ABC):
 
     #: Pydantic model for this service's config, or None if it takes no config.
     config_model: ClassVar[type[BaseModel] | None] = None
-    #: Current config schema version (major.minor). Only meaningful with a config_model.
-    config_schema_version: ClassVar[str] = "1.0"
+    #: Current config schema version (major.minor), or None for a service that takes no
+    #: config. Inheriting a default "1.0" made every behaviour-only service look like it
+    #: had a versioned contract; the pairing with config_model is enforced by
+    #: tests/test_service_config_schema.py.
+    config_schema_version: ClassVar[str | None] = None
 
     #: Wizard/edit config-section id for this service (RC-5 Phase 3), or None if the
     #: service has no config UI. The FormSection object itself lives in the forms
@@ -318,6 +321,19 @@ class Service(ABC):
         service_type = cls.__dict__.get("service_type")
         if service_type is not None:
             cls.definition = ServiceAdapter.SERVICE_DEFINITIONS[service_type]
+
+    def config_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
+        """The model that validates this service's config *at ``layer``*.
+
+        Almost always ``config_model``: one shape, wherever it appears. The exception is a
+        service that carries genuinely different content per layer, and there is one today.
+        persistent-storage and temp-storage hold mount specs on the component, but per-mount
+        clone state on the deployment-component, so a single model cannot describe both.
+
+        Returning None means "not validated at this layer", which is what a service without
+        a model gets.
+        """
+        return self.config_model
 
     def migrate_config(self, config: ServiceConfigData, from_version: str) -> ServiceConfigData:
         """Convert an older config forward to ``config_schema_version`` (hub).

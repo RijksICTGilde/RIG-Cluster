@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from opi.services.catalog.base import ManifestContext, ProvisionContext, SecretFileSpec, Service
+from opi.services.catalog.redis.config_model import RedisConfig
 from opi.services.services_enums import ServiceType
 from opi.utils.secrets import RedisSecret
 
@@ -13,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 class RedisService(Service):
     service_type = ServiceType.REDIS
+    config_model = RedisConfig
+    config_schema_version = "1.0"
     cleanup_manager_key = "redis"
     provision_order = 40
     manifest_secret_class = RedisSecret

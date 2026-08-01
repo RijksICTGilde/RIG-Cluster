@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
+from opi.services.catalog.shared.revisions import CloneState
+
 
 class StorageEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -32,3 +34,14 @@ class StorageConfig(RootModel[list[StorageEntry]]):
     """The component-level storage config: a list of mount specs."""
 
     root: list[StorageEntry]
+
+
+class StorageCloneState(CloneState):
+    """Per-mount clone state, carried on the deployment-component layer.
+
+    A deployment records which PVC generation each mount points at, as a list of
+    ``{reference, config}`` items keyed by the mount name. The content is the shared clone
+    state, so this only exists to give the storage services something to return from
+    ``config_model_for(DEPLOYMENT_COMPONENT)``; their ``config_model`` describes the mount
+    specs on the component layer and cannot describe both.
+    """

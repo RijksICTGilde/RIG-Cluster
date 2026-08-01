@@ -525,3 +525,116 @@ class TestRevisionManagerRecordComponentClone:
         pr2 = next(d for d in result["deployments"] if d["name"] == "pr2")
         # Deployment-level services should NOT exist
         assert "services" not in pr2
+
+
+class TestDeploymentServiceLookupIsFormatAgnostic:
+    """A services list holds four entry forms; clone state must be found in all of them.
+
+    ``_get_service_config`` and ``_ensure_service_entry`` used a JSONPath keyed on
+    ``@.reference``, so anything written as a ``name`` record, a bare string or a legacy
+    single-key dict was invisible. Production happens to write ``reference`` everywhere,
+    so it worked on convention rather than on contract. The damage from a miss is not a
+    crash: ``_ensure_service_entry`` appends a second entry for the same service, and a
+    services list is a selection set, so ``validate_project_structure`` then rejects the
+    whole file over a duplicate.
+    """
+
+    SERVICE = "postgresql-database"
+
+    def _project(self, entry) -> dict:
+        return {"name": "p", "deployments": [{"name": "productie", "services": [entry]}]}
+
+    @pytest.mark.parametrize(
+        ("label", "entry"),
+        [
+            ("reference record", {"reference": SERVICE, "config": {"generation": 3}}),
+            ("name record", {"name": SERVICE, "config": {"generation": 3}}),
+            ("legacy single-key", {SERVICE: {"config": {"generation": 3}}}),
+        ],
+    )
+    def test_reads_config_from_every_record_form(self, revision_manager, label, entry):
+        data = self._project(entry)
+        config = revision_manager._get_service_config(data, "productie", self.SERVICE)
+        assert config is not None, f"{label} not found"
+        assert config["generation"] == 3
+
+    @pytest.mark.parametrize(
+        ("label", "entry"),
+        [
+            ("reference record", {"reference": SERVICE, "config": {}}),
+            ("name record", {"name": SERVICE, "config": {}}),
+            ("legacy single-key", {SERVICE: {"config": {}}}),
+        ],
+    )
+    def test_ensure_reuses_an_existing_entry_instead_of_duplicating(self, revision_manager, label, entry):
+        data = self._project(entry)
+        config = revision_manager._ensure_service_entry(data, "productie", self.SERVICE)
+        assert config is not None
+        config["generation"] = 1
+
+        services = data["deployments"][0]["services"]
+        assert len(services) == 1, f"{label}: a second entry was appended, {services}"
+
+    def test_ensure_promotes_a_bare_string_rather_than_duplicating(self, revision_manager):
+        data = self._project(self.SERVICE)
+        config = revision_manager._ensure_service_entry(data, "productie", self.SERVICE)
+        assert config is not None
+        config["generation"] = 1
+
+        services = data["deployments"][0]["services"]
+        assert len(services) == 1, f"a second entry was appended next to the bare string: {services}"
+
+    def test_ensure_still_creates_an_entry_when_the_service_is_absent(self, revision_manager):
+        data = {"name": "p", "deployments": [{"name": "productie", "services": []}]}
+        config = revision_manager._ensure_service_entry(data, "productie", self.SERVICE)
+        assert config is not None
+        assert len(data["deployments"][0]["services"]) == 1
+
+
+class TestRevisionQueriesAreFormatAgnostic:
+    """The three revision queries kept their own hardcoded ``@.reference`` JSONPath.
+
+    They are all "find the config, then filter its revisions", so they inherit the same
+    blind spot: on a ``name`` record or a legacy entry they quietly answer "no revisions"
+    instead of failing, which reads as a resource that was never cloned.
+    """
+
+    SERVICE = "postgresql-database"
+
+    def _project(self) -> dict:
+        return {
+            "name": "p",
+            "deployments": [
+                {
+                    "name": "productie",
+                    "services": [
+                        {
+                            "name": self.SERVICE,  # name record, not reference
+                            "config": {
+                                "generation": 2,
+                                "revisions": [
+                                    {"generation": 1, "resource": "db_v1", "status": "superseded", "actions": []},
+                                    {"generation": 2, "resource": "db_v2", "status": "active", "actions": []},
+                                ],
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+
+    def test_get_active_revision(self, revision_manager):
+        active = revision_manager.get_active_revision(self._project(), "productie", self.SERVICE)
+        assert active is not None
+        assert active["resource"] == "db_v2"
+
+    def test_get_superseded_resources(self, revision_manager):
+        superseded = revision_manager.get_superseded_resources(self._project(), "productie", self.SERVICE)
+        assert [r["resource"] for r in superseded] == ["db_v1"]
+
+    def test_add_action_finds_the_revision(self, revision_manager):
+        data = self._project()
+        revision_manager.add_action(data, "productie", self.SERVICE, 2, "backup", source="nightly")
+        revisions = revision_manager.get_revisions(data, "productie", self.SERVICE)
+        active = next(r for r in revisions if r["generation"] == 2)
+        assert [a["type"] for a in active["actions"]] == ["backup"]

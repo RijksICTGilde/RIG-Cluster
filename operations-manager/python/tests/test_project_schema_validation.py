@@ -464,3 +464,73 @@ def test_component_command_rejects_non_list_value() -> None:
     project["components"][0]["command"] = "sh -c 'exec /app/bin/web'"
     with pytest.raises(ProjectSchemaError):
         validate_project_schema(project)
+
+
+class TestDeploymentLevelServiceConfigIsOpen:
+    """Any service must be able to carry deployment-level config.
+
+    ``$defs/deployment-service`` and ``$defs/deployment-service-config`` were both closed:
+    the entry accepted only ``reference`` + ``config``, and the config only ``generation``
+    and ``revisions``. That is the clone-state shape, hardcoded into the global schema, so
+    no other service could ever use the deployment layer and clone state could not move to
+    another layer either. Per-service validation (``validate_service_configs``) is what
+    checks the contents now, so the envelope only has to stay an envelope.
+    """
+
+    def _with_deployment_service(self, entry: dict) -> dict:
+        project = _valid_project()
+        project["deployments"][0]["services"] = [entry]
+        return project
+
+    def test_accepts_clone_state(self):
+        # The shape that exists today must keep validating.
+        validate_project_schema(
+            self._with_deployment_service(
+                {"reference": "postgresql-database", "config": {"generation": 1, "revisions": []}}
+            )
+        )
+
+    def test_accepts_a_name_record_with_a_schema_version(self):
+        # The envelope the service contract describes: {name|reference, schema-version?, config?}.
+        validate_project_schema(
+            self._with_deployment_service(
+                {"name": "minio-storage", "schema-version": "1.0", "config": {"enable-versioning": True}}
+            )
+        )
+
+    def test_accepts_config_belonging_to_another_service(self):
+        # The global schema must not decide which keys a service may carry.
+        validate_project_schema(
+            self._with_deployment_service({"reference": "some-future-service", "config": {"whatever": "value"}})
+        )
+
+
+class TestDeploymentComponentServicesAreGeneric:
+    """The global schema hardcoded two service names at the deployment-component layer.
+
+    ``$defs/publish-on-web-config`` and ``$defs/attachment-use-entry`` existed only to
+    validate ``publish-on-web`` and ``attachments`` there, because ``validate_service_configs``
+    did not walk that layer. It does now, so the envelope only has to allow the two shapes
+    that occur: a record with a config, and a list of per-mount records.
+    """
+
+    def _with(self, services) -> dict:
+        project = _valid_project()
+        project["deployments"][0]["components"] = [{"reference": "web", "services": services}]
+        return project
+
+    def test_accepts_a_record_with_config(self):
+        validate_project_schema(self._with({"publish-on-web": {"config": {"tls": "standard"}}}))
+
+    def test_accepts_a_list_of_per_mount_records(self):
+        validate_project_schema(
+            self._with({"persistent-storage": [{"reference": "data", "config": {"revisions": []}}]})
+        )
+
+    def test_accepts_a_service_the_schema_never_heard_of(self):
+        # The whole point: the envelope must not enumerate services.
+        validate_project_schema(self._with({"some-future-service": {"config": {"whatever": 1}}}))
+
+    def test_still_rejects_a_shape_that_is_neither(self):
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(self._with({"publish-on-web": "not-a-record"}))
