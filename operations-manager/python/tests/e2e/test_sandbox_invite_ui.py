@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import uuid
 from typing import TYPE_CHECKING
 
 import pytest
@@ -42,12 +43,18 @@ pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
 _API_VERIFY_SSL = os.environ.get("E2E_API_VERIFY_SSL", "false").lower() in ("1", "true", "yes")
 _USER_EMAIL = os.environ.get("E2E_SANDBOX_USER", "admin@sandbox.rijksapp.dev")
 
-_WIZARD_KEY = "probe-invite-wizard"
-_MODAL_KEY = "probe-invite-modal"
+# Unique per run: invite keys are a cross-project global namespace (UniqueInviteKeyEnforcer),
+# so a leftover project from an interrupted run would otherwise block every later create.
+_RUN = uuid.uuid4().hex[:8]
+_WIZARD_KEY = f"probe-invite-wizard-{_RUN}"
+_MODAL_KEY = f"probe-invite-modal-{_RUN}"
 _CONTACT = "invite-contact@sandbox.rijksapp.dev"
 
 
 def _select_service(page: Page, name: str) -> None:
+    # Wait for the services step to render its cards (the HTMX step swap can lag on a
+    # freshly-started pod), so a slow load isn't mistaken for a missing service.
+    page.wait_for_selector(f"input[name='services[]'][value='{name}']", timeout=15000)
     checkbox = page.locator(f"input[name='services[]'][value='{name}']").first
     assert checkbox.count() > 0, f"service card '{name}' not on the services step"
     if not checkbox.is_checked():
@@ -180,10 +187,14 @@ def test_configure_modal_adds_keycloak_client(
 ) -> None:
     # (C) the SAME shared sequence path on keycloak (untouched by this branch): adding an
     # additional-clients entry through its Configureer modal must persist.
-    client_name = "probe-client"
+    client_name = f"probe-client-{_RUN}"
     service_config.open_detail(sandbox_page, sandbox_url, invite_project)
-    service_config.open_service_config_modal(sandbox_page, "Keycloak")
-    service_config.modal_advance_to_field(sandbox_page, "additional-clients")
+    # "Keycloak Authentication" is the exact card title -- plain "Keycloak" also matches the
+    # Uitnodiging card (its description mentions the Keycloak-realm), an ambiguous selector.
+    service_config.open_service_config_modal(sandbox_page, "Keycloak Authentication")
+    # The keycloak config is a single step: the additional-clients sequence (with its
+    # "Item toevoegen" button) is right here, no "Volgende" navigation. With no clients yet
+    # there is exactly one add button, so modal_add_sequence_item targets it.
     service_config.modal_add_sequence_item(sandbox_page)
     sandbox_page.locator("#edit-section-inner [name*='additional-clients'][name$='/name']").last.fill(client_name)
     capture(sandbox_page, "keycloak-configure-modal")
