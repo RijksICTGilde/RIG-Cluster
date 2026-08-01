@@ -194,9 +194,11 @@ def test_configure_modal_adds_keycloak_client(
 
 
 def test_detail_block_shows_invite_link(invite_project: str, sandbox_url: str, sandbox_page: Page, capture) -> None:
-    # (D) the invite block on the detail page is shown to an admin and links to /invite/<key>.
+    # (D) the invite block on the detail page is shown to an admin and shows the /invite/<key>
+    # link. The link is rendered as a <code class="config-code"> (a copyable string), not an
+    # <a href>, so match on the text.
     service_config.open_detail(sandbox_page, sandbox_url, invite_project)
-    link = sandbox_page.locator(f"a[href*='/invite/{_WIZARD_KEY}']")
+    link = sandbox_page.locator("code.config-code", has_text=f"/invite/{_WIZARD_KEY}")
     capture(sandbox_page, "invite-detail-block")
     assert link.count() > 0, "invite link not shown on the detail page for an admin"
 
