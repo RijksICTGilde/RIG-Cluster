@@ -31,12 +31,12 @@ import logging
 import secrets
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 from opi.services.catalog.base import ConfigLayer, DetailPageSection, Service, config_path
 from opi.services.catalog.invite.config_model import InviteConfig
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ServiceType
+
+logger = logging.getLogger(__name__)
 
 
 class InviteService(Service):
