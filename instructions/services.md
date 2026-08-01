@@ -132,7 +132,7 @@ A service owns its own fields; the forms layer only collects them.
 | `config_component_visualizers()` | `EditableVisualizer`s (widget, label, help text) | `registry.component_service_visualizers()` |
 | `config_component_layout()` | Layout nodes (`Fieldset`, `Sequence`) for the component form | `wizard_sections._service_component_layouts()` |
 | `config_form_section(layer)` | A whole `FormSection` for a project-level config step | `wizard_sections.SERVICE_CONFIG_SECTIONS`, keyed by `config_section_id` |
-| `config_api_fields(layer)` | Field names the API/YAML accepts | validation error guidance |
+| `config_api_fields(layer)` | Field names the API/YAML accepts | validation-error guidance + which API targets the service exposes |
 
 `config_section_id` and `modal_flow_id` are declarative links: the provider names the
 section, the forms layer holds the `FormSection` object. Ordering across services is
@@ -151,6 +151,41 @@ the flow. Cover the three flows with a **user-based** sandbox E2E test -- real b
 clicks and field fills, no `page.evaluate` shortcuts and no direct modal-fragment URLs.
 `tests/e2e/test_sandbox_sleep_mode_ui.py` + `tests/e2e/helpers/service_config.py` are the
 pattern to copy.
+
+## API (configuring via REST)
+
+A service that owns a `config_model` is configurable through the REST API for free --
+you do not write an endpoint. At startup `opi/api/v2/router.py`
+(`_register_service_config_routes`) walks the registry and, for every
+`(service, target)` the service accepts config on, generates a typed route whose
+**request body is that service's own `config_model_for(target)`**:
+
+```
+PUT/DELETE /api/v2/projects/{project}/services/<service>/config/<target>[/{name}]
+GET        /api/v2/projects/{project}/services/{service}/config      # read
+GET        /api/v2/services                                          # catalog + targets
+```
+
+Because the body is the typed model, the OpenAPI spec documents the fields and enum
+values per service, so a client can be generated from it. There is deliberately **no
+per-service endpoint file** -- every service's endpoint is identical apart from its
+model, so one generator beats 13 copies. What a service owns is the *contract* (the
+model + the layer hooks); the router owns the uniform *exposure*.
+
+- Which targets a service exposes is measured from its own declarations:
+  `config_api_fields(layer)` **or** `config_editables(layer)` **or** (for the
+  component layer) `config_component_layout()`. A sequence-config service (storage is
+  a `RootModel[list]`) has no flat `config_api_fields` but is still reached through
+  its editables.
+- Validation is the model itself (the same one the wizard's save runs through
+  `validate_service_configs`), so there is no second validation path. The typed body
+  also rejects a bad value synchronously (422) before the async task is enqueued.
+- Configuring on a component/deployment implicitly selects the service at the project
+  level (a bare entry in the root `services` list), so a component-only write does not
+  require the caller to add it there first.
+
+Full reference: `features/service-config-api.md`. So a new service needs to do
+nothing beyond declaring its `config_model` (and layer hooks) to be API-configurable.
 
 ## Detail page (read-only presentation)
 
@@ -180,7 +215,7 @@ Every hook a service may implement, so a new service knows what it can own:
 
 | Hook | Purpose |
 |---|---|
-| `config_editables(layer)` / `config_api_fields(layer)` | config data + accepted API fields |
+| `config_editables(layer)` / `config_api_fields(layer)` | config data + accepted API fields; also determine which API config targets the service exposes |
 | `config_form_section(layer)` | project-level wizard/edit config step |
 | `config_component_layout()` / `config_component_visualizers()` | per-component form fields |
 | `detail_page_sections(project_data, user_role)` | read-only detail-page block |
