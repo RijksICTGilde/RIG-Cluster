@@ -25,6 +25,14 @@ class PersistentStorageService(Service):
     # Its config is a LIST of {name, size, mount-path} entries (StorageConfig is a
     # RootModel), so config_api_fields is not a flat field set -- left default.
 
+    def config_model_for(self, layer: ConfigLayer):
+        # Mount specs on the component, per-mount clone state on the deployment-component.
+        from opi.services.catalog.shared.storage import StorageCloneState
+
+        if layer is ConfigLayer.DEPLOYMENT_COMPONENT:
+            return StorageCloneState
+        return self.config_model
+
     def config_editables(self, layer: ConfigLayer):
         if layer is not ConfigLayer.COMPONENT:
             return []

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from opi.services.catalog.attachments.config_model import AttachmentsConfig
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ServiceType
@@ -21,6 +22,10 @@ from opi.services.services_enums import ServiceType
 
 class AttachmentsService(Service):
     service_type = ServiceType.ATTACHMENTS
+    # Component-level config is a list of couplings; the project-level entry holds the
+    # catalog under ``data`` rather than ``config`` and is skipped by the config walk.
+    config_model = AttachmentsConfig
+    config_schema_version = "1.0"
     config_component_order = 25
 
     def _config_selected(self, project_data: dict[str, Any]) -> bool:

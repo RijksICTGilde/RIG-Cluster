@@ -15,6 +15,8 @@ from opi.handlers.project_file_handler import (
     extract_deployment_component_attachment_uses,
     validate_attachment_references,
 )
+from opi.services.catalog.attachments.config_model import AttachmentUse
+from pydantic import ValidationError
 
 SCHEMA = json.loads((Path(__file__).resolve().parent.parent / "opi" / "schemas" / "project_v2.json").read_text())
 
@@ -52,21 +54,30 @@ def test_data_entry_invalid() -> None:
 # --- attachment-use-entry ---
 
 
+# The coupling shape moved out of the global schema ($defs/attachment-use-entry) into the
+# service's own model, so these follow it there. The rules are unchanged.
+
+
+def _use_is_valid(entry: dict[str, Any]) -> bool:
+    try:
+        AttachmentUse.model_validate(entry)
+    except ValidationError:
+        return False
+    return True
+
+
 def test_use_entry_file_mode() -> None:
-    v = _validator_for("attachment-use-entry")
-    assert v.is_valid({"reference": "mtlskeystore", "provide-as": "file", "path": "/etc/tls/keystore.p12"})
-    assert not v.is_valid({"reference": "mtlskeystore", "provide-as": "file"})  # file requires path
+    assert _use_is_valid({"reference": "mtlskeystore", "provide-as": "file", "path": "/etc/tls/keystore.p12"})
+    assert not _use_is_valid({"reference": "mtlskeystore", "provide-as": "file"})  # file requires path
 
 
 def test_use_entry_env_mode() -> None:
-    v = _validator_for("attachment-use-entry")
-    assert v.is_valid({"reference": "ca", "provide-as": "env-var", "env-name": "CA_BUNDLE"})
-    assert not v.is_valid({"reference": "ca", "provide-as": "env-var"})  # env-var requires env-name
+    assert _use_is_valid({"reference": "ca", "provide-as": "env-var", "env-name": "CA_BUNDLE"})
+    assert not _use_is_valid({"reference": "ca", "provide-as": "env-var"})  # env-var requires env-name
 
 
 def test_use_entry_bad_provide_as() -> None:
-    v = _validator_for("attachment-use-entry")
-    assert not v.is_valid({"reference": "ca", "provide-as": "mount", "path": "/x"})
+    assert not _use_is_valid({"reference": "ca", "provide-as": "mount", "path": "/x"})
 
 
 # --- pure extraction / validation helpers ---

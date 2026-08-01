@@ -208,9 +208,16 @@ class TestServiceGenericAccess:
         assert Project(data).service_config_model("not-a-service") is None
 
     def test_service_config_model_service_without_config_raises(self) -> None:
-        data = {"services": ["publish-on-web"]}
+        # publish-on-web was the example here until it got a config model; namespace-redis
+        # and platform are the two behaviour-only services left.
+        data = {"services": ["namespace-redis"]}
         with pytest.raises(TypeError):
-            Project(data).service_config_model("publish-on-web")
+            Project(data).service_config_model("namespace-redis")
+
+    def test_service_config_model_returns_the_model_for_a_bare_selection(self) -> None:
+        # A modelled service selected without a config block validates as an empty config,
+        # so callers get defaults instead of a TypeError.
+        assert Project({"services": ["publish-on-web"]}).service_config_model("publish-on-web") is not None
 
     def test_service_config_model_bad_value_fails_closed(self) -> None:
         data = {"services": [{"namespace-postgresql-database": {"config": {"instances": -1}}}]}

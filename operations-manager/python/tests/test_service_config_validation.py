@@ -50,8 +50,16 @@ def test_unknown_service_name_is_skipped():
 
 
 def test_service_without_config_model_with_config_is_skipped():
-    # minio takes no typed config; a stray config block is ignored here (not rejected).
-    validate_service_configs({"name": "p", "services": [{"minio-storage": {"config": {"anything": 1}}}]})
+    # namespace-redis takes no typed config; a stray config block is ignored here (not
+    # rejected). minio-storage used to be the example here, until it got a config model.
+    validate_service_configs({"name": "p", "services": [{"namespace-redis": {"config": {"anything": 1}}}]})
+
+
+def test_service_with_config_model_now_rejects_a_stray_key():
+    # The other side of the same coin: once a service declares a model, an unknown key in its
+    # config block is a hard failure instead of being waved through.
+    with pytest.raises(ProjectIntegrityError):
+        validate_service_configs({"name": "p", "services": [{"minio-storage": {"config": {"anything": 1}}}]})
 
 
 # --- component-level config validation (RC-5 A: storage mounts, metrics port/path) ---
@@ -218,3 +226,88 @@ def test_entry_schema_version_is_threaded_to_validate_config(monkeypatch):
     }
     validate_service_configs(data)
     assert captured == ["2.0"]
+
+
+# --- deployment-level config validation (the layer the global schema no longer guards) ---
+
+
+def test_valid_deployment_config_passes():
+    validate_service_configs(
+        {
+            "name": "p",
+            "deployments": [
+                {
+                    "name": "productie",
+                    "services": [
+                        {"reference": "postgresql-database", "config": {"generation": 1, "revisions": []}},
+                        {"name": "minio-storage", "config": {"enable-versioning": True}},
+                    ],
+                }
+            ],
+        }
+    )
+
+
+def test_invalid_deployment_config_rejected():
+    # $defs/deployment-service-config is open now, so this is the only thing standing
+    # between a typo and a silently ignored setting.
+    with pytest.raises(ProjectIntegrityError):
+        validate_service_configs(
+            {
+                "name": "p",
+                "deployments": [
+                    {"name": "productie", "services": [{"reference": "minio-storage", "config": {"typo": True}}]}
+                ],
+            }
+        )
+
+
+def test_deployment_bare_reference_is_skipped():
+    validate_service_configs({"name": "p", "deployments": [{"name": "productie", "services": ["postgresql-database"]}]})
+
+
+# --- deployment-component config validation --------------------------------------------
+
+
+def _deployment_component(services):
+    return {"name": "p", "deployments": [{"name": "prd", "components": [{"reference": "c", "services": services}]}]}
+
+
+def test_valid_deployment_component_configs_pass():
+    validate_service_configs(
+        _deployment_component(
+            {
+                "publish-on-web": {"config": {"tls": "standard"}},
+                "attachments": {"config": [{"reference": "cert", "provide-as": "file", "path": "/etc/cert.pem"}]},
+                # Per-mount clone state: a different model than the component layer's mount specs.
+                "persistent-storage": [{"reference": "data", "config": {"revisions": []}}],
+            }
+        )
+    )
+
+
+def test_invalid_deployment_component_tls_rejected():
+    with pytest.raises(ProjectIntegrityError, match="publish-on-web"):
+        validate_service_configs(_deployment_component({"publish-on-web": {"config": {"tls": "nope"}}}))
+
+
+def test_invalid_deployment_component_attachment_rejected():
+    # provide-as file without a path has no destination.
+    with pytest.raises(ProjectIntegrityError, match="attachments"):
+        validate_service_configs(
+            _deployment_component({"attachments": {"config": [{"reference": "cert", "provide-as": "file"}]}})
+        )
+
+
+def test_stray_key_in_per_mount_clone_state_rejected():
+    # This is the layer the global schema stopped guarding when the deployment envelope
+    # was opened up; without this walk a typo here goes unnoticed.
+    with pytest.raises(ProjectIntegrityError, match="persistent-storage"):
+        validate_service_configs(
+            _deployment_component({"persistent-storage": [{"reference": "data", "config": {"ONZIN": 1}}]})
+        )
+
+
+def test_deployment_component_services_as_a_list_is_walked_too():
+    with pytest.raises(ProjectIntegrityError, match="minio-storage"):
+        validate_service_configs(_deployment_component([{"reference": "minio-storage", "config": {"typo": True}}]))
