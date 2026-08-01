@@ -1,0 +1,62 @@
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: "{{ name }}"
+  namespace: "{{ namespace }}"
+spec:
+  # Service-owned NetworkPolicy (cross-domain-access), additive next to the tenant
+  # baseline: when several policies select the same pods, the allowed traffic is the
+  # union of their rules. This one opens exactly the cross-project peers the project
+  # declared, scoped to one own component via the podSelector below.
+  podSelector:
+    matchLabels:
+{% for label_key, label_value in pod_selector.items() %}
+      {{ label_key }}: "{{ label_value }}"
+{% endfor %}
+  policyTypes:
+{% if ingress %}
+    - Ingress
+{% endif %}
+{% if egress %}
+    - Egress
+{% endif %}
+{% if ingress %}
+  ingress:
+{% for rule in ingress %}
+    # namespaceSelector + podSelector in ONE peer entry means AND: exactly this
+    # deployment's component in that namespace, never the whole namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ rule.peer.namespace }}"
+          podSelector:
+            matchLabels:
+{% for label_key, label_value in rule.peer.pod_labels.items() %}
+              {{ label_key }}: "{{ label_value }}"
+{% endfor %}
+      ports:
+{% for port in rule.ports %}
+        - protocol: TCP
+          port: {{ port }}
+{% endfor %}
+{% endfor %}
+{% endif %}
+{% if egress %}
+  egress:
+{% for rule in egress %}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ rule.peer.namespace }}"
+          podSelector:
+            matchLabels:
+{% for label_key, label_value in rule.peer.pod_labels.items() %}
+              {{ label_key }}: "{{ label_value }}"
+{% endfor %}
+      ports:
+{% for port in rule.ports %}
+        - protocol: TCP
+          port: {{ port }}
+{% endfor %}
+{% endfor %}
+{% endif %}

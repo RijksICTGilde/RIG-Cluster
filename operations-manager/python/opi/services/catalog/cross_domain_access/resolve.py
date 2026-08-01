@@ -10,12 +10,16 @@ rule is logged and skipped, never raised.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from opi.core.cluster_config import get_prefixed_namespace
-from opi.services.catalog.cross_domain_access.merge import MergedRule
 from opi.utils.naming import generate_unique_name
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from opi.services.catalog.cross_domain_access.merge import MergedRule
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +78,7 @@ def resolve_rules(
             continue
         project_data = lookup_project(rule.peer_project)
         if project_data is None:
-            logger.warning(
-                "cross-domain rule '%s': project '%s' does not exist, skipped", rule.name, rule.peer_project
-            )
+            logger.warning("cross-domain rule '%s': project '%s' does not exist, skipped", rule.name, rule.peer_project)
             continue
         deployment = _find_deployment(project_data, rule.peer_deployment)
         if deployment is None:
