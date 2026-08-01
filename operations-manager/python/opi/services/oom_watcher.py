@@ -540,7 +540,7 @@ async def _run_oom_check(
     namespace = get_prefixed_namespace(cluster, base_namespace)
 
     # Check each component for health issues (unified check)
-    any_oom = False
+    oom_component_refs: list[str] = []
     image_pull_errors: list[tuple[str, str]] = []  # (component_ref, error_message)
     components = target_dep.get("components", [])
     for comp in components:
@@ -554,7 +554,7 @@ async def _run_oom_check(
         health = await check_pod_health(namespace, unique_name)
 
         if health.oom_detected:
-            any_oom = True
+            oom_component_refs.append(component_ref)
         if health.image_pull_error:
             image_pull_errors.append((component_ref, health.image_pull_error))
         # CrashLoopBackOff: no remediation in fire-and-forget — only reported inline
@@ -569,7 +569,7 @@ async def _run_oom_check(
             logger.error("Failed to handle image pull errors in %s/%s: %s", project_name, deployment_name, e)
 
     # Handle OOM kills: tune resources (git-only), then queue refresh
-    if not any_oom:
+    if not oom_component_refs:
         if not image_pull_errors:
             logger.info(
                 "Health watcher: no issues detected for %s/%s (attempt %d/%d)",
@@ -589,7 +589,9 @@ async def _run_oom_check(
     )
 
     try:
-        result = await tune_deployment_resources(project_name, deployment_name, skip_reprocessing=True)
+        result = await tune_deployment_resources(
+            project_name, deployment_name, skip_reprocessing=True, oom_components=oom_component_refs
+        )
         if result.changes:
             logger.info(
                 "Health watcher: auto-tune applied %d change(s) for %s/%s",
