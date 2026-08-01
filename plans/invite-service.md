@@ -1,7 +1,7 @@
 # Implementatieplan: invites als echte service, met portaal-UI
 
 **Eindproduct van dit document:** `plans/invite-service.md`, de opdracht voor de sessie die dit bouwt.
-**Eindproduct van de implementatie:** een `invite`-servicepackage onder `opi/services/catalog/`, een werkende beheer-UI in het portaal, een migratie van vier bestaande projecten, en `features/invites.md` volgens de projectconventie.
+**Eindproduct van de implementatie:** een `invite`-servicepackage onder `opi/services/catalog/`, een werkende beheer-UI in het portaal, een migratie van vier bestaande projecten, `features/invites.md` volgens de projectconventie, en als sluitstuk een ingevulde controle tegen `instructions/service-review-checklist.md` (taak 14).
 
 **Status: alle beslissingen zijn genomen op 1 augustus 2026 (sectie 3 en 7). Dit document is daarmee een contract, geen voorstel.** Wijkt de bouwer ergens van af, dan is dat een terugkoppeling waard en geen eigen keuze.
 
@@ -307,6 +307,22 @@ Maak `features/invites.md` volgens de projectconventie: wat het is, hoe je het g
 Verplaats `opi/api/invite_routes.py` naar `opi/services/catalog/invite/router.py` en bind hem expliciet in `opi/server.py`, precies zoals `opi/services/catalog/sleep_mode/router.py` gebonden wordt. De registry mag hem niet importeren, want dan trekt de catalogus FastAPI en httpx binnen. Doe dit als aparte PR NA de rest; een verhuizing van 1034 regels bovenop een schemamigratie maakt de review waardeloos.
 
 **Verify:** `uv run pytest tests/e2e/ -m e2e -k invite` (of een handmatige rooktest op `/invite/<key>`) blijft groen, en `python -c "import opi.services.registry"` trekt geen FastAPI binnen.
+
+---
+
+### Taak 14: valideer het geheel tegen de reviewchecklist (als allerlaatste)
+
+Loop de nieuwe service na tegen `instructions/service-review-checklist.md`, volledig, en neem de uitkomst op in de PR-beschrijving als een tabel met per sectie pass, fail of niet van toepassing.
+
+Dit is geen formaliteit. De checklist bestaat uit de vallen die deze codebase in de praktijk heeft opgeleverd, en een nieuwe service loopt daar per definitie het meeste risico op. Let in het bijzonder op:
+
+- sectie 0: stel via de registry vast wat de service declareert, niet via bestandsnamen;
+- sectie 4: de editables zijn hier het grootste oppervlak, en de rolloze uitnodiging uit sectie 8 van dit plan moet een expliciete keuze zijn en geen lege waarde;
+- sectie 7: elke regressietest moet je eerst hebben zien falen op de code zonder de fix;
+- sectie 9: draai de audit over alle 47 productiebestanden, alleen lezend;
+- sectie 10: elke toestandswijziging krijgt een logregel met wie, wat en voor welk project, en een idempotente no-op logt niets.
+
+**Verify:** de tabel is volledig, elke fail is gerepareerd of staat als bevinding in de PR met een reden, en de volledige testsuite eindigt op nul failures en nul errors.
 
 ---
 
