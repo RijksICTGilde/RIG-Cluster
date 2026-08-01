@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from opi.services.catalog.base import ManifestContext, ProvisionContext, SecretFileSpec, Service
+from opi.services.catalog.base import ConfigLayer, ManifestContext, ProvisionContext, SecretFileSpec, Service
 from opi.services.catalog.redis.config_model import RedisConfig
 from opi.services.services_enums import ServiceType
 from opi.utils.secrets import RedisSecret
@@ -22,6 +22,11 @@ class RedisService(Service):
     manifest_order = 40
     # Shared service: fires for both the shared and namespace redis variant.
     manifest_activated_by = (ServiceType.REDIS, ServiceType.NAMESPACE_REDIS)
+
+    def config_api_fields(self, layer: ConfigLayer) -> list[str]:
+        # acl-key-prefix is a project-level setting; derive the accepted-field hint from
+        # the model so a validation error names it (checklist 3), matching the siblings.
+        return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
 
     async def provision(self, ctx: ProvisionContext) -> None:
         # redis_manager handles both the shared and namespace redis variants.

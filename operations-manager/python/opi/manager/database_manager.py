@@ -1288,7 +1288,12 @@ class DatabaseManager:
         raw_config = Project(project_data).service_config(service_name)
         provider = get_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE)
         merged_config = provider.validate_config(raw_config).model_dump(mode="json")
-        logger.debug(f"Database config (validated via provider): {merged_config}")
+        logger.debug(
+            f"Database config (validated via provider): instances={merged_config.get('instances')}, "
+            f"storage={merged_config.get('storage')}, image={merged_config.get('image')}, "
+            f"privileges={len(merged_config.get('privileges') or [])}, "
+            f"postInitSQL={len(merged_config.get('postInitSQL') or [])}"
+        )
         return merged_config
 
     def _get_database_cluster_config(self, project_data: dict[str, Any], cluster_name: str) -> dict[str, Any]:
@@ -1349,7 +1354,10 @@ class DatabaseManager:
             "cluster_name": cluster_name,
         }
 
-        logger.debug(f"Built database cluster config for {project_name} in {cluster_name}: {cluster_config}")
+        logger.debug(
+            f"Built database cluster config for {project_name} in {cluster_name}: "
+            f"namespace={infrastructure_namespace}, endpoint={service_endpoint}, storage_class={storage_class}"
+        )
         return cluster_config
 
     async def _get_infrastructure_superuser_credentials(
@@ -1461,7 +1469,8 @@ class DatabaseManager:
             deployment: The deployment configuration containing namespace info
 
         Returns:
-            DatabaseSecret if found, None otherwise
+            DatabaseSecret if the secret exists, None if it is absent. Re-raises on a
+            retrieval error (it does not swallow the failure into a None result).
         """
         try:
             from opi.core.cluster_config import get_prefixed_namespace
@@ -1481,7 +1490,6 @@ class DatabaseManager:
         except Exception as e:
             logger.debug(f"Could not retrieve database secret for {deployment_name}: {e}")
             raise
-            # return None
 
     @staticmethod
     async def _test_database_connection(

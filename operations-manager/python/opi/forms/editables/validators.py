@@ -211,6 +211,24 @@ class RealmRoleValidator:
         return []
 
 
+class EnvNameValidator:
+    """Validates an environment-variable name: a letter or underscore, then letters,
+    digits and underscores. Mirrors the ``_ENV_NAME`` regex the attachments config model
+    enforces (``AttachmentUse._valid_env_name``), so an invalid name is caught at the
+    field instead of only as a whole-config error at save time."""
+
+    _PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        if not self._PATTERN.match(str(value)):
+            return [
+                "Ongeldige omgevingsvariabelenaam: begin met een letter of underscore, daarna letters, cijfers en underscores"
+            ]
+        return []
+
+
 class PathValidator:
     """Validates publication path format: must start with / and contain no spaces."""
 
