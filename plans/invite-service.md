@@ -1,7 +1,9 @@
 # Implementatieplan: invites als echte service, met portaal-UI
 
 **Eindproduct van dit document:** `plans/invite-service.md`, de opdracht voor de sessie die dit bouwt.
-**Eindproduct van de implementatie:** een `invites`-servicepackage onder `opi/services/catalog/`, een werkende beheer-UI in het portaal, een migratie van vier bestaande projecten, en `features/invites.md` volgens de projectconventie.
+**Eindproduct van de implementatie:** een `invite`-servicepackage onder `opi/services/catalog/`, een werkende beheer-UI in het portaal, een migratie van vier bestaande projecten, en `features/invites.md` volgens de projectconventie.
+
+**Status: alle beslissingen zijn genomen op 1 augustus 2026 (sectie 3 en 7). Dit document is daarmee een contract, geen voorstel.** Wijkt de bouwer ergens van af, dan is dat een terugkoppeling waard en geen eigen keuze.
 
 Alle paden in dit document zijn relatief aan `operations-manager/python/` tenzij ze met `instructions/`, `features/`, `plans/` of `opi/schemas/` beginnen. Regelnummers verwijzen naar de stand van branch `branches-samenvoegen-naar-main` op het moment van schrijven; controleer ze voordat je een bestand aanpast, ze schuiven.
 
@@ -49,38 +51,41 @@ Eerlijk antwoord: voor het grootste deel wel, voor één deel niet, en op één 
 
 Dat is geen zwakte van het contract: `instructions/services.md` regel 43 zegt expliciet dat een gedragsloze service een paar regels is en dat defaults no-ops zijn. `attachments` op de projectlaag doet hetzelfde (`opi/services/catalog/attachments/__init__.py`): alleen `config_form_section`, verder niets.
 
-**Waar je moet oppassen.** De inwisselstroom is een publiek HTTP-oppervlak met FastAPI, httpx en de Keycloak-connector. De catalogus moet importlicht blijven (`instructions/services.md` regel 302: "Keep the catalog import-light"). `sleep-mode` heeft dit al opgelost: `opi/services/catalog/sleep_mode/router.py` wordt niet door de registry geïmporteerd maar expliciet gebonden in `opi/server.py`. Je hebt dus twee opties, en dit is een beslissing voor de gebruiker (zie sectie 6): `opi/api/invite_routes.py` laten staan waar het staat, of het naar `opi/services/catalog/invites/router.py` verhuizen volgens het sleep-mode-patroon. Het advies in dit plan: laat het staan in de eerste ronde en verhuis het pas als de rest werkt, als aparte taak. Een verhuizing van 1034 regels tegelijk met een schemamigratie maakt de review onmogelijk.
+**Waar je moet oppassen.** De inwisselstroom is een publiek HTTP-oppervlak met FastAPI, httpx en de Keycloak-connector. De catalogus moet importlicht blijven (`instructions/services.md` regel 302: "Keep the catalog import-light"). `sleep-mode` heeft dit al opgelost: `opi/services/catalog/sleep_mode/router.py` wordt niet door de registry geïmporteerd maar expliciet gebonden in `opi/server.py`. BESLIST (7.13): `opi/api/invite_routes.py` verhuist naar `opi/services/catalog/invite/router.py` volgens het sleep-mode-patroon, maar als aparte en laatste stap, zodat de diff puur verplaatsen is. Een verhuizing van 1034 regels tegelijk met een schemamigratie maakt de review onmogelijk.
 
 **Wat je niet moet forceren.** Verzin geen provisioneringsstap "om de service compleet te maken", en gebruik `config_approvals` niet om een uitnodiging door een beheerder te laten goedkeuren tenzij de gebruiker daar expliciet om vraagt. Beide zijn speculatieve complexiteit.
 
 ---
 
-## 3. Naamvoorstellen (allemaal wijzigbaar)
+## 3. Namen (vastgesteld)
 
-Deze namen zijn voorstellen van de schrijver van dit plan, geen vaststaande feiten. Leg ze voor voordat ze in identifiers terechtkomen.
+Vastgesteld op 1 augustus. Niet meer ter discussie; wijk je af, koppel dat dan terug.
 
 | Wat | Voorstel | Waarom, en het alternatief |
 |---|---|---|
-| `ServiceType`-waarde | `INVITES = "invites"` | Sluit aan op de bestaande top-level sleutel en op `config_path` die er `services/invites/config/...` van maakt. Alternatief: `INVITE = "invite"`, enkelvoud zoals `keycloak`, maar dan wijkt de servicenaam af van de sectie die hij vervangt. |
-| Klassenaam | `InvitesService` | Volgt `KeycloakService`, `SleepModeService`. |
-| Packagemap | `opi/services/catalog/invites/` | Volgt de packageconventie sinds RC-5. |
-| Configmodel | `InvitesConfig`, met `InviteEntry` per item | Volgt `KeycloakConfig` + `KeycloakClientEntry`. |
-| `config_section_id` | `"invites-config"` | Volgt `"keycloak-config"`, `"sleep-mode-config"`. |
-| `modal_flow_id` | `"modal-edit-invites-config"` | Volgt `"modal-edit-sleep-mode-config"`. |
-| Weergavenaam in de UI | `"Uitnodigingen"` | Nederlands, zoals `"Slaapstand"` en `"Bijlagen"`. |
+| `ServiceType`-waarde | `INVITE = "invite"` | Enkelvoud, consistent met de dertien andere services. Gevolg: de migratie is een hernoeming (`invites:` naar `services/invite/config`), geen pure verplaatsing. |
+| Klassenaam | `InviteService` | Volgt `KeycloakService`, `SleepModeService`. |
+| Packagemap | `opi/services/catalog/invite/` | Volgt de packageconventie sinds RC-5. |
+| Configmodel | `InviteConfig`, met `InviteEntry` per item | Volgt `KeycloakConfig` + `KeycloakClientEntry`. |
+| `config_section_id` | `"invite-config"` | Volgt `"keycloak-config"`, `"sleep-mode-config"`. |
+| `modal_flow_id` | `"modal-edit-invite-config"` | Volgt `"modal-edit-sleep-mode-config"`. |
+| Weergavenaam in de UI | `"Uitnodiging"` | Nederlands, zoals `"Slaapstand"` en `"Bijlagen"`. |
 | Nieuwe optionsprovider | `InviteRealmRoleOptionsProvider` | Volgt `WakerComponentOptionsProvider`, die ook uit de omringende formulierdata leest. |
 | Nieuwe validator | `InviteKeyValidator` | Volgt `AttachmentIdValidator` in vorm en foutmeldingstoon. |
 | Nieuwe enforcer | `UniqueInviteKeyEnforcer` | Volgt `UniqueNamesEnforcer` / `UniqueDeploymentNameEnforcer`. |
-| Schemaversie van de service | `config_schema_version = "1.0"`, fragment `invites.v1.0.json` | Verplicht formaat: `<servicenaam>.v<versie>.json` naast het package (`opi/services/config_schema.py:34`). |
+| Schemaversie van de service | `config_schema_version = "1.0"`, fragment `invite.v1.0.json` | Verplicht formaat: `<servicenaam>.v<versie>.json` naast het package (`opi/services/config_schema.py:34`). |
 | Projectschemaversie | `LATEST_SCHEMA_VERSION` van `2.5` naar `2.6` | `opi/services/schema_migration.py:18`. |
 
-**Sleutelnamen in de config: onderstrepingsteken of streepje.** De bestaande invitevelden gebruiken onderstrepingstekens (`realm_roles`, `restrict_domain`, `contact_email`, `application_url`, `auth_methods`, `client_roles`, `success_title`, `success_button`). Alle andere serviceconfigs in de codebase gebruiken streepjes (`restrict-access`, `additional-clients`, `sleep-after-deploy`). Voorstel: houd in v1.0 de onderstrepingstekens aan, zodat de migratie een pure verplaatsing is en geen van de acht lezers in `project_file_handler.py` en `invite_manager.py` hoeft te veranderen. Noteer de inconsistentie in het configmodel-docstring en laat een eventuele hernoeming een v2.0 van het servicefragment zijn, met een `migrate_config`-stap. Dit is een beslissing voor de gebruiker.
+**Sleutelnamen: streepjes, en de lezers gaan via het model.** De configsleutels worden `realm-roles`, `restrict-domain`, `auth-methods`, `application-url`, `contact-email`, `success-title`, `success-button` en `default-language`, consistent met alle dertien andere services. Het model draagt de aliassen. De vijf invite-lezers (`invite_manager.py`, `invite_routes.py`, `project_file_handler.py` en de twee templates) gaan daarbij van rauwe `dict.get()` naar het model; dat is geen bijvangst maar het punt, want een service die zijn config bezit hoort ook de weg ernaartoe te bezitten. Omdat de servicenaam toch al verandert is de migratie sowieso een hernoeming, dus het argument "houd het een pure verplaatsing" is vervallen.
 
-**Structuur van de config: `settings` behouden of platslaan.** Vandaag is het `invites.settings.default_language` plus `invites.active[]`. Onder de service wordt dat `services/invites/config/settings/default_language` plus `services/invites/config/active`. Omdat `settings` nog maar één geldig veld bevat (de andere drie kunnen niet eens gezet worden, zie 1.1) is het voorstel om plat te slaan naar `services/invites/config/default_language` en `services/invites/config/active`. Dat scheelt een niveau in elk yaml-pad en in elk formulierveld. Ook dit is een beslissing voor de gebruiker; het platslaan maakt de migratie een fractie complexer maar de rest simpeler.
+**Structuur: `settings` verdwijnt.** `settings` en `config` zijn hetzelfde begrip, dus twee niveaus met dezelfde betekenis. Het wordt `services/invite/config/default-language` naast `services/invite/config/active`. Komen er later projectbrede standaarden bij, dan staan die op datzelfde niveau.
 
 ---
 
 ## 4. Taken
+
+> **Let op:** waar hieronder nog "voorstel" of "beslissing voor de gebruiker" staat, is die beslissing inmiddels genomen. Sectie 7 is het contract en wint bij tegenspraak; sectie 8 corrigeert feitelijke aannames in de tekst hieronder.
+
 
 Elke taak heeft een verifieerbaar succescriterium. Taken die parallel kunnen staan gemarkeerd; de rest hangt van de vorige af.
 
@@ -88,22 +93,22 @@ Elke taak heeft een verifieerbaar succescriterium. Taken die parallel kunnen sta
 
 1. Voeg `INVITES = "invites"` toe aan `ServiceType` in `opi/services/services_enums.py`, in een eigen rubriek met commentaar, zoals `SLEEP_MODE` op regel 35.
 2. Voeg een `ServiceDefinition` toe in `ServiceAdapter.SERVICE_DEFINITIONS` in `opi/services/services.py` (het blok begint rond regel 503 met `ServiceType.KEYCLOAK`). Velden: `name="Uitnodigingen"`, een beschrijving in het Nederlands, `icon` (kies uit de ROOS-iconenset, bijvoorbeeld `"envelop"` of `"gebruikers"`, controleer welke bestaan), `color`, `scope="component"` (dezelfde waarde als keycloak en attachments gebruiken; scope is hier niet betekenisvol maar het veld is verplicht), `variables=[]`, en cruciaal `requires=["services/keycloak"]`. Zet `hidden` NIET op True: dat is precies wat sleep-mode onzichtbaar maakte in de wizard.
-3. Maak `opi/services/catalog/invites/__init__.py` met `class InvitesService(Service)`, `service_type = ServiceType.INVITES`, en een module-docstring die uitlegt wat de service is en welke hooks bewust leeg blijven (neem de tabel uit sectie 2 over als proza).
+3. Maak `opi/services/catalog/invite/__init__.py` met `class InviteService(Service)`, `service_type = ServiceType.INVITE`, en een module-docstring die uitlegt wat de service is en welke hooks bewust leeg blijven (neem de tabel uit sectie 2 over als proza).
 4. Voeg één regel toe aan `SERVICES` in `opi/services/registry.py` (het dict begint op regel 40) plus de import bovenaan.
 
 **Verify:** `uv run pytest tests/test_service_providers.py -q` slaagt. Deze test faalt als een `ServiceType` geen service heeft of als de definitie is afgedreven, dus groen betekent dat de registratie compleet is. Daarnaast: de service verschijnt op de `/services`-pagina en als kaart in de servicesstap van de aanmaakwizard.
 
 ### Taak 2: configmodel en schemafragment (na taak 1)
 
-1. Maak `opi/services/catalog/invites/config_model.py` met twee Pydantic-modellen, naar het voorbeeld van `opi/services/catalog/keycloak/config_model.py`:
+1. Maak `opi/services/catalog/invite/config_model.py` met twee Pydantic-modellen, naar het voorbeeld van `opi/services/catalog/keycloak/config_model.py`:
    - `I18nText` met `nl: str | None` en `en: str | None`, `extra="forbid"`. Dit vervangt `$defs/i18n-text`.
    - `InviteEntry` met `key: str` (verplicht), `roles: list[str]`, `realm_roles: list[str]`, `client_roles: dict[str, list[str]]`, `groups: list[str]`, `restrict_domain: str | None`, `auth_methods: list[str]`, `contact_email: str | None`, `application_url: str | None`, `message: I18nText | None`, `success_title: I18nText | None`, `success_button: I18nText | None`. Zet `extra="forbid"`: het huidige `$defs/invite` verbiedt extra's ook, en dat is de guardrail die we willen houden.
-   - `InvitesConfig` met `default_language: str = "nl"` en `active: list[InviteEntry]`, `extra="forbid"`.
-2. Zet op de service `config_model = InvitesConfig` en `config_schema_version = "1.0"`.
+   - `InviteConfig` met `default_language: str = "nl"` en `active: list[InviteEntry]`, `extra="forbid"`.
+2. Zet op de service `config_model = InviteConfig` en `config_schema_version = "1.0"`.
 3. Implementeer `config_api_fields(layer)` dat `self.config_model_field_names()` teruggeeft voor `ConfigLayer.PROJECT` en `[]` voor de rest, zoals `SleepModeService.config_api_fields` (`opi/services/catalog/sleep_mode/__init__.py:40`).
-4. Genereer het fragment: `uv run python -m opi.services.config_schema`. Dat schrijft `opi/services/catalog/invites/invites.v1.0.json`. Commit dat bestand.
+4. Genereer het fragment: `uv run python -m opi.services.config_schema`. Dat schrijft `opi/services/catalog/invite/invite.v1.0.json`. Commit dat bestand.
 
-**Verify:** `uv run pytest tests/test_service_config_schema.py -q` slaagt (de drift-lock tussen model en fragment). En: `InvitesService().validate_config(<de invitesconfig van asses-k2n>)` valideert zonder fout. Schrijf dat als unittest met de echte vier configblokken als fixtures.
+**Verify:** `uv run pytest tests/test_service_config_schema.py -q` slaagt (de drift-lock tussen model en fragment). En: `InviteService().validate_config(<de invitesconfig van asses-k2n>)` valideert zonder fout. Schrijf dat als unittest met de echte vier configblokken als fixtures.
 
 **Let op:** `roles` en `realm_roles` doen allebei hetzelfde (`assign_invite_permissions`, `opi/manager/invite_manager.py:270` tot `287`, voegt beide samen). Behoud allebei in het model zodat bestaande bestanden blijven valideren, maar bied in de UI alleen `realm_roles` aan en documenteer `roles` als verouderd in het docstring.
 
@@ -111,7 +116,7 @@ Elke taak heeft een verifieerbaar succescriterium. Taken die parallel kunnen sta
 
 Dit is de stap die de oude en de nieuwe locatie tegelijk laat werken tijdens de uitrol, precies zoals `get_domains_config` dat doet voor de verplaatsing van `domains:` naar publish-on-web (v2.4 naar v2.5).
 
-1. Pas `ProjectFileHandler.extract_invites_config` aan (`opi/handlers/project_file_handler.py:2929`): lees eerst `services/invites/config` via `Project(project_data).get(...)` of `Project.service_config("invites")` (`opi/services/project.py:140`), en val terug op `project_data.get("invites", {})`. Alle zeven andere invitemethodes gaan door deze functie heen, dus dit is de enige plek die het weet. Controleer dat: `get_invite_settings`, `get_invite_by_key` en `get_all_active_invites` roepen alle drie `extract_invites_config` aan (regels 2961, 2982, 3001).
+1. Pas `ProjectFileHandler.extract_invites_config` aan (`opi/handlers/project_file_handler.py:2929`): lees eerst `services/invite/config` via `Project(project_data).get(...)` of `Project.service_config("invite")` (`opi/services/project.py:140`), en val terug op `project_data.get("invites", {})`. Alle zeven andere invitemethodes gaan door deze functie heen, dus dit is de enige plek die het weet. Controleer dat: `get_invite_settings`, `get_invite_by_key` en `get_all_active_invites` roepen alle drie `extract_invites_config` aan (regels 2961, 2982, 3001).
 2. Als je in taak 3 het platslaan van `settings` doorvoert (zie sectie 3): laat `get_invite_settings` beide vormen lezen zolang het terugvalpad bestaat.
 3. Verander niets aan `invite_manager.py` of `invite_routes.py`. Die praten alleen met `ProjectFileHandler`, dus die blijven werken.
 
@@ -121,10 +126,10 @@ Dit is de stap die de oude en de nieuwe locatie tegelijk laat werken tijdens de 
 
 Dit is het grootste stuk werk en het deel dat vandaag volledig ontbreekt.
 
-1. Maak `opi/services/catalog/invites/editables.py`, naar het model van `opi/services/catalog/keycloak/editables.py`. Gebruik `config_path(ConfigLayer.PROJECT, ServiceType.INVITES, "config", ...)` in plaats van hardcoded strings, zoals `opi/services/catalog/sleep_mode/editables.py:18` doet. Zet op elke editable `virtualize=("services", "_services-config")`: zonder die virtualisatie botst project-level serviceconfig met de serviceselectielijst in de wizardstate (`instructions/services.md` regel 141).
+1. Maak `opi/services/catalog/invite/editables.py`, naar het model van `opi/services/catalog/keycloak/editables.py`. Gebruik `config_path(ConfigLayer.PROJECT, ServiceType.INVITE, "config", ...)` in plaats van hardcoded strings, zoals `opi/services/catalog/sleep_mode/editables.py:18` doet. Zet op elke editable `virtualize=("services", "_services-config")`: zonder die virtualisatie botst project-level serviceconfig met de serviceselectielijst in de wizardstate (`instructions/services.md` regel 141).
 2. De velden, met per veld het voorstel voor widget, validator en converter:
 
-| Yaml-pad (onder `services/invites/config`) | Widget | Validator/converter | Toelichting |
+| Yaml-pad (onder `services/invite/config`) | Widget | Validator/converter | Toelichting |
 |---|---|---|---|
 | `default_language` | select | `AllowedValuesValidator(["nl","en"])` | Nieuwe kleine optionsprovider of hergebruik van een bestaande ja/nee-achtige provider; zie taak 4.4. |
 | `active` | sequence | `min_items=0`, `max_items` (voorstel 20) | De container; kinderen hieronder. |
@@ -143,11 +148,11 @@ Dit is het grootste stuk werk en het deel dat vandaag volledig ontbreekt.
 3. **Het i18n-patroon.** Er is geen bestaande widget voor `{nl, en}`. Twee manieren, kies er één en leg de keuze vast:
    - **Voorstel:** twee losse editables per tekst, met de paden `active[*]/message/nl` en `active[*]/message/en`, gegroepeerd in een `Fieldset` met legenda "Welkomstbericht". Geneste paden binnen een sequence-item worden ondersteund; `opi/forms/editables/fields/deployments.py:153` gebruikt bijvoorbeeld `deployments[*]/components[*]/services/attachments/config[*]/reference`. Dit is de simpelste route en levert zes velden op (drie teksten maal twee talen).
    - Alternatief: één `Sequence` van `{lang, text}`-paren. Flexibeler, maar je krijgt er een validatieprobleem bij (dubbele talen) en de opslagvorm wijkt af van wat de vier bestaande projecten hebben. Niet doen zonder reden.
-4. Maak `opi/services/catalog/invites/visualizers.py` met een `EditableVisualizer` per editable: label in het Nederlands, `help_text` waar het veld niet vanzelf spreekt, en de `children`-boom voor de sequences. Kopieer de opbouw van `opi/services/catalog/keycloak/visualizers.py:94` (`KEYCLOAK_ADDITIONAL_CLIENTS`), dat is exact het patroon voor "lijst van items met per item een naam en een geneste lijst".
+4. Maak `opi/services/catalog/invite/visualizers.py` met een `EditableVisualizer` per editable: label in het Nederlands, `help_text` waar het veld niet vanzelf spreekt, en de `children`-boom voor de sequences. Kopieer de opbouw van `opi/services/catalog/keycloak/visualizers.py:94` (`KEYCLOAK_ADDITIONAL_CLIENTS`), dat is exact het patroon voor "lijst van items met per item een naam en een geneste lijst".
 5. Implementeer `config_editables(ConfigLayer.PROJECT)` en `config_form_section(ConfigLayer.PROJECT)` op de service. Cache de sectie in `self._config_section_cache` zoals keycloak en sleep-mode doen, want consumenten vergelijken sectie-identiteit. Zet `visible=self._config_selected` (de helper staat identiek in keycloak en sleep-mode) en `post_save_action="save_only"`: een uitnodiging wijzigen hoeft geen deploy te triggeren, want er verandert niets aan de manifests. Dat is een verschil met keycloak en sleep-mode, die `"process_project"` gebruiken; zet er commentaar bij zodat niemand het "corrigeert".
 6. Layout: een `Fieldset` "Algemeen" met `default_language`, en een `Sequence(field_name=cp("active"))` in een `Fieldset` "Actieve uitnodigingen" met een beschrijving die uitlegt dat de link de enige toegangsdrempel is.
 7. Bedraad de sectie op de drie plekken die `instructions/services.md` regel 144 tot 151 noemt, en vergeet er geen:
-   - `opi/forms/visualizers/wizard_sections.py`: voeg `INVITES_CONFIG_SECTION = get_service(ServiceType.INVITES).config_form_section(ConfigLayer.PROJECT)` toe naast regel 296, en zet hem in `_CONFIG_SECTIONS_BY_ID` (regel 306). `SERVICE_CONFIG_SECTIONS` en `EDIT_SECTIONS` zijn daarvan afgeleid en hoeven niet apart bijgewerkt.
+   - `opi/forms/visualizers/wizard_sections.py`: voeg `INVITE_CONFIG_SECTION = get_service(ServiceType.INVITE).config_form_section(ConfigLayer.PROJECT)` toe naast regel 296, en zet hem in `_CONFIG_SECTIONS_BY_ID` (regel 306). `SERVICE_CONFIG_SECTIONS` en `EDIT_SECTIONS` zijn daarvan afgeleid en hoeven niet apart bijgewerkt.
    - `opi/forms/visualizers/flows.py`: voeg de sectie toe aan `CREATE_FLOW` (regel 69), `EDIT_FLOW` (regel 93) en `MODAL_EDIT_SERVICES_FLOW` (regel 143), en maak een `MODAL_EDIT_INVITES_FLOW` naar het model van regel 190, plus een regel in `FLOW_REGISTRY` (regel 226). `SERVICE_CONFIG_MODAL_FLOWS` (regel 244) is afgeleid van `modal_flow_id` en gaat vanzelf.
    - Positie in `CREATE_FLOW`: er is geen afhankelijkheid van componenten, wel van de keycloakstap (de rollenselect leest daaruit). Zet de invitessectie dus NA `KEYCLOAK_CONFIG_SECTION`.
 
@@ -158,9 +163,9 @@ Dit is het grootste stuk werk en het deel dat vandaag volledig ontbreekt.
 Zonder dit ziet een projectbeheerder zijn eigen uitnodigingslinks nergens en moet hij ze uit YAML overtypen.
 
 1. Implementeer `detail_page_sections(project_data, user_role)` op de service, naar het model van `KeycloakService.detail_page_sections` (`opi/services/catalog/keycloak/__init__.py:65`). Retourneer `[]` als er geen actieve invites zijn.
-2. Maak `opi/services/catalog/invites/section-detail.html.j2` (de catalogusmap staat op het Jinja-zoekpad, zie `opi/core/templates.py`; adresseer het als `invites/section-detail.html.j2`). Toon per invite: de sleutel, de volledige link, de toegekende rollen, het contactadres, en een kopieerknop.
+2. Maak `opi/services/catalog/invite/section-detail.html.j2` (de catalogusmap staat op het Jinja-zoekpad, zie `opi/core/templates.py`; adresseer het als `invite/section-detail.html.j2`). Toon per invite: de sleutel, de volledige link, de toegekende rollen, het contactadres, en een kopieerknop.
 3. **De volledige link.** De hook krijgt geen `request` mee, en de publieke basis-URL komt in de inwisselroutes uit `request.url_for` (`opi/api/invite_routes.py:428`). Zet dus alleen de sleutel in `section.context` en bouw de absolute URL in het sjabloon met `url_for('invite_landing', key=...)`. Ga niet alsnog een basis-URL-instelling verzinnen.
-4. **Rolafscherming.** De link is het geheim. Voorstel: toon het blok alleen aan `admin` en `owner`, net als het keycloak-realmblok. Dit is een beslissing voor de gebruiker: als gewone projectleden ook moeten kunnen uitnodigen, moet de rolcheck ruimer.
+4. **Rolafscherming.** BESLIST (7.9): alleen `admin` en `owner`, net als het keycloak-realmblok. De link is het geheim, dus wie hem ziet kan uitnodigen.
 5. Let op de ROOS-valkuil: `<c-button>` hercodeert attribuutwaarden naar dubbele quotes, dus JSON of vierkante haken in `hx-vals`, `hx-headers` of `@click` breken. Gebruik voor de kopieerknop een enkelvoudige, enkel-gequote string of een globale JS-map, geen inline JSON. Raadpleeg `/Users/robbertuittenbroek/IdeaProjects/jinja-roos-components/ROOS_CLAUDE_REFERENCE.md` voordat je de knop schrijft.
 
 **Verify:** een E2E of een rendertest die het blok op de detailpagina van een project met een invite laat zien, met een klikbare link die naar `/invite/<key>` verwijst, en die het blok NIET toont voor een gebruiker zonder de vereiste rol.
@@ -178,21 +183,21 @@ De service hoeft de rol niet te controleren; Keycloak bepaalt de toegang. Maar d
    - Voor het geval het toch gebeurt (handmatige YAML, API): gebruik `FormSection.guard` en `guard_message` (`opi/forms/visualizers/sections.py:34` tot `42`) om de stap te blokkeren met de uitleg "kies eerst de Keycloak-service en stel minstens één realm-rol in", in plaats van een lege select te tonen.
 4. **Een rol die later uit de Keycloak-config verdwijnt.** Dit is de scherpe rand en er zitten drie losse problemen in.
    - *Stille dataverliesrisico.* Als een select de huidige waarde niet in zijn opties heeft, valt hij bij de volgende opslag terug op de eerste optie of op leeg. Een invite die naar een verwijderde rol wees, wijst dan opeens naar een andere rol. Dit MOET je afvangen, ongeacht wat je verder kiest: de provider voegt de huidige opgeslagen waarde altijd toe als optie, gemarkeerd als "bestaat niet meer".
-   - *Stille mislukking bij inwisseling.* `assign_invite_permissions` (`opi/manager/invite_manager.py:278` tot `287`) roept `assign_realm_roles_to_user` aan, zet ontbrekende rollen in `result["not_found"]`, voegt ze toe aan `errors`, en de inwisseling slaagt daarna gewoon. De uitgenodigde krijgt een account zonder rol, ziet een succespagina, en loopt vervolgens tegen de authorization wall aan zonder te weten waarom. Voorstel: laat de inwisseling in dit geval een duidelijke foutpagina tonen met het `contact_email` van de invite, of op zijn minst op ERROR loggen in plaats van op INFO. Dit is een gedragswijziging in de publieke stroom, dus voorleggen.
+   - *Stille mislukking bij inwisseling.* `assign_invite_permissions` (`opi/manager/invite_manager.py:278` tot `287`) roept `assign_realm_roles_to_user` aan, zet ontbrekende rollen in `result["not_found"]`, voegt ze toe aan `errors`, en de inwisseling slaagt daarna gewoon. De uitgenodigde krijgt een account zonder rol, ziet een succespagina, en loopt vervolgens tegen de authorization wall aan zonder te weten waarom. BESLIST (7.11): een foutpagina, met het contactadres van de uitnodiging erop. Die pagina moet expliciet melden dat het account WEL is aangemaakt en dat opnieuw proberen niet werkt, want een tweede poging loopt stuk op `UserExistsError`. Gaat niet af bij een bewust rolloze uitnodiging (zie sectie 8).
    - *Voorkomen.* Optioneel: een enforcer die weigert de Keycloak-config op te slaan als er een rol verdwijnt waar een actieve invite nog naar verwijst. Voorstel is dit NIET te bouwen in de eerste ronde: het koppelt twee services aan elkaar via een enforcer en de waarschuwing plus de gemarkeerde optie dekken het praktische geval. Beslissing voor de gebruiker.
 
 **Verify:** een unittest op de provider met drie fixtures: keycloak met `realm-roles`, keycloak met alleen `restrict-access.realm-role`, en geen keycloak. Plus een test die aantoont dat een opgeslagen rol die niet in de bronlijst voorkomt, toch als optie terugkomt en na een save-ronde onveranderd in het YAML staat.
 
 ### Taak 7: geheimhouding van de uitnodiging (na taak 4)
 
-Vandaag is de sleutel zelfgekozen en raadbaar (`invulhulpen`). De link is de enige drempel, dus de link is het geheim. Er zijn drie varianten en ze sluiten elkaar niet uit.
+Vandaag is de sleutel zelfgekozen en raadbaar (`invulhulpen`). De link is de enige drempel, dus de link is het geheim. BESLIST (7.6): bouw alleen variant A. Variant B is bewust geparkeerd en variant C vervalt, want de vervaldatum gaat er in taak 9 juist uit. Vorm het sleutelveld wel zo dat B er later bij kan zonder een v2.0 van het fragment; als B komt, hoort het verbruik in OPI's eigen database en niet in het projectbestand (7.7).
 
 **Variant A: gegenereerde willekeurige sleutel (aanbevolen, klein).**
 
 De link wordt semi-geheim, zoals een niet-vermelde YouTube-video: wie hem heeft komt binnen, wie hem niet heeft raadt hem niet.
 
 - Datamodel: ongewijzigd. `key` blijft één string. Alleen de manier waarop hij ontstaat verandert.
-- Entropie: voorstel `secrets.token_urlsafe(16)`, dus 128 bits en 22 tekens. De link wordt geplakt, niet getypt. Als leesbaarheid zwaarder weegt: `token_urlsafe(9)` geeft 12 tekens en 72 bits, wat voor deze dreiging ook ruim voldoende is. Beslissing voor de gebruiker.
+- Entropie: BESLIST (7.8) `secrets.token_urlsafe(16)`, dus 128 bits en 22 tekens. De link wordt geplakt, niet getypt. Dat weegt zwaarder nu er geen vervaldatum is: de link is permanent geldig.
 - UI: een select "Sleutel" met "zelfgekozen" en "genereren". Bij "genereren" laat je het sleutelveld leeg en vul je het bij het opslaan.
 - Waar genereren: `FormSection.post_merge` (`opi/forms/visualizers/sections.py:43`) krijgt `(project_data, wizard_data)` en mag `project_data` ter plekke muteren. Dat is de veilige plek: loop de `active`-lijst af en vul elke lege `key`. De `EditableGenerator`-route (`opi/forms/editables/editable.py:77`) is de andere kandidaat, maar generators worden op flowniveau geregistreerd (`generated_editables` op `CREATE_FLOW`, `flows.py:90`) en of dat binnen een `[*]`-sequence werkt is niet geverifieerd; controleer dat voordat je die route kiest.
 - De zelfgekozen sleutel blijft dus gewoon bestaan, precies zoals gevraagd.
@@ -228,13 +233,13 @@ Dit is een wezenlijk andere feature dan A, en de kosten zitten niet in de UI maa
 
 ### Taak 9: de expires_at-beslissing uitvoeren (na taak 2)
 
-Een van de twee, niet allebei. De gebruiker beslist welke.
+BESLIST (7.4): optie B, de code gaat eruit. Er komt dus geen vervaldatum. Optie A staat hieronder alleen nog als vastlegging van wat er is afgewogen.
 
-**Optie A, het veld toevoegen (aanbevolen).** Zet `expires_at: date | None = None` op `InviteEntry`, voeg een `date`-widget toe aan het formulier, en laat `validate_invite` staan. Kosten: één veld, één widget, één regel in het fragment. Baten: de bestaande vervalafhandeling met drie geparseerde formaten en de zes tests in `tests/test_invite_manager.py:25` tot `76` gaan van dode code naar werkende code, en een gedeelde link wordt in de tijd beperkt, wat variant C uit taak 7 is. Let op de bestaande semantiek: `expiry_date < today` (`invite_manager.py:118`) betekent dat de uitnodiging aan het EINDE van de opgegeven dag verloopt. Documenteer dat in de helptekst.
+**Optie A, het veld toevoegen (NIET GEKOZEN, hier alleen ter vastlegging).** Zet `expires_at: date | None = None` op `InviteEntry`, voeg een `date`-widget toe aan het formulier, en laat `validate_invite` staan. Kosten: één veld, één widget, één regel in het fragment. Baten: de bestaande vervalafhandeling met drie geparseerde formaten en de zes tests in `tests/test_invite_manager.py:25` tot `76` gaan van dode code naar werkende code, en een gedeelde link wordt in de tijd beperkt, wat variant C uit taak 7 is. Let op de bestaande semantiek: `expiry_date < today` (`invite_manager.py:118`) betekent dat de uitnodiging aan het EINDE van de opgegeven dag verloopt. Documenteer dat in de helptekst.
 
-**Optie B, de code weghalen.** Verwijder `validate_invite`, `InviteExpiredError` (`invite_manager.py:31`), de aanroep in `get_valid_invite` (regel 202), de twee vertaalde foutmeldingen (`invite_routes.py:263` en `281`) en de zes tests. Kosten: je gooit werkende, getestte functionaliteit weg die de veiligste beperking van een gedeelde link is.
+**Optie B, de code weghalen (GEKOZEN).** Verwijder `validate_invite`, `InviteExpiredError` (`invite_manager.py:31`), de aanroep in `get_valid_invite` (regel 202), de twee vertaalde foutmeldingen (`invite_routes.py:263` en `281`) en de zes tests. Kosten: je gooit werkende, getestte functionaliteit weg die de veiligste beperking van een gedeelde link is.
 
-**In beide gevallen:** ruim de tweede variant van dezelfde fout op. `get_invite_settings` (`project_file_handler.py:2947`) geeft `allow_sso`, `allow_local` en `default_expiration_days` terug die geen van drieën door het schema toegelaten zijn. Voorstel: haal die drie uit `get_invite_settings` en houd alleen `default_language` over. `auth_methods` per invite dekt de eerste twee al (`get_invite_auth_methods`, regel 3006), en `default_expiration_days` heeft alleen betekenis als er ooit een aanmaakroute komt die een vervaldatum voorinvult; dat kan dan een constante zijn.
+**In beide gevallen:** ruim de tweede variant van dezelfde fout op. `get_invite_settings` (`project_file_handler.py:2947`) geeft `allow_sso`, `allow_local` en `default_expiration_days` terug die geen van drieën door het schema toegelaten zijn. BESLIST (7.5): haal die drie eruit en houd alleen `default-language` over. Let op de correctie: `allow_sso` en `allow_local` zijn geen dode code maar onzetbare code, gebruikt als projectbrede terugval in `get_invite_auth_methods` (regel 3006). Die terugval wordt letterlijk "allebei toegestaan", wat vandaag feitelijk al gebeurt.
 
 **Verify:** bij optie A: een test die een project met `expires_at` door `migrate_to_latest` haalt en daarna door `validate_project_schema`, en die slaagt. Bij optie B: `grep -rn "expires_at\|InviteExpired\|default_expiration_days" opi/` geeft nul treffers.
 
@@ -247,10 +252,10 @@ Een van de twee, niet allebei. De gebruiker beslist welke.
    - EN onvoorwaardelijk vanuit `_fixup_v2_data` (regel 421). De versie-gebonden stap slaat een bestand over dat al op `2.6` gestempeld is maar toch nog een top-level `invites:` heeft, bijvoorbeeld omdat een oude pod het tijdens een uitrol geschreven heeft. `migrate_to_latest` draait `_fixup_v2_data` altijd (regel 114, met het commentaar "Always run v2 fixups to clean up corruption from past bugs"): daar hoort de reparatie thuis. Dit is precies de schema-migration-catalog-gap.
 4. Tweede valkuil, expliciet: migraties die alleen `deployments` en `components` aflopen missen top-level velden. `invites` IS top-level en `services` ook. Lees `project_data` direct; ga er niet van uit dat er al een `services`-lijst staat, en laat `Project.set` die zo nodig aanmaken.
 5. Idempotent: zodra `invites` weg is, retourneert de functie `False`. Dubbel draaien mag niets doen en mag zeker geen tweede service-entry maken.
-6. **Het projectschema.** Voorstel: laat `"invites"` voorlopig in de root-properties van `opi/schemas/project_v2.json` (regel 55) staan, samen met `$defs/invites`, `$defs/invite` en `$defs/i18n-text`. De root heeft `additionalProperties: false`, dus het meteen weghalen breekt elk bestand dat nog niet gemigreerd is, ook al is dat maar even. Dit is precies wat er met `domains` is gedaan: dat staat nog steeds op regel 57 terwijl het sinds v2.5 onder publish-on-web hoort. Het opruimen van de drie `$defs` en de root-sleutel is een aparte, latere taak zodra alle projectbestanden gemigreerd op schijf staan. Beslissing voor de gebruiker of dat opruimen in dezelfde PR mag.
+6. **Het projectschema.** Voorstel: laat `"invites"` voorlopig in de root-properties van `opi/schemas/project_v2.json` (regel 55) staan, samen met `$defs/invites`, `$defs/invite` en `$defs/i18n-text`. De root heeft `additionalProperties: false`, dus het meteen weghalen breekt elk bestand dat nog niet gemigreerd is, ook al is dat maar even. Dit is precies wat er met `domains` is gedaan: dat staat nog steeds op regel 57 terwijl het sinds v2.5 onder publish-on-web hoort. BESLIST (7.12): het opruimen gebeurt NIET in deze PR en ook niet "zodra alles gemigreerd is", want dat gebeurt aantoonbaar niet: 30 van de 47 productiebestanden dragen nog een vorm van voor v2.5. Markeer de defs als legacy met een `comment` en laat ze staan. Het opruimen hangt aan het per-versie valideren van het projectschema, dat als blokkerend punt in `TODO.md` staat.
 7. **Verifieer op gemigreerde data, niet op het ruwe bestand.** De processtroom migreert in het geheugen VOORDAT hij valideert. Draai dus in de test eerst `migrate_to_latest()` en daarna `validate_project_schema()`. Een test die het ruwe bestand valideert, test het verkeerde ding; dat is de dp-bn7-les.
 
-**Verify:** een test in `tests/test_schema_migration.py` die de vier echte projectbestanden inleest (of getrouwe fixtures ervan), `migrate_to_latest` draait, controleert dat `invites` weg is, dat `services/invites/config/active` de invite bevat, dat `validate_project_schema` slaagt, en dat een tweede `migrate_to_latest` `was_migrated=False` teruggeeft. Plus een test die een bestand met `schema-version: 2.6` én een top-level `invites:` erdoorheen haalt en aantoont dat de onvoorwaardelijke fixup het alsnog verplaatst.
+**Verify:** een test in `tests/test_schema_migration.py` die de vier echte projectbestanden inleest (of getrouwe fixtures ervan), `migrate_to_latest` draait, controleert dat `invites` weg is, dat `services/invite/config/active` de invite bevat, dat `validate_project_schema` slaagt, en dat een tweede `migrate_to_latest` `was_migrated=False` teruggeeft. Plus een test die een bestand met `schema-version: 2.6` én een top-level `invites:` erdoorheen haalt en aantoont dat de onvoorwaardelijke fixup het alsnog verplaatst.
 
 ### Taak 11: `instructions/services.md` uitbreiden met een sectie over editables (onafhankelijk, mag als eerste)
 
@@ -299,7 +304,7 @@ Maak `features/invites.md` volgens de projectconventie: wat het is, hoe je het g
 
 ### Taak 13 (optioneel, onafhankelijk, na 1): de router naar het package verhuizen
 
-Verplaats `opi/api/invite_routes.py` naar `opi/services/catalog/invites/router.py` en bind hem expliciet in `opi/server.py`, precies zoals `opi/services/catalog/sleep_mode/router.py` gebonden wordt. De registry mag hem niet importeren, want dan trekt de catalogus FastAPI en httpx binnen. Doe dit als aparte PR NA de rest; een verhuizing van 1034 regels bovenop een schemamigratie maakt de review waardeloos.
+Verplaats `opi/api/invite_routes.py` naar `opi/services/catalog/invite/router.py` en bind hem expliciet in `opi/server.py`, precies zoals `opi/services/catalog/sleep_mode/router.py` gebonden wordt. De registry mag hem niet importeren, want dan trekt de catalogus FastAPI en httpx binnen. Doe dit als aparte PR NA de rest; een verhuizing van 1034 regels bovenop een schemamigratie maakt de review waardeloos.
 
 **Verify:** `uv run pytest tests/e2e/ -m e2e -k invite` (of een handmatige rooktest op `/invite/<key>`) blijft groen, en `python -c "import opi.services.registry"` trekt geen FastAPI binnen.
 
@@ -341,21 +346,37 @@ uv run ruff check . --fix && uv run ruff format . && uv run pyright
 
 Draai niet de hele testsuite; richt op de gewijzigde bestanden. In een verse worktree eerst `uv sync --all-groups`, anders faalt de pre-push-hook op ontbrekende testafhankelijkheden.
 
-## 7. Openstaande beslissingen voor de gebruiker
+## 7. Genomen beslissingen (1 augustus 2026)
 
-Deze moeten beantwoord zijn voordat de bouwer identifiers vastlegt. Alles hierboven met "voorstel" ervoor valt hieronder.
+Alle veertien zijn beantwoord. Dit is het contract; wijk je af, koppel dat terug.
 
-1. **De `ServiceType`-waarde en de weergavenaam.** `invites` of `invite`; `"Uitnodigingen"` als label. Alle afgeleide namen (`InvitesService`, `invites-config`, `modal-edit-invites-config`, `invites.v1.0.json`) volgen hieruit.
-2. **Onderstrepingsteken of streepje in de configsleutels.** Voorstel: onderstrepingstekens behouden in v1.0, zodat de migratie een pure verplaatsing is en geen enkele lezer verandert. Het alternatief is consistent met de rest van de codebase maar raakt acht lezers en de migratie.
-3. **`settings` behouden of platslaan.** Voorstel: platslaan naar `services/invites/config/default_language`, omdat `settings` nog maar één geldig veld bevat.
-4. **`expires_at`: toevoegen of weghalen.** Voorstel: toevoegen. Het maakt dode code levend, het is de goedkoopste beperking van een gedeelde link, en de tests bestaan al.
-5. **`allow_sso`, `allow_local` en `default_expiration_days` uit `get_invite_settings`.** Voorstel: weghalen, want ze kunnen niet gezet worden en `auth_methods` per invite dekt de eerste twee.
-6. **Sleutelgeheimhouding: welke varianten bouwen we.** A (gegenereerde sleutel), B (set van eenmalige codes), C (vervaldatum), of een combinatie. Voorstel: A plus C nu, B alleen als de gebruiker het nodig heeft.
-7. **Als B: waar houden we verbruik bij.** In het projectbestand (git-churn, ongeauthenticeerde schrijfweg, risico op persoonsgegevens in git), in OPI's eigen database (aanbevolen), of in Keycloak. Dit bepaalt of B een middelgrote of een grote klus is.
-8. **Entropie van de gegenereerde sleutel.** 22 tekens en 128 bits, of 12 tekens en 72 bits voor leesbaarheid.
-9. **Rolafscherming van het detailpagina-blok.** Alleen `admin` en `owner`, of ook gewone projectleden. De link is het geheim, dus dit bepaalt wie kan uitnodigen.
-10. **Een verdwenen realm-rol.** Alleen markeren en waarschuwen (aanbevolen), of ook een enforcer die de Keycloak-config blokkeert zolang een invite ernaar verwijst.
-11. **Gedragswijziging in de publieke stroom.** Mag een inwisseling waarbij de rol niet toegekend kon worden een foutpagina tonen in plaats van een succespagina? Vandaag slaagt hij stil en loopt de gebruiker daarna tegen de authorization wall.
-12. **Het opruimen van `$defs/invites`, `$defs/invite`, `$defs/i18n-text` en de root-sleutel `invites` in `project_v2.json`.** In dezelfde PR, of pas nadat alle projectbestanden gemigreerd op schijf staan (aanbevolen, en het is precies wat er met `domains` gebeurd is).
-13. **Taak 13, de routerverhuizing.** Wel of niet, en zo ja: apart of tegelijk. Voorstel: wel, maar apart en als laatste.
-14. **De taal van de nieuwe sectie in `instructions/services.md`.** Het bestand is Engels; voorstel is de sectie ook in het Engels te schrijven.
+1. **Naam.** `ServiceType.INVITE = "invite"`, label `"Uitnodiging"`. Enkelvoud, consistent met de dertien andere services. Gevolg: de migratie is een hernoeming, geen pure verplaatsing.
+2. **Sleutelnamen.** Streepjes, en de vijf lezers gaan van rauwe `dict.get()` naar het model. Zie sectie 3.
+3. **Structuur.** `settings` verdwijnt; `default-language` staat naast `active` onder `config`.
+4. **`expires_at` gaat eruit**, inclusief de vervaldatum-afhandeling en `InviteExpiredError` in `invite_manager`. Geen vervaldatum dus. Dat maakt de sleutel de enige bescherming, wat besluit 6 zwaarder maakt.
+5. **`allow_sso`, `allow_local` en `default_expiration_days` gaan eruit** uit `get_invite_settings`. Let op: `allow_sso`/`allow_local` zijn geen dode code maar onzetbare code, gebruikt als projectbrede terugval in `get_invite_auth_methods`. Die terugval wordt letterlijk "allebei toegestaan", wat vandaag feitelijk al gebeurt. Per invite blijft `auth-methods` de enige weg om het te beperken.
+6. **Alleen variant A: een genereerbare sleutel**, met de zelfgekozen sleutel als alternatief. Variant B (een set eenmalig bruikbare codes) is bewust geparkeerd. Vorm het sleutelveld zo dat B er later bij kan zonder een v2.0 van het servicefragment.
+7. **Als B ooit komt: in OPI's eigen database**, niet in het projectbestand. Dat zou een ongeauthenticeerde inwisseling een schrijfweg naar git geven, met git-churn en persoonsgegevens in de historie als gevolg.
+8. **22 tekens, ongeveer 128 bits.**
+9. **Het detailpaginablok is voor `admin` en `owner`.** De link is het geheim, dus dit is een autorisatiekeuze en geen weergavekeuze. Volgt het Keycloak-realmblok (`catalog/keycloak/__init__.py:71`).
+10. **Een rol die niet meer bestaat: markeren en waarschuwen, niet blokkeren.** Zie de correctie in sectie 8 over wélke rol dat is.
+11. **Een inwisseling waarbij een genoemde rol niet toegekend kon worden toont een foutpagina.** Die pagina moet expliciet melden dat het account wél is aangemaakt en dat opnieuw proberen niet werkt, want een tweede poging loopt stuk op `UserExistsError`. Geldt niet bij een bewust rolloze uitnodiging, zie sectie 8.
+12. **De oude defs in `project_v2.json` blijven staan**, als legacy gemarkeerd met een `comment`, precies zoals `domains`. Ze weghalen kan pas als het projectschema per versie gevalideerd wordt; dat staat als blokkerend punt in `TODO.md`. Gemeten: 30 van de 47 productiebestanden dragen nog een vorm van vóór v2.5, dus wachten tot alles zichzelf herschreven heeft werkt niet.
+13. **De routerverhuizing gebeurt wel, maar apart en als laatste**, zodat de diff puur verplaatsen is en makkelijk terug te draaien als er iets misgaat in de publieke inwisselstroom.
+14. **De nieuwe sectie in `instructions/services.md` is Engels**, consistent met de rest van dat bestand. Let op de merge-conflictwaarschuwing in taak 11: dat bestand is op 28 juli door twee sessies uitgebreid en beide helften moeten erin.
+
+---
+
+## 8. Correcties op dit plan, gevonden tijdens het besluitvormen
+
+Deze weerleggen aannames die eerder in dit document staan. Waar ze botsen, wint deze sectie.
+
+**De rollen komen niet uit `realm-roles`.** Gemeten over alle 47 productiebestanden: `realm-roles` in de Keycloak-config is in **geen enkel project** gedefinieerd. De rol die invites toekennen komt uit `restrict-access/realm-role`, gezet in 9 projecten, altijd op `allowed-user`. De optionsprovider moet dus dáár primair uit lezen. Een enforcer op `realm-roles` zou nooit afgaan.
+
+**Een uitnodiging zonder rol is een eerstelijns keuze, geen weglating.** Dat wordt vandaag gebruikt om mensen alleen een lokaal account te laten aanmaken, zonder verdere rechten. `assign_invite_permissions` slaat een lege rollenlijst gewoon over (`invite_manager.py:278`, `if all_realm_roles:`). Het rolveld is dus optioneel en de select krijgt een expliciete optie "geen rol toekennen" met uitleg erbij. De waarschuwing uit besluit 10 en de foutpagina uit besluit 11 mogen hier niet afgaan.
+
+**`roles` en `realm_roles` zijn twee velden die hetzelfde doen** en worden samengevoegd op `invite_manager.py:276`. Het model brengt dat terug tot één veld; `roles` wordt een alias of verdwijnt in de migratie.
+
+**Invite-sleutels zijn een globale naamruimte.** `_find_project_by_invite_key` neemt de eerste treffer over álle projecten, dus uniekheid moet projectoverstijgend afgedwongen worden en niet per project. Dat is ook een argument vóór de gegenereerde sleutel uit besluit 6: die maakt botsing én raadbaarheid tegelijk onwaarschijnlijk.
+
+**De service-opzet waar dit plan op bouwt bestaat inmiddels.** Sinds 1 augustus hebben dertien van de vijftien services een configmodel en een drift-gelockt schemafragment, valideert `validate_service_configs` alle vier de configlagen, en bestaat `Service.config_model_for(layer)` voor een service die per laag een ander model draagt. Bouw hierop en niet op de oude beschrijving.
