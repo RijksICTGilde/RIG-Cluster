@@ -91,7 +91,7 @@ class TestEditSectionDefinitions:
         assert "auth-wall-config" in EDIT_SECTIONS
 
     def test_edit_sections_registry_count(self):
-        assert len(EDIT_SECTIONS) == 8
+        assert len(EDIT_SECTIONS) == 9
 
     def test_sleep_mode_config_section_present(self):
         assert "sleep-mode-config" in EDIT_SECTIONS

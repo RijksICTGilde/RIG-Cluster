@@ -27,8 +27,11 @@ invite changes no manifests, so it does not trigger a deploy.
 
 from __future__ import annotations
 
+import logging
 import secrets
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from opi.services.catalog.base import ConfigLayer, DetailPageSection, Service, config_path
 from opi.services.catalog.invite.config_model import InviteConfig
@@ -69,9 +72,14 @@ class InviteService(Service):
         active = (
             Project(project_data).get(config_path(ConfigLayer.PROJECT, self.service_type, "config", "active")) or []
         )
+        generated = 0
         for entry in active:
             if isinstance(entry, dict) and not entry.get("key"):
                 entry["key"] = secrets.token_urlsafe(16)
+                generated += 1
+        if generated:
+            project_name = project_data.get("name", "unknown")
+            logger.info(f"Generated {generated} invite key(s) for project '{project_name}'")
 
     # --- config field ownership -------------------------------------------------
 
