@@ -439,6 +439,39 @@ class TestContributeDeploymentManifests:
 # --- service-manifest prune -------------------------------------------------------------
 
 
+class TestOptionsProviders:
+    def test_project_provider_reads_precomputed_and_keeps_unknown_current(self) -> None:
+        from opi.forms.visualizers.providers import CrossDomainProjectOptionsProvider
+
+        provider = CrossDomainProjectOptionsProvider(
+            yaml_data={"_cross_domain_projects": ["regelrecht", "dp-bn7"]}, current_value="gone"
+        )
+        values = [o["value"] for o in provider.get_options()]
+        assert "regelrecht" in values
+        assert "dp-bn7" in values
+        assert "gone" in values  # stored-but-unknown kept selectable
+
+    def test_project_provider_empty_shows_explanation(self) -> None:
+        from opi.forms.visualizers.providers import CrossDomainProjectOptionsProvider
+
+        options = CrossDomainProjectOptionsProvider(yaml_data={}).get_options()
+        assert options == [{"value": "", "label": "Geen andere projecten beschikbaar waar u toegang op heeft"}]
+
+    def test_local_component_provider_reads_own_components(self) -> None:
+        from opi.forms.visualizers.providers import CrossDomainLocalComponentOptionsProvider
+
+        provider = CrossDomainLocalComponentOptionsProvider(
+            yaml_data={"components": [{"name": "web"}, {"name": "worker"}]}
+        )
+        assert [o["value"] for o in provider.get_options()] == ["", "web", "worker"]
+
+    def test_port_provider_reads_precomputed_ports(self) -> None:
+        from opi.forms.visualizers.providers import CrossDomainPortOptionsProvider
+
+        provider = CrossDomainPortOptionsProvider(yaml_data={"_cross_domain_ports": [8080, 4180]})
+        assert [o["value"] for o in provider.get_options()] == ["", "8080", "4180"]
+
+
 class TestServiceManifestPrune:
     def test_removes_only_stale_service_files(self, tmp_path) -> None:
         from opi.manager.project_manager import _select_obsolete_service_manifests

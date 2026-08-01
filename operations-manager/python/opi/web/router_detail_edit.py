@@ -257,6 +257,41 @@ def _template_only_keys(
     return set(template_data or {}) - produced
 
 
+def _build_cross_domain_context(
+    project_name: str, project_data: dict[str, Any], user_email: str
+) -> dict[str, Any]:
+    """Precompute cross-domain-access select options (RC-15).
+
+    ``_cross_domain_projects``: peer projects the user is authorized for, excluding the own
+    project. ``_cross_domain_ports``: the project's own component inbound ports, plus 4180
+    where an authorization-wall fronts a component (the port the receiving side is actually
+    reachable on). One flat port union -- the form cannot filter options per row. Both are
+    template-only context (no step produces them), so they never reach the saved project.
+    """
+    from opi.services.services import service_entry_name
+    from opi.services.services_enums import ServiceType
+
+    projects = sorted(
+        summary.name
+        for summary in get_project_store().get_all()
+        if summary.name != project_name and is_user_authorized_for_project(summary.name, user_email)
+    )
+    ports: list[int] = []
+    has_auth_wall = False
+    for component in project_data.get("components", []) or []:
+        if not isinstance(component, dict):
+            continue
+        for entry in component.get("services", []) or []:
+            if service_entry_name(entry) == ServiceType.AUTHORIZATION_WALL.value:
+                has_auth_wall = True
+        for port in (component.get("ports") or {}).get("inbound") or []:
+            if isinstance(port, int) and port not in ports:
+                ports.append(port)
+    if has_auth_wall and 4180 not in ports:
+        ports.append(4180)
+    return {"_cross_domain_projects": projects, "_cross_domain_ports": sorted(ports)}
+
+
 def _pad_sparse_submission(body: dict[str, Any], flow_id: str, section_id: str = "") -> dict[str, Any]:
     """Pad sparse arrays collapsed by json-enc's cleanArrays.
 
@@ -734,6 +769,13 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
             if any(d.get("name") == requested_dep for d in cluster_deps):
                 backup_context["_selected_deployment"] = requested_dep
         state.template_data.update(backup_context)
+
+    # Cross-domain-access needs a precomputed list of authorized peer projects and of the
+    # project's own inbound ports. Populated only for flows that carry its section. These are
+    # template_only_keys: they never reach the saved project (they are not produced by any
+    # step's step_data), verified by the folding in _template_only_keys.
+    if flow_id in ("modal-edit-cross-domain-config", "modal-edit-services"):
+        state.template_data.update(_build_cross_domain_context(project_name, project_data, _user_email))
 
     # Mark all sections with data as completed (for step indicator)
     for section_id in active_section_ids:

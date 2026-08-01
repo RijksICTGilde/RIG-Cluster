@@ -16,6 +16,15 @@
       "section_id": "components-edit",
       "title": "Components beheren"
     },
+    "cross-domain-access-config": {
+      "editables": [
+        "services/cross-domain-access/config/inbound",
+        "services/cross-domain-access/config/outbound"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "cross-domain-access-config",
+      "title": "Cross-domain toegang"
+    },
     "identity-edit": {
       "editables": [
         "display-name",
@@ -104,6 +113,7 @@
         "attachments",
         "components",
         "sleep-mode-config",
+        "cross-domain-access-config",
         "deployment",
         "domains"
       ]
@@ -121,6 +131,7 @@
         "team",
         "components",
         "sleep-mode-config",
+        "cross-domain-access-config",
         "deployments",
         "config"
       ]
@@ -151,6 +162,13 @@
       "mode": "wizard",
       "sections": [
         "components-edit"
+      ]
+    },
+    "modal-edit-cross-domain-config": {
+      "flow_id": "modal-edit-cross-domain-config",
+      "mode": "wizard",
+      "sections": [
+        "cross-domain-access-config"
       ]
     },
     "modal-edit-identity": {
@@ -191,6 +209,7 @@
         "postgresql-config",
         "auth-wall-config",
         "sleep-mode-config",
+        "cross-domain-access-config",
         "attachments"
       ]
     },
@@ -225,6 +244,15 @@
       "post_save_action": "process_project",
       "section_id": "auth-wall-config",
       "title": "Authorization wall configuratie"
+    },
+    "cross-domain-access": {
+      "editables": [
+        "services/cross-domain-access/config/inbound",
+        "services/cross-domain-access/config/outbound"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "cross-domain-access-config",
+      "title": "Cross-domain toegang"
     },
     "invite": {
       "editables": [
