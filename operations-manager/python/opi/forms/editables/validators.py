@@ -165,12 +165,14 @@ class AttachmentIdValidator:
 
 
 class InviteKeyValidator:
-    """Validates an invite key: lowercase letters, digits, hyphens and underscores,
-    starting with a letter or digit, 3 to 64 characters.
+    """Validates an invite key: letters, digits, hyphens and underscores, starting with a
+    letter or digit, 3 to 64 characters.
 
-    The key becomes a URL path segment (``/invite/{key}``), so spaces, slashes and
-    percent signs are rejected. Emptiness is allowed here (an empty key is filled with a
-    generated random key at save time); only a non-empty, malformed key is rejected.
+    The key becomes a URL path segment (``/invite/{key}``), so spaces, slashes and percent
+    signs are rejected. Uppercase is allowed because a blank key is filled with a generated
+    ``secrets.token_urlsafe`` value (mixed-case, URL-safe base64), which is later re-validated
+    on edit and must pass. Emptiness is allowed here (the empty key is generated at save time);
+    only a non-empty, malformed key is rejected.
     """
 
     def validate(self, value: Any) -> list[str]:
@@ -179,9 +181,9 @@ class InviteKeyValidator:
         value_str = str(value)
         if len(value_str) < 3 or len(value_str) > 64:
             return ["Uitnodigingssleutel moet tussen 3 en 64 tekens bevatten"]
-        if not re.match(r"^[a-z0-9][a-z0-9_-]*$", value_str):
+        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_-]*$", value_str):
             return [
-                "Uitnodigingssleutel mag alleen kleine letters, cijfers, streepjes en "
+                "Uitnodigingssleutel mag alleen letters, cijfers, streepjes en "
                 "onderstrepingstekens bevatten en moet met een letter of cijfer beginnen"
             ]
         return []
