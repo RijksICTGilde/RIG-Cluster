@@ -72,6 +72,15 @@ existing entry with `service_entry_name` and promotes a bare-string selection in
 place rather than appending a duplicate. Only the fields the caller actually sent are
 written (`model_dump(exclude_unset=True)`), so an unset optional field leaves no key.
 
+Configuring a service on a **component or deployment implicitly selects it at the
+project level** (a bare-string entry in the root `services` list), so the caller does
+not have to add it to the root list first -- a component service must resolve to a
+project-level service (a structural check). No explicit project-level config is
+assumed: if the service genuinely requires project-level config, the bare selection
+fails validation there, which is a clear signal rather than a silent gap. An existing
+project entry (bare or configured) is never duplicated or demoted. A bare selection
+carries no config, so it does not appear in the read (`GET .../config`).
+
 The save chokepoint (`save_and_commit_project` -> `validate_service_configs`) is the
 backstop: it re-validates the block against the service's typed model, so a config
 that slips past the request-time check still fails the task with `validation_error`
