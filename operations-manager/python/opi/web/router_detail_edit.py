@@ -957,8 +957,16 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         state.store_step_data(section_id, section_data)
         state.mark_completed(section_id)
 
-    # Re-resolve active sections (services may add/remove conditional steps)
-    active_section_ids = resolve_active_section_ids(flow, state.step_data)
+    # Re-resolve active sections (services may add/remove conditional steps).
+    # Single-section modal flows bypass resolution, exactly as modal_wizard_init does:
+    # a service-config section's ``visible`` lambda reads the real ``services`` list, but
+    # the modal's step_data only carries the virtual ``_services-config`` key, so resolution
+    # would deem the section inactive and stash_inactive_sections would drop the data we just
+    # stored -- reverting the whole save. The edit button already guaranteed visibility.
+    if len(flow.sections) == 1:
+        active_section_ids = [flow.sections[0].section_id]
+    else:
+        active_section_ids = resolve_active_section_ids(flow, state.step_data)
     state.active_sections = active_section_ids
     state.stash_inactive_sections(active_section_ids)
 
