@@ -1,6 +1,6 @@
 # Cross-domain toegang (service)
 
-Status: PLAN, nog niet gebouwd. Basis-branch: `uniform-declarative-platform-services`.
+Status: PLAN, nog niet gebouwd. Basis-branch: `branches-samenvoegen-naar-main` (die draagt sinds 1 augustus alles wat `uniform-declarative-platform-services` had, plus de afgeronde service-opzet).
 
 Doel: een nieuwe platform-service `cross-domain-access` waarmee een project declaratief
 vastlegt welke *andere* projecten, deployments of componenten zijn pods mogen bereiken
