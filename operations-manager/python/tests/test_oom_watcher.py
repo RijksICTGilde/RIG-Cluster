@@ -889,7 +889,9 @@ class TestRunOomCheck:
 
         await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
 
-        mock_tune.assert_called_once_with("myproject", "production", skip_reprocessing=True)
+        mock_tune.assert_called_once_with(
+            "myproject", "production", skip_reprocessing=True, oom_components=["api"]
+        )
         mock_queue.assert_called_once_with("myproject", "production")
 
     @patch("opi.services.oom_watcher._queue_refresh_task", new_callable=AsyncMock)

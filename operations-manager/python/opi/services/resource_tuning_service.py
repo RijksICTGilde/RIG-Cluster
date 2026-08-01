@@ -27,6 +27,7 @@ from opi.core.cluster_config import (
 from opi.core.config import settings
 from opi.handlers.project_file_handler import ProjectFileHandler, ResourceFloor
 from opi.manager.project_manager import ProjectManager, create_project_manager
+from opi.services.catalog.resource_tuning.config import resource_tuning_config
 from opi.services.project_store import get_project_store
 from opi.services.resource_analyzer import (
     _k8s_memory_to_mb,
@@ -180,10 +181,11 @@ def _floor_is_expired(floor: ResourceFloor, max_observed_mb: float, has_oom_kill
         return False
     if set_at.tzinfo is None:
         set_at = set_at.replace(tzinfo=UTC)
+    cfg = resource_tuning_config()
     age_days = (datetime.now(UTC) - set_at).days
-    if age_days < settings.RESOURCE_TUNING_OOM_FLOOR_MIN_AGE_DAYS:
+    if age_days < cfg.oom_floor_min_age_days:
         return False
-    stable_threshold_mb = floor.floor_mb * settings.RESOURCE_TUNING_OOM_FLOOR_STABLE_PERCENT / 100
+    stable_threshold_mb = floor.floor_mb * cfg.oom_floor_stable_percent / 100
     return 0 < max_observed_mb < stable_threshold_mb
 
 
@@ -196,9 +198,16 @@ async def _analyze_component_resources(
     namespace: str,
     cluster: str,
     kubectl: KubectlConnector | None = None,
+    oom_triggered: bool = False,
 ) -> _ComponentAnalysis | None:
     """
     Query Prometheus and compute a memory recommendation for a single component.
+
+    Args:
+        oom_triggered: True when this analysis was triggered by a detected OOM for
+            this component. Skips the availability guard below: a component that just
+            OOM'd is Available=False by definition, so the guard would otherwise block
+            exactly the path that must raise its limit.
 
     Returns:
         _ComponentAnalysis with current state and recommendation, or None
@@ -211,8 +220,10 @@ async def _analyze_component_resources(
         logger.debug(f"Auto-tuning disabled for {component_ref} in {dep_name}, skipping")
         return None
 
-    # Skip unhealthy deployments — their low memory usage is misleading
-    if kubectl is not None and KubectlConnector.isConnected:
+    # Skip unhealthy deployments — their low memory usage is misleading. Not on the
+    # OOM path: an OOM'ing component is unavailable precisely when it needs a bump,
+    # so the availability guard (built for the nightly sweep) must not fire there.
+    if not oom_triggered and kubectl is not None and KubectlConnector.isConnected:
         try:
             conditions = await kubectl.get_deployment_conditions(namespace, unique_name)
             if conditions is not None:
@@ -226,10 +237,11 @@ async def _analyze_component_resources(
                     return None
         except Exception as e:
             logger.warning(f"Failed to check deployment health for {unique_name}: {e}")
-    window_hours = settings.RESOURCE_TUNING_WINDOW_HOURS
-    buffer_percent = settings.RESOURCE_TUNING_MEMORY_BUFFER_PERCENT
-    increase_threshold = settings.RESOURCE_TUNING_INCREASE_THRESHOLD
-    decrease_threshold = settings.RESOURCE_TUNING_DECREASE_THRESHOLD
+    cfg = resource_tuning_config()
+    window_hours = cfg.window_hours
+    buffer_percent = cfg.memory_buffer_percent
+    increase_threshold = cfg.increase_threshold
+    decrease_threshold = cfg.decrease_threshold
 
     current_resources = file_handler.extract_component_resources(project_data, component_ref)
     deployment_overrides = file_handler.extract_deployment_component_resources(project_data, dep_name, component_ref)
@@ -343,7 +355,7 @@ async def _analyze_component_resources(
         max_memory_mi=get_max_memory_limit_mi(cluster),
         max_memory_request_mi=get_max_memory_request_mi(cluster),
         source=source,
-        limit_factor=settings.RESOURCE_TUNING_MEMORY_LIMIT_FACTOR,
+        limit_factor=cfg.memory_limit_factor,
     )
 
     if recommendation is None:
@@ -414,14 +426,14 @@ async def _analyze_component_resources(
             new_request_mb,
             increase_threshold,
             decrease_threshold,
-            settings.RESOURCE_TUNING_MIN_DELTA_MI,
+            cfg.min_delta_mi,
         )
         limit_passes = passes_deviation_gate(
             current_limit_mb,
             new_limit_mb,
             increase_threshold,
             decrease_threshold,
-            settings.RESOURCE_TUNING_MIN_DELTA_MI,
+            cfg.min_delta_mi,
         )
         if not request_passes and not limit_passes:
             # Both changes too small to be worth a commit — keep current memory.
@@ -451,11 +463,32 @@ async def _analyze_component_resources(
             new_cpu_request_m,
             increase_threshold,
             decrease_threshold,
-            settings.RESOURCE_TUNING_MIN_DELTA_M,
+            cfg.min_delta_m,
         ):
             new_cpu_limit = cpu_limit
             new_cpu_request = cpu_request
             cpu_reason = cpu_reason_text
+
+    # Floor at the declared root: a deployment override must never be tuned below the
+    # memory the user declared on the component. This is a lower bound (the user's
+    # floor), never a ceiling — a deployment may still raise itself above root (see the
+    # OOM path). Guards a temporarily-idle PR deployment from being pulled under the
+    # declared value by the nightly sweep.
+    root_resources = file_handler.extract_component_resources(project_data, component_ref)
+    if _k8s_memory_to_mb(new_limit) < _k8s_memory_to_mb(root_resources["limits_memory"]):
+        new_limit = root_resources["limits_memory"]
+    if _k8s_memory_to_mb(new_request) < _k8s_memory_to_mb(root_resources["requests_memory"]):
+        new_request = root_resources["requests_memory"]
+
+    # Keep the memory limit measurably above the request. A container with
+    # limit == request has no burst headroom and dies on the first spike (the
+    # headscale OOM cascade, 2026-07-28). The margin is absolute rather than a factor:
+    # a factor on a small measurement rounds request and limit to the same value,
+    # exactly where the headroom is needed most. Capped by the cluster limit.
+    margin_mb = float(cfg.min_limit_headroom_mi)
+    new_request_mb = _k8s_memory_to_mb(new_request)
+    if _k8s_memory_to_mb(new_limit) < new_request_mb + margin_mb:
+        new_limit = _mb_to_k8s_memory(min(new_request_mb + margin_mb, float(get_max_memory_limit_mi(cluster))))
 
     # Nothing worth changing for either resource — signal "unchanged".
     memory_unchanged = (
@@ -485,6 +518,7 @@ async def tune_deployment_resources(
     project_name: str,
     deployment_name: str | None = None,
     skip_reprocessing: bool = False,
+    oom_components: list[str] | None = None,
 ) -> TuneResult:
     """
     Query Prometheus, compute recommendations, commit YAML, trigger reprocess.
@@ -495,6 +529,11 @@ async def tune_deployment_resources(
         skip_reprocessing: If True, only commit the YAML changes without
             triggering reprocessing.  Use when the caller will queue a
             separate task for reprocessing (e.g. OOM detection during deploy).
+        oom_components: When set, restrict tuning to exactly these component
+            references (the ones that OOM'd) and analyse them on the OOM path
+            (``oom_triggered=True``), bypassing the availability guard. Other
+            components are skipped entirely, saving the Prometheus queries a
+            broad sweep would otherwise waste on healthy components.
 
     Returns:
         TuneResult with changes, unchanged components, and whether refresh was triggered
@@ -539,6 +578,9 @@ async def tune_deployment_resources(
             component_ref = comp.get("reference", "")
             if not component_ref:
                 continue
+            # Targeted OOM tune: only look at the component(s) that OOM'd.
+            if oom_components is not None and component_ref not in oom_components:
+                continue
 
             analysis = await _analyze_component_resources(
                 connector,
@@ -549,6 +591,7 @@ async def tune_deployment_resources(
                 namespace,
                 cluster,
                 kubectl=kubectl,
+                oom_triggered=oom_components is not None,
             )
             if analysis is None:
                 unchanged.append(component_ref)
@@ -589,56 +632,40 @@ async def tune_deployment_resources(
                 resource_update["limits_cpu"] = cpu_new_limit
                 resource_update["requests_cpu"] = cpu_new_request
 
-            # Apply the change at deployment-component level
+            # Apply the change at deployment-component level only. The root component
+            # is the value the user declared, not shared state the tuner ratchets: what
+            # one deployment needs is too deployment-specific to write back to the root.
+            # Writing it there was a last-writer-wins race that pulled asses-k2n/api from
+            # 75Mi to 45Mi in six seconds. A new deployment inherits the declared root;
+            # if that is too tight it OOMs once and the watcher raises its own override.
             file_handler.set_deployment_component_resources(project_data, dep_name, component_ref, resource_update)
 
-            # Update base component definition so new deployments inherit
-            # a realistic starting point. The OOM watcher will bump up any
-            # deployment that actually needs more memory.
-            base_resources = file_handler.extract_component_resources(project_data, component_ref)
-            base_update: dict[str, str] = {}
-            if mem_changed and (
-                analysis.new_request != base_resources["requests_memory"]
-                or analysis.new_limit != base_resources["limits_memory"]
-            ):
-                base_update["requests_memory"] = analysis.new_request
-                base_update["limits_memory"] = analysis.new_limit
-            if cpu_changed and (
-                cpu_new_request != base_resources["requests_cpu"] or cpu_new_limit != base_resources["limits_cpu"]
-            ):
-                base_update["requests_cpu"] = cpu_new_request
-                base_update["limits_cpu"] = cpu_new_limit
-            if base_update:
-                file_handler.set_component_resources(project_data, component_ref, base_update)
-
-            # Write resource history at both levels (memory and/or CPU limits)
+            # Write resource history at deployment level. Both limits and requests are
+            # recorded: a change that only moves the request otherwise reads as a no-op
+            # (identical limits entry). The OOM floor still reads limits.memory only.
             source = "oom-watcher" if analysis.has_oom_kills else "auto-tune"
             now = datetime.now(UTC).isoformat()
             history_limits: dict[str, str] = {}
+            history_requests: dict[str, str] = {}
             if mem_changed:
                 history_limits["memory"] = analysis.new_limit
+                history_requests["memory"] = analysis.new_request
             if cpu_changed:
                 history_limits["cpu"] = cpu_new_limit
+                history_requests["cpu"] = cpu_new_request
             history_reason = analysis.reason
             if cpu_changed and analysis.cpu_reason:
                 history_reason = f"{analysis.reason} {analysis.cpu_reason}"
             deployment_history_entry: dict[str, Any] = {
                 "timestamp": now,
                 "limits": history_limits,
+                "requests": history_requests,
                 "source": source,
                 "reason": history_reason,
             }
             file_handler.append_deployment_component_resource_history(
                 project_data, dep_name, component_ref, deployment_history_entry
             )
-            component_history_entry: dict[str, Any] = {
-                "timestamp": now,
-                "limits": history_limits,
-                "source": source,
-                "deployment": dep_name,
-                "reason": history_reason,
-            }
-            file_handler.append_component_resource_history(project_data, component_ref, component_history_entry)
 
             change_record: dict[str, str] = {
                 "component": component_ref,
@@ -667,6 +694,9 @@ async def tune_deployment_resources(
         component_names = [c["component"] for c in changes]
         commit_msg = f"auto-tune: adjust resources for {', '.join(component_names)} in {project_name}"
 
+        # Compact history noise that already filled the windows; rides along on the
+        # commit we are making anyway (no extra commit, no fleet-wide rewrite).
+        file_handler.compact_resource_history(project_data)
         await project_manager.save_and_commit_project(project_data, commit_msg, enforce_validation=False)
         if not skip_reprocessing:
             deployment_refresh_triggered = await trigger_reprocessing(
