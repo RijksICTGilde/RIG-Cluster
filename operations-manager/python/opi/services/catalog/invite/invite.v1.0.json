@@ -1,0 +1,180 @@
+{
+  "$defs": {
+    "I18nText": {
+      "additionalProperties": false,
+      "description": "A ``{nl, en}`` translated string. Replaces ``$defs/i18n-text``.",
+      "properties": {
+        "en": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "En"
+        },
+        "nl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Nl"
+        }
+      },
+      "title": "I18nText",
+      "type": "object"
+    },
+    "InviteEntry": {
+      "additionalProperties": false,
+      "description": "One invitation. ``key`` is the shared-link secret; everything else describes what\nthe redeeming user gets in the project's Keycloak realm.",
+      "properties": {
+        "application-url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Application-Url"
+        },
+        "auth-methods": {
+          "items": {
+            "enum": [
+              "sso",
+              "local"
+            ],
+            "type": "string"
+          },
+          "title": "Auth-Methods",
+          "type": "array"
+        },
+        "client-roles": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Client-Roles",
+          "type": "object"
+        },
+        "contact-email": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contact-Email"
+        },
+        "groups": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Groups",
+          "type": "array"
+        },
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/I18nText"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "realm-roles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Realm-Roles",
+          "type": "array"
+        },
+        "restrict-domain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Restrict-Domain"
+        },
+        "roles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Roles",
+          "type": "array"
+        },
+        "success-button": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/I18nText"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "success-title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/I18nText"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "title": "InviteEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Project-level invite config: a default language and the list of active invites.\n\n``settings`` is gone (it was a second level meaning the same as ``config``);\n``default-language`` sits next to ``active``.",
+  "properties": {
+    "active": {
+      "items": {
+        "$ref": "#/$defs/InviteEntry"
+      },
+      "title": "Active",
+      "type": "array"
+    },
+    "default-language": {
+      "default": "nl",
+      "title": "Default-Language",
+      "type": "string"
+    }
+  },
+  "title": "InviteConfig",
+  "type": "object"
+}

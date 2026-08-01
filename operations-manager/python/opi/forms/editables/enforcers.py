@@ -401,6 +401,51 @@ class DomainConfigEnforcer:
         raise ValueError(f"Het kale domein '{base_domain}' is niet beschikbaar")
 
 
+class UniqueInviteKeyEnforcer:
+    """Ensures every invite key is unique across ALL projects, not just this one.
+
+    ``_find_project_by_invite_key`` (invite_routes) returns the first project in the whole
+    store whose invite matches a key, so a key is a global namespace: two projects sharing a
+    key makes the second invite silently unreachable. This section-level async enforcer reads
+    the store, skips this project, and raises a ``FieldError`` on the offending key field.
+
+    Only user-provided (non-empty) keys are checked; an empty key is filled with a generated
+    128-bit random key at save time, whose collision odds are negligible. The message never
+    names the other project -- that would leak the existence and ownership of other teams' keys.
+    """
+
+    _MESSAGE = "Deze uitnodigingssleutel is al in gebruik."
+
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+        from opi.forms.editables.service_path import smart_get_value
+        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.project_store import get_project_store
+
+        active = smart_get_value(value, "services/invite/config/active") or []
+        keyed = [
+            (i, str(entry.get("key"))) for i, entry in enumerate(active) if isinstance(entry, dict) and entry.get("key")
+        ]
+        if not keyed:
+            return value
+
+        # Duplicates within this same form.
+        seen: dict[str, int] = {}
+        for index, key in keyed:
+            if key in seen:
+                raise FieldError(f"services/invite/config/active[{index}]/key", self._MESSAGE)
+            seen[key] = index
+
+        # Collisions against every OTHER project in the store.
+        own_project = context.get("project_name")
+        handler = ProjectFileHandler()
+        other_projects = [p for p in get_project_store().get_all() if p.name != own_project]
+        for index, key in keyed:
+            for project in other_projects:
+                if project.data and handler.get_invite_by_key(project.data, key):
+                    raise FieldError(f"services/invite/config/active[{index}]/key", self._MESSAGE)
+        return value
+
+
 class ServiceDependencyEnforcer:
     """Ensures component services are valid project-level services."""
 

@@ -25,6 +25,15 @@
       "section_id": "identity-edit",
       "title": "Projectgegevens bewerken"
     },
+    "invite-config": {
+      "editables": [
+        "services/invite/config/default-language",
+        "services/invite/config/active"
+      ],
+      "post_save_action": "save_only",
+      "section_id": "invite-config",
+      "title": "Uitnodigingen"
+    },
     "keycloak-config": {
       "editables": [
         "services/keycloak/config/template",
@@ -88,6 +97,7 @@
         "identity",
         "services",
         "keycloak-config",
+        "invite-config",
         "postgresql-config",
         "auth-wall-config",
         "team",
@@ -105,6 +115,7 @@
         "identity",
         "services",
         "keycloak-config",
+        "invite-config",
         "postgresql-config",
         "auth-wall-config",
         "team",
@@ -149,6 +160,13 @@
         "identity-edit"
       ]
     },
+    "modal-edit-invite-config": {
+      "flow_id": "modal-edit-invite-config",
+      "mode": "wizard",
+      "sections": [
+        "invite-config"
+      ]
+    },
     "modal-edit-keycloak-config": {
       "flow_id": "modal-edit-keycloak-config",
       "mode": "wizard",
@@ -169,6 +187,7 @@
       "sections": [
         "services-edit",
         "keycloak-config",
+        "invite-config",
         "postgresql-config",
         "auth-wall-config",
         "sleep-mode-config",
@@ -192,6 +211,7 @@
   },
   "service_config_modal_flows": {
     "authorization-wall": "modal-edit-auth-wall-config",
+    "invite": "modal-edit-invite-config",
     "keycloak": "modal-edit-keycloak-config",
     "namespace-postgresql-database": "modal-edit-postgresql-config",
     "sleep-mode": "modal-edit-sleep-mode-config"
@@ -204,6 +224,15 @@
       "post_save_action": "process_project",
       "section_id": "auth-wall-config",
       "title": "Authorization wall configuratie"
+    },
+    "invite": {
+      "editables": [
+        "services/invite/config/default-language",
+        "services/invite/config/active"
+      ],
+      "post_save_action": "save_only",
+      "section_id": "invite-config",
+      "title": "Uitnodigingen"
     },
     "keycloak": {
       "editables": [
