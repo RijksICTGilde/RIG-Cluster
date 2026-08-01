@@ -252,3 +252,36 @@ class TestResolveOptionsForEditable:
             label="X",
         )
         assert resolve_options_for_editable(editable) == []
+
+
+class TestResolveOptionsDoesNotLeakSecrets:
+    """The options bridge passes the whole project dict to providers as ``yaml_data``.
+
+    Logging the filtered kwargs therefore dumped every secret in the project file
+    (repository passwords among them) on every render. The ``opi`` logger is pinned to
+    DEBUG without an env knob, so that line reached production stdout and Loki.
+    """
+
+    def test_debug_line_logs_key_names_not_values(self, caplog):
+        import logging
+
+        secret = "plain:super-secret-git-password"
+        yaml_data = {
+            "repositories": [{"name": "main", "password": secret}],
+            "deployments": [{"name": "productie"}],
+        }
+
+        editable = EditableVisualizer(
+            editable=Editable(yaml_path="resource_types", values_provider="BackupResourceTypesOptionsProvider"),
+            widget=WidgetType.SELECT,
+            label="Resources",
+        )
+        with caplog.at_level(logging.DEBUG, logger="opi.forms.visualizers.bridge"):
+            resolve_options_for_editable(editable, {"yaml_data": yaml_data, "yaml_path": "resource_types"})
+
+        logged = "\n".join(record.getMessage() for record in caplog.records)
+        assert secret not in logged
+        assert "super-secret" not in logged
+        # The provider name and the kwarg names stay, because those are what make the line useful.
+        assert "BackupResourceTypesOptionsProvider" in logged
+        assert "yaml_data" in logged
