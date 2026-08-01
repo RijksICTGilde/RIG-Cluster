@@ -214,6 +214,31 @@ def test_detail_block_shows_invite_link(invite_project: str, sandbox_url: str, s
     assert link.count() > 0, "invite link not shown on the detail page for an admin"
 
 
+def test_configure_via_api_writes_invite(
+    invite_project: str, sandbox_url: str, sandbox_page: Page, forgejo: ForgejoClient
+) -> None:
+    # (E) the NEW capability: the unified per-service config endpoint. Because the invite
+    # service owns a config model, it is API-configurable for free -- a generated typed route
+    # whose body IS InviteConfig. Submit a real config block over HTTP and read the committed
+    # file back, the same submit-and-read rule the wizard test uses (checklist section 13).
+    # PUT replaces the whole invite config, so this runs last: it overwrites the keys the
+    # earlier tests added on this shared throwaway project.
+    api_key = read_api_key_with_retry(sandbox_page, sandbox_url, invite_project)
+    api_invite_key = f"probe-invite-api-{_RUN}"
+    body = {"default-language": "nl", "active": [{"key": api_invite_key, "contact-email": _CONTACT}]}
+    task_id = sandbox_api.start_task(
+        sandbox_url,
+        "PUT",
+        f"/api/v2/projects/{invite_project}/services/invite/config/project",
+        api_key,
+        body,
+        verify_ssl=_API_VERIFY_SSL,
+    )
+    sandbox_api.wait_for_task(sandbox_url, task_id, api_key, verify_ssl=_API_VERIFY_SSL, timeout=240)
+    keys = _invite_keys(forgejo, invite_project)
+    assert api_invite_key in keys, f"invite configured via API not persisted to the project file: {keys}"
+
+
 def _poll(read, done, *, tries: int = 30, delay_s: float = 4):
     """Poll ``read()`` until ``done(value)`` or attempts run out; return the last value.
 
