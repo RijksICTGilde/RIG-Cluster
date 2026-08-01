@@ -36,11 +36,14 @@ beschikbare data, niet tegen de volledige productieset.
 
 Vóór enige wijziging: `uv run pytest tests/ -q` gaf **4850 passed, 6 skipped, 32 errors**. De 32
 errors zijn uitsluitend de `@pytest.mark.kind`/`integration`-tests in
-`tests/integration/test_kubectl_write_ops.py`, die in hun fixture een echte Kind-cluster
-proberen op te zetten (`tests/integration/conftest.py:210`); dat kan zonder Docker/Kind in deze
-omgeving niet. Ze zijn omgevingsgebonden en niet door deze branch veroorzaakt. Alle
-reparaties hieronder houden de pass-telling gelijk of hoger en voegen geen nieuwe failures of
-errors toe.
+`tests/integration/test_kubectl_write_ops.py` (en `test_kubectl_logs_real.py`), die in hun
+fixture een echte Kind-cluster proberen op te zetten (`tests/integration/conftest.py:210`); dat
+kan zonder Docker/Kind in deze omgeving niet. Ze zijn omgevingsgebonden en niet door deze branch
+veroorzaakt.
+
+Ná de reparaties (inclusief de 12 nieuwe tests in `tests/test_service_review_2026_08.py`):
+**4862 passed, 6 skipped, 32 errors** — precies de baseline (4850) plus de 12 nieuwe tests,
+dezelfde 32 Kind-only errors, geen enkele nieuwe failure of error.
 
 Twee dingen die het plan vooraf vastlegt en die tijdens de sweep bevestigd zijn:
 
