@@ -1,6 +1,79 @@
 # Zelfbediening op identiteit dichtzetten in projectrealms (IdP koppelen/ontkoppelen en wachtwoord zetten)
 
-Status: ontwerpnotitie (2026-07-31). Niet gebouwd. Aanleiding: een gebruiker kan in de account console van een projectrealm zelf een wachtwoord zetten en vervolgens de koppeling met de `rig-platform-oidc` IdP verwijderen. Vanaf dat moment logt die persoon lokaal in, zonder SSO Rijk en zonder de platform-realm. Praktisch getest en werkend bevonden.
+Status: fase 1 gebouwd (2026-08-01), nog niet uitgerold. Aanleiding: een gebruiker kan in de account console van een projectrealm zelf een wachtwoord zetten en vervolgens de koppeling met de `rig-platform-oidc` IdP verwijderen. Vanaf dat moment logt die persoon lokaal in, zonder SSO Rijk en zonder de platform-realm. Praktisch getest en werkend bevonden.
+
+## Besluit
+
+Beide knoppen gaan dicht op elke projectrealm met een identity provider, dus knop 1 en knop 2 uit de analyse hieronder. Niet knop 3 (de account-feature serverbreed uit) en niet smaak B (per template splitsen).
+
+De afweging die daaronder ligt, en die afwijkt van wat deze notitie eerst adviseerde:
+
+- **Smaak B is afgevallen** omdat de eis per gebruiker is geformuleerd ("een wachtwoord zetten terwijl je al een IdP hebt is raar") en per realm splitsen dat niet levert. Op `sso-support` zou de omzeiling gewoon blijven bestaan, en dat is de default van het template-veld, dus de meerderheid van de projecten.
+- **Smaak C (eigen required-action provider) is afgevallen** omdat de prijs van knop 2 in onze praktijk vrijwel nul blijkt. Dat is de correctie op de alinea "De prijs, en dat is een productbeslissing" hieronder: `create_user()` zet het wachtwoord hardcoded met `temporary: False` en zet nergens `requiredActions`, dus wij gebruiken de flow die knop 2 zou breken helemaal niet. Lokale gebruikers kiezen hun wachtwoord in óns invite-formulier, dat via de admin-API schrijft en `UPDATE_PASSWORD` nergens raakt. Zelf wijzigen kon alleen via een account console waar geen enkele link naartoe wijst, en "wachtwoord vergeten" kon al niet omdat `resetPasswordAllowed` hardgecodeerd op `False` staat en er geen SMTP is. Er gaat dus geen functie verloren die vandaag werkt.
+- **Knop 3 is niet nodig** zodra knop 1 en 2 dicht zijn, en is serverbreed waar deze per realm kan.
+
+Wat wél nog moet gebeuren is de vervanging: echte wachtwoord-zelfbediening voor lokale accounts, buiten Keycloak om. Dat is fase 2 en die wacht op de mailserver. Zie onderaan.
+
+## Fase 1: wat er gebouwd is
+
+- `KeycloakConnector.set_required_action_enabled(realm, alias, enabled)` en `KeycloakConnector.remove_default_role(realm, client_id, role_name)` in `opi/connectors/keycloak.py`, naast `_lock_identity_fields()` en met hetzelfde patroon: idempotent, alleen schrijven bij een echt verschil, en fail closed omdat een realm die deze restricties mist in de kwetsbare configuratie draait.
+- Twee sleutels op het `realms:`-item in de blueprints, verwerkt door `KeycloakYamlHandler._apply_realm_self_service()`:
+
+  ```yaml
+  disabledRequiredActions:
+    - UPDATE_PASSWORD
+  removeFromDefaultRoles:
+    - account:manage-account
+  ```
+
+  De naam is `removeFromDefaultRoles` en niet `removeDefaultRoles`, want dat laatste bestaat al als vlag op een *user*-item in `algoritmeregister.yaml`.
+- Gezet in `sso-only.yaml` en `sso-support.yaml`. **Niet** in `algoritmeregister.yaml`: die realm heeft geen enkele identity provider ("local authentication only"), dus daar is geen SSO om te omzeilen en zouden de restricties alleen kosten met zich meebrengen. Ook niet in de `bootstrap*.yaml` van de platform-realm, zie de openstaande vraag onderaan.
+- Toegepast op de create-weg (`_process_realms()`) én op de reconcile-weg (`KeycloakManager._ensure_realm_self_service()` naast de andere `_ensure_*`). Dat tweede is essentieel: `create_realm()` draait alleen bij een nieuwe realm, en dat is precies waarom `_lock_identity_fields()` vandaag geen enkele bestaande realm heeft geraakt.
+- Alleen déze twee sleutels worden uit de blueprint gelezen. De rest van het plumbing-gat hieronder staat nog open en is bewust niet meegenomen, zodat het een zichtbare aparte beslissing blijft.
+- `scripts/keycloak_self_service_report.py`: pre-flight rapport, alleen lezen. Draaien vóór uitrol.
+- Tests: `tests/test_keycloak_self_service.py`.
+
+## Wat er in de sandbox gemeten is (1 augustus)
+
+Getest op `vlam-wt8-sandboxed-local`, een `sso-support`-realm met de `rig-platform-oidc` IdP en één federated gebruiker.
+
+**De omzeiling is eerst end-to-end gereproduceerd.** Met een via de admin-API gezet wachtwoord logt de federated gebruiker lokaal in, zonder SSO Rijk. De handmatig samengestelde `kc_action=UPDATE_PASSWORD`-URL serveerde het wachtwoordformulier, en `DELETE /account/linked-accounts/rig-platform-oidc` gaf **204**: de IdP-koppeling was daadwerkelijk weg. Dit is dus geen theoretisch gat.
+
+**De scharnierende aanname klopt.** Met `UPDATE_PASSWORD` op `enabled: false` negeert Keycloak de `kc_action`-parameter volledig: de gebruiker wordt direct doorgestuurd naar de redirect-URI, zonder wachtwoordscherm. De AIA-route is daarmee dicht, en dat was de reden dat knop 3 alleen niet genoeg zou zijn.
+
+**Eén aanname klopte níet, en dat is een correctie op de analyse hierboven.** De verwachting was dat de account console read-only zou blijven omdat `view-profile` behouden blijft. Dat is niet wat er gebeurt. Zonder `manage-account` bevat het access token *helemaal geen* account-rollen meer, dus ook niet de `account`-audience, en antwoorden álle account-REST-endpoints met 401: `credentials`, `linked-accounts`, de unlink en de profielupdate. De console is inert, niet read-only. Een controlemeting bevestigt de richting: met `manage-account` terug in het composiet komen dezelfde vier calls op 200/204/204 en lukt de unlink weer. Voor ZAD is dat geen bezwaar, want er verwijst niets in de portal naar de account console, maar het is meer dan de analyse suggereerde.
+
+**Beide connector-methodes zijn idempotent gebleken tegen een live Keycloak**: de tweede aanroep schrijft niets en logt niets.
+
+**De reconcile-weg is via de echte API bewezen**, op twee realms: `vlam-wt8-sandboxed-local` (`sso-support`) en `tas-yz7-sandboxed-local` (`sso-only`). Een realm die handmatig in de open toestand was teruggezet, kreeg beide restricties terug na een gewone `GET /api/projects/<naam>/:refresh`, met de twee logregels als bewijs. Een tweede refresh schreef nul regels.
+
+**De create-weg is ook bewezen**, met een wegwerprealm uit elk van beide blueprints: `_process_realms()` levert direct bij aanmaken `UPDATE_PASSWORD=false` en een composiet zonder `manage-account`.
+
+**Het rapportscript is op beide categorieën geraakt**, niet alleen op een lege uitkomst: een gebruiker met een openstaande `UPDATE_PASSWORD` en een federated gebruiker met een wachtwoord-credential werden allebei gemeld, met exit code 1.
+
+### De lokale flows blijven werken
+
+Dit is de vraag waar het besluit op rust, dus apart gemeten op realms waar de restricties actief zijn.
+
+- **Aanmaken werkt.** `create_user()` met dezelfde argumenten als de invite-flow (`invite_manager.complete_local_invite`) levert een gebruiker met een `password`-credential en een lege `requiredActions`. De uitgezette required action zit die weg niet in de weg, precies omdat de invite-flow via de admin-API schrijft.
+- **Inloggen werkt.** Diezelfde lokale gebruiker logt daarna gewoon in via de browser-flow en krijgt een token. Ook in de strakke A/B hieronder levert de gewone lokale login in de dichte toestand nog steeds een authorization code op.
+- **Niet nagespeeld**: de HTML-kant van de invite-flow (formulier, CSRF, opzoeken van de invite in het projectbestand). Die raakt Keycloak niet, dus mijn wijziging kan hem niet breken; wat hij wél raakt, `create_user` en de login erna, is hierboven echt getest.
+
+### Op `sso-only` is een lokaal wachtwoord sowieso waardeloos
+
+Gemeten op `tas-yz7-sandboxed-local`, een echte `sso-only`-realm met de External IDP Redirector. Een lokale gebruiker met een geldig wachtwoord krijgt daar **geen inlogformulier**: de browser-flow stuurt onmiddellijk door naar `broker/rig-platform-oidc/login`, vandaar naar `rig-platform`, naar `broker/sso-rijk/login` en verder de federatieketen in. Er is dus geen lokaal inlogscherm om een wachtwoord aan aan te bieden.
+
+### Hertoets
+
+De eerste ronde liep over verschillende realms en toestanden door elkaar. Daarom overgedaan op één wegwerprealm met één federated gebruiker met wachtwoord, waarbij per meting alleen de knoppen omgingen. Alle vier de claims houden stand in beide richtingen:
+
+| | open | dicht |
+|---|---|---|
+| `kc_action=UPDATE_PASSWORD` | wachtwoordpagina geserveerd | genegeerd, direct naar redirect-URI |
+| gewone lokale login | code ontvangen | **code ontvangen** |
+| account-rollen in token | `manage-account`, `manage-account-links` | geen |
+| `credentials` / `linked-accounts` | 200 / 200 | 401 / 401 |
+| unlink IdP | 204, koppeling daadwerkelijk weg | 401 |
 
 Eis: niemand mag zelf een IdP koppelen of ontkoppelen, en niemand mag zichzelf daarmee een wachtwoord geven. Lokale accounts blijven wel bestaan en moeten blijven werken.
 
@@ -86,7 +159,7 @@ Drie smaken:
 
 - **D. Knop 3 (account-feature uit) plus knop 2.** De feature-vlag haalt alle zelfbediening weg zonder OPI-wijziging, en de required action dekt de AIA-route af die daarnaast blijft bestaan. Lokale accounts loggen gewoon in.
 
-Voorkeur: **D als eerste stap**, want die vraagt één regel in de Keycloak-deployment en niets aan het plumbing-gat hieronder. Knop 1 en 2 per realm blijven daarna zinvol als verdediging in de diepte en voor het geval de account console ooit weer aan moet. De open productvraag is dan alleen nog of `sso-support` lokale accounts als bedoelde functie houdt of niet.
+Gekozen: **A**, met de vervanging voor zelfbediening in fase 2. De redenering staat onder "Besluit" bovenaan. Kort: de prijs in de alinea hierboven blijkt in onze praktijk vrijwel nul, want wij gebruiken de flow die knop 2 zou breken helemaal niet, en de eis is per gebruiker geformuleerd waar B per realm werkt.
 
 ## Het plumbing-gat: blueprints zijn vandaag geen bron van waarheid
 
@@ -114,14 +187,31 @@ Geen van beide knoppen is trouwens een veld op de realm-representatie:
 
 Beide zijn wel realm-scoped, dus ze passen prima als eigen secties in de blueprint zodra de handler ze kent.
 
-## Voorstel
+## Wat er nog moet gebeuren
 
-0. **Eerst knop 3**, want die staat los van alles hieronder: `KC_FEATURES_DISABLED: "account,account-api"` in de Keycloak-deployment, in de sandbox verifiëren dat de account console weg is én of de AIA-route `kc_action=UPDATE_PASSWORD` dan nog werkt. Die uitkomst bepaalt hoe dringend de rest is.
-1. **Blueprint-secties toevoegen** voor required actions en voor de samenstelling van `default-roles-<realm>`, verwerkt door `KeycloakYamlHandler`. Idempotent, en aangeroepen op zowel de create- als de reconcile-weg, precies zoals `lock_identity_fields()`.
-2. **Knoppen zetten in `sso-only.yaml`**, en een besluit nemen over `sso-support.yaml` (zie smaken hierboven).
-3. **Bestaande wachtwoorden en koppelingen opruimen.** De knoppen omzetten verandert niets aan wat er al is: wie al een wachtwoord heeft gezet, houdt de omzeiling. Dat geldt in elk geval voor het testaccount waarmee dit is ontdekt. Nodig is een controle per realm (welke gebruikers met een federated identity hebben een wachtwoord-credential) plus opruimen via `DELETE /admin/realms/{realm}/users/{id}/credentials/{credentialId}`. Rapport eerst, opschonen daarna, in de stijl van de service-orphan sweep.
-4. **Verifiëren vóór uitrol** dat een uitgezette `UPDATE_PASSWORD` geen gebruikers klemzet die die required action al openstaan hebben, bijvoorbeeld doordat een beheerder een wachtwoord met "Temporary" heeft gezet. Dat is precies het soort detail dat pas in de sandbox blijkt.
+1. **`scripts/keycloak_self_service_report.py` draaien op productie**, ook over `rig-platform`. Gebruikers met een openstaande `UPDATE_PASSWORD` raken klem zodra de actie uit gaat, dus die moeten eerst opgelost. In de sandbox is dat nul, maar dat zegt niets over productie.
+3. **Bestaande wachtwoorden opruimen.** De knoppen omzetten verandert niets aan wat er al is: wie al een wachtwoord heeft gezet, houdt de omzeiling. Dat geldt in elk geval voor het testaccount waarmee dit is ontdekt. Het rapport uit stap 2 levert de lijst en de `DELETE`-paden; opschonen daarna, in de stijl van de service-orphan sweep.
+4. **Besluit over de platform-realm.** De `bootstrap*.yaml` zijn bewust niet aangeraakt. Daar leeft de `sso-rijk`-koppeling, dus dezelfde omzeiling bestaat daar een niveau hoger en weegt zwaarder. De reden om te wachten is dat onbekend is of er lokale break-glass-accounts op `rig-platform` staan die je niet wil klemzetten; stap 2 beantwoordt dat.
 5. **Los daarvan, lagere prioriteit: `directAccessGrantsEnabled`.** Deployment-clients krijgen die op `True` (`connectors/keycloak.py`, zowel de deployment-client als de extra clients). Dat is de ROPC-flow: met gebruikersnaam, wachtwoord en het client secret is een token te halen zonder browser en zonder IdP. De clients zijn confidential, dus dit is geen open deur, maar ZAD-applicaties gebruiken de authorization-code flow, dus de vlag mag uit. Aparte, kleine opruiming.
+
+## Fase 2: wachtwoord-zelfbediening terugbrengen, buiten Keycloak om
+
+Ontwerpnotitie, niet gebouwd. Wacht op de mailserver.
+
+Fase 1 haalt geen functie weg die vandaag werkt, maar het bevriest de situatie wel: een lokale gebruiker die zijn wachtwoord kwijt is of wil wijzigen, moet bij de realmbeheerder zijn. Dat is nu al zo, maar het is geen eindstation.
+
+Binnen Keycloak is dat niet meer op te lossen, en dat is geen toeval: zowel `execute-actions-email` als "wachtwoord vergeten" (`resetPasswordAllowed`) zetten intern dezelfde required action `UPDATE_PASSWORD`. Wie die uitzet, zet die twee ook uit. Een mailserver koppelen aan Keycloak lost dit dus níet op.
+
+Buiten Keycloak wél, en zonder eigen Java. Wij bezitten het aanmaakpad al: bij de invite-registratie kiest de gebruiker zijn wachtwoord in óns formulier (`invite-register.html.j2` → `invite_manager.complete_local_invite`) en wij schrijven het via de admin-API weg. Wachtwoord wijzigen en resetten is dezelfde code met een ander startpunt. Het bezwaar dat realm-lokale gebruikers geen ZAD-account hebben en die pagina dus eigen authenticatie nodig heeft, verdwijnt met een mailserver: de gemailde token ís de authenticatie, precies zoals de invite-link dat vandaag al is.
+
+Schets:
+
+- Pagina "wachtwoord instellen": e-mailadres invullen, wij mailen een token-link. Geen uitspraak doen over of het adres bestaat, anders is het een user-enumeratie-orakel.
+- Bij het inwisselen van de token controleren of de gebruiker een federated identity heeft (`GET /admin/realms/{realm}/users/{id}/federated-identity`). Zo ja: weigeren en doorverwijzen naar SSO Rijk. Dat is precies het onderscheid per gebruiker dat Keycloak zelf niet kan maken, en in Python is het één aanroep.
+- Nieuw wachtwoord schrijven via dezelfde weg als de invite-flow, met dezelfde eisen uit `invite_manager._validate_password`.
+- Token eenmalig en kortlevend, en de bestaande sessies van die gebruiker intrekken na een wijziging.
+
+Openstaand: welke mailserver het wordt en of die vanuit ODCN bereikbaar is. Let op dat ODCN geen route heeft naar 145.21.0.0/16, wat SMTP daar eerder al blokkeerde.
 
 ## Wat dit niet oplost
 

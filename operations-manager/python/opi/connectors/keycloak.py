@@ -238,6 +238,79 @@ class KeycloakConnector:
         finally:
             self.admin.change_current_realm("master")
 
+    async def set_required_action_enabled(self, realm_name: str, alias: str, enabled: bool) -> None:
+        """Enable or disable a required action provider in a realm.
+
+        Disabling UPDATE_PASSWORD is how self-service password setting is closed off: Keycloak
+        hides the account console's password button (CredentialTypeMetadata drops createAction /
+        updateAction for providers that are not enabled) and rejects the hand-crafted
+        ``kc_action=UPDATE_PASSWORD`` application-initiated action on the login endpoint. Both
+        entry points are needed, since removing manage-account only takes away the first.
+
+        Fails closed for the same reason as :meth:`_lock_identity_fields`: a realm that silently
+        keeps self-service password setting lets a federated user set a local password and log in
+        without SSO Rijk, so an API failure aborts realm provisioning.
+        """
+        try:
+            self.admin.change_current_realm(realm_name)
+            action = self.admin.get_required_action_by_alias(alias)
+            if action is None:
+                logger.warning(f"Required action {alias} not found in realm {realm_name}, nothing to change")
+                return
+            if action.get("enabled") == enabled:
+                return
+            action["enabled"] = enabled
+            self.admin.update_required_action(alias, payload=action)
+            logger.info(f"Set required action {alias} to enabled={enabled} in realm {realm_name}")
+        except KeycloakError as e:
+            logger.error(f"Could not set required action {alias} in realm {realm_name}: {e}")
+            raise
+        finally:
+            self.admin.change_current_realm("master")
+
+    async def remove_default_role(self, realm_name: str, client_id: str, role_name: str) -> None:
+        """Remove a client role from the realm's ``default-roles-<realm>`` composite.
+
+        Removing ``account:manage-account`` is what stops a user from linking or unlinking an
+        identity provider themselves: LinkedAccountsResource requires that role for both add and
+        remove. Measured in the sandbox, the effect is broader than "read-only console": without
+        the role the access token carries no account client roles at all, so it lacks the
+        ``account`` audience and every account REST endpoint answers 401, ``view-profile``
+        notwithstanding. The account console is inert rather than read-only. Nothing in the ZAD
+        portal links to it, so that is acceptable, but it is more than it looks.
+
+        Idempotent: the role is looked up in the composite first and nothing is written when it is
+        already gone. Fails closed, as above.
+        """
+        try:
+            self.admin.change_current_realm(realm_name)
+            client_uuid = self.admin.get_client_id(client_id)
+            if client_uuid is None:
+                logger.warning(f"Client {client_id} not found in realm {realm_name}, cannot remove role {role_name}")
+                return
+
+            default_role_id = self.admin.get_default_realm_role_id()
+            composites = self.admin.get_role_composites_by_id(default_role_id)
+            # Match on the owning client too: a realm role may carry the same name.
+            target = next(
+                (
+                    role
+                    for role in composites
+                    if role.get("name") == role_name and role.get("containerId") == client_uuid
+                ),
+                None,
+            )
+            if target is None:
+                return
+
+            self.admin.remove_realm_default_roles(payload=[target])
+            logger.info(f"Removed default role {client_id}:{role_name} from realm {realm_name}")
+        except KeycloakError as e:
+            logger.error(f"Could not remove default role {client_id}:{role_name} from realm {realm_name}: {e}")
+            raise
+        finally:
+            self.admin.change_current_realm("master")
+
     async def delete_realm(self, realm_name: str) -> bool:
         """
         Delete a realm from Keycloak.

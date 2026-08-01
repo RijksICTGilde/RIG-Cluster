@@ -868,6 +868,8 @@ class KeycloakManager:
                     await self._ensure_idp_and_platform_client_configuration(project_name, cluster, keycloak_url)
                     # Always reconcile identity providers from YAML template (idempotent diff-based)
                     await self._ensure_realm_identity_providers(project_name, cluster, realm_name, keycloak_url, config)
+                    # Always reconcile identity self-service restrictions (idempotent)
+                    await self._ensure_realm_self_service(project_name, cluster, realm_name, keycloak_url, config)
                     # Always ensure clients from YAML template are created (idempotent)
                     await self._ensure_realm_clients(
                         project_name, cluster, realm_name, keycloak_url, config, ingress_hosts
@@ -1443,6 +1445,50 @@ class KeycloakManager:
 
         handler = KeycloakYamlHandler(keycloak)
         await handler.ensure_identity_providers(yaml_path, context)
+
+    async def _ensure_realm_self_service(
+        self,
+        project_name: str,
+        cluster: str,
+        realm_name: str,
+        keycloak_url: str,
+        config: dict[str, Any],
+    ) -> None:
+        """
+        Ensure the identity self-service restrictions from the YAML template are applied.
+
+        Runs on every reconcile, not just on realm creation: create_realm() is skipped once a
+        realm exists, so restrictions added to a template later would otherwise only ever reach
+        newly created realms. That is the gap that left every pre-existing realm without the
+        identity-field lock.
+        """
+        template_name = config.get("template", "sso-only")
+        yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / f"{template_name}.yaml"
+
+        if not yaml_path.exists():
+            logger.warning(f"Template {template_name} not found, skipping self-service reconciliation")
+            return
+
+        keycloak = await create_keycloak_connector(
+            keycloak_url=keycloak_url,
+            admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
+            admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
+        )
+
+        display_name = f"{project_name} ({cluster})"
+        context = {
+            "project_realm_name": realm_name,
+            "project_display_name": display_name,
+            "realm_name": realm_name,
+            "realm_display_name": display_name,
+        }
+
+        user_variables = config.get("variables", {})
+        if isinstance(user_variables, dict):
+            context.update(user_variables)
+
+        handler = KeycloakYamlHandler(keycloak)
+        await handler.ensure_realm_self_service(yaml_path, context)
 
     async def _ensure_idp_and_platform_client_configuration(
         self,
