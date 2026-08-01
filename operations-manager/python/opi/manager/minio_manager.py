@@ -92,7 +92,7 @@ class MinioManager:
                 continue
             config = service_entry_config(service)
             if config:
-                logger.debug(f"Found minio-storage config for {deployment_name}: {config}")
+                logger.debug(f"Found minio-storage config for {deployment_name} with keys: {sorted(config)}")
                 return config
             logger.debug(f"Found minio-storage service for {deployment_name}, but no config block")
             return None

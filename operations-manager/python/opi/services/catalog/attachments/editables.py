@@ -8,7 +8,7 @@ are not affected by this module.
 from __future__ import annotations
 
 from opi.forms.editables.editable import Editable
-from opi.forms.editables.validators import PathValidator
+from opi.forms.editables.validators import EnvNameValidator, PathValidator
 
 ATTACHMENT_USE_REFERENCE_EDITABLE = Editable(
     yaml_path="components[*]/services{attachments}/config[*]/reference",
@@ -33,6 +33,7 @@ ATTACHMENT_USE_PATH_EDITABLE = Editable(
 
 ATTACHMENT_USE_ENV_NAME_EDITABLE = Editable(
     yaml_path="components[*]/services{attachments}/config[*]/env-name",
+    validator=EnvNameValidator(),
     remove_when_none=True,
     depends_on="components[*]/services{attachments}/config[*]/provide-as",
     show_when={"value": ["env-var"]},

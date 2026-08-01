@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from opi.core.cluster_config import get_minio_host, get_minio_port
-from opi.services.catalog.base import ManifestContext, ProvisionContext, SecretFileSpec, Service
+from opi.services.catalog.base import ConfigLayer, ManifestContext, ProvisionContext, SecretFileSpec, Service
 from opi.services.catalog.minio.config_model import MinioStorageConfig
 from opi.services.services_enums import ServiceType
 from opi.utils.secrets import MinIOSecret
@@ -21,6 +21,14 @@ class MinioStorageService(Service):
     provision_order = 20
     manifest_secret_class = MinIOSecret
     manifest_order = 20
+
+    def config_api_fields(self, layer: ConfigLayer) -> list[str]:
+        # minio carries the user setting enable-versioning at project level and OPI-managed
+        # clone state (generation/revisions) at deployment level; both are fields of the one
+        # union model, so derive the accepted-field hint from it for those layers (checklist 3).
+        if layer in (ConfigLayer.PROJECT, ConfigLayer.DEPLOYMENT):
+            return self.config_model_field_names()
+        return []
 
     async def provision(self, ctx: ProvisionContext) -> None:
         await ctx.minio_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment, ctx.force_clone)
