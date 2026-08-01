@@ -39,6 +39,7 @@ from opi.services.catalog.base import (
     DeploymentManifestContext,
     DeploymentManifestSpec,
     Service,
+    config_path,
 )
 from opi.services.catalog.cross_domain_access.config_model import CrossDomainAccessConfig
 from opi.services.catalog.cross_domain_access.merge import IncompleteRuleError, merge_rules, to_merged_rule
@@ -100,6 +101,52 @@ class CrossDomainAccessService(Service):
         if layer in (ConfigLayer.PROJECT, ConfigLayer.DEPLOYMENT):
             return self.config_model_field_names()
         return []
+
+    def config_editables(self, layer: ConfigLayer):
+        if layer is not ConfigLayer.PROJECT:
+            return []
+        from opi.services.catalog.cross_domain_access.editables import CROSS_DOMAIN_EDITABLES
+
+        return CROSS_DOMAIN_EDITABLES
+
+    def config_form_section(self, layer: ConfigLayer):
+        if layer is not ConfigLayer.PROJECT:
+            return None
+        cached = getattr(self, "_config_section_cache", None)
+        if cached is None:
+            from opi.forms.layout import Fieldset, Sequence
+            from opi.forms.visualizers.sections import FormSection
+            from opi.services.catalog.cross_domain_access.visualizers import CROSS_DOMAIN_VISUALIZERS
+
+            def cp(*segments: str) -> str:
+                return config_path(ConfigLayer.PROJECT, self.service_type, "config", *segments)
+
+            cached = FormSection(
+                section_id="cross-domain-access-config",
+                title="Cross-domain toegang",
+                icon="netwerk",
+                description=(
+                    "Netwerktoegang tussen projecten (geen DNS-domeinen). De ontvanger bepaalt wie binnen mag; "
+                    "zet aan jouw kant ook de uitgaande regel, anders is alleen verkeer op poort 80 en 443 mogelijk."
+                ),
+                visible=self._config_selected,
+                post_save_action="process_project",
+                editables=CROSS_DOMAIN_VISUALIZERS,
+                layout=[
+                    Fieldset(
+                        legend="Inkomend (wie mag bij mij binnen)",
+                        description="Elke regel is een toestemming: de ontvanger bepaalt wie toegang krijgt.",
+                        children=[Sequence(field_name=cp("inbound"))],
+                    ),
+                    Fieldset(
+                        legend="Uitgaand (waar mag ik heen)",
+                        description="Nodig voor poorten buiten 80/443 en als expliciete intentie.",
+                        children=[Sequence(field_name=cp("outbound"))],
+                    ),
+                ],
+            )
+            self._config_section_cache = cached
+        return cached
 
     # --- config reading ---------------------------------------------------------
 

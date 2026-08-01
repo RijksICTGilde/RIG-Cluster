@@ -299,6 +299,11 @@ SLEEP_MODE_CONFIG_SECTION = get_service(ServiceType.SLEEP_MODE).config_form_sect
 # re-exported here so the derived SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
 INVITE_CONFIG_SECTION = get_service(ServiceType.INVITE).config_form_section(ConfigLayer.PROJECT)
 
+# cross-domain-access owns its project-level config section
+# (CrossDomainAccessService.config_form_section), re-exported here so the derived
+# SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
+CROSS_DOMAIN_CONFIG_SECTION = get_service(ServiceType.CROSS_DOMAIN_ACCESS).config_form_section(ConfigLayer.PROJECT)
+
 # ---------------------------------------------------------------------------
 # Lookup for conditional sections keyed by service name
 # ---------------------------------------------------------------------------
@@ -315,6 +320,7 @@ _CONFIG_SECTIONS_BY_ID: dict[str, FormSection] = {
         AUTH_WALL_CONFIG_SECTION,
         SLEEP_MODE_CONFIG_SECTION,
         INVITE_CONFIG_SECTION,
+        CROSS_DOMAIN_CONFIG_SECTION,
     )
 }
 

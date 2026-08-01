@@ -917,6 +917,82 @@ class WakerComponentOptionsProvider:
         return options
 
 
+class CrossDomainProjectOptionsProvider:
+    """Peer projects a cross-domain rule may reference.
+
+    Reads ``_cross_domain_projects`` from ``yaml_data`` -- a precomputed list of project
+    names the logged-in user is authorized for (set by ``modal_wizard_init``), excluding the
+    own project. Empty (e.g. the create wizard, where the context is not populated) shows an
+    explanatory option instead of a blank select. A stored value that is no longer in the
+    list is kept selectable so a save does not silently drop it.
+    """
+
+    def __init__(self, yaml_data: dict[str, Any] | None = None, current_value: str | None = None) -> None:
+        self.yaml_data = yaml_data or {}
+        self.current_value = current_value
+
+    def get_options(self) -> list[dict[str, Any]]:
+        names = [n for n in (self.yaml_data.get("_cross_domain_projects") or []) if n]
+        if not names and not self.current_value:
+            return [{"value": "", "label": "Geen andere projecten beschikbaar waar u toegang op heeft"}]
+        options = [{"value": "", "label": "-- Kies een project --"}]
+        options.extend({"value": name, "label": name} for name in names)
+        if self.current_value and self.current_value not in names:
+            options.append({"value": self.current_value, "label": f"{self.current_value} (niet meer beschikbaar)"})
+        return options
+
+
+class CrossDomainLocalComponentOptionsProvider:
+    """The project's OWN components, for the own side of a cross-domain rule.
+
+    Reads ``components`` from the surrounding form data, like ``WakerComponentOptionsProvider``.
+    Empty in the create wizard (no components yet), populated in the edit flow.
+    """
+
+    def __init__(self, yaml_data: dict[str, Any] | None = None, current_value: str | None = None) -> None:
+        self.yaml_data = yaml_data or {}
+        self.current_value = current_value
+
+    def get_options(self) -> list[dict[str, Any]]:
+        names = [
+            component.get("name")
+            for component in (self.yaml_data.get("components") or [])
+            if isinstance(component, dict) and component.get("name")
+        ]
+        if not names and not self.current_value:
+            return [{"value": "", "label": "Nog geen componenten: voeg eerst een component toe"}]
+        options = [{"value": "", "label": "-- Kies een component --"}]
+        options.extend({"value": name, "label": name} for name in names)
+        if self.current_value and self.current_value not in names:
+            options.append({"value": self.current_value, "label": f"{self.current_value} (bestaat niet meer)"})
+        return options
+
+
+class CrossDomainPortOptionsProvider:
+    """Ports a cross-domain rule may target.
+
+    Reads ``_cross_domain_ports`` from ``yaml_data`` -- a precomputed list of the project's
+    own component inbound ports plus 4180 where an authorization-wall fronts a component (the
+    port the receiving side is actually reachable on). The framework cannot filter options
+    per row, so this is one precomputed union; the help text explains the receiving-side and
+    4180 caveats. A stored value not in the list is kept selectable.
+    """
+
+    def __init__(self, yaml_data: dict[str, Any] | None = None, current_value: str | None = None) -> None:
+        self.yaml_data = yaml_data or {}
+        self.current_value = current_value
+
+    def get_options(self) -> list[dict[str, Any]]:
+        ports = [str(p) for p in (self.yaml_data.get("_cross_domain_ports") or []) if p]
+        if not ports and not self.current_value:
+            return [{"value": "", "label": "Geen poorten bekend: stel eerst inbound-poorten in op een component"}]
+        options = [{"value": "", "label": "-- Kies een poort --"}]
+        options.extend({"value": port, "label": port} for port in ports)
+        if self.current_value and str(self.current_value) not in ports:
+            options.append({"value": str(self.current_value), "label": str(self.current_value)})
+        return options
+
+
 class InviteLanguageOptionsProvider:
     """The two languages an invite's default-language can take."""
 
@@ -1039,6 +1115,9 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "InviteLanguageOptionsProvider": InviteLanguageOptionsProvider,
     "InviteAuthMethodOptionsProvider": InviteAuthMethodOptionsProvider,
     "InviteRealmRoleOptionsProvider": InviteRealmRoleOptionsProvider,
+    "CrossDomainProjectOptionsProvider": CrossDomainProjectOptionsProvider,
+    "CrossDomainLocalComponentOptionsProvider": CrossDomainLocalComponentOptionsProvider,
+    "CrossDomainPortOptionsProvider": CrossDomainPortOptionsProvider,
 }
 
 
