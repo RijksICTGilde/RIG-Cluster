@@ -221,3 +221,34 @@ code.
       dependencies.
 - [ ] Anything surprising found while auditing is written down where the next reader will look,
       not only in the review report.
+
+## 13. API-configurability
+
+A service that a human can configure in the wizard must be configurable through the
+REST API too, at the same target layers, or its config is UI-only. The unified
+endpoint (`features/service-config-api.md`) makes this uniform, so the check is that a
+service actually shows up there.
+
+- [ ] The service is listed by `GET /api/v2/services` with the target(s) it accepts,
+      and those targets are the ones it truly carries config on (item 9), not fewer.
+      The target set is measured, not declared by hand: it is derived from
+      `config_api_fields` / `config_editables` / `config_component_layout`, so a
+      service whose config lives on the component but is only declared for the
+      project would be reachable at the wrong target. Verify against item 3.
+- [ ] The service has a generated typed route at
+      `PUT /api/v2/projects/{p}/services/<service>/config/<target>[/<name>]`, and the
+      OpenAPI spec documents that route's body as the service's own config model
+      (its fields and enum values), not a generic dict. A missing route or a generic
+      body means the config model is not wired to the layer.
+- [ ] The typed body round-trips: a real config block lands in the project YAML at the
+      target, and a block the model rejects fails at request time (422) or, as a
+      backstop, at the save chokepoint with the accepted-field list. Do not reason
+      about it; submit and read the resulting YAML, the same rule as item 4.
+- [ ] A service that carries config but exposes no API route is a gap, not an absence:
+      either it has a config model declared on no layer (wire the layer, or record why
+      it carries none), or it is genuinely config-free like `namespace-redis` and
+      `platform`. Say which.
+- [ ] A sequence-config service (storage is a `RootModel[list]`) has no flat
+      `config_api_fields`; that is correct, not a miss. It is still API-configurable
+      through its `config_editables`, and the endpoint must still reach it (its typed
+      body is a JSON array).

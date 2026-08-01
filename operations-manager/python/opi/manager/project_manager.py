@@ -7271,6 +7271,111 @@ class ProjectManager:
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
+    async def configure_service(
+        self,
+        service_name: str,
+        target: str,
+        config: dict[str, Any] | list[Any],
+        *,
+        component_name: str | None = None,
+        deployment_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Upsert one service's config block at a target layer, then persist.
+
+        The write itself is the pure ``ServiceAdapter.set_service_config``; this
+        method resolves the target, ensures the service is selected, and commits
+        through ``save_and_commit_project`` -- the single validated write path. A
+        config the service's model rejects surfaces as ``validation_error`` carrying
+        the chokepoint's message (which lists the accepted fields), so the same
+        guard the wizard hits also guards the API. ``target`` is a ``ConfigLayer``
+        value (``project`` / ``component`` / ``deployment`` / ``deployment-component``).
+        """
+        from opi.services.catalog.base import ConfigLayer
+
+        try:
+            layer = ConfigLayer(target)
+        except ValueError:
+            return {"success": False, "error": f"Unknown target '{target}'", "error_type": "invalid_target"}
+
+        try:
+            project_data = await self.get_contents()
+            project_name = await self.get_name()
+
+            try:
+                ServiceAdapter.set_service_config(
+                    project_data,
+                    service_name,
+                    layer,
+                    config,
+                    component_name=component_name,
+                    deployment_name=deployment_name,
+                )
+            except ServiceValidationError as e:
+                return {"success": False, "error": str(e), "error_type": "invalid_target"}
+
+            commit_message = f"Configure service '{service_name}' at {target} target in project '{project_name}'"
+            try:
+                await self.save_and_commit_project(project_data, commit_message)
+            except (ProjectSchemaError, ProjectIntegrityError) as e:
+                return {"success": False, "error": str(e), "error_type": "validation_error"}
+
+            logger.info(f"Configured service '{service_name}' at {target} target in project '{project_name}'")
+            return {"success": True, "service": service_name, "target": target}
+
+        except Exception as e:
+            error_msg = f"Error configuring service '{service_name}': {e}"
+            logger.exception(error_msg)
+            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+
+    async def clear_service_config(
+        self,
+        service_name: str,
+        target: str,
+        *,
+        component_name: str | None = None,
+        deployment_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Remove one service's config at a target layer (demote to bare string).
+
+        Idempotent: removing config that is not there is a success no-op and, per
+        the logging rule, writes nothing to the log. Only a real change commits and
+        logs one INFO line.
+        """
+        from opi.services.catalog.base import ConfigLayer
+
+        try:
+            layer = ConfigLayer(target)
+        except ValueError:
+            return {"success": False, "error": f"Unknown target '{target}'", "error_type": "invalid_target"}
+
+        try:
+            project_data = await self.get_contents()
+            project_name = await self.get_name()
+
+            try:
+                removed = ServiceAdapter.remove_service_config(
+                    project_data, service_name, layer, component_name=component_name, deployment_name=deployment_name
+                )
+            except ServiceValidationError as e:
+                return {"success": False, "error": str(e), "error_type": "invalid_target"}
+
+            if not removed:
+                return {"success": True, "service": service_name, "target": target, "removed": False}
+
+            commit_message = f"Clear service '{service_name}' config at {target} target in project '{project_name}'"
+            try:
+                await self.save_and_commit_project(project_data, commit_message)
+            except (ProjectSchemaError, ProjectIntegrityError) as e:
+                return {"success": False, "error": str(e), "error_type": "validation_error"}
+
+            logger.info(f"Cleared service '{service_name}' config at {target} target in project '{project_name}'")
+            return {"success": True, "service": service_name, "target": target, "removed": True}
+
+        except Exception as e:
+            error_msg = f"Error clearing service '{service_name}' config: {e}"
+            logger.exception(error_msg)
+            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+
     async def add_component_to_deployment(
         self,
         deployment_name: str,
