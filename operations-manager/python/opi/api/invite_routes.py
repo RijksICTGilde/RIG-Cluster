@@ -272,6 +272,7 @@ def _get_error_messages(language: str) -> dict[str, str]:
             "password_no_lowercase": "Wachtwoord moet minimaal een kleine letter bevatten",
             "password_no_digit": "Wachtwoord moet minimaal een cijfer bevatten",
             "password_mismatch": "Wachtwoorden komen niet overeen",
+            "role_not_assigned": "Account aangemaakt, maar rol niet toegekend",
             "generic_error": "Er is een fout opgetreden",
         },
         "en": {
@@ -289,10 +290,26 @@ def _get_error_messages(language: str) -> dict[str, str]:
             "password_no_lowercase": "Password must contain at least one lowercase letter",
             "password_no_digit": "Password must contain at least one digit",
             "password_mismatch": "Passwords do not match",
+            "role_not_assigned": "Account created, but role not assigned",
             "generic_error": "An error occurred",
         },
     }
     return messages.get(language, messages["nl"])
+
+
+def _realm_roles_unassigned(assigned: dict[str, Any]) -> bool:
+    """Whether the redemption assigned a realm user but could NOT grant a NAMED realm role.
+
+    ``assign_invite_permissions`` records a ``Realm roles not found: ...`` error only when the
+    invite actually requested realm roles that Keycloak did not have; a deliberately role-less
+    invite never attempts an assignment, so it never trips this. When it is true the user has an
+    account without the intended role, hits the authorization wall, and retrying loops on
+    ``UserExistsError`` -- so the flow must show an error page (decision 11) instead of success.
+    """
+    errors = assigned.get("errors") if isinstance(assigned, dict) else None
+    if not isinstance(errors, list):
+        return False
+    return any(isinstance(msg, str) and msg.startswith("Realm roles not found") for msg in errors)
 
 
 @invite_router.get("/{key}", response_class=HTMLResponse)
@@ -603,6 +620,11 @@ async def invite_sso_callback(request: Request, key: str) -> Response:
         # Clear session state
         request.session.pop("invite_flow", None)
 
+        # The account was created but a named realm role could not be granted: show an error
+        # page (decision 11), not success -- retrying loops on UserExistsError.
+        if _realm_roles_unassigned(result_data["assigned"]):
+            return RedirectResponse(url=f"/invite/{key}/error?code=role_not_assigned", status_code=302)
+
         # Store success info in session for success page
         request.session["invite_success"] = {
             "email": result_data["email"],
@@ -822,6 +844,11 @@ async def invite_register_submit(request: Request, key: str) -> Response:
             realm_name=realm_name,
         )
 
+        # Account created but a named realm role could not be granted: error page, not success
+        # (decision 11) -- retrying loops on UserExistsError.
+        if _realm_roles_unassigned(result_data["assigned"]):
+            return RedirectResponse(url=f"/invite/{key}/error?code=role_not_assigned", status_code=302)
+
         # Store success info in session
         request.session["invite_success"] = {
             "email": result_data["email"],
@@ -965,8 +992,9 @@ async def invite_error(request: Request, key: str) -> Response:
 
     # Try to find project for language detection
     result = await _find_project_by_invite_key(key)
+    invite: dict[str, Any] = {}
     if result:
-        _, project_data, _, _ = result
+        _, project_data, invite, _ = result
         language = _get_language(request, project_data)
     else:
         language = request.query_params.get("lang", "nl")
@@ -988,6 +1016,25 @@ async def invite_error(request: Request, key: str) -> Response:
             error_message = "Er bestaat al een account met dit e-mailadres. Gebruik de SSO login optie."
         else:
             error_message = "An account with this email already exists. Use the SSO login option."
+    elif error_code == "role_not_assigned":
+        # The account WAS created; only the intended role could not be granted. Say so
+        # explicitly, warn that retrying will not work (it hits UserExistsError), and point at
+        # the invite's contact address so the user knows who to ask (decision 11).
+        contact = invite.get("contact_email")
+        if language == "nl":
+            error_message = (
+                "Uw account is aangemaakt, maar de bijbehorende rol kon niet worden toegekend. "
+                "Opnieuw proberen werkt niet: het account bestaat al. "
+            )
+            if contact:
+                error_message += f"Neem contact op met {contact} om de rol alsnog te laten toekennen."
+        else:
+            error_message = (
+                "Your account was created, but the intended role could not be assigned. "
+                "Trying again will not work: the account already exists. "
+            )
+            if contact:
+                error_message += f"Please contact {contact} to have the role assigned."
     else:
         error_message = ""
 
