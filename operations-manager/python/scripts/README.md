@@ -22,6 +22,7 @@ Most tools talk to live infrastructure and read credentials/config from environm
 |---|---|
 | `keycloak_flow_tool.py` | Inspect/rebuild the ZAD **auto-link first-broker-login flow** on a live realm (`inspect <realm>`, `rebuild <realm> [--confirm-link]`, `inspect-all`). Rebuilds with explicit execution priorities so `idp-create-user-if-unique` precedes the handle-existing subflow (see `features/keycloak-auto-link.md`). Needs `KEYCLOAK_ADMIN_PASSWORD` (optional `KEYCLOAK_URL`, `KEYCLOAK_ADMIN_USER`). |
 | `setup_keycloak_client_scope.py` | Set up custom client scopes (organization-attribute passthrough) for Keycloak clients. |
+| `keycloak_self_service_report.py` | Pre-flight report before disabling the `UPDATE_PASSWORD` required action: per realm, users with that action still pending (they would get stuck at login, blocking, non-zero exit) and federated users who already have a password credential (they keep the SSO bypass, cleanup). Report only. Needs `KEYCLOAK_ADMIN_PASSWORD`; see `features/futures/keycloak-sso-bypass-voorkomen.md`. |
 
 ## Grafana / observability
 
