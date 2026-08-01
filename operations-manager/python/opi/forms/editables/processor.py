@@ -545,9 +545,16 @@ class EditableFormProcessor:
         ed = vis.editable
         virt = ed.virtualize
         read_path = apply_virtualize(ed.yaml_path, virt) if virt else ed.yaml_path
-        items = get_value(submitted, read_path)
+        # List-aware reads (smart_get_value, not get_value): on the final wizard
+        # submit the merged data is devirtualized, so the virtual read misses and
+        # we fall back to the REAL path. For a project-level service config that
+        # path is ``services/<name>/config/...`` and ``services`` is a mixed list,
+        # which plain get_value cannot traverse -> it returns None and the items
+        # would be overwritten with [] (silent sequence-drop). smart_get_value
+        # walks the services list, matching the scalar reads in _read_submitted.
+        items = smart_get_value(submitted, read_path)
         if not isinstance(items, list) and virt and read_path != ed.yaml_path:
-            items = get_value(submitted, ed.yaml_path)
+            items = smart_get_value(submitted, ed.yaml_path)
         if not isinstance(items, list):
             items = []
 
@@ -646,7 +653,7 @@ class EditableFormProcessor:
                     read_path = apply_virtualize(concrete_path, virt) if virt else concrete_path
                     value = _coerce_to_list(get_value(submitted, read_path))
                     if not value and virt and read_path != concrete_path:
-                        value = _coerce_to_list(get_value(submitted, concrete_path))
+                        value = _coerce_to_list(smart_get_value(submitted, concrete_path))
                     self._validate_field(child_vis, concrete_path, value, errors, context)
                     self._write_field(child_ed, concrete_path, value, result)
                 else:
@@ -654,9 +661,11 @@ class EditableFormProcessor:
                     virt = child_ed.virtualize or seq_virt
                     read_path = apply_virtualize(concrete_path, virt) if virt else concrete_path
                     value = get_value(submitted, read_path)
-                    # Fall back to real path when merged data has no virtual key
+                    # Fall back to real path when merged data has no virtual key.
+                    # smart_get_value so a service-config real path (services/<name>/...)
+                    # is walked through the mixed services list, not read as a dict key.
                     if value is None and virt and read_path != concrete_path:
-                        value = get_value(submitted, concrete_path)
+                        value = smart_get_value(submitted, concrete_path)
                     self._validate_field(child_vis, concrete_path, value, errors, context)
                     self._write_field(child_ed, concrete_path, value, result)
                     # Clean up virtual key from result (see _process_nested_sequence_json
@@ -716,7 +725,9 @@ class EditableFormProcessor:
         # reading from the real path to avoid overwriting good data with [].
         items = get_value(submitted, virtual_seq_path)
         if not isinstance(items, list) and virt:
-            items = get_value(submitted, real_seq_path)
+            # smart_get_value: the real path may be services/<name>/config/... where
+            # services is a mixed list plain get_value cannot descend (silent drop).
+            items = smart_get_value(submitted, real_seq_path)
         if not isinstance(items, list):
             items = []
 
@@ -763,9 +774,10 @@ class EditableFormProcessor:
                 # Virtual path for reading from submitted data
                 virtual_child_path = apply_virtualize(real_child_path, virt) if virt else real_child_path
                 value = get_value(submitted, virtual_child_path)
-                # Fall back to real path if virtual path has no data
+                # Fall back to real path if virtual path has no data. smart_get_value
+                # so a service-config real path is walked through the services list.
                 if value is None and virt:
-                    value = get_value(submitted, real_child_path)
+                    value = smart_get_value(submitted, real_child_path)
                 self._validate_field(child_vis, real_child_path, value, errors, context)
                 self._write_field(child_ed, real_child_path, value, result)
 
