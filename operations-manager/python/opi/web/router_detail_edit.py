@@ -233,6 +233,30 @@ def _fully_owned_list_keys(flow: Any) -> set[str]:
     return owned
 
 
+def _template_only_keys(
+    step_data: dict[str, dict[str, Any]],
+    template_data: dict[str, Any] | None,
+    virt_mappings: dict[str, str],
+) -> set[str]:
+    """Top-level keys present only as template context, to strip before the merged data
+    overwrites the stored project.
+
+    ``template_data`` carries context the step data does not (config for AGE decryption,
+    existing names for uniqueness). Anything the step actually produced must NOT be treated
+    as template-only, or the edit is reverted to the git baseline.
+
+    Crucially, a section that produces a VIRTUAL key (e.g. ``_services-config``) owns the
+    REAL key it folds into (``services``): ``get_merged_data`` has already devirtualized the
+    edit into ``services``. Counting only the raw produced keys left ``services`` looking
+    template-only, so every project-level service-config modal edit (a new invite, a keycloak
+    template change) was popped and lost. ``virt_mappings`` maps virtual -> real, so we add
+    each produced virtual key's real target to the produced set.
+    """
+    produced = {k for sd in step_data.values() for k in sd}
+    produced |= {virt_mappings[k] for k in produced if k in virt_mappings}
+    return set(template_data or {}) - produced
+
+
 def _pad_sparse_submission(body: dict[str, Any], flow_id: str, section_id: str = "") -> dict[str, Any]:
     """Pad sparse arrays collapsed by json-enc's cleanArrays.
 
@@ -1225,9 +1249,7 @@ async def _modal_do_submit(
     # and validation (e.g. config for AGE decryption, existing_deployment_names
     # for uniqueness checks) but should not overwrite existing project data.
     # JSON session round-trip also strips ruamel.yaml types (LiteralScalarString).
-    step_produced_keys = {k for sd in state.step_data.values() for k in sd}
-    template_only_keys = set(state.template_data or {}) - step_produced_keys
-    for key in template_only_keys:
+    for key in _template_only_keys(state.step_data, state.template_data, state.virt_mappings):
         merged_data.pop(key, None)
 
     # Merge with existing project data (preserve system-managed fields)

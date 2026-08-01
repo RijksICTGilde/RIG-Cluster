@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.visualizers.wizard_sections import _CONFIG_SECTIONS_BY_ID
+from opi.web.router_detail_edit import _template_only_keys
 
 
 def _service_config(services: list[Any], name: str) -> dict[str, Any] | None:
@@ -98,3 +99,33 @@ async def test_keycloak_additional_clients_survive_final_submit() -> None:
     assert clients
     assert clients[0]["name"] == "myclient"
     assert clients[0]["redirect-uris"] == ["https://x/*"]
+
+
+def test_modal_edit_keeps_virtualized_service_key() -> None:
+    """The detail-edit modal must not strip the real key behind an edited virtual key.
+
+    Regression for the second RC-13 blocker: the modal save popped ``services`` as
+    template-only because the step produced only the virtual ``_services-config`` key, so
+    ``get_merged_data`` devirtualized the edit into ``services`` and it was then reverted to
+    the git baseline (the added invite / edited keycloak client vanished, the existing one
+    survived). Counting the virtual key's real target keeps ``services`` out of the strip set.
+    """
+    step_data = {"invite-config": {"_services-config": [{"name": "invite", "config": {"active": [{"key": "x"}]}}]}}
+    template_data = {"name": "demo", "services": [{"name": "invite"}], "config": {"age-public-key": "..."}}
+    virt_mappings = {"_services-config": "services"}
+
+    stripped = _template_only_keys(step_data, template_data, virt_mappings)
+
+    assert "services" not in stripped, "the edited services list was wrongly treated as template-only"
+    assert "config" in stripped, "genuine template-only context should still be stripped"
+    assert "name" in stripped
+
+
+def test_template_only_keys_without_virtualization() -> None:
+    """A plainly produced top-level key is never template-only; unproduced context is."""
+    step_data = {"team": {"users": [{"email": "a@b.nl"}]}}
+    template_data = {"users": [{"email": "old@b.nl"}], "config": {"k": "v"}}
+
+    stripped = _template_only_keys(step_data, template_data, {})
+
+    assert stripped == {"config"}
