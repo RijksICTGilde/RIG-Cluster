@@ -9,9 +9,12 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from opi.services.services_enums import ServiceType
+
+if TYPE_CHECKING:
+    from opi.services.catalog.base import ConfigLayer
 
 logger = logging.getLogger(__name__)
 
@@ -1064,3 +1067,155 @@ class ServiceAdapter:
             "components_updated": components_updated,
             "warnings": warnings,
         }
+
+    # --- unified service-config CRUD core (RC-12 follow-up) ---------------------
+    # The pure data-manipulation behind the unified ``/api/v2/.../services/{svc}``
+    # endpoint: it upserts (or removes) one service's config block at a target
+    # layer, leaving validation to the save chokepoint. It writes the same
+    # ``{name, config}`` (project) / ``{reference, config}`` (component / deployment
+    # / deployment-component) records the wizard writes, resolves identity with
+    # ``service_entry_name`` and promotes a bare-string selection in place instead
+    # of appending a duplicate (a services list is a selection set -- checklist
+    # item 5). ``ConfigLayer`` is compared by its ``.value`` so this module need
+    # not import ``catalog.base`` at runtime (that module imports this one).
+
+    @classmethod
+    def _resolve_target_services_list(
+        cls,
+        project_data: dict[str, Any],
+        layer: ConfigLayer,
+        *,
+        component_name: str | None,
+        deployment_name: str | None,
+        create: bool,
+    ) -> list[str | dict[str, Any]]:
+        """Return the ``services`` list at ``layer`` (project / component /
+        deployment / deployment-component), creating it when ``create`` is set.
+
+        Raises ``ServiceValidationError`` when a name required by the layer is
+        missing or does not resolve to an existing component/deployment.
+        """
+        container = cls._resolve_target_container(
+            project_data, layer, component_name=component_name, deployment_name=deployment_name
+        )
+        services = container.get("services")
+        if services is None:
+            if not create:
+                return []
+            services = []
+            container["services"] = services
+        return services
+
+    @classmethod
+    def _resolve_target_container(
+        cls,
+        project_data: dict[str, Any],
+        layer: ConfigLayer,
+        *,
+        component_name: str | None,
+        deployment_name: str | None,
+    ) -> dict[str, Any]:
+        """Return the dict that owns the ``services`` list for ``layer``."""
+        lv = layer.value
+        if lv == "project":
+            return project_data
+        if lv == "component":
+            return cls._require_named(
+                project_data.get("components", []), component_name, kind="component", param="component_name"
+            )
+        if lv == "deployment":
+            return cls._require_named(
+                project_data.get("deployments", []), deployment_name, kind="deployment", param="deployment_name"
+            )
+        if lv == "deployment-component":
+            deployment = cls._require_named(
+                project_data.get("deployments", []), deployment_name, kind="deployment", param="deployment_name"
+            )
+            return cls._require_named(
+                deployment.get("components", []),
+                component_name,
+                kind="deployment component",
+                param="component_name",
+            )
+        raise ServiceValidationError(f"Unknown config target layer: {layer!r}")
+
+    @classmethod
+    def _require_named(cls, items: list[dict[str, Any]], name: str | None, *, kind: str, param: str) -> dict[str, Any]:
+        """Find an item by name/reference or raise a clear ServiceValidationError."""
+        if not name:
+            raise ServiceValidationError(f"A '{param}' is required to target the {kind} layer")
+        for item in items:
+            if service_entry_name(item) == name:
+                return item
+        raise ServiceValidationError(f"{kind.capitalize()} '{name}' not found in project")
+
+    @classmethod
+    def set_service_config(
+        cls,
+        project_data: dict[str, Any],
+        service_name: str,
+        layer: ConfigLayer,
+        config: dict[str, Any] | list[Any],
+        *,
+        component_name: str | None = None,
+        deployment_name: str | None = None,
+    ) -> None:
+        """Upsert one service's ``config`` block at ``layer`` (pure data-manipulation).
+
+        Mirrors ``add_services_to_project``: no I/O and no schema validation -- the
+        caller persists through ``save_and_commit_project``, which runs
+        ``validate_service_configs`` and rejects a config the service's model does
+        not accept. An existing entry (bare string, ``{name}``/``{reference}``
+        record, or legacy single-key dict) is found via ``service_entry_name`` and
+        replaced in place; a ``schema-version``/``type`` sibling is preserved. The
+        record key is ``name`` at the project layer and ``reference`` elsewhere,
+        matching the shape the wizard writes.
+        """
+        cls.parse_services_from_strings([service_name])  # rejects an unknown service name
+        target_list = cls._resolve_target_services_list(
+            project_data, layer, component_name=component_name, deployment_name=deployment_name, create=True
+        )
+        key = "name" if layer.value == "project" else "reference"
+
+        for index, entry in enumerate(target_list):
+            if service_entry_name(entry) == service_name:
+                record: dict[str, Any] = {key: service_name, "config": config}
+                schema_version = service_entry_schema_version(entry)
+                if schema_version is not None:
+                    record["schema-version"] = schema_version
+                entry_type = service_entry_type(entry)
+                if entry_type is not None:
+                    record["type"] = entry_type
+                target_list[index] = record
+                return
+
+        target_list.append({key: service_name, "config": config})
+
+    @classmethod
+    def remove_service_config(
+        cls,
+        project_data: dict[str, Any],
+        service_name: str,
+        layer: ConfigLayer,
+        *,
+        component_name: str | None = None,
+        deployment_name: str | None = None,
+    ) -> bool:
+        """Remove one service's config at ``layer`` by demoting its entry to a bare
+        string, keeping the selection. Returns True if an entry was changed, False
+        if the service was not present at that layer.
+
+        Demotion (rather than deleting the entry) is the least-surprising CRUD
+        semantics for a config resource: DELETE clears the config, not the fact that
+        the component/project uses the service.
+        """
+        target_list = cls._resolve_target_services_list(
+            project_data, layer, component_name=component_name, deployment_name=deployment_name, create=False
+        )
+        for index, entry in enumerate(target_list):
+            if service_entry_name(entry) == service_name:
+                if isinstance(entry, str):
+                    return False  # already bare -- no config to remove
+                target_list[index] = service_name
+                return True
+        return False

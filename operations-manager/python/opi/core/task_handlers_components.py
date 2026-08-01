@@ -520,3 +520,108 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
     finally:
         if project_manager:
             await project_manager.close()
+
+
+async def handle_configure_service(payload: dict, progress: Any) -> dict:
+    """Handle async configure-service task (unified service-config endpoint).
+
+    Upserts or clears one service's config at a target layer, then processes the
+    project so the change is reconciled -- mirroring handle_add_service. A clear
+    that changed nothing skips processing (and, per the logging rule, is a quiet
+    no-op).
+    """
+    from opi.manager.project_manager import ProjectManager
+    from opi.utils.project_utils import validate_project_name
+
+    project_name: str = payload["project_name"]
+    service_name: str = payload["service"]
+    target: str = payload["target"]
+    operation: str = payload.get("operation", "upsert")
+    component_name: str | None = payload.get("component")
+    deployment_name: str | None = payload.get("deployment")
+    config = payload.get("config")
+    project_manager: ProjectManager | None = None
+
+    try:
+        validate_task = progress.add_task("Service-config validatie")
+        progress.update_current_step("Validating project name")
+        if not validate_project_name(project_name):
+            error_msg = (
+                "Invalid project name format. Must start with lowercase letter, "
+                "then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters"
+            )
+            progress.fail_task(validate_task, error_msg)
+            progress.fail_project(error_msg)
+            return {"service": service_name, "target": target, "status": "failed", "error": error_msg}
+        progress.complete_task(validate_task)
+
+        write_task = progress.add_task("Service-config schrijven")
+        progress.update_current_step(f"Configuring service '{service_name}' at {target}")
+        project_file_relative_path = f"projects/{project_name}.yaml"
+        project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
+
+        if operation == "clear":
+            result = await project_manager.clear_service_config(
+                service_name, target, component_name=component_name, deployment_name=deployment_name
+            )
+        else:
+            result = await project_manager.configure_service(
+                service_name, target, config, component_name=component_name, deployment_name=deployment_name
+            )
+
+        if not result["success"]:
+            error_msg = result.get("error", "Unknown error configuring service")
+            progress.fail_task(write_task, error_msg)
+            progress.fail_project(error_msg)
+            return {
+                "service": service_name,
+                "target": target,
+                "status": "failed",
+                "error": error_msg,
+                "error_type": result.get("error_type", "unknown"),
+            }
+        progress.complete_task(write_task)
+
+        # Only reconcile when the project file actually changed. A clear that found
+        # nothing to remove returns removed=False and skips processing entirely.
+        changed = operation != "clear" or result.get("removed", False)
+        processing_status = "skipped"
+        if changed:
+            deploy_task = progress.add_task("Project processing")
+            progress.update_current_step("Processing project to reconcile service config")
+            processing_success = await project_manager.process_project_from_git(
+                project_file_relative_path, task_progress_manager=progress
+            )
+            if processing_success:
+                processing_status = "completed"
+                progress.complete_task(deploy_task)
+            else:
+                processing_status = "failed"
+                processing_error = project_manager.get_processing_error() or "Project processing failed"
+                progress.fail_task(deploy_task, processing_error)
+                progress.fail_project(processing_error)
+
+        succeeded = processing_status != "failed"
+        return {
+            "status": "success" if succeeded else "failed",
+            "service": service_name,
+            "target": target,
+            "removed": result.get("removed"),
+            "processing": {
+                "status": processing_status,
+                **(
+                    {"error": project_manager.get_processing_error()}
+                    if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
+            },
+        }
+
+    except Exception as exc:
+        error_msg = f"Error configuring service: {exc}"
+        logger.error(error_msg)
+        progress.fail_project(error_msg)
+        return {"service": service_name, "target": target, "status": "failed", "error": error_msg}
+    finally:
+        if project_manager:
+            await project_manager.close()

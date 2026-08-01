@@ -879,7 +879,9 @@ class AddComponentRequest(BaseModel):
     )
     path: str = Field("/", max_length=256, description="Ingress path (only relevant with publish-on-web service)")
     services: list[str] | None = Field(
-        None, description="Component services list (e.g. ['postgresql-database']). NOT inherited from project."
+        None,
+        description="Component services list (e.g. ['postgresql-database']), bare names only. NOT inherited from "
+        "project. Per-service config is set separately via PUT /api/v2/projects/{project}/services/{service}.",
     )
     cpu_limit: str | None = Field(None, max_length=16, description="CPU limit, e.g. '500m'")
     memory_limit: str | None = Field(None, max_length=16, description="Memory limit, e.g. '512Mi'")
@@ -1197,7 +1199,11 @@ class UpdateComponentRequest(BaseModel):
         description="Inbound ports as an array; replaces the component's inbound ports (use [] to clear). Use either 'port' or 'ports', not both.",
     )
     path: str | None = Field(None, max_length=256, description="Ingress path (only relevant with publish-on-web).")
-    services: list[str] | None = Field(None, description="Component services list (replaces the existing list).")
+    services: list[str] | None = Field(
+        None,
+        description="Component services list (replaces the existing list), bare names only. Per-service config is "
+        "set separately via PUT /api/v2/projects/{project}/services/{service}.",
+    )
     cpu_limit: str | None = Field(None, max_length=16, description="CPU limit, e.g. '500m'.")
     memory_limit: str | None = Field(None, max_length=16, description="Memory limit, e.g. '512Mi'.")
 
@@ -1664,6 +1670,7 @@ async def add_component_to_deployment(
     responses={
         201: {"description": "Service added (or already present) successfully"},
     },
+    deprecated=True,
 )
 @validate_api_token
 async def add_service(
