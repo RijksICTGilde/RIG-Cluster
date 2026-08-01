@@ -451,6 +451,7 @@ NETWORK_POLICY_ALLOW_EXTERNAL_HTTPS: bool = True
 
 ## Related
 
+- [`features/cross-domain-access.md`](cross-domain-access.md) - The cross-domain-access service writes an **additive** per-component NetworkPolicy next to this baseline, so a project can explicitly open named cross-project peers on named ports without touching the baseline itself.
 - `features/shared-resource-warning-acme-network-policy.md` - Related issue with shared network policies across deployments
 - `manifests/network-policy.yaml.jinja` - Current network policy template
 - `manifests/allow-all-network-policy.yaml.jinja` - Current allow-all template
