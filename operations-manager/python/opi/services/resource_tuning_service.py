@@ -514,42 +514,21 @@ async def _analyze_component_resources(
     )
 
 
-async def tune_deployment_resources(
-    project_name: str,
+async def apply_resource_tuning(
+    project_data: dict[str, Any],
+    file_handler: ProjectFileHandler,
     deployment_name: str | None = None,
-    skip_reprocessing: bool = False,
     oom_components: list[str] | None = None,
-) -> TuneResult:
-    """
-    Query Prometheus, compute recommendations, commit YAML, trigger reprocess.
+) -> tuple[list[dict[str, str]], list[str]]:
+    """Analyse deployments and mutate ``project_data`` in place; no git read, no commit.
 
-    Args:
-        project_name: Name of the project
-        deployment_name: Optional specific deployment to tune
-        skip_reprocessing: If True, only commit the YAML changes without
-            triggering reprocessing.  Use when the caller will queue a
-            separate task for reprocessing (e.g. OOM detection during deploy).
-        oom_components: When set, restrict tuning to exactly these component
-            references (the ones that OOM'd) and analyse them on the OOM path
-            (``oom_triggered=True``), bypassing the availability guard. Other
-            components are skipped entirely, saving the Prometheus queries a
-            broad sweep would otherwise waste on healthy components.
-
-    Returns:
-        TuneResult with changes, unchanged components, and whether refresh was triggered
+    The pure tuning core, split out so it can run either standalone (``tune_deployment_resources``
+    reads git and commits around it) or from the after-sync observation hook (which already holds
+    ``project_data`` and commits once for all hooks together). Returns ``(changes, unchanged)``.
 
     Raises:
-        ValueError: If project not found or has no data
-        RuntimeError: If metrics backend is unavailable
+        RuntimeError: If the metrics backend is unavailable.
     """
-    # Read fresh from git to avoid overwriting fields that changed since
-    # the in-memory cache was last populated.
-    project_data, filename = await get_project_data_from_git(project_name)
-    file_handler = ProjectFileHandler()
-    # No connector is threaded in: ProjectManager takes the warm one from the store
-    # itself, so no caller can hold -- or close -- it.
-    project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
-
     try:
         connector = await get_metrics_connector()
     except Exception as e:
@@ -559,8 +538,7 @@ async def tune_deployment_resources(
     changes: list[dict[str, str]] = []
     unchanged: list[str] = []
 
-    deployments = project_data.get("deployments", [])
-    for dep in deployments:
+    for dep in project_data.get("deployments", []):
         dep_name = dep.get("name", "")
         if deployment_name and dep_name != deployment_name:
             continue
@@ -573,8 +551,7 @@ async def tune_deployment_resources(
 
         namespace = get_prefixed_namespace(cluster, base_namespace)
 
-        components = dep.get("components", [])
-        for comp in components:
+        for comp in dep.get("components", []):
             component_ref = comp.get("reference", "")
             if not component_ref:
                 continue
@@ -687,6 +664,47 @@ async def tune_deployment_resources(
                 change_record["new_requests_cpu"] = cpu_new_request
                 change_record["cpu_reason"] = analysis.cpu_reason or ""
             changes.append(change_record)
+
+    return changes, unchanged
+
+
+async def tune_deployment_resources(
+    project_name: str,
+    deployment_name: str | None = None,
+    skip_reprocessing: bool = False,
+    oom_components: list[str] | None = None,
+) -> TuneResult:
+    """
+    Query Prometheus, compute recommendations, commit YAML, trigger reprocess.
+
+    Args:
+        project_name: Name of the project
+        deployment_name: Optional specific deployment to tune
+        skip_reprocessing: If True, only commit the YAML changes without
+            triggering reprocessing.  Use when the caller will queue a
+            separate task for reprocessing (e.g. OOM detection during deploy).
+        oom_components: When set, restrict tuning to exactly these component
+            references (the ones that OOM'd) and analyse them on the OOM path
+            (``oom_triggered=True``), bypassing the availability guard. Other
+            components are skipped entirely, saving the Prometheus queries a
+            broad sweep would otherwise waste on healthy components.
+
+    Returns:
+        TuneResult with changes, unchanged components, and whether refresh was triggered
+
+    Raises:
+        ValueError: If project not found or has no data
+        RuntimeError: If metrics backend is unavailable
+    """
+    # Read fresh from git to avoid overwriting fields that changed since
+    # the in-memory cache was last populated.
+    project_data, filename = await get_project_data_from_git(project_name)
+    file_handler = ProjectFileHandler()
+    # No connector is threaded in: ProjectManager takes the warm one from the store
+    # itself, so no caller can hold -- or close -- it.
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
+
+    changes, unchanged = await apply_resource_tuning(project_data, file_handler, deployment_name, oom_components)
 
     # If changes were made, commit and optionally reprocess
     deployment_refresh_triggered = False
