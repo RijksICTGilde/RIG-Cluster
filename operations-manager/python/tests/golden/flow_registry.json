@@ -211,6 +211,7 @@
   },
   "service_config_modal_flows": {
     "authorization-wall": "modal-edit-auth-wall-config",
+    "cross-domain-access": "modal-edit-cross-domain-config",
     "invite": "modal-edit-invite-config",
     "keycloak": "modal-edit-keycloak-config",
     "namespace-postgresql-database": "modal-edit-postgresql-config",

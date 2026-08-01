@@ -88,6 +88,19 @@ def manifest_secret_services() -> list[Service]:
     return sorted(contributing, key=lambda s: s.manifest_order)
 
 
+def deployment_manifest_services() -> list[Service]:
+    """Services that contribute deployment-wide manifests, in ``manifest_order`` (RC-15).
+
+    Only services that override ``contribute_deployment_manifests`` are included. The
+    generic emitter in ``project_manager.create_application_manifests`` calls each once per
+    deployment, after the component loop, and writes the returned specs.
+    """
+    overriding = [
+        s for s in SERVICES.values() if type(s).contribute_deployment_manifests is not Service.contribute_deployment_manifests
+    ]
+    return sorted(overriding, key=lambda s: s.manifest_order)
+
+
 def approval_services() -> list[Service]:
     """Services that declare at least one ApprovalSpec, in registry order (RC-5).
 
