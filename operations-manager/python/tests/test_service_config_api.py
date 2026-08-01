@@ -231,6 +231,33 @@ class TestRoundTripThroughValidationChokepoint:
         with pytest.raises(ProjectIntegrityError):
             validate_service_configs(data)
 
+    def test_cross_domain_access_project_and_deployment_round_trip(self) -> None:
+        # The service is API-configurable for free at both layers it declares; a config
+        # written by the core is accepted by the same chokepoint the save path runs.
+        data = _project()
+        ServiceAdapter.set_service_config(
+            data,
+            ServiceType.CROSS_DOMAIN_ACCESS.value,
+            ConfigLayer.PROJECT,
+            {
+                "outbound": [
+                    {
+                        "name": "naar-api",
+                        "from": {"component": "backend"},
+                        "to": {"project": "regelrecht", "deployment": "prod", "component": "api", "port": 8080},
+                    }
+                ]
+            },
+        )
+        ServiceAdapter.set_service_config(
+            data,
+            ServiceType.CROSS_DOMAIN_ACCESS.value,
+            ConfigLayer.DEPLOYMENT,
+            {"outbound": [{"name": "naar-api", "to": {"deployment": "dev"}}]},
+            deployment_name="deployment-1",
+        )
+        validate_service_configs(data)  # must not raise
+
     def test_out_of_range_enum_value_is_rejected(self) -> None:
         data = _project()
         ServiceAdapter.set_service_config(
@@ -330,6 +357,7 @@ class TestEndpointHelpers:
 EXPECTED_API_TARGETS: dict[str, list[str]] = {
     "attachments": ["component"],
     "authorization-wall": ["project"],
+    "cross-domain-access": ["project", "deployment"],
     "health-check": ["component"],
     "invite": ["project"],
     "keycloak": ["project"],
