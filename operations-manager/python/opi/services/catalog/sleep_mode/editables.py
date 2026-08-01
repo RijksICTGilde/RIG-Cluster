@@ -14,6 +14,13 @@ from opi.services.services_enums import ServiceType
 
 _VIRTUALIZE = ("services", "_services-config")
 
+# Optional fields carry ``remove_when_none`` so an empty form field drops the key instead of
+# writing ``null`` / ``''`` / ``[]`` into the project file. Writing the model default out
+# explicitly would freeze it: a project saved today would keep the old value when the default
+# changes later. Deliberately NOT on ``enabled`` and ``waker``: those are booleans, the flag
+# treats False as empty, and ``waker`` defaults to True, so unticking it would silently flip
+# back to on.
+
 
 def _path(*segments: str) -> str:
     return config_path(ConfigLayer.PROJECT, ServiceType.SLEEP_MODE, "config", *segments)
@@ -37,6 +44,7 @@ SLEEP_WAKE_MODE_EDITABLE = Editable(
 SLEEP_MATCH_EDITABLE = Editable(
     yaml_path=_path("match"),
     converter=CommaSeparatedListConverter(),
+    remove_when_none=True,
     virtualize=_VIRTUALIZE,
 )
 
@@ -66,17 +74,21 @@ SLEEP_WAKER_COMPONENT_EDITABLE = Editable(
     yaml_path=_path("waker-component"),
     values_provider="WakerComponentOptionsProvider",
     converter=EmptyToNoneConverter(),
+    remove_when_none=True,
     virtualize=_VIRTUALIZE,
 )
 
 SLEEP_TITLE_EDITABLE = Editable(
     yaml_path=_path("title"),
     converter=EmptyToNoneConverter(),
+    remove_when_none=True,
     virtualize=_VIRTUALIZE,
 )
 
 SLEEP_DESCRIPTION_EDITABLE = Editable(
     yaml_path=_path("description"),
+    converter=EmptyToNoneConverter(),
+    remove_when_none=True,
     virtualize=_VIRTUALIZE,
 )
 
