@@ -30,7 +30,7 @@ from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, Kub
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import IMAGE_PULL_REASONS as _IMAGE_PULL_REASONS
-from opi.services.resource_tuning_service import get_project_data, tune_deployment_resources
+from opi.services.resource_tuning_service import get_project_data
 from opi.utils.naming import generate_unique_name
 
 if TYPE_CHECKING:
@@ -588,14 +588,17 @@ async def _run_oom_check(
         max_attempts,
     )
 
+    # Route through the same after-sync hook scan the inline deploy path uses, so the
+    # OOM remediation is not hardcoded here either. The runner commits once.
+    from opi.services.catalog.base import ComponentHealth
+    from opi.services.deployment_observation import run_after_sync_observation
+
+    component_health = {ref: ComponentHealth(oom_detected=True) for ref in oom_component_refs}
     try:
-        result = await tune_deployment_resources(
-            project_name, deployment_name, skip_reprocessing=True, oom_components=oom_component_refs
-        )
-        if result.changes:
+        observation = await run_after_sync_observation(project_name, deployment_name, component_health)
+        if observation.requeue_refresh:
             logger.info(
-                "Health watcher: auto-tune applied %d change(s) for %s/%s",
-                len(result.changes),
+                "Health watcher: auto-tune committed changes for %s/%s",
                 project_name,
                 deployment_name,
             )
@@ -608,6 +611,8 @@ async def _run_oom_check(
             )
         else:
             logger.info("Health watcher: tune found no actionable changes for %s/%s", project_name, deployment_name)
+        for msg in observation.failures:
+            logger.warning("Health watcher: %s", msg)
     except Exception as e:
         logger.error("Health watcher: auto-tune failed for %s/%s: %s", project_name, deployment_name, e)
 

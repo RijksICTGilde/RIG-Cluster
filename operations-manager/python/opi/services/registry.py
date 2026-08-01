@@ -12,7 +12,7 @@ postgresql-database, ...), NOT a connector/provider ("how OPI talks to a system"
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.attachments import AttachmentsService
 from opi.services.catalog.authorization_wall import AuthorizationWallService
@@ -29,9 +29,10 @@ from opi.services.catalog.platform import PlatformService
 from opi.services.catalog.postgresql_database import PostgresqlDatabaseService
 from opi.services.catalog.publish_on_web import PublishOnWebService
 from opi.services.catalog.redis import RedisService
+from opi.services.catalog.resource_tuning import ResourceTuningService
 from opi.services.catalog.sleep_mode import SleepModeService
 from opi.services.catalog.temp_storage import TempStorageService
-from opi.services.services_enums import ServiceType
+from opi.services.services_enums import HookPoint, ServiceType
 
 if TYPE_CHECKING:
     from opi.forms.editables.editable import Editable
@@ -55,6 +56,7 @@ SERVICES: dict[ServiceType, Service] = {
     ServiceType.ATTACHMENTS: AttachmentsService(),
     ServiceType.SLEEP_MODE: SleepModeService(),
     ServiceType.INVITE: InviteService(),
+    ServiceType.RESOURCE_TUNING: ResourceTuningService(),
 }
 
 
@@ -74,6 +76,27 @@ def provisioning_services() -> list[Service]:
     """
     overriding = [s for s in SERVICES.values() if type(s).provision is not Service.provision]
     return sorted(overriding, key=lambda s: s.provision_order)
+
+
+#: The default (no-op) method backing each hook point. A service participates at a hook
+#: exactly when it overrides that method, so participation is derived, never a
+#: separately-declared list that could drift from the implementation.
+_HOOK_DEFAULTS: dict[HookPoint, Any] = {
+    HookPoint.AFTER_SYNC: Service.observe_deployment,
+}
+
+
+def services_for_hook(hook: HookPoint) -> list[Service]:
+    """Services participating at ``hook``, in their order for that point (task 8).
+
+    Same override-detection pattern as ``provisioning_services()``, keyed by the hook's
+    enum: a service is in only if it overrides the hook's default method. Order comes
+    from ``hook_order[hook]`` (default 100), per-hook so a service on two points does
+    not share one order.
+    """
+    default = _HOOK_DEFAULTS[hook]
+    overriding = [s for s in SERVICES.values() if getattr(type(s), default.__name__) is not default]
+    return sorted(overriding, key=lambda s: s.hook_order.get(hook, 100))
 
 
 def manifest_secret_services() -> list[Service]:
