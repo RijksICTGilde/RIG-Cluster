@@ -1177,6 +1177,16 @@ class ServiceAdapter:
         )
         key = "name" if layer.value == "project" else "reference"
 
+        # Configuring on a component/deployment implicitly selects the service at the
+        # project level, so the caller need not add it to the root services list
+        # first. A structural check requires every component service to resolve to a
+        # project-level service (project_validation); this keeps a component-only
+        # config write self-contained. If the service genuinely needs project-level
+        # config, the bare selection fails validation there -- a clear signal, not a
+        # silent gap.
+        if layer.value != "project":
+            cls._ensure_project_selection(project_data, service_name)
+
         for index, entry in enumerate(target_list):
             if service_entry_name(entry) == service_name:
                 record: dict[str, Any] = {key: service_name, "config": config}
@@ -1190,6 +1200,18 @@ class ServiceAdapter:
                 return
 
         target_list.append({key: service_name, "config": config})
+
+    @classmethod
+    def _ensure_project_selection(cls, project_data: dict[str, Any], service_name: str) -> None:
+        """Add ``service_name`` as a bare project-level selection if absent.
+
+        Never duplicates and never demotes an existing configured project entry --
+        an entry already present (bare or with config) is left untouched.
+        """
+        services = project_data.setdefault("services", [])
+        if any(service_entry_name(entry) == service_name for entry in services):
+            return
+        services.append(service_name)
 
     @classmethod
     def remove_service_config(

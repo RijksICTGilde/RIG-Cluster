@@ -120,6 +120,46 @@ class TestSetServiceConfigComponentLayer:
             ServiceAdapter.set_service_config(data, ServiceType.HEALTH_CHECK.value, ConfigLayer.COMPONENT, {"port": 1})
 
 
+class TestImplicitProjectSelection:
+    """Configuring a service on a component/deployment implicitly selects it at the
+    project level, so a component config write does not require the caller to have
+    added the service to the root services list first (structural check
+    project_validation.py:288). No explicit project-level config is assumed."""
+
+    def test_component_config_adds_bare_project_selection(self) -> None:
+        data = _project()  # no health-check anywhere
+        ServiceAdapter.set_service_config(
+            data, ServiceType.HEALTH_CHECK.value, ConfigLayer.COMPONENT, {"port": 8080}, component_name="backend"
+        )
+        project_names = ServiceAdapter.extract_service_names_from_project_services(data["services"])
+        assert "health-check" in project_names
+        # added as a bare selection, not a config record at project level
+        entry = next(e for e in data["services"] if service_entry_name(e) == "health-check")
+        assert entry == "health-check"
+
+    def test_deployment_config_adds_bare_project_selection(self) -> None:
+        data = _project()
+        ServiceAdapter.set_service_config(
+            data, ServiceType.MINIO_STORAGE.value, ConfigLayer.DEPLOYMENT, {}, deployment_name="deployment-1"
+        )
+        assert "minio-storage" in ServiceAdapter.extract_service_names_from_project_services(data["services"])
+
+    def test_existing_project_entry_is_not_duplicated_or_demoted(self) -> None:
+        data = _project()
+        data["services"].append({"name": "minio-storage", "config": {"existing": True}})
+        ServiceAdapter.set_service_config(
+            data, ServiceType.MINIO_STORAGE.value, ConfigLayer.DEPLOYMENT, {}, deployment_name="deployment-1"
+        )
+        minio_entries = [e for e in data["services"] if service_entry_name(e) == "minio-storage"]
+        assert len(minio_entries) == 1
+        assert service_entry_config(minio_entries[0]) == {"existing": True}  # project config preserved
+
+    def test_project_config_does_not_add_a_second_entry(self) -> None:
+        data = _project()
+        ServiceAdapter.set_service_config(data, ServiceType.KEYCLOAK.value, ConfigLayer.PROJECT, {"template": "x"})
+        assert len([e for e in data["services"] if service_entry_name(e) == "keycloak"]) == 1
+
+
 class TestSetServiceConfigDeploymentLayers:
     def test_deployment_layer_writes_on_named_deployment(self) -> None:
         data = _project()

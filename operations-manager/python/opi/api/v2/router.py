@@ -1108,7 +1108,13 @@ def _collect_service_config(project_data: dict[str, Any], service_name: str, tar
     def find(services: list, target: str, **ids: str) -> list[dict]:
         for entry in services or []:
             if service_entry_name(entry) == service_name:
-                return [{"target": target, **ids, "config": service_entry_config(entry)}]
+                config = service_entry_config(entry)
+                # A bare selection (no config) is not a configuration -- e.g. the
+                # implicit project-level selection added when config is set on a
+                # component/deployment. Only report entries that carry config.
+                if config is None:
+                    return []
+                return [{"target": target, **ids, "config": config}]
         return []
 
     found: list[dict] = []
