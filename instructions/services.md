@@ -45,6 +45,10 @@ Only `__init__.py` is required. A behaviour-only service is a few lines
 Shared building blocks live in `catalog/shared/` (e.g. `storage.py` for the two storage
 services).
 
+`editables.py` and `visualizers.py` are the service's user interface. A package without them
+has no wizard screens, which is fine for a service the platform switches on itself and wrong
+for one a user is supposed to configure. See "Forms and wizard screens".
+
 ## Identity and registration
 
 Adding a service touches exactly three places:
@@ -122,25 +126,151 @@ config_path(ConfigLayer.COMPONENT, ServiceType.PUBLISH_ON_WEB, "config", "tls")
 | `DEPLOYMENT` | `deployments[*]/services{<svc>}` | Per-deployment state, usually OPI-managed |
 | `DEPLOYMENT_COMPONENT` | `deployments[*]/components[*]/services{<svc>}` | Per-deployment override of a component setting |
 
-## Forms
+## Forms and wizard screens
 
-A service owns its own fields; the forms layer only collects them.
+**Registering a service gives it no UI at all.** The enum, the `ServiceDefinition` and the
+registry line make it exist, provision, and contribute manifests. They do not put a checkbox
+in the wizard and they do not create a single input field. Every screen is something you
+declare on the service, and for the project level you also wire it into the forms layer by
+hand. Skipping this is the most common way a new service lands "finished" but unreachable
+for a user: sleep-mode shipped that way, fully working, with no wizard presence whatsoever.
 
-| Hook | Returns | Collected by |
-|---|---|---|
-| `config_editables(layer)` | `Editable`s (yaml path, validator, converter, defaults) | `registry.component_service_editables()` for the component layer |
-| `config_component_visualizers()` | `EditableVisualizer`s (widget, label, help text) | `registry.component_service_visualizers()` |
-| `config_component_layout()` | Layout nodes (`Fieldset`, `Sequence`) for the component form | `wizard_sections._service_component_layouts()` |
-| `config_form_section(layer)` | A whole `FormSection` for a project-level config step | `wizard_sections.SERVICE_CONFIG_SECTIONS`, keyed by `config_section_id` |
-| `config_api_fields(layer)` | Field names the API/YAML accepts | validation error guidance |
+A service therefore has two independent UI questions, and you must answer both.
 
-`config_section_id` and `modal_flow_id` are declarative links: the provider names the
-section, the forms layer holds the `FormSection` object. Ordering across services is
-`config_component_order`.
+### 1. Does the user pick the service? The selection card
 
-Editables at the project level use `virtualize=("services", "_services-config")`. The form
-posts under the virtual key so per-service config cannot collide with the service *selection*
-list, and `WizardState.get_merged_data` folds it back onto the real `services` list.
+The services step renders one card per service (`SERVICES_EDITABLE` in
+`forms/editables/fields/services.py`, the `SERVICE_CARDS` visualizer in
+`forms/visualizers/fields/services.py`). Its options come from `ServiceOptionsProvider`
+(`forms/visualizers/providers.py:83`), which iterates `ServiceType` and **skips every
+definition with `hidden=True`** (`providers.py:116`). So:
+
+- `hidden=False` (the default): the service appears as a card in the create wizard
+  (`SERVICES_SECTION`) and in the detail-page modal `modal-edit-services`
+  (`SERVICES_EDIT_SECTION`). A user can switch it on and off.
+- `hidden=True`: no card anywhere. The service can only be switched on by editing the project
+  file, by an API call, or by a cluster-wide default the service owns itself.
+
+`hidden=True` is a legitimate choice (`platform` is implicit, `namespace-redis` is a variant
+picked by policy, sleep-mode is driven by a cluster default plus a `match` pattern), but it
+is a *decision*, not a default you inherit. If a user is supposed to enable your service,
+`hidden` must stay `False` and you owe the user a configuration screen as well.
+
+Component-level selection is a second, separate list: the per-component `services` checkbox
+group uses `FilteredServiceOptionsProvider`, which shows only services the *project* already
+selected. A component-scoped service that is not selected at project level can never be
+ticked on a component.
+
+### 2. Where does its config live? One mechanism per layer
+
+The four `ConfigLayer`s are not interchangeable, and only one of them is wired end to end
+for you. Pick the layer from where the value belongs, then implement that row:
+
+| Layer | Where the user sees it | What you implement | Wiring you must still do by hand |
+|---|---|---|---|
+| `PROJECT` | Its own wizard step / modal, shown when the service is selected | `config_editables(PROJECT)`, `config_form_section(PROJECT)`, `config_section_id`, optionally `modal_flow_id` | Register the section and add it to the flows, see below |
+| `COMPONENT` | A fieldset inside the per-component form | `config_editables(COMPONENT)`, `config_component_visualizers()`, `config_component_layout()`, `config_component_order` | **None.** The registry collects it automatically |
+| `DEPLOYMENT` | No service-owned form hook exists today | Nothing to hook into | Fields are hand-authored in `forms/editables/fields/deployments.py`. Deployment-level config is normally OPI-managed state, not user input |
+| `DEPLOYMENT_COMPONENT` | Same as `DEPLOYMENT` | Nothing to hook into | Hand-authored too (the attachments `use` sequence is the one example) |
+
+`config_api_fields(layer)` is separate from all of this: it tells the API/YAML validator which
+field names the layer accepts, so an error message can name them. Declare it per layer, even
+when the layer has no form.
+
+### Project-level config: what "declarative" does and does not cover
+
+The service builds the whole `FormSection` itself (auth-wall is the smallest complete
+example, `catalog/authorization_wall/__init__.py:61`):
+
+```python
+class AuthorizationWallService(Service):
+    config_section_id = "auth-wall-config"                  # names the section
+    modal_flow_id = "modal-edit-auth-wall-config"           # names its modal flow
+
+    def config_editables(self, layer: ConfigLayer):
+        if layer is not ConfigLayer.PROJECT:
+            return []
+        from opi.services.catalog.authorization_wall.editables import AUTH_WALL_BANNER_EDITABLE
+        return [AUTH_WALL_BANNER_EDITABLE]
+
+    def config_form_section(self, layer: ConfigLayer):
+        if layer is not ConfigLayer.PROJECT:
+            return None
+        ...
+        return FormSection(
+            section_id="auth-wall-config",
+            title="Authorization wall configuratie",
+            visible=self._config_selected,               # only when the service is selected
+            post_save_action="process_project",
+            editables=[AUTH_WALL_BANNER],                # visualizers, not editables
+            layout=[config_path(ConfigLayer.PROJECT, self.service_type, "config", "banner")],
+        )
+```
+
+Cache the built section on the instance: consumers compare section *identity*
+(`EDIT_SECTIONS[...] is AUTH_WALL_CONFIG_SECTION`), so rebuilding it per call breaks them.
+
+`config_section_id` and `modal_flow_id` are only *links*. The forms layer still has to be
+told the object exists, in four places:
+
+1. `forms/visualizers/wizard_sections.py`: re-export the section
+   (`AUTH_WALL_CONFIG_SECTION = get_service(...).config_form_section(ConfigLayer.PROJECT)`)
+   and add it to `_CONFIG_SECTIONS_BY_ID`. `SERVICE_CONFIG_SECTIONS` and `EDIT_SECTIONS`
+   derive from there.
+2. `forms/visualizers/flows.py`: add the section to `CREATE_FLOW` and `EDIT_FLOW` (a section
+   with a `visible=` predicate is listed unconditionally and hides itself), and to
+   `MODAL_EDIT_SERVICES_FLOW` so the detail-page "Services beheren" modal walks the user
+   through the config right after switching the service on.
+3. `forms/visualizers/flows.py`: if you declared `modal_flow_id`, add the matching
+   `FormFlow` and its `FLOW_REGISTRY` entry, otherwise the per-service config button on the
+   project page points at a flow that does not exist. `SERVICE_CONFIG_MODAL_FLOWS` is derived,
+   the flow object is not.
+4. `tests/golden/flow_registry.json`: regenerate, the added section and flow are locked
+   (`UPDATE_GOLDEN=1 uv run pytest tests/test_flow_registry_snapshot.py -q`).
+
+Yes, that is generic code you touch for a project-level screen. It is the one place the
+declarative story is not finished; do not conclude from it that a component-level service
+needs the same, and do not invent a new mechanism to avoid it.
+
+### Component-level config: fully automatic
+
+Declare the three hooks and you are done. metrics-scraper
+(`catalog/metrics_scraper/__init__.py`) is the reference:
+
+```python
+def config_editables(self, layer):            # data: paths, converters, validators
+    return [METRICS_PORT_EDITABLE, METRICS_PATH_EDITABLE] if layer is ConfigLayer.COMPONENT else []
+
+def config_component_visualizers(self):       # presentation: widget, label, help text
+    return [METRICS_PORT, METRICS_PATH]
+
+def config_component_layout(self):            # placement inside the component form
+    return [Fieldset(legend="...", depends_on="services",
+                     show_when={"contains": svc}, children=[...])]
+```
+
+`registry.component_service_editables()` and `component_service_visualizers()` flatten these
+across all services in `config_component_order`, and
+`wizard_sections._service_component_layouts()` appends the layout nodes to the component
+form. No section, no flow, no snapshot edit.
+
+### Editable versus visualizer
+
+Two objects, deliberately split, and mixing them up produces a field that saves nothing or
+renders nothing:
+
+- **`Editable`** (`<service>/editables.py`) is the *data* contract: `yaml_path` (always built
+  with `config_path(...)`, never a hand-typed string), `converter`, `validator`, `required`,
+  `default`, `depends_on` + `show_when` for conditional display, `children` for a repeating
+  `Sequence`, `remove_when_none` to drop an emptied key.
+- **`EditableVisualizer`** (`<service>/visualizers.py`) wraps that same editable with `widget`,
+  `label` and `description`. A `FormSection.editables` list holds *visualizers*; the field
+  name in `layout=[...]` is the editable's yaml path.
+
+Editables that write into the `services` list use `virtualize=("services", "_services-config")`.
+The form posts under the virtual key so per-service config cannot collide with the service
+*selection* list, and `WizardState.get_merged_data` folds it back onto the real `services`
+list. Leaving `virtualize` off is how a config field silently overwrites the selection.
 
 A project-level config section reaches the user through three places, and all three must be
 wired: the create/edit wizard (`CREATE_FLOW`/`EDIT_FLOW` in `flows.py`), the "Services
@@ -278,19 +408,38 @@ record a revocation on a domain that is already in use. Enforcement happens at p
 2. `catalog/<name>/__init__.py` with a `Service` subclass, and one line in `SERVICES`.
 3. Config? Add `config_model.py`, set `config_model` + `config_schema_version`, run
    `uv run python -m opi.services.config_schema`, commit the fragment.
-4. UI? Add `editables.py` + `visualizers.py`, and either `config_component_layout()` for the
-   component form or a `FormSection` plus `config_section_id` for a project-level step.
+4. **Decide the UI, explicitly, and write down the decision.** Two questions:
+   - *May a user switch this on?* Then `hidden` stays `False` and the service gets a card in
+     the services step. If not, set `hidden=True` **and say in the definition why**, so the
+     next reader sees a choice instead of an oversight.
+   - *Does it have settings a user should reach?* Then add `editables.py` + `visualizers.py`
+     and implement the row for its layer: `config_component_layout()` for a component-level
+     service (automatic), or a `FormSection` + `config_section_id` plus the four wiring steps
+     for a project-level one. A user-selectable service without a config screen only works if
+     it genuinely has nothing to configure.
 5. Provisions resources? Override `provision`, set `provision_order`, delegate to a manager.
 6. Server-side resources to clean up? Set `cleanup_manager_key`.
 7. Manifest contribution? `manifest_secret_class` for the simple case, otherwise override
    `contribute_manifest_context` / `build_secret_files` and set `manifest_order`.
 8. Needs approval? Add `ApprovalSpec`s from `config_approvals(layer)`.
+9. Walk the UI you claim to have built: open `/projects/<name>/modal-wizard/modal-edit-services`
+   and the create wizard, and check the card, the config step and the modal button are really
+   there. "The code is complete" and "a user can reach it" are two different statements.
 
-You should not need to edit generic code, a flow list, or the global schema `$defs`. If you
-do, the hook you need is probably missing and adding it beats special-casing your service.
+Behaviour, component-level fields and the global schema `$defs` need no generic-code edits: if
+you find yourself special-casing your service there, the hook you need is probably missing and
+adding it beats the special case. A **project-level** config screen is today's exception, and
+its four wiring points are listed under "Forms and wizard screens".
 
 ## Traps
 
+- **A registered service has no UI.** The registry drives behaviour, not screens. A service
+  without form hooks is invisible in the wizard, and `hidden=True` removes even its card.
+  Neither is reported by any test, because "no UI" is a valid configuration for some services.
+- **The four config layers each have their own wiring.** Only the component layer is collected
+  automatically. A project-level section also needs registering in `wizard_sections.py`, adding
+  to the flows in `flows.py`, a modal `FormFlow` when you declared `modal_flow_id`, and a
+  regenerated flow snapshot.
 - **Identity via `service_entry_name`, always.** See the entry forms above.
 - **A services list is a selection set.** A name may appear at most once, at every level.
   `validate_project_structure` rejects a duplicate; the wizard merge folds entries so one
