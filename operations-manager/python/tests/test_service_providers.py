@@ -27,7 +27,7 @@ from opi.services.registry import (
     provisioning_services,
 )
 from opi.services.services import ServiceAdapter
-from opi.services.services_enums import ServiceType
+from opi.services.services_enums import ManagerKey, ServiceType
 from opi.utils.secrets import DatabaseSecret, MinIOSecret, RedisSecret
 
 
@@ -138,13 +138,13 @@ def test_default_provision_is_noop():
 # provider registry now owns this mapping via cleanup_manager_key; this guard fails
 # if a provider's key ever drifts from the dispatch the map used to perform.
 _LEGACY_SERVICE_MANAGER_KEYS = {
-    ServiceType.POSTGRESQL_DATABASE: "database",
-    ServiceType.NAMESPACE_POSTGRESQL_DATABASE: "database",
-    ServiceType.MINIO_STORAGE: "minio",
-    ServiceType.REDIS: "redis",
-    ServiceType.NAMESPACE_REDIS: "redis",
-    ServiceType.KEYCLOAK: "keycloak",
-    ServiceType.PERSISTENT_STORAGE: "pvc",
+    ServiceType.POSTGRESQL_DATABASE: ManagerKey.DATABASE,
+    ServiceType.NAMESPACE_POSTGRESQL_DATABASE: ManagerKey.DATABASE,
+    ServiceType.MINIO_STORAGE: ManagerKey.MINIO,
+    ServiceType.REDIS: ManagerKey.REDIS,
+    ServiceType.NAMESPACE_REDIS: ManagerKey.REDIS,
+    ServiceType.KEYCLOAK: ManagerKey.KEYCLOAK,
+    ServiceType.PERSISTENT_STORAGE: ManagerKey.PVC,
 }
 
 
@@ -186,7 +186,7 @@ def test_handle_service_removal_delegates_to_resolved_manager():
 
     result = asyncio.run(run())
     assert result == {"errors": []}
-    assert resolved_keys == ["minio"]
+    assert resolved_keys == [ManagerKey.MINIO]
     manager.handle_service_removal.assert_awaited_once_with(
         project_name="p",
         deployment_name="d",

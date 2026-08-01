@@ -43,6 +43,44 @@ class ServiceType(Enum):
     RESOURCE_TUNING = "resource-tuning"
 
 
+class ServiceScope(Enum):
+    """Whether a service is chosen per component or shared per deployment.
+
+    A closed set, so a typo is a pyright error, not a runtime surprise. Rendered
+    values go through ``.value`` (a bare Enum renders as ``ServiceScope.COMPONENT``).
+    """
+
+    COMPONENT = "component"
+    DEPLOYMENT = "deployment"
+
+
+class CleanupStrategy(Enum):
+    """How a service's server-side resources are cleaned up on removal.
+
+    - ``NONE``: nothing to clean up (the default).
+    - ``IMMEDIATE``: ephemeral/recreatable resources deleted right away.
+    - ``DEFERRED``: persistent data marked for deferred deletion (recoverable).
+    """
+
+    NONE = "none"
+    IMMEDIATE = "immediate"
+    DEFERRED = "deferred"
+
+
+class ManagerKey(Enum):
+    """The manager a service delegates server-side cleanup to (``cleanup_manager_key``).
+
+    A closed set resolved by ``DeleteProjectManager._get_manager_for_service``; an enum
+    turns a typo into a pyright error instead of a runtime failure mid-teardown.
+    """
+
+    DATABASE = "database"
+    MINIO = "minio"
+    REDIS = "redis"
+    KEYCLOAK = "keycloak"
+    PVC = "pvc"
+
+
 class ServiceKind(Enum):
     """Whether a project chooses this service, or the platform always runs it.
 
