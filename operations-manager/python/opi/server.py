@@ -121,6 +121,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 handle_add_component,
                 handle_add_component_to_deployment,
                 handle_add_service,
+                handle_configure_service,
                 handle_update_component,
             )
             from opi.core.task_handlers_deployment import (  # type: ignore[reportMissingImports]
@@ -150,6 +151,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             _worker_instance.register_handler(TaskType.UPDATE_COMPONENT, handle_update_component)
             _worker_instance.register_handler(TaskType.ADD_COMPONENT_TO_DEPLOYMENT, handle_add_component_to_deployment)
             _worker_instance.register_handler(TaskType.ADD_SERVICE, handle_add_service)
+            _worker_instance.register_handler(TaskType.CONFIGURE_SERVICE, handle_configure_service)
             _worker_instance.register_handler(TaskType.BACKUP, handle_backup)
             _worker_instance.register_handler(TaskType.RESTORE, handle_restore)
 
