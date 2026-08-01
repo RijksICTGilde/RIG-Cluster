@@ -22,10 +22,12 @@ registry line, and a coverage test fails CI if you forget the registry line.
 - `opi/services/catalog/base.py` — the `Service` base class and the context/
   contribution dataclasses (`ProvisionContext`, `RemovalContext`, `ManifestContext`,
   `ManifestContribution`, `SecretFileSpec`).
-- `opi/services/catalog/<service>.py` — one module per service (its `Service`
-  subclass; config models + config UI move in per service as they migrate). A
+- `opi/services/catalog/<service>/` — one **package** per service since RC-5: its
+  `Service` subclass (`__init__.py`) plus the config model, editables, visualizers,
+  committed schema fragment and any detail-page template, all owned in one place. A
   service is a user-facing configuration-as-code unit, **not** a connector/provider
-  ("how OPI talks to a system").
+  ("how OPI talks to a system"). See `instructions/services.md` for the full contract
+  and every hook a service declares.
 - `opi/services/registry.py` — assembles `SERVICES` (one entry per `ServiceType`) plus
   the derivation helpers (`get_service`, `provisioning_services`,
   `manifest_secret_services`, `manifest_services`).
