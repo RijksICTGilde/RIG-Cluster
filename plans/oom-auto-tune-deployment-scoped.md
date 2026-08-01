@@ -4,6 +4,15 @@
 **Aangemaakt**: 2026-07-30
 **Aanleiding**: `asses-k2n/pr-450` op odcn-production
 
+
+> **Bijgewerkt 1 augustus 2026.** Dit plan is geschreven vóór de afronding van de service-opzet. Wat er sindsdien veranderd is: dertien van de vijftien services hebben een configmodel met drift-gelockt fragment, `validate_service_configs` loopt over alle vier de configlagen, `Service.config_model_for(layer)` bestaat, `config_schema_version` is `None` tenzij er een model is (een guardrail bewaakt die koppeling), en het globale schema kent geen servicenamen meer als contract. Lees `instructions/service-review-checklist.md` voordat je begint, en gebruik die als sluitstuk.
+>
+> **Besloten over de configuratie van een systeemdienst.** `RESOURCE_TUNING_*` bestaat vandaag uit dertien env-gedreven velden in `opi/core/config.py` die door niets als samenhangend geheel gevalideerd worden. Die verhuizen naar het servicepakket, volgens het patroon dat sleep-mode al gebruikt: een dict met de waarden in de service zelf (`catalog/sleep_mode/config.py`, `_CLUSTER_DEFAULTS`, expliciet niet in `core/cluster_config.py` zodat de service zelfstandig blijft), met een Pydantic-model eroverheen zodat de waarden getypeerd en gevalideerd zijn. Een systeemdienst heeft geen UI, dus `config_editables` en `config_form_section` blijven leeg; daar is `hidden` voor. De per-project opt-out `auto-tune-resources: false` blijft wel gewoon projectconfig, want dat is het enige dat een gebruiker hier kiest.
+>
+> **Eén beslissing die daarbij hoort en die de bouwer moet voorleggen:** die dertien waarden zijn nu `Settings`-velden en dus per omgeving via een env-var te overschrijven zonder deploy. Een dict in code haalt dat weg. Wil je bijvoorbeeld `RESOURCE_TUNING_HOUR` in productie kunnen bijstellen zonder release, houd dan een env-overschrijfpad, en leg vast welke velden dat verdienen en welke niet.
+>
+> **Coördinatie:** `plans/cross-domain-access-service.md` introduceert een haak `contribute_deployment_manifests` en dit plan een `HookPoint`-enum. Die twee moeten één mechanisme worden, niet twee naast elkaar; stem af met wie dat plan uitvoert.
+
 ## Context
 
 Op 30 juli 2026 08:16 faalde de deploy van `asses-k2n/pr-450` met:

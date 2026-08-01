@@ -13,6 +13,9 @@ moet aanpassen buiten wat in Stap 4 staat, klopt er iets niet.
 
 ---
 
+
+> **Bijgewerkt 1 augustus 2026.** Dit plan is geschreven vóór de afronding van de service-opzet. Wat er sindsdien veranderd is en wat je dus niet opnieuw hoeft te doen: `$defs/deployment-service-config` is opengezet (stap 2.4 vervalt), `validate_service_configs` loopt over alle vier de configlagen, `Service.config_model_for(layer)` bestaat voor een service die per laag een ander model draagt, dertien van de vijftien services hebben nu een configmodel met drift-gelockt fragment, en er staan geen servicenamen meer als contract in het globale schema. Lees `instructions/service-review-checklist.md` voordat je begint, en gebruik die als sluitstuk. Let op de coördinatie met `plans/oom-auto-tune-deployment-scoped.md`: dat plan introduceert een `HookPoint`-enum en dit plan een haak `contribute_deployment_manifests`. Die twee moeten één mechanisme worden, niet twee naast elkaar; stem af met wie dat plan uitvoert.
+
 ## 1. Hoe het vandaag werkt
 
 Per deployment schrijft OPI precies een NetworkPolicy:
@@ -523,11 +526,11 @@ Verify: `uv run pytest tests/test_service_providers.py -q` groen; service versch
 2. Zet `config_model` + `config_schema_version = "1.0"` op de service.
 3. `uv run python -m opi.services.config_schema` en commit
    `catalog/cross_domain_access/cross-domain-access.v1.0.json`.
-4. **`opi/schemas/project_v2.json`: `$defs/deployment-service-config` verruimen.** Dat is nu
-   een gesloten object met alleen `generation` en `revisions`, dus deployment-level config van
-   deze service wordt anders geweigerd door de globale schemavalidatie. Dit is exact de klasse
-   fout die dp-bn7 stil blokkeerde. Voeg de velden toe of maak het object open voor onbekende
-   sleutels (per-service validatie doet het model al). Kies bewust en motiveer in de commit.
+4. **`$defs/deployment-service-config` is al verruimd, deze stap vervalt.** Op 1 augustus is dat
+   object opengezet en is `$defs/deployment-service` uitgebreid met `name` en `schema-version`,
+   zodat elke service deployment-level config kan dragen. Tegelijk loopt `validate_service_configs`
+   sinds die datum over alle vier de configlagen, dus de controle op de inhoud is verhuisd naar
+   het servicemodel. Doe hier niets; controleer alleen dat je model die laag daadwerkelijk dekt.
 
 Verify:
 - `uv run pytest tests/test_service_config_schema.py -q`
@@ -901,8 +904,9 @@ Plus de nieuwe eigen tests. Draai niet de hele suite; die heeft pre-existing col
 - **Identiteit altijd via `service_entry_name(entry)`**, nooit via de dict-keys. Een record met
   config heeft keys `name`/`config`; key-lezen laat de service verdwijnen. Config lezen met
   `service_entry_config(entry)`.
-- **`deployment-service-config` is gesloten.** Zie Stap 2.4. Zonder die aanpassing lijkt de
-  deployment-config te werken in het formulier en faalt de opslag pas bij schemavalidatie.
+- **`deployment-service-config` is inmiddels open** (1 augustus), dus die val bestaat niet meer.
+  Wat er wel voor in de plaats komt: omdat het globale schema die laag niet meer bewaakt, is jouw
+  configmodel de enige controle. Een laag die je model niet dekt wordt stil doorgelaten.
 - **Zaai geen defaults.** Een editable met een default op een `{K}`-pad materialiseert de
   service in de lijst; dan staat de service ineens aan bij projecten die hem nooit kozen.
 - **Nooit een lege peer of lege regel renderen.** `- from: [{}]` betekent allow-all in
