@@ -735,6 +735,8 @@ def relocate_invites_to_service(project_data: dict[str, Any]) -> bool:
 
     Project(project_data).set("services/invite/config", dumped)
     del project_data["invites"]
+    project_name = project_data.get("name", "unknown")
+    logger.info(f"Relocated {len(active)} invite(s) to services/invite/config for project '{project_name}'")
     return True
 
 
