@@ -8,6 +8,7 @@ Read-only GET endpoints return deployment state directly (no task queue).
 
 import asyncio
 import logging
+from inspect import Parameter, Signature
 from typing import Any, NamedTuple
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
@@ -29,6 +30,7 @@ from opi.api.task_models import (
     AddServiceResult,
     CloneBucketResult,
     CloneDatabaseResult,
+    ConfigureServiceResult,
     DeleteDeploymentResult,
     RefreshDeploymentResult,
     RefreshProjectResult,
@@ -57,8 +59,12 @@ from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.catalog.base import ConfigLayer
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
 from opi.services.project_store import get_project_store
+from opi.services.registry import SERVICES, get_service
+from opi.services.services import service_entry_config, service_entry_name
+from opi.services.services_enums import ServiceType
 from opi.utils.naming import (
     HostnameFormat,
     generate_argocd_application_name,
@@ -980,6 +986,7 @@ async def add_component_to_deployment_v2(
         200: {"model": TaskResponse[AddServiceResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
     },
+    deprecated=True,
 )
 @validate_api_token
 async def add_service_v2(
@@ -987,9 +994,11 @@ async def add_service_v2(
     project_name: str,
     service_data: AddServiceRequest = Body(...),
 ) -> JSONResponse:
-    """Add a service to a project (async).
+    """Add a service to a project by name (async). DEPRECATED.
 
-    Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
+    Superseded by ``PUT /api/v2/projects/{project}/services/{service}``, which both
+    selects a service and sets its config in one call. This endpoint only adds a
+    bare selection. Returns immediately with a task ID; poll /api/tasks/{task_id}.
 
     Headers:
         X-API-Key: The API key for the project (required)
@@ -1013,3 +1022,301 @@ async def add_service_v2(
         },
     )
     return _accepted_response(task, "add_service")
+
+
+# ---------------------------------------------------------------------------
+# Unified service-config endpoint (RC-12 follow-up)
+#
+# One registry-driven surface to configure any service: descriptor GETs
+# (self-describing fields + enums per target), a project-scoped read, and
+# async upsert (PUT) / clear (DELETE). The set of valid targets per service is
+# derived from ``config_api_fields(layer)`` -- the service's own declaration of
+# which layers it accepts config on -- so the API surface stays in lock-step
+# with the models and never hardcodes a service name.
+# ---------------------------------------------------------------------------
+
+
+def _service_or_404(service_name: str):
+    """Resolve a service by name or raise 404."""
+    try:
+        service_type = ServiceType(service_name)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Unknown service '{service_name}'")
+    return get_service(service_type)
+
+
+def _accepts_config_at(service, layer: ConfigLayer) -> bool:
+    """Whether a service accepts a config block at ``layer``.
+
+    Derived from the service's own declarations -- never a hardcoded name list. A
+    flat-field service declares ``config_api_fields``; a sequence-config service
+    (storage is a ``RootModel[list]``, so it has no flat field names) declares
+    ``config_editables``; a component-level service hooks into the component form
+    via ``config_component_layout``. Any of these means the layer is configurable.
+    """
+    if service.config_api_fields(layer) or service.config_editables(layer):
+        return True
+    return layer is ConfigLayer.COMPONENT and bool(service.config_component_layout())
+
+
+def _supported_targets(service) -> list[str]:
+    """The config targets a service accepts, measured from its own declarations."""
+    return [layer.value for layer in ConfigLayer if _accepts_config_at(service, layer)]
+
+
+def _resolve_supported_layer(service, service_name: str, target: str) -> ConfigLayer:
+    """Parse a target into a ConfigLayer the service actually supports, or 422."""
+    try:
+        layer = ConfigLayer(target)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"Unknown target '{target}'")
+    if not _accepts_config_at(service, layer):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Service '{service_name}' accepts no config at target '{target}'. "
+            f"Supported targets: {_supported_targets(service)}",
+        )
+    return layer
+
+
+@v2_router.get("/services", tags=["v2", "services"])
+async def list_configurable_services_v2() -> JSONResponse:
+    """List platform services and the config targets each accepts (registry-driven).
+
+    Project-independent metadata: no project and no API key. ``targets`` is empty
+    for services that carry no user config (they are still listed so a client sees
+    the full catalog).
+    """
+    services = []
+    for service_type, service in SERVICES.items():
+        targets = _supported_targets(service)
+        services.append(
+            {
+                "name": service_type.value,
+                "config_schema_version": service.config_schema_version,
+                "targets": targets,
+                "configurable": bool(targets),
+            }
+        )
+    services.sort(key=lambda item: item["name"])
+    return JSONResponse({"services": services})
+
+
+def _collect_service_config(project_data: dict[str, Any], service_name: str, target_filter: str | None) -> list[dict]:
+    """Gather a service's config across every layer it is set on in the project."""
+
+    def find(services: list, target: str, **ids: str) -> list[dict]:
+        for entry in services or []:
+            if service_entry_name(entry) == service_name:
+                return [{"target": target, **ids, "config": service_entry_config(entry)}]
+        return []
+
+    found: list[dict] = []
+    if target_filter in (None, ConfigLayer.PROJECT.value):
+        found += find(project_data.get("services", []), ConfigLayer.PROJECT.value)
+    if target_filter in (None, ConfigLayer.COMPONENT.value):
+        for component in project_data.get("components", []):
+            found += find(component.get("services", []), ConfigLayer.COMPONENT.value, component=component.get("name"))
+    for deployment in project_data.get("deployments", []):
+        if target_filter in (None, ConfigLayer.DEPLOYMENT.value):
+            found += find(
+                deployment.get("services", []), ConfigLayer.DEPLOYMENT.value, deployment=deployment.get("name")
+            )
+        if target_filter in (None, ConfigLayer.DEPLOYMENT_COMPONENT.value):
+            for component in deployment.get("components", []):
+                found += find(
+                    component.get("services", []),
+                    ConfigLayer.DEPLOYMENT_COMPONENT.value,
+                    deployment=deployment.get("name"),
+                    component=service_entry_name(component),
+                )
+    return found
+
+
+@v2_router.get("/projects/{project_name}/services/{service_name}/config", tags=["v2", "services"])
+@validate_api_token
+async def get_service_config_v2(
+    request: Request,
+    project_name: str,
+    service_name: str,
+) -> JSONResponse:
+    """Read a service's current config across every target it is set on.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    _service_or_404(service_name)
+    project = get_project_store().get(project_name)
+    if not project or not project.data:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+    return JSONResponse(
+        {
+            "service": service_name,
+            "configurations": _collect_service_config(project.data, service_name, None),
+        }
+    )
+
+
+#: OpenAPI responses shared by every config write route.
+_CONFIG_WRITE_RESPONSES = {
+    200: {"model": TaskResponse[ConfigureServiceResult], "description": "Task completed (when polled)"},
+    202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+}
+
+
+async def _enqueue_config_write(
+    request: Request,
+    project_name: str,
+    service_name: str,
+    target: str,
+    operation: str,
+    *,
+    config: dict[str, Any] | list[Any] | None = None,
+    component: str | None = None,
+    deployment: str | None = None,
+) -> JSONResponse:
+    """Validate the (service, target) pair and enqueue a configure_service task.
+
+    Shared by the per-target upsert (PUT) and clear (DELETE) routes so the target
+    lives in the path while the guards stay in one place. An unknown service is
+    404 and a target the service does not support is 422, both before enqueue.
+    """
+    logger.info("V2 %s service config '%s' at %s in project: %s", operation, service_name, target, project_name)
+    if not validate_project_name(project_name):
+        raise HTTPException(status_code=400, detail="Invalid project name format.")
+    service = _service_or_404(service_name)
+    _resolve_supported_layer(service, service_name, target)
+
+    task = await create_async_task(
+        request=request,
+        task_type="configure_service",
+        project_name=project_name,
+        payload={
+            "project_name": project_name,
+            "service": service_name,
+            "target": target,
+            "operation": operation,
+            "config": config,
+            "component": component,
+            "deployment": deployment,
+        },
+    )
+    return _accepted_response(task, "configure_service")
+
+
+# --- typed per-service config routes (generated from the registry) -----------
+# Each configurable (service, target) gets its OWN explicit route whose request
+# body IS that service's config model, so the OpenAPI spec documents the fields
+# and enum values per service (a client can be generated from it) instead of a
+# generic config dict resolved only at request time. The path is a predictable
+# pattern: /projects/{project}/services/<service>/config/<target>[/<name>].
+# deployment-component is intentionally omitted -- no service accepts config there
+# today (it is written via the image-update storage actions).
+
+
+def _config_write_route(layer: ConfigLayer) -> tuple[str, str | None]:
+    """The path suffix and the extra path-param name for a target layer."""
+    if layer is ConfigLayer.PROJECT:
+        return "/config/project", None
+    if layer is ConfigLayer.COMPONENT:
+        return "/config/component/{component_name}", "component_name"
+    if layer is ConfigLayer.DEPLOYMENT:
+        return "/config/deployment/{deployment_name}", "deployment_name"
+    raise ValueError(f"No config write route for layer {layer!r}")
+
+
+def _config_write_signature(name_param: str | None, body_model: type | None) -> Signature:
+    """Build the endpoint signature FastAPI introspects: request, project_name, an
+    optional component/deployment name, and (for upsert) the typed config body."""
+    params = [
+        Parameter("request", Parameter.POSITIONAL_OR_KEYWORD, annotation=Request),
+        Parameter("project_name", Parameter.POSITIONAL_OR_KEYWORD, annotation=str),
+    ]
+    if name_param:
+        params.append(Parameter(name_param, Parameter.POSITIONAL_OR_KEYWORD, annotation=str))
+    if body_model is not None:
+        params.append(Parameter("body", Parameter.POSITIONAL_OR_KEYWORD, annotation=body_model, default=Body(...)))
+    return Signature(params, return_annotation=JSONResponse)
+
+
+def _make_upsert_endpoint(service_name: str, target: str, name_param: str | None, config_model: type):
+    """Build a typed PUT endpoint whose body is the service's config model."""
+
+    async def endpoint(**kwargs: Any) -> JSONResponse:
+        # exclude_unset: only write what the caller actually sent, so unset optional
+        # fields leave no key rather than freezing a model default (checklist item 4).
+        config = kwargs["body"].model_dump(by_alias=True, exclude_unset=True)
+        return await _enqueue_config_write(
+            kwargs["request"],
+            kwargs["project_name"],
+            service_name,
+            target,
+            "upsert",
+            config=config,
+            component=kwargs.get("component_name"),
+            deployment=kwargs.get("deployment_name"),
+        )
+
+    endpoint.__signature__ = _config_write_signature(name_param, config_model)
+    endpoint.__name__ = f"configure_{service_name.replace('-', '_')}_{target.replace('-', '_')}"
+    return endpoint
+
+
+def _make_clear_endpoint(service_name: str, target: str, name_param: str | None):
+    """Build a DELETE endpoint that clears this service's config at a target."""
+
+    async def endpoint(**kwargs: Any) -> JSONResponse:
+        return await _enqueue_config_write(
+            kwargs["request"],
+            kwargs["project_name"],
+            service_name,
+            target,
+            "clear",
+            component=kwargs.get("component_name"),
+            deployment=kwargs.get("deployment_name"),
+        )
+
+    endpoint.__signature__ = _config_write_signature(name_param, None)
+    endpoint.__name__ = f"clear_{service_name.replace('-', '_')}_{target.replace('-', '_')}"
+    return endpoint
+
+
+def _register_service_config_routes(router: APIRouter) -> None:
+    """Generate the typed per-service config routes from the registry.
+
+    Adding a service to the registry adds its config endpoints here automatically;
+    nothing in this module hardcodes a service name.
+    """
+    for service_type, service in SERVICES.items():
+        service_name = service_type.value
+        for layer in ConfigLayer:
+            if not _accepts_config_at(service, layer) or layer not in _CONFIG_WRITE_LAYERS:
+                continue
+            model = service.config_model_for(layer)
+            if model is None:
+                continue
+            suffix, name_param = _config_write_route(layer)
+            path = f"/projects/{{project_name}}/services/{service_name}{suffix}"
+            target = layer.value
+            router.add_api_route(
+                path,
+                validate_api_token(_make_upsert_endpoint(service_name, target, name_param, model)),
+                methods=["PUT"],
+                tags=["v2", "services", service_name],
+                responses=_CONFIG_WRITE_RESPONSES,
+                summary=f"Upsert {service_name} config ({target})",
+            )
+            router.add_api_route(
+                path,
+                validate_api_token(_make_clear_endpoint(service_name, target, name_param)),
+                methods=["DELETE"],
+                tags=["v2", "services", service_name],
+                responses=_CONFIG_WRITE_RESPONSES,
+                summary=f"Clear {service_name} config ({target})",
+            )
+
+
+#: The layers we generate write routes for (deployment-component intentionally out).
+_CONFIG_WRITE_LAYERS = (ConfigLayer.PROJECT, ConfigLayer.COMPONENT, ConfigLayer.DEPLOYMENT)
+
+_register_service_config_routes(v2_router)

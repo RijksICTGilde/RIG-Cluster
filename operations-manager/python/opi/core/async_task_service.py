@@ -39,6 +39,7 @@ class TaskType(StrEnum):
     ADD_COMPONENT_TO_DEPLOYMENT = "add_component_to_deployment"
     UPDATE_COMPONENT = "update_component"
     ADD_SERVICE = "add_service"
+    CONFIGURE_SERVICE = "configure_service"
     BACKUP = "backup"
     RESTORE = "restore"
 

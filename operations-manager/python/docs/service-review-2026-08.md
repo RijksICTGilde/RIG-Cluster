@@ -609,3 +609,76 @@ Bevinding:
   revisies). Aanbeveling: `source: str | None = None` typen of de dode `record_initial`
   verwijderen. Raakt het gedeelde clone-state-contract (minio/postgresql-database), dus geen
   safe-fix binnen de storage-scope. Niet gerepareerd.
+
+---
+
+## Naloop: API-configureerbaarheid (checklist sectie 13)
+
+**Aanleiding.** De sweep hierboven toetste per service of `config_api_fields(layer)`
+gedeclareerd was, maar niet of een service ook *end-to-end via de API* te configureren
+was. Meting wees uit: dat kon niet. De REST-API (v1 én v2) liet services alleen **op
+naam** toevoegen/koppelen — elk `services`-veld was `list[str]`, geen enkel requestmodel
+had een per-service `config`-veld. Alle échte config (keycloak template,
+namespace-postgres storage/instances, storage-mounts, health-check probes,
+metrics-scraper, auth-wall banner, sleep-mode, redis, minio, publish-on-web tls) was
+uitsluitend via de wizard/forms-laag te schrijven. `config_api_fields` bestond wél, maar
+werd op één plek gebruikt (`project_validation.py:40`) om een foutmelding-hint te bouwen —
+niet om config via de API binnen te laten.
+
+**Opgelost (nieuw terrein, geen safe-fix maar een bewuste bouw op verzoek).** Er is een
+uniform, registry-gedreven service-config-oppervlak bijgebouwd: `GET /api/v2/services`
+(catalogus + ondersteunde targets), een read `GET …/services/{service}/config`, en per
+configureerbare (service, target) een **eigen getypeerde** route
+`PUT/DELETE …/services/<service>/config/<target>[/<naam>]`. De PUT-body **is** het
+configmodel van die service, dus de OpenAPI-spec documenteert de velden + enum-waardes
+expliciet per service (een client is eruit te genereren); FastAPI valideert de body al
+synchroon (422 op een onbekende/out-of-enum waarde). De routes worden bij startup uit de
+registry gegenereerd, dus niets hardcodet een servicenaam. Zie
+`features/service-config-api.md`. De schrijfweg gaat door hetzelfde validatie-chokepoint
+(`save_and_commit_project` → `validate_service_configs`) als backstop, zodat een door het
+model afgewezen config de task laat falen mét de accepted-fields hint. Geen schemaversie
+opgehoogd, geen globaal schema geraakt, geen projectbestand aangeraakt — de
+`{name, config}` / `{reference, config}`-records zijn daar al geldig.
+
+**Per-service dekking (gemeten via de registry, niet aangenomen):**
+
+| Service | Config-target(s) via API | Opmerking |
+|---|---|---|
+| authorization-wall | project | |
+| keycloak | project | |
+| namespace-postgresql-database | project | |
+| redis | project | api-fields-only (geen editables) |
+| sleep-mode | project | |
+| minio-storage | project, deployment | api-fields-only |
+| attachments | component | sequence-config; via `config_editables` |
+| health-check | component | |
+| metrics-scraper | component | |
+| persistent-storage | component | `RootModel[list]`; geen platte api-fields, correct |
+| temp-storage | component | idem |
+| publish-on-web | component | alleen tls/attachment; domeinen blijven platform-infra |
+| namespace-redis | — | draagt bewust geen config; correct |
+| platform | — | draagt bewust geen config; correct |
+| postgresql-database | — | **FINDING** |
+
+- [FINDING/postgresql-database] Heeft een `config_model` (schema 1.0) maar declareert het
+  op géén enkele laag (`config_api_fields`/`config_editables`/`config_component_layout`
+  alle leeg). Daardoor is het via geen enkele target configureerbaar — noch UI, noch API.
+  Dit is dezelfde soort gat als de RC-12-reparaties voor redis/minio, maar hier hangt de
+  keuze *welke* laag (en of het veld überhaupt user-facing hoort te zijn) aan een
+  productbeslissing over de gedeelde-database-service. Niet gegokt; vastgelegd als
+  bevinding. Aanbeveling: bepaal of `postgresql-database` per-project config hoort te
+  dragen; zo ja, declareer de laag zoals de siblings, zo nee, verwijder het ongebruikte
+  configmodel.
+
+**Grensbesluit (bewust niet gedaan):** de image-update-endpoint draagt per-mount
+storage-*acties* (clone/recreate) via `ServiceReference`. Dat is een opdracht, geen
+config, en heeft geen equivalent op het config-endpoint; ongemoeid gelaten. De
+component-`services: list[str]`-velden blijven (pure selectie, bare names, kunnen geen
+config dragen); hun beschrijving verwijst nu naar het config-endpoint. De
+add-service-endpoints (v1 + v2) zijn `deprecated` gemarkeerd omdat de uniforme PUT
+selectie + config in één doet.
+
+**Tests:** `tests/test_service_config_api.py` (pure kern, round-trip door het
+validatie-chokepoint, endpoint-helpers, en een gemeten dekkings-guard over álle services)
+en `tests/test_v2_flow.py::TestConfigureServiceFlow` (het HTTP-oppervlak: descriptors,
+upsert/clear-payloads, auth, en de 404/422-poorten). Alle falende-eerst geverifieerd.

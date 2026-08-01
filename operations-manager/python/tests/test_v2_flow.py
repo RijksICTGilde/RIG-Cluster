@@ -587,6 +587,128 @@ class TestAddServiceFlow:
 
 
 # ---------------------------------------------------------------------------
+# Configure Service - unified service-config endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestConfigureServiceFlow:
+    """Verify the unified service-config surface: the catalog list, the typed
+    per-service upsert/clear endpoints, and the read."""
+
+    def test_list_services_is_public_and_registry_driven(self, v2_client: TestClient) -> None:
+        response = v2_client.get("/api/v2/services")
+        assert response.status_code == 200
+        names = {item["name"]: item for item in response.json()["services"]}
+        assert names["keycloak"]["targets"] == ["project"]
+        assert names["keycloak"]["configurable"] is True
+        assert names["namespace-redis"]["configurable"] is False
+
+    def test_openapi_documents_a_typed_body_per_service(self, v2_client: TestClient) -> None:
+        # The whole point: each service's fields+enums are explicit on its route,
+        # so a client can be generated from the spec (no generic config dict).
+        spec = v2_client.get("/openapi.json").json()
+        put = spec["paths"]["/api/v2/projects/{project_name}/services/keycloak/config/project"]["put"]
+        ref = put["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        assert ref.endswith("KeycloakConfig")
+        hc_path = "/api/v2/projects/{project_name}/services/health-check/config/component/{component_name}"
+        hc_ref = spec["paths"][hc_path]["put"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        scheme = spec["components"]["schemas"][hc_ref.split("/")[-1]]["properties"]["scheme"]
+        assert {"none", "tcp", "http", "https"} <= set(scheme["anyOf"][0]["enum"])
+
+    def test_upsert_project_target_enqueues_typed_config(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        response = v2_client.put(
+            "/api/v2/projects/test-project/services/keycloak/config/project",
+            headers=HEADERS,
+            json={"template": "algor"},
+        )
+        assert response.status_code == 202
+        call_kwargs = mock_task_service.create_task.call_args[1]
+        assert call_kwargs["task_type"] == "configure_service"
+        payload = call_kwargs["payload"]
+        assert payload["service"] == "keycloak"
+        assert payload["target"] == "project"
+        assert payload["operation"] == "upsert"
+        assert payload["config"] == {"template": "algor"}
+
+    def test_upsert_component_target_carries_component_name(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        response = v2_client.put(
+            "/api/v2/projects/test-project/services/health-check/config/component/backend",
+            headers=HEADERS,
+            json={"scheme": "http", "port": 8080},
+        )
+        assert response.status_code == 202
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        assert payload["target"] == "component"
+        assert payload["component"] == "backend"
+        assert payload["config"] == {"scheme": "http", "port": 8080}
+
+    def test_invalid_value_rejected_by_typed_body_before_enqueue(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        # The typed body validates at request time: an out-of-enum value -> 422,
+        # before any task is enqueued (health-check.scheme is a Literal).
+        response = v2_client.put(
+            "/api/v2/projects/test-project/services/health-check/config/component/backend",
+            headers=HEADERS,
+            json={"scheme": "ftp"},
+        )
+        assert response.status_code == 422
+        mock_task_service.create_task.assert_not_called()
+
+    def test_unsupported_target_has_no_route(self, v2_client: TestClient) -> None:
+        # keycloak carries no config at the component layer, so no such route exists.
+        response = v2_client.put(
+            "/api/v2/projects/test-project/services/keycloak/config/component/backend",
+            headers=HEADERS,
+            json={"template": "x"},
+        )
+        assert response.status_code == 404
+
+    def test_unknown_service_has_no_route(self, v2_client: TestClient) -> None:
+        response = v2_client.put(
+            "/api/v2/projects/test-project/services/not-a-service/config/project",
+            headers=HEADERS,
+            json={},
+        )
+        assert response.status_code == 404
+
+    def test_upsert_requires_api_key(self, v2_client: TestClient) -> None:
+        response = v2_client.put(
+            "/api/v2/projects/test-project/services/keycloak/config/project",
+            json={"template": "x"},
+        )
+        assert response.status_code == 401
+
+    def test_read_returns_config_across_targets(self, v2_client: TestClient) -> None:
+        from types import SimpleNamespace
+
+        stored = SimpleNamespace(data={"services": [{"name": "keycloak", "config": {"template": "algor"}}]})
+        with patch("opi.api.v2.router.get_project_store") as get_store:
+            get_store.return_value.get.return_value = stored
+            response = v2_client.get("/api/v2/projects/test-project/services/keycloak/config", headers=HEADERS)
+        assert response.status_code == 200
+        assert response.json()["configurations"] == [{"target": "project", "config": {"template": "algor"}}]
+
+    def test_clear_enqueues_clear_operation(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+        response = v2_client.delete(
+            "/api/v2/projects/test-project/services/keycloak/config/project",
+            headers=HEADERS,
+        )
+        assert response.status_code == 202
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        assert payload["operation"] == "clear"
+        assert payload["service"] == "keycloak"
+        assert payload["target"] == "project"
+
+
+# ---------------------------------------------------------------------------
 # Federation routing - task_service vs federation_service
 # ---------------------------------------------------------------------------
 
