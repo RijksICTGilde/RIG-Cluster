@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -14,6 +15,8 @@ from opi.forms.visualizers.providers import get_provider
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.visualizer import EditableVisualizer
+
+logger = logging.getLogger(__name__)
 
 
 def editable_to_form_field(
@@ -296,10 +299,9 @@ def _resolve_options(
 
     kwargs = _filter_provider_kwargs(provider_name, context or {})
     try:
-        import logging
-
-        logger = logging.getLogger(__name__)
-        logger.debug(f"_resolve_options: provider={provider_name!r}, filtered_kwargs={kwargs}")
+        # Key names only, never values: one of the kwargs is ``yaml_data``, the whole project
+        # dict, which carries repository passwords and every other secret in the project file.
+        logger.debug(f"_resolve_options: provider={provider_name!r}, kwargs={sorted(kwargs)}")
         provider = get_provider(provider_name, **kwargs)
         return provider.get_options()
     except KeyError:
