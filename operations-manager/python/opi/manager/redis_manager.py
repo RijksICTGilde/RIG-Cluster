@@ -360,7 +360,7 @@ class RedisManager:
                 continue
             config = service_entry_config(service)
             if config:
-                logger.debug(f"Found redis config: {config}")
+                logger.debug(f"Found redis config with keys: {sorted(config)}")
                 return config
             return None
 

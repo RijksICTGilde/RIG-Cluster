@@ -2005,6 +2005,8 @@ class ProjectFileHandler:
                 config:
                   generation: 2
         """
+        from opi.services.services import service_entry_name
+
         deployments = project_data.get("deployments", [])
         for deployment in deployments:
             if deployment.get("name") == deployment_name:
@@ -2013,7 +2015,10 @@ class ProjectFileHandler:
                 # Services is a list of {reference: ..., config: ...}
                 if isinstance(services, list):
                     for item in services:
-                        if isinstance(item, dict) and item.get("reference") == service_type:
+                        # Resolve identity format-agnostically: a deployment clone-state entry
+                        # may be {reference}, {name} or a bare string; matching only on
+                        # ``reference`` silently missed the other forms (checklist 5).
+                        if isinstance(item, dict) and service_entry_name(item) == service_type:
                             config = item.get("config", {})
                             generation = config.get("generation")
                             if generation is not None:
