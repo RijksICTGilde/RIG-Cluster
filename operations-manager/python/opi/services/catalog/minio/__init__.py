@@ -6,6 +6,7 @@ import logging
 
 from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.services.catalog.base import ManifestContext, ProvisionContext, SecretFileSpec, Service
+from opi.services.catalog.minio.config_model import MinioStorageConfig
 from opi.services.services_enums import ServiceType
 from opi.utils.secrets import MinIOSecret
 
@@ -14,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 class MinioStorageService(Service):
     service_type = ServiceType.MINIO_STORAGE
+    config_model = MinioStorageConfig
+    config_schema_version = "1.0"
     cleanup_manager_key = "minio"
     provision_order = 20
     manifest_secret_class = MinIOSecret

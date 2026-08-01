@@ -1,0 +1,12 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "acl-key-prefix": {
+      "default": true,
+      "title": "Acl-Key-Prefix",
+      "type": "boolean"
+    }
+  },
+  "title": "RedisConfig",
+  "type": "object"
+}

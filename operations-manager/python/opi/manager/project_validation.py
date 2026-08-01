@@ -68,10 +68,16 @@ def _validate_one_config(
     except ValueError:
         return  # unknown service name -- other validation handles it
     provider = get_service(service_type)
-    if provider.config_model is None:
-        return  # service takes no typed config
+    model = provider.config_model_for(layer)
+    if model is None:
+        return  # service takes no typed config at this layer
     try:
-        provider.validate_config(raw, from_version=from_version)
+        if model is provider.config_model:
+            provider.validate_config(raw, from_version=from_version)
+        else:
+            # A layer-specific model (per-mount clone state). OPI writes it, so there is no
+            # stamped version to migrate from; validate the shape directly.
+            model.model_validate(raw)
     except ValidationError as e:
         accepted = _accepted_config_fields(provider, layer)
         hint = f" Geaccepteerde velden: {', '.join(accepted)}." if accepted else ""
@@ -84,11 +90,12 @@ def validate_service_configs(project_data: dict[str, Any]) -> None:
     """Validate every service's config against its provider's typed model (RC-5 A:
     the per-service config-validation chokepoint).
 
-    Covers BOTH layers a config can live at: project-level service definitions
-    (keycloak, namespace-postgres, auth-wall) and component-level service references
-    (persistent-storage / temp-storage mounts, metrics-scraper port/path). Services
-    without a config block, or without a typed model, are skipped. Fails closed:
-    raises ProjectIntegrityError on the first invalid service config.
+    Covers all three layers a config can live at: project-level service definitions
+    (keycloak, namespace-postgres, auth-wall), component-level service references
+    (persistent-storage / temp-storage mounts, metrics-scraper port/path) and
+    deployment-level entries (clone state today). Services without a config block, or
+    without a typed model, are skipped. Fails closed: raises ProjectIntegrityError on the
+    first invalid service config.
     """
     view = Project(project_data)
     project_name = project_data.get("name", "(onbekend)")
@@ -117,6 +124,66 @@ def validate_service_configs(project_data: dict[str, Any]) -> None:
             _validate_one_config(
                 name, config, ConfigLayer.COMPONENT, f"in component '{comp_name}'", project_name, from_version
             )
+
+    # Deployment-level service entries (clone state today, anything a service declares
+    # tomorrow). ``$defs/deployment-service-config`` in the global schema is deliberately
+    # open, so this walk is the only thing between a typo and a silently ignored setting.
+    for deployment in project_data.get("deployments", []) or []:
+        if not isinstance(deployment, dict):
+            continue
+        dep_name = deployment.get("name", "(onbekend)")
+        for entry in deployment.get("services", []) or []:
+            name = service_entry_name(entry)
+            config = service_entry_config(entry)
+            if name is None or config is None:
+                continue  # bare reference / no config to validate
+            from_version = service_entry_schema_version(entry)
+            _validate_one_config(
+                name, config, ConfigLayer.DEPLOYMENT, f"in deployment '{dep_name}'", project_name, from_version
+            )
+
+    # Deployment-component service entries. Two shapes live here: a dict keyed by service
+    # name (``{publish-on-web: {config: ...}}``) and, for the storage services, a list of
+    # per-mount records under that key. Both are walked, because the global schema no longer
+    # guards this layer: opening up the deployment envelope moved that job here.
+    for deployment in project_data.get("deployments", []) or []:
+        if not isinstance(deployment, dict):
+            continue
+        dep_name = deployment.get("name", "(onbekend)")
+        for component in deployment.get("components", []) or []:
+            if not isinstance(component, dict):
+                continue
+            comp_name = component.get("reference") or component.get("name", "(onbekend)")
+            where = f"in component '{comp_name}' van deployment '{dep_name}'"
+            services = component.get("services")
+            if isinstance(services, dict):
+                for name, body in services.items():
+                    for entry in body if isinstance(body, list) else [body]:
+                        config = entry.get("config") if isinstance(entry, dict) else None
+                        if config is None:
+                            continue
+                        _validate_one_config(
+                            name,
+                            config,
+                            ConfigLayer.DEPLOYMENT_COMPONENT,
+                            where,
+                            project_name,
+                            service_entry_schema_version(entry),
+                        )
+            elif isinstance(services, list):
+                for entry in services:
+                    name = service_entry_name(entry)
+                    config = service_entry_config(entry)
+                    if name is None or config is None:
+                        continue
+                    _validate_one_config(
+                        name,
+                        config,
+                        ConfigLayer.DEPLOYMENT_COMPONENT,
+                        where,
+                        project_name,
+                        service_entry_schema_version(entry),
+                    )
 
 
 def validate_component_references(project_data: dict, components: list, context: str = "deployment") -> dict[str, Any]:

@@ -224,6 +224,30 @@ class TestProviderValidateConfig:
         assert self._provider().migrate_config(cfg, "1.0") == cfg
 
     def test_provider_without_config_model_raises(self) -> None:
-        # A service that takes no config must not silently accept one.
+        # A service that takes no config must not silently accept one. publish-on-web used
+        # to be the example here, until it got a config model; namespace-redis and platform
+        # are the two behaviour-only services left.
         with pytest.raises(TypeError):
+            get_service(ServiceType.NAMESPACE_REDIS).validate_config({"anything": 1})
+
+    def test_provider_with_config_model_rejects_a_stray_key(self) -> None:
+        # The other side: a modelled service fails validation instead of raising TypeError.
+        with pytest.raises(ValidationError):
             get_service(ServiceType.PUBLISH_ON_WEB).validate_config({"anything": 1})
+
+
+class TestConfigModelAndVersionArePaired:
+    """``config_schema_version`` used to default to ``"1.0"`` on the base class.
+
+    Every behaviour-only service therefore advertised a versioned config contract it did
+    not have, which is misleading in exactly the place a reader goes looking for one. The
+    two must travel together: a service either declares both or neither.
+    """
+
+    def test_a_modelled_service_declares_a_version(self) -> None:
+        missing = [t.value for t, s in SERVICES.items() if s.config_model is not None and not s.config_schema_version]
+        assert not missing, f"config_model without config_schema_version: {missing}"
+
+    def test_a_service_without_a_model_declares_no_version(self) -> None:
+        stray = [t.value for t, s in SERVICES.items() if s.config_model is None and s.config_schema_version]
+        assert not stray, f"config_schema_version without a config_model: {stray}"
