@@ -31,12 +31,51 @@ absent:
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from opi.services.catalog.base import ConfigLayer, Service
+from opi.services.catalog.base import (
+    ConfigLayer,
+    DeploymentManifestContext,
+    DeploymentManifestSpec,
+    Service,
+)
 from opi.services.catalog.cross_domain_access.config_model import CrossDomainAccessConfig
-from opi.services.services import service_entry_name
+from opi.services.catalog.cross_domain_access.merge import IncompleteRuleError, merge_rules, to_merged_rule
+from opi.services.catalog.cross_domain_access.resolve import ResolvedRule, resolve_rules
+from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
+from opi.utils.naming import generate_network_policy_name, generate_unique_name
+
+logger = logging.getLogger(__name__)
+
+
+def _direction_rules(config: Any, direction: str) -> list[dict]:
+    """The raw ``inbound``/``outbound`` rule dicts from a stored config block, or []."""
+    if not isinstance(config, dict):
+        return []
+    return [rule for rule in (config.get(direction) or []) if isinstance(rule, dict)]
+
+
+def _group_by_peer(rules: list[ResolvedRule]) -> list[dict]:
+    """Fold rules with the same peer into one entry with a sorted ``ports`` list.
+
+    Two rules from one own component to the same peer become one policy peer entry with two
+    ports, so the rendered YAML stays compact. Sorted for a stable render.
+    """
+    groups: dict[tuple, dict] = {}
+    for rule in rules:
+        key = (rule.peer.namespace, tuple(sorted(rule.peer.pod_labels.items())))
+        entry = groups.setdefault(
+            key, {"peer": {"namespace": rule.peer.namespace, "pod_labels": rule.peer.pod_labels}, "ports": []}
+        )
+        if rule.port not in entry["ports"]:
+            entry["ports"].append(rule.port)
+    result = list(groups.values())
+    for entry in result:
+        entry["ports"].sort()
+    result.sort(key=lambda entry: (entry["peer"]["namespace"], sorted(entry["peer"]["pod_labels"].items())))
+    return result
 
 
 class CrossDomainAccessService(Service):
@@ -61,3 +100,112 @@ class CrossDomainAccessService(Service):
         if layer in (ConfigLayer.PROJECT, ConfigLayer.DEPLOYMENT):
             return self.config_model_field_names()
         return []
+
+    # --- config reading ---------------------------------------------------------
+
+    def _project_config(self, project_data: dict[str, Any]) -> Any:
+        """This service's project-level config block, or None if not selected."""
+        for entry in project_data.get("services", []) or []:
+            if service_entry_name(entry) == self.service_type.value:
+                return service_entry_config(entry)
+        return None
+
+    def _deployment_config(self, deployment: dict[str, Any]) -> Any:
+        """This service's deployment-level config block on ``deployment``, or None."""
+        for entry in deployment.get("services", []) or []:
+            if service_entry_name(entry) == self.service_type.value:
+                return service_entry_config(entry)
+        return None
+
+    # --- effect: per-deployment NetworkPolicies ---------------------------------
+
+    def _resolve_direction(
+        self,
+        direction: str,
+        project_config: Any,
+        deployment_config: Any,
+        local_components: set[str | None],
+        ctx: DeploymentManifestContext,
+    ) -> list[ResolvedRule]:
+        """Merge, validate and resolve one direction's rules for this deployment.
+
+        Rules whose own component is not in this deployment, or whose peer deployment is
+        still open after the merge, or that reference something that does not exist, are
+        logged and skipped -- generation never fails on a broken rule.
+        """
+        from opi.services.project_store import get_project_store
+
+        def lookup(name: str) -> dict | None:
+            summary = get_project_store().get(name)
+            return summary.data if summary is not None else None
+
+        merged = merge_rules(
+            _direction_rules(project_config, direction), _direction_rules(deployment_config, direction)
+        )
+        normalized = []
+        deployment_name = ctx.deployment.get("name")
+        for rule_dict in merged:
+            name = rule_dict.get("name")
+            try:
+                rule = to_merged_rule(rule_dict, direction=direction)
+            except IncompleteRuleError as error:
+                logger.warning(str(error))
+                continue
+            if rule is None:
+                logger.warning(
+                    "cross-domain %s-regel '%s': peer-deployment niet ingesteld voor deployment '%s', overgeslagen",
+                    direction,
+                    name,
+                    deployment_name,
+                )
+                continue
+            if rule.local_component not in local_components:
+                logger.warning(
+                    "cross-domain %s-regel '%s': eigen component '%s' zit niet in deployment '%s', overgeslagen",
+                    direction,
+                    rule.name,
+                    rule.local_component,
+                    deployment_name,
+                )
+                continue
+            normalized.append(rule)
+        return resolve_rules(normalized, cluster=ctx.cluster, self_project=ctx.project_name, lookup_project=lookup)
+
+    def contribute_deployment_manifests(self, ctx: DeploymentManifestContext) -> list[DeploymentManifestSpec]:
+        project_config = self._project_config(ctx.project_data)
+        deployment_config = self._deployment_config(ctx.deployment)
+        if project_config is None and deployment_config is None:
+            return []
+
+        local_components: set[str | None] = {
+            component.get("reference")
+            for component in ctx.deployment.get("components", []) or []
+            if isinstance(component, dict)
+        }
+
+        ingress = self._resolve_direction("inbound", project_config, deployment_config, local_components, ctx)
+        egress = self._resolve_direction("outbound", project_config, deployment_config, local_components, ctx)
+
+        deployment_name = ctx.deployment["name"]
+        specs: list[DeploymentManifestSpec] = []
+        components = sorted({rule.local_component for rule in ingress} | {rule.local_component for rule in egress})
+        for component in components:
+            component_ingress = _group_by_peer([rule for rule in ingress if rule.local_component == component])
+            component_egress = _group_by_peer([rule for rule in egress if rule.local_component == component])
+            # No peers means no file: let the prune remove any stale one (2.8).
+            if not component_ingress and not component_egress:
+                continue
+            specs.append(
+                DeploymentManifestSpec(
+                    filename=f"{deployment_name}-{self.service_type.value}-{component}-network-policy",
+                    template_path="service-network-policy.yaml.jinja",
+                    values={
+                        "name": generate_network_policy_name(f"{self.service_type.value}-{component}", deployment_name),
+                        "namespace": ctx.namespace,
+                        "pod_selector": {"app": generate_unique_name(deployment_name, component)},
+                        "ingress": component_ingress,
+                        "egress": component_egress,
+                    },
+                )
+            )
+        return specs
