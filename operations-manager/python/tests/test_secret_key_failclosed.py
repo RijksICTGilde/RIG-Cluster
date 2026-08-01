@@ -85,13 +85,22 @@ def _load_settings_class(monkeypatch: pytest.MonkeyPatch):
     skipped rather than reported as a SECRET_KEY regression.
     """
     monkeypatch.delenv("SECRET_KEY", raising=False)
+    config = importlib.import_module("opi.core.config")
+    # Reloading rebinds the module-level ``settings`` to a fresh instance, but every module
+    # that did ``from opi.core.config import settings`` still holds the original object. Left
+    # like that the two drift apart for the rest of the session: a later test monkeypatching
+    # ``settings`` patches the new instance while production code reads the old one, and the
+    # assertion silently sees the default. Only the Settings *class* is wanted here, so the
+    # original instance goes back on the module as soon as the reload has run.
+    original_settings = config.settings
     try:
-        config = importlib.import_module("opi.core.config")
         config = importlib.reload(config)
     except InsecureSecretKeyError:
         raise
     except (TypeError, ImportError) as exc:  # pre-existing unrelated env breakage
         pytest.skip(f"opi.core.config import broken by unrelated environment issue: {exc}")
+    finally:
+        importlib.import_module("opi.core.config").settings = original_settings
     return config.Settings
 
 
