@@ -59,10 +59,19 @@ class EditModalHelper:
         field = self.page.locator(f"[name='{name}']")
         field.fill("")
 
-    def submit_step(self) -> None:
-        """Click the submit button and wait for HTMX swap to complete."""
+    def submit_step(self, timeout: float | None = None) -> None:
+        """Click the submit button and wait for the step response to come back.
+
+        Waits on the response itself rather than on network-idle: idle can already be
+        true at the moment of the click, so the wait returns before the save has even
+        left the browser and the caller then races the server. Same pattern as
+        ``select_with_rerender``.
+        """
+        timeout = timeout or self.action_timeout_ms
         submit_btn = self.page.locator("#modal-wizard-form button[type='submit']")
-        self._click_and_wait(submit_btn)
+        with self.page.expect_response(lambda r: "/step/" in r.url or "/submit" in r.url, timeout=timeout):
+            submit_btn.click()
+        self.page.wait_for_load_state("networkidle", timeout=timeout)
 
     def submit_step_expect_progress(self, timeout: float | None = None) -> None:
         """Submit a process_project step and wait for the progress panel to appear.
@@ -156,6 +165,7 @@ class EditModalHelper:
         with self.page.expect_response(lambda r: "/step/" in r.url, timeout=timeout):
             select_locator.select_option(value)
         self.page.wait_for_load_state("networkidle", timeout=timeout)
+        self._wait_htmx_idle(timeout)
 
     def sequence_add(self, path: str, timeout: float | None = None) -> None:
         """Add an item to a sequence field (e.g. 'users', 'components') in the modal.
@@ -168,6 +178,20 @@ class EditModalHelper:
     def sequence_remove(self, path: str, index: int, timeout: float | None = None) -> None:
         """Remove item `index` from a sequence field in the modal."""
         self._do_and_wait(lambda: self.page.evaluate(f"sequenceRemove('{path}', {index})"), timeout=timeout)
+
+    def _wait_htmx_idle(self, timeout: float | None = None) -> None:
+        """Wait until the modal form has no htmx request in flight.
+
+        htmx drops a second request issued on an element that is still busy, so a click
+        that lands in that window produces no request at all and the caller waits for a
+        response that will never come. Network-idle is not the same signal: it goes true
+        before htmx has finished settling its own bookkeeping.
+        """
+        self.page.wait_for_function(
+            "() => { const f = document.querySelector('#modal-wizard-form');"
+            " return !f || !f.classList.contains('htmx-request'); }",
+            timeout=timeout or self.action_timeout_ms,
+        )
 
     def _click_and_wait(self, locator, timeout: float | None = None) -> None:
         """Click a button and wait for the HTMX swap to complete."""
