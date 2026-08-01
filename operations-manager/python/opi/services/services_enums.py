@@ -35,6 +35,9 @@ class ServiceType(Enum):
     # Sleep mode: scale idle preview deployments to zero after a deadline, wake on request
     SLEEP_MODE = "sleep-mode"
 
+    # Invitations: onboard users into the project's Keycloak realm via a shared link
+    INVITE = "invite"
+
 
 class CloneFromType(Enum):
     """Type of clone-from source for deployment cloning."""

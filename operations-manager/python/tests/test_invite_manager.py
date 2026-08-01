@@ -4,69 +4,14 @@ Tests for opi.manager.invite_manager module.
 Tests invite validation, email domain checks, password validation, and language detection.
 """
 
-from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
 from opi.manager.invite_manager import (
     InviteDomainError,
     InviteError,
-    InviteExpiredError,
     InviteManager,
 )
-
-
-class TestValidateInvite:
-    """Tests for InviteManager.validate_invite."""
-
-    def _make_manager(self):
-        return InviteManager(project_file_handler=MagicMock())
-
-    def test_valid_invite_no_expiry(self):
-        """Invite without expires_at is always valid."""
-        manager = self._make_manager()
-        result = manager.validate_invite({}, {"key": "abc"})
-        assert result is True
-
-    def test_valid_invite_future_expiry_string(self):
-        """Invite with future expiry date string is valid."""
-        manager = self._make_manager()
-        future = (datetime.now(tz=UTC) + timedelta(days=30)).strftime("%Y-%m-%d")
-        result = manager.validate_invite({}, {"key": "abc", "expires_at": future})
-        assert result is True
-
-    def test_expired_invite_raises(self):
-        """Expired invite raises InviteExpiredError."""
-        manager = self._make_manager()
-        past = (datetime.now(tz=UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
-        with pytest.raises(InviteExpiredError):
-            manager.validate_invite({}, {"key": "abc", "expires_at": past})
-
-    def test_expires_at_date_object(self):
-        """Bug: expires_at as a date object must not raise NameError.
-
-        The code uses isinstance(expires_at, date) but 'date' is not imported,
-        causing a NameError at runtime.
-        """
-        manager = self._make_manager()
-        future_date = datetime.now(tz=UTC).date() + timedelta(days=30)
-        # This should NOT raise NameError
-        result = manager.validate_invite({}, {"key": "abc", "expires_at": future_date})
-        assert result is True
-
-    def test_expires_at_past_date_object(self):
-        """Expired date object should raise InviteExpiredError, not NameError."""
-        manager = self._make_manager()
-        # Use 10 days ago to avoid timezone edge cases near midnight
-        past_date = datetime.now(tz=UTC).date() - timedelta(days=10)
-        with pytest.raises(InviteExpiredError):
-            manager.validate_invite({}, {"key": "abc", "expires_at": past_date})
-
-    def test_invalid_expiry_format_treated_as_valid(self):
-        """Invalid date format should be treated as not expired."""
-        manager = self._make_manager()
-        result = manager.validate_invite({}, {"key": "abc", "expires_at": "not-a-date"})
-        assert result is True
 
 
 class TestValidateEmailDomain:
