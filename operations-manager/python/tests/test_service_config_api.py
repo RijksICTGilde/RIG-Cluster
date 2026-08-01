@@ -244,6 +244,28 @@ class TestRoundTripThroughValidationChokepoint:
             validate_service_configs(data)
 
 
+class TestPortRangeExcludesPrivilegedPorts:
+    """Probe/scrape ports must be non-privileged (>=1024): images run non-root, so a
+    port below 1024 can never be bound or reached. The constraint lives in the config
+    model (the API body's validation source), mirrored by the editable."""
+
+    def test_health_check_rejects_privileged_port(self) -> None:
+        from opi.services.catalog.health_check.config_model import HealthCheckConfig
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            HealthCheckConfig.model_validate({"port": 1000})
+        HealthCheckConfig.model_validate({"port": 8080})  # non-privileged is fine
+
+    def test_metrics_scraper_rejects_privileged_port(self) -> None:
+        from opi.services.catalog.metrics_scraper.config_model import MetricsScraperConfig
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            MetricsScraperConfig.model_validate({"port": 1000})
+        MetricsScraperConfig.model_validate({"port": 8080})
+
+
 class TestRemoveServiceConfig:
     def test_demotes_record_to_bare_string_and_reports_true(self) -> None:
         data = _project()
