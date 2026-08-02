@@ -15,6 +15,7 @@ from opi.core.config import settings
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.catalog.base import RemovalContext
 from opi.services.persistence.subdomain_registry import SubdomainConnector
+from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.services.project import Project
 from opi.services.project_store import get_project_store
 from opi.services.registry import get_service
@@ -406,8 +407,11 @@ class DeleteProjectManager:
         # service_entry_name resolves all three entry formats. Matching on the raw dict
         # keys only saw the legacy single-key form, so a namespace service carrying
         # config went undetected here and its infrastructure was left behind on delete.
-        uses_namespace_infrastructure = any(
-            service_entry_name(entry) in NAMESPACE_SERVICES for entry in project_services
+        # postgresql-database with scope: project also owns an infrastructure namespace
+        # (RC-17), so include it or its dedicated cluster leaks on delete.
+        uses_namespace_infrastructure = (
+            any(service_entry_name(entry) in NAMESPACE_SERVICES for entry in project_services)
+            or project_uses_dedicated_postgres(project_data)
         )
 
         if not uses_namespace_infrastructure:
