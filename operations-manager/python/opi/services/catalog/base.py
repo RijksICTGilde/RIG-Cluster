@@ -284,6 +284,43 @@ class DetailPageSection:
     context: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class DeploymentManifestContext:
+    """Inputs a service needs to contribute deployment-wide manifests (RC-15).
+
+    Unlike ``ManifestContext`` (which runs once per component), this runs once per
+    deployment, after the component loop. A service that needs a resource scoped to the
+    whole deployment -- a NetworkPolicy that references the deployment's peers, say --
+    contributes here. ``project_data`` is the full project dict so the service can read its
+    own project- and deployment-level config; ``deployment`` is the current deployment dict;
+    ``namespace`` is already cluster-prefixed.
+    """
+
+    project_name: str
+    project_data: dict[str, Any]
+    deployment: dict[str, Any]
+    cluster: str
+    namespace: str
+
+
+@dataclass
+class DeploymentManifestSpec:
+    """One deployment-wide manifest a service asks the generic emitter to write (RC-15).
+
+    The service returns a declarative spec; ``project_manager`` renders ``template_path``
+    with ``values`` and writes ``<filename>.yaml``. ``filename`` MUST start with
+    ``f"{deployment_name}-{service_type.value}-"`` -- the obsolete-manifest prune
+    (``_prune_obsolete_service_manifests``) keys on that prefix to remove a service's files
+    when it is switched off or stops contributing.
+    """
+
+    #: Basename without ``.yaml``. Must start with ``f"{deployment}-{service_type.value}-"``.
+    filename: str
+    #: Template path resolvable relative to the ``manifests/`` directory.
+    template_path: str
+    values: dict[str, Any]
+
+
 class Service(ABC):
     """One subclass per ``ServiceType``; the single declarative home for a service.
 
@@ -636,5 +673,16 @@ class Service(ABC):
         (``ProjectManager._write_secret_file``) does the actual write. A service that
         cannot build its secret (no provisioned credentials) returns ``[]`` and logs,
         matching the old warn-and-skip branches.
+        """
+        return []
+
+    def contribute_deployment_manifests(self, ctx: DeploymentManifestContext) -> list[DeploymentManifestSpec]:
+        """Deployment-wide manifests this service contributes (RC-15, default none).
+
+        Runs once per deployment (after the per-component loop), for resources that belong
+        to the whole deployment rather than a single component. cross-domain-access is the
+        first user: it returns one NetworkPolicy spec per own component that has rules. A
+        service with nothing to add inherits the empty default; the generic emitter and the
+        service-manifest prune both skip it.
         """
         return []

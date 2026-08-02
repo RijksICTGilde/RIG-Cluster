@@ -27,6 +27,7 @@ class TestServiceType:
             "sleep-mode",
             "invite",
             "resource-tuning",
+            "cross-domain-access",
         }
         actual = {st.value for st in ServiceType}
         assert actual == expected

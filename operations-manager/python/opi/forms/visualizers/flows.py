@@ -23,6 +23,7 @@ from opi.forms.visualizers.wizard_sections import (
     COMPONENTS_EDIT_SECTION,
     COMPONENTS_SECTION,
     CONFIG_DISPLAY_SECTION,
+    CROSS_DOMAIN_CONFIG_SECTION,
     DEPLOYMENTS_SECTION,
     IDENTITY_EDIT_SECTION,
     IDENTITY_SECTION,
@@ -86,6 +87,8 @@ CREATE_FLOW = FormFlow(
         # After COMPONENTS_SECTION so the waker-component select is populated from the
         # components already entered into the draft project (empty earlier in the flow).
         SLEEP_MODE_CONFIG_SECTION,
+        # After COMPONENTS_SECTION too: the own-component select reads the draft components.
+        CROSS_DOMAIN_CONFIG_SECTION,
         build_deployment_wizard_section(0),
         build_domain_section(0),
     ],
@@ -108,6 +111,7 @@ EDIT_FLOW = FormFlow(
         TEAM_SECTION,
         COMPONENTS_SECTION,
         SLEEP_MODE_CONFIG_SECTION,
+        CROSS_DOMAIN_CONFIG_SECTION,
         DEPLOYMENTS_SECTION,
         CONFIG_DISPLAY_SECTION,
     ],
@@ -157,6 +161,7 @@ MODAL_EDIT_SERVICES_FLOW = FormFlow(
         POSTGRESQL_CONFIG_SECTION,
         AUTH_WALL_CONFIG_SECTION,
         SLEEP_MODE_CONFIG_SECTION,
+        CROSS_DOMAIN_CONFIG_SECTION,
         ATTACHMENTS_SECTION,
     ],
 )
@@ -209,6 +214,14 @@ MODAL_EDIT_INVITES_FLOW = FormFlow(
     sections=[INVITE_CONFIG_SECTION],
 )
 
+MODAL_EDIT_CROSS_DOMAIN_FLOW = FormFlow(
+    flow_id="modal-edit-cross-domain-config",
+    title="Cross-domain toegang",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[CROSS_DOMAIN_CONFIG_SECTION],
+)
+
 # ---------------------------------------------------------------------------
 # Backup & Restore modal flows
 # ---------------------------------------------------------------------------
@@ -250,6 +263,7 @@ FLOW_REGISTRY: dict[str, FormFlow] = {
     MODAL_EDIT_AUTH_WALL_FLOW.flow_id: MODAL_EDIT_AUTH_WALL_FLOW,
     MODAL_EDIT_SLEEP_MODE_FLOW.flow_id: MODAL_EDIT_SLEEP_MODE_FLOW,
     MODAL_EDIT_INVITES_FLOW.flow_id: MODAL_EDIT_INVITES_FLOW,
+    MODAL_EDIT_CROSS_DOMAIN_FLOW.flow_id: MODAL_EDIT_CROSS_DOMAIN_FLOW,
     MODAL_BACKUP_FLOW.flow_id: MODAL_BACKUP_FLOW,
 }
 

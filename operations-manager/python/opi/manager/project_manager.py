@@ -66,11 +66,16 @@ from opi.manager.project_validation import validate_component_references, valida
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
-from opi.services.catalog.base import ManifestContext, ProvisionContext, SecretFileSpec
+from opi.services.catalog.base import (
+    DeploymentManifestContext,
+    ManifestContext,
+    ProvisionContext,
+    SecretFileSpec,
+)
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.project import Project
 from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
-from opi.services.registry import manifest_services, provisioning_services
+from opi.services.registry import deployment_manifest_services, manifest_services, provisioning_services
 from opi.services.services import service_entry_name
 from opi.utils.age import (
     decrypt_age_content,
@@ -292,6 +297,47 @@ def _select_obsolete_component_manifests(
         if _owning_component(basename) is not None:
             selected.append(basename)
 
+    return sorted(selected)
+
+
+def _select_obsolete_service_manifests(
+    directory: str,
+    service_prefixes: set[str],
+    generated_files: set[str],
+) -> list[str]:
+    """Select deployment-wide, service-owned manifest files this run did not (re)generate.
+
+    Symmetric with ``_select_obsolete_component_manifests`` but keyed on the service
+    prefix ``f"{deployment_name}-{service_type.value}-"`` that every
+    ``DeploymentManifestSpec`` filename must carry (RC-15). A service-owned deployment
+    manifest has no component prefix, so the component prune never touches it; without
+    this, a NetworkPolicy would linger after its service is switched off and keep the
+    opening alive. ``*.marked-for-deletion.yaml`` files are left to the reconciliation
+    lifecycle.
+
+    Args:
+        directory: Deployment manifest directory to scan (non-recursive).
+        service_prefixes: One ``f"{deployment_name}-{svc.value}-"`` per ServiceType.
+        generated_files: Basenames generated this run (the desired-state set).
+
+    Returns:
+        Sorted list of basenames to remove.
+    """
+    if not os.path.isdir(directory):
+        return []
+    selected: list[str] = []
+    for path in glob.glob(os.path.join(directory, "*")):
+        if not os.path.isfile(path):
+            continue
+        basename = os.path.basename(path)
+        if not basename.endswith(_COMPONENT_MANIFEST_EXTENSIONS):
+            continue
+        if basename.endswith(".marked-for-deletion.yaml"):
+            continue
+        if basename in generated_files:
+            continue
+        if any(basename.startswith(prefix) for prefix in service_prefixes):
+            selected.append(basename)
     return sorted(selected)
 
 
@@ -3395,6 +3441,29 @@ class ProjectManager:
         for basename in obsolete:
             os.remove(os.path.join(target_path, basename))
 
+    def _prune_obsolete_service_manifests(
+        self, deployment: dict[str, Any], target_path: str, generated_files: list[str]
+    ) -> None:
+        """Delete deployment-wide, service-owned manifest files this run did not regenerate.
+
+        The counterpart of ``_prune_obsolete_component_manifests`` for the RC-15
+        deployment-manifest hook: a service (cross-domain-access today) writes files named
+        ``<deployment>-<service>-...``. When the service is switched off, its last rule is
+        removed, a component scope disappears, or a target project vanishes, the run no
+        longer generates that file, and this removes it (ArgoCD then prunes the resource).
+        The component prune leaves these alone because they carry no component prefix.
+        """
+        deployment_name = deployment["name"]
+        service_prefixes = {f"{deployment_name}-{service.value}-" for service in ServiceType}
+        obsolete = _select_obsolete_service_manifests(target_path, service_prefixes, set(generated_files))
+        if not obsolete:
+            return
+        logger.info(
+            f"Pruning {len(obsolete)} obsolete service manifest(s) from {deployment_name}: {', '.join(obsolete)}"
+        )
+        for basename in obsolete:
+            os.remove(os.path.join(target_path, basename))
+
     async def _process_deployment_manifests(
         self,
         deployment: dict[str, Any],
@@ -3467,6 +3536,13 @@ class ProjectManager:
         # glob, so leftovers would otherwise be re-adopted and keep dead workloads in
         # ArgoCD. Symmetric with the removed-service cleanup in DeleteProjectManager.
         self._prune_obsolete_component_manifests(deployment, target_path, created_files)
+
+        # Prune obsolete deployment-wide, service-owned manifests (RC-15). A service (e.g.
+        # cross-domain-access) writes <deployment>-<service>-* files; when the service is
+        # switched off or stops contributing, this removes the leftover so ArgoCD prunes
+        # the resource. Symmetric with the component prune above and non-overlapping (those
+        # files carry no component prefix).
+        self._prune_obsolete_service_manifests(deployment, target_path, created_files)
 
         # Run manifest extensions (e.g. registry rewrite for ODCN)
         extension_pipeline = load_extensions(cluster_name)
@@ -6274,6 +6350,35 @@ class ProjectManager:
             f"backup={baseline_variables['backup_namespace']}, "
             f"ingress={baseline_variables['ingress_controller_selector']['namespace']})"
         )
+
+        # Deployment-wide, service-owned manifests (RC-15). After the component loop and the
+        # baseline, every service that overrides contribute_deployment_manifests may add
+        # resources scoped to the whole deployment (cross-domain-access adds one NetworkPolicy
+        # per own component with rules). The kustomization is rebuilt from the on-disk glob,
+        # so writing the files is enough for them to be included; the prune in
+        # _process_deployment_manifests removes any that this run no longer generates.
+        deployment_manifest_ctx = DeploymentManifestContext(
+            project_name=project_name,
+            project_data=project_data,
+            deployment=deployment,
+            cluster=cluster,
+            namespace=namespace,
+        )
+        service_manifest_template_dir = os.path.join(os.path.dirname(__file__), "..", "..", "manifests")
+        for service in deployment_manifest_services():
+            for spec in service.contribute_deployment_manifests(deployment_manifest_ctx):
+                self._manifest_generator.create_manifest_file(
+                    template_path=os.path.join(service_manifest_template_dir, spec.template_path),
+                    values=spec.values,
+                    output_dir=deployment_output_dir,
+                    output_filename=spec.filename,
+                    use_sops=False,
+                )
+                created_files.append(f"{spec.filename}.yaml")
+                logger.info(
+                    f"Created {service.service_type.value} deployment manifest '{spec.filename}.yaml' "
+                    f"for deployment '{deployment_name}'"
+                )
 
         # Clear rollback info on success
         self._pending_subdomain_rollback = None

@@ -420,7 +420,8 @@ Every hook a service may implement, so a new service knows what it can own:
 | `detail_page_sections(project_data, user_role)` | read-only detail-page block |
 | `config_approvals(layer)` | values that need approval before taking effect |
 | `provision(ctx)` / `handle_service_removal(ctx)` | server-side resources |
-| `contribute_manifest_context(ctx)` / `build_secret_files(ctx)` | manifest + secret contributions |
+| `contribute_manifest_context(ctx)` / `build_secret_files(ctx)` | manifest + secret contributions (per component) |
+| `contribute_deployment_manifests(ctx)` | deployment-wide manifests (once per deployment, e.g. a NetworkPolicy) |
 
 ## Provisioning and cleanup
 
@@ -479,6 +480,20 @@ that writer service-agnostic.
 
 Rendered output is byte-locked by `tests/test_golden_manifests.py`. An intentional change is
 regenerated with `UPDATE_GOLDEN=1`, and the diff is part of the review.
+
+### Deployment-wide manifests
+
+`contribute_manifest_context` runs once per component. For a resource that belongs to the
+*whole deployment* (a NetworkPolicy that references the deployment's cross-project peers,
+say), override `contribute_deployment_manifests(ctx: DeploymentManifestContext) ->
+list[DeploymentManifestSpec]` instead. It runs once per deployment, after the component loop.
+Each `DeploymentManifestSpec` names a template + values + a `filename` that **must** start
+with `f"{deployment}-{service_type.value}-"` -- the symmetric prune
+(`project_manager._prune_obsolete_service_manifests`) keys on that prefix to remove a
+service's deployment manifests when it stops contributing (switched off, last rule removed,
+target gone). `registry.deployment_manifest_services()` collects the overriding services in
+`manifest_order`; the generic emitter in `create_application_manifests` writes the specs and
+the on-disk-glob kustomization picks them up. cross-domain-access is the reference user.
 
 ## Approvals
 

@@ -1,0 +1,177 @@
+From 618331da7fa62fcd2da1be952859c32407ee83f8 Mon Sep 17 00:00:00 2001
+From: robbertuittenbroek <robbert.uittenbroek@rijksoverheid.nl>
+Date: Thu, 23 Jul 2026 18:14:49 +0200
+Subject: [PATCH 2/2] fix: drop stranded GVK on error and cap sync warnings
+
+---
+ gitops-engine/pkg/cache/cluster.go            | 26 +++++-
+ .../pkg/cache/rig_regression_test.go          | 92 +++++++++++++++++++
+ 2 files changed, 116 insertions(+), 2 deletions(-)
+ create mode 100644 gitops-engine/pkg/cache/rig_regression_test.go
+
+diff --git a/gitops-engine/pkg/cache/cluster.go b/gitops-engine/pkg/cache/cluster.go
+index fa329b00a..31495875f 100644
+--- a/gitops-engine/pkg/cache/cluster.go
++++ b/gitops-engine/pkg/cache/cluster.go
+@@ -298,8 +298,10 @@ type clusterCache struct {
+ 
+ 	// syncWarnings accumulates per-sync, operator-facing warnings (e.g. skipped inaccessible (GVK,ns) pairs).
+ 	// Reset at the start of each sync; written concurrently by GVK goroutines, so guarded by syncWarningsLock.
+-	syncWarnings     []string
+-	syncWarningsLock sync.Mutex
++	syncWarnings []string
++	// syncWarningsDropped counts warnings suppressed by maxSyncWarnings this sync.
++	syncWarningsDropped int
++	syncWarningsLock    sync.Mutex
+ }
+ 
+ type clusterCacheSync struct {
+@@ -718,6 +720,12 @@ func (c *clusterCache) startMissingWatches() error {
+ 				return nil
+ 			})
+ 			if err != nil {
++				// Drop the apisMeta entry we optimistically added above. Without this the
++				// GVK stays in the map with no watcher, so the `if _, ok := c.apisMeta[gk]`
++				// guard skips it on every subsequent call and it is never retried until the
++				// next full resync.
++				delete(c.apisMeta, api.GroupKind)
++				delete(namespacedResources, api.GroupKind)
+ 				return err
+ 			}
+ 		}
+@@ -1039,9 +1047,19 @@ func (c *clusterCache) checkNamespacePermission(ctx context.Context, reviewInter
+ 	return resp != nil && resp.Status.Allowed, nil
+ }
+ 
++// maxSyncWarnings bounds how many warnings are retained per sync. Warnings are
++// emitted once per (GVK, namespace) pair and joined into the cluster's
++// ConnectionState.Message, so on a namespace-scoped cluster with many namespaces
++// and many restricted kinds the unbounded message reaches hundreds of KB.
++const maxSyncWarnings = 50
++
+ func (c *clusterCache) recordSyncWarning(msg string) {
+ 	c.syncWarningsLock.Lock()
+ 	defer c.syncWarningsLock.Unlock()
++	if len(c.syncWarnings) >= maxSyncWarnings {
++		c.syncWarningsDropped++
++		return
++	}
+ 	c.syncWarnings = append(c.syncWarnings, msg)
+ }
+ 
+@@ -1108,6 +1126,7 @@ func (c *clusterCache) sync() error {
+ 	c.parentUIDToChildren = make(map[types.UID]map[kube.ResourceKey]struct{})
+ 	c.syncWarningsLock.Lock()
+ 	c.syncWarnings = nil
++	c.syncWarningsDropped = 0
+ 	c.syncWarningsLock.Unlock()
+ 	config := c.config
+ 	version, err := c.kubectl.GetServerVersion(config)
+@@ -1759,6 +1778,9 @@ func (c *clusterCache) GetClusterInfo() ClusterInfo {
+ 
+ 	c.syncWarningsLock.Lock()
+ 	warnings := append([]string(nil), c.syncWarnings...)
++	if c.syncWarningsDropped > 0 {
++		warnings = append(warnings, fmt.Sprintf("... and %d more", c.syncWarningsDropped))
++	}
+ 	c.syncWarningsLock.Unlock()
+ 
+ 	c.syncStatus.lock.Lock()
+diff --git a/gitops-engine/pkg/cache/rig_regression_test.go b/gitops-engine/pkg/cache/rig_regression_test.go
+new file mode 100644
+index 000000000..c624f7a69
+--- /dev/null
++++ b/gitops-engine/pkg/cache/rig_regression_test.go
+@@ -0,0 +1,92 @@
++package cache
++
++import (
++	"fmt"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++	authorizationv1 "k8s.io/api/authorization/v1"
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
++	"k8s.io/apimachinery/pkg/runtime"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++	"k8s.io/client-go/dynamic/fake"
++	kubefake "k8s.io/client-go/kubernetes/fake"
++	testcore "k8s.io/client-go/testing"
++
++	"github.com/argoproj/gitops-engine/pkg/utils/kube/kubetest"
++)
++
++func rigSSAR(allowed bool) *kubefake.Clientset {
++	k := kubefake.NewSimpleClientset()
++	k.PrependReactor("create", "selfsubjectaccessreviews", func(a testcore.Action) (bool, runtime.Object, error) {
++		sar := a.(testcore.CreateAction).GetObject().(*authorizationv1.SelfSubjectAccessReview)
++		sar.Status.Allowed = allowed
++		return true, sar, nil
++	})
++	return k
++}
++
++// FIX for finding 1: a transient error must not strand the GVK in apisMeta.
++func TestRIG_TransientErrorDoesNotStrandGVK(t *testing.T) {
++	pod := testPod1()
++	cluster := newClusterWithOptions(t, []UpdateSettingsFunc{SetClientset(rigSSAR(false))}, pod)
++	cluster.namespaces = []string{"default"}
++	require.NoError(t, cluster.EnsureSynced())
++
++	podGK := pod.GroupVersionKind().GroupKind()
++	cluster.stopWatching(podGK, "default")
++
++	failing, listed := true, 0
++	fc := cluster.kubectl.(*kubetest.MockKubectlCmd).DynamicClient.(*fake.FakeDynamicClient)
++	fc.PrependReactor("list", "*", func(a testcore.Action) (bool, runtime.Object, error) {
++		if a.GetResource().Resource == "pods" && a.GetNamespace() == "default" {
++			listed++
++			if failing {
++				return true, nil, apierrors.NewInternalError(fmt.Errorf("transient"))
++			}
++		}
++		return false, nil, nil
++	})
++	err := runSynced(&cluster.lock, func() error { return cluster.startMissingWatches() })
++	require.Error(t, err)
++	assert.NotContains(t, cluster.apisMeta, podGK, "GVK must be dropped so it is retried")
++
++	// Clear the fault: the GVK must now be picked up again.
++	failing, listed = false, 0
++	require.NoError(t, runSynced(&cluster.lock, func() error { return cluster.startMissingWatches() }))
++	assert.Positive(t, listed, "pods must be re-listed once the fault clears")
++	assert.Contains(t, cluster.apisMeta, podGK)
++}
++
++// FIX for finding 3: warnings are capped.
++func TestRIG_SyncWarningsAreCapped(t *testing.T) {
++	pod := testPod1()
++	cluster := newClusterWithOptions(t, []UpdateSettingsFunc{SetClientset(rigSSAR(false))}, pod)
++	nss := []string{}
++	for i := 0; i < 47; i++ {
++		nss = append(nss, fmt.Sprintf("ns%d", i))
++	}
++	cluster.namespaces = nss
++
++	fc := cluster.kubectl.(*kubetest.MockKubectlCmd).DynamicClient.(*fake.FakeDynamicClient)
++	fc.PrependReactor("list", "*", func(a testcore.Action) (bool, runtime.Object, error) {
++		return true, nil, apierrors.NewForbidden(
++			schema.GroupResource{Resource: a.GetResource().Resource}, "",
++			fmt.Errorf(`User "system:serviceaccount:argocd:argocd-application-controller" cannot list resource %q in API group %q in the namespace %q`,
++				a.GetResource().Resource, a.GetResource().Group, a.GetNamespace()))
++	})
++	require.NoError(t, cluster.EnsureSynced())
++
++	w := cluster.GetClusterInfo().SyncWarnings
++	joined := ""
++	for i, s := range w {
++		if i > 0 {
++			joined += "; "
++		}
++		joined += s
++	}
++	t.Logf("47 namespaces x %d GVKs => %d warnings, %d bytes", len(cluster.apiResources), len(w), len(joined))
++	assert.LessOrEqual(t, len(w), maxSyncWarnings+1)
++	assert.Contains(t, joined, "and", "overflow marker present")
++}
