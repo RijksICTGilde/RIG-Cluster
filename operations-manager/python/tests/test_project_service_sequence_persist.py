@@ -70,6 +70,36 @@ async def test_invite_active_survives_final_submit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_postgresql_schemas_survive_final_submit() -> None:
+    """An extra schema in services/postgresql-database/config/schemas (RC-17) must not
+    be dropped -- the same project-level sequence pattern as the RC-13 regression."""
+    section = _CONFIG_SECTIONS_BY_ID["postgresql-schemas-config"]
+    processor = EditableFormProcessor()
+
+    merged: dict[str, Any] = {
+        "name": "demo",
+        "services": [
+            {
+                "name": "postgresql-database",
+                "config": {"schemas": [{"postfix": "rapportage", "description": "Rapportage"}]},
+            },
+        ],
+        "deployments": [{"name": "dep"}],
+    }
+
+    final, errors = await processor.process_json_submission(
+        merged, section.editables, merged, edit_mode=False, strip_transients=False
+    )
+
+    assert errors == {}
+    cfg = _service_config(final["services"], "postgresql-database")
+    assert cfg is not None
+    assert cfg["schemas"]
+    assert cfg["schemas"][0]["postfix"] == "rapportage"
+    assert cfg["schemas"][0]["description"] == "Rapportage"
+
+
+@pytest.mark.asyncio
 async def test_keycloak_additional_clients_survive_final_submit() -> None:
     """A keycloak additional-clients entry (nested sequence) must not be dropped."""
     section = _CONFIG_SECTIONS_BY_ID["keycloak-config"]
