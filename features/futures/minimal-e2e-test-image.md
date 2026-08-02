@@ -1,8 +1,10 @@
 # Minimal all-services E2E test workload image
 
-> **Status: PLANNED / not started.** Design complete, grounded against the live
-> platform (securityContext, probe, injected env-var names verified today).
-> Implementation not begun. Pick up from "Next steps" below.
+> **Status: IMPLEMENTED (RC-18).** This plan is delivered - see the shipped
+> feature doc `features/e2e-allservices-image.md`, the source in
+> `images/e2e-allservices/`, and the scan generator `scripts/generate_probe_spec.py`.
+> The only remaining step is live sandbox validation (publish the image, then run
+> the all-services suite). The design/rationale below is kept for reference.
 
 ## Context — why
 
