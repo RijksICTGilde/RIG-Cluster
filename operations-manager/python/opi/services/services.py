@@ -684,6 +684,23 @@ class ServiceAdapter:
             # keeps it out of the picker, so no explicit hidden is needed).
             kind=ServiceKind.SYSTEM,
         ),
+        ServiceType.CROSS_DOMAIN_ACCESS: ServiceDefinition(
+            name="Cross-domain toegang",
+            description=(
+                "Bepaal welke andere projecten, deployments of componenten de pods van dit "
+                "project mogen bereiken en waar dit project zelf heen mag, telkens op een "
+                "expliciet benoemde poort. Dit gaat over netwerktoegang tussen projecten, "
+                "niet over DNS-domeinen."
+            ),
+            icon="netwerk",
+            color="donkerblauw",
+            # The rules apply per deployment (each gets its own NetworkPolicy); the effect
+            # lives entirely in generated manifests, so there is nothing server-side to clean
+            # up -- the generic manifest prune removes the policy files when the service is off.
+            scope=ServiceScope.DEPLOYMENT,
+            variables=[],
+            cleanup_strategy=CleanupStrategy.NONE,
+        ),
         ServiceType.HEALTH_CHECK: ServiceDefinition(
             name="Health check",
             description=(
