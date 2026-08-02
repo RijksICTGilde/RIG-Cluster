@@ -583,13 +583,22 @@ class DeleteProjectManager:
                     )
                     logger.info(f"Successfully deleted infrastructure namespace: {infra_namespace}")
                 else:
+                    # As above: --ignore-not-found makes a genuinely absent namespace
+                    # return True, so a False is a real failure -- surface it rather than
+                    # calling it "not_found" and leaking the infrastructure namespace.
                     deletion_results["operations"].append(
                         {
                             "type": "infrastructure_namespace_deletion",
                             "target": infra_namespace,
-                            "status": "not_found",
+                            "status": "error",
+                            "error": "kubectl delete namespace failed (see logs); namespace left behind",
                         }
                     )
+                    deletion_results["errors"].append(
+                        f"Failed to delete infrastructure namespace '{infra_namespace}' (see logs)."
+                    )
+                    deletion_results["success"] = False
+                    logger.error(f"Failed to delete infrastructure namespace {infra_namespace}; it was left behind")
 
             # 5. Delete infrastructure manifests folder from deployment git repo
             repositories = project_data.get("repositories", [])
@@ -1365,16 +1374,25 @@ class DeleteProjectManager:
                         )
                         logger.info(f"Successfully deleted namespace: {namespace}")
                     else:
+                        # delete_namespace uses --ignore-not-found, so a genuinely absent
+                        # namespace returns True. A False here is therefore a real delete
+                        # failure (e.g. an RBAC 403), NOT "already gone" -- surface it
+                        # instead of silently reporting success and leaking the namespace.
                         deletion_results["operations"].append(
                             {
                                 "type": "namespace_deletion",
                                 "target": namespace,
                                 "cluster": cluster,
                                 "deployment": deployment_name,
-                                "status": "not_found",
+                                "status": "error",
+                                "error": "kubectl delete namespace failed (see logs); namespace left behind",
                             }
                         )
-                        logger.info(f"Namespace {namespace} was not found (already deleted)")
+                        deletion_results["errors"].append(
+                            f"Failed to delete namespace '{namespace}' (see logs for the kubectl error)."
+                        )
+                        deletion_results["success"] = False
+                        logger.error(f"Failed to delete namespace {namespace}; it was left behind")
                 else:
                     deletion_results["operations"].append(
                         {
