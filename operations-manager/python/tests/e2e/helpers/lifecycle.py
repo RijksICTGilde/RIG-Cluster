@@ -21,11 +21,20 @@ if TYPE_CHECKING:
     from playwright.sync_api import Page
     from tests.e2e.helpers.forgejo import ForgejoClient
 
-# The wizard component gets inbound port 8080 by default. Use an image that actually
-# listens on 8080 and runs as non-root so the deployment becomes healthy (nginx:latest
-# serves on 80 as root and CrashLoopBackOffs under non-root enforcement, which makes the
-# non-force UI delete drag on ArgoCD teardown).
-RUNNABLE_IMAGE = "nginxinc/nginx-unprivileged:stable-alpine"
+# The E2E test workload image. The platform forces a hard non-root securityContext on
+# every component pod: runAsUser: 1001, runAsNonRoot, drop ALL capabilities, and the
+# generated probe is a tcpSocket on port 8080. So the image MUST run cleanly as an
+# ARBITRARY UID (1001) and listen on TCP 8080, or the pod CrashLoopBackOffs and never
+# becomes Healthy -- which makes create tests wait out wait_for_project_apps_healthy
+# (~4 min) and the non-force UI delete drag on ArgoCD teardown.
+#
+# Use the platform's own base image: it is built OpenShift-style (writable dirs are
+# group-owned, no fixed-UID assumption), so it runs fine as UID 1001 and listens on 8080
+# -- verified Ready under the exact securityContext above. Do NOT switch to a stock nginx
+# image like nginxinc/nginx-unprivileged: that one pins UID 101 and CrashLoopBackOffs when
+# forced to 1001 (cannot write /var/cache/nginx). A purpose-built minimal all-services
+# test image is planned: features/futures/minimal-e2e-test-image.md.
+RUNNABLE_IMAGE = "ghcr.io/minbzk/base-images/hello-world:latest"
 
 REVIEW_SUBMIT_SELECTOR = "button:has-text('Project aanmaken'), button:has-text('Indienen')"
 
