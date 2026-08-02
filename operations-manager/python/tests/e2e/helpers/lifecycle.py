@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from playwright.sync_api import expect
 from tests.e2e.helpers import cluster, sandbox_api
 from tests.e2e.helpers.wizard import WizardHelper
 
@@ -158,14 +159,18 @@ def _fill_component_identity(page: Page, component_name: str, image: str) -> Non
     page.wait_for_load_state("networkidle")
     # Loop until BOTH the values stick AND the Next button is enabled. The button is
     # disabled until client-side validation accepts the required fields; clicking it
-    # early leaves the wizard on the components step.
-    for _ in range(10):
-        page.wait_for_timeout(500)
+    # early leaves the wizard on the components step. Each iteration waits on an EVENT
+    # (the button becoming enabled) rather than a fixed sleep: a late re-render that
+    # clobbers the fields also disables the button, so to_be_enabled times out and we
+    # refill and retry.
+    for _ in range(6):
         name_field.fill(component_name)
         image_field.fill(image)
-        page.wait_for_timeout(300)  # let client validation react and toggle the button
-        values_ok = (name_field.input_value() or "") == component_name and (image_field.input_value() or "") == image
-        if values_ok and not next_button.is_disabled():
+        try:
+            expect(next_button).to_be_enabled(timeout=3000)
+        except AssertionError:
+            continue  # re-render clobbered the values / disabled Next -> refill
+        if (name_field.input_value() or "") == component_name and (image_field.input_value() or "") == image:
             return
     raise AssertionError("component name/image did not settle (values stuck / Next enabled) on the components step")
 
