@@ -1,0 +1,270 @@
+{
+  "$defs": {
+    "InboundRulePatch": {
+      "additionalProperties": false,
+      "properties": {
+        "disabled": {
+          "default": false,
+          "title": "Disabled",
+          "type": "boolean"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PeerRefPatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "name": {
+          "maxLength": 40,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "title": "Name",
+          "type": "string"
+        },
+        "to": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LocalTargetPatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "InboundRulePatch",
+      "type": "object"
+    },
+    "LocalRefPatch": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Component"
+        }
+      },
+      "title": "LocalRefPatch",
+      "type": "object"
+    },
+    "LocalTargetPatch": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Component"
+        },
+        "port": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Port"
+        }
+      },
+      "title": "LocalTargetPatch",
+      "type": "object"
+    },
+    "OutboundRulePatch": {
+      "additionalProperties": false,
+      "properties": {
+        "disabled": {
+          "default": false,
+          "title": "Disabled",
+          "type": "boolean"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LocalRefPatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "name": {
+          "maxLength": 40,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "title": "Name",
+          "type": "string"
+        },
+        "to": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PeerTargetPatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "OutboundRulePatch",
+      "type": "object"
+    },
+    "PeerRefPatch": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Component"
+        },
+        "deployment": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Deployment"
+        },
+        "project": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Project"
+        }
+      },
+      "title": "PeerRefPatch",
+      "type": "object"
+    },
+    "PeerTargetPatch": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Component"
+        },
+        "deployment": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Deployment"
+        },
+        "port": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Port"
+        },
+        "project": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Project"
+        }
+      },
+      "title": "PeerTargetPatch",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Project- or deployment-level cross-domain-access config: two lists of named rules.\n\nThis is the STORED shape (patch models), because a root rule may leave the peer\ndeployment open and a deployment rule is a partial patch keyed on ``name``. The\ncompleteness of a rule is judged after the merge, not here.",
+  "properties": {
+    "inbound": {
+      "items": {
+        "$ref": "#/$defs/InboundRulePatch"
+      },
+      "title": "Inbound",
+      "type": "array"
+    },
+    "outbound": {
+      "items": {
+        "$ref": "#/$defs/OutboundRulePatch"
+      },
+      "title": "Outbound",
+      "type": "array"
+    }
+  },
+  "title": "CrossDomainAccessConfig",
+  "type": "object"
+}

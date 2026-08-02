@@ -42,6 +42,10 @@ class ServiceType(Enum):
     # after a sync and raises memory for a component that OOM'd (not user-selectable).
     RESOURCE_TUNING = "resource-tuning"
 
+    # Cross-domain network access: allow this project's pods to reach, and be reached by,
+    # named deployments/components of other projects on explicit ports (NetworkPolicy).
+    CROSS_DOMAIN_ACCESS = "cross-domain-access"
+
 
 class ServiceScope(Enum):
     """Whether a service is chosen per component or shared per deployment.

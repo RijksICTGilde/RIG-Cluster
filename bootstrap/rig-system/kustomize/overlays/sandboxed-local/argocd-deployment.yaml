@@ -6,6 +6,13 @@ metadata:
   annotations:
     policies.kyverno.io/exclude: "disallow-capabilities-strict,disallow-privilege-escalation,restrict-seccomp-strict"
 spec:
+  # RIG-eigen image: upstream v3.3.12 + de namespace-sync fixes uit images/argocd-rig.
+  # Alle componenten volgen dit, behalve repo-server (zie spec.repo hieronder) — zo is de
+  # sandbox dezelfde vorm als odcn-production, waar repo-server op de Red Hat build blijft.
+  # In kind staat de image lokaal op de node via `task load-kind`; de tag is niet `latest`
+  # dus de pull policy is IfNotPresent en er wordt niets uit een registry gehaald.
+  image: argocd-rig
+  version: v3.3.12-rig1
   extraConfig:
     resource.customizations.health.cert-manager.io_Issuer: |
       hs = {}
@@ -60,25 +67,15 @@ spec:
       requests:
         cpu: 1
         memory: 128Mi
+  # ⚠️  De sops-plugin component (zie kustomization.yaml) doet `op: replace` op /spec/repo:
+  #     ALLES wat hieronder staat wordt bij het renderen weggegooid. Wat echt moet landen,
+  #     hoort als patch in kustomization.yaml, ná de component — daar staan nu image/version
+  #     en de env vars. De rest hieronder is momenteel dood gewicht (annotations, resources,
+  #     en de securityContext/volumeMounts van de sidecar); verifieer met
+  #     `kustomize build <overlay> | grep -A20 '^  repo:'` voor je hier iets aan verandert.
   repo:
     annotations:
       policies.kyverno.io/exclude: "disallow-capabilities-strict,disallow-privilege-escalation,restrict-seccomp-strict"
-    env:
-      - name: ARGOCD_EXEC_TIMEOUT
-        value: "180"
-      - name: ARGOCD_GIT_ATTEMPTS_COUNT
-        value: "3"
-      - name: ARGOCD_HELM_ALLOW_CONCURRENCY
-        value: "true"
-      # Stream only the app's manifest-generate-paths dir to the CMP instead of
-      # tarring the whole monorepo per render (odcn measured ~27s of a 28.5s
-      # render was repo streaming; the kustomize+sops render itself is ~1s). The
-      # child apps carry manifest-generate-paths: '.', so this makes their syncs
-      # (add-component, redeploys) fast on the sandbox too - it was previously only
-      # set on odcn-production, leaving the sandbox streaming the whole repo every
-      # render. See issue #130.
-      - name: ARGOCD_REPO_SERVER_PLUGIN_USE_MANIFEST_GENERATE_PATHS
-        value: "true"
     resources:
       limits:
         cpu: 5
