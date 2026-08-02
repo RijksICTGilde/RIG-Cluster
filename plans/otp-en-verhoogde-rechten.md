@@ -92,58 +92,13 @@ Met verhoogde rechten worden die twee voorwaardelijk: zonder verse OTP-bevestigi
 
 **Een gebruiker zonder OTP.** Omdat de eerste ronde alleen platformbeheer raakt, is de groep klein en overzichtelijk. Een platformbeheerder zonder OTP werkt gewoon door als gewone gebruiker en richt zijn tweede factor in wanneer hij de brede blik nodig heeft.
 
-## 5b. Keycloak-kant: bestaande realms, de master-realm en het service-account
+## 5b. De Keycloak-kant is afgesplitst
 
-Dit hoort bij hetzelfde traject maar gaat over Keycloak-accounts, niet over ZAD-gebruikers. Het bouwt op het werk dat op 2 augustus is veiliggesteld in `9b1d8c75` (branch `claude/keycloak-realm-admin-otp`), dat 255 commits achterloopt en dus opnieuw toegepast moet worden en niet gemerged.
+Het service-account voor OPI, OTP op de realm-admins van projecten en de master-realm staan nu in `plans/keycloak-otp-en-service-account.md`, met alle beslissingen van 2 augustus erin verwerkt.
 
-### Wat OTP hier precies is
+Reden voor de splitsing: dat deel gaat over Keycloak-accounts en niet over ZAD-gebruikers, het is los te bouwen en te testen, en het is de voorwaarde voor de rest (zolang OPI met het gedeelde adminwachtwoord inlogt, sluit elke OTP op dat account OPI buiten). Dit plan blijft over OTP op de ZAD-gebruiker en de verhoogde rechten daarop.
 
-Hetzelfde als bij een gewone Keycloak-gebruiker: een TOTP-zaad. Normaal genereert Keycloak dat, toont een QR, en daarna staat het in de Keycloak-database en in de app van die ene persoon. Het bewaarde ontwerp draait dat om voor de realm-admins, en alleen omdat dat **gedeelde** accounts zijn: OPI genereert het zaad, duwt het als OTP-credential in Keycloak (`build_credential_representation`), en bewaart het AGE-versleuteld in het projectbestand naast het adminwachtwoord. Zonder die omkering zou de eerste die de QR scant de enige zijn die kan inloggen.
-
-### Waar welk geheim hoort
-
-| Identiteit | Zaad | Toelichting |
-|---|---|---|
-| OPI zelf | geen OTP | Machine-identiteit met client-credentials; een tweede factor is zinloos voor een proces. |
-| Realm-admin per project (gedeeld) | Projectbestand, AGE met de projectsleutel | Gedeeld account, dus het zaad moet deelbaar zijn. |
-| Gedeeld master-`admin` (break-glass) | Zelfde weg als het wachtwoord: cluster-secret, AGE-versleuteld in git | Consistent met hoe alle wachtwoorden vandaag bewaard worden. |
-| Eigen master-account per beheerder | Niets op te slaan | Keycloak genereert, de beheerder scant de QR; het zaad staat alleen in Keycloak en op zijn telefoon. |
-
-**De twee OTP's in dit plan hebben elk hun eigen doel, en dat hoort in de feature-documentatie zodat niemand ze verwisselt.**
-
-De OTP *in Keycloak* beschermt de Keycloak-console: hij maakt een uitgelekt of doorgestuurd adminwachtwoord waardeloos en blokkeert brute force op het inlogscherm. Dat is het doel, en daarvoor is het genoeg dat het zaad op dezelfde manier bewaard wordt als de andere geheimen. Het is uitdrukkelijk niet bedoeld als bescherming tegen iemand die al bij de secret-opslag kan; dat is een ander dreigingsbeeld en daar hoort een andere maatregel bij.
-
-De OTP *in ZAD*, op de gebruikerstabel, is de echte tweede factor. Die hangt aan een persoon en niet aan een gedeeld account, en daar hangen de verhoogde rechten uit sectie 5 aan. Dat is waar "je doet dit bewust en je bent het echt" wordt afgedwongen.
-
-Het einddoel waar ook de Keycloak-kant een persoonsgebonden factor krijgt is de laatste rij van de tabel: een eigen master-account per beheerder, waar Keycloak zelf het zaad genereert en er niets gedeeld bewaard wordt. Het service-account maakt dat mogelijk, want daarna is het gedeelde `admin`-account geen dagelijks werkpaard meer.
-
-### Het service-account is de voorwaarde
-
-OPI logt vandaag in met het gedeelde `admin`-wachtwoord (`create_keycloak_connector`, `connectors/keycloak.py:3976`, 27 aanroepplekken). Zolang dat zo is kun je op dat account geen OTP afdwingen zonder OPI buiten te sluiten. Het bewaarde ontwerp lost dat op met een confidential client in de master-realm met de master `admin`-rol, waarmee OPI via client-credentials op het token-endpoint authenticeert.
-
-De zelfbootstrap voorkomt een kip-ei op een vers cluster: is `KEYCLOAK_ADMIN_CLIENT_SECRET` leeg, dan verandert er niets; werkt client-credentials al, dan gebruikt hij dat; anders gebruikt hij het adminwachtwoord één keer om de client te maken en zichzelf de rol te geven.
-
-Dat het één factory is, is hier de winst: de authenticatie verandert op één plek en de 27 aanroepers merken er niets van.
-
-### Bestaande realms
-
-Het bewaarde werk heeft hier al een antwoord voor: `_ensure_admin_otp(...)`, omschreven als idempotente retrofit, aangeroepen in de tak voor een realm die al bestaat, naast `_ensure_realm_clients` en `_create_additional_clients`. Dat is dezelfde plek waar op 1 augustus `_ensure_realm_self_service` is neergezet, om precies hetzelfde probleem: `create_realm()` draait alleen bij een nieuwe realm, en daarom heeft de identity-field-lock nooit een bestaande realm geraakt. Die twee komen dus naast elkaar te staan.
-
-### Volgorde, en waarom die zo is
-
-1. **Service-account.** Los en niet-brekend zolang het secret leeg is. Voorwaarde voor al het andere, want zonder gescheiden machine-identiteit sluit OTP op een menselijk account OPI buiten.
-2. **OTP op de realm-admins van projecten**, inclusief de retrofit voor bestaande realms.
-3. **De master-realm:** eigen accounts per beheerder met OTP via de normale Keycloak-weg, en het gedeelde `admin`-account terug naar break-glass.
-
-### De bootstrap
-
-Dit is het lastigste stuk en het moet in één keer kloppen. De bootstrap genereert vandaag het adminwachtwoord (`infrastructure/bootstrap/infrastructure/secrets/templates/keycloak-admin-secret.yaml`, met `@secret-gen:random:16`) en OPI gebruikt het meteen. Na deze wijziging moet de bootstrap ook het clientsecret aanmaken en de volgorde bewaken: eerst de secrets, dan OPI die zichzelf één keer bootstrapt, en daarna nooit meer het wachtwoord gebruiken.
-
-Wat daarbij niet vergeten mag worden: de bootstrap moet expliciet maken wat er daarna met dat adminwachtwoord gebeurt. Laat je dat impliciet, dan blijft het gewoon in de omgeving van OPI staan en is er niets gewonnen.
-
-### Wat opnieuw toegepast moet worden
-
-`connectors/keycloak.py` en `manager/keycloak_manager.py` zijn op 1 augustus gewijzigd voor de zelfbedienings-fix (`set_required_action_enabled`, `remove_default_role`, `_ensure_realm_self_service`). Het bewaarde werk raakt dezelfde bestanden. Neem `opi/utils/totp.py` en de feature-documenten over, en pas de rest opnieuw toe op de huidige code in plaats van de branch te mergen.
+Twee verwijzingen die blijven gelden: `opi/utils/totp.py` komt uit hetzelfde veiliggestelde werk, en de scheiding tussen de twee doelen (Keycloak-OTP tegen brute force op de console, ZAD-OTP als persoonsgebonden tweede factor) staat in beide documenten.
 
 ## 6. Logging
 
