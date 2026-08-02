@@ -295,6 +295,11 @@ AUTH_WALL_CONFIG_SECTION = get_service(ServiceType.AUTHORIZATION_WALL).config_fo
 # re-exported here so the derived SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
 SLEEP_MODE_CONFIG_SECTION = get_service(ServiceType.SLEEP_MODE).config_form_section(ConfigLayer.PROJECT)
 
+# postgresql-database owns its project-level schema-list section
+# (PostgresqlDatabaseService.config_form_section), re-exported so the derived
+# SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
+POSTGRESQL_SCHEMAS_SECTION = get_service(ServiceType.POSTGRESQL_DATABASE).config_form_section(ConfigLayer.PROJECT)
+
 # invite owns its project-level config section (InviteService.config_form_section),
 # re-exported here so the derived SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
 INVITE_CONFIG_SECTION = get_service(ServiceType.INVITE).config_form_section(ConfigLayer.PROJECT)
@@ -317,6 +322,7 @@ _CONFIG_SECTIONS_BY_ID: dict[str, FormSection] = {
     for section in (
         KEYCLOAK_CONFIG_SECTION,
         POSTGRESQL_CONFIG_SECTION,
+        POSTGRESQL_SCHEMAS_SECTION,
         AUTH_WALL_CONFIG_SECTION,
         SLEEP_MODE_CONFIG_SECTION,
         INVITE_CONFIG_SECTION,
@@ -1008,6 +1014,7 @@ ALL_SECTIONS: list[FormSection] = [
     SERVICES_SECTION,
     KEYCLOAK_CONFIG_SECTION,
     POSTGRESQL_CONFIG_SECTION,
+    POSTGRESQL_SCHEMAS_SECTION,
     AUTH_WALL_CONFIG_SECTION,
     TEAM_SECTION,
     COMPONENTS_SECTION,

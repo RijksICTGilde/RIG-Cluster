@@ -367,7 +367,7 @@ EXPECTED_API_TARGETS: dict[str, list[str]] = {
     "namespace-redis": [],
     "persistent-storage": ["component"],
     "platform": [],
-    "postgresql-database": [],
+    "postgresql-database": ["project"],
     "publish-on-web": ["component"],
     "redis": ["project"],
     "resource-tuning": [],
