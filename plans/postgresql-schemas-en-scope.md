@@ -1,6 +1,6 @@
 # Meerdere schema's en een scope-keuze voor de PostgreSQL-service
 
-Status: ontwerpnotitie, 2 augustus 2026. Niet gebouwd. Aanleiding: een project kan vandaag precies één schema hebben, en de toegewijde database is een aparte service met een eigen namespace terwijl hij feitelijk gewoon een andere plaatsingskeuze is.
+Status: ontwerpnotitie, 2 augustus 2026. Niet gebouwd. **Alle zes de openstaande beslissingen zijn genomen op 2 augustus; zie sectie 10. Waar de tekst hierboven nog een voorstel doet, wint sectie 10.** Aanleiding: een project kan vandaag precies één schema hebben, en de toegewijde database is een aparte service met een eigen namespace terwijl hij feitelijk gewoon een andere plaatsingskeuze is.
 
 Doel van dit document: een plan dat gebouwd kan worden, met de open beslissingen expliciet, zonder het bestaande mechanisme voor generaties, klonen en backups te slopen.
 
@@ -48,7 +48,7 @@ Wat dit oplost: de manifests en de werking bestaan al voor beide gevallen, maar 
 
 Wat dit kost: `namespace-postgresql-database` heeft een eigen configmodel met `instances`, `storage`, `image`, `registry`, `postInitSQL` en `privileges`. Die velden horen alleen bij `project` en `deployment`, niet bij `shared`. Het samengevoegde model moet dus per scope andere velden accepteren, en dat is precies waar een Pydantic-discriminated union voor is. Zet `scope` als discriminator; dan faalt `storage: 10Gi` op `scope: shared` met een begrijpelijke fout in plaats van stil genegeerd te worden.
 
-**Open beslissing 1:** blijft `namespace-postgresql-database` bestaan als alias voor `scope: project`, of verdwijnt het servicetype na de migratie? Verdwijnen is schoner maar raakt de twee projecten die hem vandaag gebruiken.
+**BESLIST (10.1):** het servicetype verdwijnt uiteindelijk, maar niet in de eerste ronde. `scope` komt erbij en `namespace-postgresql-database` blijft gewoon werken; het opruimen is een latere stap zodra de drie projecten die hem gebruiken (`algor-odc`, `mb-grist-helmfile`, `mb-docs-helmfile`) gemigreerd op schijf staan. Dat is dezelfde volgorde als bij `domains` en `invites`, en het hangt aan dezelfde blokkade: zolang het projectschema niet per versie gevalideerd wordt, kan de oude vorm er niet uit.
 
 ## 3. Meerdere schema's
 
@@ -76,9 +76,9 @@ Daaruit volgt het voorstel:
 
 **De aap uit de mouw:** die naam is afgeleid van door de gebruiker gekozen invoer, dus hij moet een geldige env-variabelenaam opleveren. Dat vraagt dezelfde strengheid als in sectie 3, plus een botsingscontrole tegen de negen bestaande namen en hun aliassen. Een postfix `db` zou anders `DATABASE_SCHEMA_DB` opleveren, wat verwarrend dicht bij `DATABASE_DB` ligt.
 
-**Open beslissing 2:** komt er ook een variabele per schema met een volledige connectiestring, zoals `DATABASE_SERVER_FULL` dat nu voor de deployment doet? Dat is handig voor tooling die per schema een eigen verbinding opzet, maar het verdubbelt het aantal variabelen en de meeste applicaties hebben er niets aan.
+**BESLIST (10.2):** nee. Per extra schema komt er precies één variabele, `DATABASE_SCHEMA_{POSTFIX}`, plus de `APP_`-alias. Wie een verbinding op dat schema wil, bouwt hem uit de onderdelen die er al zijn of gebruikt `SET search_path`. Technisch was het triviaal geweest, want `DatabaseSecret` zet de `search_path` al in de query-parameters van de connectiestring (`utils/secrets.py:172`), maar het aantal variabelen in de pod-omgeving weegt zwaarder.
 
-**Open beslissing 3:** wat gebeurt er met `DATABASE_SCHEMA` als een component het default schema níet mag (sectie 5)? Weglaten is eerlijk maar breekt de aanname dat de variabele er altijd is. Wijzen naar het eerste schema dat het component wél mag is vriendelijker maar minder voorspelbaar.
+**BESLIST (10.3):** `DATABASE_SCHEMA` wijst naar het primaire schema van dát component, oftewel het eerste in zijn lijst, en de `search_path` begint daar ook. Voor een component dat niets instelt is dat het default schema, dus niets breekt. De variabele betekent daarmee overal hetzelfde: waar dit component standaard in werkt. Dat is niet onvoorspelbaar zoals hier eerst stond, maar volledig bepaald.
 
 ## 5. Toegang per component
 
@@ -90,7 +90,7 @@ Wat er wel echt verandert: `build_secret_files` maakt nu één secret per deploy
 
 **Terugvalgedrag:** een component dat niets opgeeft krijgt wat het nu krijgt, namelijk toegang tot het default schema. Anders breekt elk bestaand project.
 
-**Open beslissing 4:** krijgt een component per schema ook een leesrecht-variant, zoals de bestaande `_ro`-rol? Dat vermenigvuldigt het aantal rollen met twee. Voorstel: nee in de eerste ronde, en de bestaande deployment-brede `_ro`-rol laten zoals hij is.
+**BESLIST (10.4):** één rol per component, geen leesrecht-variant. De bestaande deployment-brede `_ro`-rol blijft, en die krijgt SELECT op álle schema's van de deployment; anders wordt de database-console blind voor precies de schema's die je toevoegt. Dat is geen keuze maar een gevolg, want `db_console_manager` verbindt als die rol. **Eis die daaruit volgt:** de console moet alle schema's van een deployment kunnen ontsluiten, dus daar komt een schemakeuze in. Vandaag toont hij er één.
 
 ## 6. De UI
 
@@ -103,7 +103,7 @@ Wat de UI expliciet moet doen, want anders wordt het een voetangel:
 - **Verwijderen is gevaarlijk.** Een schema verwijderen uit de config betekent data weggooien. Dat hoort niet stil te gebeuren bij een gewone opslag. Voorstel: verwijderen uit de lijst haalt het schema níet weg maar markeert het, in de geest van de bestaande `marked_for_deletion`-weg, met een aparte bevestiging.
 - **Toegang per component** hoort bij het component, niet bij de service: een meerkeuzeveld op het component met de schema's van dit project. Dat is een options-provider die uit de serviceconfig leest, precies zoals de invite-service er een krijgt voor realm-rollen.
 
-**Open beslissing 5:** mag een deployment een schema toevoegen dat het project niet kent, of is de lijst strikt project-breed? Project-breed is eenvoudiger uit te leggen en past bij hoe de rest werkt.
+**BESLIST (10.5):** strikt project-breed. De lijst staat in de projectconfig en elke deployment krijgt dezelfde schema's, elk in zijn eigen database. Daarmee zijn de variabelen overal gelijk en blijft applicatieconfiguratie één op één overdraagbaar tussen acceptatie en productie. Een deployment kan dus geen eigen schema toevoegen.
 
 ## 7. De namespace van de toegewijde database
 
@@ -117,7 +117,7 @@ Drie dingen om te meten voordat dat verhuist, want ze bepalen of het echt eenvou
 2. **De resourcequota.** Een database in de projectnamespace telt mee in het quotum van het project. Dat is een zichtbare gedragswijziging voor gebruikers en geen implementatiedetail.
 3. **De verwijderweg.** Ruimt die vandaag de infrastructuurnamespace als geheel op? Zo ja, dan verdwijnt die vangnetfunctie bij een verhuizing en moet het opruimen expliciet worden.
 
-**Open beslissing 6:** verhuizen we bestaande toegewijde databases, of geldt de nieuwe plaatsing alleen voor nieuwe? Verhuizen betekent data verplaatsen en dat is een ander soort risico dan de rest van dit plan.
+**BESLIST (10.6):** alles gaat naar de projectnamespace, inclusief de drie bestaande. Eén plaatsing, dus de netwerkpolicy-uitzondering kan weg en de verwijderweg wordt eenvoudiger. Maar dat betekent een datamigratie op drie productiedatabases (`algor-odc`, `mb-grist-helmfile`, `mb-docs-helmfile`) met een CNPG-cluster en zijn PVC's, dus **doe dat als eigen traject met een terugvalplan, niet als onderdeel van dit plan**. De drie controles hierboven blijven staan en gaan daaraan vooraf.
 
 ## 8. Volgorde
 
@@ -142,11 +142,11 @@ Drie invarianten die bij elke stap moeten blijven gelden, en waarop de verificat
 
 Verificatie per stap in de vorm die deze codebase gebruikt: alle productiebestanden inlezen, `migrate_to_latest()` in memory, dan `validate_project_schema` en `validate_service_configs`, en daarnaast `instructions/service-review-checklist.md` als sluitstuk.
 
-## 10. De open beslissingen op een rij
+## 10. Genomen beslissingen (2 augustus 2026)
 
-1. Blijft `namespace-postgresql-database` bestaan als alias voor `scope: project`, of verdwijnt het na de migratie?
-2. Komt er per schema ook een volledige connectiestring-variabele?
-3. Wat is `DATABASE_SCHEMA` voor een component dat het default schema niet mag?
-4. Krijgt elk component per schema ook een leesrecht-rol?
-5. Mag een deployment een schema toevoegen dat het project niet kent?
-6. Verhuizen bestaande toegewijde databases naar de projectnamespace, of alleen nieuwe?
+1. **`namespace-postgresql-database` blijft voorlopig bestaan.** `scope` komt erbij, het servicetype blijft werken, en het opruimen is een latere stap zodra de drie projecten gemigreerd op schijf staan.
+2. **Geen connectiestring per schema.** Alleen `DATABASE_SCHEMA_{POSTFIX}` met zijn `APP_`-alias.
+3. **`DATABASE_SCHEMA` is het primaire schema van het component**, oftewel het eerste in zijn lijst. Voor een component zonder eigen keuze is dat het default schema.
+4. **Eén rol per component, geen leesrecht-variant.** De deployment-brede `_ro` blijft en krijgt SELECT op alle schema's. Daaruit volgt de eis dat de database-console alle schema's van een deployment moet kunnen tonen.
+5. **Schema's zijn strikt project-breed.** Een deployment kan er geen toevoegen.
+6. **Alle toegewijde databases gaan naar de projectnamespace, ook de bestaande**, maar als eigen traject met een terugvalplan, want het is een datamigratie op drie productiedatabases.
