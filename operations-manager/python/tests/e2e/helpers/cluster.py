@@ -95,9 +95,7 @@ def wait_for_project_apps_healthy(project_name: str, *, timeout: float, interval
         return True
 
     def _healthy() -> bool:
-        result = _run(
-            ["get", "applications", "-n", "rig-system", "-l", f"project={project_name}", "-o", "json"]
-        )
+        result = _run(["get", "applications", "-n", "rig-system", "-l", f"project={project_name}", "-o", "json"])
         if result.returncode != 0:
             return False
         items = json.loads(result.stdout or '{"items": []}').get("items", [])
