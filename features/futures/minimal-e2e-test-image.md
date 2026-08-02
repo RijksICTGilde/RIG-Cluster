@@ -22,11 +22,23 @@ every create/delete cycle and the suite already fights ~4-minute
 `wait_for_project_apps_healthy` waits.
 
 **Goal:** a purpose-built, ultra-minimal, fastest-booting test workload that, on
-startup, **connects to and verifies every platform service it is bound to**,
-reports per-service status over HTTP, and is fully up + verified within ~5 s.
-E2E tests can then assert *real connectivity*, not just liveness. This replaces
-`rig-world` as the E2E fixture and, longer term, doubles as a smoke-test workload
-a human can deploy to sanity-check a cluster.
+startup, does a **real read/write round-trip against every platform resource it
+is bound to** — database (incl. every extra schema), Redis, MinIO/S3, Keycloak,
+and the mounted PVCs — **logs each step and every failure clearly** to stdout,
+reports the outcome over HTTP, and is fully up + verified within ~5 s. When this
+image boots green we *know* the whole binding actually works, end to end, with
+the exact credentials the platform injected. It also serves a plain human-facing
+web page (a "hello world" string + a live status summary) because it can — handy
+for eyeballing a deployment in a browser. This replaces `rig-world` as the E2E
+fixture and doubles as a smoke-test workload a human can deploy to sanity-check a
+cluster.
+
+The requirement is deliberately strong: **no check is "optional" or "just report
+the vars are present".** For every bound resource the image performs an actual
+authenticated operation (write *and* read back, verifying the bytes), because the
+whole point is to catch a mis-provisioned secret, an unreachable host, a missing
+grant, a wrong bucket, or an unmounted volume — none of which a
+"credentials-present" check would notice.
 
 ## Hard platform constraints (verified live — the image MUST satisfy these)
 
@@ -111,8 +123,11 @@ be `{REDIS_PREFIX}:e2e-healthcheck` — an unprefixed key gets NOPERM and would
 make a *correct* Redis look broken.
 
 **Storage (PVC mounts)** (`StorageVariables`): `DATA_PATH` (default `/data`),
-`TEMP_PATH` (default `/tmp`) — direct paths, no secret. Optional check: stat +
-write-a-file-and-read-back in each path that is set.
+`TEMP_PATH` (default `/tmp`) — direct paths, no secret. **Required check** (not
+optional): for each path that is set, write a small file, `fsync`, read it back,
+compare bytes, then delete it — this proves the PVC is actually mounted,
+writable under the forced `fsGroup: 1001`, and durable. A read-only or
+unmounted volume is a real, common provisioning bug this must catch.
 
 **Web / publish** (`WebVariables`): `PUBLIC_HOST`, `PUBLIC_HOSTNAME` — informational
 only (the app's own public URL); report but nothing to "connect" to.
@@ -160,36 +175,78 @@ On start the binary:
    vars are present (e.g. `DATABASE_SERVER_HOST` set ⇒ check Postgres). A service
    whose vars are **absent is skipped** (reported `skipped`, not `FAIL`) — the
    same image must work for a project that binds only some services.
-2. Runs each bound service's check **concurrently**, each with a short timeout
-   (e.g. 2–3 s) so one slow/broken service can't blow the 5 s budget:
-   - **Postgres:** connect using `DATABASE_SERVER_FULL` (fall back to the
-     discrete host/port/user/password/db vars), `SELECT 1`. Then for the default
-     `DATABASE_SCHEMA` **and every discovered `DATABASE_SCHEMA_{POSTFIX}`**,
-     verify the schema is reachable (e.g. `SELECT 1 FROM
-     information_schema.schemata WHERE schema_name = $1`, or `SET search_path` +
-     create/select a temp object). Report each schema individually.
-     *Optional:* also verify the read-only role (`*_RO`) can connect and cannot
-     write.
-   - **Redis:** connect (honour `REDIS_URL` / discrete vars + `REDIS_USERNAME`
-     ACL), `PING`, then `SET`/`GET`/`DEL` on key `{REDIS_PREFIX}:e2e-healthcheck`.
-   - **MinIO / S3:** client from `OBJECT_STORE_ENDPOINT_URL` (or host/port) +
-     access/secret key + region; `PutObject` a tiny object into
-     `OBJECT_STORE_BUCKET_NAME`, `GetObject` it back, compare bytes, delete it.
-   - **Keycloak / OIDC:** HTTPS GET `OIDC_DISCOVERY_URL` (fall back to
-     `OIDC_URL`/`OIDC_REALM` → `.../realms/{realm}/.well-known/openid-configuration`),
-     assert 200 + a parseable doc containing `issuer` and `token_endpoint`. (A
-     client-credentials token grab is a possible deeper check but needs the
-     confidential client to allow it — keep as optional/next-step.)
-   - **Storage (optional):** for each of `DATA_PATH` / `TEMP_PATH` that is set,
-     write-then-read a small temp file.
-3. Caches the per-service results (status + latency + error message) and keeps
+2. Runs each bound resource's check **concurrently**, each with a short timeout
+   (e.g. 2–3 s) so one slow/broken service can't blow the 5 s budget. Every check
+   does a **real write-and-read-back**, not a ping:
+   - **Postgres (write/read):** connect using `DATABASE_SERVER_FULL` (fall back to
+     the discrete host/port/user/password/db vars), `SELECT 1`. Then for the
+     default `DATABASE_SCHEMA` **and every discovered `DATABASE_SCHEMA_{POSTFIX}`**:
+     `CREATE TEMP TABLE` (or a temp table in that schema), `INSERT` a marker row,
+     `SELECT` it back, verify, drop it. This proves the role can actually write in
+     each schema, not merely that the schema exists. Report each schema
+     individually.
+   - **Postgres read-only role (required):** connect as `DATABASE_SERVER_USER_RO`
+     / `DATABASE_PASSWORD_RO`, assert it **can `SELECT`** and that a write is
+     **refused** (expect a permission error). This catches grant/ownership bugs
+     that a single-role check misses.
+   - **Redis (write/read):** connect (honour `REDIS_URL` / discrete vars +
+     `REDIS_USERNAME` ACL), `PING`, then `SET` a value, `GET` it back and compare,
+     `DEL` it — all on key `{REDIS_PREFIX}:e2e-healthcheck` (the ACL only grants
+     the prefixed keyspace; see the `REDIS_PREFIX` note above).
+   - **MinIO / S3 (write/read):** client from `OBJECT_STORE_ENDPOINT_URL` (or
+     host/port) + access/secret key + region; `PutObject` a tiny object with known
+     bytes into `OBJECT_STORE_BUCKET_NAME`, `GetObject` it back, compare bytes,
+     then `RemoveObject` it.
+   - **Keycloak / OIDC (required):** HTTPS GET `OIDC_DISCOVERY_URL` (fall back to
+     `OIDC_URL`/`OIDC_REALM` →
+     `.../realms/{realm}/.well-known/openid-configuration`), assert 200 + a
+     parseable doc containing `issuer` and `token_endpoint`, **then perform a
+     client-credentials token request** against `token_endpoint` using
+     `OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET` and assert a bearer token comes back
+     (and, cheaply, that it decodes as a JWT with the expected `iss`). This proves
+     the injected client secret actually authenticates, not just that the realm is
+     reachable. (If a given project's confidential client is configured without
+     the client-credentials grant, fall back to discovery-only and say so in the
+     status/log — but attempt the token grab by default.)
+   - **Storage / PVC (required):** for each of `DATA_PATH` / `TEMP_PATH` that is
+     set, write a small file, `fsync`, read it back, compare, delete — proving the
+     volume is mounted and writable under `fsGroup: 1001`.
+3. **Logs every step to stdout** as it runs (see "Logging" below), so
+   `kubectl logs` alone tells the full story of what was attempted and what
+   failed, with latencies and error detail.
+4. Caches the per-resource results (status + latency + error message) and keeps
    re-running them lazily/periodically so `/status` reflects current reality, not
    just the boot snapshot.
-4. Serves HTTP on `:8080` **immediately** (bind first, so the TCP probe passes
+5. Serves HTTP on `:8080` **immediately** (bind first, so the TCP probe passes
    even while the first check round is still in flight).
+
+### Logging
+
+The image is only as useful as its logs when something is red, so logging is a
+first-class feature, not an afterthought:
+
+- Emit a clear, timestamped line per check to **stdout** (the platform collects
+  pod stdout): a `START <service> <target-host>` line, then either
+  `OK <service> <op> (<latency>ms)` or `FAIL <service> <op>: <error>` with the
+  underlying driver error verbatim (host, code, message) — never a swallowed
+  generic. Redact secret values (log the host/user/bucket/key-name, never the
+  password/secret).
+- At the end of the first round print a one-line **summary banner**
+  (`ALL OK (5/5)` or `FAILED: postgres(schema=reporting), minio`) so a human
+  scanning `kubectl logs` sees the verdict instantly.
+- Structured (JSON) log lines are fine and preferred if cheap, but a
+  human-readable one-line-per-step format is the hard requirement — the goal is
+  "open the logs, immediately understand what the app did and what broke".
 
 ### HTTP surface
 
+- `GET /` → a plain **human-facing web page**: a big `Hello, world` string plus a
+  small live summary rendered from the cached results (e.g. a table of
+  service → OK/FAIL/skipped + latency, and the deployment/component name). Serving
+  a real page is a requirement ("because it can") — it makes the workload
+  eyeball-able in a browser via the project's public ingress, and doubles as a
+  trivial publish-on-web smoke test. Keep it a single self-contained HTML string,
+  no assets, no framework.
 - `GET /healthz` → `200 OK` as soon as the process is up and listening (liveness;
   matches the platform's tcpSocket probe intent, and gives a cheap HTTP check
   too). Never fails on a downstream service — it reports process liveness only.
@@ -266,12 +323,15 @@ On start the binary:
    uses — public ingress URL (realistic, but needs the route up) vs
    `kubectl port-forward`/`exec` (deterministic, no DNS/ingress dependency).
    Port-forward is the safer default for CI.
-3. **Depth of the OIDC check:** discovery-doc fetch only (default) vs also a
-   client-credentials token grab (needs the confidential client to permit it;
-   more faithful but more coupling). Start with discovery-only.
-4. **RO-role check scope:** just report the RO creds are present, vs actively
-   connect as `*_RO` and assert writes are refused. The latter catches grant
-   bugs but adds a check; decide if it earns its keep.
+3. **OIDC token grant availability:** the plan requires a client-credentials
+   token grab by default. Confirm the platform provisions the confidential client
+   with the client-credentials (service-account) grant enabled; if some project
+   shapes don't, define the discovery-only fallback precisely (and make sure the
+   log/status clearly marks it as a downgrade, not a silent pass).
+4. **Extra-schema write target:** decide whether the per-schema write uses a
+   `TEMP` table `SET search_path` to the schema, or a real (then-dropped) table in
+   the schema — the latter proves `CREATE` privilege in that specific schema,
+   which is closer to what a real app needs. Lean to the real table.
 5. **Strict probe mode:** should `/status?strict=1` (503 on failure) ever back a
    readiness probe, or is the platform's fixed tcpSocket:8080 the only probe? The
    platform generates the probe today, so this is informational unless
