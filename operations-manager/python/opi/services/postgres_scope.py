@@ -49,6 +49,27 @@ def project_uses_dedicated_postgres(project_data: dict[str, Any]) -> bool:
     return postgres_scope(project_data) == "project"
 
 
+def get_postgres_schemas(project_data: dict[str, Any], include_marked: bool = False) -> list[dict[str, Any]]:
+    """The project-wide extra schemas ({postfix, description, ...}) for postgresql-database.
+
+    Schemas are strictly project-wide (RC-17 decision 10.5) and live on the
+    ``postgresql-database`` service config, so the same list applies to every
+    deployment. Empty for the legacy ``namespace-postgresql-database`` service or a
+    project without PostgreSQL. By default schemas marked for deletion are excluded, so
+    provisioning stops exposing them while leaving the schema (and its data) in place.
+    """
+    view = Project(project_data)
+    if not view.uses_service(ServiceType.POSTGRESQL_DATABASE.value):
+        return []
+    model = view.service_config_model(ServiceType.POSTGRESQL_DATABASE.value)
+    if model is None:
+        return []
+    schemas = [entry.model_dump() for entry in model.root.schemas]  # type: ignore[attr-defined]
+    if include_marked:
+        return schemas
+    return [entry for entry in schemas if not entry.get("marked_for_deletion")]
+
+
 def get_dedicated_postgres_config(project_data: dict[str, Any]) -> dict[str, Any]:
     """The validated CNPG-cluster config (image/instances/storage/...) for a
     project-scoped database, read from whichever service declares it.
@@ -67,8 +88,10 @@ def get_dedicated_postgres_config(project_data: dict[str, Any]) -> dict[str, Any
     model = view.service_config_model(ServiceType.POSTGRESQL_DATABASE.value)
     if model is None:
         raise ValueError("get_dedicated_postgres_config called for a project without a dedicated PostgreSQL database")
-    # RootModel member is ProjectScopeConfig (the CNPG fields + scope); drop the scope
-    # tag so the result matches NamespacePostgresConfig's field set exactly.
+    # RootModel member is ProjectScopeConfig (the CNPG fields + scope + schemas); drop
+    # the non-cluster fields so the result matches NamespacePostgresConfig's field set
+    # exactly (schemas are handled separately, not by the cluster generator).
     config = model.root.model_dump(mode="json")  # type: ignore[attr-defined]
     config.pop("scope", None)
+    config.pop("schemas", None)
     return config
