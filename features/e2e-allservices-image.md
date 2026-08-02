@@ -40,10 +40,18 @@ Each bound service maps to one reusable *probe kind*:
 | `metadata` | publish-on-web, metrics-scraper, platform | assert presence and echo (`DEPLOYMENT_NAME`, `PUBLIC_HOST`, ...); secret-looking values are redacted |
 
 Beyond the round-trip, for every **bound** service it asserts that **all** env
-vars the platform injects for it are present and non-empty - a dropped or renamed
-variable is itself a provisioning bug. A service whose connection vars are absent
-is reported `skipped`, not failed, so the same image works for a project that
-binds only some services.
+vars the platform injects for it are actually injected (the key exists) - a
+dropped or renamed variable is a provisioning-drift bug and fails the check. An
+injected-but-empty value is left to the handler, which surfaces it with a precise
+error (e.g. an auth failure) instead of aborting before the round-trip runs. A
+service whose connection vars are absent is reported `skipped`, not failed, so the
+same image works for a project that binds only some services.
+
+The Postgres **read-only role** is enforced when its credentials are injected
+(must `SELECT`, must be refused writes); when the platform has not provisioned RO
+credentials it is reported `read_only: skipped (no RO credentials provisioned)` -
+visible in `/status`, but it does not fail the database check, whose core is the
+read/write binding and every schema round-trip.
 
 ## Scan-driven coverage (stays in sync with the platform)
 
@@ -152,12 +160,23 @@ download then uses the host network).
 - Build-time spec generator: Python, imports OPI's `opi.services` /
   `opi.utils.secrets`. Never runs in the pod.
 
+## Validation
+
+Validated end to end on the live sandbox: created an all-services project that
+deployed this image (kind-loaded as `local/e2e-allservices:latest`), and the
+workload reported **`all_ok: true` (9/9 bound services)** against the real
+platform resources with the injected credentials - the full write/read loop for
+Postgres (schema round-trip), Redis (prefixed ACL key), MinIO (put/get/remove)
+and the PVCs, plus a real client-credentials token grab against the sandbox
+Keycloak (issuer decoded from the returned JWT). It also runs cleanly as UID 1001
+and the `metrics` auth token is redacted in `/status`. The RO role showed
+`skipped (no RO credentials provisioned)` on that project - the image surfacing a
+real platform state, not a false green.
+
 ## Notes / follow-ups
 
-- The final image is ~14 MB (three service clients in one static binary); the
+- The final image is ~14-15 MB (three service clients in one static binary); the
   compressed layer pushed to the registry is a few MB. This is above the
   "< 10 MB" design target but well within budget for a fast-booting fixture.
-- The `oidc` handler is exercised in unit/integration form; the live
-  client-credentials grab against Keycloak is validated during sandbox E2E.
-- `rig-world` can be retired from the E2E path once this fixture is proven on the
-  sandbox (see the plan's next-steps).
+- `rig-world` can be retired from the E2E path once this fixture is published to
+  ghcr and the suite runs green in CI (see the plan's next-steps).

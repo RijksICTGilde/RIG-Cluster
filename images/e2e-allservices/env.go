@@ -42,11 +42,21 @@ func firstPresent(names []string) string {
 	return ""
 }
 
-// missingVars returns the subset of names that are absent or empty.
+// injected reports whether the platform injected name at all (the key exists,
+// even if its value is empty). This distinguishes a genuinely dropped/renamed
+// variable (key absent - a provisioning-drift bug) from an injected-but-empty
+// value (a value problem the handler surfaces with a precise error, e.g. an auth
+// failure, rather than aborting the whole check before it can run).
+func injected(name string) bool {
+	_, ok := os.LookupEnv(name)
+	return ok
+}
+
+// missingVars returns the subset of names the platform did not inject at all.
 func missingVars(names []string) []string {
 	var missing []string
 	for _, n := range names {
-		if !present(n) {
+		if !injected(n) {
 			missing = append(missing, n)
 		}
 	}

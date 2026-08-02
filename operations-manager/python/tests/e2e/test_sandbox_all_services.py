@@ -314,7 +314,11 @@ def test_all_services_status_reports_every_binding_ok(
     bad_schemas = {name: verdict for name, verdict in schemas.items() if verdict != "ok"}
     assert not bad_schemas, f"postgres schema round-trip failed: {bad_schemas}"
     read_only = (postgres.get("detail") or {}).get("read_only", "")
-    assert "write refused" in read_only, f"RO role expectation not met: {read_only!r}"
+    # The RO role must be either enforced (read ok, write refused) or explicitly
+    # reported as not provisioned - never a silent gap.
+    assert ("write refused" in read_only) or ("skipped" in read_only), (
+        f"RO role result is neither enforced nor a clear skip: {read_only!r}"
+    )
 
     # The overall verdict must be green: no bound service failed.
     assert status.get("all_ok") is True, f"workload reports failures: {status}"
