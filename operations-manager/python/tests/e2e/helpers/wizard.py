@@ -48,10 +48,29 @@ class WizardHelper:
         self.page.goto(f"{self.base_url}/forms/wizard/start")
         self.page.wait_for_load_state("networkidle")
 
+    # Stepper label of the first step (identity). Used to assert we start clean.
+    STEP_IDENTITY = "Projectgegevens"
+
     def open_create_wizard(self) -> None:
-        """Navigate directly to the create-project wizard."""
+        """Navigate to a FRESH create-project wizard, guaranteed to start on step 1.
+
+        The wizard keeps server-side state keyed by the session (see
+        ``wizard_page`` in ``opi/web/router_wizard.py``: it *resumes* an existing
+        flow at its current step). Because the E2E browser context is shared across
+        the whole test session, a prior test that left the wizard part-way (e.g. on
+        the Components step) makes ``GET /forms/wizard/create-project`` resume there
+        instead of at step 1 -- so the identity step's ``display-name`` field is
+        absent and ``fill_identity`` burns a blind 15s timeout. Hitting ``/restart``
+        first clears that state (``wizard_restart`` -> ``clear_wizard_state``), so
+        every create starts clean regardless of what ran before.
+        """
+        self.page.goto(f"{self.base_url}/forms/wizard/restart")
+        self.page.wait_for_load_state("networkidle")
         self.page.goto(self.wizard_url)
         self.page.wait_for_load_state("networkidle")
+        # Fail fast with a useful message if we did not land on step 1, instead of
+        # letting fill_identity time out on a field that lives on another step.
+        self.assert_on_step(self.STEP_IDENTITY)
 
     def fill_identity(
         self,
@@ -74,6 +93,11 @@ class WizardHelper:
         if display_name is None:
             display_name = _unique_project_name()
         self.project_name = display_name
+
+        # Verify we are actually on the identity step before filling. A clear
+        # "on step X, expected Projectgegevens" beats a blind 15s timeout on a
+        # display-name field that lives on step 1 when the wizard resumed elsewhere.
+        self.assert_on_step(self.STEP_IDENTITY)
 
         name_input = self.page.locator("[name='display-name']")
         name_input.wait_for(state="visible", timeout=15000)
@@ -172,11 +196,29 @@ class WizardHelper:
         )
 
     def get_current_step_title(self) -> str | None:
-        """Return the current step indicator title."""
-        current = self.page.locator("[aria-current='step']")
-        if current.count() > 0:
-            return current.first.text_content()
+        """Return the title (stepper label) of the currently-active wizard step."""
+        label = self.page.locator("li[aria-current='step'] .wizard-steps__label")
+        if label.count() > 0:
+            return (label.first.text_content() or "").strip()
         return None
+
+    def assert_on_step(self, expected_title: str, timeout: float = 10000) -> None:
+        """Assert the wizard is showing the expected step; fail fast if not.
+
+        Reading the active step indicator is far more useful than a blind
+        ``wait_for`` on a field: if the wizard resumed on the wrong step the field
+        we want is simply absent, and we would wait out the full timeout with no
+        clue why. This says which step we actually got, and points at the usual
+        cause (leaked wizard state from a prior test in the shared context).
+        """
+        label = self.page.locator("li[aria-current='step'] .wizard-steps__label")
+        label.first.wait_for(state="visible", timeout=timeout)
+        current = self.get_current_step_title() or ""
+        if expected_title.lower() not in current.lower():
+            raise AssertionError(
+                f"Wizard is on step '{current}', expected '{expected_title}' "
+                f"(url={self.page.url}). Likely leaked wizard state from a prior test."
+            )
 
     def has_validation_errors(self) -> bool:
         """Check if the current step shows validation errors."""
