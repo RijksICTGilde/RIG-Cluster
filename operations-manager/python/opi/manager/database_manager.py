@@ -1367,6 +1367,7 @@ class DatabaseManager:
             - service_endpoint: Full qualified database service DNS name
             - storage_class: Cluster-specific storage class
             - cluster_name: Name of the cluster
+            - database_operator_namespace: Namespace of the CNPG operator
 
         Example:
             {
@@ -1379,6 +1380,7 @@ class DatabaseManager:
         """
         from opi.core.cluster_config import (
             get_database_cluster_service_endpoint,
+            get_database_operator_namespace,
             get_infrastructure_namespace,
             get_storage_class_name,
         )
@@ -1402,6 +1404,10 @@ class DatabaseManager:
             "service_endpoint": service_endpoint,
             "storage_class": storage_class,
             "cluster_name": cluster_name,
+            # The DB subsystem owns this: the CNPG operator's namespace must be
+            # allowed into the infra namespace so it can extract instance status,
+            # or the dedicated Cluster never becomes Ready.
+            "database_operator_namespace": get_database_operator_namespace(cluster_name),
         }
 
         logger.debug(

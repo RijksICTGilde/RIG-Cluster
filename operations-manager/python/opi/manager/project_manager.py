@@ -2339,6 +2339,11 @@ class ProjectManager:
                     "ops_namespace": get_namespace(cluster_name),
                     "backup_namespace": get_backup_namespace(cluster_name),
                     "ingress_controller_selector": get_ingress_controller_selector(cluster_name),
+                    # The CNPG operator (in its own namespace) must reach the
+                    # dedicated cluster's pods to extract instance status, or the
+                    # Cluster never becomes Ready. The DB subsystem owns which
+                    # namespace that is; only the infra namespace needs this rule.
+                    "database_operator_namespace": database_cluster_config["database_operator_namespace"],
                     # The project's app namespaces must reach the PostgreSQL
                     # cluster that lives in this infrastructure namespace.
                     "allowed_ingress_namespaces": tenant_namespaces,
@@ -6328,6 +6333,9 @@ class ProjectManager:
             "ops_namespace": get_namespace(cluster),
             "backup_namespace": get_backup_namespace(cluster),
             "ingress_controller_selector": get_ingress_controller_selector(cluster),
+            # A regular app namespace hosts no CNPG cluster, so the operator does
+            # not need ingress here (only the infrastructure namespace does).
+            "database_operator_namespace": None,
             "project_infra_namespace": get_infrastructure_namespace(cluster, project_name),
         }
         self._manifest_generator.create_manifest_file(
