@@ -1305,6 +1305,27 @@ tasks:
           REGISTRY_IMAGE: ghcr.io/minbzk/base-images
           PLATFORMS: linux/amd64,linux/arm64
 
+  generate-probe-spec:
+    desc: "Regenerate the e2e-allservices probe spec from OPI's service registry"
+    dir: operations-manager/python
+    cmds:
+      - uv run python ../../scripts/generate_probe_spec.py
+    silent: true
+
+  publish-e2e-allservices:
+    desc: "Build and publish the e2e-allservices test workload to GitHub Container Registry"
+    deps: [requirements-check]
+    cmds:
+      # Embed the current probe spec (scan of the service registry) before building.
+      - task: generate-probe-spec
+      - task: docker-build-and-push
+        vars:
+          BUILD_CONTEXT: images/e2e-allservices
+          DOCKERFILE_PATH: Dockerfile
+          IMAGE_NAME: e2e-allservices
+          REGISTRY_IMAGE: ghcr.io/minbzk/base-images
+          PLATFORMS: linux/amd64,linux/arm64
+
   publish-waker:
     desc: "Build and publish the zad-waker (sleep-mode) image to GitHub Container Registry"
     deps: [requirements-check]
