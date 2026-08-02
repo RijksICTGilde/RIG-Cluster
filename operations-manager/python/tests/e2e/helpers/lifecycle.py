@@ -28,13 +28,17 @@ if TYPE_CHECKING:
 # becomes Healthy -- which makes create tests wait out wait_for_project_apps_healthy
 # (~4 min) and the non-force UI delete drag on ArgoCD teardown.
 #
-# Use the platform's own base image: it is built OpenShift-style (writable dirs are
-# group-owned, no fixed-UID assumption), so it runs fine as UID 1001 and listens on 8080
-# -- verified Ready under the exact securityContext above. Do NOT switch to a stock nginx
-# image like nginxinc/nginx-unprivileged: that one pins UID 101 and CrashLoopBackOffs when
-# forced to 1001 (cannot write /var/cache/nginx). A purpose-built minimal all-services
-# test image is planned: features/futures/minimal-e2e-test-image.md.
-RUNNABLE_IMAGE = "ghcr.io/minbzk/base-images/hello-world:latest"
+# Use the purpose-built e2e-allservices workload: a tiny static Go binary built to
+# exactly this contract -- distroless-static, holds no writable state, runs fine as an
+# arbitrary UID (1001) and binds :8080 immediately, so the tcpSocket probe passes at
+# once. Beyond starting, it round-trips every platform service the project binds it to
+# and exposes the verdict at /status, which the all-services suite asserts on. It skips
+# absent services, so it is a safe drop-in for the service-less lifecycle tests too. Do
+# NOT switch to a stock nginx image like nginxinc/nginx-unprivileged: that one pins UID
+# 101 and CrashLoopBackOffs when forced to 1001 (cannot write /var/cache/nginx). Source,
+# design and the securityContext contract: images/e2e-allservices/ and
+# features/e2e-allservices-image.md. Publish it with `task publish-e2e-allservices`.
+RUNNABLE_IMAGE = "ghcr.io/minbzk/base-images/e2e-allservices:latest"
 
 REVIEW_SUBMIT_SELECTOR = "button:has-text('Project aanmaken'), button:has-text('Indienen')"
 
