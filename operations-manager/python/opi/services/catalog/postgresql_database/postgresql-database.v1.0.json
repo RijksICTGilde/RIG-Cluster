@@ -1,34 +1,94 @@
 {
   "$defs": {
-    "Revision": {
+    "DatabasePrivilege": {
+      "description": "PostgreSQL role privileges accepted for the dedicated database user.\n\nMatches the allow-list previously enforced inline in DatabaseManager.",
+      "enum": [
+        "SUPERUSER",
+        "NOSUPERUSER",
+        "CREATEDB",
+        "NOCREATEDB",
+        "CREATEROLE",
+        "NOCREATEROLE",
+        "LOGIN",
+        "NOLOGIN",
+        "REPLICATION",
+        "NOREPLICATION",
+        "BYPASSRLS",
+        "NOBYPASSRLS"
+      ],
+      "title": "DatabasePrivilege",
+      "type": "string"
+    },
+    "DatabaseResources": {
       "additionalProperties": false,
-      "description": "One generation's resource, with the actions that produced and changed it.",
+      "description": "requests/limits pair, mirroring DEFAULT_CONFIG['resources'].",
       "properties": {
-        "actions": {
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/RevisionAction"
-          },
-          "title": "Actions",
-          "type": "array"
+        "limits": {
+          "$ref": "#/$defs/LimitsQuantities",
+          "default": {
+            "cpu": "500m",
+            "memory": "512Mi"
+          }
         },
-        "created_at": {
-          "title": "Created At",
+        "requests": {
+          "$ref": "#/$defs/RequestsQuantities",
+          "default": {
+            "cpu": "100m",
+            "memory": "256Mi"
+          }
+        }
+      },
+      "title": "DatabaseResources",
+      "type": "object"
+    },
+    "LimitsQuantities": {
+      "additionalProperties": false,
+      "description": "CPU/memory *limits* (defaults differ from requests, as in DEFAULT_CONFIG).",
+      "properties": {
+        "cpu": {
+          "default": "500m",
+          "title": "Cpu",
           "type": "string"
         },
-        "generation": {
-          "title": "Generation",
+        "memory": {
+          "default": "512Mi",
+          "title": "Memory",
+          "type": "string"
+        }
+      },
+      "title": "LimitsQuantities",
+      "type": "object"
+    },
+    "ProjectScopeConfig": {
+      "additionalProperties": false,
+      "description": "``scope: project`` -- one dedicated CNPG cluster per project, shared by all its\ndeployments. Carries the same CNPG-cluster fields as\n``namespace-postgresql-database``.",
+      "properties": {
+        "image": {
+          "default": "ghcr.io/cloudnative-pg/postgresql:17",
+          "title": "Image",
+          "type": "string"
+        },
+        "instances": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Instances",
           "type": "integer"
         },
-        "resource": {
-          "title": "Resource",
-          "type": "string"
+        "postInitSQL": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Postinitsql",
+          "type": "array"
         },
-        "status": {
-          "title": "Status",
-          "type": "string"
+        "privileges": {
+          "items": {
+            "$ref": "#/$defs/DatabasePrivilege"
+          },
+          "title": "Privileges",
+          "type": "array"
         },
-        "superseded_at": {
+        "registry": {
           "anyOf": [
             {
               "type": "string"
@@ -38,68 +98,86 @@
             }
           ],
           "default": null,
-          "title": "Superseded At"
+          "title": "Registry"
+        },
+        "resources": {
+          "$ref": "#/$defs/DatabaseResources",
+          "default": {
+            "limits": {
+              "cpu": "500m",
+              "memory": "512Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "256Mi"
+            }
+          }
+        },
+        "scope": {
+          "const": "project",
+          "title": "Scope",
+          "type": "string"
+        },
+        "storage": {
+          "default": "10Gi",
+          "title": "Storage",
+          "type": "string"
         }
       },
       "required": [
-        "generation",
-        "resource",
-        "status",
-        "created_at"
+        "scope"
       ],
-      "title": "Revision",
+      "title": "ProjectScopeConfig",
       "type": "object"
     },
-    "RevisionAction": {
+    "RequestsQuantities": {
       "additionalProperties": false,
-      "description": "One entry in a revision's audit trail (created, cloned, restored, ...).",
+      "description": "CPU/memory *requests*. Per-field defaults preserve the old deep-merge: a\nconfig overriding only ``requests.memory`` keeps the default ``cpu``.",
       "properties": {
-        "source": {
-          "title": "Source",
+        "cpu": {
+          "default": "100m",
+          "title": "Cpu",
           "type": "string"
         },
-        "timestamp": {
-          "title": "Timestamp",
-          "type": "string"
-        },
-        "type": {
-          "title": "Type",
+        "memory": {
+          "default": "256Mi",
+          "title": "Memory",
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "source",
-        "timestamp"
-      ],
-      "title": "RevisionAction",
+      "title": "RequestsQuantities",
+      "type": "object"
+    },
+    "SharedScopeConfig": {
+      "additionalProperties": false,
+      "description": "``scope: shared`` -- a database on the shared cluster instance (the default).\n\nCarries no CNPG-cluster fields: ``extra=\"forbid\"`` means putting ``storage`` or\n``instances`` here fails validation with a message that names the offending key.",
+      "properties": {
+        "scope": {
+          "const": "shared",
+          "default": "shared",
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "title": "SharedScopeConfig",
       "type": "object"
     }
   },
-  "additionalProperties": false,
-  "description": "Clone state for a shared-instance PostgreSQL database.",
-  "properties": {
-    "generation": {
-      "anyOf": [
-        {
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Generation"
+  "description": "Project-layer config: a ``scope``-discriminated union of the two shapes above.\n\n``scope`` defaults to ``shared`` when absent, so an existing project that sets no\nscope validates as a shared database and its behaviour is unchanged.",
+  "discriminator": {
+    "mapping": {
+      "project": "#/$defs/ProjectScopeConfig",
+      "shared": "#/$defs/SharedScopeConfig"
     },
-    "revisions": {
-      "default": [],
-      "items": {
-        "$ref": "#/$defs/Revision"
-      },
-      "title": "Revisions",
-      "type": "array"
-    }
+    "propertyName": "scope"
   },
-  "title": "PostgresqlDatabaseConfig",
-  "type": "object"
+  "oneOf": [
+    {
+      "$ref": "#/$defs/SharedScopeConfig"
+    },
+    {
+      "$ref": "#/$defs/ProjectScopeConfig"
+    }
+  ],
+  "title": "PostgresqlDatabaseProjectConfig"
 }

@@ -73,10 +73,10 @@ from opi.services.catalog.base import (
     SecretFileSpec,
 )
 from opi.services.persistence.subdomain_registry import SubdomainConnector
+from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.services.project import Project
 from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
 from opi.services.registry import deployment_manifest_services, manifest_services, provisioning_services
-from opi.services.services import service_entry_name
 from opi.utils.age import (
     decrypt_age_content,
     decrypt_password_smart,
@@ -517,23 +517,19 @@ class ProjectManager:
 
         from opi.core.cluster_config import get_database_cluster_service_endpoint, get_infrastructure_namespace
         from opi.manager.database_manager import DatabaseManager
-        from opi.services import ServiceType
         from opi.utils.naming import generate_postgres_superuser_secret_name
 
         project_data = await self.get_contents(record_base=False)
         project_name = project_data.get("name")
-        project_services = project_data.get("services", [])
 
-        # Check if project uses namespace-specific PostgreSQL. Format-agnostic:
-        # ``value in service`` tested dict keys, so a namespace-postgres entry carrying
-        # config (a {name, config} record) was undetected and this wrongly read False.
-        uses_namespace_db = any(
-            service_entry_name(service) == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-            for service in project_services
-        )
+        # A dedicated (project-scoped) cluster needs the infrastructure-namespace
+        # superuser; the shared instance uses the cluster admin. Both
+        # namespace-postgresql-database and postgresql-database with scope: project mean
+        # "dedicated" (RC-17), so route the decision through the shared helper.
+        uses_namespace_db = project_uses_dedicated_postgres(project_data)
 
         if uses_namespace_db:
-            # Namespace-specific database
+            # Dedicated-cluster database
             db_host = get_database_cluster_service_endpoint(settings.CLUSTER_MANAGER, project_name)
             infrastructure_namespace = get_infrastructure_namespace(settings.CLUSTER_MANAGER, project_name)
             secret_name = generate_postgres_superuser_secret_name(project_name)
@@ -4750,13 +4746,11 @@ class ProjectManager:
             await self.check_and_create_namespaces(deployment_names=targets)
             await self.check_and_create_sops_secrets_in_namespaces(deployment_names=targets)
 
-            # Check if project requires infrastructure namespace (namespace-specific PostgreSQL)
-            # This check is infrastructure-level, independent of any manager initialization
-            project_services = project_data.get("services", [])
-            needs_infrastructure_namespace = any(
-                service_entry_name(service_item) == ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-                for service_item in (project_services or [])
-            )
+            # Check if project requires an infrastructure namespace (a dedicated,
+            # project-scoped PostgreSQL cluster). Both namespace-postgresql-database and
+            # postgresql-database with scope: project need it (RC-17). This check is
+            # infrastructure-level, independent of any manager initialization.
+            needs_infrastructure_namespace = project_uses_dedicated_postgres(project_data)
 
             # If infrastructure is needed, provision it BEFORE initializing managers
             if needs_infrastructure_namespace:
