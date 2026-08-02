@@ -17,6 +17,7 @@ from keycloak import KeycloakAdmin, KeycloakOpenIDConnection
 from keycloak.exceptions import KeycloakError, KeycloakGetError, KeycloakPostError
 
 from opi.core.config import settings
+from opi.utils.totp import build_credential_representation
 
 logger = logging.getLogger(__name__)
 
@@ -3509,6 +3510,7 @@ class KeycloakConnector:
         first_name: str | None = None,
         last_name: str | None = None,
         enabled: bool = True,
+        totp_secret: str | None = None,
     ) -> dict[str, Any]:
         """
         Create a user in the specified realm.
@@ -3521,6 +3523,11 @@ class KeycloakConnector:
             first_name: Optional first name
             last_name: Optional last name
             enabled: Whether the user is enabled (default: True)
+            totp_secret: Optional raw TOTP secret. When set, an OTP credential is
+                imported alongside the password so Keycloak's conditional-OTP
+                browser step requires it at login. Note: Keycloak only imports
+                credentials on user creation - if the user already exists (409
+                below) the OTP credential is not added.
 
         Returns:
             User information dictionary including user ID
@@ -3533,6 +3540,9 @@ class KeycloakConnector:
             "emailVerified": False,
             "credentials": [{"type": "password", "value": password, "temporary": False}],
         }
+
+        if totp_secret:
+            user_data["credentials"].append(build_credential_representation(totp_secret))
 
         if email:
             user_data["email"] = email

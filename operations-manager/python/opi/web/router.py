@@ -25,6 +25,7 @@ from opi.services.project_authorization import (
 from opi.services.project_store import get_project_store
 from opi.utils.age import decrypt_password_smart, get_global_private_key
 from opi.utils.csrf import ensure_csrf_token
+from opi.utils.totp import build_otpauth_uri, totp_base32
 from opi.utils.yaml_util import load_yaml_from_string
 from opi.web.menu import get_menu_items
 
@@ -1109,6 +1110,14 @@ async def project_details(request: Request, project_name: str):
                 except Exception as e:
                     logger.warning(f"Failed to decrypt Keycloak password for realm {kc_config.get('realm')}: {e}")
                     kc_config["password"] = None
+            if kc_config.get("totp_secret"):
+                try:
+                    secret = await decrypt_password_smart(kc_config["totp_secret"], project_private_key)
+                    kc_config["totp_secret"] = totp_base32(secret)
+                    kc_config["totp_otpauth_uri"] = build_otpauth_uri(secret, kc_config["username"], kc_config["realm"])
+                except Exception as e:
+                    logger.warning(f"Failed to decrypt Keycloak TOTP secret for realm {kc_config.get('realm')}: {e}")
+                    kc_config["totp_secret"] = None
 
         for deployment in project_data_decrypted.get("deployments", []):
             # Decrypt deployment-component-level user-env-vars

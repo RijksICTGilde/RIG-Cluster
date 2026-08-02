@@ -40,6 +40,18 @@
           "title": "Realm",
           "type": "string"
         },
+        "totp_secret": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Totp Secret"
+        },
         "username": {
           "title": "Username",
           "type": "string"
