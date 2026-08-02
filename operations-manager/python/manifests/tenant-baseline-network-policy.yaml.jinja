@@ -61,6 +61,16 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: "{{ backup_namespace }}"
+{% if database_operator_namespace %}
+    # CloudNativePG operator namespace: the operator must reach the dedicated
+    # CNPG cluster's pods to extract their instance status. Without this the
+    # cluster never reports Ready and its ArgoCD health stays Unknown. Only the
+    # infrastructure namespace (which hosts the CNPG cluster) sets this.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ database_operator_namespace }}"
+{% endif %}
 {% if allowed_ingress_namespaces %}
     # Explicit cross-namespace ingress (e.g. the project's app namespaces
     # reaching the project's own infrastructure namespace).

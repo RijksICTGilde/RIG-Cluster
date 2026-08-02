@@ -254,6 +254,32 @@ class TestInfrastructureNamespaceVariant:
         assert {"rig-myproject", "rig-myproject-staging"} <= ingress_targets
 
 
+def _ingress_namespaces(doc) -> set[str]:
+    return {
+        peer["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"]
+        for rule in doc["spec"]["ingress"]
+        for peer in rule.get("from", [])
+        if peer.get("namespaceSelector", {}).get("matchLabels")
+    }
+
+
+class TestCnpgOperatorIngress:
+    """The CNPG operator must reach the dedicated cluster's pods (RC-17): without an
+    ingress allowance for its namespace the operator cannot extract instance status,
+    the Cluster never becomes Ready and its ArgoCD health stays Unknown.
+    """
+
+    def test_infra_namespace_allows_the_operator_namespace(self):
+        _, doc = _render_baseline(deployment_selector=None, database_operator_namespace="cnpg-system")
+        assert "cnpg-system" in _ingress_namespaces(doc)
+
+    def test_regular_namespace_does_not_allow_the_operator_namespace(self):
+        # A per-deployment (regular app) policy hosts no CNPG cluster, so it must NOT
+        # open ingress from the operator namespace.
+        _, doc = _render_baseline(deployment_selector="myapp", database_operator_namespace=None)
+        assert "cnpg-system" not in _ingress_namespaces(doc)
+
+
 class TestDeploymentLabelOnPods:
     """Pods need the `deployment: <name>` label or the per-deployment selector
     selects nothing.
