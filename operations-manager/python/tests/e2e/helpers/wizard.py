@@ -59,25 +59,29 @@ class WizardHelper:
         description: str = "E2E test project",
         cluster: str | None = None,
     ) -> None:
-        """Fill the identity step fields."""
+        """Fill the identity step fields.
+
+        Targets the specific fields by name and waits for them to render, rather than
+        falling back to broad ``input.first`` / ``textarea.first`` locators. Those
+        fallbacks were dangerous: under load the identity form renders a moment late, so
+        the specific locator was momentarily empty and the fallback grabbed the FIRST
+        textarea on the page -- which, on a partially-rendered/wrong step, is the hidden
+        CodeMirror-backed ``components[0]/aliases`` textarea (``display:none``). Playwright
+        then waited 30s for that hidden element to become visible before failing, turning
+        a timing blip into a minutes-long, failing create. Waiting for the real field is
+        both correct and event-based.
+        """
         if display_name is None:
             display_name = _unique_project_name()
         self.project_name = display_name
 
-        # Fill display name - look for input by name attribute (yaml_path)
         name_input = self.page.locator("[name='display-name']")
-        if name_input.count() > 0:
-            name_input.fill(display_name)
-        else:
-            # Fallback: first text input in the form
-            self.page.locator("input[type='text']").first.fill(display_name)
+        name_input.wait_for(state="visible", timeout=15000)
+        name_input.fill(display_name)
 
-        # Fill description
         desc_input = self.page.locator("[name='description']")
-        if desc_input.count() > 0:
-            desc_input.fill(description)
-        else:
-            self.page.locator("textarea").first.fill(description)
+        desc_input.wait_for(state="visible", timeout=15000)
+        desc_input.fill(description)
 
         # Select cluster if provided and a select exists
         if cluster:
@@ -108,12 +112,17 @@ class WizardHelper:
         name: str = "web",
         image: str = "nginx:latest",
     ) -> None:
-        """Fill a minimal component definition."""
-        comp_name = self.page.locator("[name*='name']").first
-        if comp_name.count() > 0:
-            comp_name.fill(name)
+        """Fill a minimal component definition.
 
-        comp_image = self.page.locator("[name*='image']").first
+        Targets the exact component fields by name and waits for them, instead of the
+        fuzzy ``[name*='name']`` / ``[name*='image']`` selectors, which also match storage
+        sub-fields and, under a late render, the wrong element.
+        """
+        comp_name = self.page.locator("[name='components[0]/name']")
+        comp_name.wait_for(state="visible", timeout=15000)
+        comp_name.fill(name)
+
+        comp_image = self.page.locator("[name='components[0]/image']").first
         if comp_image.count() > 0:
             comp_image.fill(image)
 
