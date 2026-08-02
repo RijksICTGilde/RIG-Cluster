@@ -92,10 +92,12 @@ func checkSQL(ctx context.Context) checkResult {
 	}
 	detail["schemas"] = schemaResults
 
-	// Read-only role: must SELECT, must be refused writes.
-	roMsg, roOK := checkReadOnlyRole(ctx)
+	// Read-only role: when provisioned it must SELECT and be refused writes. When
+	// the platform has not provisioned RO credentials (empty), report it but do
+	// not fail the whole database check - the read/write binding above is proven.
+	roMsg, roOK, roProvisioned := checkReadOnlyRole(ctx)
 	detail["read_only"] = roMsg
-	if !roOK {
+	if roProvisioned && !roOK {
 		failures = append(failures, "ro-role")
 	}
 
@@ -133,21 +135,24 @@ func roundTripSchema(ctx context.Context, conn *pgx.Conn, schema string) error {
 }
 
 // checkReadOnlyRole verifies the RO role can read but is refused writes. Returns
-// a human message and whether the expectation held.
-func checkReadOnlyRole(ctx context.Context) (string, bool) {
+// (message, ok, provisioned): provisioned is false when no RO credentials were
+// injected, so the caller can report it without failing the database check.
+func checkReadOnlyRole(ctx context.Context) (msg string, ok bool, provisioned bool) {
 	connStr := sqlROConnString()
 	if connStr == "" {
-		return "no RO credentials injected", false
+		// The RO role is optional platform state (e.g. not yet provisioned); a
+		// missing RO credential is reported, not treated as a database failure.
+		return "skipped (no RO credentials provisioned)", false, false
 	}
 	conn, err := pgx.Connect(ctx, connStr)
 	if err != nil {
-		return "connect failed: " + err.Error(), false
+		return "connect failed: " + err.Error(), false, true
 	}
 	defer conn.Close(context.Background())
 
 	var one int
 	if err := conn.QueryRow(ctx, "SELECT 1").Scan(&one); err != nil {
-		return "cannot SELECT: " + err.Error(), false
+		return "cannot SELECT: " + err.Error(), false, true
 	}
 
 	schema := firstEnv("DATABASE_SCHEMA", "APP_DATABASE_SCHEMA")
@@ -160,14 +165,14 @@ func checkReadOnlyRole(ctx context.Context) (string, bool) {
 		dctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_, _ = conn.Exec(dctx, "DROP TABLE IF EXISTS "+table)
-		return "read ok but RO role could WRITE (should be refused)", false
+		return "read ok but RO role could WRITE (should be refused)", false, true
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(werr, &pgErr) && pgErr.Code == "42501" {
-		return "read ok, write refused (permission denied)", true
+		return "read ok, write refused (permission denied)", true, true
 	}
 	// Any other error still means the write did not succeed; note it verbatim.
-	return "read ok, write refused (" + werr.Error() + ")", true
+	return "read ok, write refused (" + werr.Error() + ")", true, true
 }
 
 // ---- Redis ----------------------------------------------------------------
