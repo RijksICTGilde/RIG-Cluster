@@ -89,13 +89,17 @@ class TestInviteConfigModel:
 
 
 class TestKeyGeneration:
-    def test_empty_key_is_generated_self_chosen_is_kept(self) -> None:
+    def test_empty_key_is_generated_self_chosen_is_kept(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # token_urlsafe can start with '-'/'_', which the validator rejects; force that case
+        # first so the test deterministically exercises the regenerate-until-alphanumeric path.
+        tokens = iter(["-leadinghyphen1234567", "AbcdEfghIjklMnopQrst12"])
+        monkeypatch.setattr("opi.services.catalog.invite.secrets.token_urlsafe", lambda _n: next(tokens))
         project = _invite_service_project([{"realm-roles": ["allowed-user"]}, {"key": "mijn-sleutel"}])
         InviteService()._generate_missing_keys(project, {})
         active = project["services"][-1]["config"]["active"]
         assert active[1]["key"] == "mijn-sleutel"  # self-chosen untouched
         generated = active[0]["key"]
-        assert len(generated) == 22  # secrets.token_urlsafe(16)
+        assert generated[0].isalnum()  # never starts with '-' or '_'
         assert InviteKeyValidator().validate(generated) == []
 
 
