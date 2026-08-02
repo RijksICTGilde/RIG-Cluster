@@ -536,6 +536,34 @@ def generate_database_schema(project_name: str, deployment_name: str) -> str:
     return _truncate_if_needed(schema, 63)  # PostgreSQL schema limit
 
 
+def generate_extra_database_schema(project_name: str, deployment_name: str, postfix: str) -> str:
+    """Generate the full name of an extra schema (RC-17).
+
+    Format: ``{project}_{deployment}_{postfix}``. Unlike the default schema, an extra
+    schema is NOT truncated: two long postfixes could truncate to the same name and
+    silently collide, so this fails loudly instead. Callers validate the postfix and
+    the resulting length at save time; this is the last-line guard.
+
+    Raises:
+        ValueError: if the resulting name exceeds the 63-character PostgreSQL limit.
+    """
+    project_clean = _sanitize_for_identifier(project_name)
+    deployment_clean = _sanitize_for_identifier(deployment_name)
+    postfix_clean = _sanitize_for_identifier(postfix)
+    schema = f"{project_clean}_{deployment_clean}_{postfix_clean}"
+    if len(schema) > 63:
+        raise ValueError(f"Schema name '{schema}' exceeds the 63-character PostgreSQL limit; choose a shorter postfix")
+    return schema
+
+
+def generate_schema_variable_name(postfix: str) -> str:
+    """The env-variable name that exposes an extra schema: ``DATABASE_SCHEMA_{POSTFIX}``.
+
+    The postfix is sanitised and uppercased so it is a valid variable-name fragment.
+    """
+    return f"DATABASE_SCHEMA_{_sanitize_for_identifier(postfix).upper()}"
+
+
 def generate_database_name(project_name: str, deployment_name: str, generation: int | None = None) -> str:
     """
     Generate a consistent database name with optional generation suffix.
