@@ -146,33 +146,55 @@ only (the app's own public URL); report but nothing to "connect" to.
 
 ### Language / runtime
 
-**Recommendation: a single statically-linked Go binary** (`CGO_ENABLED=0`,
-scratch or distroless-static base). Rationale:
+**Decision: a Go runtime binary + a Python scan-generator.** The two jobs have
+opposite pressures, so split them by language where each is strongest:
+
+- **Runtime probe = one statically-linked Go binary** (`CGO_ENABLED=0`,
+  distroless-static base). This is what ships in the pod and must be tiny + boot
+  instantly.
+- **Build-time scan-generator = Python** (`scripts/generate_probe_spec.py`). It
+  *must* be Python because it imports OPI's own service registry / `*Variables`
+  enums to emit `probe_spec.json`; that spec is embedded into the Go binary at
+  build time. Python never runs in the pod, so its size/boot cost is irrelevant.
+
+Why Go for the runtime (this was the open question — resolved):
 
 - One self-contained binary, no libc, no interpreter → image a few MB, boot is
-  instantaneous (no runtime warm-up before it can bind :8080).
-- Trivially runs as any UID from `scratch` (no user DB, no writable state).
-- First-class, well-maintained clients for exactly the services in scope:
-  `github.com/jackc/pgx` (Postgres), `github.com/redis/go-redis`,
-  `github.com/minio/minio-go` (S3), and OIDC discovery is a plain HTTPS GET of
-  `.../.well-known/openid-configuration` (stdlib `net/http` + `encoding/json`).
-- Easy concurrency: run all service checks in parallel goroutines with a short
-  per-check timeout so total verification stays within the ~5 s budget.
+  instantaneous (no runtime warm-up before it can bind :8080). A Python runtime
+  image balloons to 40–60 MB and spends 0.5–1.5 s importing
+  `psycopg`/`boto3`/`redis` before it can serve — that directly eats the "<5 s,
+  smallest image" budget.
+- Trivially runs as any UID from a static base (no user DB, no writable state) —
+  exactly what the forced arbitrary-UID securityContext needs.
+- The "we have *many* services" worry does **not** translate to many libraries:
+  the scan-driven probe-kind design means only **~3 clients total** —
+  `github.com/jackc/pgx/v5` (Postgres), `github.com/redis/go-redis/v9`,
+  `github.com/minio/minio-go/v7` (S3) — plus stdlib `net/http` for OIDC and
+  `os` for PVC files. That is a small, mature dependency set in Go.
+- Easy bounded concurrency: run all checks in parallel goroutines with a short
+  per-check `context` timeout so total verification stays within ~5 s.
+
+**Build-resource note (why Go is fine to build here):** the OOM pain in this
+repo's history was the *large OPI image* being built on the Kind control-plane. A
+Go probe is a light multi-stage build (`golang:alpine` → distroless-static) that
+runs in CI or the implementer's environment, **not** on the Kind node, and the
+final image is a single tiny layer so pushing it to the sandbox `rig-registry` is
+seconds. Building Go is not a resource risk here.
 
 **Alternatives considered (and why not):**
 
-- *Rust* — equally tiny/fast, but the team's ecosystem here is Python/Go; Go's
-  service clients are the more familiar, lower-friction choice. Fine as a
-  fallback if a Go author isn't available.
-- *Python (FastAPI/uvicorn or stdlib)* — matches OPI's stack, but interpreter +
-  driver import cost eats into the boot budget and the image balloons well past
-  10 MB. Rejected for the "fastest boot" requirement.
-- *Static nginx + shell probes* — cannot do real authenticated round-trips to
-  Postgres/Redis/S3/OIDC; this is precisely the gap we're closing. Rejected.
-- *Distroless base vs scratch* — `gcr.io/distroless/static` adds CA certs
-  (needed for the HTTPS OIDC discovery / TLS S3 endpoints) for a few hundred KB;
-  from `scratch` you must `COPY` a `ca-certificates.crt` yourself. Either works;
-  distroless-static is the lower-effort default.
+- *Python runtime (distroless-python)* — the documented **fallback** if no Go
+  author is available. Costs image size (~40–60 MB) and boot (~1 s), but the
+  check logic (`psycopg`, `redis`, `minio`/`boto3`, `httpx`) is straightforward
+  and the scan-generator is already Python. Acceptable, not preferred.
+- *Rust* — equally tiny/fast, but Go's service clients are more familiar here and
+  lower-friction. No advantage over Go for this job.
+- *Static nginx / busybox + shell (psql/redis-cli/mc/curl)* — "low level" but
+  assembling static musl builds of each client is fiddly, error handling is poor,
+  and the image ends up similar in size to Go with more moving parts. Rejected.
+- *Distroless-static vs scratch* — distroless-static bundles CA certs (needed for
+  HTTPS OIDC discovery / TLS S3) for a few hundred KB; from `scratch` you must
+  `COPY` `ca-certificates.crt` yourself. Use distroless-static (lower effort).
 
 ### Dynamic, scan-driven coverage (keep it in sync with the platform — don't hardcode)
 
@@ -373,8 +395,9 @@ first-class feature, not an afterthought:
 
 ## Open questions / next steps (resume here)
 
-1. **Confirm language:** Go static binary (recommended) vs Rust — pick based on
-   who implements it. Everything below assumes Go.
+1. **Language — DECIDED:** Go static binary for the runtime probe, Python for the
+   build-time scan-generator (see "Language / runtime"). Distroless-Python is the
+   documented fallback if no Go author is available. No longer open.
 2. **Reach for `/status` in the test:** decide the access path the assertion
    uses — public ingress URL (realistic, but needs the route up) vs
    `kubectl port-forward`/`exec` (deterministic, no DNS/ingress dependency).
