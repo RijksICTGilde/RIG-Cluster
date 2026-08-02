@@ -113,6 +113,13 @@
             }
           }
         },
+        "schemas": {
+          "items": {
+            "$ref": "#/$defs/SchemaEntry"
+          },
+          "title": "Schemas",
+          "type": "array"
+        },
         "scope": {
           "const": "project",
           "title": "Scope",
@@ -148,10 +155,43 @@
       "title": "RequestsQuantities",
       "type": "object"
     },
+    "SchemaEntry": {
+      "additionalProperties": false,
+      "description": "One extra schema, project-wide (RC-17 decision 10.5).\n\n``postfix`` is the user-chosen short name; the full schema becomes\n``{project}_{deployment}_{postfix}`` per deployment and an env variable\n``DATABASE_SCHEMA_{POSTFIX}`` is exposed. The pattern keeps the postfix a valid\nidentifier fragment; uniqueness within the list, the 63-char full-name limit and\nvariable-name collisions are enforced at save time (they need the project and\ndeployment names, which this model does not have).",
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "marked-for-deletion": {
+          "default": false,
+          "title": "Marked-For-Deletion",
+          "type": "boolean"
+        },
+        "postfix": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Postfix",
+          "type": "string"
+        }
+      },
+      "required": [
+        "postfix"
+      ],
+      "title": "SchemaEntry",
+      "type": "object"
+    },
     "SharedScopeConfig": {
       "additionalProperties": false,
       "description": "``scope: shared`` -- a database on the shared cluster instance (the default).\n\nCarries no CNPG-cluster fields: ``extra=\"forbid\"`` means putting ``storage`` or\n``instances`` here fails validation with a message that names the offending key.",
       "properties": {
+        "schemas": {
+          "items": {
+            "$ref": "#/$defs/SchemaEntry"
+          },
+          "title": "Schemas",
+          "type": "array"
+        },
         "scope": {
           "const": "shared",
           "default": "shared",

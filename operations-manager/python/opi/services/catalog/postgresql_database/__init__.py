@@ -62,6 +62,7 @@ class PostgresqlDatabaseService(Service):
             password=creds.password,
             database=creds.database,
             schema=creds.schema,
+            extra_schemas=creds.extra_schemas,
         )
         return [
             SecretFileSpec(
