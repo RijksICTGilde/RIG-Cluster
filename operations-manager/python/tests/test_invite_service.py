@@ -102,6 +102,18 @@ class TestKeyGeneration:
         assert generated[0].isalnum()  # never starts with '-' or '_'
         assert InviteKeyValidator().validate(generated) == []
 
+    def test_generated_key_always_passes_its_own_validator(self) -> None:
+        """A generated key must never start with '-'/'_': token_urlsafe (base64url) can,
+        and the validator (start with a letter or digit) would reject it. Regression for
+        a ~3%-of-the-time invalid key. Many iterations to exercise the random path."""
+        from opi.services.catalog.invite import _generate_invite_key
+
+        for _ in range(500):
+            key = _generate_invite_key()
+            assert len(key) == 22
+            assert key[0].isalnum()
+            assert InviteKeyValidator().validate(key) == []
+
 
 class TestInviteKeyValidator:
     def test_empty_is_allowed(self) -> None:
