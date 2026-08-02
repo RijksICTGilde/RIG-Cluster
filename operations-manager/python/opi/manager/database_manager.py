@@ -14,8 +14,9 @@ from opi.connectors.postgres import PostgresConnector, create_postgres_connector
 from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
 from opi.services import CloneFromType, ServiceType
+from opi.services.catalog.shared.postgres import DedicatedPostgresFields
+from opi.services.postgres_scope import get_dedicated_postgres_config, project_uses_dedicated_postgres
 from opi.services.project import Project
-from opi.services.registry import get_service
 from opi.utils.naming import generate_database_name
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import DatabaseSecret
@@ -152,19 +153,21 @@ class DatabaseManager:
             database_task = progress_manager.add_task("Database klaarmaken")
 
         try:
-            # Determine if using namespace-specific or shared database
-            uses_namespace_postgresql = self._project_uses_namespace_postgresql(project_data)
+            # Determine placement: a dedicated (project-scoped) cluster or the shared
+            # instance. Both namespace-postgresql-database and postgresql-database with
+            # scope: project mean "dedicated" (RC-17).
+            uses_dedicated_postgresql = project_uses_dedicated_postgres(project_data)
 
             # Get appropriate configuration
-            if uses_namespace_postgresql:
-                # Namespace-specific database configuration
+            if uses_dedicated_postgresql:
+                # Dedicated-cluster configuration
                 cluster_config = self._get_database_cluster_config(project_data, cluster_name)
                 db_host = cluster_config["service_endpoint"]
                 infrastructure_namespace = cluster_config["infrastructure_namespace"]
 
                 # Get superuser credentials from infrastructure namespace
                 logger.info(
-                    f"Using namespace-specific PostgreSQL for {project_name} "
+                    f"Using dedicated PostgreSQL cluster for {project_name} "
                     f"(infrastructure: {infrastructure_namespace}, endpoint: {db_host})"
                 )
                 admin_username, admin_password = await self._get_infrastructure_superuser_credentials(
@@ -182,7 +185,7 @@ class DatabaseManager:
             self._ensure_connection()
 
             # Get database service config (includes privileges if specified)
-            service_config = self._get_database_service_config(project_data) if uses_namespace_postgresql else {}
+            service_config = self._get_database_service_config(project_data) if uses_dedicated_postgresql else {}
             database_privileges = service_config.get("privileges", [])
 
             if database_privileges:
@@ -949,18 +952,18 @@ class DatabaseManager:
         if not cluster_name:
             raise ValueError(f"Deployment {deployment['name']} is missing required 'cluster' field")
 
-        # Determine if using namespace-specific or shared database
-        uses_namespace_postgresql = self._project_uses_namespace_postgresql(project_data)
+        # Determine placement: a dedicated (project-scoped) cluster or the shared instance.
+        uses_dedicated_postgresql = project_uses_dedicated_postgres(project_data)
 
-        if uses_namespace_postgresql:
-            # Namespace-specific database configuration
+        if uses_dedicated_postgresql:
+            # Dedicated-cluster configuration
             cluster_config = self._get_database_cluster_config(project_data, cluster_name)
             db_host = cluster_config["service_endpoint"]
             infrastructure_namespace = cluster_config["infrastructure_namespace"]
 
             # Get superuser credentials from infrastructure namespace
             logger.info(
-                f"Using namespace-specific PostgreSQL for {project_name} "
+                f"Using dedicated PostgreSQL cluster for {project_name} "
                 f"(infrastructure: {infrastructure_namespace}, endpoint: {db_host})"
             )
             admin_username, admin_password = await self._get_infrastructure_superuser_credentials(
@@ -1275,19 +1278,18 @@ class DatabaseManager:
         Raises:
             ValueError: If service configuration is invalid or missing required fields
         """
-        # RC-5 Phase 2: defaults + validation live in the typed config model
-        # (NamespacePostgresConfig via the provider), replacing the previous
-        # hand-rolled DEFAULT_CONFIG merge and manual field/privilege checks. We
-        # still read the legacy project-level service-entry shape here (bare string
-        # or {name-as-key: {config}}); RC-5 Phase 3 normalises that shape.
-        service_name = ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value
-        # Form-agnostic read via the Project aggregate root (bare string / legacy
-        # name-as-key / new {name, config} record). None when the service is absent
-        # or has no config block -> validate_config supplies the model defaults, and
-        # fails closed on a malformed (non-dict) config.
-        raw_config = Project(project_data).service_config(service_name)
-        provider = get_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE)
-        merged_config = provider.validate_config(raw_config).model_dump(mode="json")
+        # RC-5 Phase 2: defaults + validation live in the typed config model,
+        # replacing the previous hand-rolled DEFAULT_CONFIG merge and manual
+        # field/privilege checks. RC-17: the dedicated-cluster config can come from
+        # either service (namespace-postgresql-database, or postgresql-database with
+        # scope: project); get_dedicated_postgres_config reads whichever is present.
+        # For a shared database (no dedicated service) there is no CNPG cluster, so we
+        # return the model defaults -- same result the old namespace read produced when
+        # the service was absent, so postInitSQL/etc. stay empty.
+        if project_uses_dedicated_postgres(project_data):
+            merged_config = get_dedicated_postgres_config(project_data)
+        else:
+            merged_config = DedicatedPostgresFields().model_dump(mode="json")
         logger.debug(
             f"Database config (validated via provider): instances={merged_config.get('instances')}, "
             f"storage={merged_config.get('storage')}, image={merged_config.get('image')}, "
@@ -1820,9 +1822,13 @@ class DatabaseManager:
                 project_data, deployment
             )
 
-            # Get database service config (includes privileges if specified)
+            # Get database service config (includes privileges if specified). Placement
+            # (dedicated vs shared) decides whether there is a CNPG config to read;
+            # the revision service-name below is a separate question (which service the
+            # deployment entry is stored under), so keep both flags.
+            uses_dedicated_postgresql = project_uses_dedicated_postgres(project_data)
             uses_namespace_postgresql = self._project_uses_namespace_postgresql(project_data)
-            service_config = self._get_database_service_config(project_data) if uses_namespace_postgresql else {}
+            service_config = self._get_database_service_config(project_data) if uses_dedicated_postgresql else {}
             database_privileges = service_config.get("privileges", [])
 
             # Get current generation from project file (for generational versioning)

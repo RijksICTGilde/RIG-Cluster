@@ -1,7 +1,7 @@
 {
   "$defs": {
     "DatabasePrivilege": {
-      "description": "PostgreSQL role privileges accepted for the namespace database user.\n\nMatches the allow-list previously enforced inline in DatabaseManager.",
+      "description": "PostgreSQL role privileges accepted for the dedicated database user.\n\nMatches the allow-list previously enforced inline in DatabaseManager.",
       "enum": [
         "SUPERUSER",
         "NOSUPERUSER",
