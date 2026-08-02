@@ -262,6 +262,14 @@ class Settings(BaseSettings):
     KEYCLOAK_ADMIN_USERNAME: str = "admin"
     KEYCLOAK_ADMIN_PASSWORD: str = "changeMe123!"
 
+    # OPI's own client-credentials service account for Keycloak admin operations.
+    # When the secret is set, OPI authenticates with this confidential master
+    # client instead of the shared admin password, so the admin account can be
+    # OTP-enforced/locked without locking OPI out. The admin password is only
+    # needed for first-boot self-bootstrap of this client (and as break-glass).
+    KEYCLOAK_ADMIN_CLIENT_ID: str = "opi-admin-service"
+    KEYCLOAK_ADMIN_CLIENT_SECRET: str = ""
+
     # Default shared realm configuration
     KEYCLOAK_DEFAULT_REALM: str = "rig-platform"
     KEYCLOAK_DEFAULT_REALM_DISPLAY_NAME: str = "RIG Platform"

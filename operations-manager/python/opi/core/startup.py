@@ -96,14 +96,20 @@ async def wait_for_keycloak_availability() -> bool:
     logger.info("Checking Keycloak availability...")
 
     try:
+        # Prefer OPI's service account; on a fresh cluster that client does not
+        # exist yet (it is created later in setup_keycloak), so fall back to the
+        # admin-password connection just to confirm the server is reachable.
         keycloak = await create_keycloak_connector()
+        if await keycloak.connection_works():
+            logger.info("Keycloak is available and responding")
+            return True
 
-        # Try a simple API call to check if Keycloak is responding
-        # We'll try to get the master realm info as a basic health check
-        await keycloak.get_realm("master")
+        admin = await create_keycloak_connector(use_client_credentials=False)
+        if await admin.connection_works():
+            logger.info("Keycloak is available and responding (admin-password fallback)")
+            return True
 
-        logger.info("Keycloak is available and responding")
-        return True
+        raise RuntimeError("Keycloak did not respond via client-credentials or admin password")
 
     except Exception as e:
         logger.warning(f"Keycloak not yet available: {e}")
