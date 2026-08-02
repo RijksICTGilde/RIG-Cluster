@@ -79,6 +79,10 @@ class KeycloakRealm(BaseModel):
     realm: str
     username: str
     password: str
+    # Shared TOTP seed for the realm-admin account (AGE-encrypted or ``plain:``-
+    # prefixed, like ``password``). Only present when KEYCLOAK_ENFORCE_ADMIN_OTP
+    # provisioned it; absent on pre-OTP realms.
+    totp_secret: str | None = None
 
 
 class KeycloakConfig(BaseModel):

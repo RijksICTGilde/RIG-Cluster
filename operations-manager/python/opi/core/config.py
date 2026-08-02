@@ -270,6 +270,13 @@ class Settings(BaseSettings):
     KEYCLOAK_ADMIN_CLIENT_ID: str = "opi-admin-service"
     KEYCLOAK_ADMIN_CLIENT_SECRET: str = ""
 
+    # Shared OTP for project realm-admin accounts. Off by default so enabling the
+    # feature is a deliberate, controlled rollout: when False, no OTP is
+    # generated, stored, shown, or enforced anywhere. When True, newly created
+    # realms get a shared OTP credential at creation and existing realms are
+    # retrofitted (seed shown in the portal) the next time they are processed.
+    KEYCLOAK_ENFORCE_ADMIN_OTP: bool = False
+
     # Default shared realm configuration
     KEYCLOAK_DEFAULT_REALM: str = "rig-platform"
     KEYCLOAK_DEFAULT_REALM_DISPLAY_NAME: str = "RIG Platform"
