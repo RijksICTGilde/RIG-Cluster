@@ -2,7 +2,7 @@
 
 Status: ontwerpnotitie, 2 augustus 2026. Niet gebouwd. **Alle zeven openstaande beslissingen zijn genomen op 2 augustus; zie sectie 8. Waar de tekst hieronder nog een voorstel doet, wint sectie 8.** Aanleiding: gevoelige handelingen (beheerder worden, een deployment van een productieproject verwijderen) gaan nu zonder extra bevestiging, en er is geen tweede factor op een ZAD-gebruiker.
 
-**Besloten vooraf:** de extra controlestap steunt op een eigen OTP dat de gebruiker in ZAD registreert, niet op herauthenticatie via SSO Rijk. ZAD wordt daarmee beheerder van een tweede-factor-geheim, met alles wat daarbij hoort aan herstel.
+**Besloten vooraf:** de extra controlestap steunt op een eigen OTP dat de gebruiker in ZAD registreert, niet op herauthenticatie via SSO Rijk. Geheimen worden bewaard zoals alle andere wachtwoorden vandaag: AGE-versleuteld, in het cluster en in git, want er is nog geen veiliger plek en een uitzondering onthoudt niemand. ZAD wordt daarmee beheerder van een tweede-factor-geheim, met alles wat daarbij hoort aan herstel.
 
 Alle paden zijn relatief aan `operations-manager/python/` tenzij ze met `instructions/`, `features/`, `plans/` of `opi/schemas/` beginnen.
 
@@ -29,6 +29,7 @@ Ze zijn los te bouwen en te releasen.
 1. **OTP op de gebruiker**: registreren, verifiëren, herstellen.
 2. **De projectstatus**: uitgesteld, zie sectie 4. Wordt eigendom van een nog te bouwen promotieservice.
 3. **Verhoogde rechten**: begint bij platformbeheer, niet bij destructieve acties.
+4. **De Keycloak-kant** (sectie 5b): het service-account voor OPI, OTP op bestaande realm-admins, en de master-realm. Loopt naast 1 tot en met 3 en heeft zijn eigen volgorde.
 
 ## 3. Onderdeel 1: OTP op de gebruiker
 
@@ -90,6 +91,55 @@ Met verhoogde rechten worden die twee voorwaardelijk: zonder verse OTP-bevestigi
 **Wat er niet in moet.** Geen tweede rollenstelsel naast het bestaande. De rol bepaalt nog steeds óf je iets mag; de verhoogde stap bepaalt alleen dat je het nu bewust doet. Dat onderscheid moet in de code zichtbaar blijven, anders groeien er twee autorisatiemodellen naast elkaar.
 
 **Een gebruiker zonder OTP.** Omdat de eerste ronde alleen platformbeheer raakt, is de groep klein en overzichtelijk. Een platformbeheerder zonder OTP werkt gewoon door als gewone gebruiker en richt zijn tweede factor in wanneer hij de brede blik nodig heeft.
+
+## 5b. Keycloak-kant: bestaande realms, de master-realm en het service-account
+
+Dit hoort bij hetzelfde traject maar gaat over Keycloak-accounts, niet over ZAD-gebruikers. Het bouwt op het werk dat op 2 augustus is veiliggesteld in `9b1d8c75` (branch `claude/keycloak-realm-admin-otp`), dat 255 commits achterloopt en dus opnieuw toegepast moet worden en niet gemerged.
+
+### Wat OTP hier precies is
+
+Hetzelfde als bij een gewone Keycloak-gebruiker: een TOTP-zaad. Normaal genereert Keycloak dat, toont een QR, en daarna staat het in de Keycloak-database en in de app van die ene persoon. Het bewaarde ontwerp draait dat om voor de realm-admins, en alleen omdat dat **gedeelde** accounts zijn: OPI genereert het zaad, duwt het als OTP-credential in Keycloak (`build_credential_representation`), en bewaart het AGE-versleuteld in het projectbestand naast het adminwachtwoord. Zonder die omkering zou de eerste die de QR scant de enige zijn die kan inloggen.
+
+### Waar welk geheim hoort
+
+| Identiteit | Zaad | Toelichting |
+|---|---|---|
+| OPI zelf | geen OTP | Machine-identiteit met client-credentials; een tweede factor is zinloos voor een proces. |
+| Realm-admin per project (gedeeld) | Projectbestand, AGE met de projectsleutel | Gedeeld account, dus het zaad moet deelbaar zijn. |
+| Gedeeld master-`admin` (break-glass) | Zelfde weg als het wachtwoord: cluster-secret, AGE-versleuteld in git | Consistent met hoe alle wachtwoorden vandaag bewaard worden. |
+| Eigen master-account per beheerder | Niets op te slaan | Keycloak genereert, de beheerder scant de QR; het zaad staat alleen in Keycloak en op zijn telefoon. |
+
+**Wat dit wel en niet oplevert, en dat hoort in de feature-documentatie.** Voor een account waarvan het wachtwoord op dezelfde plek staat, voegt OTP niets toe tegen iemand die bij die opslag kan: wie het projectbestand kan ontsleutelen of de cluster-secret kan lezen, heeft beide factoren. Wat het wél doet: een uitgelekt of doorgestuurd wachtwoord wordt waardeloos, brute force op de console wordt geblokkeerd, en de MFA-eis voor beheertoegang wordt ingevuld. Dat is genoeg reden om het te doen, maar het is een andere reden dan dubbele beveiliging, en dat verschil moet opgeschreven staan.
+
+Het einddoel waar dat bezwaar wél verdwijnt is de laatste rij: een eigen master-account per beheerder, waar het zaad nergens gedeeld bewaard wordt. Het service-account maakt dat mogelijk, want daarna is het gedeelde `admin`-account geen dagelijks werkpaard meer.
+
+### Het service-account is de voorwaarde
+
+OPI logt vandaag in met het gedeelde `admin`-wachtwoord (`create_keycloak_connector`, `connectors/keycloak.py:3976`, 27 aanroepplekken). Zolang dat zo is kun je op dat account geen OTP afdwingen zonder OPI buiten te sluiten. Het bewaarde ontwerp lost dat op met een confidential client in de master-realm met de master `admin`-rol, waarmee OPI via client-credentials op het token-endpoint authenticeert.
+
+De zelfbootstrap voorkomt een kip-ei op een vers cluster: is `KEYCLOAK_ADMIN_CLIENT_SECRET` leeg, dan verandert er niets; werkt client-credentials al, dan gebruikt hij dat; anders gebruikt hij het adminwachtwoord één keer om de client te maken en zichzelf de rol te geven.
+
+Dat het één factory is, is hier de winst: de authenticatie verandert op één plek en de 27 aanroepers merken er niets van.
+
+### Bestaande realms
+
+Het bewaarde werk heeft hier al een antwoord voor: `_ensure_admin_otp(...)`, omschreven als idempotente retrofit, aangeroepen in de tak voor een realm die al bestaat, naast `_ensure_realm_clients` en `_create_additional_clients`. Dat is dezelfde plek waar op 1 augustus `_ensure_realm_self_service` is neergezet, om precies hetzelfde probleem: `create_realm()` draait alleen bij een nieuwe realm, en daarom heeft de identity-field-lock nooit een bestaande realm geraakt. Die twee komen dus naast elkaar te staan.
+
+### Volgorde, en waarom die zo is
+
+1. **Service-account.** Los en niet-brekend zolang het secret leeg is. Voorwaarde voor al het andere, want zonder gescheiden machine-identiteit sluit OTP op een menselijk account OPI buiten.
+2. **OTP op de realm-admins van projecten**, inclusief de retrofit voor bestaande realms.
+3. **De master-realm:** eigen accounts per beheerder met OTP via de normale Keycloak-weg, en het gedeelde `admin`-account terug naar break-glass.
+
+### De bootstrap
+
+Dit is het lastigste stuk en het moet in één keer kloppen. De bootstrap genereert vandaag het adminwachtwoord (`infrastructure/bootstrap/infrastructure/secrets/templates/keycloak-admin-secret.yaml`, met `@secret-gen:random:16`) en OPI gebruikt het meteen. Na deze wijziging moet de bootstrap ook het clientsecret aanmaken en de volgorde bewaken: eerst de secrets, dan OPI die zichzelf één keer bootstrapt, en daarna nooit meer het wachtwoord gebruiken.
+
+Wat daarbij niet vergeten mag worden: de bootstrap moet expliciet maken wat er daarna met dat adminwachtwoord gebeurt. Laat je dat impliciet, dan blijft het gewoon in de omgeving van OPI staan en is er niets gewonnen.
+
+### Wat opnieuw toegepast moet worden
+
+`connectors/keycloak.py` en `manager/keycloak_manager.py` zijn op 1 augustus gewijzigd voor de zelfbedienings-fix (`set_required_action_enabled`, `remove_default_role`, `_ensure_realm_self_service`). Het bewaarde werk raakt dezelfde bestanden. Neem `opi/utils/totp.py` en de feature-documenten over, en pas de rest opnieuw toe op de huidige code in plaats van de branch te mergen.
 
 ## 6. Logging
 
