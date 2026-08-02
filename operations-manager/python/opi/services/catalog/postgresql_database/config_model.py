@@ -39,6 +39,29 @@ class PostgresqlDatabaseConfig(CloneState):
     """
 
 
+class SchemaEntry(BaseModel):
+    """One extra schema, project-wide (RC-17 decision 10.5).
+
+    ``postfix`` is the user-chosen short name; the full schema becomes
+    ``{project}_{deployment}_{postfix}`` per deployment and an env variable
+    ``DATABASE_SCHEMA_{POSTFIX}`` is exposed. The pattern keeps the postfix a valid
+    identifier fragment; uniqueness within the list, the 63-char full-name limit and
+    variable-name collisions are enforced at save time (they need the project and
+    deployment names, which this model does not have).
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    # Lowercase, digits, underscore, starting with a letter -- a safe identifier and
+    # (uppercased) a safe env-variable suffix.
+    postfix: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    description: str = ""
+    # Removing a schema from the list marks it rather than dropping it, so a schema (and
+    # its data) is never silently discarded on a routine save (RC-17 section 6). The
+    # provisioner leaves a marked schema in place and stops exposing its variable.
+    marked_for_deletion: bool = Field(default=False, alias="marked-for-deletion")
+
+
 class SharedScopeConfig(BaseModel):
     """``scope: shared`` -- a database on the shared cluster instance (the default).
 
@@ -49,6 +72,7 @@ class SharedScopeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     scope: Literal["shared"] = "shared"
+    schemas: list[SchemaEntry] = Field(default_factory=list)
 
 
 class ProjectScopeConfig(DedicatedPostgresFields):
@@ -59,6 +83,7 @@ class ProjectScopeConfig(DedicatedPostgresFields):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     scope: Literal["project"]
+    schemas: list[SchemaEntry] = Field(default_factory=list)
 
 
 class PostgresqlDatabaseProjectConfig(RootModel):

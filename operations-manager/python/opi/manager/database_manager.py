@@ -15,9 +15,13 @@ from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
 from opi.services import CloneFromType, ServiceType
 from opi.services.catalog.shared.postgres import DedicatedPostgresFields
-from opi.services.postgres_scope import get_dedicated_postgres_config, project_uses_dedicated_postgres
+from opi.services.postgres_scope import (
+    get_dedicated_postgres_config,
+    get_postgres_schemas,
+    project_uses_dedicated_postgres,
+)
 from opi.services.project import Project
-from opi.utils.naming import generate_database_name
+from opi.utils.naming import generate_database_name, generate_extra_database_schema
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import DatabaseSecret
 
@@ -239,22 +243,34 @@ class DatabaseManager:
             db_schema = db_state.schema
             final_password = db_state.password
 
+            # Extra schemas (RC-17), project-wide, all living in this same database so
+            # generations/clones/backups keep working. Create them idempotently (a clone
+            # already carries them; a fresh database gets them empty), owned by the main
+            # user. The default schema stays first in every search_path.
+            extra_schema_pairs = self._resolve_extra_schemas(project_data, project_name, deployment_name)
+            for _postfix, extra_schema in extra_schema_pairs:
+                await self.postgres_connector.create_schema(
+                    schema_name=extra_schema, database=db_database, owner=db_username
+                )
+            all_schemas = [db_schema, *(name for _, name in extra_schema_pairs)]
+
             # Set the default search_path for the role scoped to this database.
             # This ensures applications that don't explicitly set a search_path
             # still resolve to the correct schema. Idempotent and safe on every sync.
             await self.postgres_connector.set_role_search_path(
                 username=db_username,
                 database=db_database,
-                schema=db_schema,
+                schemas=all_schemas,
             )
 
-            # Ensure the persistent read-only role exists alongside the main user.
+            # Ensure the persistent read-only role exists alongside the main user, with
+            # SELECT on every schema so the read-only console can browse all of them.
             ro_username, ro_password = await self._ensure_readonly_user(
                 deployment_name=deployment_name,
                 deployment=deployment,
                 main_username=db_username,
                 database=db_database,
-                schema=db_schema,
+                schemas=all_schemas,
             )
 
             # PHASE 3: FINAL STATE STORAGE - Store working credentials with correct host
@@ -268,6 +284,7 @@ class DatabaseManager:
                 database=db_database,
                 ro_username=ro_username,
                 ro_password=ro_password,
+                extra_schemas=extra_schema_pairs,
             )
             self.project_manager._add_secret_to_create(
                 deployment_name,
@@ -319,22 +336,41 @@ class DatabaseManager:
             # User was created (or error occurred)
             return db_password, create_result
 
+    def _resolve_extra_schemas(
+        self, project_data: dict[str, Any], project_name: str, deployment_name: str
+    ) -> list[tuple[str, str]]:
+        """The deployment's extra schemas as ``(postfix, full_schema_name)`` pairs.
+
+        Schemas are project-wide (RC-17 decision 10.5), so the same postfixes apply to
+        every deployment; the full name is per-deployment
+        (``{project}_{deployment}_{postfix}``). Schemas marked for deletion are excluded
+        so provisioning stops managing them while leaving the schema in place.
+        """
+        return [
+            (entry["postfix"], generate_extra_database_schema(project_name, deployment_name, entry["postfix"]))
+            for entry in get_postgres_schemas(project_data)
+        ]
+
     async def _ensure_readonly_user(
         self,
         deployment_name: str,
         deployment: dict[str, Any],
         main_username: str,
         database: str,
-        schema: str,
+        schemas: list[str],
     ) -> tuple[str, str]:
         """Ensure a persistent read-only role exists for the deployment's database.
 
         The role mirrors the main user's lifecycle: created alongside it, granted
-        SELECT-only on the schema, with a default search_path so it resolves the
-        deployment schema. The read-only database console (and read-only
-        application use) connect as this role, so writes are impossible
-        server-side. Its password is kept stable across syncs by reusing the
-        value already stored in the deployment's database secret.
+        SELECT-only on every schema of the deployment (the default schema plus any
+        extra schemas, RC-17 decision 10.4), with a default search_path over the same
+        list. The read-only database console (and read-only application use) connect as
+        this role, so writes are impossible server-side and the console can browse every
+        schema. Its password is kept stable across syncs by reusing the value already
+        stored in the deployment's database secret.
+
+        Args:
+            schemas: The deployment's schemas, primary first; must be non-empty.
 
         Returns:
             Tuple of (ro_username, ro_password).
@@ -352,8 +388,9 @@ class DatabaseManager:
         if create_result["status"] == "exists":
             await self.postgres_connector.update_user_password(username=ro_username, new_password=ro_password)
 
-        await self.postgres_connector.grant_readonly_on_schema(database, schema, ro_username)
-        await self.postgres_connector.set_role_search_path(username=ro_username, database=database, schema=schema)
+        for schema in schemas:
+            await self.postgres_connector.grant_readonly_on_schema(database, schema, ro_username)
+        await self.postgres_connector.set_role_search_path(username=ro_username, database=database, schemas=schemas)
 
         return ro_username, ro_password
 
@@ -691,6 +728,16 @@ class DatabaseManager:
             # Source uses base name (None generation) - versioned sources would need explicit handling
             source_database = generate_database_name(project_name, clone_source_ref, None)
             source_schema = source_database  # Schema matches database name
+            # Extra schemas (RC-17) live in the same database and must come along, or a
+            # clone would lose their data. Their names embed the deployment, so the
+            # source uses the source deployment and the target uses this deployment.
+            extra_clone_pairs = [
+                (
+                    generate_extra_database_schema(project_name, clone_source_ref, postfix),
+                    generate_extra_database_schema(project_name, deployment_name, postfix),
+                )
+                for postfix, _ in self._resolve_extra_schemas(project_data, project_name, deployment_name)
+            ]
             logger.info(f"Clone requested from {source_database} to {db_database} (force={force_clone})")
 
             # Determine service type from project configuration
@@ -793,6 +840,7 @@ class DatabaseManager:
                     target_schema=db_schema,
                     target_owner=db_username,
                     target_owner_password=db_password,
+                    additional_schemas=extra_clone_pairs,
                 )
 
                 if clone_result["status"] != "success":
@@ -1984,14 +2032,27 @@ class DatabaseManager:
 
             # STEP 7: Store credentials in memory map
             try:
-                # Ensure the persistent read-only role is granted on the (possibly
-                # newly versioned) clone target schema.
+                # Extra schemas (RC-17) declared by the project, created empty on the
+                # clone target (the external source only populates the default schema),
+                # so the search_path, grants and variables match the normal path.
+                extra_schema_pairs = self._resolve_extra_schemas(project_data, project_name, deployment_name)
+                for _postfix, extra_schema in extra_schema_pairs:
+                    await self.postgres_connector.create_schema(
+                        schema_name=extra_schema, database=target_database, owner=target_username
+                    )
+                all_schemas = [target_schema, *(name for _, name in extra_schema_pairs)]
+                await self.postgres_connector.set_role_search_path(
+                    username=target_username, database=target_database, schemas=all_schemas
+                )
+
+                # Ensure the persistent read-only role is granted on every schema of the
+                # (possibly newly versioned) clone target.
                 ro_username, ro_password = await self._ensure_readonly_user(
                     deployment_name=deployment_name,
                     deployment=deployment,
                     main_username=target_username,
                     database=target_database,
-                    schema=target_schema,
+                    schemas=all_schemas,
                 )
                 database_secret = DatabaseSecret(
                     host=self._db_host,
@@ -2002,6 +2063,7 @@ class DatabaseManager:
                     database=target_database,
                     ro_username=ro_username,
                     ro_password=ro_password,
+                    extra_schemas=extra_schema_pairs,
                 )
                 self.project_manager._add_secret_to_create(deployment_name, "database", database_secret)
                 result["operations"].append({"type": "credentials_stored_in_memory", "status": "success"})

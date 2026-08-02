@@ -379,6 +379,7 @@ def _fake_creds():
         password="p",
         database="d",
         schema="s",
+        extra_schemas=[],
         access_key="ak",
         secret_key="sk",
         bucket_name="bucket",
