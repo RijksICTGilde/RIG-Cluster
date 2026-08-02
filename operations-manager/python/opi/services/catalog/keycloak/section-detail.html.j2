@@ -84,7 +84,57 @@
                     <c-secret-field value="{{ kc_config.password }}" />
                 </div>
             </div>
+            {% if kc_config.totp_secret %}
+            <div class="config-item">
+                <div class="config-label">
+                    <c-icon icon="sleutel" size="md" color="rood" />
+                    <strong>Gedeelde OTP (setup-URI)</strong>
+                </div>
+                <p class="rvo-text--subtle" style="margin: 0 0 var(--rvo-space-2xs) 0;">
+                    Plak deze URI in je wachtwoordmanager (1Password, Bitwarden) of authenticator-app.
+                    Alle realm-admins gebruiken dezelfde sleutel.
+                </p>
+                <div class="config-value">
+                    <c-secret-field value="{{ kc_config.totp_otpauth_uri }}" />
+                </div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">
+                    <c-icon icon="sleutel" size="md" color="rood" />
+                    <strong>Gedeelde OTP (Base32-sleutel)</strong>
+                </div>
+                <div class="config-value">
+                    <c-secret-field value="{{ kc_config.totp_secret }}" />
+                </div>
+                <c-button
+                    kind="tertiary"
+                    size="sm"
+                    label="Toon QR-code"
+                    showIcon="before"
+                    icon="fotocamera"
+                    data-otpauth-uri="{{ kc_config.totp_otpauth_uri }}"
+                    data-target="otp-qr-{{ loop.index }}"
+                    @click="showOtpQr(this)" />
+                <div id="otp-qr-{{ loop.index }}" class="otp-qr" hidden style="margin-top: var(--rvo-space-sm);"></div>
+            </div>
+            {% endif %}
             {% endfor %}
         </div>
     </c-layout-flow>
 </c-card>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script>
+    function showOtpQr(btn) {
+        const target = document.getElementById(btn.dataset.target);
+        if (!target.dataset.rendered) {
+            new QRCode(target, {
+                text: btn.dataset.otpauthUri,
+                width: 180,
+                height: 180,
+                correctLevel: QRCode.CorrectLevel.M
+            });
+            target.dataset.rendered = "1";
+        }
+        target.hidden = !target.hidden;
+    }
+</script>
