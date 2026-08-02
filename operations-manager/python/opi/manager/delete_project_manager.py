@@ -19,6 +19,7 @@ from opi.services.project import Project
 from opi.services.project_store import get_project_store
 from opi.services.registry import get_service
 from opi.services.services import service_entry_name
+from opi.services.services_enums import ManagerKey
 
 if TYPE_CHECKING:
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
@@ -2251,19 +2252,21 @@ class DeleteProjectManager:
     # `cleanup_manager_key` (RC-5 Phase 5); this only resolves a key to its
     # manager instance, invoked via RemovalContext.get_manager.
 
-    async def _get_manager_for_service(self, manager_key: str) -> Any:
-        """Resolve the manager instance for a given manager key."""
-        if manager_key == "database":
+    async def _get_manager_for_service(self, manager_key: ManagerKey) -> Any:
+        """Resolve the manager instance for a given manager key.
+
+        Database is special (an async ensure); the rest are plain attributes, so a
+        dict lookup replaces the old if-chain. The enum makes the set exhaustive at
+        type-check time -- a bad key is a pyright error, not a teardown-time crash.
+        """
+        if manager_key is ManagerKey.DATABASE:
             return await self.project_manager._ensure_database_manager()
-        if manager_key == "minio":
-            return self.project_manager._minio_manager
-        if manager_key == "redis":
-            return self.project_manager._redis_manager
-        if manager_key == "keycloak":
-            return self.project_manager._keycloak_manager
-        if manager_key == "pvc":
-            return self.project_manager._pvc_manager
-        raise ValueError(f"Unknown manager key: {manager_key}")
+        return {
+            ManagerKey.MINIO: self.project_manager._minio_manager,
+            ManagerKey.REDIS: self.project_manager._redis_manager,
+            ManagerKey.KEYCLOAK: self.project_manager._keycloak_manager,
+            ManagerKey.PVC: self.project_manager._pvc_manager,
+        }[manager_key]
 
     async def cleanup_removed_services_from_yaml_change(
         self,

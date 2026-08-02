@@ -39,13 +39,14 @@ from opi.services.services_enums import ServiceType
 logger = logging.getLogger(__name__)
 
 
-def generate_invite_key() -> str:
-    """Generate a 22-char URL-safe invite key that starts with an alphanumeric character.
+def _generate_invite_key() -> str:
+    """A 128-bit URL-safe key that also passes ``InviteKeyValidator``.
 
-    ``secrets.token_urlsafe(16)`` can start with ``-`` or ``_``, which ``InviteKeyValidator``
-    rejects (a key becomes the ``/invite/{key}`` path segment and must start with a letter or
-    digit). Regenerate until the first character is alphanumeric so a generated key always
-    passes re-validation on edit.
+    ``secrets.token_urlsafe(16)`` is base64url, so it can start with ``-`` or ``_`` --
+    which the validator rejects (a key must start with a letter or digit, since it
+    becomes an ``/invite/{key}`` path segment re-validated on edit). Regenerate until
+    the first character is alphanumeric; length stays 22 and the full 128 bits of
+    entropy are kept.
     """
     while True:
         key = secrets.token_urlsafe(16)
@@ -79,7 +80,7 @@ class InviteService(Service):
         """Fill any empty invite key with a generated 128-bit random key (post-merge).
 
         The link is the only barrier, so a blank key becomes an unguessable, permanent
-        22-char key (see ``generate_invite_key``). A self-chosen key is left untouched.
+        key. A self-chosen key is left untouched.
         """
         from opi.services.project import Project
 
@@ -89,7 +90,7 @@ class InviteService(Service):
         generated = 0
         for entry in active:
             if isinstance(entry, dict) and not entry.get("key"):
-                entry["key"] = generate_invite_key()
+                entry["key"] = _generate_invite_key()
                 generated += 1
         if generated:
             project_name = project_data.get("name", "unknown")
