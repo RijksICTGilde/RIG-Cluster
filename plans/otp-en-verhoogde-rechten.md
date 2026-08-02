@@ -1,6 +1,6 @@
 # OTP op de ZAD-gebruiker en verhoogde rechten voor gevoelige acties
 
-Status: ontwerpnotitie, 2 augustus 2026. Niet gebouwd. Aanleiding: gevoelige handelingen (beheerder worden, een deployment van een productieproject verwijderen) gaan nu zonder extra bevestiging, en er is geen tweede factor op een ZAD-gebruiker.
+Status: ontwerpnotitie, 2 augustus 2026. Niet gebouwd. **Alle zeven openstaande beslissingen zijn genomen op 2 augustus; zie sectie 8. Waar de tekst hieronder nog een voorstel doet, wint sectie 8.** Aanleiding: gevoelige handelingen (beheerder worden, een deployment van een productieproject verwijderen) gaan nu zonder extra bevestiging, en er is geen tweede factor op een ZAD-gebruiker.
 
 **Besloten vooraf:** de extra controlestap steunt op een eigen OTP dat de gebruiker in ZAD registreert, niet op herauthenticatie via SSO Rijk. ZAD wordt daarmee beheerder van een tweede-factor-geheim, met alles wat daarbij hoort aan herstel.
 
@@ -24,11 +24,11 @@ Let op de beperking van dat bestand: het kent vier functies (`generate_totp_secr
 
 ## 2. Drie onderdelen, in deze volgorde
 
-Ze zijn los te bouwen en te releasen, en dat is met opzet: onderdeel 3 is het meest ingrijpend en profiteert ervan dat 1 en 2 al draaien.
+Ze zijn los te bouwen en te releasen.
 
 1. **OTP op de gebruiker**: registreren, verifiëren, herstellen.
-2. **Een productiemarkering op het project**, want zonder dat begrip is er geen regel te schrijven.
-3. **Verhoogde rechten**: welke acties een verse OTP-bevestiging vragen, en hoe dat afgedwongen wordt.
+2. **De projectstatus**: uitgesteld, zie sectie 4. Wordt eigendom van een nog te bouwen promotieservice.
+3. **Verhoogde rechten**: begint bij platformbeheer, niet bij destructieve acties.
 
 ## 3. Onderdeel 1: OTP op de gebruiker
 
@@ -42,51 +42,54 @@ Ze zijn los te bouwen en te releasen, en dat is met opzet: onderdeel 3 is het me
 
 Die derde kolom is het verschil tussen een echte tweede factor en een schijnbare: zonder is een onderschepte code dertig seconden lang herbruikbaar.
 
-**Versleuteling.** Het geheim hoort niet leesbaar in de database. ZAD heeft AGE (`utils/age.py`) en gebruikt dat al voor secrets in projectbestanden, dus dat ligt voor de hand. **Open beslissing 1:** AGE met de clustersleutel, of een aparte sleutel voor gebruikersgeheimen zodat een projectsleutel er niet bij kan.
+**Versleuteling.** BESLIST (8.1): AGE met de OPI-sleutel, in envelope-vorm, plus een kolom met de sleutelversie zodat roteren later kan zonder migratie-archeologie. Dat kleine veld nu toevoegen is bijna gratis en achteraf lastig.
+
+Dat is ook de gangbare opzet en geen eigen uitvinding: cijfertekst in de opslag, sleutel in de omgeving van de applicatie, zoals `ActiveRecord::Encryption` en Django-veldversleuteling het doen. Let op het verschil met een wachtwoord: een TOTP-geheim kán niet gehasht worden, want je hebt de platte waarde nodig om de code te berekenen. Versleutelen is dus verplicht en sleutelbeheer is het hele probleem. Database-native alternatieven zijn hier ongeschikt: TDE beschermt tegen een gestolen schijf maar niet tegen iemand die een query kan draaien, en `pgcrypto` met de sleutel als queryparameter zet die sleutel in de querylogs.
 
 **Verifiëren.** Uitbreiden van `utils/totp.py` met een `verify(secret, code, now)` die het venster berekent, één stap tolerantie geeft en een constante-tijdvergelijking doet. Geen eigen crypto verzinnen; de HMAC-basis komt uit de standaardbibliotheek.
 
 **Registreren.** Een pagina onder het gebruikersmenu: geheim genereren, QR en Base32 tonen (`build_otpauth_uri` en `totp_base32` bestaan al), en pas opslaan als de gebruiker een geldige code invoert. Toon de herstelcodes in diezelfde stap, want daarna zijn ze niet meer te tonen.
 
-**Herstel bij verlies van het toestel.** Dit is het onderdeel dat het vaakst wordt overgeslagen en het vaakst pijn doet. Twee wegen die elkaar aanvullen: eenmalige herstelcodes bij registratie, en een beheerderspad waarmee iemand met de juiste rol de OTP van een ander kan resetten. Dat tweede is zelf een gevoelige actie, dus het valt onder onderdeel 3, en daarmee ontstaat een kip-ei die je bewust moet oplossen: **open beslissing 2**, mag de allereerste beheerder zichzelf zonder OTP inrichten, of is er een noodpad buiten de UI om?
+**Herstel bij verlies van het toestel.** BESLIST (8.2): eenmalige herstelcodes bij registratie zijn de primaire weg. Op termijn komt daar een herstel via een gemailde link bij, in dezelfde vorm als fase 2 van de invite-service, zodra de mailserver er is. Tot die tijd is er geen formeel noodpad: wie zowel toestel als codes kwijt is, wordt op verzoek handmatig geholpen door iemand met database- en AGE-toegang.
+
+Twee dingen die daarbij horen. Leg in de feature-documentatie vast wélke kolommen dan geleegd moeten worden, zodat degene die dat buiten kantooruren doet niet hoeft te gokken. En besef dat een handmatige ingreep geen spoor achterlaat waar de rest van het systeem dat wel doet; noteer hem dus ergens.
+
+Een consequentie die bij de gemailde link hoort en die bewust genomen moet worden: herstel via e-mail maakt de tweede factor zo sterk als de mailbox, en omdat de eerste factor SSO Rijk is dat aan datzelfde adres hangt, valt de tweede factor daarmee terug op de eerste. Voor gewone gebruikers is dat aanvaardbaar; voor accounts met verhoogde rechten is een wachttijd met notificatie of een goedkeuringsstap het overwegen waard.
+
+Je eigen OTP instellen is nooit een verhoogde actie: dat is zelfbediening en kan per definitie geen rechtenverhoging zijn.
 
 **Verify:** een test die een code verifieert tegen een bekend geheim en tijdstip (RFC 6238 heeft testvectoren), een test dat dezelfde code binnen hetzelfde venster de tweede keer wordt geweigerd, en een test dat een niet-bevestigd geheim geen toegang geeft.
 
-## 4. Onderdeel 2: de productiemarkering
+## 4. Onderdeel 2: de projectstatus (uitgesteld)
 
-Zonder een begrip van "dit project is echt in gebruik" is er geen regel te formuleren. De cluster kan het niet zijn, zie sectie 1.
+**BESLIST (8.3 en 8.4):** er komt een statusveld met een enum op het project en mogelijk ook op de deployment, maar het wordt in dit plan niet gebruikt. Het krijgt pas betekenis via een nog te bouwen promotieservice die deployments of images door een OTAP-pad loodst; die service wordt eigenaar van het veld en bepaalt wie het mag zetten. Het veld mag alvast toegevoegd worden, ongebruikt.
 
-**Voorstel:** een veld op het project, niet op de deployment. Een project is productie of niet; per deployment differentiëren maakt de regel moeilijk uit te leggen en de UI onrustig.
+**Gevolg voor dit plan, en dat is een echte inperking:** de regel "een deployment verwijderen vraagt bevestiging als het project productie is" kan nu niet gebouwd worden. De verhoogde-rechten-stap start dus zonder status-afhankelijke regels.
 
-**Open beslissing 3:** wat is de vorm? Een boolean `production: true` is het simpelst en het duidelijkst. Een statusveld met meerdere waarden (`ontwikkel`, `acceptatie`, `productie`) is uitdrukkelijker en biedt later ruimte, maar dan moet per waarde vastliggen wat hij betekent, anders wordt het een label zonder gevolg.
-
-**Open beslissing 4:** wie mag die markering zetten en afhalen? Als een projecteigenaar hem zelf kan afhalen, is de bescherming een formaliteit: je zet hem uit, doet je verwijdering, en zet hem terug. Dat pleit ervoor het afhalen zelf een verhoogde actie te maken, of het bij een platformbeheerder te leggen.
-
-Wat het niet is: een deploymentstatus. Slapend, uitgeschakeld en verwijderd-gemarkeerd bestaan al en gaan over de toestand van een deployment, niet over het gewicht van het project.
+Wat wel blijft staan uit het oorspronkelijke onderzoek: de cluster kan die rol niet overnemen, want 115 van de 117 deployments draaien op `odcn-production`. Onderscheiden op cluster zou vrijwel elke handeling een extra stap geven en de maatregel door gewenning waardeloos maken.
 
 ## 5. Onderdeel 3: verhoogde rechten
 
-**Het model.** Een actie declareert dat hij verhoogde rechten vraagt, en onder welke voorwaarde. De voorwaarde is een functie van de actie en de toestand, niet alleen van de rol. Bijvoorbeeld: een deployment verwijderen vraagt bevestiging alleen als het project als productie gemarkeerd staat; iemand beheerder maken vraagt hem altijd.
+**Het eerste doel is niet een destructieve actie maar de breedte van je toegang.** BESLIST (8.7): OTP geldt in eerste instantie alleen voor platformbeheer, oftewel het zien van alle projecten. Dat is het breedste recht in het systeem, het raakt een kleine groep, en het is daarmee zowel het waardevolst om af te schermen als het veiligst om mee te beginnen.
 
-**Vorm.** Een decorator naast de bestaande `requires_sso`, in dezelfde stijl, zodat een route zelf declareert wat hij nodig heeft in plaats van dat een centrale lijst dat bijhoudt. Dat past bij hoe deze codebase het elders doet: de service bezit zijn eigen contract.
+Het aangrijpingspunt is klein en precies aan te wijzen. `UserService.is_platform_admin(email)` (`services/user_service.py:279`) toetst tegen de configuratie `ADMIN_EMAILS`, en wordt op twee plekken gebruikt in `services/project_authorization.py`:
 
-**De geldigheidsduur is de kern van het ontwerp.** Bij elke klik een code vragen is onwerkbaar en leidt tot gewenning; één keer per sessie is te zwak. Voorstel: een verhoogde sessie die kort geldig is (in de orde van vijf tot vijftien minuten) en aan de sessie hangt, zodat een reeks samenhangende handelingen niet telkens onderbroken wordt. **Open beslissing 5:** hoe lang precies, en verlengt elke verhoogde actie de duur of loopt hij vanaf de eerste bevestiging door?
+- `is_user_authorized_for_project` (regel 37): een platformbeheerder is altijd geautoriseerd.
+- `get_user_role_for_project` (regel 57): een platformbeheerder krijgt altijd de rol `admin`.
 
-**Welke acties.** Voorstel als startpunt, waarbij het principe is: onomkeerbaar of rechtenverhogend.
+Met verhoogde rechten worden die twee voorwaardelijk: zonder verse OTP-bevestiging valt een platformbeheerder terug op zijn werkelijke projectlidmaatschap, precies zoals elke andere gebruiker. Dat is een zichtbare gedragswijziging voor die groep en het is de bedoelde.
 
-| Actie | Voorwaarde |
-|---|---|
-| Deployment verwijderen | Alleen bij een productieproject |
-| Project verwijderen | Altijd |
-| Iemand de rol admin of owner geven | Altijd |
-| De productiemarkering afhalen | Altijd (zie open beslissing 4) |
-| OTP van een andere gebruiker resetten | Altijd |
+**Vorm.** Een decorator naast de bestaande `requires_sso` (`core/auth_decorators.py:18`), zodat een actie zelf declareert wat hij nodig heeft in plaats van dat een centrale lijst dat bijhoudt. BESLIST (8.6): dat is niet alleen stijl maar een eis, want later moet per service en per actie te markeren zijn dat er een verhoogde stap nodig is, in een RBAC-achtige vorm die nog niet bestaat. Uitbreiden moet dan een declaratie toevoegen zijn, geen generieke code aanpassen.
 
-**Open beslissing 6:** vallen er ook acties op services onder, bijvoorbeeld het verwijderen van een database of een bijlage? Die zijn onomkeerbaar en raken data, dus het argument geldt, maar het maakt de maatregel breder en de gewenning groter.
+**Geldigheidsduur.** BESLIST (8.5): een kort venster van ongeveer vijf minuten vanaf de bevestiging, dat **niet** meeschuift bij gebruik. Een reeks samenhangende handelingen kan dus achter elkaar, maar wie een half uur later nog iets doet bevestigt opnieuw. Voorspelbaar, en het voorkomt dat de verhoogde toestand bij aaneengesloten gebruik onbeperkt openblijft.
+
+**Later, niet nu.** De volgende acties zijn de logische vervolgstap zodra het mechanisme zich bewezen heeft: iemand de rol admin of owner geven, een project verwijderen, de OTP van een ander resetten, en (zodra de promotieservice er is) een deployment van een productieproject verwijderen.
+
+**Uitdrukkelijk niet in de eerste ronde.** BESLIST (8.6): onomkeerbare service-acties zoals een database of een bijlage verwijderen. Die zijn bovendien minder onomkeerbaar dan ze lijken: een bijlage staat in het projectbestand en dus in de git-historie, en voor een database bestaat de backupweg.
 
 **Wat er niet in moet.** Geen tweede rollenstelsel naast het bestaande. De rol bepaalt nog steeds óf je iets mag; de verhoogde stap bepaalt alleen dat je het nu bewust doet. Dat onderscheid moet in de code zichtbaar blijven, anders groeien er twee autorisatiemodellen naast elkaar.
 
-**Een gebruiker zonder OTP.** Als een verhoogde actie een OTP vereist en de gebruiker heeft er geen, dan is het antwoord niet "sta het toe" maar "richt eerst OTP in". **Open beslissing 7:** geldt dat vanaf dag één, of is er een overgangsperiode waarin de eis alleen geldt voor wie al OTP heeft? Dat eerste is veiliger, het tweede voorkomt dat iedereen tegelijk vastloopt.
+**Een gebruiker zonder OTP.** Omdat de eerste ronde alleen platformbeheer raakt, is de groep klein en overzichtelijk. Een platformbeheerder zonder OTP werkt gewoon door als gewone gebruiker en richt zijn tweede factor in wanneer hij de brede blik nodig heeft.
 
 ## 6. Logging
 
@@ -98,18 +101,17 @@ Een mislukte OTP-poging is bovendien een beveiligingssignaal, geen ruis. Overwee
 
 1. **`totp.py` overnemen en uitbreiden met verificatie** (uit `claude/keycloak-realm-admin-otp`, commit `9b1d8c75`). Los te bouwen en te testen tegen de RFC-testvectoren.
 2. **Migratie `005` en het gebruikersmodel**, plus registreren en herstellen. Hangt aan 1.
-3. **De productiemarkering.** Onafhankelijk van 1 en 2, kan parallel.
-4. **De verhoogde-rechten-decorator**, eerst op één actie zodat het mechanisme zich bewijst voordat het overal komt te staan. Hangt aan 2 en 3.
-5. **Uitrollen over de overige acties uit de tabel.**
+3. **De verhoogde-rechten-decorator, alleen op platformbeheer.** Hangt aan 2. Twee call-sites in `project_authorization.py`, dus klein genoeg om het mechanisme te bewijzen voordat het ergens anders komt te staan.
+4. **Later:** de overige acties (rol wijzigen, project verwijderen, OTP van een ander resetten), en zodra de promotieservice er is de status-afhankelijke deploymentverwijdering.
 
-Onderdeel 1 en 3 kunnen tegelijk. Doe 4 pas als 2 in de sandbox is uitgeprobeerd, inclusief het herstelpad, want dat is waar dit soort maatregelen in de praktijk op stuk loopt.
+Doe stap 3 pas als stap 2 in de sandbox is uitgeprobeerd, inclusief het herstelpad, want dat is waar dit soort maatregelen in de praktijk op stuk loopt.
 
-## 8. De open beslissingen op een rij
+## 8. Genomen beslissingen (2 augustus 2026)
 
-1. Waarmee wordt het OTP-geheim versleuteld: de clustersleutel via AGE, of een aparte sleutel voor gebruikersgeheimen?
-2. Hoe wordt de kip-ei opgelost dat het resetten van andermans OTP zelf een verhoogde actie is?
-3. Is de productiemarkering een boolean of een status met meerdere waarden?
-4. Wie mag de productiemarkering afhalen, en is dat zelf een verhoogde actie?
-5. Hoe lang blijft een verhoogde sessie geldig, en verlengt gebruik hem?
-6. Vallen onomkeerbare service-acties (database, bijlage verwijderen) er ook onder?
-7. Geldt de OTP-eis vanaf dag één voor iedereen, of eerst alleen voor wie er al een heeft?
+1. **AGE met de OPI-sleutel, in envelope-vorm**, met een sleutelversie in de rij zodat roteren later kan.
+2. **Herstelcodes primair; later een gemailde link** (na de mailserver, zoals fase 2 van de invite-service). Tot die tijd geen formeel noodpad: handmatig op verzoek via database- en AGE-toegang. Je eigen OTP instellen vraagt nooit een verhoogde stap.
+3. **De projectstatus wordt een enum op project en mogelijk deployment**, maar wordt hier niet gebruikt.
+4. **Eigendom van dat veld ligt bij een nog te bouwen promotieservice** die deployments of images door een OTAP-pad loodst. Die bepaalt ook wie de status mag zetten.
+5. **Een kort venster van ongeveer vijf minuten dat niet meeschuift** bij gebruik.
+6. **Service-acties (database, bijlage verwijderen) vallen er voorlopig niet onder.** Het mechanisme moet wel zo gebouwd worden dat markeren later een declaratie is en geen wijziging in generieke code; een RBAC-achtige markering op services en acties is toekomstig werk.
+7. **De eerste en voorlopig enige verhoogde actie is platformbeheer**: alle projecten mogen zien vraagt een verhoogde sessie. Destructieve acties komen later.
