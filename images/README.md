@@ -1,5 +1,11 @@
 We created the following images because there was no default solution:
 
+e2e-allservices: minimal, fast-booting test workload that round-trips every platform service it is
+bound to (PostgreSQL incl. extra schemas + RO role, Redis, MinIO/S3, Keycloak/OIDC, PVCs) and reports
+over HTTP (/, /healthz, /status). Used as the sandbox E2E all-services fixture; what it tests is
+scan-driven from OPI's service registry. See images/e2e-allservices/README.md and
+features/e2e-allservices-image.md. Build+publish: `task publish-e2e-allservices`.
+
 cmp-kustomize-sops: used as sidecar in ArgoCD, so we can apply kustomize with sops secrets, where the secret is
 stored in the namespace, similar to how Flux would deploy.
 
