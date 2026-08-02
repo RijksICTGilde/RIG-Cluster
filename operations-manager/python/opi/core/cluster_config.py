@@ -24,6 +24,10 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
+        # Namespace of the CloudNativePG operator, which must reach the dedicated
+        # CNPG cluster's pods to extract instance status; the infra-namespace
+        # NetworkPolicy allows ingress from here.
+        "database_operator_namespace": "cnpg-system",
         "ingress_controller_selector": {
             "namespace": "ingress-nginx",
             "pod_labels": {},
@@ -80,6 +84,10 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
+        # Namespace of the CloudNativePG operator, which must reach the dedicated
+        # CNPG cluster's pods to extract instance status; the infra-namespace
+        # NetworkPolicy allows ingress from here.
+        "database_operator_namespace": "cnpg-system",
         "ingress_controller_selector": {
             "namespace": "ingress-nginx",
             "pod_labels": {},
@@ -130,6 +138,8 @@ CLUSTER_CONFIG = {
         "minio_port": 9000,
         "redis_server": "rig-redis.rig-prd-operations.svc.cluster.local",
         "backup_namespace": "rig-prd-backup",
+        # Namespace of the CloudNativePG operator (see the note in the other clusters).
+        "database_operator_namespace": "cnpg-system",
         "ingress_controller_selector": {
             "namespace": "openshift-ingress",
             "pod_labels": {
@@ -578,6 +588,29 @@ def get_backup_namespace(cluster_name: str) -> str:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["backup_namespace"]
+
+
+def get_database_operator_namespace(cluster_name: str) -> str:
+    """Namespace of the CloudNativePG operator for a cluster.
+
+    A dedicated (project-scoped) PostgreSQL cluster lives in the project's
+    infrastructure namespace, but the CNPG operator that manages it runs in its own
+    namespace and must reach the cluster's pods to extract their instance status.
+    Without an ingress allowance for this namespace the operator reports
+    "Instance Status Extraction Error", the Cluster never becomes Ready and its ArgoCD
+    health stays Unknown. The infra-namespace NetworkPolicy uses this as an allowed peer.
+
+    Defaults to ``cnpg-system`` (the CloudNativePG default install namespace) for
+    clusters that predate this setting.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        CloudNativePG operator namespace name
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("database_operator_namespace", "cnpg-system")
 
 
 def get_ingress_controller_selector(cluster_name: str) -> dict:
