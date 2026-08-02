@@ -40,6 +40,13 @@ whole point is to catch a mis-provisioned secret, an unreachable host, a missing
 grant, a wrong bucket, or an unmounted volume — none of which a
 "credentials-present" check would notice.
 
+Equally important, **what it tests is derived from a scan of the platform's own
+service definitions, not hardcoded.** The image stays in sync with the platform
+automatically: it reads the service catalog / `*Variables` enums (via a
+build-time generated spec) to learn which services exist, every env var each
+injects, and how to exercise it — and asserts *every* injected variable is
+actually present. See "Dynamic, scan-driven coverage" below.
+
 ## Hard platform constraints (verified live — the image MUST satisfy these)
 
 These are not negotiable; a stock image that ignores them CrashLoopBackOffs.
@@ -167,14 +174,63 @@ scratch or distroless-static base). Rationale:
   from `scratch` you must `COPY` a `ca-certificates.crt` yourself. Either works;
   distroless-static is the lower-effort default.
 
+### Dynamic, scan-driven coverage (keep it in sync with the platform — don't hardcode)
+
+The env-var tables above describe **how the platform works today**; they must not
+be baked into the binary as a frozen list, or the image silently rots the moment
+a service adds a variable or a new service is introduced. The platform already
+has a single source of truth for this: the `*Variables` enums and the service
+catalog in `operations-manager/python/opi/services/`. The image's knowledge of
+*what to test* should be **derived from that scan**, so coverage tracks the
+platform automatically.
+
+Concretely:
+
+1. **Build-time scan → spec.** A small generator (a `scripts/` tool, run in the
+   image's build / in CI) imports the service registry and every `*Variables`
+   enum and emits a machine-readable **probe spec** (JSON) grouping, per service:
+   its env-var names (canonical + `APP_` aliases + the dynamic
+   `DATABASE_SCHEMA_{POSTFIX}` pattern), which vars are the connection parameters
+   vs. metadata, which are secret (redact in logs), and the service's **probe
+   kind** (see below). This spec is embedded in the image (Go `embed`). Because it
+   is generated from the enums, adding a var to an existing service means a
+   regenerate, no code change — and a CI check can fail if the committed spec
+   drifts from the enums.
+2. **Probe kinds, not per-service code.** The actual "how do I round-trip this"
+   logic is a small, fixed set of **probe-kind handlers** — `sql`, `redis`, `s3`,
+   `oidc-http`, `path`, `metadata` — one each, reused across services. The scan
+   maps every service to one kind; the runtime dispatches on kind. This is the
+   honest boundary of "dynamic":
+   - **New env var on an existing service / a second instance of a kind →
+     automatic** (the scan picks it up, the existing handler uses it).
+   - **A genuinely new *kind* of resource** (say, a message queue) → one new
+     handler (a few dozen lines) + tag the service with that kind. Everything else
+     stays generic. There is no way around this: you cannot derive "issue an AMQP
+     publish/consume" from an env-var name alone — but you only pay it once per
+     resource *class*, not per service or per variable.
+3. **Assert every injected var — coverage, not just connectivity.** For each bound
+   service the runtime asserts **all** its spec'd env vars are actually present
+   and non-empty (a dropped/renamed var is itself a provisioning bug), logs the
+   set it saw, and reports any missing ones as a FAIL. Connection vars are then
+   used in the real round-trip; metadata vars (`DEPLOYMENT_NAME`, `PUBLIC_HOST`,
+   …) are asserted-present + echoed into `/status`. So "all env vars are tested"
+   is satisfied in two tiers: **presence** for every var, **exercised** for every
+   connection var. This is cheap and worth it.
+
+The per-service check descriptions in "Startup behaviour" below are therefore the
+**behaviour of each probe kind**, not bespoke code paths — the scan decides which
+kind runs for which bound service.
+
 ### Startup behaviour
 
 On start the binary:
 
-1. Reads the environment once. For each service, it is "**bound**" iff its key
-   vars are present (e.g. `DATABASE_SERVER_HOST` set ⇒ check Postgres). A service
+1. Loads the embedded probe spec (from the scan) and reads the environment once.
+   For each service in the spec it is "**bound**" iff its connection vars are
+   present (e.g. `DATABASE_SERVER_HOST` set ⇒ run the `sql` probe). A service
    whose vars are **absent is skipped** (reported `skipped`, not `FAIL`) — the
-   same image must work for a project that binds only some services.
+   same image must work for a project that binds only some services. A service
+   that is bound but **missing some of its spec'd vars is a FAIL**, not a skip.
 2. Runs each bound resource's check **concurrently**, each with a short timeout
    (e.g. 2–3 s) so one slow/broken service can't blow the 5 s budget. Every check
    does a **real write-and-read-back**, not a ping:
@@ -338,6 +394,13 @@ first-class feature, not an afterthought:
    configurable probes (`features/futures/configurable-health-probes.md`) land.
 6. **Retire `rig-world`:** once the new fixture is proven on sandbox, remove
    `rig-world` from the E2E path and note it in the suite docs.
-7. **Build the image, publish it, flip `RUNNABLE_IMAGE`, extend
+7. **Scan generator location + drift guard:** decide where the spec generator
+   lives (`scripts/generate_probe_spec.py` importing the service registry) and add
+   a CI/test that regenerates and diffs it against the committed spec, so a new
+   service or env var that isn't reflected fails the build rather than silently
+   going untested. Confirm the `*Variables` enums + catalog expose enough to
+   derive each service's probe kind (they may need a tiny `probe_kind` hint per
+   service if it can't be inferred from the var shape).
+8. **Build the image, publish it, flip `RUNNABLE_IMAGE`, extend
    `test_sandbox_all_services.py` with the `/status` assertion, and validate
    end-to-end on the sandbox** before calling this done.
