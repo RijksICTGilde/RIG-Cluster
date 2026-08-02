@@ -109,9 +109,13 @@ Hetzelfde als bij een gewone Keycloak-gebruiker: een TOTP-zaad. Normaal genereer
 | Gedeeld master-`admin` (break-glass) | Zelfde weg als het wachtwoord: cluster-secret, AGE-versleuteld in git | Consistent met hoe alle wachtwoorden vandaag bewaard worden. |
 | Eigen master-account per beheerder | Niets op te slaan | Keycloak genereert, de beheerder scant de QR; het zaad staat alleen in Keycloak en op zijn telefoon. |
 
-**Wat dit wel en niet oplevert, en dat hoort in de feature-documentatie.** Voor een account waarvan het wachtwoord op dezelfde plek staat, voegt OTP niets toe tegen iemand die bij die opslag kan: wie het projectbestand kan ontsleutelen of de cluster-secret kan lezen, heeft beide factoren. Wat het wél doet: een uitgelekt of doorgestuurd wachtwoord wordt waardeloos, brute force op de console wordt geblokkeerd, en de MFA-eis voor beheertoegang wordt ingevuld. Dat is genoeg reden om het te doen, maar het is een andere reden dan dubbele beveiliging, en dat verschil moet opgeschreven staan.
+**De twee OTP's in dit plan hebben elk hun eigen doel, en dat hoort in de feature-documentatie zodat niemand ze verwisselt.**
 
-Het einddoel waar dat bezwaar wél verdwijnt is de laatste rij: een eigen master-account per beheerder, waar het zaad nergens gedeeld bewaard wordt. Het service-account maakt dat mogelijk, want daarna is het gedeelde `admin`-account geen dagelijks werkpaard meer.
+De OTP *in Keycloak* beschermt de Keycloak-console: hij maakt een uitgelekt of doorgestuurd adminwachtwoord waardeloos en blokkeert brute force op het inlogscherm. Dat is het doel, en daarvoor is het genoeg dat het zaad op dezelfde manier bewaard wordt als de andere geheimen. Het is uitdrukkelijk niet bedoeld als bescherming tegen iemand die al bij de secret-opslag kan; dat is een ander dreigingsbeeld en daar hoort een andere maatregel bij.
+
+De OTP *in ZAD*, op de gebruikerstabel, is de echte tweede factor. Die hangt aan een persoon en niet aan een gedeeld account, en daar hangen de verhoogde rechten uit sectie 5 aan. Dat is waar "je doet dit bewust en je bent het echt" wordt afgedwongen.
+
+Het einddoel waar ook de Keycloak-kant een persoonsgebonden factor krijgt is de laatste rij van de tabel: een eigen master-account per beheerder, waar Keycloak zelf het zaad genereert en er niets gedeeld bewaard wordt. Het service-account maakt dat mogelijk, want daarna is het gedeelde `admin`-account geen dagelijks werkpaard meer.
 
 ### Het service-account is de voorwaarde
 
