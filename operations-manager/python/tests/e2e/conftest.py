@@ -12,6 +12,7 @@ code changes needed.
 
 import base64
 import contextlib
+import faulthandler
 import json
 import os
 import socket
@@ -73,6 +74,21 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+@pytest.fixture(autouse=True)
+def _quiet_faulthandler_for_e2e() -> None:
+    """Disarm pytest's per-test faulthandler timer for E2E tests.
+
+    The repo sets ``faulthandler_timeout = 60`` globally, which is a useful hang
+    net for the fast unit tests. But sandbox E2E tests legitimately run for
+    minutes (they wait on real ArgoCD sync and CNPG clusters coming up), so that
+    timer fires mid-test and dumps every thread's stack -- pure noise that reads
+    like a failure ("Timeout (0:01:00)!"). pytest arms the timer once for the whole
+    test protocol; cancelling it here (during setup) leaves it disarmed through the
+    long call phase, for E2E only, leaving the stricter unit-test setting untouched.
+    Per-test timeouts still come from the helpers' own bounded waits."""
+    faulthandler.cancel_dump_traceback_later()
 
 
 @pytest.fixture(scope="session")
