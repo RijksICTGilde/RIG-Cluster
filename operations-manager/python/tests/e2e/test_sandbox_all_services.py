@@ -255,7 +255,10 @@ def _fetch_status(namespace: str) -> dict:
     last_error: Exception | None = None
     for pod in pods:
         try:
-            code, body = cluster.http_get_via_port_forward(namespace, pod, 8080, "/status", timeout=60.0)
+            # Short per-attempt cap: this runs inside a poll loop, so a pod that is
+            # not serving yet should fail fast and be retried on the next round
+            # rather than blocking the whole wait on one slow port-forward.
+            code, body = cluster.http_get_via_port_forward(namespace, pod, 8080, "/status", timeout=15.0)
         except Exception as exc:
             last_error = exc
             continue
