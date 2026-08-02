@@ -33,7 +33,9 @@ class TestServiceType:
         assert actual == expected
 
     def test_enum_count(self):
-        assert len(ServiceType) == 17
+        # 18 sinds cross-domain-access en resource-tuning er allebei bij kwamen; die
+        # landden via twee losse branches, die elk 17 verwachtten.
+        assert len(ServiceType) == 18
 
 
 class TestGetAllServices:
