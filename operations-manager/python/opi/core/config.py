@@ -344,28 +344,9 @@ class Settings(BaseSettings):
     LOGWATCHER_WINDOW: str = "now-35m"  # Loki look-back per run (30m cadence + 5m overlap)
     LOGWATCHER_DEDUP_HOURS: float = 6.0  # do not re-alert the same signature within this window
 
-    # Resource tuning configuration
-    RESOURCE_TUNING_WINDOW_HOURS: int = 24  # How far back to look for max usage
-    RESOURCE_TUNING_MEMORY_BUFFER_PERCENT: int = 25  # Add 25% above max observed (request)
-    # Memory limit = observed peak x this factor (burst headroom above the peak).
-    # Limits decay with the peak instead of being frozen; a valid OOM floor is the
-    # lower bound and the OOM watcher is the reactive net for unobserved boot spikes.
-    RESOURCE_TUNING_MEMORY_LIMIT_FACTOR: float = 1.5
-    RESOURCE_TUNING_THRESHOLD_PERCENT: int = 20  # Legacy symmetric threshold (superseded by the asymmetric gate)
-    RESOURCE_TUNING_OOM_FLOOR_MIN_AGE_DAYS: int = 10  # OOM floor may expire after this many days...
-    RESOURCE_TUNING_OOM_FLOOR_STABLE_PERCENT: int = 50  # ...if observed max stays below this % of the floor
-    # Asymmetric deviation gate: react promptly to increases (reliability),
-    # conservatively to decreases (cost only) so we don't churn git/ArgoCD.
-    RESOURCE_TUNING_INCREASE_THRESHOLD: int = 10  # Apply an increase when the request grows by >= this %
-    RESOURCE_TUNING_DECREASE_THRESHOLD: int = 30  # Apply a decrease only when the request shrinks by >= this %
-    # Scheduled fleet-wide auto-tuner (reads VPA where available, else Prometheus)
-    RESOURCE_TUNING_SCHEDULER_ENABLED: bool = True
-    RESOURCE_TUNING_HOUR: int = 1  # Hour (Europe/Amsterdam) of the nightly fleet sweep; before backups (~2am)
-    RESOURCE_TUNING_PACE_SECONDS: int = 15  # Delay after each changed project, to spread pod rollouts
-    # Absolute deadband: ignore a change smaller than this regardless of percentage,
-    # so tiny pods near the floor don't churn on a few MB / a few millicores.
-    RESOURCE_TUNING_MIN_DELTA_MI: int = 16  # memory, in Mi
-    RESOURCE_TUNING_MIN_DELTA_M: int = 10  # CPU, in millicores
+    # Resource tuning parameters moved to the resource-tuning service package
+    # (opi/services/catalog/resource_tuning/config.py): a system service owns its own
+    # config as a validated dict, and these have never been environment-driven.
     # Mirrors the upstream VPA recommender's podMinMemoryMb floor
     # (--pod-recommendation-min-allowed-memory-mb). A target at this value carries
     # no real signal (usage is below the floor), so fall back to Prometheus for the

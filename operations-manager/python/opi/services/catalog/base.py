@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from opi.forms.visualizers.sections import FormSection
     from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.services.catalog.approval import ApprovalSpec
-    from opi.services.services_enums import ServiceType
+    from opi.services.services_enums import HookPoint, ManagerKey, ServiceType
     from opi.utils.secrets import BaseSecret
 
 
@@ -207,6 +207,62 @@ class ManifestContribution:
 
 
 @dataclass
+class ComponentHealth:
+    """Observed pod health for one component after a sync (task 8).
+
+    A uniform, caller-agnostic shape: both the inline deploy path (from
+    ``DeploymentHealthError.failures``) and the fire-and-forget watcher (from
+    ``PodHealthResult``) build this, so an observation hook reads one thing.
+    """
+
+    oom_detected: bool = False
+    crash_loop: bool = False
+    image_pull_error: str | None = None
+
+
+@dataclass
+class DeploymentObservationContext:
+    """Inputs an after-sync observation hook needs (task 8, ``HookPoint.AFTER_SYNC``).
+
+    Mirrors ``ProvisionContext`` / ``ManifestContext``. The hook observes the running
+    deployment's pod health and may mutate ``project_data`` in place, but it never
+    commits: the generic runner does a single ``save_and_commit_project`` for all hook
+    outcomes together, so two services on this hook cannot race to two commits.
+
+    ``component_health`` is keyed by component reference. Fields are added when a hook
+    needs them (as ``ManifestContext`` grew), which is why there is no ``get_manager``
+    yet -- the one hook today (resource-tuning) reaches Prometheus/kubectl through its
+    own business module, not a manager.
+    """
+
+    project_name: str
+    deployment_name: str
+    project_data: dict[str, Any]  # in-memory, mutable
+    cluster: str
+    namespace: str
+    component_health: dict[str, ComponentHealth]
+
+
+@dataclass
+class ObservationOutcome:
+    """What an observation hook reports back (task 8), declarative like
+    ``ManifestContribution``.
+
+    The runner aggregates these across services: it commits once if any hook changed
+    ``project_data``, queues a refresh if any asked, and surfaces failures/notices.
+    """
+
+    #: The hook mutated ``ctx.project_data`` and it should be committed.
+    project_data_changed: bool = False
+    #: A refresh task should be queued for this deployment.
+    requeue_refresh: bool = False
+    #: Blocking messages surfaced as sync failures.
+    failures: list[str] = field(default_factory=list)
+    #: Non-blocking messages for the task progress.
+    notices: list[str] = field(default_factory=list)
+
+
+@dataclass
 class DetailPageSection:
     """A read-only section a service renders on the project-details page (WP2).
 
@@ -296,7 +352,7 @@ class Service(ABC):
     #: Manager key for server-side cleanup on removal (RC-5 Phase 5), or None if the
     #: service has no server-side resources to clean up. Resolved via
     #: RemovalContext.get_manager; replaces the _SERVICE_TYPE_MANAGER_ATTR map.
-    cleanup_manager_key: ClassVar[str | None] = None
+    cleanup_manager_key: ClassVar[ManagerKey | None] = None
 
     #: Per-deployment secret whose name is added to the pod's ``envFrom`` when a
     #: component uses this service (RC-5 Phase 6a), or None. The base
@@ -312,6 +368,11 @@ class Service(ABC):
     #: also fire for their namespace variant (mirroring the provisioning grouping), so
     #: exactly one provider contributes per manager.
     manifest_activated_by: ClassVar[tuple[ServiceType, ...]] = ()
+
+    #: Order of this service at each hook point (task 8); lower runs first, default 100.
+    #: A per-hook map so a service on two hook points does not share one order. Only
+    #: meaningful for a hook the service overrides.
+    hook_order: ClassVar[dict[HookPoint, int]] = {}
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
@@ -482,6 +543,33 @@ class Service(ABC):
         replay-safe), so the generic loop is byte-identical to the old fixed sequence.
         """
         return
+
+    def applies_to(self, project_data: dict[str, Any], deployment_name: str) -> bool:
+        """Whether this service applies to this project/deployment (task 9).
+
+        A ``SYSTEM`` service always runs; a ``USER`` service runs only when the project
+        selected it (project-level or referenced by a component). Generic code filters
+        the hook scan through this, so no caller names a specific service.
+        """
+        from opi.services.services import service_entry_name
+        from opi.services.services_enums import ServiceKind
+
+        if self.definition.kind is ServiceKind.SYSTEM:
+            return True
+        selected = {service_entry_name(entry) for entry in project_data.get("services", []) or []}
+        for component in project_data.get("components", []) or []:
+            for entry in component.get("services", []) or []:
+                selected.add(service_entry_name(entry))
+        return self.service_type.value in selected
+
+    async def observe_deployment(self, ctx: DeploymentObservationContext) -> ObservationOutcome:
+        """Observe a just-synced deployment's running state (task 8, ``AFTER_SYNC``).
+
+        Default no-op, so only services that override it are scanned
+        (``registry.services_for_hook``). A hook may mutate ``ctx.project_data`` but
+        must not commit -- the generic runner does one commit for all outcomes.
+        """
+        return ObservationOutcome()
 
     async def handle_service_removal(self, ctx: RemovalContext) -> dict[str, Any]:
         """Clean up this service's server-side resources when it is removed from a

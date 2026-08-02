@@ -265,6 +265,81 @@ class TestGetResourceHistoryFloor:
         assert floor.floor_mb == 768.0
 
 
+class TestPruningKeepsOomFloor:
+    """Task 5: an auto-tune burst must not evict the OOM floor out of the cap."""
+
+    def test_auto_tune_burst_keeps_newest_oom_watcher_entry(self):
+        handler = ProjectFileHandler()
+        oom_entry = {
+            "timestamp": "2026-01-01T00:00:00+00:00",
+            "limits": {"memory": "512Mi"},
+            "source": "oom-watcher",
+        }
+        data = _make_project_data(deployment_history=[oom_entry])
+
+        # Six auto-tune entries on top of the single oom-watcher entry.
+        for i in range(6):
+            handler.append_deployment_component_resource_history(
+                data,
+                "production",
+                "api",
+                {
+                    "timestamp": f"2026-02-0{i + 1}T00:00:00+00:00",
+                    "limits": {"memory": "64Mi"},
+                    "requests": {"memory": "48Mi"},
+                    "source": "auto-tune",
+                },
+            )
+
+        history = data["deployments"][0]["components"][0]["resources"]["history"]
+        assert any(e["source"] == "oom-watcher" for e in history)
+        floor = handler.get_resource_history_floor(data, "production", "api")
+        assert floor is not None
+        assert floor.floor_mb == 512
+
+
+class TestCompactResourceHistory:
+    """Task 7: compact windows already filled with identical auto-tune noise."""
+
+    def test_collapses_identical_auto_tune_and_keeps_floor(self):
+        # Five identical auto-tune entries (the asses-k2n pr-405..productie run) plus
+        # an older oom-watcher entry.
+        auto = [
+            {
+                "timestamp": ts,
+                "limits": {"memory": "25Mi"},
+                "source": "auto-tune",
+                "deployment": "production",
+                "reason": "Limit kept equal at 25Mi",
+            }
+            for ts in (
+                "2026-01-05T23:03:05",
+                "2026-01-05T23:03:03",
+                "2026-01-05T23:03:02",
+                "2026-01-05T23:03:00",
+                "2026-01-05T23:02:55",
+            )
+        ]
+        oom_entry = {
+            "timestamp": "2026-01-01T00:00:00",
+            "limits": {"memory": "512Mi"},
+            "source": "oom-watcher",
+            "deployment": "production",
+        }
+        data = _make_project_data(deployment_history=[*auto, oom_entry])
+
+        handler = ProjectFileHandler()
+        changed = handler.compact_resource_history(data)
+
+        assert changed is True
+        new_history = data["deployments"][0]["components"][0]["resources"]["history"]
+        assert len([e for e in new_history if e["source"] == "auto-tune"]) == 1
+        assert len([e for e in new_history if e["source"] == "oom-watcher"]) == 1
+        floor = handler.get_resource_history_floor(data, "production", "api")
+        assert floor is not None
+        assert floor.floor_mb == 512
+
+
 # ---------------------------------------------------------------------------
 # get_project_data: deepcopy safety
 # ---------------------------------------------------------------------------
@@ -340,12 +415,14 @@ class TestTuneBaseComponentUpdate:
     @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
     @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
     @pytest.mark.asyncio
-    async def test_base_component_limits_updated_when_increased(
+    async def test_root_component_left_untouched_on_oom(
         self, mock_connector, mock_git_data, mock_pm_cls, mock_reprocess, mock_prefix, mock_min
     ):
-        """When tune raises limits, base component definition should also be raised."""
+        """Route A: an OOM bump writes only the deployment override, never the root.
+
+        The root is the value the user declared; the tuner no longer ratchets it.
+        """
         data = _make_project_data(component_limits="128Mi", component_requests="64Mi")
-        mock_git_connector = AsyncMock()
         mock_git_data.return_value = (data, "test.yaml")
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0, has_oom=True)
         mock_reprocess.return_value = True
@@ -356,10 +433,13 @@ class TestTuneBaseComponentUpdate:
 
         await tune_deployment_resources("test-project", "production")
 
-        # The save receives the modified data - check the base component was updated
         committed_data = mock_pm.save_and_commit_project.call_args[0][0]
-        base_limits = committed_data["components"][0]["resources"]["limits"]["memory"]
-        assert base_limits == "256Mi"  # 128 * 2.0 (< 256Mi range)
+        # Root component untouched, exactly as declared.
+        assert committed_data["components"][0]["resources"]["limits"]["memory"] == "128Mi"
+        assert committed_data["components"][0]["resources"]["requests"]["memory"] == "64Mi"
+        # The deployment override carries the OOM bump, above the declared root.
+        dep_limit = committed_data["deployments"][0]["components"][0]["resources"]["limits"]["memory"]
+        assert int(dep_limit.removesuffix("Mi")) > 128
 
     @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
     @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
@@ -368,12 +448,12 @@ class TestTuneBaseComponentUpdate:
     @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
     @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
     @pytest.mark.asyncio
-    async def test_history_written_to_both_levels(
+    async def test_history_written_at_deployment_level_only(
         self, mock_connector, mock_git_data, mock_pm_cls, mock_reprocess, mock_prefix, mock_min
     ):
-        """Tune should write history entries at both deployment and component level."""
+        """History is written only at the deployment level (Route A), and records
+        both limits and requests (task 6)."""
         data = _make_project_data(component_limits="128Mi", component_requests="64Mi")
-        mock_git_connector = AsyncMock()
         mock_git_data.return_value = (data, "test.yaml")
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0, has_oom=True)
         mock_reprocess.return_value = True
@@ -386,17 +466,16 @@ class TestTuneBaseComponentUpdate:
 
         committed_data = mock_pm.save_and_commit_project.call_args[0][0]
 
-        # Deployment-level history
+        # Deployment-level history, with both limits and requests.
         dep_comp = committed_data["deployments"][0]["components"][0]
         dep_history = dep_comp.get("resources", {}).get("history", [])
         assert len(dep_history) == 1
         assert dep_history[0]["source"] == "oom-watcher"
+        assert "memory" in dep_history[0]["limits"]
+        assert "memory" in dep_history[0]["requests"]
 
-        # Component-level history (includes deployment name)
-        comp_history = committed_data["components"][0]["resources"].get("history", [])
-        assert len(comp_history) == 1
-        assert comp_history[0]["source"] == "oom-watcher"
-        assert comp_history[0]["deployment"] == "production"
+        # No root-level history is written any more.
+        assert "history" not in committed_data["components"][0]["resources"]
 
     @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
     @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
@@ -416,14 +495,15 @@ class TestTuneBaseComponentUpdate:
                 "source": "oom-watcher",
             }
         ]
+        # Root request is low (64Mi) so the request may still drop; a high declared
+        # root request would floor it (task 4) and defeat this scenario.
         data = _make_project_data(
             component_limits="512Mi",
-            component_requests="256Mi",
+            component_requests="64Mi",
             deployment_limits="512Mi",
             deployment_requests="256Mi",
             deployment_history=oom_history,
         )
-        mock_git_connector = AsyncMock()
         mock_git_data.return_value = (data, "test.yaml")
         # Low usage - tuner would normally recommend ~150Mi
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=100, avg_mb=80)
@@ -436,11 +516,13 @@ class TestTuneBaseComponentUpdate:
         result = await tune_deployment_resources("test-project", "production")
 
         # Limit is held at the 512Mi floor, but the request drops to usage+buffer
+        # (bounded below by the declared root request of 64Mi).
         assert len(result.changes) == 1
         committed_data = mock_pm.save_and_commit_project.call_args[0][0]
         dep_resources = committed_data["deployments"][0]["components"][0]["resources"]
         assert dep_resources["limits"]["memory"] == "512Mi"
-        assert int(dep_resources["requests"]["memory"].removesuffix("Mi")) < 256
+        req = int(dep_resources["requests"]["memory"].removesuffix("Mi"))
+        assert 64 <= req < 256
 
     @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
     @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
@@ -460,16 +542,15 @@ class TestTuneBaseComponentUpdate:
                 "source": "oom-watcher",
             }
         ]
-        # Coupled limit/request: an expired floor lets the limit follow the
-        # request down (a frozen, differing limit would stay put regardless).
+        # Low declared root (128Mi) so downward tuning has room below the 512Mi
+        # override; the declared root is the floor the override cannot cross.
         data = _make_project_data(
-            component_limits="512Mi",
-            component_requests="512Mi",
+            component_limits="128Mi",
+            component_requests="128Mi",
             deployment_limits="512Mi",
             deployment_requests="512Mi",
             deployment_history=oom_history,
         )
-        mock_git_connector = AsyncMock()
         mock_git_data.return_value = (data, "test.yaml")
         # Stable low usage, far below the floor (100 < 50% of 512)
         mock_connector.return_value = _mock_prometheus_with_usage(max_mb=100, avg_mb=80)
@@ -484,7 +565,131 @@ class TestTuneBaseComponentUpdate:
         assert len(result.changes) == 1
         committed_data = mock_pm.save_and_commit_project.call_args[0][0]
         dep_resources = committed_data["deployments"][0]["components"][0]["resources"]
-        assert int(dep_resources["limits"]["memory"].removesuffix("Mi")) < 512
+        lim = int(dep_resources["limits"]["memory"].removesuffix("Mi"))
+        # Tuned down from 512, but never below the declared root (128Mi).
+        assert 128 <= lim < 512
+
+
+def _kubectl_unavailable():
+    """A kubectl mock whose deployment reports Available=False (the OOM state)."""
+    mock = MagicMock()
+    mock.get_deployment_conditions = AsyncMock(
+        return_value=[{"type": "Available", "status": "False", "reason": "MinimumReplicasUnavailable"}]
+    )
+    mock.get_vpa_recommendation = AsyncMock(return_value=None)
+    return mock
+
+
+class TestOomPathBypassesAvailabilityGuard:
+    """Task 1 + Task 11: the availability guard blocks the nightly sweep but not the
+    OOM path. Reproduces the pr-450 field case (45Mi limit, deployment
+    Available=False with reason MinimumReplicasUnavailable, no Prometheus data, OOM
+    detected)."""
+
+    @patch("opi.services.resource_tuning_service.supports_vpa", return_value=False)
+    @patch("opi.services.resource_tuning_service.KubectlConnector")
+    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
+    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
+    @patch("opi.services.resource_tuning_service.trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.ProjectManager")
+    @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_nightly_sweep_skips_unavailable_deployment(
+        self, mock_connector, mock_git_data, mock_pm_cls, mock_reprocess, mock_prefix, mock_min, mock_kubectl, mock_vpa
+    ):
+        data = _make_project_data(component_limits="45Mi", component_requests="45Mi")
+        mock_git_data.return_value = (data, "test.yaml")
+        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0, has_oom=True)
+        mock_kubectl.isConnected = True
+        mock_kubectl.return_value = _kubectl_unavailable()
+
+        mock_pm = MagicMock()
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
+
+        # No oom_components -> nightly path -> availability guard fires -> skip.
+        result = await tune_deployment_resources("test-project", "production")
+
+        assert result.changes == []
+        mock_pm.save_and_commit_project.assert_not_called()
+
+    @patch("opi.services.resource_tuning_service.supports_vpa", return_value=False)
+    @patch("opi.services.resource_tuning_service.KubectlConnector")
+    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=25)
+    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
+    @patch("opi.services.resource_tuning_service.trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.ProjectManager")
+    @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_oom_path_bypasses_guard_and_bumps(
+        self, mock_connector, mock_git_data, mock_pm_cls, mock_reprocess, mock_prefix, mock_min, mock_kubectl, mock_vpa
+    ):
+        data = _make_project_data(component_limits="45Mi", component_requests="45Mi")
+        mock_git_data.return_value = (data, "test.yaml")
+        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=0, avg_mb=0, has_oom=True)
+        mock_kubectl.isConnected = True
+        mock_kubectl.return_value = _kubectl_unavailable()
+
+        mock_pm = MagicMock()
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
+
+        result = await tune_deployment_resources("test-project", "production", oom_components=["api"])
+
+        assert len(result.changes) == 1
+        committed = mock_pm.save_and_commit_project.call_args[0][0]
+        # Root component untouched (Route A).
+        assert committed["components"][0]["resources"]["limits"]["memory"] == "45Mi"
+        dep_res = committed["deployments"][0]["components"][0]["resources"]
+        lim = int(dep_res["limits"]["memory"].removesuffix("Mi"))
+        req = int(dep_res["requests"]["memory"].removesuffix("Mi"))
+        # 3x OOM bump off the 45Mi limit (>= 135Mi), with the request/limit margin held.
+        assert lim >= 135
+        assert lim >= req + 64
+        # Deployment-level oom-watcher history, recording both limits and requests.
+        history = dep_res["history"]
+        assert history[0]["source"] == "oom-watcher"
+        assert "memory" in history[0]["limits"]
+        assert "memory" in history[0]["requests"]
+
+
+class TestLimitRequestMargin:
+    """Veldgeval headscale: the written memory limit stays measurably above the
+    request even when the measurement is tiny (limit == request kills on the first
+    spike)."""
+
+    @patch("opi.services.resource_tuning_service.supports_vpa", return_value=False)
+    @patch("opi.services.resource_tuning_service.KubectlConnector")
+    @patch("opi.services.resource_tuning_service.get_min_memory_limit_mi", return_value=10)
+    @patch("opi.services.resource_tuning_service.get_prefixed_namespace", return_value="rig-prd-ns")
+    @patch("opi.services.resource_tuning_service.trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.ProjectManager")
+    @patch("opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock)
+    @patch("opi.services.resource_tuning_service.get_metrics_connector", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_limit_kept_above_request_at_tiny_usage(
+        self, mock_connector, mock_git_data, mock_pm_cls, mock_reprocess, mock_prefix, mock_min, mock_kubectl, mock_vpa
+    ):
+        # Measured max 15Mi (headscale), no OOM, low declared root.
+        data = _make_project_data(component_limits="25Mi", component_requests="25Mi")
+        mock_git_data.return_value = (data, "test.yaml")
+        mock_connector.return_value = _mock_prometheus_with_usage(max_mb=15, avg_mb=15)
+        mock_kubectl.isConnected = False  # skip guard + VPA
+
+        mock_pm = MagicMock()
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
+
+        result = await tune_deployment_resources("test-project", "production")
+
+        assert len(result.changes) == 1
+        dep_res = mock_pm.save_and_commit_project.call_args[0][0]["deployments"][0]["components"][0]["resources"]
+        lim = int(dep_res["limits"]["memory"].removesuffix("Mi"))
+        req = int(dep_res["requests"]["memory"].removesuffix("Mi"))
+        assert lim > req
+        assert lim >= req + 64
 
 
 # ---------------------------------------------------------------------------

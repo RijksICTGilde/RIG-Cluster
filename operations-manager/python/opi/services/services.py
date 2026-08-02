@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from opi.services.services_enums import ServiceType
+from opi.services.services_enums import CleanupStrategy, ServiceKind, ServiceScope, ServiceType
 
 if TYPE_CHECKING:
     from opi.services.catalog.base import ConfigLayer
@@ -166,13 +166,18 @@ class ServiceDefinition:
     description: str
     icon: str
     color: str
-    scope: str  # "component" or "deployment"
+    scope: ServiceScope
     variables: list[VariableDefinition] = field(default_factory=list)
     secret_class: str | None = None
     # TODO: specific definitions should not be here
     storage_config: dict[str, Any] | None = None
     component_flag: str | None = None
     hidden: bool = False
+    kind: ServiceKind = ServiceKind.USER
+    """Whether a project chooses this service (``USER``) or the platform always runs it
+    (``SYSTEM``). Distinct from ``hidden``: ``hidden`` means "not in the service picker"
+    (a namespace variant OPI selects itself), ``SYSTEM`` means "always on, never in the
+    project file". A ``SYSTEM`` service is also kept out of the picker."""
     help_template: str | None = None
     """Optional Jinja2 template name (relative to ``templates/help/``) with a
     long-form explanation shown in a popup when the user clicks the info icon."""
@@ -187,16 +192,16 @@ class ServiceDefinition:
     Used for both UI behavior (auto-select, lock) and submit-time
     validation.
     """
-    cleanup_strategy: str = "none"
+    cleanup_strategy: CleanupStrategy = CleanupStrategy.NONE
     """How server-side resources are cleaned up when the service is removed.
 
-    - ``"none"``      - no server-side resources to clean up (e.g. storage PVCs,
-                         ingress config).  This is the default.
-    - ``"immediate"``  - ephemeral / easily recreatable resources are deleted
-                         right away (e.g. Redis ACL users, Keycloak clients).
-    - ``"deferred"``   - persistent data resources are marked for deferred
-                         deletion so they can be recovered (e.g. databases,
-                         MinIO buckets).
+    - ``NONE``      - no server-side resources to clean up (e.g. storage PVCs,
+                       ingress config).  This is the default.
+    - ``IMMEDIATE``  - ephemeral / easily recreatable resources are deleted
+                       right away (e.g. Redis ACL users, Keycloak clients).
+    - ``DEFERRED``   - persistent data resources are marked for deferred
+                       deletion so they can be recovered (e.g. databases,
+                       MinIO buckets).
     """
     backup_label: str | None = None
     """Short label used to identify this service in backup/restore flows.
@@ -500,7 +505,7 @@ class ServiceAdapter:
             description="Maak de applicatie toegankelijk via het publieke internet",
             icon="wereldbol",
             color="hemelblauw",
-            scope="component",
+            scope=ServiceScope.COMPONENT,
             variables=[var.value for var in WebVariables],
         ),
         ServiceType.KEYCLOAK: ServiceDefinition(
@@ -508,29 +513,29 @@ class ServiceAdapter:
             description="Configureerbare Keycloak authenticatie met ondersteuning voor SSO en lokale gebruikers",
             icon="sleutel",
             color="groen",
-            scope="component",
+            scope=ServiceScope.COMPONENT,
             secret_class="KeycloakSecret",
             variables=[var.value for var in KeycloakVariables],
             requires=["services/publish-on-web"],
-            cleanup_strategy="immediate",
+            cleanup_strategy=CleanupStrategy.IMMEDIATE,
         ),
         ServiceType.PERSISTENT_STORAGE: ServiceDefinition(
             name="Permanente opslag",
             description="Gegevens blijven bewaard tijdens de levenscyclus van de applicatie",
             icon="server",
             color="grijs-600",
-            scope="component",
+            scope=ServiceScope.COMPONENT,
             backup_label="pvc",
             storage_config={"name": "data", "type": "persistent", "size": "1Gi", "mount-path": "/data"},
             variables=[var.value for var in StorageVariables if var.value.name == "DATA_PATH"],
-            cleanup_strategy="deferred",
+            cleanup_strategy=CleanupStrategy.DEFERRED,
         ),
         ServiceType.TEMP_STORAGE: ServiceDefinition(
             name="Tijdelijke schijfruimte",
             description="Gegevens worden niet bewaard tijdens de levenscyclus van de applicatie",
             icon="klok",
             color="oranje",
-            scope="component",
+            scope=ServiceScope.COMPONENT,
             storage_config={"name": "temp", "type": "ephemeral", "size": "500Mi", "mount-path": "/tmp"},
             variables=[var.value for var in StorageVariables if var.value.name == "TEMP_PATH"],
         ),
@@ -539,10 +544,10 @@ class ServiceAdapter:
             description="Database service voor applicaties",
             icon="database",
             color="donkerblauw",
-            scope="deployment",
+            scope=ServiceScope.DEPLOYMENT,
             secret_class="DatabaseSecret",
             variables=[var.value for var in DatabaseVariables],
-            cleanup_strategy="deferred",
+            cleanup_strategy=CleanupStrategy.DEFERRED,
             backup_label="database",
         ),
         ServiceType.NAMESPACE_POSTGRESQL_DATABASE: ServiceDefinition(
@@ -550,11 +555,11 @@ class ServiceAdapter:
             description="Dedicated PostgreSQL database cluster voor project",
             icon="database",
             color="donkerblauw",
-            scope="deployment",
+            scope=ServiceScope.DEPLOYMENT,
             secret_class="DatabaseSecret",
             variables=[var.value for var in DatabaseVariables],
             hidden=True,
-            cleanup_strategy="deferred",
+            cleanup_strategy=CleanupStrategy.DEFERRED,
             backup_label="database",
         ),
         ServiceType.MINIO_STORAGE: ServiceDefinition(
@@ -562,10 +567,10 @@ class ServiceAdapter:
             description="S3-compatible object storage voor documenten, afbeeldingen en grote bestanden",
             icon="map",
             color="rood",
-            scope="deployment",
+            scope=ServiceScope.DEPLOYMENT,
             secret_class="MinIOSecret",
             variables=[var.value for var in MinIOVariables],
-            cleanup_strategy="deferred",
+            cleanup_strategy=CleanupStrategy.DEFERRED,
             backup_label="minio",
         ),
         ServiceType.REDIS: ServiceDefinition(
@@ -573,38 +578,40 @@ class ServiceAdapter:
             description="Shared Redis cache en message broker voor caching en Celery task queues",
             icon="zandloper",
             color="rood",
-            scope="deployment",
+            scope=ServiceScope.DEPLOYMENT,
             secret_class="RedisSecret",
             variables=[var.value for var in RedisVariables],
-            cleanup_strategy="immediate",
+            cleanup_strategy=CleanupStrategy.IMMEDIATE,
         ),
         ServiceType.NAMESPACE_REDIS: ServiceDefinition(
             name="Namespace Redis Cache",
             description="Dedicated Redis instance per namespace voor caching en Celery task queues",
             icon="zandloper",
             color="rood",
-            scope="deployment",
+            scope=ServiceScope.DEPLOYMENT,
             secret_class="RedisSecret",
             variables=[var.value for var in RedisVariables],
             hidden=True,
-            cleanup_strategy="immediate",
+            cleanup_strategy=CleanupStrategy.IMMEDIATE,
         ),
         ServiceType.PLATFORM: ServiceDefinition(
             name="Platform",
             description="Automatisch beschikbare platform variabelen",
             icon="info",
             color="grijs-600",
-            scope="component",
+            scope=ServiceScope.COMPONENT,
             secret_class="PlatformSecret",
             variables=[var.value for var in PlatformVariables],
-            hidden=True,
+            # Always on, never chosen by a project -> a system service. kind=SYSTEM
+            # also keeps it out of the picker, so an explicit hidden is not needed.
+            kind=ServiceKind.SYSTEM,
         ),
         ServiceType.ATTACHMENTS: ServiceDefinition(
             name="Bijlagen",
             description="Geuploade bestanden (bijv. certificaten) gekoppeld als bestand of env-var aan een component",
             icon="map",
             color="grijs-600",
-            scope="component",
+            scope=ServiceScope.COMPONENT,
             variables=[],
         ),
         ServiceType.AUTHORIZATION_WALL: ServiceDefinition(
@@ -612,7 +619,7 @@ class ServiceAdapter:
             description="OAuth2-proxy sidecar die Keycloak OIDC authenticatie afdwingt voor webapplicaties",
             icon="schild-met-vinkje-erop",
             color="groen",
-            scope="component",
+            scope=ServiceScope.COMPONENT,
             help_template="authorization-wall.html.j2",
             variables=[],
             requires=[
@@ -626,7 +633,7 @@ class ServiceAdapter:
             description="Zorgt dat prometheus scraping op het component wordt ingeschakeld",
             icon="grafiek",
             color="hemelblauw",
-            scope="component",
+            scope=ServiceScope.COMPONENT,
             variables=[v.value for v in MetricsScraperVariables],
         ),
         ServiceType.SLEEP_MODE: ServiceDefinition(
@@ -637,7 +644,7 @@ class ServiceAdapter:
             ),
             icon="klok",
             color="donkerblauw",
-            scope="deployment",
+            scope=ServiceScope.DEPLOYMENT,
             # Selectable in the wizard with its own project-level config section
             # (SleepModeService.config_form_section). A cluster-wide default still
             # applies, and `match` scopes which deployments it affects.
@@ -656,12 +663,26 @@ class ServiceAdapter:
             color="lichtblauw",
             # scope is not meaningful here (an invite provisions nothing), but the field is
             # required; "component" matches keycloak/attachments.
-            scope="component",
+            scope=ServiceScope.COMPONENT,
             variables=[],
             # Path-syntax requirement: auto-selects keycloak, locks it in the UI, and validates
             # at submit that keycloak is present. An invite assigns a realm role, so keycloak
             # must exist. Do NOT build a second dependency mechanism next to this.
             requires=["services/keycloak"],
+        ),
+        ServiceType.RESOURCE_TUNING: ServiceDefinition(
+            name="Resource tuning",
+            description=(
+                "Systeemdienst: houdt draaiende deployments in de gaten na een sync en hoogt "
+                "het geheugen op van een component dat OOM'd. Draait altijd, is niet kiesbaar."
+            ),
+            icon="grafiek",
+            color="grijs-600",
+            scope=ServiceScope.DEPLOYMENT,
+            variables=[],
+            # Always on, never in the project file -> a system service (kind=SYSTEM also
+            # keeps it out of the picker, so no explicit hidden is needed).
+            kind=ServiceKind.SYSTEM,
         ),
         ServiceType.HEALTH_CHECK: ServiceDefinition(
             name="Health check",
@@ -673,7 +694,7 @@ class ServiceAdapter:
             ),
             icon="stethoscoop",
             color="rood",
-            scope="component",
+            scope=ServiceScope.COMPONENT,
             variables=[],
         ),
     }
@@ -730,13 +751,13 @@ class ServiceAdapter:
     def is_component_service(cls, service: ServiceType) -> bool:
         """Check if a service is component-specific."""
         definition = cls.get_service_definition(service)
-        return definition is not None and definition.scope == "component"
+        return definition is not None and definition.scope is ServiceScope.COMPONENT
 
     @classmethod
     def is_deployment_service(cls, service: ServiceType) -> bool:
         """Check if a service is deployment-shared."""
         definition = cls.get_service_definition(service)
-        return definition is not None and definition.scope == "deployment"
+        return definition is not None and definition.scope is ServiceScope.DEPLOYMENT
 
     @classmethod
     def get_component_flag(cls, service: ServiceType) -> str | None:
@@ -796,7 +817,7 @@ class ServiceAdapter:
         return [
             svc_type
             for svc_type, definition in cls.SERVICE_DEFINITIONS.items()
-            if definition.cleanup_strategy != "none"
+            if definition.cleanup_strategy is not CleanupStrategy.NONE
         ]
 
     @classmethod

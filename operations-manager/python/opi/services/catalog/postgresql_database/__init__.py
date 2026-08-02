@@ -6,7 +6,7 @@ import logging
 
 from opi.services.catalog.base import ManifestContext, ProvisionContext, SecretFileSpec, Service
 from opi.services.catalog.postgresql_database.config_model import PostgresqlDatabaseConfig
-from opi.services.services_enums import ServiceType
+from opi.services.services_enums import ManagerKey, ServiceType
 from opi.utils.secrets import DatabaseSecret
 
 logger = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ class PostgresqlDatabaseService(Service):
     service_type = ServiceType.POSTGRESQL_DATABASE
     config_model = PostgresqlDatabaseConfig
     config_schema_version = "1.0"
-    cleanup_manager_key = "database"
+    cleanup_manager_key = ManagerKey.DATABASE
     provision_order = 10
     manifest_secret_class = DatabaseSecret
     manifest_order = 10

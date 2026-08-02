@@ -13,13 +13,13 @@ from typing import Any
 from opi.services.catalog.base import ConfigLayer, ProvisionContext, Service, config_path
 from opi.services.catalog.keycloak.config_model import KeycloakConfig
 from opi.services.services import service_entry_name
-from opi.services.services_enums import ServiceType
+from opi.services.services_enums import ManagerKey, ServiceType
 from opi.utils.secrets import KeycloakSecret
 
 
 class KeycloakService(Service):
     service_type = ServiceType.KEYCLOAK
-    cleanup_manager_key = "keycloak"
+    cleanup_manager_key = ManagerKey.KEYCLOAK
     config_model = KeycloakConfig
     config_schema_version = "1.0"
     config_section_id = "keycloak-config"
