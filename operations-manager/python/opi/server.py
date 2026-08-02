@@ -174,7 +174,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                     logger.error("Failed to start backup scheduler: %s", e)
 
             # Start resource tuning scheduler if enabled
-            if settings.RESOURCE_TUNING_SCHEDULER_ENABLED:
+            from opi.services.catalog.resource_tuning.config import resource_tuning_config
+
+            if resource_tuning_config().scheduler_enabled:
                 try:
                     from opi.core.resource_tuning_scheduler import ResourceTuningScheduler
 

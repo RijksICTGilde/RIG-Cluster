@@ -12,12 +12,12 @@ from typing import Any
 from opi.services.catalog.base import ConfigLayer, Service, config_path
 from opi.services.catalog.namespace_postgres.config_model import NamespacePostgresConfig
 from opi.services.services import service_entry_name
-from opi.services.services_enums import ServiceType
+from opi.services.services_enums import ManagerKey, ServiceType
 
 
 class NamespacePostgresqlDatabaseService(Service):
     service_type = ServiceType.NAMESPACE_POSTGRESQL_DATABASE
-    cleanup_manager_key = "database"
+    cleanup_manager_key = ManagerKey.DATABASE
     config_model = NamespacePostgresConfig
     config_schema_version = "1.0"
     config_section_id = "postgresql-config"

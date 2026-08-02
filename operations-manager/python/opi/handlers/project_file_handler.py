@@ -205,6 +205,48 @@ def _apply_flat_resources(target: dict[str, Any], resources: dict[str, str]) -> 
         res["limits"]["cpu"] = resources["limits_cpu"]
 
 
+def _prune_resource_history(history: list[dict[str, Any]], max_entries: int) -> list[dict[str, Any]]:
+    """Prune a newest-first history to ``max_entries``, always keeping the newest
+    ``oom-watcher`` entry.
+
+    The most recent oom-watcher entry is the OOM floor
+    (``get_resource_history_floor``); a burst of auto-tune entries must not push it
+    out of the cap and silently drop the floor. When it falls outside the cap it
+    replaces the oldest kept entry, so the total still respects ``max_entries``.
+    """
+    if len(history) <= max_entries:
+        return history
+    kept = history[:max_entries]
+    if any(entry.get("source") == "oom-watcher" for entry in kept):
+        return kept
+    for entry in history:  # newest-first: first match is the newest oom-watcher
+        if entry.get("source") == "oom-watcher":
+            return [*kept[:-1], entry]
+    return kept
+
+
+def _compact_resource_history_list(history: list[dict[str, Any]], max_entries: int) -> list[dict[str, Any]]:
+    """Collapse consecutive identical auto-tune entries, then prune.
+
+    A run of adjacent ``auto-tune`` entries with the same ``limits`` and ``requests``
+    is folded to its newest member (the older duplicates carry no information). The
+    newest oom-watcher entry is always preserved (``_prune_resource_history``). An
+    oom-watcher entry between two auto-tune entries breaks the run.
+    """
+    compacted: list[dict[str, Any]] = []
+    for entry in history:  # newest-first
+        if (
+            entry.get("source") == "auto-tune"
+            and compacted
+            and compacted[-1].get("source") == "auto-tune"
+            and compacted[-1].get("limits") == entry.get("limits")
+            and compacted[-1].get("requests") == entry.get("requests")
+        ):
+            continue  # identical older duplicate; the newer one is already kept
+        compacted.append(entry)
+    return _prune_resource_history(compacted, max_entries)
+
+
 def _migrate_flat_key_before_apply(res: dict[str, Any], key: str) -> None:
     """Migrate a legacy flat resource key into requests/limits if present.
 
@@ -1339,7 +1381,7 @@ class ProjectFileHandler:
                     comp["resources"] = {}
                 history = comp["resources"].get("history", [])
                 history.insert(0, entry)
-                comp["resources"]["history"] = history[:max_entries]
+                comp["resources"]["history"] = _prune_resource_history(history, max_entries)
                 return True
         return False
 
@@ -1378,9 +1420,42 @@ class ProjectFileHandler:
                     comp["resources"] = {}
                 history = comp["resources"].get("history", [])
                 history.insert(0, entry)
-                comp["resources"]["history"] = history[:max_entries]
+                comp["resources"]["history"] = _prune_resource_history(history, max_entries)
                 return True
         return False
+
+    def compact_resource_history(self, project_data: dict[str, Any], max_entries: int = 5) -> bool:
+        """Compact every component's resource history in place (task 7).
+
+        Folds runs of identical consecutive auto-tune entries and prunes to
+        ``max_entries`` while always keeping the newest oom-watcher entry, at both the
+        component-definition and deployment-component levels. Cleans windows that
+        already filled with auto-tune noise; the service calls this just before it
+        commits an already-needed change, so it costs no extra commit and never
+        rewrites a project that has nothing else to change.
+
+        Returns True if any history list was modified.
+        """
+        changed = False
+
+        def compact(resources: Any) -> None:
+            nonlocal changed
+            if not isinstance(resources, dict):
+                return
+            history = resources.get("history")
+            if not history:
+                return
+            new_history = _compact_resource_history_list(history, max_entries)
+            if new_history != history:
+                resources["history"] = new_history
+                changed = True
+
+        for comp in project_data.get("components", []):
+            compact(comp.get("resources"))
+        for dep in project_data.get("deployments", []):
+            for comp in dep.get("components", []):
+                compact(comp.get("resources"))
+        return changed
 
     def get_resource_history_floor(
         self,

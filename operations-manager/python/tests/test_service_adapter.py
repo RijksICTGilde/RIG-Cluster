@@ -2,7 +2,7 @@
 
 import pytest
 from opi.services.services import ServiceAdapter, ServiceDefinition, VariableDefinition
-from opi.services.services_enums import ServiceType
+from opi.services.services_enums import ServiceScope, ServiceType
 
 
 class TestServiceType:
@@ -26,12 +26,13 @@ class TestServiceType:
             "attachments",
             "sleep-mode",
             "invite",
+            "resource-tuning",
         }
         actual = {st.value for st in ServiceType}
         assert actual == expected
 
     def test_enum_count(self):
-        assert len(ServiceType) == 16
+        assert len(ServiceType) == 17
 
 
 class TestGetAllServices:
@@ -55,7 +56,7 @@ class TestGetServiceDefinition:
 
     def test_publish_on_web_definition(self):
         defn = ServiceAdapter.get_service_definition(ServiceType.PUBLISH_ON_WEB)
-        assert defn.scope == "component"
+        assert defn.scope is ServiceScope.COMPONENT
         assert defn.name == "Publiceren op het web"
 
     def test_publish_on_web_exposes_public_host_and_hostname(self):
@@ -70,7 +71,7 @@ class TestGetServiceDefinition:
 
     def test_postgresql_definition(self):
         defn = ServiceAdapter.get_service_definition(ServiceType.POSTGRESQL_DATABASE)
-        assert defn.scope == "deployment"
+        assert defn.scope is ServiceScope.DEPLOYMENT
         assert defn.secret_class == "DatabaseSecret"
 
     def test_every_service_has_definition(self):
@@ -79,7 +80,7 @@ class TestGetServiceDefinition:
             assert defn is not None
             assert defn.name
             assert defn.description
-            assert defn.scope in ("component", "deployment")
+            assert defn.scope in (ServiceScope.COMPONENT, ServiceScope.DEPLOYMENT)
 
 
 class TestGetServiceByValue:
