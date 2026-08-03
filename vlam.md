@@ -22,6 +22,9 @@ verkeer niet lezen.
 
 ## De RON-koppeling
 
+De koppeling zelf, inclusief het gekoppelde IP-blok en de ingresskant, staat in
+`docs/ron-koppeling.md`. Hieronder alleen wat deze gateway ervan gebruikt.
+
 Egress naar RON wordt gekozen met een **annotatie op de namespace**, geen label:
 
 ```
