@@ -164,6 +164,27 @@ class AttachmentIdValidator:
         return []
 
 
+class SchemaPostfixValidator:
+    """Validates an extra-schema postfix (RC-17): lowercase letters, digits and
+    underscores, starting with a letter.
+
+    The postfix becomes part of a PostgreSQL schema name
+    (``{project}_{deployment}_{postfix}``) and, uppercased, an env-variable name
+    (``DATABASE_SCHEMA_{POSTFIX}``), so both must be valid. This is the per-field format
+    check; uniqueness, the 63-char full-name limit and variable-name collisions are the
+    section enforcer's job (they need the project and deployment names).
+    """
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return ["Postfix is verplicht"]
+        if not re.match(r"^[a-z][a-z0-9_]*$", str(value)):
+            return [
+                "Gebruik alleen kleine letters, cijfers en underscores, beginnend met een letter (bijv. 'rapportage')"
+            ]
+        return []
+
+
 class InviteKeyValidator:
     """Validates an invite key: letters, digits, hyphens and underscores, starting with a
     letter or digit, 3 to 64 characters.

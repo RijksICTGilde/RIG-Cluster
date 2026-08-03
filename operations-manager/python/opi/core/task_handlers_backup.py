@@ -25,6 +25,7 @@ from opi.manager.backup import (
     create_database_backup_manager,
 )
 from opi.services import ServiceType
+from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.utils.naming import generate_backup_run_id
 from opi.utils.secrets import DatabaseSecret, MinIOSecret
 
@@ -121,9 +122,10 @@ async def handle_backup(
                 generation = project_file_handler.get_database_generation(
                     project_data, deployment_name, component_name, reference_name
                 )
-                uses_namespace_db = project_file_handler.deployment_uses_service(
-                    project_data, deployment_name, [ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value]
-                )
+                # Dedicated placement (a project-owned cluster) is a project-wide
+                # decision: namespace-postgresql-database or postgresql-database with
+                # scope: project (RC-17).
+                uses_namespace_db = project_uses_dedicated_postgres(project_data)
                 source_type = "namespace" if uses_namespace_db else "shared"
 
                 db_result = await database_backup_manager.backup_database(

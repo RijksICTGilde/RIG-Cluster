@@ -446,6 +446,72 @@ class UniqueInviteKeyEnforcer:
         return value
 
 
+class UniqueSchemaEnforcer:
+    """Validates the extra-schema list of the postgresql-database service (RC-17).
+
+    Per the plan's "naming fails loudly" invariant, every way a schema list can be
+    unsafe is caught here, at save time, with a ``FieldError`` on the offending postfix:
+
+    * a duplicate postfix (two schemas with the same name);
+    * a postfix whose ``DATABASE_SCHEMA_{POSTFIX}`` variable collides with one the
+      database service already exposes (e.g. ``db`` -> ``DATABASE_SCHEMA_DB``);
+    * a full name ``{project}_{deployment}_{postfix}`` over PostgreSQL's 63-char limit
+      for any current deployment (two long postfixes must not truncate to the same
+      name, so the whole name is checked, not the postfix alone).
+
+    Schemas marked for deletion are skipped: they are on their way out, so they must not
+    block a save. The section is only reached when the service carries a schema list, so
+    an empty list returns immediately.
+    """
+
+    _PATH = "services/postgresql-database/config/schemas"
+
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+        from opi.forms.editables.service_path import smart_get_value
+        from opi.services.services import reserved_database_variable_names
+        from opi.utils.naming import generate_extra_database_schema, generate_schema_variable_name
+
+        schemas = smart_get_value(value, self._PATH) or []
+        active = [
+            (i, str(entry.get("postfix")))
+            for i, entry in enumerate(schemas)
+            if isinstance(entry, dict) and entry.get("postfix") and not entry.get("marked-for-deletion")
+        ]
+        if not active:
+            return value
+
+        project_name = context.get("project_name") or value.get("name") or ""
+        deployment_names = [
+            d.get("name") for d in (value.get("deployments") or []) if isinstance(d, dict) and d.get("name")
+        ]
+        reserved = reserved_database_variable_names()
+
+        seen: dict[str, int] = {}
+        for index, postfix in active:
+            path = f"{self._PATH}[{index}]/postfix"
+            if postfix in seen:
+                raise FieldError(path, f"Schema-postfix '{postfix}' is al in gebruik.")
+            seen[postfix] = index
+
+            if generate_schema_variable_name(postfix) in reserved:
+                raise FieldError(
+                    path,
+                    f"De postfix '{postfix}' levert variabele {generate_schema_variable_name(postfix)} op, "
+                    "die botst met een bestaande databasevariabele. Kies een andere postfix.",
+                )
+
+            for deployment_name in deployment_names:
+                try:
+                    generate_extra_database_schema(project_name, deployment_name, postfix)
+                except ValueError:
+                    raise FieldError(
+                        path,
+                        f"De volledige schemanaam voor deployment '{deployment_name}' wordt langer dan 63 tekens. "
+                        "Kies een kortere postfix.",
+                    ) from None
+        return value
+
+
 class ServiceDependencyEnforcer:
     """Ensures component services are valid project-level services."""
 

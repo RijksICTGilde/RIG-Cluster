@@ -65,6 +65,14 @@
       "section_id": "postgresql-config",
       "title": "Database configuratie"
     },
+    "postgresql-schemas-config": {
+      "editables": [
+        "services/postgresql-database/config/schemas"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "postgresql-schemas-config",
+      "title": "Database-schema's"
+    },
     "services-edit": {
       "editables": [
         "services"
@@ -108,6 +116,7 @@
         "keycloak-config",
         "invite-config",
         "postgresql-config",
+        "postgresql-schemas-config",
         "auth-wall-config",
         "team",
         "attachments",
@@ -127,6 +136,7 @@
         "keycloak-config",
         "invite-config",
         "postgresql-config",
+        "postgresql-schemas-config",
         "auth-wall-config",
         "team",
         "components",
@@ -199,6 +209,13 @@
         "postgresql-config"
       ]
     },
+    "modal-edit-postgresql-schemas": {
+      "flow_id": "modal-edit-postgresql-schemas",
+      "mode": "wizard",
+      "sections": [
+        "postgresql-schemas-config"
+      ]
+    },
     "modal-edit-services": {
       "flow_id": "modal-edit-services",
       "mode": "wizard",
@@ -207,6 +224,7 @@
         "keycloak-config",
         "invite-config",
         "postgresql-config",
+        "postgresql-schemas-config",
         "auth-wall-config",
         "sleep-mode-config",
         "cross-domain-access-config",
@@ -234,6 +252,7 @@
     "invite": "modal-edit-invite-config",
     "keycloak": "modal-edit-keycloak-config",
     "namespace-postgresql-database": "modal-edit-postgresql-config",
+    "postgresql-database": "modal-edit-postgresql-schemas",
     "sleep-mode": "modal-edit-sleep-mode-config"
   },
   "service_config_sections": {
@@ -284,6 +303,14 @@
       "post_save_action": "process_project",
       "section_id": "postgresql-config",
       "title": "Database configuratie"
+    },
+    "postgresql-database": {
+      "editables": [
+        "services/postgresql-database/config/schemas"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "postgresql-schemas-config",
+      "title": "Database-schema's"
     },
     "sleep-mode": {
       "editables": [

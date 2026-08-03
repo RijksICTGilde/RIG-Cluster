@@ -289,6 +289,20 @@ class DatabaseVariables(Enum):
     )
 
 
+def reserved_database_variable_names() -> set[str]:
+    """Every env-variable name the database service already exposes (names + aliases).
+
+    An extra schema's ``DATABASE_SCHEMA_{POSTFIX}`` variable must not collide with one
+    of these (a postfix ``db`` would produce ``DATABASE_SCHEMA_DB``, uncomfortably close
+    to ``DATABASE_DB``). The save-time enforcer checks a candidate against this set.
+    """
+    names: set[str] = set()
+    for var in DatabaseVariables:
+        names.add(var.value.name)
+        names.update(var.value.aliases)
+    return names
+
+
 class KeycloakVariables(Enum):
     """Keycloak/SSO service variable definitions - single source of truth."""
 

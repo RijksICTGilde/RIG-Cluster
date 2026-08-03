@@ -3,19 +3,38 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
-from opi.services.catalog.base import ManifestContext, ProvisionContext, SecretFileSpec, Service
-from opi.services.catalog.postgresql_database.config_model import PostgresqlDatabaseConfig
+from opi.services.catalog.base import (
+    ConfigLayer,
+    ManifestContext,
+    ProvisionContext,
+    SecretFileSpec,
+    Service,
+    config_path,
+)
+from opi.services.catalog.postgresql_database.config_model import (
+    PostgresqlDatabaseConfig,
+    PostgresqlDatabaseProjectConfig,
+)
 from opi.services.services_enums import ManagerKey, ServiceType
 from opi.utils.secrets import DatabaseSecret
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 
 class PostgresqlDatabaseService(Service):
     service_type = ServiceType.POSTGRESQL_DATABASE
-    config_model = PostgresqlDatabaseConfig
+    # The user-facing config is the project-layer scope decision; the deployment-layer
+    # clone state is OPI-managed (see config_model_for below). config_model names the
+    # project model so its committed fragment documents the user config.
+    config_model = PostgresqlDatabaseProjectConfig
     config_schema_version = "1.0"
+    config_section_id = "postgresql-schemas-config"
+    modal_flow_id = "modal-edit-postgresql-schemas"
     cleanup_manager_key = ManagerKey.DATABASE
     provision_order = 10
     manifest_secret_class = DatabaseSecret
@@ -23,6 +42,69 @@ class PostgresqlDatabaseService(Service):
     # Shared service: fires for both the shared and namespace postgres variant, so
     # exactly one database envFrom secret is contributed (like provisioning).
     manifest_activated_by = (ServiceType.POSTGRESQL_DATABASE, ServiceType.NAMESPACE_POSTGRESQL_DATABASE)
+
+    def config_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
+        # Project layer: the scope-discriminated user config. Deployment layer: clone
+        # state (OPI-managed). No config at the component layers (per-component access
+        # is a later round).
+        if layer is ConfigLayer.PROJECT:
+            return PostgresqlDatabaseProjectConfig
+        if layer is ConfigLayer.DEPLOYMENT:
+            return PostgresqlDatabaseConfig
+        return None
+
+    def _config_selected(self, project_data: dict) -> bool:
+        """Section visibility: shown when the project uses this service."""
+        from opi.services.services import service_entry_name
+
+        return ServiceType.POSTGRESQL_DATABASE.value in [
+            service_entry_name(entry) for entry in project_data.get("services", []) or []
+        ]
+
+    def config_editables(self, layer: ConfigLayer):
+        if layer is not ConfigLayer.PROJECT:
+            return []
+        from opi.services.catalog.postgresql_database.editables import POSTGRESQL_SCHEMAS_EDITABLES
+
+        return POSTGRESQL_SCHEMAS_EDITABLES
+
+    def config_form_section(self, layer: ConfigLayer):
+        if layer is not ConfigLayer.PROJECT:
+            return None
+        cached = getattr(self, "_config_section_cache", None)
+        if cached is None:
+            from opi.forms.editables.enforcers import UniqueSchemaEnforcer
+            from opi.forms.layout import Fieldset, Sequence
+            from opi.forms.visualizers.sections import FormSection
+            from opi.services.catalog.postgresql_database.visualizers import POSTGRESQL_SCHEMAS_VISUALIZERS
+
+            def cp(*segments: str) -> str:
+                return config_path(ConfigLayer.PROJECT, self.service_type, "config", *segments)
+
+            cached = FormSection(
+                section_id="postgresql-schemas-config",
+                title="Database-schema's",
+                icon="database",
+                description="Extra schema's binnen de projectdatabase, project-breed voor elke deployment",
+                visible=self._config_selected,
+                # Schemas are provisioned (created, granted, exposed as variables), so a
+                # change must trigger a reconcile.
+                post_save_action="process_project",
+                enforcer=UniqueSchemaEnforcer(),
+                editables=POSTGRESQL_SCHEMAS_VISUALIZERS,
+                layout=[
+                    Fieldset(
+                        legend="Extra schema's",
+                        description=(
+                            "Naast het standaardschema. Elk schema is project-breed en krijgt per deployment "
+                            "de naam {project}_{deployment}_{postfix} met een variabele DATABASE_SCHEMA_{POSTFIX}."
+                        ),
+                        children=[Sequence(field_name=cp("schemas"))],
+                    ),
+                ],
+            )
+            self._config_section_cache = cached
+        return cached
 
     async def provision(self, ctx: ProvisionContext) -> None:
         # database_manager handles both the shared and namespace postgres variants in
@@ -42,6 +124,7 @@ class PostgresqlDatabaseService(Service):
             password=creds.password,
             database=creds.database,
             schema=creds.schema,
+            extra_schemas=creds.extra_schemas,
         )
         return [
             SecretFileSpec(
