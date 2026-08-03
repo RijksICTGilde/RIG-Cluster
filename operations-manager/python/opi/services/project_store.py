@@ -454,10 +454,18 @@ class GitProjectStore(ProjectStore):
                 # reset_to_remote() fetches it. Merging once before the loop would
                 # therefore republish the caller's version over whatever was just
                 # fetched -- the same lost update, arriving by the other route.
+                logger.info(
+                    "store.save '%s' attempt %d/%d (msg=%r, has_base=%s)",
+                    name,
+                    attempt + 1,
+                    MAX_MUTATION_ATTEMPTS,
+                    message,
+                    base is not None,
+                )
                 attempt_data = data
                 if base is not None:
                     attempt_data = await self._reconcile_with_concurrent_write(
-                        connector, relative_path, name=name, base=base, data=data
+                        connector, relative_path, name=name, base=base, data=data, actor=actor
                     )
 
                 await self._validate(attempt_data, enforce=enforce_validation)
@@ -607,6 +615,7 @@ class GitProjectStore(ProjectStore):
         name: str,
         base: dict[str, Any],
         data: dict[str, Any],
+        actor: str = "?",
     ) -> dict[str, Any]:
         """Compare-and-swap for a pre-built dict, with a three-way merge fallback.
 
@@ -625,6 +634,11 @@ class GitProjectStore(ProjectStore):
         """
         current = await self._read_committed(connector, relative_path)
         if current is None or current == base:
+            logger.info(
+                "reconcile '%s' [%s]: current==base (no concurrent change since read) -> publishing as-is",
+                name,
+                actor,
+            )
             return data
 
         # Our change IS the committed state already: a request handler saved it and a
@@ -633,9 +647,18 @@ class GitProjectStore(ProjectStore):
         # There is nothing to merge, and re-applying a delta that is already applied
         # would be reported as a conflict.
         if current == data:
+            logger.info(
+                "reconcile '%s' [%s]: current==data (our change already committed by a prior save) -> no-op",
+                name,
+                actor,
+            )
             return data
 
-        logger.info("Project '%s' changed since it was read; re-applying our change on top of it", name)
+        logger.info(
+            "reconcile '%s' [%s]: file changed since read (current!=base, current!=data) -> three-way merging",
+            name,
+            actor,
+        )
 
         merged = _apply_our_change_to(base=base, ours=data, theirs=current)
         if merged is None:
