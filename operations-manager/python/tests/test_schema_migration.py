@@ -1139,3 +1139,66 @@ def test_empty_invites_block_is_removed_without_a_service():
     out, _ = migrate_to_latest(data)
     assert "invites" not in out
     assert not any(isinstance(s, dict) and s.get("name") == "invite" for s in out["services"])
+
+
+# ---------------------------------------------------------------------------
+# Duplicate service entries (found on real production files, 3 August)
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_bare_service_entry_is_collapsed():
+    """The shape found on dsm1j2-2ws: the same service twice as a bare string.
+
+    ``_validate_services_listed_once`` rejects this, so such a file fails every
+    reprocess with nothing the user sees: no deploys, no auto-tune, no error. That is
+    the dp-bn7 failure mode, so the repair belongs in the unconditional fixup.
+    """
+    data = {
+        "schema-version": LATEST_SCHEMA_VERSION,
+        "name": "dup",
+        "services": ["publish-on-web", "publish-on-web", "keycloak"],
+    }
+    out, was_migrated = migrate_to_latest(data)
+
+    assert was_migrated is True
+    assert out["services"] == ["publish-on-web", "keycloak"]
+
+
+def test_duplicate_collapse_keeps_the_entry_carrying_config():
+    """The shape found on ug-zxt after migration: one record with config, one bare.
+
+    The bare entry says nothing the record does not already say, so the record must
+    survive regardless of which came first.
+    """
+    record = {"name": "publish-on-web", "config": {"domains": {"allowed-domains": []}}}
+    data = {
+        "schema-version": LATEST_SCHEMA_VERSION,
+        "name": "dup",
+        "services": ["publish-on-web", record],
+    }
+    out, _ = migrate_to_latest(data)
+
+    assert out["services"] == [record]
+
+
+def test_two_entries_that_both_carry_config_are_left_for_the_validator():
+    """Never silently pick a winner: two configs can contradict each other.
+
+    Collapsing here could drop a user's settings without a trace, so this case stays
+    untouched and ``_validate_services_listed_once`` rejects the file loudly.
+    """
+    first = {"name": "keycloak", "config": {"template": "sso-only"}}
+    second = {"name": "keycloak", "config": {"template": "sso-support"}}
+    data = {"schema-version": LATEST_SCHEMA_VERSION, "name": "dup", "services": [first, second]}
+
+    out, _ = migrate_to_latest(data)
+
+    assert out["services"] == [first, second]
+
+
+def test_collapse_is_idempotent_and_leaves_clean_files_alone():
+    clean = {"schema-version": LATEST_SCHEMA_VERSION, "name": "ok", "services": ["publish-on-web", "keycloak"]}
+    out, was_migrated = migrate_to_latest(copy.deepcopy(clean))
+
+    assert was_migrated is False
+    assert out == clean
