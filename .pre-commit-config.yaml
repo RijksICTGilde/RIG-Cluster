@@ -7,8 +7,13 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
+      # Patch files are byte-exact by nature: a context line that is an empty line
+      # must be a single space. Stripping it makes `git am` reject the patch, which
+      # is exactly what images/argocd-rig/Taskfile.yaml `src:verify` runs.
       - id: trailing-whitespace
+        exclude: \.patch$
       - id: end-of-file-fixer
+        exclude: \.patch$
       - id: check-yaml
         args: [--allow-multiple-documents]
       - id: check-added-large-files
