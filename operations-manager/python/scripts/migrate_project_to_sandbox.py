@@ -45,7 +45,10 @@ if str(_OPI_ROOT) not in sys.path:
     sys.path.insert(0, str(_OPI_ROOT))
 
 from opi.utils.age import decrypt_age_content_sync, encrypt_age_content_sync  # noqa: E402  (after sys.path bootstrap)
-from opi.utils.yaml_util import load_yaml_from_path, save_yaml_to_path  # noqa: E402
+from opi.utils.yaml_util import (  # noqa: E402
+    load_yaml_from_path,
+    save_yaml_to_path,
+)
 from ruamel.yaml.scalarstring import LiteralScalarString  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -61,6 +64,10 @@ SANDBOX_DOMAIN = "sandbox.rijksapp.dev"
 # otherwise the health/ingress path points at a port nothing is listening on.
 DEFAULT_PROBE_IMAGE = "ghcr.io/minbzk/base-images/e2e-allservices:latest"
 DEFAULT_PROBE_PORT = 8080
+
+#: Value written over every user-env-var. Recognisable on sight in a manifest or a pod,
+#: so nobody mistakes a sandbox copy for real configuration.
+SANDBOX_ENV_PLACEHOLDER = "SANDBOX-PLACEHOLDER"
 SANDBOX_ADMIN = {"email": f"admin@{SANDBOX_DOMAIN}", "role": "admin"}
 SANDBOX_REPOSITORIES = [
     {
@@ -158,6 +165,9 @@ def migrate_project(
     """
     project = deepcopy(data)
     name = project.get("name", "unknown")
+    # Kept from step 2 so later steps can read blocks encrypted with the project's own
+    # key (user-env-vars); after step 2 the stored copy is sandbox-encrypted.
+    project_private_key: str | None = None
 
     # 1. Clusters -> sandboxed-local
     project["clusters"] = [TARGET_CLUSTER]
@@ -174,6 +184,7 @@ def migrate_project(
         decrypted = decrypt_age_content_sync(raw_content, prod_private_key)
         if decrypted is None:
             raise RuntimeError(f"Failed to decrypt age-private-key for {name}")
+        project_private_key = decrypted
         re_encrypted = encrypt_age_content_sync(decrypted, sandbox_public_key)
         config["age-private-key"] = LiteralScalarString(re_encrypted)
     else:
@@ -259,10 +270,121 @@ def migrate_project(
                                     f"  [{name}] deployment '{dep_name}' component '{comp.get('name', '?')}': stripped {svc_name} config"
                                 )
 
+    replace_user_env_var_values(project, project_private_key, project_public_key, name)
+    replace_alias_values(project, name)
+
     if probe_image:
         apply_probe_workload(project, probe_image, probe_port)
 
     return project
+
+
+def _blank_env_values(content: str) -> str:
+    """Replace every value in a ``KEY=VALUE`` block, keeping keys, comments and blanks.
+
+    Two formats occur in real project files and both must be handled:
+    ``KEY=value`` (dotenv) and ``KEY: value`` (YAML-ish). Parsing the block as YAML is
+    not an option either: for the dotenv form it yields a plain string, and iterating
+    that gives characters instead of keys.
+
+    Raises on a line it cannot parse rather than passing it through. Both mistakes were
+    made here first: the initial version produced one placeholder per character, and the
+    second silently passed every ``KEY: value`` line through, which left a production
+    ``SECRET_KEY_BASE`` in the output. A line this does not understand is a value that
+    would ship verbatim, so it has to stop the run.
+    """
+    lines = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            lines.append(line)
+            continue
+
+        eq, colon = line.find("="), line.find(":")
+        candidates = [i for i in (eq, colon) if i > 0]
+        if not candidates:
+            raise ValueError(
+                f"Cannot find a key/value separator in user-env-vars line {line!r}; "
+                f"refusing to copy it to the sandbox unchanged"
+            )
+        cut = min(candidates)
+        lines.append(f"{line[:cut]}{line[cut]}{'' if line[cut] == '=' else ' '}{SANDBOX_ENV_PLACEHOLDER}")
+    return "\n".join(lines) + "\n"
+
+
+def replace_user_env_var_values(
+    project: dict, project_private_key: str | None, project_public_key: str | None, name: str
+) -> None:
+    """Overwrite the *values* in every ``user-env-vars`` block, keeping the keys.
+
+    These blocks are AGE-encrypted with the project's own public key, and step 2 above
+    re-encrypts that project key with the sandbox key. Copying them across verbatim would
+    therefore make every production value a team put there (API tokens, third-party
+    credentials) readable by anyone holding the sandbox key. That is a real downgrade of
+    protection, not a theoretical one: over the six sample projects it covers fifteen
+    components.
+
+    Dropping the block instead would be safe but would stop the upgrade test from proving
+    anything about it, and whether user-env-vars survive a migration and still reach the
+    manifest is exactly one of the things that must be proven. So the structure, the key
+    names and the whole processing path stay intact and only the value changes.
+    """
+    if not project_public_key or not project_private_key:
+        return
+
+    entities = list(project.get("components", []) or [])
+    for dep in project.get("deployments", []) or []:
+        if isinstance(dep, dict):
+            entities.extend(dep.get("components", []) or [])
+
+    replaced = 0
+    for entity in entities:
+        if not isinstance(entity, dict) or not entity.get("user-env-vars"):
+            continue
+        raw = str(entity["user-env-vars"]).strip()
+        decrypted = decrypt_age_content_sync(raw, project_private_key)
+        if decrypted is None:
+            # Cannot read it, so cannot preserve the key names. Removing beats shipping an
+            # unreadable production blob to the sandbox.
+            del entity["user-env-vars"]
+            logger.warning(f"  [{name}] component '{entity.get('name', '?')}': user-env-vars unreadable, dropped")
+            continue
+        entity["user-env-vars"] = LiteralScalarString(
+            encrypt_age_content_sync(_blank_env_values(decrypted), project_public_key)
+        )
+        replaced += 1
+
+    if replaced:
+        logger.info(f"  [{name}] Replaced the values of {replaced} user-env-vars block(s) with a placeholder")
+
+
+def replace_alias_values(project: dict, name: str) -> None:
+    """Overwrite every component alias value, keeping the alias names.
+
+    Same reasoning as ``replace_user_env_var_values``: an alias template can hold a
+    secret. Encrypting alias values at rest is new (see ComponentAliasesEncryptGenerator),
+    so existing project files still carry them as plaintext, which means a sandbox copy
+    would publish them verbatim.
+
+    Kept plaintext here on purpose: OPI encrypts alias values lazily on the next save,
+    so leaving them plain exercises exactly that upgrade path in the test.
+    """
+    entities = list(project.get("components", []) or [])
+    for dep in project.get("deployments", []) or []:
+        if isinstance(dep, dict):
+            entities.extend(dep.get("components", []) or [])
+
+    replaced = 0
+    for entity in entities:
+        aliases = entity.get("aliases") if isinstance(entity, dict) else None
+        if not isinstance(aliases, dict) or not aliases:
+            continue
+        for key in aliases:
+            aliases[key] = SANDBOX_ENV_PLACEHOLDER
+        replaced += 1
+
+    if replaced:
+        logger.info(f"  [{name}] Replaced the values of {replaced} aliases block(s) with a placeholder")
 
 
 def resolve_input_path(input_path: str, source_dir: str) -> str:

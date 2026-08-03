@@ -20,6 +20,8 @@ if str(_SCRIPTS_DIR) not in sys.path:
 from migrate_project_to_sandbox import (  # noqa: E402
     DEFAULT_PROBE_IMAGE,
     DEFAULT_PROBE_PORT,
+    SANDBOX_ENV_PLACEHOLDER,
+    _blank_env_values,
     apply_probe_workload,
 )
 
@@ -100,3 +102,60 @@ def test_component_without_ports_gets_inbound(project: dict) -> None:
 
     worker = project["components"][-1]
     assert worker["ports"]["inbound"] == [DEFAULT_PROBE_PORT]
+
+
+# ---------------------------------------------------------------------------
+# Blanking user-env-var values before a production project reaches the sandbox
+# ---------------------------------------------------------------------------
+
+
+class TestBlankEnvValues:
+    """Converting a production project re-encrypts its key with the SANDBOX key.
+
+    Everything encrypted with the project's own key therefore becomes readable by anyone
+    holding the sandbox key, and user-env-vars is where teams put API tokens and
+    passwords. Values are blanked; keys, comments and layout stay so the upgrade test
+    still proves the block survives migration and reaches the manifest.
+    """
+
+    def test_dotenv_format_keeps_keys_and_blanks_values(self):
+        out = _blank_env_values("DJANGO_SECRET_KEY=s3cr3t\nDEBUG=false\n")
+
+        assert "s3cr3t" not in out
+        assert f"DJANGO_SECRET_KEY={SANDBOX_ENV_PLACEHOLDER}" in out
+        assert f"DEBUG={SANDBOX_ENV_PLACEHOLDER}" in out
+
+    def test_yaml_colon_format_is_handled_too(self):
+        """Both formats occur in real files; only handling ``=`` shipped a real secret.
+
+        The first version of this passed every ``KEY: value`` line through untouched,
+        which left openp-4pw's production SECRET_KEY_BASE in the converted output.
+        """
+        out = _blank_env_values('SECRET_KEY_BASE: "abc123"\nOPENPROJECT_HTTPS: "true"\n')
+
+        assert "abc123" not in out
+        assert f"SECRET_KEY_BASE: {SANDBOX_ENV_PLACEHOLDER}" in out
+        assert f"OPENPROJECT_HTTPS: {SANDBOX_ENV_PLACEHOLDER}" in out
+
+    def test_a_value_holding_the_other_separator_is_cut_at_the_first_one(self):
+        # A URL value contains ':' while the line's separator is '='; cutting at the
+        # wrong one would leave the host in the output.
+        out = _blank_env_values("API_URL=https://example.com:8443/path\n")
+
+        assert "example.com" not in out
+        assert out.strip() == f"API_URL={SANDBOX_ENV_PLACEHOLDER}"
+
+    def test_comments_and_blank_lines_survive(self):
+        out = _blank_env_values("# a comment\n\nKEY=value\n")
+
+        assert "# a comment" in out
+        assert "\n\n" in out
+
+    def test_an_unparsable_line_raises_instead_of_passing_through(self):
+        """Silence is the dangerous failure here: an unrecognised line is a value.
+
+        Passing it through unchanged is exactly how the SECRET_KEY_BASE leak happened,
+        so a line without a separator must stop the run rather than reach the sandbox.
+        """
+        with pytest.raises(ValueError, match="separator"):
+            _blank_env_values("just-a-bare-secret-value\n")
