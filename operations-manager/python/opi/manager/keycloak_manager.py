@@ -22,7 +22,12 @@ from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name, service_entry_type
-from opi.utils.age import encrypt_age_content, get_project_public_key
+from opi.utils.age import (
+    decrypt_password_smart,
+    encrypt_age_content,
+    get_decoded_project_private_key,
+    get_project_public_key,
+)
 from opi.utils.naming import (
     HostnameFormat,
     extract_domain_from_url,
@@ -35,6 +40,7 @@ from opi.utils.naming import (
 )
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import KeycloakSecret
+from opi.utils.totp import build_otpauth_uri, generate_totp_secret
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
@@ -882,6 +888,8 @@ class KeycloakManager:
                     additional_clients = config.get("additional_clients", [])
                     if additional_clients:
                         await self._create_additional_clients(realm_name, keycloak_url, additional_clients, cluster)
+                    # Ensure the realm admin has the shared OTP credential (idempotent retrofit)
+                    await self._ensure_admin_otp(project_name, cluster, realm_name, keycloak_url)
                 else:
                     logger.warning(
                         f"Project realm config exists but realm {realm_name} not found in Keycloak - will recreate"
@@ -1684,6 +1692,16 @@ class KeycloakManager:
         encrypted_password = await encrypt_age_content(admin_password, project_public_key)
         encrypted_password_str = LiteralScalarString(encrypted_password)
 
+        # Generate and encrypt a shared TOTP secret (only when OTP is enabled).
+        # Provisioning it as an OTP credential makes Keycloak's conditional-OTP
+        # browser step require it at login. The seed is shared (stored in the
+        # project file) so every project admin can load it and shared realm
+        # access keeps working.
+        totp_secret = generate_totp_secret() if settings.KEYCLOAK_ENFORCE_ADMIN_OTP else None
+        encrypted_totp_str = (
+            LiteralScalarString(await encrypt_age_content(totp_secret, project_public_key)) if totp_secret else None
+        )
+
         # Extract template from config (already validated in _get_keycloak_service_config)
         template_name = config["template"]  # Will KeyError if config malformed
         yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / f"{template_name}.yaml"
@@ -1781,6 +1799,7 @@ class KeycloakManager:
             first_name="Realm",
             last_name="Administrator",
             enabled=True,
+            totp_secret=totp_secret,
         )
         logger.info(f"Created admin user {admin_username} in master realm")
 
@@ -1800,6 +1819,8 @@ class KeycloakManager:
             "username": admin_username,
             "password": encrypted_password_str,
         }
+        if encrypted_totp_str:
+            config_entry["totp_secret"] = encrypted_totp_str
 
         existing_config = next((i for i, kc in enumerate(realms) if kc.get("realm") == realm_name), None)
         if existing_config is not None:
@@ -1823,12 +1844,91 @@ class KeycloakManager:
         )
         logger.info(f"Stored and pushed Keycloak config in project file for cluster {cluster}")
 
-        return {
+        result = {
             "host": keycloak_url,
             "realm": realm_name,
             "username": admin_username,
             "password": admin_password,  # Return plain password for immediate use
         }
+        if totp_secret:
+            result["totp_secret"] = totp_secret  # Plain TOTP secret for immediate use
+            result["totp_otpauth_uri"] = build_otpauth_uri(totp_secret, admin_username, realm_name)
+        return result
+
+    async def _ensure_admin_otp(
+        self,
+        project_name: str,
+        cluster: str,
+        realm_name: str,
+        keycloak_url: str,
+    ) -> None:
+        """Idempotently ensure the realm admin user has the shared OTP credential.
+
+        Realms provisioned before OTP support have an admin user without an OTP
+        credential and no ``totp_secret`` in the project file. Keycloak 25 only
+        imports OTP credentials at user-creation time, so this retrofits by
+        deleting and recreating the admin user - reusing its existing password so
+        it does not rotate - with the OTP credential, then re-assigning realm
+        management roles.
+
+        Runs at most once per realm: once ``totp_secret`` is stored, later
+        deploys short-circuit. The seed becomes visible in the portal, and OTP is
+        required at the admin's next login.
+
+        Gated by KEYCLOAK_ENFORCE_ADMIN_OTP (off by default) so enabling OTP is a
+        deliberate rollout rather than a side-effect of any reprocess.
+        """
+        if not settings.KEYCLOAK_ENFORCE_ADMIN_OTP:
+            return
+
+        project_data = await self.project_manager.get_contents()
+        view = Project(project_data)
+        realms = view.get("services/keycloak/config/realms") or []
+        entry_index = next((i for i, e in enumerate(realms) if e.get("realm") == realm_name), None)
+        if entry_index is None or realms[entry_index].get("totp_secret"):
+            return
+        kc_entry = realms[entry_index]
+
+        admin_username = generate_project_admin_username(project_name, cluster)
+        logger.info(f"Retrofitting shared OTP for realm admin {admin_username} ({realm_name})")
+
+        keycloak = await create_keycloak_connector(keycloak_url=keycloak_url)
+
+        # Reuse the existing admin password so the retrofit only ADDS a factor and
+        # does not rotate the password. Decrypt with the project private key.
+        project_private_key = await get_decoded_project_private_key(project_data)
+        admin_password = await decrypt_password_smart(kc_entry["password"], project_private_key)
+
+        # Delete (if present) and recreate the admin user with the OTP credential.
+        totp_secret = generate_totp_secret()
+        existing = await keycloak.get_user_by_username("master", admin_username)
+        if existing is not None:
+            await keycloak.delete_user_by_username("master", admin_username)
+
+        user_info = await keycloak.create_user(
+            realm_name="master",
+            username=admin_username,
+            password=admin_password,
+            email=f"{admin_username}@local.invalid",
+            first_name="Realm",
+            last_name="Administrator",
+            enabled=True,
+            totp_secret=totp_secret,
+        )
+        await keycloak.assign_realm_admin_from_master(target_realm_name=realm_name, user_id=user_info["id"])
+
+        # Persist the encrypted secret so this retrofit runs only once.
+        project_public_key = get_project_public_key(project_data)
+        kc_entry["totp_secret"] = LiteralScalarString(await encrypt_age_content(totp_secret, project_public_key))
+        view.set("services/keycloak/config/realms", realms)
+        await self.project_manager.save_and_commit_project(
+            project_data,
+            f"Store shared OTP secret for realm admin of {realm_name}",
+            enforce_validation=False,
+        )
+        logger.info(
+            f"Stored shared OTP secret for realm admin {admin_username}; OTP required at next login for {realm_name}"
+        )
 
     async def _create_additional_clients(
         self,

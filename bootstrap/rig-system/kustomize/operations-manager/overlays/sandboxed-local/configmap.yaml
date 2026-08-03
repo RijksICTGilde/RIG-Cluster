@@ -35,6 +35,10 @@ data:
     KEYCLOAK_URL=https://keycloak.sandbox.rijksapp.dev
     # OIDC credentials are set dynamically by OPI after creating its own realm
 
+    # Shared OTP for project realm-admin accounts (off by default; on in sandbox
+    # so the feature is exercised). Existing realms migrate on next reprocess.
+    KEYCLOAK_ENFORCE_ADMIN_OTP=true
+
     # Upstream IDP: production Keycloak for SSO-Rijk authentication
     # The client secret is provided via operations-manager-env-secrets (from .env.sandboxed-local.secrets)
     # Without this, the sandbox works with local admin user only (no SSO)
