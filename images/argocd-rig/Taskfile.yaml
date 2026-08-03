@@ -12,7 +12,7 @@ version: '3'
 #   task cr-snippet         # YAML voor de ArgoCD CR
 #
 # Naar de registry (productie-architectuur):
-#   task publish            # linux/amd64 build + push naar ghcr.io/minbzk
+#   task publish            # linux/amd64 build + push naar ghcr.io/minbzk/base-images
 
 dotenv: ['../../.env-taskfile-current']
 
@@ -26,7 +26,7 @@ vars:
 
   IMAGE_NAME: '{{default "argocd-rig" .IMAGE_NAME}}'
   IMAGE_TAG: '{{default "v3.3.12-rig1" .IMAGE_TAG}}'
-  REGISTRY_IMAGE: '{{default "ghcr.io/minbzk/argocd" .REGISTRY_IMAGE}}'
+  REGISTRY_IMAGE: '{{default "ghcr.io/minbzk/base-images/argocd-rig" .REGISTRY_IMAGE}}'
 
   # Lokaal bouwen we voor de host-arch (kind draait op dezelfde arch als de Mac),
   # publiceren doen we voor het productiecluster (ODCN = amd64).

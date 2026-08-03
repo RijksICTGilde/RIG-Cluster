@@ -45,7 +45,7 @@ task cr-snippet      # YAML voor de ArgoCD CR
 Naar de registry (productie-architectuur, vraagt om bevestiging):
 
 ```bash
-task publish         # linux/amd64 → ghcr.io/minbzk/argocd:v3.3.12-rig1
+task publish         # linux/amd64 → ghcr.io/minbzk/base-images/argocd-rig:v3.3.12-rig1
 ```
 
 Branch naar de fork pushen:
@@ -65,7 +65,7 @@ Handige overrides: `ARGOCD_REPO`, `ARGOCD_SRC`, `BRANCH`, `BASE_TAG`, `IMAGE_TAG
   na `task load-kind` lokaal op de node, tag is niet `latest` dus de pull policy is `IfNotPresent`.
   Al uitgerold: controller, server en applicationset draaien `argocd-rig:v3.3.12-rig1`,
   repo-server bleef op `quay.io/argoproj/argocd:v3.3.10`.
-- **odcn-production**: `spec.image: ghcr.io/minbzk/argocd`, `spec.version: v3.3.12-rig1`, en
+- **odcn-production**: `spec.image: ghcr.io/minbzk/base-images/argocd-rig`, `spec.version: v3.3.12-rig1`, en
   repo-server teruggepind op de Red Hat build.
 
 Controller, server en applicationset volgen `spec.image`; de repo-server pinnen we terug op de
