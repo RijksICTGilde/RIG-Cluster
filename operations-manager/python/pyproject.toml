@@ -183,7 +183,11 @@ branch = true
 command_line = "-m pytest"
 relative_files = true # needed for sonarcloud code coverage
 omit = [
-    "tests/*"
+    "tests/*",
+    # Operational/diagnostic scripts are not application code under the 90% bar.
+    # Some are imported by tests (e.g. probe-spec drift, upgrade-safety), which
+    # would otherwise pull their partial coverage into the application metric.
+    "scripts/*",
 ]
 concurrency = ["greenlet", "thread"]
 
@@ -213,7 +217,8 @@ markers = [
    "requires_infra: marks tests that require external infrastructure (database, keycloak, etc.)",
    "e2e: marks end-to-end browser tests (require playwright and chromium)",
    "sandbox: marks tests that require a running sandbox cluster",
-   "reallife: long-running real-life sandbox suite (5 projects, semi-concurrent UI+API mutations); excluded from the standard sandbox run"
+   "reallife: long-running real-life sandbox suite (5 projects, semi-concurrent UI+API mutations); excluded from the standard sandbox run",
+   "upgrade_safety: RC-20 upgrade-safety replay of real production project files (clones the projects repo; needs network)"
 ]
 pythonpath = "."
 

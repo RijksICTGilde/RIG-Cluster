@@ -46,7 +46,8 @@ Most tools talk to live infrastructure and read credentials/config from environm
 |---|---|
 | `add_domain_approvals.py` | Add `domains` configuration blocks to project files. |
 | `fix_shared_service_revisions.py` | Fix shared-service revisions caused by a YAML anchor/alias bug. |
-| `migrate_project_to_sandbox.py` | Migrate production project files to the sandbox cluster. |
+| `migrate_project_to_sandbox.py` | Migrate production project files to the sandbox cluster. `--probe-image` additionally swaps every component workload for the e2e-allservices probe and moves the inbound port to 8080 (RC-19 upgrade-safety test). |
+| `compare_deployments_diff.py` | Summarize a zad-deployments `git diff` into disappeared keys (env vars, secrets, ingress, mounts, schemas) per project, for the RC-19 upgrade-safety test (`features/upgrade-safety-test.md`). Reads a ref-pair via git or a diff via `--stdin`. |
 
 ## Infra / DNS
 
