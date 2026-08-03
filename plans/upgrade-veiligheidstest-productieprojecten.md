@@ -70,13 +70,30 @@ Niet gedekt en dat kan ook niet: `sleep-mode`, `health-check`, `cross-domain-acc
 De volgorde is één keer wisselen, niet heen en weer per project:
 
 1. Sandbox op de server, OPI op het image dat productie nu draait (vastgepind, niet `latest`).
-2. De vier projecten omzetten en inrichten. Alles laten provisioneren tot alle apps healthy zijn.
+2. De zes projecten inrichten (ze staan al omgezet klaar, zie 3a). Alles laten provisioneren tot alle apps healthy zijn.
 3. De gegenereerde staat vastleggen: de zad-deployments-repo op dat moment is het ijkpunt.
 4. Het OPI-image wisselen naar de nieuwe build. Eén keer.
 5. Elk project heropenen en verversen, zodat alles opnieuw gegenereerd wordt.
 6. Vergelijken.
 
 Dat oude OPI een nieuw schema niet kan lezen klopt, maar dat bijt alleen als je teruggaat, en teruggaan hoeft alleen bij afwisselen. Wil je de test herhalen, dan zet je de omgeving schoon opnieuw op; dat is toch wat je wilt voor een eerlijke tweede meting.
+
+## 3a. Klaargezet op 3 augustus
+
+De zes projecten zijn omgezet en staan klaar in `https://git.claude.robbertuittenbroek.nl/robbert/zad-upgrade-test-projects.git` (privé; een sessie met de gewone Forgejo-inloggegevens kan erbij, de server zelf niet). De README daar beschrijft precies wat er is omgezet en wat er bewust uit is gehaald.
+
+Het OPI-image voor de nulmeting is `ghcr.io/minbzk/base-images/operations-manager/operations-manager:2026.07.27.0941-9d9c0764-dirty`, exact wat de odcn-overlay vandaag pint. Die tag is aanwezig op ghcr, dus de sandbox kan hem trekken. Let op dat de server-sandbox nu op `rc17-seqfix2` staat en dus eerst terug moet.
+
+## 3b. De verschillen die we verwachten, vooraf gemeten
+
+De uitkomst is niet "byte-identiek". Deze release verandert bewust dingen, en die zijn per project gemeten zodat ze vooraf vastliggen in plaats van achteraf goedgepraat te worden. In de steekproef zijn dat er precies vier soorten:
+
+1. `schema-version` gaat naar 2.6.
+2. Bij `openp-4pw` en `dp-bn7` verhuizen de invites van top-level `invites:` naar `services/invite/config`. Beide zijn juist daarom gekozen.
+3. Aliaswaarden worden bij de eerstvolgende opslag AGE-versleuteld: twee blokken in `wies`, één in `openp-4pw`.
+4. Verder niets. De nieuwe variabele-interpolatie in `user-env-vars` verandert in deze zes niets, want geen van hen gebruikt een hoofdletterverwijzing; en geen van hen heeft een dubbele service-entry, dus die reparatie doet hier ook niets.
+
+Alles buiten deze lijst is een bevinding.
 
 ## 4. Hoe "klopt het nog" mechanisch wordt
 
@@ -86,22 +103,37 @@ De maatstaf is de zad-deployments-repo. Die bevat alles wat OPI voor een project
 
 Wat een diff niet ziet, en waar de live-omgeving juist voor is: databaserechten en `search_path`, of Keycloak-realms, clients en rollen nog kloppen, of buckets en hun beleid er nog zijn, en of ArgoCD alles gesynchroniseerd en healthy krijgt. Daar is de e2e-allservices-probe voor: die bindt elke dienst en meldt per dienst op `/status` of hij hem echt heen en weer krijgt.
 
+### De belangrijkste toets, en die ontbreekt nog
+
+Bovenstaande bewijst dat er niets verdwijnt en dat elke dienst nog te bereiken is. Het bewijst NIET wat er het meest toe doet: dat een dienst nog hetzelfde ding is. Een deployment die na de upgrade netjes verbindt met een andere database is een geslaagde probe en een ramp.
+
+Twee dingen staan die toets vandaag in de weg, en allebei moeten ze opgelost:
+
+- `compare_deployments_diff.py` identificeert een regel op de **sleutel**, met de expliciete keuze dat "changing only the value keeps the same identity and is not reported". Een gewijzigde `DATABASE_NAME` valt daar dus buiten.
+- Die waarden staan versleuteld in de deployments-repo, en AGE-cijfertekst is niet deterministisch. Een vergelijking op de ruwe tekst zegt dus sowieso niets, in beide richtingen: gelijke inhoud kan verschillen en verschil kan ruis zijn.
+
+De toets die er wel moet komen: ontsleutel de gegenereerde secrets aan beide kanten en vergelijk de opgeloste waarden van wat de identiteit van een dienst bepaalt. Concreet per deployment de databasehost, -naam, -gebruiker en het schema; de OIDC-issuer, realm en client-id; de bucketnaam; en de hostname plus het domein waarop gepubliceerd wordt. Die verzameling moet aan beide kanten gelijk zijn, en dát is de assertie waar de test op staat of valt. Verschilt er iets, dan noemt het rapport de dienst, het veld en beide waarden.
+
+Let daarbij op de bestaande skip-if-unchanged in `encrypt_to_sops_files`: die houdt een bestand verbatim als de geparste YAML gelijk is, juist omdat SOPS anders churnt. Dat helpt de manifest-diff schoon te houden, maar het is geen vervanging voor de vergelijking hierboven, want het zegt niets over waarden die wél veranderd zijn.
+
 Een verschil is niet per se fout. Deze release verandert bewust dingen, bijvoorbeeld de eenmalige migratie naar v2.6. De uitkomst van deze test is dus geen groen vinkje maar een beoordeelde diff: elk verschil is verklaard en gewenst, of het is een bug.
 
 ## 5. Wat er gebouwd moet worden
 
 1. **Laag-1-test** die alle productiebestanden migreert en valideert, met een rapport per bestand en een duidelijke uitkomst per klasse fout. Bron is de projecten-repo uit 2a; een ondiepe kloon volstaat, want alleen de huidige inhoud telt.
 2. **Uitbreiding van het omzetscript** met twee dingen die het nu niet doet: het image van elk component vervangen door `e2e-allservices`, en de poort meeverhuizen. De probe luistert op 8080 terwijl productiecomponenten eigen poorten declareren, dus zonder die herschrijving falen de gezondheidscontroles. Overweeg dit als aparte vlag zodat het omzetscript ook zonder die vervanging bruikbaar blijft.
-3. **Een taakje dat de vergelijking doet**: ijkpunt vastleggen, na de upgrade diffen, en de diff samenvatten naar verdwenen sleutels per project.
-4. **Een draaiboek** in `features/` zodat de test herhaalbaar is bij de volgende release, en niet eenmalig werk blijft.
+3. **De dienst-identiteitstoets uit sectie 4**, die de gegenereerde secrets aan beide kanten ontsleutelt en de opgeloste waarden vergelijkt. Dit is het belangrijkste ontbrekende stuk: zonder dit meet de test wel of er iets verdwijnt maar niet of een dienst nog hetzelfde ding is.
+4. **De projectbestanden zelf diffen**, niet alleen de gegenereerde manifests. De verversing met de nieuwe OPI herschrijft die bestanden, en juist daar zit de migratie; een verdwenen sleutel daar weegt zwaarder dan in een manifest, want een manifest kun je opnieuw genereren.
+5. **Uitvoeren op de server-sandbox**, waar `kind-rig-sandbox` draait en orch met `orch sandbox claim` al een beurtwisseling kent. Claim aan het begin, release aan het eind, ook bij een mislukking.
+6. **Een draaiboek** in `features/` zodat de test herhaalbaar is bij de volgende release, en niet eenmalig werk blijft.
 
 ## 6. Open beslissingen
 
 1. ~~Draait laag 1 op de echte productiebestanden of op een kopie?~~ **BESLIST op 3 augustus:** rechtstreeks uit `https://git.claude.robbertuittenbroek.nl/robbert/rig-cluster-projects-github.git`, alleen lezen, nooit terugschrijven. Geen sleutel nodig en geen lokale checkout, dus de test werkt overal hetzelfde en blijft actueel. Wat nog wel te bepalen valt is het gedrag als de repo onbereikbaar is: overslaan met een melding, of falen. Overslaan verbergt een test die stilletjes nooit draait, dus falen heeft de voorkeur tenzij dat een bouwmachine zonder netwerk breekt.
 2. **Wat is de uitkomst bij een verschil?** Faalt de test, of produceert hij een rapport dat iemand beoordeelt? Voor laag 1 lijkt falen juist; voor de diff van laag 2 is beoordelen realistischer, want gewenste verschillen bestaan.
 3. **Nemen we de projecteigen images mee of vervangen we alles door de probe?** Alles vervangen is sneller en betrouwbaarder, maar test niet of echte werklasten nog starten. Voorstel is vervangen, want het doel is het projectbestand en de dienstverlening, niet de applicaties van gebruikers.
-4. **Hoe komt de oude OPI erin?** Een vastgepind image van wat productie draait. Te bepalen of dat de CalVer-tag uit de odcn-overlay is of de commit waar productie nu op staat.
-5. **Wat doen we met de vier projecten na afloop?** Laten staan voor een volgende ronde, of opruimen zodat de sandbox leeg blijft. Opruimen via `sandbox_project_tool.py delete` doorloopt de echte teardown en test dus meteen het verwijderpad.
+4. ~~Hoe komt de oude OPI erin?~~ **BESLIST op 3 augustus:** de tag die de odcn-overlay vandaag pint, `2026.07.27.0941-9d9c0764-dirty`, aanwezig op ghcr en dus trekbaar door de sandbox.
+5. **Wat doen we met de zes projecten na afloop?** Laten staan voor een volgende ronde, of opruimen zodat de sandbox leeg blijft. Opruimen via `sandbox_project_tool.py delete` doorloopt de echte teardown en test dus meteen het verwijderpad.
 6. ~~Hoort de invite-service erbij?~~ **BESLIST op 3 augustus: ja, en er zijn er twee opgenomen**, `openp-4pw` en `dp-bn7`. Aanleiding is een meting die het risico concreet maakte: `migrate_to_latest()` verplaatst bij vier productieprojecten de invites van top-level `invites:` naar `services/invite/config`, en ruimt bij vier andere projecten stale data op. Dat is een echte herschrijving van bestaande bestanden, dus juist het pad dat bewaakt moet worden. Beide dragers hebben één deployment en één component, dus dit kostte vrijwel geen ruimte.
 
 ## 7. Buiten scope
