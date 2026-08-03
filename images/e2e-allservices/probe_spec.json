@@ -1,0 +1,186 @@
+{
+  "targets": [
+    {
+      "bound_when_any": [
+        "METRICS_AUTH_TOKEN",
+        "PROMETHEUS_METRICS_AUTH_TOKEN"
+      ],
+      "env_vars": [
+        "METRICS_AUTH_TOKEN",
+        "PROMETHEUS_METRICS_AUTH_TOKEN"
+      ],
+      "id": "metrics",
+      "kind": "metadata",
+      "services": [
+        "metrics-scraper"
+      ]
+    },
+    {
+      "bound_when_any": [
+        "APP_OBJECT_STORE_HOST",
+        "OBJECT_STORE_HOST"
+      ],
+      "env_vars": [
+        "APP_OBJECT_STORE_BUCKET_NAME",
+        "APP_OBJECT_STORE_ENDPOINT_URL",
+        "APP_OBJECT_STORE_HOST",
+        "APP_OBJECT_STORE_PASSWORD",
+        "APP_OBJECT_STORE_PORT",
+        "APP_OBJECT_STORE_REGION",
+        "APP_OBJECT_STORE_URL",
+        "APP_OBJECT_STORE_USER",
+        "OBJECT_STORE_BUCKET_NAME",
+        "OBJECT_STORE_ENDPOINT_URL",
+        "OBJECT_STORE_HOST",
+        "OBJECT_STORE_PASSWORD",
+        "OBJECT_STORE_PORT",
+        "OBJECT_STORE_REGION",
+        "OBJECT_STORE_URL",
+        "OBJECT_STORE_USER"
+      ],
+      "id": "minio",
+      "kind": "s3",
+      "services": [
+        "minio-storage"
+      ]
+    },
+    {
+      "bound_when_any": [
+        "OIDC_DISCOVERY_URL",
+        "OIDC_URL"
+      ],
+      "env_vars": [
+        "OIDC_CLIENT_ID",
+        "OIDC_CLIENT_SECRET",
+        "OIDC_DISCOVERY_URL",
+        "OIDC_HOSTNAME",
+        "OIDC_PUBLIC_CLIENT_ID",
+        "OIDC_REALM",
+        "OIDC_URL"
+      ],
+      "id": "oidc",
+      "kind": "oidc",
+      "services": [
+        "keycloak"
+      ]
+    },
+    {
+      "bound_when_any": [
+        "COMPONENT_NAME",
+        "DEPLOYMENT_NAME"
+      ],
+      "env_vars": [
+        "COMPONENT_NAME",
+        "DEPLOYMENT_NAME"
+      ],
+      "id": "platform",
+      "kind": "metadata",
+      "services": [
+        "platform"
+      ]
+    },
+    {
+      "bound_when_any": [
+        "APP_DATABASE_SERVER",
+        "APP_DATABASE_SERVER_HOST",
+        "DATABASE_SERVER_HOST"
+      ],
+      "env_vars": [
+        "APP_DATABASE_DB",
+        "APP_DATABASE_PASSWORD",
+        "APP_DATABASE_PASSWORD_RO",
+        "APP_DATABASE_PORT",
+        "APP_DATABASE_SCHEMA",
+        "APP_DATABASE_SERVER",
+        "APP_DATABASE_SERVER_FULL",
+        "APP_DATABASE_SERVER_HOST",
+        "APP_DATABASE_SERVER_PORT",
+        "APP_DATABASE_USER",
+        "APP_DATABASE_USER_RO",
+        "DATABASE_DB",
+        "DATABASE_PASSWORD",
+        "DATABASE_PASSWORD_RO",
+        "DATABASE_SCHEMA",
+        "DATABASE_SERVER_FULL",
+        "DATABASE_SERVER_HOST",
+        "DATABASE_SERVER_PORT",
+        "DATABASE_SERVER_USER",
+        "DATABASE_SERVER_USER_RO"
+      ],
+      "id": "postgres",
+      "kind": "sql",
+      "services": [
+        "namespace-postgresql-database",
+        "postgresql-database"
+      ]
+    },
+    {
+      "bound_when_any": [
+        "APP_REDIS_HOST",
+        "REDIS_HOST"
+      ],
+      "env_vars": [
+        "APP_REDIS_HOST",
+        "APP_REDIS_PASSWORD",
+        "APP_REDIS_PORT",
+        "APP_REDIS_PREFIX",
+        "APP_REDIS_URL",
+        "APP_REDIS_USERNAME",
+        "REDIS_HOST",
+        "REDIS_PASSWORD",
+        "REDIS_PORT",
+        "REDIS_PREFIX",
+        "REDIS_URL",
+        "REDIS_USERNAME"
+      ],
+      "id": "redis",
+      "kind": "redis",
+      "services": [
+        "namespace-redis",
+        "redis"
+      ]
+    },
+    {
+      "bound_when_any": [
+        "DATA_PATH"
+      ],
+      "env_vars": [
+        "DATA_PATH"
+      ],
+      "id": "storage-data",
+      "kind": "path",
+      "services": [
+        "persistent-storage"
+      ]
+    },
+    {
+      "bound_when_any": [
+        "TEMP_PATH"
+      ],
+      "env_vars": [
+        "TEMP_PATH"
+      ],
+      "id": "storage-temp",
+      "kind": "path",
+      "services": [
+        "temp-storage"
+      ]
+    },
+    {
+      "bound_when_any": [
+        "PUBLIC_HOST",
+        "PUBLIC_HOSTNAME"
+      ],
+      "env_vars": [
+        "PUBLIC_HOST",
+        "PUBLIC_HOSTNAME"
+      ],
+      "id": "web",
+      "kind": "metadata",
+      "services": [
+        "publish-on-web"
+      ]
+    }
+  ],
+  "version": 1
+}
