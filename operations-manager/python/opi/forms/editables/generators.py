@@ -213,3 +213,43 @@ class UserEnvVarsEncryptGenerator:
             )
 
         return True
+
+
+class ComponentAliasesEncryptGenerator:
+    """Encrypt each component alias value with the project's AGE public key.
+
+    Aliases are stored as a ``name -> value`` map; values may hold secrets
+    (e.g. a password), so each value is encrypted independently while the
+    alias names stay readable. Skips values that are already AGE-encrypted.
+
+    Must run after ``AGEKeyPairGenerator`` so the project public key exists.
+    Uses a ``_generated`` path - the return value is discarded during cleanup.
+    """
+
+    def generate(self, yaml_data: dict[str, Any]) -> Any:
+        from ruamel.yaml.scalarstring import LiteralScalarString
+
+        from opi.utils.age import encrypt_age_content_sync
+
+        public_key = yaml_data.get("config", {}).get("age-public-key")
+        if not public_key:
+            logger.debug("No project public key available, skipping aliases encryption")
+            return True
+
+        for component in yaml_data.get("components", []):
+            if not isinstance(component, dict):
+                continue
+            aliases = component.get("aliases")
+            if not isinstance(aliases, dict):
+                continue
+            for alias_name, alias_value in aliases.items():
+                if not isinstance(alias_value, str) or "BEGIN AGE ENCRYPTED FILE" in alias_value:
+                    continue
+                aliases[alias_name] = LiteralScalarString(encrypt_age_content_sync(alias_value, public_key))
+                logger.debug(
+                    "Encrypted alias '%s' for component %s",
+                    alias_name,
+                    component.get("name", "unknown"),
+                )
+
+        return True
