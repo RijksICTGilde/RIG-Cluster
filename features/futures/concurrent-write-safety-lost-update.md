@@ -1,8 +1,58 @@
 # Concurrent project-file writes lose updates (snapshot save vs mutator save)
 
-> **Status: REAL BUG, diagnosed, not fixed.** Root cause confirmed against the
-> live sandbox by the reallife concurrency E2E suite. Fix is a broad, careful
-> change across write paths — needs a deliberate decision, not an autonomous patch.
+> **Status: REAL BUG, still not fixed. First diagnosis below was WRONG — see the
+> correction.** The reallife concurrency E2E (`test_ui_env_vars_while_api_patches`,
+> `test_ui_removal_while_api_patches`, + downstream `test_final_state`) fails live.
+
+## CORRECTION (investigated 2026-08-03) — the naive "no base" diagnosis was wrong
+
+The original root cause below ("most write paths snapshot-save without base") is
+**incorrect**. The concurrency machinery is already in place and the write paths
+already use it:
+
+- `save_and_commit_project` already passes `base` to the store, falling back to
+  `self.__contents_as_read` (project_manager.py:1693). `get_contents()` sets that
+  to a **pristine `copy.deepcopy`** (project_manager.py:6476), so the base is a
+  clean pre-edit snapshot even without an explicit argument.
+- `get_project_store()` is a **process-wide singleton** with one asyncio lock and
+  one warm working copy; the task worker runs **in-process** (server.py:162,
+  "combined mode"), so web-request writes and API-task writes share that lock and
+  serialize.
+- `ProjectStore.save` already does a base-aware compare-and-swap with a validated
+  **3-way merge** (`_reconcile_with_concurrent_write` → `_apply_our_change_to`),
+  raising `ConflictError` (never silent last-writer-wins) when it can't merge.
+
+So adding an explicit `base=copy.deepcopy(...)` to the two saves (commit b5488b05)
+was a **no-op** — the value was identical to the existing fallback — and it did
+NOT fix the tests (reverted in 3aed68a9). The lost update is NOT a missing base.
+
+**What the live evidence actually shows** (reallife run, HEAD with the no-op fix):
+`beta`'s UI removal and the API image-update both get overwritten, AND crucially
+**no `three-way merge` / `changed since it was read` log fires**, and there is **no
+push-conflict on `zad-projects`** (the observed rebases are all on
+`zad-deployments`/`zad-argo`). That means the store's reconcile sees
+`current == base` for the second writer — the first writer's committed change is
+not visible when the second reconciles — so both commits fast-forward and one
+silently wins. The reconcile machinery is correct; it just isn't being triggered.
+
+**Prime suspects to investigate next (with the user):**
+1. **A UI edit fires more than one save.** `router_detail_edit` does the store-save
+   (`_process_and_save_modal_edit`, line ~1533) AND then starts a deployment-process
+   task (line ~1342) carrying `state.base_version` captured at *form load*. That
+   task re-saves the project; if its base is the pre-edit version, its save can
+   re-publish the pre-edit state over a concurrent change. Map every save one UI
+   edit triggers before touching the store.
+2. **Warm-copy read-vs-committed visibility gap.** Confirm (temporary logging in
+   `_reconcile_with_concurrent_write`) whether reconcile runs during the race and
+   what `current`/`base` it actually sees — does the warm copy have the first
+   writer's commit when the second reconciles under the lock?
+3. Only after that: decide whether the real fix is threading `base_version`
+   correctly through the deployment-process task, collapsing the double-save, or
+   moving these paths to `mutate_and_commit_project` (single serialized RMW).
+
+The sections below are the ORIGINAL (wrong) analysis, kept for history.
+
+---
 
 ## Symptom (reproduced live)
 
