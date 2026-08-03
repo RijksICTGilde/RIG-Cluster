@@ -213,7 +213,8 @@ markers = [
    "requires_infra: marks tests that require external infrastructure (database, keycloak, etc.)",
    "e2e: marks end-to-end browser tests (require playwright and chromium)",
    "sandbox: marks tests that require a running sandbox cluster",
-   "reallife: long-running real-life sandbox suite (5 projects, semi-concurrent UI+API mutations); excluded from the standard sandbox run"
+   "reallife: long-running real-life sandbox suite (5 projects, semi-concurrent UI+API mutations); excluded from the standard sandbox run",
+   "upgrade_safety: RC-20 upgrade-safety replay of real production project files (clones the projects repo; needs network)"
 ]
 pythonpath = "."
 

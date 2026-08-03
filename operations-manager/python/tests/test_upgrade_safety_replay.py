@@ -39,9 +39,11 @@ from __future__ import annotations
 import copy
 import glob
 import os
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
@@ -54,6 +56,28 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures" / "upgrade_safety"
 #: Env var pointing at a checkout of the projects repo (one YAML per project). When
 #: set, every file there is replayed in addition to the committed fixtures.
 PROJECTS_DIR_ENV = "RIG_PROJECTS_DIR"
+
+#: Read-only production projects repo (plan section 2a / open decision 1). Cloned
+#: shallow for the ``requires_infra`` replay when no local checkout is given. No key
+#: is needed: nothing here decrypts the AGE blocks.
+PROJECTS_REPO_ENV = "RIG_PROJECTS_REPO"
+DEFAULT_PROJECTS_REPO = "https://git.claude.robbertuittenbroek.nl/robbert/rig-cluster-projects-github.git"
+
+#: These files declare the odcn-production cluster; the domain-format checks read that
+#: cluster's config (e.g. ``rijks.app`` supports dots there but not under ``local``).
+PRODUCTION_CLUSTER = "odcn-production"
+
+#: Known, PRE-EXISTING structural defects in the production data (not regressions this
+#: release introduces): both list ``publish-on-web`` twice at project level, which the
+#: structural validator rejects. They are the dp-bn7 class made visible -- on their next
+#: processing run they stall silently. The source repo is read-only here, so they are
+#: baselined by filename: the real-file replay stays green on today's data and turns RED
+#: the moment a NEW file fails (a genuine regression) or a baselined file starts passing
+#: (someone de-duplicated it -- drop it from the baseline).
+KNOWN_REAL_FAILURES: dict[str, str] = {
+    "dsm1j2-2ws.yaml": "staat meerdere keren in de services-lijst",
+    "ug-zxt.yaml": "staat meerdere keren in de services-lijst",
+}
 
 
 @dataclass
@@ -204,26 +228,113 @@ async def test_legacy_invites_block_is_relocated_not_lost() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Real project files: only when a projects checkout is available.
+# Real project files: reproduce what production actually does, then replay.
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def production_reality(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the replay reflect production, not the test host.
+
+    Two production realities decide whether the verdict is faithful:
+
+    * ``CLUSTER_MANAGER`` -> the cluster these files declare (odcn-production). The
+      domain-format check reads per-cluster domain config, so validating odcn files
+      under the default ``local`` cluster invents failures that production never sees.
+    * ``SubdomainConnector`` -> stubbed to "available". It is the one genuinely external
+      dependency in ``validate_project_structure`` (a live registry / DNS lookup); it
+      raises ``gaierror`` on a host without network, which is neither a validation
+      verdict nor a property of the file. For an existing project being reprocessed the
+      registry already records that project as the subdomain owner, so the real check is
+      a no-op there anyway.
+    """
+    import opi.core.config as opi_config
+    import opi.forms.editables.enforcers as enforcers
+
+    monkeypatch.setattr(opi_config.settings, "CLUSTER_MANAGER", PRODUCTION_CLUSTER)
+    subdomain_stub = MagicMock()  # SubdomainConnector() is a sync call; only the method is awaited
+    subdomain_stub.return_value.get_by_subdomain = AsyncMock(return_value=None)
+    monkeypatch.setattr(enforcers, "SubdomainConnector", subdomain_stub)
+
+
+def _assert_real_files_ok(outcomes: list[ReplayOutcome]) -> None:
+    """Assert every real file passes, except the documented pre-existing baseline.
+
+    Reports ALL failures at once so an upgrade review sees the full blast radius in one
+    run, and holds the baseline both ways (a new failure OR a baselined file that now
+    passes both fail the test).
+    """
+    failures = {o.name: f"{o.stage}: {o.error}" for o in outcomes if not o.ok}
+
+    new_failures = {name: why for name, why in failures.items() if name not in KNOWN_REAL_FAILURES}
+    report = "\n".join(f"  - {name}: {why}" for name, why in new_failures.items())
+    assert not new_failures, (
+        f"{len(new_failures)}/{len(outcomes)} production files NEWLY fail the upgrade replay "
+        f"(the dp-bn7 class -- they would stall silently on their next reprocess):\n{report}"
+    )
+
+    fixed = [name for name in KNOWN_REAL_FAILURES if name not in failures]
+    assert not fixed, f"Baselined-as-failing files now pass; drop them from KNOWN_REAL_FAILURES: {fixed}"
+
+    for name, expected in KNOWN_REAL_FAILURES.items():
+        assert expected in failures.get(name, ""), (
+            f"Baselined file '{name}' fails for a different reason than documented "
+            f"(expected '{expected}'): {failures.get(name)}"
+        )
 
 
 @pytest.mark.skipif(
     not _project_dir_paths(),
     reason=f"no projects checkout at ${PROJECTS_DIR_ENV}; set it to a zad-projects checkout to replay real files",
 )
+@pytest.mark.usefixtures("production_reality")
 async def test_real_project_files_migrate_and_validate() -> None:
-    """Replay every real project file and fail with a per-file report of what broke.
+    """Replay every real project file from a local ``$RIG_PROJECTS_DIR`` checkout.
 
-    This is the part that actually answers the plan's question against production
-    data. It reports ALL failures at once (not just the first) so an upgrade review
-    sees the full blast radius in one run.
+    Offline (no clone), so it can run in the default suite when a checkout is present.
     """
-    outcomes = [await replay_project_data(_load(p), os.path.basename(p)) for p in _project_dir_paths()]
-    failures = [o for o in outcomes if not o.ok]
+    paths = _project_dir_paths()
+    outcomes = [await replay_project_data(_load(p), os.path.basename(p)) for p in paths]
+    _assert_real_files_ok(outcomes)
 
-    report = "\n".join(f"  - {o.name}: FAILED at {o.stage}: {o.error}" for o in failures)
-    assert not failures, f"{len(failures)}/{len(outcomes)} project files failed the upgrade replay:\n{report}"
+
+def _clone_projects_repo(dest: Path) -> list[str]:
+    """Shallow-clone the read-only production projects repo (open decision 1).
+
+    Fails (rather than skips) when unreachable -- a safety test that silently never runs
+    is worse than a red one -- unless ``RIG_PROJECTS_SKIP_IF_OFFLINE=1`` is set for a
+    build machine without network access.
+    """
+    repo = os.environ.get(PROJECTS_REPO_ENV, DEFAULT_PROJECTS_REPO)
+    result = subprocess.run(
+        ["git", "clone", "--depth", "1", repo, str(dest)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        message = f"Could not clone the production projects repo ({repo}):\n{result.stderr.strip()}"
+        if os.environ.get("RIG_PROJECTS_SKIP_IF_OFFLINE") == "1":
+            pytest.skip(message)
+        pytest.fail(message)
+    files = sorted(glob.glob(str(dest / "projects" / "*.yaml"))) or sorted(glob.glob(str(dest / "**" / "*.yaml")))
+    assert files, f"No project YAML files found in {repo}"
+    return files
+
+
+@pytest.mark.requires_infra
+@pytest.mark.upgrade_safety
+@pytest.mark.usefixtures("production_reality")
+async def test_cloned_production_files_migrate_and_validate(tmp_path: Path) -> None:
+    """Replay every real project file, cloned fresh from the read-only projects repo.
+
+    This is the plan's open-decision-1 form: no local checkout, no key, always the
+    current production data. ``requires_infra`` (needs network to clone) keeps it out of
+    the default offline suite; run it with ``-m "requires_infra and upgrade_safety"``.
+    """
+    paths = _clone_projects_repo(tmp_path / "projects-repo")
+    outcomes = [await replay_project_data(_load(p), os.path.basename(p)) for p in paths]
+    _assert_real_files_ok(outcomes)
 
 
 # ---------------------------------------------------------------------------
