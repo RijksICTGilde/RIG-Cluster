@@ -1,0 +1,28 @@
+{# Swapped in by the "Toon code" button in the Keycloak detail section.
+
+   Deliberately carries the code and not the seed: the seed would let anyone who
+   sees the page generate codes forever, this one dies with its period. Served by
+   keycloak_otp_code_web, which repeats the section's admin/owner check. #}
+<div class="config-value config-value--inline">
+    <code class="config-code">{{ code }}</code>
+    <c-button
+        kind="tertiary"
+        size="sm"
+        label="Kopieer"
+        showIcon="before"
+        icon="document-blanco"
+        class="copy-btn"
+        @click="copyToClipboard('.config-code', event, '.config-item')" />
+    <c-button
+        kind="tertiary"
+        size="sm"
+        label="Nieuwe code"
+        showIcon="before"
+        icon="refresh"
+        hx-get="/projects/{{ project_name }}/keycloak/{{ realm }}/otp-code"
+        hx-target="#otp-code-{{ realm }}"
+        hx-swap="innerHTML" />
+</div>
+<p class="rvo-text--subtle" style="margin: var(--rvo-space-2xs) 0 0 0;">
+    Nog {{ seconds_remaining }} seconde{{ "n" if seconds_remaining != 1 else "" }} geldig.
+</p>

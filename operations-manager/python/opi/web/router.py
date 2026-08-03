@@ -25,7 +25,7 @@ from opi.services.project_authorization import (
 from opi.services.project_store import get_project_store
 from opi.utils.age import decrypt_password_smart, get_global_private_key
 from opi.utils.csrf import ensure_csrf_token
-from opi.utils.totp import build_otpauth_uri, totp_base32
+from opi.utils.totp import totp_now
 from opi.utils.yaml_util import load_yaml_from_string
 from opi.web.menu import get_menu_items
 
@@ -479,6 +479,51 @@ async def delete_component_web(request: Request, project_name: str, component_na
         from fastapi.responses import JSONResponse
 
         return JSONResponse(content={"error": f"Fout bij verwijderen van component: {e!s}"}, status_code=500)
+
+
+@web_router.get("/projects/{project_name}/keycloak/{realm_name}/otp-code", response_class=HTMLResponse)
+@requires_sso
+async def keycloak_otp_code_web(request: Request, project_name: str, realm_name: str) -> HTMLResponse:
+    """Render the realm-admin's TOTP code of this moment.
+
+    Fetched on demand so the shared seed stays on the server: the detail page
+    renders only a button, and what it swaps in expires within one period.
+    Mirrors the authorization of the detail-page section that hosts the button.
+    """
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    if not is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+
+    if get_user_role_for_project(project_name, user_email) not in ("admin", "owner"):
+        raise HTTPException(status_code=403, detail="Alleen admin of owner rollen kunnen de OTP-code opvragen")
+
+    project = get_project_store().get(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project niet gevonden")
+
+    realms = Project(project.data or {}).get("services/keycloak/config/realms") or []
+    encrypted_secret = next(
+        (r.get("totp_secret") for r in realms if r.get("realm") == realm_name),
+        None,
+    )
+    if not encrypted_secret:
+        raise HTTPException(status_code=404, detail=f"Geen OTP ingesteld voor realm '{realm_name}'")
+
+    project_private_key = await decrypt_password_smart(
+        (project.data or {})["config"]["age-private-key"], get_global_private_key()
+    )
+    secret = await decrypt_password_smart(encrypted_secret, project_private_key)
+    code, seconds_remaining = totp_now(secret)
+
+    logger.info(f"OTP code requested for '{project_name}' realm '{realm_name}' by {user_email}")
+
+    return get_templates().TemplateResponse(
+        request,
+        "keycloak/otp-code.html.j2",
+        {"code": code, "seconds_remaining": seconds_remaining, "project_name": project_name, "realm": realm_name},
+    )
 
 
 @web_router.post("/projects/{project_name}/refresh", response_class=HTMLResponse)
@@ -1110,14 +1155,10 @@ async def project_details(request: Request, project_name: str):
                 except Exception as e:
                     logger.warning(f"Failed to decrypt Keycloak password for realm {kc_config.get('realm')}: {e}")
                     kc_config["password"] = None
-            if kc_config.get("totp_secret"):
-                try:
-                    secret = await decrypt_password_smart(kc_config["totp_secret"], project_private_key)
-                    kc_config["totp_secret"] = totp_base32(secret)
-                    kc_config["totp_otpauth_uri"] = build_otpauth_uri(secret, kc_config["username"], kc_config["realm"])
-                except Exception as e:
-                    logger.warning(f"Failed to decrypt Keycloak TOTP secret for realm {kc_config.get('realm')}: {e}")
-                    kc_config["totp_secret"] = None
+            # The seed never reaches the page: it would grant codes forever, while the
+            # code fetched on demand expires within one period. Only the flag ships.
+            kc_config["has_totp"] = bool(kc_config.get("totp_secret"))
+            kc_config["totp_secret"] = None
 
         for deployment in project_data_decrypted.get("deployments", []):
             # Decrypt deployment-component-level user-env-vars
