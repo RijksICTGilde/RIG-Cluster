@@ -409,10 +409,9 @@ class DeleteProjectManager:
         # config went undetected here and its infrastructure was left behind on delete.
         # postgresql-database with scope: project also owns an infrastructure namespace
         # (RC-17), so include it or its dedicated cluster leaks on delete.
-        uses_namespace_infrastructure = (
-            any(service_entry_name(entry) in NAMESPACE_SERVICES for entry in project_services)
-            or project_uses_dedicated_postgres(project_data)
-        )
+        uses_namespace_infrastructure = any(
+            service_entry_name(entry) in NAMESPACE_SERVICES for entry in project_services
+        ) or project_uses_dedicated_postgres(project_data)
 
         if not uses_namespace_infrastructure:
             logger.debug(
