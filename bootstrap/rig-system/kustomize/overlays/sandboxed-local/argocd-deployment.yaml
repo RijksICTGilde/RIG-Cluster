@@ -9,9 +9,10 @@ spec:
   # RIG-eigen image: upstream v3.3.12 + de namespace-sync fixes uit images/argocd-rig.
   # Alle componenten volgen dit, behalve repo-server (zie spec.repo hieronder) — zo is de
   # sandbox dezelfde vorm als odcn-production, waar repo-server op de Red Hat build blijft.
-  # In kind staat de image lokaal op de node via `task load-kind`; de tag is niet `latest`
-  # dus de pull policy is IfNotPresent en er wordt niets uit een registry gehaald.
-  image: argocd-rig
+  # Uit de publieke registry, zodat de sandbox hem via GitOps binnenhaalt in plaats van
+  # via `task load-kind`; die taak blijft bestaan om een lokale build te testen voor je
+  # publiceert (bouw dan met IMAGE_TAG=<iets anders> en pin die tag hier tijdelijk).
+  image: ghcr.io/minbzk/base-images/argocd-rig
   version: v3.3.12-rig1
   extraConfig:
     resource.customizations.health.cert-manager.io_Issuer: |
