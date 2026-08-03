@@ -12,9 +12,13 @@ these checks only make sense on the machine that runs the sandbox.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import socket
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from functools import lru_cache
 from typing import Any
 
@@ -164,3 +168,73 @@ def deployment_pod_annotations(namespace: str) -> dict[str, str]:
     for deploy in get_json("deployments", namespace).get("items", []):
         annotations.update(deploy.get("spec", {}).get("template", {}).get("metadata", {}).get("annotations", {}) or {})
     return annotations
+
+
+def running_pod_names(namespace: str, name_prefix: str) -> list[str]:
+    """Running pod names in the namespace whose name starts with ``name_prefix``.
+
+    Used to find a component's application pod (named after its deployment),
+    excluding db/infra pods that live in other namespaces.
+    """
+    names: list[str] = []
+    for pod in get_json("pods", namespace).get("items", []):
+        if pod.get("status", {}).get("phase") != "Running":
+            continue
+        name = pod.get("metadata", {}).get("name", "")
+        if name.startswith(name_prefix):
+            names.append(name)
+    return names
+
+
+def _free_local_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def http_get_via_port_forward(
+    namespace: str,
+    pod: str,
+    remote_port: int,
+    path: str,
+    *,
+    timeout: float = 30.0,
+) -> tuple[int, str]:
+    """GET ``path`` from a pod's ``remote_port`` over a temporary ``kubectl
+    port-forward``.
+
+    This reaches the application container directly, bypassing any ingress and
+    the authorization-wall sidecar (which would otherwise gate the request behind
+    OIDC). The workload image is distroless, so ``kubectl exec`` + curl is not an
+    option - port-forward is the deterministic path. Returns (status_code, body).
+    """
+    local_port = _free_local_port()
+    proc = subprocess.Popen(
+        ["kubectl", "port-forward", "-n", namespace, f"pod/{pod}", f"{local_port}:{remote_port}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    url = f"http://127.0.0.1:{local_port}{path}"
+    try:
+        deadline = time.time() + timeout
+        last_error: Exception | None = None
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                stderr = proc.stderr.read() if proc.stderr else ""
+                raise RuntimeError(f"port-forward exited early: {stderr.strip()}")
+            try:
+                with urllib.request.urlopen(url, timeout=5.0) as resp:  # noqa: S310 (fixed localhost)
+                    return resp.status, resp.read().decode()
+            except urllib.error.HTTPError as exc:
+                # A response with a non-2xx status (e.g. ?strict=1 -> 503) still
+                # carries the JSON body we want to assert on.
+                return exc.code, exc.read().decode()
+            except (urllib.error.URLError, ConnectionError, OSError) as exc:
+                last_error = exc
+                time.sleep(1.0)
+        raise RuntimeError(f"GET {url} did not succeed within {timeout:.0f}s: {last_error}")
+    finally:
+        proc.terminate()
+        with contextlib.suppress(subprocess.SubprocessError):
+            proc.wait(timeout=5)
