@@ -1892,6 +1892,34 @@ tasks:
       - uv run pytest tests/ --ignore=tests/integration/ -v
     silent: false
 
+  test-upgrade-safety:
+    desc: "RC-19 Layer 1: replay every project file through migrate + validate (offline, no cluster/key)"
+    summary: |
+      Runs the offline upgrade-safety replay. Always exercises the committed
+      sanitized fixtures; set RIG_PROJECTS_DIR to a zad-projects checkout to
+      replay the real production files too.
+
+        RIG_PROJECTS_DIR=/path/to/zad-projects/projects task test-upgrade-safety
+    dir: operations-manager/python
+    cmds:
+      - uv run pytest tests/test_upgrade_safety_replay.py -v
+    silent: false
+
+  upgrade-safety-diff:
+    desc: "RC-19 Layer 2: summarize what a zad-deployments upgrade removed, per project"
+    summary: |
+      Diffs a zad-deployments checkout against the baseline recorded before the
+      OPI image swap, and summarizes disappeared keys (env vars, secrets, ingress,
+      mounts, schemas) per project. The output is a report to judge, not a pass/fail.
+
+        REPO=/path/to/zad-deployments BASELINE=<sha> task upgrade-safety-diff
+    dir: operations-manager/python
+    requires:
+      vars: [REPO, BASELINE]
+    cmds:
+      - uv run python scripts/compare_deployments_diff.py "{{.REPO}}" "{{.BASELINE}}" "{{.TARGET | default \"HEAD\"}}"
+    silent: true
+
   test-integration:
     desc: "Run integration tests (mock-based, no infrastructure required)"
     dir: operations-manager/python
