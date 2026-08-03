@@ -22,6 +22,7 @@ from opi.manager.backup import (
     create_database_backup_manager,
 )
 from opi.services import ServiceType
+from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.services.project_store import get_project_store
 from opi.utils.naming import generate_backup_run_id
 from opi.utils.secrets import DatabaseSecret, MinIOSecret
@@ -481,10 +482,10 @@ async def backup_project_deployment(
                         reference_name = f"{deployment_name}-database"
                         generation = None
 
-                    # Determine source type based on which service is used
-                    uses_namespace_db = project_file_handler.deployment_uses_service(
-                        project.data, deployment_name, [ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value]
-                    )
+                    # Determine source type based on placement. Dedicated (a project-owned
+                    # cluster) is project-wide: namespace-postgresql-database or
+                    # postgresql-database with scope: project (RC-17).
+                    uses_namespace_db = project_uses_dedicated_postgres(project.data)
                     source_type = "namespace" if uses_namespace_db else "shared"
 
                     logger.info(

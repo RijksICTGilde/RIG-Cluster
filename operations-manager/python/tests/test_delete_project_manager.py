@@ -158,6 +158,41 @@ class TestCleanupProjectInfrastructure:
         assert len(infra_ops) > 0
 
     @pytest.mark.asyncio
+    async def test_failed_infra_namespace_delete_is_surfaced_not_swallowed(self):
+        """A failed namespace delete must fail loudly, not be reported as success.
+
+        delete_namespace uses --ignore-not-found, so a genuinely absent namespace returns
+        True; a False is a real failure (e.g. an RBAC 403). Regression: OPI used to label
+        that False as "not_found" and return overall success, silently leaking the
+        namespace.
+        """
+        mock_pm = _make_project_manager_mock()
+        mock_pm._kubectl_connector.delete_namespace = AsyncMock(return_value=False)
+        manager = DeleteProjectManager(mock_pm)
+
+        project_data = _make_project_data(
+            services=["namespace-postgresql-database"],
+            repositories=[{"name": "main-repo", "path": ""}],
+        )
+        deletion_results: dict = {"operations": [], "errors": [], "success": True}
+
+        mock_argo = AsyncMock()
+        mock_argo.refresh_application = AsyncMock(return_value=True)
+        mock_argo.application_exists = AsyncMock(return_value=False)
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("os.path.exists", return_value=False),
+        ):
+            await manager._cleanup_project_infrastructure("test-project", "local", project_data, deletion_results)
+
+        ns_ops = [op for op in deletion_results["operations"] if op["type"] == "infrastructure_namespace_deletion"]
+        assert ns_ops, "expected an infrastructure_namespace_deletion operation"
+        assert ns_ops[-1]["status"] == "error", "a failed delete must be reported as error, not not_found"
+        assert deletion_results["success"] is False
+        assert deletion_results["errors"], "the failure must be surfaced in errors"
+
+    @pytest.mark.asyncio
     async def test_runs_when_namespace_redis_service(self):
         """Infrastructure cleanup should run when project uses namespace-redis."""
         mock_pm = _make_project_manager_mock()
