@@ -1,9 +1,15 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# Use upstream ingress-nginx manifest for KIND
+# Use upstream ingress-nginx manifest for KIND.
+#
+# Gepind op een release-tag, niet op main: `task install-ingress-nginx` bouwt deze base bij
+# elke verse sandbox, dus met `main` haalde elke setup binnen wat er die dag toevallig
+# stond. Dan verandert de controllerversie zonder dat iemand iets wijzigt, en verdwijnt het
+# pad zodra upstream opruimt -- precies wat de hostpath-driver in csi-snapshot/base overkwam.
+# Ophogen is een bewuste stap: check de patches hieronder tegen de nieuwe versie.
 resources:
-- https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+- https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml
 
 patches:
 # Enable configuration-snippet annotations (disabled by default since v1.9.0)
