@@ -28,6 +28,8 @@ De server heeft de productiesleutel niet en hoort die ook niet te krijgen. Dat i
 
 **Laag 1 heeft helemaal geen sleutel nodig.** Migratie en validatie werken op de structuur van het bestand; de AGE-blokken zijn voor dat werk gewoon ondoorzichtige strings die nergens ontsleuteld worden. Die controle kan dus draaien op de productiebestanden zoals ze zijn, zonder enige sleutel, waar dan ook.
 
+**En de bestanden staan voor de server klaar**, in een andere Forgejo-repo dan de sandbox gebruikt: `https://git.claude.robbertuittenbroek.nl/robbert/rig-cluster-projects-github.git`. Op 3 augustus geverifieerd bereikbaar met `git ls-remote`, zonder inloggegevens. Dat is de bron voor laag 1: een ondiepe kloon van die repo, lezen, nooit terugschrijven. Daarmee is laag 1 niet afhankelijk van een lokale checkout en werkt hij overal hetzelfde.
+
 Dat maakt de rolverdeling simpel: omzetten gebeurt lokaal en met de hand, uitvoeren gebeurt op de server met alleen sandboxgeheimen. Het draaiboek moet dat expliciet zeggen, anders zoekt iemand later alsnog naar een manier om die sleutel op de server te krijgen.
 
 ## 3. Twee lagen, en de goedkope eerst
@@ -71,14 +73,14 @@ Een verschil is niet per se fout. Deze release verandert bewust dingen, bijvoorb
 
 ## 5. Wat er gebouwd moet worden
 
-1. **Laag-1-test** die alle productiebestanden migreert en valideert, met een rapport per bestand en een duidelijke uitkomst per klasse fout.
+1. **Laag-1-test** die alle productiebestanden migreert en valideert, met een rapport per bestand en een duidelijke uitkomst per klasse fout. Bron is de projecten-repo uit 2a; een ondiepe kloon volstaat, want alleen de huidige inhoud telt.
 2. **Uitbreiding van het omzetscript** met twee dingen die het nu niet doet: het image van elk component vervangen door `e2e-allservices`, en de poort meeverhuizen. De probe luistert op 8080 terwijl productiecomponenten eigen poorten declareren, dus zonder die herschrijving falen de gezondheidscontroles. Overweeg dit als aparte vlag zodat het omzetscript ook zonder die vervanging bruikbaar blijft.
 3. **Een taakje dat de vergelijking doet**: ijkpunt vastleggen, na de upgrade diffen, en de diff samenvatten naar verdwenen sleutels per project.
 4. **Een draaiboek** in `features/` zodat de test herhaalbaar is bij de volgende release, en niet eenmalig werk blijft.
 
 ## 6. Open beslissingen
 
-1. **Draait laag 1 op de echte productiebestanden of op een kopie?** Een sleutel is er niet voor nodig (zie 2a), dus dat is de blokkade niet. De vraag is waar de bestanden vandaan komen: rechtstreeks uit de projecten-repo, die alleen-gelezen mag worden en waar niets naartoe gecommit mag worden, of uit een vastgelegde momentopname in de testdata. Het eerste is altijd actueel maar maakt de test afhankelijk van een checkout die op een bouwmachine niet staat; het tweede draait overal maar veroudert. Een middenweg is de test overslaan met een duidelijke melding als de map ontbreekt, zodat hij lokaal en op de server met projecten-checkout wél bijt.
+1. ~~Draait laag 1 op de echte productiebestanden of op een kopie?~~ **BESLIST op 3 augustus:** rechtstreeks uit `https://git.claude.robbertuittenbroek.nl/robbert/rig-cluster-projects-github.git`, alleen lezen, nooit terugschrijven. Geen sleutel nodig en geen lokale checkout, dus de test werkt overal hetzelfde en blijft actueel. Wat nog wel te bepalen valt is het gedrag als de repo onbereikbaar is: overslaan met een melding, of falen. Overslaan verbergt een test die stilletjes nooit draait, dus falen heeft de voorkeur tenzij dat een bouwmachine zonder netwerk breekt.
 2. **Wat is de uitkomst bij een verschil?** Faalt de test, of produceert hij een rapport dat iemand beoordeelt? Voor laag 1 lijkt falen juist; voor de diff van laag 2 is beoordelen realistischer, want gewenste verschillen bestaan.
 3. **Nemen we de projecteigen images mee of vervangen we alles door de probe?** Alles vervangen is sneller en betrouwbaarder, maar test niet of echte werklasten nog starten. Voorstel is vervangen, want het doel is het projectbestand en de dienstverlening, niet de applicaties van gebruikers.
 4. **Hoe komt de oude OPI erin?** Een vastgepind image van wat productie draait. Te bepalen of dat de CalVer-tag uit de odcn-overlay is of de commit waar productie nu op staat.
