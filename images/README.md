@@ -6,6 +6,12 @@ over HTTP (/, /healthz, /status). Used as the sandbox E2E all-services fixture; 
 scan-driven from OPI's service registry. See images/e2e-allservices/README.md and
 features/e2e-allservices-image.md. Build+publish: `task publish-e2e-allservices`.
 
+argocd-rig: upstream Argo CD v3.3.12 plus two namespace-sync fixes, so the cluster cache survives a
+namespace being deleted or RBAC-restricted (we run namespace-mode with 47 namespaces). The patches in
+images/argocd-rig/patches/ are the source of truth; `task src:verify` proves the build worktree is
+exactly v3.3.12 + those patches. See images/argocd-rig/README.md. Build+publish: `task publish` in
+that directory, to ghcr.io/minbzk/base-images/argocd-rig.
+
 cmp-kustomize-sops: used as sidecar in ArgoCD, so we can apply kustomize with sops secrets, where the secret is
 stored in the namespace, similar to how Flux would deploy.
 
