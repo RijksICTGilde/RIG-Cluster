@@ -23,6 +23,7 @@ from opi.forms.visualizers.wizard_sections import (
     IDENTITY_SECTION,
     KEYCLOAK_CONFIG_SECTION,
     POSTGRESQL_CONFIG_SECTION,
+    POSTGRESQL_SCHEMAS_SECTION,
     SERVICES_SECTION,
     TEAM_SECTION,
     WIZARD_DEPLOYMENT_SECTION,
@@ -136,6 +137,16 @@ _POSTGRESQL_DATA = {
     ],
 }
 
+_POSTGRESQL_SCHEMAS_DATA = {
+    "services": [
+        {
+            "postgresql-database": {
+                "config": {"schemas": [{"postfix": "rapportage", "description": "Reporting tables"}]},
+            },
+        },
+    ],
+}
+
 _AUTH_WALL_DATA = {
     "services": [
         {
@@ -169,6 +180,7 @@ SECTION_DATA = {
     "config": (CONFIG_DISPLAY_SECTION, _CONFIG_DATA),
     "keycloak-config": (KEYCLOAK_CONFIG_SECTION, _KEYCLOAK_DATA),
     "postgresql-config": (POSTGRESQL_CONFIG_SECTION, _POSTGRESQL_DATA),
+    "postgresql-schemas-config": (POSTGRESQL_SCHEMAS_SECTION, _POSTGRESQL_SCHEMAS_DATA),
     "auth-wall-config": (AUTH_WALL_CONFIG_SECTION, _AUTH_WALL_DATA),
     "domains": (DOMAIN_SECTION, _DOMAIN_DATA),
     "deployment": (WIZARD_DEPLOYMENT_SECTION, _DOMAIN_DATA),

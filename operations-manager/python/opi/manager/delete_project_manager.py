@@ -15,6 +15,7 @@ from opi.core.config import settings
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.catalog.base import RemovalContext
 from opi.services.persistence.subdomain_registry import SubdomainConnector
+from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.services.project import Project
 from opi.services.project_store import get_project_store
 from opi.services.registry import get_service
@@ -406,9 +407,11 @@ class DeleteProjectManager:
         # service_entry_name resolves all three entry formats. Matching on the raw dict
         # keys only saw the legacy single-key form, so a namespace service carrying
         # config went undetected here and its infrastructure was left behind on delete.
+        # postgresql-database with scope: project also owns an infrastructure namespace
+        # (RC-17), so include it or its dedicated cluster leaks on delete.
         uses_namespace_infrastructure = any(
             service_entry_name(entry) in NAMESPACE_SERVICES for entry in project_services
-        )
+        ) or project_uses_dedicated_postgres(project_data)
 
         if not uses_namespace_infrastructure:
             logger.debug(
@@ -579,13 +582,22 @@ class DeleteProjectManager:
                     )
                     logger.info(f"Successfully deleted infrastructure namespace: {infra_namespace}")
                 else:
+                    # As above: --ignore-not-found makes a genuinely absent namespace
+                    # return True, so a False is a real failure -- surface it rather than
+                    # calling it "not_found" and leaking the infrastructure namespace.
                     deletion_results["operations"].append(
                         {
                             "type": "infrastructure_namespace_deletion",
                             "target": infra_namespace,
-                            "status": "not_found",
+                            "status": "error",
+                            "error": "kubectl delete namespace failed (see logs); namespace left behind",
                         }
                     )
+                    deletion_results["errors"].append(
+                        f"Failed to delete infrastructure namespace '{infra_namespace}' (see logs)."
+                    )
+                    deletion_results["success"] = False
+                    logger.error(f"Failed to delete infrastructure namespace {infra_namespace}; it was left behind")
 
             # 5. Delete infrastructure manifests folder from deployment git repo
             repositories = project_data.get("repositories", [])
@@ -1361,16 +1373,25 @@ class DeleteProjectManager:
                         )
                         logger.info(f"Successfully deleted namespace: {namespace}")
                     else:
+                        # delete_namespace uses --ignore-not-found, so a genuinely absent
+                        # namespace returns True. A False here is therefore a real delete
+                        # failure (e.g. an RBAC 403), NOT "already gone" -- surface it
+                        # instead of silently reporting success and leaking the namespace.
                         deletion_results["operations"].append(
                             {
                                 "type": "namespace_deletion",
                                 "target": namespace,
                                 "cluster": cluster,
                                 "deployment": deployment_name,
-                                "status": "not_found",
+                                "status": "error",
+                                "error": "kubectl delete namespace failed (see logs); namespace left behind",
                             }
                         )
-                        logger.info(f"Namespace {namespace} was not found (already deleted)")
+                        deletion_results["errors"].append(
+                            f"Failed to delete namespace '{namespace}' (see logs for the kubectl error)."
+                        )
+                        deletion_results["success"] = False
+                        logger.error(f"Failed to delete namespace {namespace}; it was left behind")
                 else:
                     deletion_results["operations"].append(
                         {
