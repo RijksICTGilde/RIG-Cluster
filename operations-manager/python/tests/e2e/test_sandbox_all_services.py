@@ -28,6 +28,7 @@ when kubectl is not available.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -229,6 +230,102 @@ def test_all_services_provisioned_in_cluster(
         pvcs,
         ingresses,
     )
+
+
+# Service -> /status target id, for the subset of bound services that inject
+# connection variables and therefore round-trip a real resource. authorization-wall
+# and attachments inject no vars, so they have no /status target (their provisioning
+# is already asserted structurally above).
+_STATUS_TARGETS = {
+    "publish-on-web": "web",
+    "keycloak": "oidc",
+    "metrics-scraper": "metrics",
+    "persistent-storage": "storage-data",
+    "temp-storage": "storage-temp",
+    "postgresql-database": "postgres",
+    "minio-storage": "minio",
+    "redis": "redis",
+}
+
+
+def _fetch_status(namespace: str) -> dict:
+    """GET /status from the workload pod over a port-forward (bypasses the ingress
+    and the auth-wall sidecar). Retries pods until one answers with the payload."""
+    pods = cluster.running_pod_names(namespace, "")
+    assert pods, f"no running pod in namespace '{namespace}' to query /status"
+    last_error: Exception | None = None
+    for pod in pods:
+        try:
+            # Short per-attempt cap: this runs inside a poll loop, so a pod that is
+            # not serving yet should fail fast and be retried on the next round
+            # rather than blocking the whole wait on one slow port-forward.
+            code, body = cluster.http_get_via_port_forward(namespace, pod, 8080, "/status", timeout=15.0)
+        except Exception as exc:
+            last_error = exc
+            continue
+        if code == 200 and '"services"' in body:
+            return json.loads(body)
+        last_error = AssertionError(f"pod {pod} /status -> {code}: {body[:200]}")
+    raise AssertionError(f"could not read /status from any pod in '{namespace}': {last_error}")
+
+
+@pytest.mark.timeout(600)
+def test_all_services_status_reports_every_binding_ok(
+    all_services_project: CreatedProject,
+) -> None:
+    """The workload's /status confirms every bound service is actually reachable
+    with the injected credentials - the point of this whole image.
+
+    'Pod Healthy' only proves the process started and passed the TCP probe. This
+    asserts the app could really connect to and round-trip each platform resource
+    (database incl. schemas + RO role, redis, minio, oidc, PVCs), reported at
+    /status as bound + ok. Skips when kubectl cannot reach the sandbox host.
+    """
+    if not cluster.kubectl_available():
+        pytest.skip("kubectl cannot reach a cluster - /status check needs the sandbox host")
+
+    namespace = f"rig-{all_services_project.name}"
+
+    # The workload only reports green once its first check round has run; give the
+    # freshly-created pod a moment to come up and verify its bindings.
+    status: dict = {}
+
+    def _ready() -> bool:
+        nonlocal status
+        try:
+            status = _fetch_status(namespace)
+        except Exception:
+            return False
+        return bool(status.get("ready"))
+
+    assert cluster.wait_for(_ready, timeout=_PROVISION_TIMEOUT), f"workload /status never became ready in '{namespace}'"
+    logger.info("status for '%s': %s", all_services_project.name, status)
+
+    services = status.get("services") or {}
+
+    # Every service the project bound that round-trips a resource must be bound + ok.
+    for svc, target_id in _STATUS_TARGETS.items():
+        entry = services.get(target_id)
+        assert entry is not None, f"/status has no target '{target_id}' for service '{svc}'"
+        assert entry.get("bound") is True, f"service '{svc}' ({target_id}) not bound: {entry}"
+        assert entry.get("ok") is True, f"service '{svc}' ({target_id}) not ok: {entry}"
+
+    # Postgres detail: every schema (default + any extra DATABASE_SCHEMA_{POSTFIX})
+    # round-tripped, and the read-only role behaved (read, write refused).
+    postgres = services["postgres"]
+    schemas = (postgres.get("detail") or {}).get("schemas") or {}
+    assert schemas, f"postgres /status carries no schema results: {postgres}"
+    bad_schemas = {name: verdict for name, verdict in schemas.items() if verdict != "ok"}
+    assert not bad_schemas, f"postgres schema round-trip failed: {bad_schemas}"
+    read_only = (postgres.get("detail") or {}).get("read_only", "")
+    # The RO role must be either enforced (read ok, write refused) or explicitly
+    # reported as not provisioned - never a silent gap.
+    assert ("write refused" in read_only) or ("skipped" in read_only), (
+        f"RO role result is neither enforced nor a clear skip: {read_only!r}"
+    )
+
+    # The overall verdict must be green: no bound service failed.
+    assert status.get("all_ok") is True, f"workload reports failures: {status}"
 
 
 # --- Namespace-variant services (added via the API; hidden in the wizard) --------
