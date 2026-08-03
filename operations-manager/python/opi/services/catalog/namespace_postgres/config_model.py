@@ -7,64 +7,20 @@ fields, same privilege allow-list. Version ``1.0`` deliberately *describes reali
 rather than tightening it, so every existing project file validates unchanged; any
 stricter guardrails (e.g. a storage-quantity pattern) come later as a versioned
 ``migrate_config`` step, never as a silent behaviour change on the current version.
+
+The CNPG-cluster field set itself lives in ``catalog/shared/postgres.py`` because it
+is now shared with ``postgresql-database``'s ``scope: project`` variant; this service
+only decides that it uses it.
 """
 
 from __future__ import annotations
 
-from enum import StrEnum
+from pydantic import ConfigDict
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-
-
-class DatabasePrivilege(StrEnum):
-    """PostgreSQL role privileges accepted for the namespace database user.
-
-    Matches the allow-list previously enforced inline in DatabaseManager.
-    """
-
-    SUPERUSER = "SUPERUSER"
-    NOSUPERUSER = "NOSUPERUSER"
-    CREATEDB = "CREATEDB"
-    NOCREATEDB = "NOCREATEDB"
-    CREATEROLE = "CREATEROLE"
-    NOCREATEROLE = "NOCREATEROLE"
-    LOGIN = "LOGIN"
-    NOLOGIN = "NOLOGIN"
-    REPLICATION = "REPLICATION"
-    NOREPLICATION = "NOREPLICATION"
-    BYPASSRLS = "BYPASSRLS"
-    NOBYPASSRLS = "NOBYPASSRLS"
+from opi.services.catalog.shared.postgres import DedicatedPostgresFields
 
 
-class RequestsQuantities(BaseModel):
-    """CPU/memory *requests*. Per-field defaults preserve the old deep-merge: a
-    config overriding only ``requests.memory`` keeps the default ``cpu``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    memory: str = "256Mi"
-    cpu: str = "100m"
-
-
-class LimitsQuantities(BaseModel):
-    """CPU/memory *limits* (defaults differ from requests, as in DEFAULT_CONFIG)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    memory: str = "512Mi"
-    cpu: str = "500m"
-
-
-class DatabaseResources(BaseModel):
-    """requests/limits pair, mirroring DEFAULT_CONFIG['resources']."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    requests: RequestsQuantities = RequestsQuantities()
-    limits: LimitsQuantities = LimitsQuantities()
-
-
-class NamespacePostgresConfig(BaseModel):
+class NamespacePostgresConfig(DedicatedPostgresFields):
     """Typed config for a dedicated (namespace) PostgreSQL cluster.
 
     Field defaults reproduce ``DatabaseManager.DEFAULT_CONFIG`` so validating an
@@ -72,28 +28,7 @@ class NamespacePostgresConfig(BaseModel):
     old ``dict.get()`` merge produced.
     """
 
-    # extra="forbid" catches config typos (e.g. "instaces"); the field set below is
-    # exactly the keys the old merge honoured, so no real project file is rejected.
+    # Re-declared explicitly: an empty subclass does not re-emit the parent's
+    # extra="forbid" into its JSON schema (additionalProperties: false), and that
+    # guardrail is what rejects config typos (e.g. "instaces").
     model_config = ConfigDict(extra="forbid")
-
-    # CNPG-compatible image (has a postgres user with UID 26).
-    image: str = "ghcr.io/cloudnative-pg/postgresql:17"
-    # Optional named registry the image is pulled from (see project 'registries').
-    registry: str | None = None
-    instances: int = Field(default=1, ge=1)
-    # Kubernetes storage quantity, e.g. "10Gi". Not pattern-constrained at v1.0 to
-    # match today's behaviour (required, non-empty); tighten via a future version.
-    storage: str = "10Gi"
-    privileges: list[DatabasePrivilege] = Field(default_factory=list)
-    postInitSQL: list[str] = Field(default_factory=list)
-    resources: DatabaseResources = DatabaseResources()
-
-    @field_validator("privileges", mode="before")
-    @classmethod
-    def _uppercase_privileges(cls, value: object) -> object:
-        # Preserve the old case-insensitive behaviour (privilege.upper()): SQL role
-        # keywords are case-insensitive, so a hand-edited lowercase value still
-        # validates and is normalised to the canonical uppercase form.
-        if isinstance(value, list):
-            return [item.upper() if isinstance(item, str) else item for item in value]
-        return value

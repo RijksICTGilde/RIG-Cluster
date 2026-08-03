@@ -7,11 +7,12 @@ Kubernetes secrets with consistent key mappings and validation.
 
 import logging
 from abc import ABC
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from opi.services import ServiceType
 from opi.services.services import ServiceAdapter
+from opi.utils.naming import generate_schema_variable_name
 
 if TYPE_CHECKING:
     from opi.connectors.kubectl import KubectlConnector
@@ -158,6 +159,12 @@ class DatabaseSecret(BaseSecret):
     # they are populated on the next deployment reprocess.
     ro_username: str = ""
     ro_password: str = ""
+    # Extra schemas (RC-17), as ``(postfix, full_schema_name)`` in the order the role's
+    # search_path should list them (after the default ``schema``). Each one is exposed
+    # as ``DATABASE_SCHEMA_{POSTFIX}`` (+ APP_ alias) and joined into the search_path.
+    # Not a service-definition variable and not reconstructed from k8s (the names are
+    # dynamic), so it defaults empty and is populated when the secret is authored.
+    extra_schemas: list[tuple[str, str]] = field(default_factory=list)
 
     SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-database"
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.POSTGRESQL_DATABASE
@@ -166,18 +173,36 @@ class DatabaseSecret(BaseSecret):
         """Validate database secret data."""
         super().__post_init__()  # Call parent's default implementation
 
+    def _search_path(self) -> str:
+        """The role's schema search order: the default schema, then every extra schema.
+
+        ``public`` stays last so unqualified objects the platform expects there still
+        resolve. This is the single source for both the ALTER ROLE search_path and the
+        connection-string ``options`` parameter."""
+        schemas = [self.schema, *(name for _, name in self.extra_schemas), "public"]
+        return ",".join(schemas)
+
     @property
     def connection_string(self) -> str:
         """Generate PostgreSQL connection string."""
-        return f"postgresql://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}?options=--search_path%3D{self.schema},public"
+        # Literal commas, exactly as before: with no extra schemas this yields the
+        # unchanged ``--search_path=<schema>,public``.
+        return f"postgresql://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}?options=--search_path%3D{self._search_path()}"
 
     def _get_additional_keys(self) -> dict[str, str]:
         """Add computed keys that are not defined in service definitions."""
-        return {
+        keys = {
             # Connection string - this is computed and not in service definition
             "DATABASE_SERVER_FULL": self.connection_string,
             "APP_DATABASE_SERVER_FULL": self.connection_string,
         }
+        # One variable per extra schema, so an app can name a specific schema without
+        # having to reconstruct the generated name (RC-17 decision 10.2).
+        for postfix, schema_name in self.extra_schemas:
+            var = generate_schema_variable_name(postfix)
+            keys[var] = schema_name
+            keys[f"APP_{var}"] = schema_name
+        return keys
 
     @classmethod
     def _convert_field_value(cls, field_name: str, value: str) -> str | int:
