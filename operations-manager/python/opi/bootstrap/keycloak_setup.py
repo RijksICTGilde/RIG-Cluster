@@ -53,7 +53,12 @@ class KeycloakSetup:
         logger.info("Starting Keycloak setup")
 
         try:
-            # Initialize connectors
+            # Step 0: Ensure OPI's client-credentials service account exists. On a
+            # fresh cluster this uses the admin password once to create it; on
+            # later boots OPI runs purely on client-credentials.
+            await self.ensure_master_admin_service_account()
+
+            # Initialize connectors (uses client-credentials when configured)
             self.keycloak = await create_keycloak_connector()
             self.kubectl = KubectlConnector()
 
@@ -103,6 +108,30 @@ class KeycloakSetup:
         except Exception as e:
             logger.error(f"Keycloak setup failed with exception: {e}")
             return False
+
+    async def ensure_master_admin_service_account(self) -> None:
+        """First-boot self-bootstrap of OPI's client-credentials service account.
+
+        - No client secret configured: stay on admin-password auth (legacy).
+        - Secret set and client-credentials already work: nothing to do.
+        - Otherwise: use the admin password once to create/repair the master
+          confidential client so subsequent boots run on client-credentials.
+        """
+        if not settings.KEYCLOAK_ADMIN_CLIENT_SECRET:
+            logger.info("KEYCLOAK_ADMIN_CLIENT_SECRET not set; using admin password authentication")
+            return
+
+        client_cred = await create_keycloak_connector(use_client_credentials=True)
+        if await client_cred.connection_works():
+            logger.info("OPI Keycloak service account already functional; using client-credentials")
+            return
+
+        logger.info("Bootstrapping OPI Keycloak service account using admin password")
+        admin = await create_keycloak_connector(use_client_credentials=False)
+        await admin.ensure_master_service_account_client(
+            client_id=settings.KEYCLOAK_ADMIN_CLIENT_ID,
+            client_secret=settings.KEYCLOAK_ADMIN_CLIENT_SECRET,
+        )
 
     async def setup_operations_realm(self) -> None:
         """Create OPI's own realm using project file config (like any other project).

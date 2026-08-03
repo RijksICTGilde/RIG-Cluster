@@ -13,10 +13,11 @@ import string
 from enum import Enum
 from typing import Any
 
-from keycloak import KeycloakAdmin
+from keycloak import KeycloakAdmin, KeycloakOpenIDConnection
 from keycloak.exceptions import KeycloakError, KeycloakGetError, KeycloakPostError
 
 from opi.core.config import settings
+from opi.utils.totp import build_credential_representation
 
 logger = logging.getLogger(__name__)
 
@@ -41,30 +42,51 @@ class KeycloakConnector:
         keycloak_url: str,
         admin_username: str | None = None,
         admin_password: str | None = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
     ):
         """
         Initialize the Keycloak connector.
+
+        Authenticates against the master realm using either a client-credentials
+        service account (client_id + client_secret) or, as a fallback, an admin
+        username + password (direct grant).
 
         Args:
             keycloak_url: Base URL of the Keycloak server
             admin_username: Admin username for Keycloak API access
             admin_password: Admin password for Keycloak API access
+            client_id: Service-account client id (client-credentials mode)
+            client_secret: Service-account client secret (client-credentials mode)
         """
         self.keycloak_url = keycloak_url.rstrip("/")
         self.admin_username = admin_username
         self.admin_password = admin_password
 
-        # Initialize KeycloakAdmin instance
-        self.admin = KeycloakAdmin(
-            server_url=self.keycloak_url,
-            username=self.admin_username,
-            password=self.admin_password,
-            realm_name="master",
-            user_realm_name="master",  # Always authenticate against master realm
-            verify=True,
-        )
-
-        logger.debug(f"Initialized KeycloakConnector for {keycloak_url}")
+        if client_secret:
+            # Client-credentials mode: OPI's own service account, independent of
+            # any human-admin OTP policy.
+            connection = KeycloakOpenIDConnection(
+                server_url=self.keycloak_url,
+                realm_name="master",
+                client_id=client_id,
+                client_secret_key=client_secret,
+                grant_type="client_credentials",
+                verify=True,
+            )
+            self.admin = KeycloakAdmin(connection=connection)
+            logger.debug(f"Initialized KeycloakConnector for {keycloak_url} (client-credentials: {client_id})")
+        else:
+            # Admin username/password mode (bootstrap/break-glass fallback).
+            self.admin = KeycloakAdmin(
+                server_url=self.keycloak_url,
+                username=self.admin_username,
+                password=self.admin_password,
+                realm_name="master",
+                user_realm_name="master",  # Always authenticate against master realm
+                verify=True,
+            )
+            logger.debug(f"Initialized KeycloakConnector for {keycloak_url} (admin user: {admin_username})")
 
     # ==================== Realm Operations ====================
 
@@ -3488,6 +3510,7 @@ class KeycloakConnector:
         first_name: str | None = None,
         last_name: str | None = None,
         enabled: bool = True,
+        totp_secret: str | None = None,
     ) -> dict[str, Any]:
         """
         Create a user in the specified realm.
@@ -3500,6 +3523,11 @@ class KeycloakConnector:
             first_name: Optional first name
             last_name: Optional last name
             enabled: Whether the user is enabled (default: True)
+            totp_secret: Optional raw TOTP secret. When set, an OTP credential is
+                imported alongside the password so Keycloak's conditional-OTP
+                browser step requires it at login. Note: Keycloak only imports
+                credentials on user creation - if the user already exists (409
+                below) the OTP credential is not added.
 
         Returns:
             User information dictionary including user ID
@@ -3512,6 +3540,9 @@ class KeycloakConnector:
             "emailVerified": False,
             "credentials": [{"type": "password", "value": password, "temporary": False}],
         }
+
+        if totp_secret:
+            user_data["credentials"].append(build_credential_representation(totp_secret))
 
         if email:
             user_data["email"] = email
@@ -3969,24 +4000,100 @@ class KeycloakConnector:
             self.admin.change_current_realm("master")
             raise
 
+    async def connection_works(self) -> bool:
+        """Return True if this connector can authenticate and reach the master realm.
+
+        Used to decide whether OPI's client-credentials service account is already
+        functional, or whether a first-boot admin-password bootstrap is needed.
+        """
+        try:
+            self.admin.change_current_realm("master")
+            self.admin.get_realm("master")
+            return True
+        except KeycloakError as e:
+            logger.info(f"Keycloak connection check failed: {e}")
+            return False
+
+    async def ensure_master_service_account_client(self, client_id: str, client_secret: str) -> None:
+        """Ensure a confidential service-account client exists in the master realm.
+
+        Creates (or repairs) a client with the given id and secret, service
+        accounts enabled and interactive flows disabled, then grants its service
+        account user the master realm 'admin' role (full multi-realm admin). This
+        lets OPI authenticate via client-credentials instead of the shared admin
+        password.
+        """
+        self.admin.change_current_realm("master")
+
+        payload = {
+            "clientId": client_id,
+            "name": "OPI Admin Service Account",
+            "protocol": "openid-connect",
+            "enabled": True,
+            "publicClient": False,
+            "secret": client_secret,
+            "standardFlowEnabled": False,
+            "implicitFlowEnabled": False,
+            "directAccessGrantsEnabled": False,
+            "serviceAccountsEnabled": True,
+        }
+
+        existing = next((c for c in self.admin.get_clients() if c.get("clientId") == client_id), None)
+        if existing is None:
+            self.admin.create_client(payload=payload)
+            logger.info(f"Created master service-account client '{client_id}'")
+            client = next((c for c in self.admin.get_clients() if c.get("clientId") == client_id), None)
+        else:
+            self.admin.update_client(client_id=existing["id"], payload=payload)
+            logger.info(f"Updated master service-account client '{client_id}'")
+            client = existing
+
+        if not client:
+            raise KeycloakError(f"Failed to retrieve master service-account client '{client_id}'")
+
+        service_account_user = self.admin.get_client_service_account_user(client["id"])
+        await self.assign_realm_roles_to_user("master", service_account_user["id"], ["admin"])
+        logger.info(f"Granted master 'admin' role to service account of client '{client_id}'")
+
 
 # ==================== Factory Function ====================
 
 
 async def create_keycloak_connector(
-    keycloak_url: str | None = None, admin_username: str | None = None, admin_password: str | None = None
+    keycloak_url: str | None = None,
+    admin_username: str | None = None,
+    admin_password: str | None = None,
+    use_client_credentials: bool | None = None,
 ) -> KeycloakConnector:
     """
     Factory function to create a KeycloakConnector instance.
+
+    By default OPI authenticates with its client-credentials service account when
+    KEYCLOAK_ADMIN_CLIENT_SECRET is configured, otherwise it falls back to the
+    admin username/password. Pass use_client_credentials=False to force the
+    admin-password path (used during first-boot self-bootstrap of the service
+    account client).
 
     Args:
         keycloak_url: Base URL of the Keycloak server (uses config default if None)
         admin_username: Admin username for Keycloak API access (uses config default if None)
         admin_password: Admin password for Keycloak API access (uses config default if None)
+        use_client_credentials: Force client-credentials (True) or admin password
+            (False); None auto-selects based on whether a client secret is set.
 
     Returns:
         KeycloakConnector instance
     """
+    if use_client_credentials is None:
+        use_client_credentials = bool(settings.KEYCLOAK_ADMIN_CLIENT_SECRET)
+
+    if use_client_credentials and settings.KEYCLOAK_ADMIN_CLIENT_SECRET:
+        return KeycloakConnector(
+            keycloak_url=keycloak_url or settings.KEYCLOAK_URL,
+            client_id=settings.KEYCLOAK_ADMIN_CLIENT_ID,
+            client_secret=settings.KEYCLOAK_ADMIN_CLIENT_SECRET,
+        )
+
     return KeycloakConnector(
         keycloak_url=keycloak_url or settings.KEYCLOAK_URL,
         admin_username=admin_username or settings.KEYCLOAK_ADMIN_USERNAME,
