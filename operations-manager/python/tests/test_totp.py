@@ -10,6 +10,7 @@ import base64
 import json
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
 from opi.utils.totp import (
     KEYCLOAK_ALGORITHM,
     OTPAUTH_ALGORITHM,
@@ -19,6 +20,7 @@ from opi.utils.totp import (
     build_otpauth_uri,
     generate_totp_secret,
     totp_base32,
+    totp_now,
 )
 
 
@@ -84,3 +86,56 @@ def test_otpauth_uri_url_encodes_label() -> None:
     # Spaces in label/issuer must be percent-encoded, not raw.
     assert " " not in uri
     assert "RIG%20Project" in uri
+
+
+# RFC 6238 Appendix B, SHA-1 vectors. The RFC lists 8-digit codes; ours are the
+# low 6 digits of those, since the truncation only differs in the final modulo.
+@pytest.mark.parametrize(
+    ("at", "expected"),
+    [
+        (59, "287082"),
+        (1111111109, "081804"),
+        (1111111111, "050471"),
+        (1234567890, "005924"),
+        (2000000000, "279037"),
+        (20000000000, "353130"),
+    ],
+)
+def test_totp_now_matches_rfc6238_vectors(at: int, expected: str) -> None:
+    # The RFC's SHA-1 seed is this ASCII string, used verbatim as the HMAC key -
+    # exactly how we treat the raw secret Keycloak stores.
+    assert totp_now("12345678901234567890", at=at)[0] == expected
+
+
+def test_totp_now_agrees_with_the_secret_handed_to_authenticators() -> None:
+    """A code from the raw secret must match one derived from the otpauth Base32.
+
+    This closes the loop the encoding contract promises: what an authenticator
+    computes from the URI is what the portal shows.
+    """
+    secret = generate_totp_secret()
+    b32 = totp_base32(secret)
+    padded = b32 + "=" * (-len(b32) % 8)
+    from_uri = base64.b32decode(padded).decode()
+    assert totp_now(from_uri, at=1700000000) == totp_now(secret, at=1700000000)
+
+
+def test_totp_now_code_is_six_digits_and_zero_padded() -> None:
+    # 1546962600 lands on a code starting with a zero; str() alone would drop it.
+    code, _ = totp_now("12345678901234567890", at=1234567890)
+    assert code == "005924"
+    assert len(code) == TOTP_DIGITS
+
+
+def test_totp_now_seconds_remaining_counts_down_within_the_period() -> None:
+    assert totp_now("s", at=1000.0)[1] == TOTP_PERIOD - (1000 % TOTP_PERIOD)
+    # Start of a period: a full period of validity, never zero.
+    assert totp_now("s", at=1200.0)[1] == TOTP_PERIOD
+    # Last second of that period.
+    assert totp_now("s", at=1229.9)[1] == 1
+
+
+def test_totp_now_code_is_stable_within_a_period_and_changes_after() -> None:
+    secret = generate_totp_secret()
+    assert totp_now(secret, at=1200.0)[0] == totp_now(secret, at=1229.9)[0]
+    assert totp_now(secret, at=1200.0)[0] != totp_now(secret, at=1230.0)[0]
