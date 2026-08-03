@@ -44,15 +44,22 @@ after it the shared `admin` account is no longer a daily workhorse.
 ## How to use it
 
 1. Open a project's detail page in the portal (admin/owner role). Under the
-   **Keycloak** section, each realm now shows:
-   - **Gedeelde OTP (setup-URI)** - an `otpauth://` URI. Paste it into 1Password
-     / Bitwarden (or an authenticator app) to register the shared seed. This is
-     the primary path.
-   - **Gedeelde OTP (Base32-sleutel)** - the Base32 secret for manual entry
-     (algorithm SHA1, 6 digits, 30s period).
-   - **Toon QR-code** - renders a QR of the otpauth URI client-side for scanning.
+   **Keycloak** section, each realm with OTP shows a **Toon code** button. It
+   fetches the code of that moment plus how long it stays valid, and a **Nieuwe
+   code** button refetches once it runs out.
 2. Log in at `{keycloak}/admin/` with the admin username + password; Keycloak
    prompts for the OTP code.
+
+The seed itself is deliberately not shown. It never leaves the server, so what a
+viewer of the page can obtain is one code with a lifetime of at most one period,
+instead of the ability to generate codes forever. That also keeps the page free
+of a third-party script: rendering a scannable QR of the `otpauth://` URI needed
+one, and there is nothing left to scan.
+
+When per-user seeds arrive (people registering their own OTP on a phone or in a
+password manager), that flow does need the URI and a QR. Render the QR
+server-side then (an inline SVG via `segno`), rather than reintroducing a CDN
+script into a page that carries secrets.
 
 ## Enablement (single gate, default off)
 
@@ -131,20 +138,21 @@ above for why that is acceptable here and where the person-bound factor lives.
 
 ## Key files
 
-- `opi/utils/totp.py` - secret generation, credential representation, otpauth URI
-  (stdlib only; no new dependency).
+- `opi/utils/totp.py` - secret generation, credential representation, otpauth URI,
+  and `totp_now` for the code of this moment (stdlib only; no new dependency).
 - `opi/connectors/keycloak.py` - `create_user(..., totp_secret=...)` imports the
   OTP credential alongside the password.
 - `opi/manager/keycloak_manager.py` - `_setup_project_keycloak_realm` (new realm)
   and `_ensure_admin_otp` (retrofit).
-- `opi/web/router.py` + `opi/services/catalog/keycloak/section-detail.html.j2`
-  - decrypt and display the secret, otpauth URI, and QR.
+- `opi/web/router.py` (`keycloak_otp_code_web`) +
+  `opi/services/catalog/keycloak/section-detail.html.j2` + `otp-code.html.j2` -
+  the on-demand code endpoint and the button/fragment that show it.
 - `opi/services/catalog/keycloak/config_model.py` + `keycloak.v1.0.json` -
   `totp_secret` field on the `KeycloakRealm` model + regenerated schema fragment.
 
 ## Dependencies
 
-- Python: stdlib only (`secrets`, `base64`, `json`, `urllib.parse`).
-- Frontend QR: `qrcodejs` loaded via jsdelivr CDN (same pattern as chart.js /
-  mermaid elsewhere in the portal), rendered entirely client-side.
+- Python: stdlib only (`secrets`, `base64`, `json`, `urllib.parse`, `hmac`,
+  `hashlib`, `struct`, `time`).
+- Frontend: none beyond htmx, which the portal already loads.
 - Keycloak 25.x conditional-OTP browser flow (default).

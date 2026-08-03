@@ -14,9 +14,13 @@ Encoding contract (matches Keycloak's own TOTP handling):
 """
 
 import base64
+import hashlib
+import hmac
 import json
 import secrets
 import string
+import struct
+import time
 from urllib.parse import quote
 
 # Keycloak credential parameters. Kept in one place so the stored credential and
@@ -40,6 +44,25 @@ def generate_totp_secret() -> str:
 def totp_base32(secret: str) -> str:
     """Return the Base32 form of a raw secret, for the otpauth URI / manual entry."""
     return base64.b32encode(secret.encode()).decode("ascii").rstrip("=")
+
+
+def totp_now(secret: str, at: float | None = None) -> tuple[str, int]:
+    """Return the current TOTP code and the seconds it stays valid.
+
+    The portal shows this code instead of the seed: a code expires within one
+    period, the seed would grant codes forever. Uses the raw secret's bytes as
+    the HMAC key, matching what Keycloak stores in ``secretData.value``.
+    """
+    now = time.time() if at is None else at
+    counter = int(now // TOTP_PERIOD)
+
+    digest = hmac.new(secret.encode(), struct.pack(">Q", counter), hashlib.sha1).digest()
+    # RFC 6238 dynamic truncation: the low nibble of the last byte picks the offset.
+    offset = digest[-1] & 0x0F
+    code = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
+
+    seconds_remaining = TOTP_PERIOD - int(now) % TOTP_PERIOD
+    return str(code % 10**TOTP_DIGITS).zfill(TOTP_DIGITS), seconds_remaining
 
 
 def build_credential_representation(secret: str, label: str = "ZAD shared OTP") -> dict[str, str]:
