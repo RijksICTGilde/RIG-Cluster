@@ -183,7 +183,11 @@ branch = true
 command_line = "-m pytest"
 relative_files = true # needed for sonarcloud code coverage
 omit = [
-    "tests/*"
+    "tests/*",
+    # Operational/diagnostic scripts are not application code under the 90% bar.
+    # Some are imported by tests (e.g. probe-spec drift, upgrade-safety), which
+    # would otherwise pull their partial coverage into the application metric.
+    "scripts/*",
 ]
 concurrency = ["greenlet", "thread"]
 
