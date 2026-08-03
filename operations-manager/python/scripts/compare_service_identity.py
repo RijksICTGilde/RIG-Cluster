@@ -52,7 +52,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import binascii
 import glob
 import os
 import subprocess
@@ -128,7 +127,9 @@ def secret_data_from_doc(doc: dict) -> dict[str, str]:
                 continue
             try:
                 result[key] = base64.b64decode(value, validate=True).decode("utf-8")
-            except (binascii.Error, ValueError, UnicodeDecodeError):
+            except ValueError:
+                # binascii.Error and UnicodeDecodeError are both ValueError subclasses,
+                # so this covers a non-base64 value and a non-utf-8 payload alike.
                 continue
 
     string_data = doc.get("stringData") or {}
@@ -280,7 +281,7 @@ def load_tree(root: str) -> tuple[dict[str, list[dict]], list[str]]:
             try:
                 with open(path) as handle:
                     docs_by_path[rel] = _parse_docs(handle.read())
-            except (OSError, yaml.YAMLError):
+            except OSError, yaml.YAMLError:
                 undecryptable.append(rel)
 
     return docs_by_path, undecryptable
