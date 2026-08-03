@@ -86,7 +86,12 @@ from opi.utils.age import (
     get_project_public_key,
     is_age_encrypted,
 )
-from opi.utils.env_vars import detect_circular_references, extract_variable_references, substitute_variables
+from opi.utils.env_vars import (
+    detect_circular_references,
+    extract_variable_references,
+    substitute_known_variables,
+    substitute_variables,
+)
 
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
@@ -5417,36 +5422,30 @@ class ProjectManager:
             # Register user environment variables
             # NOTE: User env vars go into a secret and are referenced via envFrom, not as direct env vars
             if user_env_vars:
-                # Substitute PUBLIC_HOST / PUBLIC_HOSTNAME in user-env-vars if referenced
-                # NOTE: This is a simple substitution for these two direct vars only. If we need
-                # to support more direct variables in user-env-vars in the future, consider
-                # extending the alias system to support "direct" source variables.
-                # IMPORTANT: substitute PUBLIC_HOSTNAME before PUBLIC_HOST so the longer name
-                # is matched first and isn't partially consumed by the PUBLIC_HOST replacement.
-                public_host: str | None = env_vars.get("PUBLIC_HOST")
-                public_hostname: str | None = env_vars.get("PUBLIC_HOSTNAME")
-                if public_host or public_hostname:
-                    substituted_user_env_vars: dict[str, Any] = {}
-                    for key, value in user_env_vars.items():
-                        if isinstance(value, str) and (
-                            "$PUBLIC_HOST" in value or "${PUBLIC_HOST}" in value or "${PUBLIC_HOSTNAME}" in value
-                        ):
-                            substituted_value = value
-                            if public_hostname:
-                                substituted_value = substituted_value.replace("${PUBLIC_HOSTNAME}", public_hostname)
-                                substituted_value = substituted_value.replace("$PUBLIC_HOSTNAME", public_hostname)
-                            if public_host:
-                                substituted_value = substituted_value.replace("${PUBLIC_HOST}", public_host)
-                                substituted_value = substituted_value.replace("$PUBLIC_HOST", public_host)
-                            substituted_user_env_vars[key] = substituted_value
-                            if substituted_value != value:
-                                logger.debug(
-                                    f"Substituted PUBLIC_HOST/HOSTNAME in user-env-var {key}: "
-                                    f"{value} -> {substituted_value}"
-                                )
-                        else:
-                            substituted_user_env_vars[key] = value
-                    user_env_vars = substituted_user_env_vars
+                # Resolve $VAR / ${VAR} in user-env-vars against everything this component
+                # can see: the storage, publish-on-web and resolved-alias variables built
+                # above. This used to special-case PUBLIC_HOST and PUBLIC_HOSTNAME by hand,
+                # with a note to extend the alias system if more were ever needed -- so
+                # this is that extension, using the same engine aliases already use.
+                #
+                # Deliberately the LENIENT substitution: an unknown $NAME is left as-is.
+                # In an alias a missing reference is a typo and must fail, but a user-env-var
+                # value is often just a password that happens to contain a dollar. Measured
+                # on production: regel-k4c's ADMIN_PASSWORD and rijks-595's DJANGO_SECRET_KEY
+                # both carry one, and strict substitution would fail their deploy outright.
+                substituted_user_env_vars: dict[str, Any] = {}
+                for key, value in user_env_vars.items():
+                    if not isinstance(value, str) or "$" not in value:
+                        substituted_user_env_vars[key] = value
+                        continue
+                    substituted_value = substitute_known_variables(
+                        value, env_vars, where=f"user-env-var {key} of component {component_name}"
+                    )
+                    substituted_user_env_vars[key] = substituted_value
+                    if substituted_value != value:
+                        # Never log the values: user-env-vars hold secrets.
+                        logger.debug(f"Substituted variable references in user-env-var {key}")
+                user_env_vars = substituted_user_env_vars
 
             # # IMPORTANT: Add component FIRST to prevent fallback creation with namespace=None
             # if config_handler:
