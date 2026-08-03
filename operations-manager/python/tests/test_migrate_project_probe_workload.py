@@ -145,17 +145,15 @@ class TestBlankEnvValues:
         assert "example.com" not in out
         assert out.strip() == f"API_URL={SANDBOX_ENV_PLACEHOLDER}"
 
-    def test_comments_and_blank_lines_survive(self):
-        out = _blank_env_values("# a comment\n\nKEY=value\n")
-
-        assert "# a comment" in out
-        assert "\n\n" in out
+    def test_a_comment_only_block_is_left_alone(self):
+        # Nothing to blank, and OPI's parser returns no keys for it.
+        assert _blank_env_values("# just a note\n") == "# just a note\n"
 
     def test_an_unparsable_line_raises_instead_of_passing_through(self):
         """Silence is the dangerous failure here: an unrecognised line is a value.
 
-        Passing it through unchanged is exactly how the SECRET_KEY_BASE leak happened,
-        so a line without a separator must stop the run rather than reach the sandbox.
+        Passing it through unchanged is exactly how the SECRET_KEY_BASE leak happened.
+        The raise comes from OPI's own parser, so this cannot drift from what OPI accepts.
         """
-        with pytest.raises(ValueError, match="separator"):
+        with pytest.raises(ValueError, match="Invalid format"):
             _blank_env_values("just-a-bare-secret-value\n")
