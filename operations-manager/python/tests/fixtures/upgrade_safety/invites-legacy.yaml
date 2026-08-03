@@ -1,0 +1,74 @@
+# Sanitized copy of a real production project that predates the invite service:
+# it still carries a top-level `invites:` block. The v2.5 -> v2.6 migration must
+# relocate this to services/invite/config. This is exactly the kind of file that
+# would silently break if the relocation regressed (see plan section 6, item 6).
+schema-version: 2
+name: regel-k4c
+display-name: Regelbeheer
+description: Project created via self-service portal
+
+users:
+  - email: beheer@rijksoverheid.nl
+    role: admin
+
+clusters:
+  - odcn-production
+
+services:
+  - publish-on-web
+  - keycloak:
+      config:
+        template: standard
+
+invites:
+  settings:
+    default_language: nl
+  active:
+    - key: WELKOM-BIJ-REGEL-K4C-0001
+      realm_roles:
+        - developer
+      auth_methods:
+        - sso
+      restrict_domain: rijksoverheid.nl
+      contact_email: beheer@rijksoverheid.nl
+      message:
+        nl: Welkom bij het project
+        en: Welcome to the project
+
+registries: []
+
+repositories:
+  - name: main-repo
+    url: https://github.com/RijksICTGilde/regel-k4c.git
+    username: git
+    password: base64+age:UExBQ0VIT0xERVJfUkVQT19QQVNTV09SRA==
+    branch: main
+    path: .
+    project_name: regel-k4c
+
+components:
+  - name: web
+    type: single
+    ports:
+      inbound: [8080]
+      outbound: [80, 443]
+    path: /
+    uses-components: []
+    services:
+      - publish-on-web
+      - keycloak
+
+deployments:
+  - name: deployment-1
+    cluster: odcn-production
+    namespace: regel-k4c
+    repository: main-repo
+    subdomain: deployment-1
+    components:
+      - reference: web
+        image: ghcr.io/rijksictgilde/regel-k4c/web:2025.01.10
+
+config:
+  age-public-key: age1d489e9c48pmwam6603vecp7y29zz9fx5cgpe9uk6cu9l7asfzg9sx5s0tq
+  age-private-key: base64+age:UExBQ0VIT0xERVJfQUdFX1BSSVZBVEVfS0VZ
+  api-key: base64+age:UExBQ0VIT0xERVJfQVBJX0tFWQ==
