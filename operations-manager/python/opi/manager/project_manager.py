@@ -7751,8 +7751,20 @@ class ProjectManager:
                     f"Available registries: {registry_names or 'none'}"
                 )
 
-        # 3. Find deployment (raise ValueError if not found)
-        deployment = await self.get_deployment_by_name(deployment_name)
+        # 3. Find the deployment WITHIN project_data -- the exact dict we save below.
+        # Using get_deployment_by_name() here was the bug: it runs its own get_contents(),
+        # so it returns a SEPARATE copy of the project, and setting comp["image"] on it
+        # never reached the project_data that gets committed. The store then saw no diff
+        # (current == data) and committed nothing, silently dropping the image update.
+        # Match get_deployments' cluster filter so we pick the same deployment it would.
+        deployment = next(
+            (
+                d
+                for d in project_data.get("deployments", [])
+                if d.get("name") == deployment_name and d.get("cluster") == settings.CLUSTER_MANAGER
+            ),
+            None,
+        )
         if not deployment:
             raise ValueError(f"Deployment '{deployment_name}' not found in project '{project_name}'")
 
