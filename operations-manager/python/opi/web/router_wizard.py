@@ -2102,6 +2102,11 @@ def _apply_literal_scalars(data: dict[str, Any]) -> None:
     for comp in data.get("components", []):
         if isinstance(comp, dict):
             _literalize(comp, "user-env-vars")
+            # Aliases are a name -> value map; values may be AGE-encrypted.
+            aliases = comp.get("aliases")
+            if isinstance(aliases, dict):
+                for alias_name in aliases:
+                    _literalize(aliases, alias_name)
 
     # Deployment-component-level user-env-vars (edit/add flows)
     for dep in data.get("deployments", []):
