@@ -105,3 +105,31 @@ def test_report_mentions_judging() -> None:
     report = format_report(summarize_diff(SAMPLE_DIFF))
     assert "sandboxed-local/moza" in report
     assert "regression" in report.lower()
+
+
+# A zad-PROJECTS diff (one YAML per project), not a manifest diff: the draaiboek points
+# the same summarizer at the project files, since the upgrade refresh rewrites those and
+# that is where the migration lands. A removed top-level section and a removed nested
+# config key must both surface as disappearances; a relocated invite (removed here,
+# re-added under a service key) must NOT, since the key still exists in the file.
+PROJECT_FILE_DIFF = """\
+diff --git a/projects/dp-bn7.yaml b/projects/dp-bn7.yaml
+index aaa..bbb 100644
+--- a/projects/dp-bn7.yaml
++++ b/projects/dp-bn7.yaml
+@@ -5,10 +5,8 @@ services:
+   OIDC_CLIENT_ID: dp-bn7
+-  LEGACY_SETTING: gone
+   DATABASE_DB: dp_bn7
+"""
+
+
+def test_project_file_diff_surfaces_removed_key() -> None:
+    """The summarizer works on a zad-projects diff too, not only zad-deployments."""
+    summary = summarize_diff(PROJECT_FILE_DIFF)
+    assert "projects/dp-bn7.yaml" in summary
+    removed = [line for items in summary["projects/dp-bn7.yaml"].removed_by_category.values() for line in items]
+    assert any("LEGACY_SETTING" in line for line in removed)
+    # Unchanged keys around it are not reported.
+    assert not any("OIDC_CLIENT_ID" in line for line in removed)
+    assert not any("DATABASE_DB" in line for line in removed)
