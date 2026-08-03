@@ -7,6 +7,7 @@ to drive multi-step edit flows within the modal.
 
 from __future__ import annotations
 
+import copy
 import logging
 import re
 from typing import TYPE_CHECKING, Any
@@ -40,7 +41,7 @@ from opi.forms.wizard.session import (
 from opi.services.project_authorization import (
     is_user_authorized_for_project,
 )
-from opi.services.project_store import get_project_store
+from opi.services.project_store import ConflictError, get_project_store
 from opi.utils.csrf import reject_misfired_form_get
 from opi.web.project_edit_security import (
     apply_form_data_to_project,
@@ -1399,6 +1400,11 @@ async def _process_and_save_modal_edit(
     is owned by the caller, which closes it once this returns.
     """
     existing_data = await project_manager.get_contents()
+    # Pre-edit snapshot so the save below is a 3-way merge: the store applies this
+    # form's delta onto whatever is current, instead of committing a stale whole-file
+    # snapshot that clobbers a concurrent write (e.g. an API image-update landing on
+    # the same project file while this UI edit is in flight).
+    base_snapshot = copy.deepcopy(existing_data)
 
     # Capture existing attachments' encrypted content before the form merge: the wizard
     # strips it from the session (see _strip_attachment_content), so it is re-attached at
@@ -1530,11 +1536,30 @@ async def _process_and_save_modal_edit(
     # A validation failure (e.g. pre-existing structural drift surfaced by the
     # full-project check) is returned to the caller as a review re-render.
     try:
-        await project_manager.save_and_commit_project(existing_data, f"Update {project_name} ({flow_id})")
+        await project_manager.save_and_commit_project(
+            existing_data, f"Update {project_name} ({flow_id})", base=base_snapshot
+        )
     except (ProjectSchemaError, ProjectIntegrityError) as e:
         logger.warning("Modal wizard save rejected by validation for %s (flow=%s): %s", project_name, flow_id, e)
         return existing_data, _render_modal_review(
             request, wizard_token, project_name, flow_id, active_sections, state, global_errors=[str(e)]
+        )
+    except ConflictError as e:
+        # Someone else changed this project between the form load and this save, in a
+        # way the 3-way merge could not reconcile (overlapping edits to the same field).
+        # Surface it instead of silently overwriting: the user reloads and re-applies.
+        logger.warning("Modal wizard save hit a concurrent change for %s (flow=%s): %s", project_name, flow_id, e)
+        return existing_data, _render_modal_review(
+            request,
+            wizard_token,
+            project_name,
+            flow_id,
+            active_sections,
+            state,
+            global_errors=[
+                "Dit project is ondertussen door iemand anders gewijzigd en kon niet automatisch "
+                "worden samengevoegd. Herlaad de pagina en probeer je wijziging opnieuw."
+            ],
         )
     return existing_data, None
 
