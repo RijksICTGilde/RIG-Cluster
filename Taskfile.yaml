@@ -1920,6 +1920,26 @@ tasks:
       - uv run python scripts/compare_deployments_diff.py "{{.REPO}}" "{{.BASELINE}}" "{{.TARGET | default \"HEAD\"}}"
     silent: true
 
+  upgrade-safety-identity:
+    desc: "RC-19 Layer 2: assert every service still resolves to the SAME thing after the upgrade"
+    summary: |
+      Decrypts the generated secrets in a baseline zad-deployments worktree and the
+      upgraded tree, and compares the resolved identity of each service per deployment
+      (database host/name/user/schema, OIDC url/realm/client-id, bucket name, published
+      Ingress host). Unlike upgrade-safety-diff this is a pass/fail: a same-key but
+      different-VALUE identity change (e.g. a deployment now pointing at another database)
+      is a finding. Needs the AGE key the secrets are encrypted with (the sandbox key).
+
+        git -C /path/to/zad-deployments worktree add /tmp/zad-baseline <baseline-sha>
+        BASELINE_DIR=/tmp/zad-baseline TARGET_DIR=/path/to/zad-deployments \
+          KEY_FILE=../../security/sandbox-key.txt task upgrade-safety-identity
+    dir: operations-manager/python
+    requires:
+      vars: [BASELINE_DIR, TARGET_DIR, KEY_FILE]
+    cmds:
+      - uv run python scripts/compare_service_identity.py "{{.BASELINE_DIR}}" "{{.TARGET_DIR}}" --key-file "{{.KEY_FILE}}"
+    silent: true
+
   test-integration:
     desc: "Run integration tests (mock-based, no infrastructure required)"
     dir: operations-manager/python
