@@ -10,6 +10,7 @@ number directly.
 import logging
 from typing import Any
 
+from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 from opi.utils.naming import generate_storage_name
 
@@ -488,11 +489,63 @@ def _fixup_v2_data(project_data: dict[str, Any]) -> bool:
     if relocate_invites_to_service(project_data):
         cleaned = True
 
+    if _fixup_duplicate_service_entries(project_data):
+        cleaned = True
+
     if cleaned:
         project_name = project_data.get("name", "unknown")
         logger.info(f"Cleaned up stale data in project '{project_name}'")
 
     return cleaned
+
+
+def _fixup_duplicate_service_entries(project_data: dict[str, Any]) -> bool:
+    """Collapse a service named twice in the project-level services list.
+
+    Some past write path appended a service instead of reusing the entry that was
+    already there, leaving files with a literal ``["publish-on-web", "publish-on-web"]``.
+    ``_validate_services_listed_once`` rejects that, and rightly so, but the effect on
+    an existing file is that every reprocess fails silently: no deploys, no auto-tune,
+    no error anyone sees. That is the dp-bn7 failure mode, and two production files sit
+    in it today (``dsm1j2-2ws`` and ``ug-zxt``, both two bare strings).
+
+    Only collapses when the repeat is unambiguous, meaning at most one of the entries
+    carries a non-empty config. Then the duplicate says nothing the survivor does not
+    already say and dropping it cannot lose data. Two entries that both carry config
+    could contradict each other, so those are left alone for the validator to reject
+    rather than silently picking a winner.
+    """
+    services = project_data.get("services")
+    if not isinstance(services, list):
+        return False
+
+    by_name: dict[str, list[int]] = {}
+    for index, entry in enumerate(services):
+        name = service_entry_name(entry)
+        if name is not None:
+            by_name.setdefault(name, []).append(index)
+
+    drop: set[int] = set()
+    for name, indexes in by_name.items():
+        if len(indexes) < 2:
+            continue
+        with_config = [i for i in indexes if service_entry_config(services[i])]
+        if len(with_config) > 1:
+            logger.warning(
+                f"Project '{project_data.get('name', 'unknown')}': service '{name}' staat meerdere keren "
+                f"in de services-lijst en meer dan een daarvan draagt config; niet automatisch samengevoegd"
+            )
+            continue
+        # Keep the one carrying config, or else the first occurrence.
+        keep = with_config[0] if with_config else indexes[0]
+        drop.update(i for i in indexes if i != keep)
+
+    if not drop:
+        return False
+
+    project_data["services"] = [entry for i, entry in enumerate(services) if i not in drop]
+    logger.info(f"Project '{project_data.get('name', 'unknown')}': {len(drop)} dubbele service-entry(s) samengevoegd")
+    return True
 
 
 def _fixup_catalog_root(project_data: dict[str, Any]) -> bool:
