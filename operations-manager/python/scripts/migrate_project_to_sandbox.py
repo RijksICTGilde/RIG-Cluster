@@ -45,6 +45,7 @@ if str(_OPI_ROOT) not in sys.path:
     sys.path.insert(0, str(_OPI_ROOT))
 
 from opi.utils.age import decrypt_age_content_sync, encrypt_age_content_sync  # noqa: E402  (after sys.path bootstrap)
+from opi.utils.env_vars import _detect_env_var_format, validate_and_parse_env_vars  # noqa: E402
 from opi.utils.yaml_util import (  # noqa: E402
     load_yaml_from_path,
     save_yaml_to_path,
@@ -280,36 +281,27 @@ def migrate_project(
 
 
 def _blank_env_values(content: str) -> str:
-    """Replace every value in a ``KEY=VALUE`` block, keeping keys, comments and blanks.
+    """Replace every value in a user-env-vars block, keeping the keys.
 
-    Two formats occur in real project files and both must be handled:
-    ``KEY=value`` (dotenv) and ``KEY: value`` (YAML-ish). Parsing the block as YAML is
-    not an option either: for the dotenv form it yields a plain string, and iterating
-    that gives characters instead of keys.
+    Both the ``KEY=VALUE`` and the YAML ``KEY: value`` form occur in real project files,
+    and OPI already detects and parses both (``validate_and_parse_env_vars``). Reusing
+    that instead of splitting lines here means this cannot drift from what OPI accepts,
+    and the format detection stays in one place.
 
-    Raises on a line it cannot parse rather than passing it through. Both mistakes were
-    made here first: the initial version produced one placeholder per character, and the
-    second silently passed every ``KEY: value`` line through, which left a production
-    ``SECRET_KEY_BASE`` in the output. A line this does not understand is a value that
-    would ship verbatim, so it has to stop the run.
+    Rewriting hand-rolled parsing here got it wrong twice: the first version read the
+    block as YAML and produced one placeholder per character, the second understood only
+    ``KEY=`` and passed every ``KEY: value`` line through untouched, which left a
+    production ``SECRET_KEY_BASE`` in the converted output. ``validate_and_parse_env_vars``
+    raises on a line it cannot parse, which is what we want: silence here would mean a
+    real value ships verbatim. An empty result means the block held only comments, so
+    there is nothing to blank.
     """
-    lines = []
-    for line in content.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            lines.append(line)
-            continue
+    parsed = validate_and_parse_env_vars(content)
+    if not parsed:
+        return content
 
-        eq, colon = line.find("="), line.find(":")
-        candidates = [i for i in (eq, colon) if i > 0]
-        if not candidates:
-            raise ValueError(
-                f"Cannot find a key/value separator in user-env-vars line {line!r}; "
-                f"refusing to copy it to the sandbox unchanged"
-            )
-        cut = min(candidates)
-        lines.append(f"{line[:cut]}{line[cut]}{'' if line[cut] == '=' else ' '}{SANDBOX_ENV_PLACEHOLDER}")
-    return "\n".join(lines) + "\n"
+    separator = ": " if _detect_env_var_format(content) == "yaml" else "="
+    return "\n".join(f"{key}{separator}{SANDBOX_ENV_PLACEHOLDER}" for key in parsed) + "\n"
 
 
 def replace_user_env_var_values(
