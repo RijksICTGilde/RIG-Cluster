@@ -7740,11 +7740,6 @@ class ProjectManager:
 
         # 1. Load project data
         project_data = await self.get_contents()
-        # Snapshot the pre-edit state so the save is a 3-way merge: the store applies
-        # our delta (this image change) onto whatever is current, instead of a stale
-        # last-writer-wins snapshot that would clobber a concurrent edit (e.g. a UI
-        # env-var change landing on the same file at the same time).
-        base_snapshot = copy.deepcopy(project_data)
 
         # 2. Validate registry exists if provided
         if registry:
@@ -7828,7 +7823,7 @@ class ProjectManager:
         if generation_changes:
             storage_list = ", ".join(generation_changes.keys())
             commit_msg += f" and recreate PVCs: {storage_list}"
-        await self.save_and_commit_project(project_data, commit_msg, base=base_snapshot)
+        await self.save_and_commit_project(project_data, commit_msg)
         logger.info("Saved and committed project YAML changes")
 
         # 7. CRITICAL: Process entire project for this deployment
