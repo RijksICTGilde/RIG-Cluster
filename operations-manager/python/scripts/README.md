@@ -48,6 +48,7 @@ Most tools talk to live infrastructure and read credentials/config from environm
 | `fix_shared_service_revisions.py` | Fix shared-service revisions caused by a YAML anchor/alias bug. |
 | `migrate_project_to_sandbox.py` | Migrate production project files to the sandbox cluster. `--probe-image` additionally swaps every component workload for the e2e-allservices probe and moves the inbound port to 8080 (RC-19 upgrade-safety test). |
 | `compare_deployments_diff.py` | Summarize a zad-deployments `git diff` into disappeared keys (env vars, secrets, ingress, mounts, schemas) per project, for the RC-19 upgrade-safety test (`features/upgrade-safety-test.md`). Reads a ref-pair via git or a diff via `--stdin`. |
+| `compare_service_identity.py` | RC-19 upgrade-safety test: decrypt the generated secrets in two zad-deployments trees and assert every service still resolves to the SAME thing (database host/name/user/schema, OIDC url/realm/client-id, bucket name, published Ingress host). Catches a same-key/different-value identity change the diff summarizer cannot see. Needs the AGE key (`SOPS_AGE_KEY` or `--key-file`). |
 
 ## Infra / DNS
 
