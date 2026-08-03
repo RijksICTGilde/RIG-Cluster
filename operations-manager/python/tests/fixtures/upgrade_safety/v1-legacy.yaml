@@ -1,0 +1,61 @@
+# Sanitized copy of an old production project written before schema v2: it uses
+# `uses-services` and a legacy component-level `storage:` block, and carries no
+# `schema-version`. The v1 -> v2 migration (and the chain up to v2.6) must convert
+# it and the result must still validate. This is the heaviest migration path.
+name: amt
+display-name: Aanvraag Monitoring Tool
+description: Project created via self-service portal
+
+clusters:
+  - odcn-production
+
+users:
+  - email: amt-admin@rijksoverheid.nl
+    role: admin
+
+services:
+  - publish-on-web
+  - keycloak
+  - postgresql-database
+  - persistent-storage
+
+config:
+  age-public-key: age1d489e9c48pmwam6603vecp7y29zz9fx5cgpe9uk6cu9l7asfzg9sx5s0tq
+  age-private-key: base64+age:UExBQ0VIT0xERVJfQUdFX1BSSVZBVEVfS0VZ
+  api-key: base64+age:UExBQ0VIT0xERVJfQVBJX0tFWQ==
+
+repositories:
+  - name: main-repo
+    url: https://github.com/RijksICTGilde/amt.git
+    username: git
+    password: base64+age:UExBQ0VIT0xERVJfUkVQT19QQVNTV09SRA==
+    branch: main
+    path: .
+
+components:
+  - name: app
+    type: deployment
+    publish-on-web: true
+    ports:
+      inbound: [8080]
+      outbound: [443, 5432]
+    uses-services:
+      - publish-on-web
+      - keycloak
+      - postgresql-database
+      - persistent-storage
+    storage:
+      - type: persistent
+        size: 10Gi
+        mount-path: /data
+    resources:
+      cpu: "500m"
+      memory: "512Mi"
+
+deployments:
+  - name: default
+    cluster: odcn-production
+    namespace: amt
+    components:
+      - reference: app
+        image: ghcr.io/rijksictgilde/amt/app:2024.10.01
