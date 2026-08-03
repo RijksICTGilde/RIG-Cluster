@@ -9,9 +9,11 @@ not eyeballed screens.
 
 - **Layer 1 (offline replay):** `operations-manager/python/tests/test_upgrade_safety_replay.py`
 - **Layer 2 tooling:** the `--probe-image` flag on
-  `operations-manager/python/scripts/migrate_project_to_sandbox.py` and the
-  summarizer `operations-manager/python/scripts/compare_deployments_diff.py`
-- **Tasks:** `task test-upgrade-safety`, `task upgrade-safety-diff`
+  `operations-manager/python/scripts/migrate_project_to_sandbox.py`, the removal
+  summarizer `operations-manager/python/scripts/compare_deployments_diff.py`, and the
+  identity check `operations-manager/python/scripts/compare_service_identity.py`
+- **Tasks:** `task test-upgrade-safety`, `task upgrade-safety-diff`,
+  `task upgrade-safety-identity`
 
 ## Why
 
@@ -66,27 +68,60 @@ fixtures still run everywhere. A failure is a real finding about the reading cod
 
 ## Layer 2: a real upgrade on the sandbox, over a sample
 
-There is no room to roll out every project, so this is deliberately a sample:
-**wies, regelrecht, moza and amt** -- enough service variety to hit the
-interesting paths, small enough to see the turnaround. (At least one project that
-uses invites is worth including, since those are relocated from a top-level
-`invites:` block; swap one sample or add a fifth if none of the four is one.)
+There is no room to roll out every project, so this is deliberately a sample. It was
+composed on 3 August 2026 by scanning all 47 production files on services, deployment
+and component count, and the presence of invites. **Six projects:**
 
-Switch the OPI image **once**, not back and forth per project:
+| Project | Dep | Cmp | Why |
+|---|---|---|---|
+| `wies` | 18 | 3 | Far the most deployments; tests scale and the per-deployment paths. |
+| `regel-k4c` | 6 | 9 | The most components, plus `metrics-scraper`. |
+| `amt-odc` | 1 | 1 | Six services in a small project: `minio-storage`, `persistent-storage`, `temp-storage`. |
+| `mozad-dle` | 1 | 1 | The bare case: only `publish-on-web`. A project without services must survive too. |
+| `openp-4pw` | 1 | 1 | Carries `invite` and `redis`, otherwise absent; one deployment, so cheap. |
+| `dp-bn7` | 1 | 1 | Carries `invite` and `authorization-wall`, and is the project that stalled silently on a schema gap for months. The one file that most has to pass. |
 
-1. Sandbox on the server, OPI on the image production runs now (pinned, not
+Together they cover ten of the fifteen services: `keycloak`, `postgresql-database`,
+`publish-on-web`, `persistent-storage`, `temp-storage`, `minio-storage`,
+`metrics-scraper`, `invite`, `redis`, `authorization-wall`. Not covered because they
+appear in no production file (newer than the data): `sleep-mode`, `health-check`,
+`cross-domain-access`, `resource-tuning`. If room remains, the cheapest carriers of the
+gaps are `tva-d62` (`attachments`) and `algor-odc` (`namespace-postgresql-database`, the
+path RC-17's `scope: project` now makes equivalent -- the most interesting, but it costs
+its own CNPG cluster).
+
+Switch the OPI image **once**, not back and forth per project. Claim the shared sandbox
+first (`orch sandbox claim`) and release it at the end, also on failure:
+
+1. `orch sandbox claim` -- the sandbox is a single shared cluster; hold it for the run.
+2. Sandbox on the server, OPI on the image production runs now (pinned, not
    `latest` -- see "Which old OPI image" below).
-2. Convert and set up the sample projects. Let everything provision until all apps
-   are healthy.
-3. Record the generated state: the zad-deployments repo commit at this point is
-   the baseline.
-4. Swap the OPI image to the new build. Once.
-5. Reopen and refresh each project so everything is regenerated.
-6. Compare.
+3. Set up the sample projects (they are already converted and waiting, see "Pre-staged
+   on 3 August"). Let everything provision until all apps are healthy.
+4. Record the generated state: the zad-deployments repo commit at this point is the
+   baseline. Also record the zad-projects commit (the refresh in step 6 rewrites those
+   files, and that is where the migration lands -- diff them too, see below).
+5. Swap the OPI image to the new build. Once.
+6. Reopen and refresh each project so everything is regenerated.
+7. Compare (removals, identity, project files).
+8. `orch sandbox release` -- free the sandbox for the next PR, even if a step failed.
 
 To repeat the test, rebuild the environment clean rather than switching the image
 back (old OPI cannot read a newer schema); a clean second setup is what you want
 for a fair second measurement anyway.
+
+### Pre-staged on 3 August
+
+The six projects are already converted and waiting in
+`https://git.claude.robbertuittenbroek.nl/robbert/zad-upgrade-test-projects.git`
+(private; a session with the ordinary Forgejo credentials can reach it, the server
+itself cannot). Its README states exactly what was converted and what was deliberately
+removed.
+
+The old-OPI baseline image is
+`ghcr.io/minbzk/base-images/operations-manager/operations-manager:2026.07.27.0941-9d9c0764-dirty`
+-- exactly what the odcn overlay pins today, and present on ghcr so the sandbox can pull
+it. Note the server-sandbox may sit on a newer branch and has to go back to this first.
 
 ### Converting the sample projects (local)
 
@@ -95,41 +130,90 @@ each binding, and move the ports so the probe (which listens on 8080) is reachab
 
 ```bash
 cd operations-manager/python
-uv run python scripts/migrate_project_to_sandbox.py wies regelrecht moza amt \
+uv run python scripts/migrate_project_to_sandbox.py \
+    wies regel-k4c amt-odc mozad-dle openp-4pw dp-bn7 \
     --probe-image --output-dir /tmp/sandbox-projects
 ```
 
 `--probe-image` is opt-in: without it the script does a plain migration and keeps
 the original images and ports. Push the converted files in `/tmp/sandbox-projects`
-to the sandbox Forgejo `zad-projects` repo.
+to the sandbox Forgejo `zad-projects` repo. (For the standard run the projects are
+already staged, see "Pre-staged on 3 August"; you only re-run this when reconverting.)
 
 ## How "still works" becomes mechanical
 
-Two complementary checks.
+Four complementary checks: what disappeared, whether a service is still the same
+thing, whether the project files themselves stayed whole, and whether it all still
+round-trips live.
 
-**The diff (what disappeared).** The zad-deployments repo holds everything OPI
-generates for a project: manifests, secrets, configmaps, RBAC, network policies.
-Record the commit after step 3, then after step 5 diff against it. Every removed
+**1. The removal diff (what disappeared).** The zad-deployments repo holds everything
+OPI generates for a project: manifests, secrets, configmaps, RBAC, network policies.
+Record the commit after step 4, then after step 6 diff against it. Every removed
 env var, secret key, ingress, mount or schema shows up as a removed line. The
 summarizer turns that into a per-project list:
 
 ```bash
-# Record the baseline BEFORE the image swap (step 3):
+# Record the baseline BEFORE the image swap (step 4):
 git -C /path/to/zad-deployments rev-parse HEAD
 
-# After the upgrade + refresh (step 6):
+# After the upgrade + refresh (step 7):
 REPO=/path/to/zad-deployments BASELINE=<sha> task upgrade-safety-diff
 ```
 
-**The live probe (what a diff cannot see).** Whether database grants and
+**2. The identity check (is a service still the SAME thing).** The removal diff proves
+nothing vanished, but it identifies a line by its key and ignores value changes on
+purpose -- so a deployment that after the upgrade connects cleanly to a *different*
+database passes it silently. That is the worst case, so it has its own check. It
+decrypts the generated secrets on both sides (SOPS+AGE, offline, needs the sandbox
+key) and asserts that each deployment's database host/name/user/schema, OIDC
+url/realm/client-id, bucket name and published Ingress host are unchanged. This one is
+pass/fail, not a judged report -- a difference here is a finding:
+
+```bash
+# A baseline worktree at the pre-upgrade commit, compared to the upgraded tree:
+git -C /path/to/zad-deployments worktree add /tmp/zad-baseline <baseline-sha>
+BASELINE_DIR=/tmp/zad-baseline TARGET_DIR=/path/to/zad-deployments \
+    KEY_FILE=../../security/sandbox-key.txt task upgrade-safety-identity
+```
+
+**3. The project-file diff (the migration itself).** The refresh with the new OPI
+rewrites the project files in zad-projects, and that is exactly where the migration
+lands -- a key that disappears there weighs more than in a manifest, because a manifest
+can be regenerated. Record the zad-projects commit before the swap and summarize the
+same way (the summarizer reads any git diff):
+
+```bash
+# Before the swap: git -C /path/to/zad-projects rev-parse HEAD
+REPO=/path/to/zad-projects BASELINE=<sha> task upgrade-safety-diff
+```
+
+**4. The live probe (what a diff cannot see).** Whether database grants and
 `search_path`, Keycloak realms/clients/roles, and buckets/policies still hold, and
 whether ArgoCD syncs everything healthy, is not visible in a diff. That is what the
 e2e-allservices probe is for: it binds every service and reports per service on
 `/status` whether it round-trips.
 
-A difference is not automatically a bug. This release changes some things on
-purpose (the one-off migration to v2.6). The outcome is therefore a **judged
-diff**: every difference is either explained and wanted, or it is a bug.
+A removal or project-file difference is not automatically a bug. This release changes
+some things on purpose, so those two are **judged diffs**: every difference is either
+explained and wanted, or it is a bug. The identity check (2) is the exception -- it
+must be clean.
+
+### The differences measured in advance
+
+The outcome is not "byte-identical" -- this release changes things deliberately. For
+the six-project sample those were measured up front so they are fixed rather than
+explained away afterwards. Exactly four kinds, in the project-file diff:
+
+1. `schema-version` goes to 2.6.
+2. `openp-4pw` and `dp-bn7`: the invites move from a top-level `invites:` block into
+   `services/invite/config` (why both were chosen).
+3. Alias values get AGE-encrypted on the next save: two blocks in `wies`, one in
+   `openp-4pw`.
+4. Nothing else. None of the six uses an uppercase reference (so the new
+   `user-env-vars` interpolation changes nothing here), and none has a duplicate
+   service entry (so that repair does nothing here either).
+
+Anything outside this list, and any identity-check (2) difference at all, is a finding.
 
 ## Decisions taken (were open in the plan)
 
@@ -137,8 +221,9 @@ diff**: every difference is either explained and wanted, or it is a bug.
    regression guard); real files via `RIG_PROJECTS_DIR`, skipped with a message
    when absent. No production files are committed.
 2. **Outcome on a difference:** Layer 1 fails (a file that no longer validates is a
-   regression). The Layer 2 diff is a report to judge, because wanted differences
-   exist.
+   regression). The Layer 2 removal and project-file diffs are reports to judge,
+   because wanted differences exist; the Layer 2 identity check is pass/fail (a
+   service that resolves to a different thing is always a finding).
 3. **Project workloads:** replaced entirely by the probe (`--probe-image`). The
    target is the project file and the service delivery, not the users' apps.
 4. **Which old OPI image:** a pinned image of what production runs now. Take the
@@ -146,7 +231,13 @@ diff**: every difference is either explained and wanted, or it is a bug.
    the commit production is on -- pin it, never `latest`.
 5. **After the run:** clean up via `scripts/sandbox_project_tool.py delete
    <project>`, which runs the real OPI teardown and so exercises the delete path
-   too. Or leave them for a next round.
+   too. Or leave them for a next round. Either way `orch sandbox release` frees the
+   shared cluster (also on failure).
+6. **Invite carriers included:** yes, two (`openp-4pw`, `dp-bn7`). The migration
+   relocates top-level `invites:` into `services/invite/config` for four production
+   projects and cleans up stale data for four others -- a real rewrite of existing
+   files, so exactly the path to guard. Both carriers are one-deployment/one-component,
+   so they cost almost nothing.
 
 ## Out of scope
 
