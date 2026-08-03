@@ -48,7 +48,24 @@ Dit hoort een test te worden die in CI draait, niet een script dat iemand handma
 
 ### Laag 2: echte upgrade op de server-sandbox, met een steekproef
 
-Er is geen ruimte om alle projecten uit te rollen, dus dit is bewust een steekproef: **wies, regelrecht, moza en amt**. Genoeg variatie in diensten om de interessante paden te raken, klein genoeg om de doorlooptijd te zien.
+Er is geen ruimte om alle projecten uit te rollen, dus dit is bewust een steekproef. De samenstelling is op 3 augustus bepaald door alle 47 productiebestanden te scannen op diensten, aantal deployments en componenten, en de aanwezigheid van invites.
+
+**De zes projecten van de steekproef:**
+
+| Project | Dep | Cmp | Waarom |
+|---|---|---|---|
+| `wies` | 18 | 3 | Veruit de meeste deployments; test schaal en de per-deployment paden. |
+| `regel-k4c` | 6 | 9 | De meeste componenten, plus `metrics-scraper`. |
+| `amt-odc` | 1 | 1 | Zes diensten in een klein project: `minio-storage`, `persistent-storage` en `temp-storage` naast de gebruikelijke. |
+| `mozad-dle` | 1 | 1 | Het kale geval: alleen `publish-on-web`. Een project zonder diensten moet net zo goed heel blijven. |
+| `openp-4pw` | 1 | 1 | Draagt `invite` én `redis`, de twee diensten die anders helemaal ontbreken, en is met één deployment spotgoedkoop. |
+| `dp-bn7` | 1 | 1 | Draagt `invite` en `authorization-wall`, en is het project dat maandenlang stil vastliep op een schemagat. Als er één bestand is dat door deze test moet komen, is het dit. |
+
+Samen dekken die tien van de vijftien diensten: `keycloak`, `postgresql-database`, `publish-on-web`, `persistent-storage`, `temp-storage`, `minio-storage`, `metrics-scraper`, `invite`, `redis` en `authorization-wall`.
+
+**Wat er dan nog niet gedekt is, met de goedkoopste drager erbij**, te overwegen als er ruimte blijkt te zijn: `attachments` (`tva-d62`, 1 deployment, 1 component, maar attachments dragen base64-blokken dus dit is het zwaarste bestand van de twee) en `namespace-postgresql-database` (`algor-odc`, 1 deployment, 3 componenten). Die tweede is inhoudelijk het interessantst, want RC-17 maakt `scope: project` juist gelijkwaardig aan die oude dienst, dus dat is precies het pad dat verandert. Hij kost wel een eigen CNPG-cluster in de sandbox, en dat is waarschijnlijk de reden dat hij er niet bij past.
+
+Niet gedekt en dat kan ook niet: `sleep-mode`, `health-check`, `cross-domain-access` en `resource-tuning` staan in geen enkel productiebestand, want die zijn nieuwer dan de productiedata.
 
 De volgorde is één keer wisselen, niet heen en weer per project:
 
@@ -85,7 +102,7 @@ Een verschil is niet per se fout. Deze release verandert bewust dingen, bijvoorb
 3. **Nemen we de projecteigen images mee of vervangen we alles door de probe?** Alles vervangen is sneller en betrouwbaarder, maar test niet of echte werklasten nog starten. Voorstel is vervangen, want het doel is het projectbestand en de dienstverlening, niet de applicaties van gebruikers.
 4. **Hoe komt de oude OPI erin?** Een vastgepind image van wat productie draait. Te bepalen of dat de CalVer-tag uit de odcn-overlay is of de commit waar productie nu op staat.
 5. **Wat doen we met de vier projecten na afloop?** Laten staan voor een volgende ronde, of opruimen zodat de sandbox leeg blijft. Opruimen via `sandbox_project_tool.py delete` doorloopt de echte teardown en test dus meteen het verwijderpad.
-6. **Hoort de invite-service erbij?** Vier projecten in productie gebruiken invites en die staan nog als top-level `invites:` in het bestand. Geen van de vier steekproefprojecten is er een, dus overweeg er één te ruilen of een vijfde toe te voegen.
+6. ~~Hoort de invite-service erbij?~~ **BESLIST op 3 augustus: ja, en er zijn er twee opgenomen**, `openp-4pw` en `dp-bn7`. Aanleiding is een meting die het risico concreet maakte: `migrate_to_latest()` verplaatst bij vier productieprojecten de invites van top-level `invites:` naar `services/invite/config`, en ruimt bij vier andere projecten stale data op. Dat is een echte herschrijving van bestaande bestanden, dus juist het pad dat bewaakt moet worden. Beide dragers hebben één deployment en één component, dus dit kostte vrijwel geen ruimte.
 
 ## 7. Buiten scope
 
