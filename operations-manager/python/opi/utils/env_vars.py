@@ -349,3 +349,61 @@ def detect_circular_references(aliases: dict[str, str]) -> None:
             if cycle:
                 cycle_str = " -> ".join(cycle)
                 raise ValueError(f"Circular reference detected: {cycle_str}")
+
+
+#: Variables OPI exposes are uppercase by convention (PUBLIC_HOST, DATABASE_HOST, the
+#: resolved aliases). Matching only that shape is what makes lenient substitution safe:
+#: a dollar inside a password almost never looks like this. Measured on the production
+#: files, the three real ``$`` occurrences outside a genuine reference are ``$wL7nQr4``,
+#: ``$k`` and ``$x8cc5ls`` -- all lowercase, so none of them is even a candidate.
+_UPPERCASE_REFERENCE = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}|\$([A-Z_][A-Z0-9_]*)(?=[^A-Za-z0-9_{]|$)")
+
+
+def extract_uppercase_references(template: str) -> list[str]:
+    """Variable references in the uppercase form OPI actually exposes."""
+    if not template:
+        return []
+    return sorted({braced or simple for braced, simple in _UPPERCASE_REFERENCE.findall(template)})
+
+
+def substitute_known_variables(template: str, context: dict[str, str], where: str = "") -> str:
+    """Substitute the uppercase variables we know; leave anything else untouched.
+
+    The lenient counterpart of :func:`substitute_variables`, for user-supplied values
+    rather than aliases. The strict version raises on an unknown reference, which is
+    right for an alias: the author wrote it to reference something, so a miss is a typo.
+    A user-env-var value is often just a password that happens to contain a dollar, and
+    failing a project's deploy over that would be wrong.
+
+    Two things keep this from being sloppy. Only the uppercase form is a candidate at
+    all, so ordinary password noise is not even considered. And an uppercase reference we
+    cannot resolve is logged as a warning, because that one probably IS a typo -- with
+    only the first three characters of the name, since the reference sits inside a value
+    that may be a secret.
+
+    ``$$`` still escapes to a literal ``$``.
+    """
+    if not template:
+        return template
+
+    placeholder = "\x00ESCAPED_DOLLAR\x00"
+    result = template.replace("$$", placeholder)
+
+    unresolved = []
+    for var_name in extract_uppercase_references(result):
+        if var_name not in context:
+            unresolved.append(var_name)
+            continue
+        value = context[var_name]
+        result = result.replace(f"${{{var_name}}}", value)
+        # Word boundary so $PUBLIC_HOST does not eat the start of $PUBLIC_HOSTNAME.
+        result = re.sub(rf"\${var_name}(?=[^A-Za-z0-9_{{]|$)", value.replace("\\", "\\\\"), result)
+
+    if unresolved:
+        hints = ", ".join(f"${name[:3]}..." for name in unresolved)
+        logger.warning(
+            f"Left {len(unresolved)} unresolved variable reference(s) in {where or 'a value'} as-is ({hints}); "
+            f"available: {', '.join(sorted(context)) or 'none'}"
+        )
+
+    return result.replace(placeholder, "$")
