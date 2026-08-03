@@ -68,16 +68,19 @@ DEFAULT_PROJECTS_REPO = "https://git.claude.robbertuittenbroek.nl/robbert/rig-cl
 PRODUCTION_CLUSTER = "odcn-production"
 
 #: Known, PRE-EXISTING structural defects in the production data (not regressions this
-#: release introduces): both list ``publish-on-web`` twice at project level, which the
-#: structural validator rejects. They are the dp-bn7 class made visible -- on their next
-#: processing run they stall silently. The source repo is read-only here, so they are
-#: baselined by filename: the real-file replay stays green on today's data and turns RED
-#: the moment a NEW file fails (a genuine regression) or a baselined file starts passing
-#: (someone de-duplicated it -- drop it from the baseline).
-KNOWN_REAL_FAILURES: dict[str, str] = {
-    "dsm1j2-2ws.yaml": "staat meerdere keren in de services-lijst",
-    "ug-zxt.yaml": "staat meerdere keren in de services-lijst",
-}
+#: release introduces). The source repo is read-only here, so such a file is baselined by
+#: filename: the real-file replay stays green on today's data and turns RED the moment a
+#: NEW file fails (a genuine regression) or a baselined file starts passing (it got fixed
+#: -- drop it from the baseline).
+#:
+#: Empty since 3 August. It held ``dsm1j2-2ws.yaml`` and ``ug-zxt.yaml``, which both list
+#: ``publish-on-web`` twice at project level; the structural validator rejects that, so
+#: every processing run stalled silently -- the dp-bn7 class made visible, and exactly what
+#: this replay was built to surface. Rather than leaving them baselined,
+#: ``_fixup_duplicate_service_entries`` now collapses an unambiguous repeat during
+#: migration, so both files pass. This assertion holding both ways is what forced the
+#: baseline to be revisited instead of quietly going stale.
+KNOWN_REAL_FAILURES: dict[str, str] = {}
 
 
 @dataclass
