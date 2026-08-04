@@ -206,10 +206,8 @@ class TestClearedFieldRoundtrip:
     """
 
     def _component_section_editables(self):
-        from opi.forms.editables.fields.components import (
-            COMPONENT_ALIASES_EDITABLE,
-            COMPONENT_NAME_EDITABLE,
-        )
+        from opi.forms.editables.fields.components import COMPONENT_NAME_EDITABLE
+        from opi.services.catalog.aliases.editables import COMPONENT_ALIASES_EDITABLE
 
         return [
             EditableVisualizer(editable=COMPONENT_NAME_EDITABLE, widget=WidgetType.TEXT, label="Naam"),
