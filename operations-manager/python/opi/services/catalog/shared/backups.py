@@ -94,13 +94,17 @@ class BackupsPageMixin:
     Each owner returns the same section and the same router, and the registry renders
     and mounts each of them once -- so the block appears for a project that can back
     something up, and exactly once.
+
+    Cooperative (``super()``): a service can carry more than one page mixin -- the
+    PostgreSQL services are backupable AND bring the console/job modals -- and a mixin
+    that simply returned its own list would silently swallow the other's.
     """
 
     def deployment_page_sections(self, ctx: DeploymentPageContext) -> list[DetailPageSection]:
-        return backup_deployment_sections(ctx)
+        return [*super().deployment_page_sections(ctx), *backup_deployment_sections(ctx)]  # type: ignore[misc]
 
-    def web_router(self) -> APIRouter:
-        return backups_router
+    def web_routers(self) -> list[Any]:
+        return [*super().web_routers(), backups_router]  # type: ignore[misc]
 
 
 def _snapshot_to_dict(snapshot: Any) -> dict[str, Any]:

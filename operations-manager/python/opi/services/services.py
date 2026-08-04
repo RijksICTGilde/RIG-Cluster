@@ -27,22 +27,35 @@ class ServiceValidationError(ValueError):
 class DeploymentAction:
     """A deployment-level action button a service contributes to the UI.
 
-    ``section-deployment-actions.html.j2`` renders one button per action after its
-    own hardcoded buttons. This is the generic hook so a service (sleep-mode's
-    "wake", tomorrow the database console) owns its own button instead of the
-    template deriving the condition itself.
+    ``section-deployment-actions.html.j2`` renders one button per action. This is the
+    generic hook so a service (sleep-mode's wake/sleep toggle, the database console,
+    the job runner) owns its own button instead of the template deriving the condition
+    itself.
+
+    An action either POSTs (``endpoint``) or opens the shared modal shell on a fragment
+    URL (``modal_endpoint`` + ``modal_title``) -- exactly one of the two.
     """
 
     label: str
     icon: str
     #: ROOS button kind: "primary" | "secondary" | "warning" | "subtle" | ...
     kind: str
-    #: Web-route path the htmx POST targets (CSRF handled by the template).
-    endpoint: str
+    #: Web-route path the POST targets (CSRF handled by the template).
+    endpoint: str | None = None
+    #: Web-route path whose HTML is loaded into the shared edit-modal shell.
+    modal_endpoint: str | None = None
+    #: Heading for that modal; required with ``modal_endpoint``.
+    modal_title: str | None = None
     #: Optional confirm dialog text; None means no confirmation.
     confirm_message: str | None = None
     #: Whether the button should render for this deployment.
     visible: bool = True
+
+    def __post_init__(self) -> None:
+        if bool(self.endpoint) == bool(self.modal_endpoint):
+            raise ValueError(f"DeploymentAction '{self.label}' needs exactly one of endpoint / modal_endpoint")
+        if self.modal_endpoint and not self.modal_title:
+            raise ValueError(f"DeploymentAction '{self.label}' has a modal_endpoint but no modal_title")
 
 
 #: A service's action provider: given (project_data, deployment_name) it returns the
