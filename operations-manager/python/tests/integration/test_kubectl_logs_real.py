@@ -13,6 +13,15 @@ from typing import Any
 
 import pytest
 
+# Deze module praat met een echte Kubernetes-API via de Kind-cluster `rig-integration-test`
+# (task test-kind-create). Gemarkeerd als requires_infra, want de standaard-addopts in
+# pyproject.toml sluiten dat uit: zonder cluster gaven deze tests anders errors en ruim een
+# minuut wachttijd in elke gewone run, terwijl niemand de opbrengst zag.
+#
+# De cluster ruimt zichzelf niet op (bewust, zie tests/integration/conftest.py) en kost twee
+# Docker-containers van elk ~1GB. Draai `task test-kind-delete` als je klaar bent.
+pytestmark = pytest.mark.requires_infra
+
 
 @pytest.mark.slow
 @pytest.mark.kind
