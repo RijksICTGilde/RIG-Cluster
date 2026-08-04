@@ -5439,12 +5439,16 @@ class ProjectManager:
                         substituted_user_env_vars[key] = value
                         continue
                     substituted_value = substitute_known_variables(
-                        value, env_vars, where=f"user-env-var {key} of component {component_name}"
+                        # No key name: a user-env-var's NAME is the user's business too, and
+                        # the component is enough to locate the warning.
+                        value,
+                        env_vars,
+                        where=f"a user-env-var of component {component_name}",
                     )
                     substituted_user_env_vars[key] = substituted_value
                     if substituted_value != value:
-                        # Never log the values: user-env-vars hold secrets.
-                        logger.debug(f"Substituted variable references in user-env-var {key}")
+                        # Neither the value nor the name: user-env-vars are the user's.
+                        logger.debug(f"Substituted variable references in a user-env-var of {component_name}")
                 user_env_vars = substituted_user_env_vars
 
             # # IMPORTANT: Add component FIRST to prevent fallback creation with namespace=None

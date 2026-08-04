@@ -12,7 +12,7 @@ and BEFORE any write or commit. Fails closed on the first violation.
 import logging
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
@@ -198,13 +198,22 @@ def _validate_owned_properties(project_data: dict[str, Any], project_name: str) 
     (``config_editables``), so this loop names neither service.
     """
     for service in property_owning_services():
-        key = service.owned_property
-        assert key is not None  # property_owning_services filters on it
+        key, model = service.owned_property, service.config_model
+        if key is None or model is None:
+            # property_owning_services() filters on owned_property, and a service that owns
+            # one is always modelled -- but this walk is a fail-closed validation path, so
+            # it narrows explicitly instead of leaning on an assert (which `python -O`
+            # strips, turning the guarantee into a silent skip).
+            continue
         if service.config_editables(ConfigLayer.COMPONENT):
             for component in project_data.get("components", []) or []:
                 if isinstance(component, dict) and component.get(key) is not None:
                     _validate_owned_property(
-                        service, component[key], f"van component '{component.get('name', '(onbekend)')}'", project_name
+                        service,
+                        model,
+                        component[key],
+                        f"van component '{component.get('name', '(onbekend)')}'",
+                        project_name,
                     )
         if not service.config_editables(ConfigLayer.DEPLOYMENT_COMPONENT):
             continue
@@ -217,17 +226,21 @@ def _validate_owned_properties(project_data: dict[str, Any], project_name: str) 
                     comp_name = component.get("reference") or component.get("name", "(onbekend)")
                     _validate_owned_property(
                         service,
+                        model,
                         component[key],
                         f"van component '{comp_name}' in deployment '{dep_name}'",
                         project_name,
                     )
 
 
-def _validate_owned_property(service: Service, raw: Any, where: str, project_name: str) -> None:
-    """Validate one owned-property value against its service's model; fail closed."""
-    assert service.config_model is not None  # a property-owning service is always modelled
+def _validate_owned_property(service: Service, model: type[BaseModel], raw: Any, where: str, project_name: str) -> None:
+    """Validate one owned-property value against its service's model; fail closed.
+
+    The model is passed in rather than read off the service again, so the narrowing the
+    caller already did is carried in the signature instead of re-asserted here.
+    """
     try:
-        service.config_model.model_validate(raw)
+        model.model_validate(raw)
     except ValidationError as e:
         raise ProjectIntegrityError(
             f"Project '{project_name}': '{service.owned_property}' {where} is ongeldig: {e}."

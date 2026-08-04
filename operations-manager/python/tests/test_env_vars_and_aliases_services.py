@@ -9,6 +9,8 @@ the yaml paths below are the paths every existing project file already uses.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from opi.core.project_schema import ProjectIntegrityError
 from opi.manager.project_validation import validate_service_configs
@@ -24,6 +26,9 @@ ENV_VARS = SERVICES[ServiceType.USER_ENV_VARS]
 ALIASES = SERVICES[ServiceType.ALIASES]
 
 AGE_BLOCK = "-----BEGIN AGE ENCRYPTED FILE-----\nYWJj\n-----END AGE ENCRYPTED FILE-----"
+
+#: The opi package root, for the source-level guards below.
+_OPI = Path(__import__("opi").__file__).resolve().parent
 
 
 class TestSystemServiceShape:
@@ -139,11 +144,15 @@ class TestAliasMapValidator:
 
     def test_rejects_an_alias_without_a_reference(self) -> None:
         messages = AliasMapValidator().validate("MODE=production")
-        assert messages and "MODE" in messages[0]
+        assert messages
+        assert "MODE" in messages[0]
 
     def test_names_every_offending_alias(self) -> None:
         messages = AliasMapValidator().validate("A=$HOST\nB=one\nC=two")
-        assert "B" in messages[0] and "C" in messages[0] and "A" not in messages[0].split(":")[1].split(".")[0]
+        named = messages[0].split(":")[1].split(".")[0]
+        assert "B" in named
+        assert "C" in named
+        assert "A" not in named
 
     def test_reports_a_parse_error_once(self) -> None:
         assert len(AliasMapValidator().validate("not an alias line")) == 1
@@ -208,3 +217,36 @@ class TestTheConverterNeverLogsAValue:
         with caplog.at_level("DEBUG", logger="opi.forms.editables.converters"):
             KeyValueConverter(fmt="env", write_as="string").write("API_KEY=s3cr3t-value")
         assert "s3cr3t-value" not in caplog.text
+
+
+class TestNoUserEnvVarNamesInLogs:
+    """Not the values, and not the names either.
+
+    Which variables a component defines is the user's business; that we processed some,
+    and how many, is all a log needs to say. Only the component name locates the entry.
+    """
+
+    def test_substitution_debug_line_names_neither_the_var_nor_its_value(self, caplog) -> None:
+        from opi.utils.env_vars import substitute_known_variables
+
+        with caplog.at_level("DEBUG"):
+            result = substitute_known_variables("$PUBLIC_HOST/x", {"PUBLIC_HOST": "app.example.nl"})
+        assert result == "app.example.nl/x"
+        assert "app.example.nl" not in caplog.text
+
+    def test_the_unresolved_warning_does_not_carry_a_var_name(self) -> None:
+        # project_manager passes `where` without the variable name, so the warning that
+        # quotes it cannot leak one.
+        source = (_OPI / "manager" / "project_manager.py").read_text(encoding="utf-8")
+        assert 'where=f"a user-env-var of component {component_name}"' in source
+
+    def test_the_router_logs_a_count_not_the_keys(self) -> None:
+        source = (_OPI / "web" / "router.py").read_text(encoding="utf-8")
+        assert "parsed_env_vars.keys()" not in source, (
+            "web/router.py logs user-env-var key names again; log how many, not which"
+        )
+
+    def test_the_config_handler_logs_neither_key_nor_value(self) -> None:
+        source = (_OPI / "handlers" / "configuration_handler.py").read_text(encoding="utf-8")
+        assert "key='{key}', value='{value}'" not in source
+        assert "add_env_var called for component" in source
