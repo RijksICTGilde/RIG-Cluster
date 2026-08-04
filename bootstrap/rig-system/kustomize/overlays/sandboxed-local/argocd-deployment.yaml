@@ -53,20 +53,22 @@ spec:
         value: "150"
       - name: ARGOCD_K8S_CLIENT_BURST
         value: "300"
+    # Sandbox-CPU-beleid: minimale request, geen cpu-limit — zie de toelichting in
+    # infrastructure/bootstrap/clusters/sandboxed-local/kustomization.yaml. De controller
+    # en applicationSet vroegen samen 2 van de 4 cores van de dev-server op; daardoor paste
+    # keycloak (2 CPU) er niet meer bij en bleef die Pending.
     resources:
       limits:
-        cpu: 5
         memory: 2Gi
       requests:
-        cpu: 1
+        cpu: 50m
         memory: 512Mi
   applicationSet:
     resources:
       limits:
-        cpu: 5
         memory: 256Mi
       requests:
-        cpu: 1
+        cpu: 25m
         memory: 128Mi
   # ⚠️  De sops-plugin component (zie kustomization.yaml) doet `op: replace` op /spec/repo:
   #     ALLES wat hieronder staat wordt bij het renderen weggegooid. Wat echt moet landen,
