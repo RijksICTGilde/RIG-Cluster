@@ -261,7 +261,7 @@ class TaskResponse[TResult: BaseModel](BaseModel):
     """
 
     task_id: str = Field(..., description="Unique task identifier (UUID)")
-    task_type: str = Field(..., description="Type of operation being performed")
+    task_type: TaskType = Field(..., description="Type of operation being performed")
     status: str = Field(..., description="Task status: pending, claimed, running, completed, failed, cancelled")
     progress_percent: int = Field(default=0, description="Completion percentage (0-100)")
     current_step: str = Field(default="", description="Human-readable description of the current step")

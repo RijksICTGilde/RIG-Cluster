@@ -150,6 +150,7 @@ def apply_probe_workload(project: dict, image: str, port: int) -> None:
             component.pop("registry", None)
             component.pop("imagePullPolicy", None)
         _point_command_at_probe(component, f"{name}/{component.get('name', '?')}")
+        _apply_probe_resources(component, f"{name}/{component.get('name', '?')}")
 
     for dep in project.get("deployments", []):
         if not isinstance(dep, dict):
@@ -161,6 +162,7 @@ def apply_probe_workload(project: dict, image: str, port: int) -> None:
             comp.pop("registry", None)
             comp.pop("imagePullPolicy", None)
             _point_command_at_probe(comp, f"{name}/{dep.get('name', '?')}/{comp.get('reference', '?')}")
+            _apply_probe_resources(comp, f"{name}/{dep.get('name', '?')}/{comp.get('reference', '?')}")
             logger.info(
                 f"  [{name}] deployment '{dep.get('name', '?')}' component '{comp.get('reference', '?')}': "
                 f"image -> {image}"
@@ -170,6 +172,33 @@ def apply_probe_workload(project: dict, image: str, port: int) -> None:
 #: What the probe image runs. A component that overrides ``command`` gets this instead of
 #: its own; see ``_point_command_at_probe``.
 PROBE_ENTRYPOINT = ["/e2e-allservices"]
+
+#: What the probe needs, which is almost nothing: a static Go binary that opens a port and
+#: talks to the services it is bound to. Production values are tuned for the real workload
+#: (wies asks 270Mi) and carrying them over would reserve memory nothing uses, while the
+#: auto-tuner's history describes an image that is no longer there.
+PROBE_RESOURCES = {
+    "requests": {"memory": "32Mi", "cpu": "10m"},
+    "limits": {"memory": "128Mi", "cpu": "200m"},
+}
+
+
+def _apply_probe_resources(component: dict, where: str) -> None:
+    """Give the component the probe's resource profile and drop the tuner's history.
+
+    Requests and limits in a production file are tuned for that project's own image, by the
+    VPA-driven tuner, over weeks of real traffic. None of that applies once the workload is
+    a small static probe: the reservations are far too large, and the ``history`` list
+    inside ``resources`` is an audit trail about an image that will not be running.
+
+    The domain histories elsewhere in the file are a different thing entirely and stay put.
+    """
+    resources = component.get("resources")
+    if not isinstance(resources, dict):
+        return
+    had_history = "history" in resources
+    component["resources"] = {k: dict(v) for k, v in PROBE_RESOURCES.items()}
+    logger.info(f"  [{where}]: resources -> probe-profiel{' (tuning-historie verwijderd)' if had_history else ''}")
 
 
 def _point_command_at_probe(component: dict, where: str) -> None:
@@ -510,6 +539,9 @@ _FRESH_PROJECT_REMOVALS = (
 _PROBE_REMOVALS = (
     "/deployments[]/components[]/registry",
     "/deployments[]/components[]/imagePullPolicy",
+    # The tuner's audit trail describes the image being replaced.
+    "/deployments[]/components[]/resources/history",
+    "/components[]/resources/history",
 )
 
 
