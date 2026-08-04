@@ -142,6 +142,14 @@ def apply_probe_workload(project: dict, image: str, port: int) -> None:
         if isinstance(ports, dict):
             ports["inbound"] = [port]
             logger.info(f"  [{name}] component '{component.get('name', '?')}': inbound port -> {port}")
+        # Ook hier het image, niet alleen op de deployment-componenten. Het deployment-niveau
+        # overschrijft dit meestal, maar niet altijd, en een probe-command naast het
+        # originele image is een combinatie die gegarandeerd niet start.
+        if "image" in component:
+            component["image"] = image
+            component.pop("registry", None)
+            component.pop("imagePullPolicy", None)
+        _point_command_at_probe(component, f"{name}/{component.get('name', '?')}")
 
     for dep in project.get("deployments", []):
         if not isinstance(dep, dict):
@@ -152,10 +160,37 @@ def apply_probe_workload(project: dict, image: str, port: int) -> None:
             comp["image"] = image
             comp.pop("registry", None)
             comp.pop("imagePullPolicy", None)
+            _point_command_at_probe(comp, f"{name}/{dep.get('name', '?')}/{comp.get('reference', '?')}")
             logger.info(
                 f"  [{name}] deployment '{dep.get('name', '?')}' component '{comp.get('reference', '?')}': "
                 f"image -> {image}"
             )
+
+
+#: What the probe image runs. A component that overrides ``command`` gets this instead of
+#: its own; see ``_point_command_at_probe``.
+PROBE_ENTRYPOINT = ["/e2e-allservices"]
+
+
+def _point_command_at_probe(component: dict, where: str) -> None:
+    """Keep a component's ``command`` but make it start the probe.
+
+    ``command`` maps straight to ``containers[].command``, and production values assume the
+    project's own image: ``openp-4pw`` and ``vlam-wt8`` both use one. Swapping in the probe
+    without touching it leaves the container trying to exec something that image does not
+    have, and the pod never starts::
+
+        exec: "sh": executable file not found in $PATH
+
+    Dropping the field would fix that but would also stop the test from covering it, and a
+    command is exactly the kind of thing that must survive a migration. So the field stays
+    and only its value changes, the same treatment user-env-vars get: the shape is
+    exercised end to end, the production value is not.
+    """
+    if "command" not in component:
+        return
+    component["command"] = list(PROBE_ENTRYPOINT)
+    logger.info(f"  [{where}]: command -> {PROBE_ENTRYPOINT} (de probe heeft geen shell)")
 
 
 def migrate_project(

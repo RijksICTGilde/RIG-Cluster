@@ -45,7 +45,10 @@ running_pid() {
     [ -f "$PIDFILE" ] || return 1
     local pid
     pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
-    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+    # ps -p en niet kill -0: de forward draait als root, en een signaal sturen naar een
+    # proces van root mag jij niet, waardoor kill -0 faalt en dit "staat uit" concludeerde
+    # terwijl hij gewoon draaide. ps ziet processen van iedereen.
+    [ -n "$pid" ] && ps -p "$pid" -o pid= >/dev/null 2>&1 || return 1
     echo "$pid"
 }
 
@@ -94,6 +97,9 @@ cmd_on() {
     # van een ssh die vrolijk zonder forward doorleeft.
     # UserKnownHostsFile expliciet: als root heeft ssh een eigen (lege) known_hosts, en met
     # BatchMode weigert hij dan op een onbekende hostsleutel in plaats van te vragen.
+    # Doel is het LAN-adres van de server en niet zijn 127.0.0.1: de ingress is daar wel
+    # bereikbaar en op de loopback van de server niet (getest: curl naar 127.0.0.1 geeft daar
+    # geen verbinding, naar het LAN-adres wel).
     sudo ssh -f -N \
         -i "$SSH_KEY" \
         -o BatchMode=yes \
@@ -101,8 +107,8 @@ cmd_on() {
         -o ExitOnForwardFailure=yes \
         -o ServerAliveInterval=30 \
         -p "$SSH_PORT" \
-        -L "127.0.0.1:80:127.0.0.1:80" \
-        -L "127.0.0.1:443:127.0.0.1:443" \
+        -L "127.0.0.1:80:${SERVER}:80" \
+        -L "127.0.0.1:443:${SERVER}:443" \
         "${SSH_USER}@${SERVER}"
 
     # ssh -f daemoniseert zelf, dus de pid komt van de poort en niet van $!.
@@ -146,8 +152,11 @@ cmd_status() {
     # Een levende poort zegt nog niet dat de ingress antwoordt, dus even echt vragen.
     local code
     code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 \
-        -H "Host: argo.sandbox.rijksapp.dev" https://127.0.0.1/ 2>/dev/null || echo "geen antwoord")
-    echo "  https://127.0.0.1 met Host argo.sandbox.rijksapp.dev -> ${code}"
+        -H "Host: argo.sandbox.rijksapp.dev" https://127.0.0.1/ 2>/dev/null) || code=""
+    case "$code" in
+        "" | 000) echo "  https://127.0.0.1 antwoordt niet; staat de forward echt en draait de ingress?" ;;
+        *) echo "  https://127.0.0.1 met Host argo.sandbox.rijksapp.dev -> ${code}" ;;
+    esac
 }
 
 case "${1:-}" in
