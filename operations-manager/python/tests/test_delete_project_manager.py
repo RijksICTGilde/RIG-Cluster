@@ -589,8 +589,15 @@ class TestDeleteProjectOrchestration:
         assert call_kwargs["kc_config"] == kc_config
 
     @pytest.mark.asyncio
-    async def test_keycloak_realm_cleanup_skipped_when_no_config(self):
-        """delete_project should skip Keycloak realm cleanup when no config exists."""
+    async def test_keycloak_cleanup_uses_derived_names_when_no_config_exists(self):
+        """Without a config entry the cleanup still runs, on names derived from project+cluster.
+
+        It used to be skipped, which left the realm AND the master-realm admin user behind
+        for good; that account carries the shared OTP credential. Both names come
+        deterministically from project and cluster, so a missing config block is no reason
+        to leave them. ``only_if_present`` keeps it quiet for a project that never used
+        Keycloak, instead of filling its delete report with failed operations.
+        """
         mock_pm = _make_project_manager_mock()
         mock_pm._get_project_keycloak_config_for_cluster = AsyncMock(return_value=None)
 
@@ -626,7 +633,11 @@ class TestDeleteProjectOrchestration:
 
             await manager.delete_project("test-project")
 
-        mock_realm_cleanup.assert_not_called()
+        mock_realm_cleanup.assert_called_once()
+        kwargs = mock_realm_cleanup.call_args.kwargs
+        assert kwargs["only_if_present"] is True
+        assert kwargs["kc_config"]["realm"], "a realm name must be derived, not left empty"
+        assert kwargs["kc_config"]["username"], "an admin username must be derived, not left empty"
 
     @pytest.mark.asyncio
     async def test_cleanup_skipped_when_deployment_deletion_fails(self):
