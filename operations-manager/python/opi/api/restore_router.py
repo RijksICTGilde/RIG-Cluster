@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
@@ -42,6 +42,15 @@ from opi.utils.naming import (
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+# ``project_name`` gates tenant isolation on every restore endpoint: it is what
+# ``validate_api_token`` matches the API key against, and it determines the only
+# namespace the caller may address (see ``_require_namespace_owned_by_project``).
+# It has always been required at runtime -- a call without it is rejected before
+# reaching the handler. Declaring it required here makes the OpenAPI spec say so,
+# so downstream clients see the requirement in the schema instead of discovering
+# it through a rejected request.
+_PROJECT_NAME_QUERY = Query(..., description="Project name matching the API key")
 
 
 def _require_namespace_owned_by_project(project_name: str, cluster: str, namespace: str) -> None:
@@ -441,7 +450,7 @@ def _bucket_result_to_model(result: BucketRestoreResult) -> BucketRestoreResultM
 @restore_router.get("/snapshots/{cluster}/{namespace}", response_model=ListSnapshotsResponse)
 @validate_api_token
 async def list_snapshots(
-    request: Request, cluster: str, namespace: str, project_name: str | None = None
+    request: Request, cluster: str, namespace: str, project_name: str = _PROJECT_NAME_QUERY
 ) -> ListSnapshotsResponse:
     """
     List all available Kopia snapshots for a namespace.
@@ -484,7 +493,7 @@ async def list_snapshots(
 @restore_router.get("/snapshots/{cluster}/{namespace}/{pvc_name}", response_model=ListSnapshotsResponse)
 @validate_api_token
 async def list_pvc_snapshots(
-    request: Request, cluster: str, namespace: str, pvc_name: str, project_name: str | None = None
+    request: Request, cluster: str, namespace: str, pvc_name: str, project_name: str = _PROJECT_NAME_QUERY
 ) -> ListSnapshotsResponse:
     """
     List available Kopia snapshots for a specific PVC.
@@ -530,7 +539,7 @@ async def restore_pvc(
     namespace: str,
     pvc_name: str,
     body: RestoreRequest | None = None,
-    project_name: str | None = None,
+    project_name: str = _PROJECT_NAME_QUERY,
 ) -> JSONResponse:
     """
     Restore a PVC from a Kopia backup.
@@ -1326,7 +1335,7 @@ async def restore_database(
     namespace: str,
     reference_name: str,
     body: DatabaseRestoreRequest,
-    project_name: str | None = None,
+    project_name: str = _PROJECT_NAME_QUERY,
 ) -> JSONResponse:
     """
     Restore a PostgreSQL database from a Kopia backup.
@@ -1440,7 +1449,7 @@ async def restore_bucket(
     namespace: str,
     reference_name: str,
     body: BucketRestoreRequest,
-    project_name: str | None = None,
+    project_name: str = _PROJECT_NAME_QUERY,
 ) -> JSONResponse:
     """
     Restore a MinIO bucket from a Kopia backup.
