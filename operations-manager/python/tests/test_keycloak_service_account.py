@@ -191,3 +191,52 @@ class TestTokenRealmSurvivesARealmSwitch:
         KeycloakConnector(keycloak_url="https://kc.example", admin_username="admin", admin_password="pw")
 
         assert captured["user_realm_name"] == "master"
+
+
+class TestTokenIsRefreshedAfterRealmCreation:
+    """A token minted before a realm exists cannot administer that realm.
+
+    Keycloak creates a ``<realm>-realm`` client in master alongside every new realm and
+    carries its admin roles in the token's ``resource_access``. A token issued earlier
+    does not have them, so the very next call on the fresh realm answers 403.
+
+    Measured on the sandbox with one service account holding master 'admin':
+    ``POST /admin/realms`` -> 201, then ``GET /admin/realms/<new>/users/profile`` -> 403
+    with the token that created it and 200 with a token minted a second later. An admin
+    USER is immune (super-admin covers realms created after its token), which is why this
+    only appeared once OPI moved to a client-credentials service account.
+    """
+
+    def _connector(self, monkeypatch) -> tuple[KeycloakConnector, MagicMock]:
+        admin = MagicMock()
+        monkeypatch.setattr(keycloak_mod, "KeycloakOpenIDConnection", lambda **kw: MagicMock())
+        monkeypatch.setattr(keycloak_mod, "KeycloakAdmin", lambda **kw: admin)
+        conn = KeycloakConnector(keycloak_url="https://kc.example", client_id="opi-admin-service", client_secret="s")
+        return conn, admin
+
+    async def test_realm_creation_refreshes_the_token_before_touching_the_realm(self, monkeypatch) -> None:
+        conn, admin = self._connector(monkeypatch)
+        calls: list[str] = []
+        admin.create_realm.side_effect = lambda **kw: calls.append("create_realm")
+        admin.connection.get_token.side_effect = lambda: calls.append("get_token")
+        admin.get_realm.side_effect = lambda **kw: calls.append("get_realm") or {}
+        admin.get_realm_users_profile.side_effect = lambda: calls.append("users_profile") or {"attributes": []}
+
+        await conn.create_realm(realm_name="proj-cluster")
+
+        assert "get_token" in calls, "no token refresh after creating the realm"
+        assert calls.index("create_realm") < calls.index("get_token") < calls.index("users_profile"), (
+            f"the refresh must sit between creating the realm and using it, got {calls}"
+        )
+
+    async def test_a_failing_refresh_does_not_mask_the_real_error(self, monkeypatch) -> None:
+        # Best-effort: if the refresh itself fails the caller carries on, so whatever goes
+        # wrong next reports its own error instead of this one.
+        conn, admin = self._connector(monkeypatch)
+        admin.connection.get_token.side_effect = KeycloakError("token endpoint down")
+        admin.get_realm.return_value = {"realm": "proj-cluster"}
+        admin.get_realm_users_profile.return_value = {"attributes": []}
+
+        result = await conn.create_realm(realm_name="proj-cluster")
+
+        assert result is not None
