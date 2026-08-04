@@ -25,7 +25,6 @@ from opi.forms.editables.fields.deployments import (
     DEPLOYMENT_COMP_PUBLISH_TLS_EDITABLE,
     DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
     DEPLOYMENT_COMP_REFERENCE_EDITABLE,
-    DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE,
     DEPLOYMENT_COMPONENTS_SEQ_EDITABLE,
     DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE,
     DEPLOYMENT_DOMAIN_FORMAT_EDITABLE,
@@ -36,6 +35,7 @@ from opi.forms.editables.fields.deployments import (
     DEPLOYMENTS_SEQUENCE_EDITABLE,
 )
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.services.registry import deployment_component_service_visualizers
 
 DEPLOYMENT_NAME = EditableVisualizer(
     editable=DEPLOYMENT_NAME_EDITABLE,
@@ -167,18 +167,6 @@ DEPLOYMENT_COMP_PULL_POLICY = EditableVisualizer(
     label="Pull policy",
 )
 
-DEPLOYMENT_COMP_USER_ENV_VARS = EditableVisualizer(
-    editable=DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE,
-    widget=WidgetType.KEY_VALUE,
-    label="Omgevingsvariabelen",
-    description="Deployment-specifieke omgevingsvariabelen voor dit component.",
-    help_text=(
-        "Overschrijft de omgevingsvariabelen uit de componentdefinitie voor deze deployment. "
-        "Bijvoorbeeld: API_URL=https://api.production.example.com"
-    ),
-    attributes={"kv_format": "env"},
-)
-
 DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE = EditableVisualizer(
     editable=DEPLOYMENT_COMP_ATTACHMENT_USE_REFERENCE_EDITABLE,
     widget=WidgetType.SELECT,
@@ -229,7 +217,8 @@ DEPLOYMENT_COMPONENTS_SEQ = EditableVisualizer(
         DEPLOYMENT_COMP_REFERENCE,
         DEPLOYMENT_COMP_IMAGE,
         DEPLOYMENT_COMP_PULL_POLICY,
-        DEPLOYMENT_COMP_USER_ENV_VARS,
+        # Per-service deployment-component visualizers, from the registry (RC-25).
+        *deployment_component_service_visualizers(),
         DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE,
     ],
 )

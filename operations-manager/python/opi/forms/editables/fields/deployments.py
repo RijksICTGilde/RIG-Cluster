@@ -6,7 +6,6 @@ from opi.forms.editables.conditions import SentinelValueCondition
 from opi.forms.editables.converters import (
     CloneFromConverter,
     CustomDomainSelectConverter,
-    KeyValueConverter,
     RRuleDayConverter,
     RRuleFrequencyConverter,
     RRuleMonthDayConverter,
@@ -17,11 +16,11 @@ from opi.forms.editables.validators import (
     BaseDomainValidator,
     CustomDomainValidator,
     DomainFormatValidator,
-    KeyValueValidator,
     KubernetesNameValidator,
     PathValidator,
     SubdomainValidator,
 )
+from opi.services.registry import deployment_component_service_editables
 
 # ===========================================================================
 # Pure Editable definitions (data logic only)
@@ -137,13 +136,6 @@ DEPLOYMENT_COMP_PATH_EDITABLE = Editable(
         DEPLOYMENT_COMP_PATH_REWRITE_EDITABLE,
     ],
 )
-DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE = Editable(
-    yaml_path="deployments[*]/components[*]/user-env-vars",
-    converter=KeyValueConverter(fmt="env", write_as="string"),
-    validator=KeyValueValidator(),
-    remove_when_none=True,
-)
-
 # Per-deployment attachment coupling override. Mirrors the base-component coupling
 # (components[*]/services{attachments}/config) but on the deployment component, so a
 # certificate/file can differ per deployment. Optional (min_items=0): an empty list
@@ -202,7 +194,9 @@ DEPLOYMENT_COMPONENTS_SEQ_EDITABLE = Editable(
         DEPLOYMENT_COMP_IMAGE_EDITABLE,
         DEPLOYMENT_COMP_PULL_POLICY_EDITABLE,
         DEPLOYMENT_COMP_PATH_EDITABLE,
-        DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE,
+        # Per-service deployment-component fields, gathered from the registry (RC-25):
+        # user-env-vars owns this layer's one field.
+        *deployment_component_service_editables(),
         DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE_EDITABLE,
     ],
 )

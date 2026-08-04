@@ -17,7 +17,6 @@ from opi.forms.layout import (
     Submit,
 )
 from opi.forms.visualizers.fields.components import (
-    COMPONENT_ALIASES,
     COMPONENT_IMAGE,
     COMPONENT_NAME,
     COMPONENT_PORTS_INBOUND,
@@ -27,7 +26,6 @@ from opi.forms.visualizers.fields.components import (
     COMPONENT_RESOURCES_MEMORY_LIMIT,
     COMPONENT_RESOURCES_MEMORY_REQUEST,
     COMPONENT_SERVICES,
-    COMPONENT_USER_ENV_VARS,
     COMPONENTS_SEQUENCE,
 )
 from opi.forms.visualizers.fields.config_display import (
@@ -62,6 +60,8 @@ from opi.forms.visualizers.fields.team import (
     USER_ROLE,
     USERS_SEQUENCE,
 )
+from opi.services.catalog.aliases.visualizers import COMPONENT_ALIASES
+from opi.services.catalog.user_env_vars.visualizers import COMPONENT_USER_ENV_VARS
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.visualizer import EditableVisualizer
