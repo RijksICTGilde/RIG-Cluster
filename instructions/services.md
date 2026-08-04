@@ -396,6 +396,9 @@ happened to the Keycloak realm block when RC-5 relocated the realms into the ser
 | Hook | Returns | Collected by |
 |---|---|---|
 | `detail_page_sections(project_data, user_role)` | `DetailPageSection`s (a template + its context) | `registry.collect_detail_page_sections()` |
+| `deployment_page_sections(ctx)` | the same, for ONE deployment | `registry.collect_deployment_page_sections()` |
+| `definition.actions_provider(project_data, deployment_name)` | `DeploymentAction`s (buttons) | `registry.collect_deployment_actions()` |
+| `web_routers()` | the `APIRouter`s that serve this service's own fragments/modals | `registry.collect_service_routers()` |
 
 - `project_data` is the **decrypted** project dict, so a service can surface managed
   credentials; `user_role` lets the service gate on the viewer (return `[]` to omit).
@@ -406,7 +409,39 @@ happened to the Keycloak realm block when RC-5 relocated the realms into the ser
   `opi/core/templates.py`). The include gets the `DetailPageSection` as `section`, so the
   template reads its data from `section.context`.
 
-`KeycloakService.detail_page_sections` is the reference implementation.
+### Which of the two section hooks
+
+`detail_page_sections` is about the project (the Keycloak realms, the invite links, the
+attachment catalog). `deployment_page_sections` is about ONE deployment (its metrics, its
+backups) and is asked once per deployment on the Deployments tab. Its `ctx`
+(`DeploymentPageContext`) adds the deployment, the managed cluster, and
+`backend_available` -- the availability of optional back-ends (`prometheus`, `backups`)
+that the view probed, because a service must not call a connector itself.
+
+### A block a service does not own alone
+
+Backups belong to every service with a `backup_label`; the two modals belong to both
+PostgreSQL services. Such a block is delivered by each owner (through a shared mixin in
+`catalog/shared/`), and the collectors keep one copy: sections dedupe on template name,
+actions on (label, endpoint), routers on object identity -- so return the SAME router
+object from every owner. Page mixins are cooperative (`super()`), since a service can
+carry more than one.
+
+### Endpoints belong with the block
+
+A block that lazy-loads (backups) or is a modal (the database console, the job runner)
+needs routes. Declare them on the service via `web_routers()` and they are mounted onto
+the web app, so the block and the endpoints that fill it travel together. Import the
+route module **inside** `web_routers()`: those modules import managers, which the catalog
+itself must not do.
+
+A modal button is a `DeploymentAction` with `modal_endpoint` + `modal_title` instead of
+`endpoint`; the shared modal shell loads that URL (`openServiceModal`). One or the other,
+never both.
+
+`KeycloakService.detail_page_sections` is the reference implementation for the project
+level, `MetricsScraperService.deployment_page_sections` for the deployment level, and
+`catalog/shared/backups.py` for a jointly-owned block with its own route.
 
 ## Hooks at a glance
 
@@ -417,7 +452,9 @@ Every hook a service may implement, so a new service knows what it can own:
 | `config_editables(layer)` / `config_api_fields(layer)` | config data + accepted API fields; also determine which API config targets the service exposes |
 | `config_form_section(layer)` | project-level wizard/edit config step |
 | `config_component_layout()` / `config_component_visualizers()` | per-component form fields |
-| `detail_page_sections(project_data, user_role)` | read-only detail-page block |
+| `detail_page_sections(project_data, user_role)` | read-only detail-page block (project level) |
+| `deployment_page_sections(ctx)` | read-only detail-page block for one deployment |
+| `web_routers()` | the endpoints those blocks need (fragments, modals) |
 | `config_approvals(layer)` | values that need approval before taking effect |
 | `provision(ctx)` / `handle_service_removal(ctx)` | server-side resources |
 | `contribute_manifest_context(ctx)` / `build_secret_files(ctx)` | manifest + secret contributions (per component) |

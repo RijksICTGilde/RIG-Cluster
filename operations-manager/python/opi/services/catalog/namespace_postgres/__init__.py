@@ -12,11 +12,12 @@ from typing import Any
 from opi.services.catalog.base import ConfigLayer, Service, config_path
 from opi.services.catalog.namespace_postgres.config_model import NamespacePostgresConfig
 from opi.services.catalog.shared.backups import BackupsPageMixin
+from opi.services.catalog.shared.postgres_pages import DatabasePagesMixin, database_actions
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ManagerKey, ServiceType
 
 
-class NamespacePostgresqlDatabaseService(BackupsPageMixin, Service):
+class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
     service_type = ServiceType.NAMESPACE_POSTGRESQL_DATABASE
     cleanup_manager_key = ManagerKey.DATABASE
     config_model = NamespacePostgresConfig
@@ -68,3 +69,8 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, Service):
             )
             self._config_section_cache = cached
         return cached
+
+
+# Same two buttons as the shared PostgreSQL service; the collector keeps one of each
+# when a project happens to use both.
+NamespacePostgresqlDatabaseService.definition.actions_provider = database_actions
