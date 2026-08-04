@@ -99,6 +99,19 @@ class KeycloakConnector:
 
     # ==================== Realm Operations ====================
 
+    def _refresh_admin_token(self) -> None:
+        """Mint a fresh admin access token on the underlying connection.
+
+        Needed after creating a realm: see the call site in :meth:`create_realm` for why a
+        token issued earlier cannot administer a realm created later. Best-effort -- if the
+        refresh itself fails, the caller carries on with the existing token and the
+        operation surfaces its own error rather than this one masking it.
+        """
+        try:
+            self.admin.connection.get_token()
+        except KeycloakError as e:
+            logger.warning(f"Could not refresh the Keycloak admin token: {e}")
+
     async def create_realm(
         self,
         realm_name: str,
@@ -193,6 +206,22 @@ class KeycloakConnector:
                         logger.info(f"Updated settings on existing realm {realm_name}: {replay_settings}")
                 else:
                     raise
+
+            # A token minted before this realm existed cannot administer it. Keycloak
+            # creates a ``<realm>-realm`` client in master alongside every new realm and
+            # carries its admin roles in ``resource_access``; an access token issued
+            # earlier simply does not have them, so every follow-up call on the fresh
+            # realm answers 403. Measured on the sandbox: same service account, same
+            # master 'admin' role, POST /admin/realms -> 201 but
+            # GET /admin/realms/<new>/users/profile -> 403 with the token that created it,
+            # and 200 with a token minted one second later.
+            #
+            # This bites service accounts only -- an admin USER with the master 'admin'
+            # role is a super-admin over realms that did not exist when its token was
+            # issued, which is why this never showed before OPI moved to a
+            # client-credentials service account. Refreshing unconditionally keeps the two
+            # auth paths behaving the same and costs one token request per realm created.
+            self._refresh_admin_token()
 
             # Get the realm details
             realm_info = self.admin.get_realm(realm_name=realm_name)
