@@ -722,6 +722,10 @@ def test_component_layout_collection_is_ordered_by_config_component_order():
 
     labels = [getattr(n, "legend", None) or getattr(n, "field_name", None) for n in _service_component_layouts()]
     assert labels == [
+        # The aliases / user-env-vars system services sort first (RC-25), where the
+        # hand-authored "Variabelen" fieldset used to sit.
+        "Aliassen",
+        "Eigen omgevingsvariabelen",
         "services{persistent-storage}/config",
         "services{temp-storage}/config",
         "services{attachments}/config",
@@ -782,10 +786,11 @@ def test_config_ownership_defaults_are_noop():
     provider = get_service(ServiceType.AUTHORIZATION_WALL)
     assert provider.config_form_section(ConfigLayer.COMPONENT) is None
     assert provider.config_api_fields(ConfigLayer.COMPONENT) == []
-    # a service with no config-field ownership yet
+    # a service with no config-field ownership at this layer (redis owns the project
+    # layer since RC-25, but nothing on the component layer)
     redis = get_service(ServiceType.REDIS)
-    assert redis.config_form_section(ConfigLayer.PROJECT) is None
-    assert redis.config_editables(ConfigLayer.PROJECT) == []
+    assert redis.config_form_section(ConfigLayer.COMPONENT) is None
+    assert redis.config_editables(ConfigLayer.COMPONENT) == []
 
 
 # --- approval ownership (RC-5) ---------------------------------------------------

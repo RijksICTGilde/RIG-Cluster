@@ -18,8 +18,19 @@ from __future__ import annotations
 
 from pydantic import RootModel, field_validator
 
-from opi.utils.age import is_age_encrypted
+from opi.utils.age import is_age_encrypted, parse_password_with_prefix
 from opi.utils.env_vars import validate_and_parse_env_vars
+
+
+def _is_opaque(value: str) -> bool:
+    """Whether the value is encrypted, and therefore not ours to parse.
+
+    Two forms are in the wild and both must be accepted: the multiline AGE block, and
+    the single-line prefixed form (``base64+age:``, ``age:``) that fits in a .env-style
+    value. Reading only the block form is how a real production file
+    (``base64+age:...`` on ``algor-odc``) would have been rejected.
+    """
+    return is_age_encrypted(value) or parse_password_with_prefix(value)[0] != "plain"
 
 
 class UserEnvVarsConfig(RootModel[str | dict[str, str]]):
@@ -29,7 +40,7 @@ class UserEnvVarsConfig(RootModel[str | dict[str, str]]):
     @classmethod
     def _parseable(cls, value: str | dict[str, str]) -> str | dict[str, str]:
         if isinstance(value, str):
-            if is_age_encrypted(value):
+            if _is_opaque(value):
                 return value
             validate_and_parse_env_vars(value)
             return value
