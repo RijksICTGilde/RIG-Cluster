@@ -17,6 +17,7 @@ from opi.services.catalog.postgresql_database.config_model import (
     PostgresqlDatabaseConfig,
     PostgresqlDatabaseProjectConfig,
 )
+from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.services_enums import ManagerKey, ServiceType
 from opi.utils.secrets import DatabaseSecret
 
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class PostgresqlDatabaseService(Service):
+class PostgresqlDatabaseService(BackupsPageMixin, Service):
     service_type = ServiceType.POSTGRESQL_DATABASE
     # The user-facing config is the project-layer scope decision; the deployment-layer
     # clone state is OPI-managed (see config_model_for below). config_model names the

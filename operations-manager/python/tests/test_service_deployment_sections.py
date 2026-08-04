@@ -81,8 +81,73 @@ class TestMetricsScraper:
         assert "Resource Metrics" in html
 
 
-def test_same_template_from_several_owners_renders_once() -> None:
-    """A block owned jointly (backups: every backupable service) renders once."""
-    ctx = _ctx(["persistent-storage", "postgresql-database", "minio-storage"])
-    templates_seen = _templates(ctx)
-    assert len(templates_seen) == len(set(templates_seen))
+BACKUPS_TEMPLATE = "shared/section-backups.html.j2"
+
+
+class TestBackups:
+    """Backups are not a service of their own: the block belongs to every service with a
+    ``backup_label``. It used to render for any project with a deployment."""
+
+    def test_section_for_a_project_that_can_back_something_up(self) -> None:
+        section = collect_deployment_page_sections(_ctx(["postgresql-database"]))[0]
+        assert section.template == BACKUPS_TEMPLATE
+        assert section.context["available"] is True
+        assert section.context["deployment_name"] == "dep-1"
+
+    def test_no_section_for_a_project_with_nothing_to_back_up(self) -> None:
+        assert _templates(_ctx(["publish-on-web", "redis"])) == []
+
+    def test_every_backupable_service_is_an_owner(self) -> None:
+        for service_name in ("persistent-storage", "postgresql-database", "minio-storage"):
+            assert BACKUPS_TEMPLATE in _templates(_ctx([service_name])), service_name
+
+    def test_several_owners_still_render_one_block(self) -> None:
+        seen = _templates(_ctx(["persistent-storage", "postgresql-database", "minio-storage"]))
+        assert seen.count(BACKUPS_TEMPLATE) == 1
+
+    def test_no_section_for_a_deployment_on_another_cluster(self) -> None:
+        assert _templates(_ctx(["postgresql-database"], cluster="other-cluster")) == []
+
+    def test_only_the_first_deployment_carries_the_single_loader(self) -> None:
+        """One request for the whole project: per-deployment loaders each open a Kopia
+        repository, which OOM-killed the pod once."""
+        ctx = _ctx(["postgresql-database"])
+        ctx.project_data["deployments"] = [
+            {"name": "b-dep", "cluster": "test-cluster", "namespace": "proj"},
+            {"name": "a-dep", "cluster": "test-cluster", "namespace": "proj"},
+        ]
+        loaders = {}
+        for deployment in ctx.project_data["deployments"]:
+            ctx.deployment = deployment
+            loaders[deployment["name"]] = collect_deployment_page_sections(ctx)[0].context["loads_snapshots"]
+        assert loaders == {"a-dep": True, "b-dep": False}
+
+    def test_unavailable_backend_gives_one_notice_not_one_per_deployment(self) -> None:
+        ctx = _ctx(["postgresql-database"])
+        ctx.backend_available["backups"] = False
+        ctx.project_data["deployments"] = [
+            {"name": "a-dep", "cluster": "test-cluster", "namespace": "proj"},
+            {"name": "b-dep", "cluster": "test-cluster", "namespace": "proj"},
+        ]
+        ctx.deployment = ctx.project_data["deployments"][0]
+        assert [s.context["available"] for s in collect_deployment_page_sections(ctx)] == [False]
+        ctx.deployment = ctx.project_data["deployments"][1]
+        assert collect_deployment_page_sections(ctx) == []
+
+    def test_template_renders_through_the_app_env(self) -> None:
+        ctx = _ctx(["postgresql-database"])
+        ctx.deployment["backup"] = {"schedule": "FREQ=DAILY"}
+        section = collect_deployment_page_sections(ctx)[0]
+        html = templates.env.get_template(section.template).render(section=section)
+        assert "/projects/details/proj/backups" in html
+        assert "backups-snapshots-dep-1" in html
+        assert "Backups" in html
+
+
+def test_the_backups_fragment_route_is_mounted_exactly_once() -> None:
+    """Every backupable service hands back the SAME router object, so the shared route
+    is registered once instead of four times."""
+    from opi.web.router import web_router
+
+    paths = [route.path for route in web_router.routes]
+    assert paths.count("/projects/details/{project_name}/backups") == 1

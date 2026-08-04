@@ -76,7 +76,6 @@
         </div>
         {% endfor %}
         {% include "project-details/section-deployments.html.j2" %}
-        {% include "project-details/section-backups.html.j2" %}
         {% include "project-details/section-env-vars.html.j2" %}
     </c-layout-flow>
 
@@ -1281,7 +1280,7 @@
             section.style.display = 'none';
         });
         // Show sections matching this deployment
-        ['deployment-actions-', 'deployment-', 'argocd-', 'backups-'].forEach(prefix => {
+        ['deployment-actions-', 'deployment-', 'argocd-'].forEach(prefix => {
             const el = document.getElementById(prefix + deploymentName);
             if (el) el.style.display = '';
         });

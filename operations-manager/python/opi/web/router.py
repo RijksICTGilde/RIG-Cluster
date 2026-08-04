@@ -23,6 +23,7 @@ from opi.services.project_authorization import (
     is_user_authorized_for_project,
 )
 from opi.services.project_store import get_project_store
+from opi.services.registry import collect_service_routers
 from opi.utils.age import decrypt_password_smart, get_global_private_key
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.totp import totp_now
@@ -61,6 +62,12 @@ web_router.include_router(attachments_router)
 web_router.include_router(wizard_attachments_router)
 web_router.include_router(db_console_router)
 web_router.include_router(jobs_router)
+
+# Routers the services themselves deliver (RC-24): a service that owns a page block owns
+# the endpoints that fill it (the backups fragment, the console/job modals), instead of
+# leaving half the block behind in this router. Shared routers are mounted once.
+for _service_router in collect_service_routers():
+    web_router.include_router(_service_router)
 
 
 @web_router.get("/")
@@ -1680,26 +1687,6 @@ async def _fetch_argocd_deployment_status(
         return _argocd_unavailable_result(app_name, str(app_error), source="API")
 
 
-def _snapshot_to_dict(s: Any) -> dict[str, Any]:
-    return {
-        "snapshot_id": s.snapshot_id,
-        "pvc_name": s.pvc_name,
-        "timestamp": s.timestamp,
-        "size_bytes": s.size_bytes,
-        "cluster": s.cluster,
-        "namespace": s.namespace,
-        "project_name": s.project_name,
-        "deployment_name": s.deployment_name,
-        "component_name": s.component_name,
-        "storage_name": s.storage_name,
-        "generation": s.generation,
-        "backup_run_id": s.backup_run_id,
-        "resource_type": s.resource_type,
-        "tags": s.tags,
-        "trigger": s.trigger,
-    }
-
-
 @web_router.get("/projects/details/{project_name}/resource-usage", response_class=HTMLResponse)
 @requires_sso
 async def project_resource_usage_fragment(request: Request, project_name: str) -> HTMLResponse:
@@ -1790,82 +1777,6 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
         request=request,
         name="project-details/_resource-usage.html.j2",
         context=ctx,
-    )
-
-
-@web_router.get("/projects/details/{project_name}/backups", response_class=HTMLResponse)
-@requires_sso
-async def backups_fragment(request: Request, project_name: str) -> HTMLResponse:
-    """Backup snapshots for the WHOLE project, in one HTMX lazy-load.
-
-    Listing snapshots opens a Kopia repository over S3 (2.1s connect + 0.4s list,
-    measured in production), so it must stay off the detail page's own render. But
-    it must be ONE request, not one per deployment: an earlier version gave every
-    deployment block its own hx-trigger="load", and a project like 'wies' has 18
-    deployments in a single namespace. That fired 18 parallel Kopia connects to the
-    same repository, ~9 at once, and OOM-killed the pod.
-
-    Deployments share a namespace, so this lists each namespace once (cached) and
-    fans the results back out to the per-deployment blocks via hx-swap-oob.
-    """
-    from opi.core.cluster_config import get_prefixed_namespace
-    from opi.core.config import settings
-    from opi.manager.backup import BackupManager
-
-    user = get_current_user(request)
-    user_email = user.get("email", "").lower()
-
-    if not is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Not authorized")
-
-    project = get_project_store().get(project_name)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    current_cluster = settings.CLUSTER_MANAGER
-    deployments = [d for d in (project.data or {}).get("deployments", []) if d.get("cluster") == current_cluster]
-
-    manager = BackupManager()
-    # One list_snapshots per distinct namespace, not per deployment.
-    per_namespace: dict[str, list[Any]] = {}
-    error: str | None = None
-    for deployment in deployments:
-        base_namespace = deployment.get("namespace")
-        if not base_namespace:
-            continue
-        k8s_namespace = get_prefixed_namespace(current_cluster, base_namespace)
-        if k8s_namespace in per_namespace:
-            continue
-        try:
-            per_namespace[k8s_namespace] = await manager.list_snapshots(
-                current_cluster, k8s_namespace, project_name=project_name
-            )
-        except Exception as backup_err:
-            # Shown, not swallowed: an empty list and an unreachable repository look
-            # identical to a user otherwise.
-            logger.warning(f"Failed to fetch backups for namespace {k8s_namespace}: {backup_err}")
-            error = str(backup_err)
-            per_namespace[k8s_namespace] = []
-
-    backups_by_deployment: dict[str, list[dict[str, Any]]] = {}
-    for deployment in deployments:
-        base_namespace = deployment.get("namespace")
-        name = deployment.get("name")
-        if not base_namespace or not name:
-            continue
-        k8s_namespace = get_prefixed_namespace(current_cluster, base_namespace)
-        backups_by_deployment[name] = [
-            _snapshot_to_dict(s) for s in per_namespace.get(k8s_namespace, []) if s.deployment_name == name
-        ]
-
-    return get_templates().TemplateResponse(
-        request=request,
-        name="project-details/_backup-snapshots.html.j2",
-        context={
-            "deployments": deployments,
-            "backups_by_deployment": backups_by_deployment,
-            "backups_error": error,
-        },
     )
 
 
