@@ -7,13 +7,14 @@ import logging
 from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.services.catalog.base import ConfigLayer, ManifestContext, ProvisionContext, SecretFileSpec, Service
 from opi.services.catalog.minio.config_model import MinioStorageConfig
+from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.services_enums import ManagerKey, ServiceType
 from opi.utils.secrets import MinIOSecret
 
 logger = logging.getLogger(__name__)
 
 
-class MinioStorageService(Service):
+class MinioStorageService(BackupsPageMixin, Service):
     service_type = ServiceType.MINIO_STORAGE
     config_model = MinioStorageConfig
     config_schema_version = "1.0"

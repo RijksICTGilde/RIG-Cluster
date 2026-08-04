@@ -17,12 +17,14 @@ import inspect
 import re
 from pathlib import Path
 
-from opi.web import router
+from opi.services.catalog.shared import backups
 
-_TEMPLATES = Path(__file__).resolve().parents[1] / "opi" / "templates" / "project-details"
+_TEMPLATES = Path(__file__).resolve().parents[1] / "opi" / "services" / "catalog" / "shared"
 
 
 def test_the_page_handler_does_not_list_snapshots() -> None:
+    from opi.web import router
+
     source = inspect.getsource(router.project_details)
     assert "list_snapshots" not in source, (
         "project_details fetches backup snapshots again; that is a 2.5s Kopia round trip "
@@ -31,7 +33,7 @@ def test_the_page_handler_does_not_list_snapshots() -> None:
 
 
 def test_the_fragment_does_list_snapshots() -> None:
-    source = inspect.getsource(router.backups_fragment)
+    source = inspect.getsource(backups.backups_fragment)
     assert "list_snapshots" in source
     assert "is_user_authorized_for_project" in source, "the fragment is a separate entry point and needs its own check"
 
@@ -50,9 +52,12 @@ def test_the_section_fires_exactly_one_lazy_request() -> None:
 
     assert section.count("hx-trigger=") == 1, "exactly one loader for the whole backups section"
     assert 'hx-trigger="intersect once"' in section
-    assert 'hx-get="/projects/details/{{ project.name }}/backups"' in section
+    assert 'hx-get="/projects/details/{{ ctx.project_name }}/backups"' in section
+    # Only the first deployment's block carries the loader (RC-24: the block is now
+    # rendered once per deployment by the backupable services).
+    assert "{% if ctx.loads_snapshots %}" in section
     # Not the per-deployment URL that caused the swarm.
-    assert "/backups/{{ deployment.name }}" not in section
+    assert "/backups/{{ ctx.deployment_name }}" not in section
     assert "deployment_backups" not in section
 
 
@@ -62,7 +67,7 @@ def test_the_fragment_lists_each_namespace_once() -> None:
     18 wies deployments live in one namespace; listing per deployment would reopen
     the same Kopia repository 18 times even in a single request.
     """
-    source = inspect.getsource(router.backups_fragment)
+    source = inspect.getsource(backups.backups_fragment)
     assert "per_namespace" in source
     assert "if k8s_namespace in per_namespace" in source, "must skip a namespace already listed"
 
@@ -76,7 +81,7 @@ def test_the_restore_button_waits_for_the_snapshot_list() -> None:
     section = (_TEMPLATES / "section-backups.html.j2").read_text()
     fragment = (_TEMPLATES / "_backup-snapshots.html.j2").read_text()
 
-    assert 'id="restore-btn-{{ deployment.name }}"' in section
+    assert 'id="restore-btn-{{ ctx.deployment_name }}"' in section
     assert "Herstellen" not in section, "the page must not decide this"
 
     restore_block = re.search(r"\{% if backups %\}.*?\{% endif %\}", fragment, re.DOTALL)
@@ -97,5 +102,5 @@ def test_a_failed_backup_lookup_is_shown_not_swallowed() -> None:
     fragment = (_TEMPLATES / "_backup-snapshots-one.html.j2").read_text()
     assert "backups_error" in fragment
 
-    source = inspect.getsource(router.backups_fragment)
+    source = inspect.getsource(backups.backups_fragment)
     assert "backups_error" in source or "error" in source
