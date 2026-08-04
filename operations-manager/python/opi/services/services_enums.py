@@ -46,6 +46,12 @@ class ServiceType(Enum):
     # named deployments/components of other projects on explicit ports (NetworkPolicy).
     CROSS_DOMAIN_ACCESS = "cross-domain-access"
 
+    # A component's own environment variables and its alias map. System services: every
+    # component has them, so they are never in the picker and never in the services list.
+    # They own the plain component properties of the same name (see their packages).
+    USER_ENV_VARS = "user-env-vars"
+    ALIASES = "aliases"
+
 
 class ServiceScope(Enum):
     """Whether a service is chosen per component or shared per deployment.

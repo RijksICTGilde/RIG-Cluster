@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from opi.forms.editables.editable import WidgetType
 from opi.forms.editables.fields.components import (
-    COMPONENT_ALIASES_EDITABLE,
     COMPONENT_IMAGE_EDITABLE,
     COMPONENT_NAME_EDITABLE,
     COMPONENT_PATH_EDITABLE,
@@ -17,7 +16,6 @@ from opi.forms.editables.fields.components import (
     COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE,
     COMPONENT_RESOURCES_MEMORY_REQUEST_EDITABLE,
     COMPONENT_SERVICES_EDITABLE,
-    COMPONENT_USER_ENV_VARS_EDITABLE,
     COMPONENTS_SEQUENCE_EDITABLE,
     INBOUND_PORT_EDITABLE,
     OUTBOUND_PORT_EDITABLE,
@@ -151,32 +149,6 @@ COMPONENT_PATH = EditableVisualizer(
     children=[COMPONENT_PATH_MATCH, COMPONENT_PATH_REWRITE],
 )
 
-COMPONENT_ALIASES = EditableVisualizer(
-    editable=COMPONENT_ALIASES_EDITABLE,
-    widget=WidgetType.KEY_VALUE,
-    label="Aliassen",
-    description="Koppel platform-variabelen aan aangepaste namen voor dit component.",
-    help_text=(
-        "Wijs omgevingsvariabelen toe aan andere namen. "
-        "Gebruik $VARIABELE_NAAM om platform-variabelen te refereren. "
-        "Bijvoorbeeld: POSTGRES_HOST=$DATABASE_SERVER_HOST"
-    ),
-    attributes={"kv_format": "env"},
-)
-
-COMPONENT_USER_ENV_VARS = EditableVisualizer(
-    editable=COMPONENT_USER_ENV_VARS_EDITABLE,
-    widget=WidgetType.KEY_VALUE,
-    label="Eigen omgevingsvariabelen",
-    description="Voeg eigen omgevingsvariabelen toe voor dit component.",
-    help_text=(
-        "Definieer extra omgevingsvariabelen die beschikbaar worden in de container. "
-        "Deze waarden worden versleuteld opgeslagen. "
-        "Bijvoorbeeld: API_KEY=mijn-geheime-sleutel"
-    ),
-    attributes={"kv_format": "env"},
-)
-
 COMPONENTS_SEQUENCE = EditableVisualizer(
     editable=COMPONENTS_SEQUENCE_EDITABLE,
     widget=WidgetType.SEQUENCE,
@@ -192,10 +164,8 @@ COMPONENTS_SEQUENCE = EditableVisualizer(
         COMPONENT_PORTS_OUTBOUND,
         COMPONENT_SERVICES,
         COMPONENT_PATH,
-        COMPONENT_ALIASES,
-        COMPONENT_USER_ENV_VARS,
-        # Per-service component visualizers, gathered from the registry in config_component_order
-        # (persistent-storage, temp-storage, attachments, publish-on-web, metrics-scraper).
+        # Per-service component visualizers, gathered from the registry in config_component_order.
+        # Includes the aliases / user-env-vars system services (RC-25), which sort first.
         *component_service_visualizers(),
     ],
 )
