@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
+from typing import Any
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
@@ -139,7 +140,38 @@ def _get_env_files() -> list[str]:
 
 
 class Settings(BaseSettings):
-    model_config = {"env_file": _get_env_files(), "env_file_encoding": "utf-8"}
+    # ``extra="allow"`` instead of pydantic-settings' default ``forbid``: an unknown key is
+    # reported, not fatal.
+    #
+    # Forbidding meant an OPI image refused to start on a config file that mentions a
+    # setting newer than itself, which is exactly what a rollback or an upgrade test does.
+    # It cost the upgrade-safety run twice: the baseline image crash-looped on SLEEP_MODE_*
+    # and the operator had to strip those lines from the live ConfigMap by hand, then put
+    # them back before swapping to the new image. The second time one line was missed
+    # (KEYCLOAK_ENFORCE_ADMIN_OTP), so the new side ran without OTP and the test could not
+    # show anything about it -- silently, because nothing complains about a setting that is
+    # simply absent.
+    #
+    # The reason for forbidding was catching typos in configuration, and that is worth
+    # keeping, so unknown keys are logged as a warning naming each one (see
+    # ``_warn_about_unknown_settings``). A typo still surfaces; a rollback no longer bricks.
+    model_config = {"env_file": _get_env_files(), "env_file_encoding": "utf-8", "extra": "allow"}
+
+    def model_post_init(self, __context: Any) -> None:
+        self._warn_about_unknown_settings()
+
+    def _warn_about_unknown_settings(self) -> None:
+        """Name every config key this build does not know.
+
+        Two causes, and the message cannot tell them apart: a typo, or a setting from a
+        newer version than this image. Both are worth seeing.
+        """
+        unknown = sorted(self.model_extra or {})
+        if unknown:
+            logger.warning(
+                f"{len(unknown)} unknown configuration key(s) ignored by this build "
+                f"(a typo, or a setting newer than this image): {', '.join(unknown)}"
+            )
 
     OWN_DOMAIN: str = "operations-manager.kind"
     ADDITIONAL_DOMAINS: str = ""  # Comma-separated list of additional domains for redirect URIs
