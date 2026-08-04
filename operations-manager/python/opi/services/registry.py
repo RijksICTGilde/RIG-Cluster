@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from opi.services.catalog.aliases import AliasesService
 from opi.services.catalog.attachments import AttachmentsService
 from opi.services.catalog.authorization_wall import AuthorizationWallService
 from opi.services.catalog.base import ConfigLayer, Service
@@ -33,6 +34,7 @@ from opi.services.catalog.redis import RedisService
 from opi.services.catalog.resource_tuning import ResourceTuningService
 from opi.services.catalog.sleep_mode import SleepModeService
 from opi.services.catalog.temp_storage import TempStorageService
+from opi.services.catalog.user_env_vars import UserEnvVarsService
 from opi.services.services_enums import HookPoint, ServiceType
 
 if TYPE_CHECKING:
@@ -59,6 +61,8 @@ SERVICES: dict[ServiceType, Service] = {
     ServiceType.INVITE: InviteService(),
     ServiceType.RESOURCE_TUNING: ResourceTuningService(),
     ServiceType.CROSS_DOMAIN_ACCESS: CrossDomainAccessService(),
+    ServiceType.USER_ENV_VARS: UserEnvVarsService(),
+    ServiceType.ALIASES: AliasesService(),
 }
 
 
@@ -205,3 +209,36 @@ def component_service_visualizers() -> list[EditableVisualizer]:
     for service in sorted(SERVICES.values(), key=lambda s: s.config_component_order):
         visualizers.extend(service.config_component_visualizers())
     return visualizers
+
+
+def deployment_component_service_editables() -> list[Editable]:
+    """Deployment-component editables every service contributes, in
+    ``config_component_order`` (RC-25).
+
+    The deployment-component counterpart of ``component_service_editables``. Until RC-25
+    this layer had no service-owned hook and its one field (``user-env-vars``) was
+    hand-authored in the forms layer; it is now declared by the service that owns it.
+    """
+    editables: list[Editable] = []
+    for service in sorted(SERVICES.values(), key=lambda s: s.config_component_order):
+        editables.extend(service.config_editables(ConfigLayer.DEPLOYMENT_COMPONENT))
+    return editables
+
+
+def deployment_component_service_visualizers() -> list[EditableVisualizer]:
+    """As ``deployment_component_service_editables``, for the visualizers."""
+    visualizers: list[EditableVisualizer] = []
+    for service in sorted(SERVICES.values(), key=lambda s: s.config_component_order):
+        visualizers.extend(service.config_deployment_component_visualizers())
+    return visualizers
+
+
+def property_owning_services() -> list[Service]:
+    """System services that own a plain project-file property (RC-25).
+
+    ``user-env-vars`` and ``aliases`` are services whose config is not a block in a
+    ``services:`` list but a property of the component itself. Generic validation reads
+    this list instead of naming those two, so a third one is a declaration, not an edit
+    to the validator.
+    """
+    return [s for s in SERVICES.values() if s.owned_property is not None]

@@ -380,6 +380,21 @@ class Service(ABC):
     #: user-facing priority is a deferred future refinement.
     config_component_order: ClassVar[int] = 100
 
+    #: Layers where this service carries config but deliberately offers no form, mapped
+    #: to the reason. Clone state OPI writes itself is the obvious case; so is a layer
+    #: that is API-only on purpose. The point is that the choice is written down: without
+    #: it a missing form section is indistinguishable from a forgotten one, which is
+    #: exactly how half the catalog ended up with config nobody could edit.
+    #: ``tests/test_service_config_layers.py`` holds every service to this.
+    form_exempt_layers: ClassVar[dict[ConfigLayer, str]] = {}
+
+    #: For a SYSTEM service that owns a plain project-file property instead of a block
+    #: in a ``services:`` list (``user-env-vars``, ``aliases``), the property key it
+    #: owns. Generic validation walks the layers this service declares editables for and
+    #: validates that key against ``config_model``; None means "config lives in the
+    #: services list", which is the normal case.
+    owned_property: ClassVar[str | None] = None
+
     #: Order in the generic provisioning loop (RC-5 Phase 4); lower runs first. Only
     #: meaningful for providers that override ``provision``. The defaults on the four
     #: provisioning providers reproduce today's fixed db -> minio -> keycloak -> redis
@@ -485,10 +500,67 @@ class Service(ABC):
         return []
 
     def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
-        """The wizard/edit config section this service contributes at ``layer``, or
-        None. The forms layer sources its per-service sections from here instead of
-        hand-authoring them."""
-        return None
+        """The wizard/edit config section this service contributes at ``layer``, or None.
+
+        The forms layer sources its per-service sections from here instead of
+        hand-authoring them. A PROJECT-level section is a standalone wizard step and the
+        service builds it itself (keycloak, sleep-mode, ...).
+
+        The component and deployment-component layers are different: those fields are
+        *embedded* in the per-component form rather than shown as their own step, so
+        there is nothing per-service to author. This default builds that section from
+        what the service already declares for the layer (its visualizers + its layout
+        nodes), which is why every component-level service answers the hook without a
+        line of its own code. A service with no fields at the layer still returns None.
+
+        Answering the hook at the layer where the config actually lives is what
+        ``tests/test_service_config_layers.py`` locks: a service that carries config
+        somewhere either has a section there or declares the layer OPI-managed.
+        """
+        from opi.forms.visualizers.sections import FormSection
+
+        if layer is ConfigLayer.COMPONENT:
+            visualizers, layout = self.config_component_visualizers(), self.config_component_layout()
+            title = f"{self.definition.name} (per component)"
+        elif layer is ConfigLayer.DEPLOYMENT_COMPONENT:
+            visualizers, layout = (
+                self.config_deployment_component_visualizers(),
+                self.config_deployment_component_layout(),
+            )
+            title = f"{self.definition.name} (per deployment-component)"
+        else:
+            return None
+
+        if not visualizers:
+            return None
+        return FormSection(
+            section_id=f"{self.service_type.value}-{layer.value}-config",
+            title=title,
+            editables=visualizers,
+            layout=layout,
+            post_save_action="process_project",
+        )
+
+    def config_layers(self) -> list[ConfigLayer]:
+        """The layers at which this service carries config, measured from its own hooks.
+
+        A layer counts when the service declares editables for it, accepts API fields
+        for it, or hooks layout nodes into that layer's form. Derived rather than
+        declared, so it cannot drift from the implementation -- the same trick
+        ``registry.provisioning_services()`` uses.
+        """
+        layers = []
+        for layer in ConfigLayer:
+            has_layout = (
+                bool(self.config_component_layout())
+                if layer is ConfigLayer.COMPONENT
+                else bool(self.config_deployment_component_layout())
+                if layer is ConfigLayer.DEPLOYMENT_COMPONENT
+                else False
+            )
+            if self.config_editables(layer) or self.config_api_fields(layer) or has_layout:
+                layers.append(layer)
+        return layers
 
     def detail_page_sections(self, project_data: dict[str, Any], user_role: str) -> list[DetailPageSection]:
         """Read-only project-details sections this service contributes (default none).
@@ -523,6 +595,21 @@ class Service(ABC):
         component-form aggregation (``COMPONENTS_SEQUENCE``) collects each service's
         visualizers in ``config_component_order`` instead of a hand-synced list, so a
         component-level service owns the display of its own fields."""
+        return []
+
+    def config_deployment_component_layout(self) -> list[Any]:
+        """Layout node(s) this service hooks into the per-deployment component form.
+
+        The deployment-component counterpart of ``config_component_layout()``: fields a
+        deployment overrides on one of its components (``user-env-vars`` today). Until
+        RC-25 this layer had no service-owned hook at all and its fields were
+        hand-authored in ``forms/editables/fields/deployments.py``; a service that owns
+        config here now declares it, in ``config_component_order``.
+        """
+        return []
+
+    def config_deployment_component_visualizers(self) -> list[EditableVisualizer]:
+        """The visualizers this service contributes to the per-deployment component form."""
         return []
 
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
