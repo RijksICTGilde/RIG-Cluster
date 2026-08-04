@@ -69,6 +69,15 @@ class KeycloakConnector:
             connection = KeycloakOpenIDConnection(
                 server_url=self.keycloak_url,
                 realm_name="master",
+                # Always authenticate against master, exactly like the admin-password path
+                # below. Without this python-keycloak takes the token realm from
+                # ``realm_name`` (openid_connection: ``user_realm_name or realm_name``), and
+                # ``change_current_realm()`` -- which OPI calls for every project realm --
+                # reassigns it. The next token refresh then asks a PROJECT realm for
+                # ``opi-admin-service``, which only exists in master, and Keycloak answers
+                # client_not_found. The first token always succeeds, so the failure only
+                # appears after a realm switch plus a token expiry.
+                user_realm_name="master",
                 client_id=client_id,
                 client_secret_key=client_secret,
                 grant_type="client_credentials",
