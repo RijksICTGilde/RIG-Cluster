@@ -1196,9 +1196,12 @@ async def project_details(request: Request, project_name: str):
                         logger.info(f"YAML returned {type(parsed_env_vars).__name__}, trying KEY=VALUE format")
                         parsed_env_vars = validate_and_parse_env_vars(decrypted_yaml)
 
+                    # Count only -- not the names and certainly not the values. Which
+                    # variables a component defines is the user's business; that we parsed
+                    # some, and how many, is all this log needs to say.
                     logger.info(
-                        f"Parsed user-env-vars for component '{component_name}': "
-                        f"type={type(parsed_env_vars).__name__}, keys={list(parsed_env_vars.keys()) if isinstance(parsed_env_vars, dict) else 'N/A'}"
+                        f"Parsed {len(parsed_env_vars) if isinstance(parsed_env_vars, dict) else 0} "
+                        f"user-env-vars for component '{component_name}'"
                     )
                     component["user-env-vars"] = parsed_env_vars
                 except Exception as e:

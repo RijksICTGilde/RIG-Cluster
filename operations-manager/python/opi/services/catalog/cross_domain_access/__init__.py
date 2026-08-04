@@ -32,7 +32,7 @@ absent:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, ClassVar
 
 from opi.services.catalog.base import (
     ConfigLayer,
@@ -113,7 +113,7 @@ class CrossDomainAccessService(Service):
     # It is user config, not OPI state, but it has no form yet: the project-level rule
     # editor is the whole UI today and a patch editor is its own piece of work. Declared
     # rather than left silent so the gap is visible instead of looking like an oversight.
-    form_exempt_layers = {
+    form_exempt_layers: ClassVar[dict[ConfigLayer, str]] = {
         ConfigLayer.DEPLOYMENT: (
             "per-deployment patch on the project rules; alleen via API/projectbestand, nog geen formulier (RC-25)"
         )
