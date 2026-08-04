@@ -5,7 +5,15 @@ from __future__ import annotations
 import logging
 
 from opi.core.config import settings
-from opi.services.catalog.base import ConfigLayer, ManifestContext, ManifestContribution, SecretFileSpec, Service
+from opi.services.catalog.base import (
+    ConfigLayer,
+    DeploymentPageContext,
+    DetailPageSection,
+    ManifestContext,
+    ManifestContribution,
+    SecretFileSpec,
+    Service,
+)
 from opi.services.catalog.metrics_scraper.config_model import MetricsScraperConfig
 from opi.services.catalog.metrics_scraper.editables import METRICS_PATH_EDITABLE, METRICS_PORT_EDITABLE
 from opi.services.services import service_entry_config, service_entry_name
@@ -51,6 +59,39 @@ class MetricsScraperService(Service):
                 depends_on="services",
                 show_when={"contains": svc},
                 children=[f"services{{{svc}}}/port", f"services{{{svc}}}/path"],
+            )
+        ]
+
+    def deployment_page_sections(self, ctx: DeploymentPageContext) -> list[DetailPageSection]:
+        # The Resource Metrics block belongs to this service: it exists because the
+        # project scrapes metrics. The general template used to render it for every
+        # project with a reachable Prometheus, service or no service.
+        project_name = ctx.project_data.get("name", "")
+        deployment_name = ctx.deployment.get("name", "")
+        if not project_name or not deployment_name:
+            return []
+
+        if not ctx.backend_available.get("prometheus", False):
+            reason = "Prometheus is niet verbonden. Resource metrics worden getoond wanneer Prometheus beschikbaar is."
+            available = False
+        elif ctx.deployment.get("cluster") != ctx.current_cluster:
+            reason = (
+                f"Deze deployment draait niet op cluster {ctx.current_cluster}. "
+                "Resource metrics zijn alleen beschikbaar voor deployments op het huidige cluster."
+            )
+            available = False
+        else:
+            reason, available = "", True
+
+        return [
+            DetailPageSection(
+                template="metrics_scraper/section-deployment.html.j2",
+                context={
+                    "project_name": project_name,
+                    "deployment_name": deployment_name,
+                    "available": available,
+                    "unavailable_reason": reason,
+                },
             )
         ]
 
