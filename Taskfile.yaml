@@ -1433,6 +1433,17 @@ tasks:
           echo "❌ No cluster selected. Please run 'task select-cluster' first."
           exit 1
         fi
+        # Bestaan is niet genoeg: als .env-taskfile-current pas tijdens deze run is
+        # aangemaakt, zijn de dotenv-waarden al leeg ingelezen. Zonder deze check schrijft
+        # de generatie naar OUTPUT_DIR/ zelf in plaats van OUTPUT_DIR/<cluster>, ziet daar
+        # de .sops.yaml van een andere cluster, en slaat stilzwijgend alles over.
+        if [ -z "{{.CLUSTER_FOLDER}}" ]; then
+          echo "❌ CLUSTER_FOLDER is leeg — de cluster-variabelen zijn niet geladen."
+          echo "   .env-taskfile-current wordt bij het parsen gelezen, dus hij moet er"
+          echo "   staan vóór je task start:"
+          echo "     cp .env-taskfile-sandboxed-local .env-taskfile-current"
+          exit 1
+        fi
         if [ ! -f "{{.KEY_FILE}}" ]; then
           echo "❌ {{.KEY_FILE}} not found. Please generate an AGE key first."
           exit 1
@@ -2114,8 +2125,16 @@ tasks:
       - task: sandbox:generate-bootstrap-secrets
       - task: sandbox:apply-sso
       - task: sandbox:generate-env-secrets
+      # Overlays op lokale images zetten als dit een dev-build is. Moet vóór
+      # sandbox:sync en bootstrap-argo-system, want die pushen/appliceren de overlays.
+      # Zonder deze stap deed .sandbox-mode=dev niets: ask-build-mode schreef het bestand
+      # wel, maar niemand las het tijdens setup.
+      - task: sandbox:configure-local-images
       # Phase 1: Create cluster and install operators/CRDs
       - task: sandbox:create-cluster
+      # De image moet in de cluster staan vóórdat de deployment hem probeert te pullen
+      # (imagePullPolicy: Never in dev-mode). No-op in demo-mode.
+      - task: sandbox:build-operations-manager-image-if-dev
       - task: install-ingress-nginx
       - task: install-cnpg-operator
       - task: sandbox:install-csi-snapshot
@@ -2360,11 +2379,17 @@ tasks:
         fi
     silent: true
 
+  # Let op bij het aanpassen: `sed -i ''` is BSD/macOS-syntax. GNU sed (Linux, en dus
+  # de dev-server) leest die lege string als bestandsnaam en faalt, waardoor de
+  # dev-mode daar stil niets deed en de sandbox alsnog de gepubliceerde images pakte.
+  # `sed -i.bak` werkt op allebei; de .bak-bestanden ruimen we onderaan op.
   sandbox:configure-local-images:
     desc: "Patch overlay files to use locally built images with imagePullPolicy: Never"
     cmds:
       - |
-        MODE=$(cat .sandbox-mode 2>/dev/null || echo "demo")
+        # SANDBOX_MODE uit de omgeving wint, zodat een onbewaakte installatie dev-mode
+        # kan kiezen zonder ask-build-mode (dat is interactief).
+        MODE="${SANDBOX_MODE:-$(cat .sandbox-mode 2>/dev/null || echo demo)}"
         if [ "$MODE" != "dev" ]; then
           exit 0
         fi
@@ -2373,22 +2398,25 @@ tasks:
 
         # Operations Manager: use local image + Never
         OM_PATCH="bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/patches/deployment.yaml"
-        sed -i '' 's|image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:latest|image: operations-manager:latest|' "$OM_PATCH"
-        sed -i '' 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$OM_PATCH"
+        sed -i.bak 's|image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:latest|image: operations-manager:latest|' "$OM_PATCH"
+        sed -i.bak 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$OM_PATCH"
 
         # CMP sidecar in ArgoCD deployment: use local image + Never
         ARGO_DEPLOY="bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-deployment.yaml"
-        sed -i '' 's|image: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest|image: rig-cmp-argo-kustomize-sops:latest|' "$ARGO_DEPLOY"
-        sed -i '' 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$ARGO_DEPLOY"
+        sed -i.bak 's|image: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest|image: rig-cmp-argo-kustomize-sops:latest|' "$ARGO_DEPLOY"
+        sed -i.bak 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$ARGO_DEPLOY"
 
         # CMP sidecar kustomize patch: Always -> Never
         KUST="bootstrap/rig-system/kustomize/overlays/sandboxed-local/kustomization.yaml"
-        sed -i '' 's|value: Always|value: Never|' "$KUST"
+        sed -i.bak 's|value: Always|value: Never|' "$KUST"
 
         # CMP sidecar in shared sops-plugin component: use local image + Never
         CMP_COMPONENT="bootstrap/rig-system/kustomize/components/sops-plugin/kustomization.yaml"
-        sed -i '' 's|image: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest|image: rig-cmp-argo-kustomize-sops:latest|' "$CMP_COMPONENT"
-        sed -i '' 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$CMP_COMPONENT"
+        sed -i.bak 's|image: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest|image: rig-cmp-argo-kustomize-sops:latest|' "$CMP_COMPONENT"
+        sed -i.bak 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$CMP_COMPONENT"
+
+        # .bak-bestanden van de portable sed-aanroepen opruimen.
+        find bootstrap infrastructure -name "*.yaml.bak" -delete 2>/dev/null || true
 
         echo "Overlays configured for local images"
     silent: true
@@ -2460,6 +2488,14 @@ tasks:
         echo "Public key: $PUBLIC_KEY"
     silent: true
 
+  # CLUSTER_TYPE/CLUSTER_FOLDER staan hier letterlijk en komen bewust NIET uit
+  # .env-taskfile-current. Dat bestand wordt via `dotenv:` ingelezen bij het *parsen* van
+  # de Taskfile, terwijl sandbox:setup het pas in zijn eigen eerste stap aanmaakt. Op een
+  # verse checkout draaide de hele run daardoor met lege waarden: de secrets belandden in
+  # de bovenliggende overlays/-map, de "bestaat al"-check zag daar de .sops.yaml van een
+  # andere cluster, sloeg het genereren over, en setup struikelde later over een
+  # ontbrekend postgres-admin-secret. Deze taken zijn per definitie sandboxed-local, dus
+  # hoeven ze dat niet uit de omgeving te halen.
   sandbox:generate-infrastructure-secrets:
     desc: "Generate SOPS-encrypted infrastructure secrets for sandboxed-local cluster"
     cmds:
@@ -2468,8 +2504,8 @@ tasks:
           MODE: "infrastructure"
           TEMPLATES_DIR: "infrastructure/bootstrap/infrastructure/secrets/templates"
           OUTPUT_DIR: "infrastructure/bootstrap/infrastructure/secrets/config/overlays"
-          CLUSTER_TYPE: "{{.CLUSTER_TYPE}}"
-          CLUSTER_FOLDER: "{{.INFRASTRUCTURE_CLUSTER_FOLDER}}"
+          CLUSTER_TYPE: "sandboxed-local"
+          CLUSTER_FOLDER: "sandboxed-local"
           KEY_FILE: "security/sandbox-key.txt"
           FIXED_PASSWORD: "admin1234"
 
@@ -2481,8 +2517,8 @@ tasks:
           MODE: "bootstrap"
           TEMPLATES_DIR: "bootstrap/rig-system/kustomize/secrets/templates"
           OUTPUT_DIR: "bootstrap/rig-system/kustomize/overlays"
-          CLUSTER_TYPE: "{{.CLUSTER_TYPE}}"
-          CLUSTER_FOLDER: "{{.BOOTSTRAP_CLUSTER_FOLDER}}"
+          CLUSTER_TYPE: "sandboxed-local"
+          CLUSTER_FOLDER: "sandboxed-local"
           KEY_FILE: "security/sandbox-key.txt"
           FIXED_PASSWORD: "admin1234"
 
@@ -3003,6 +3039,21 @@ tasks:
 
         echo ""
         echo "*.${DOMAIN} now resolves to 127.0.0.1"
+    silent: true
+
+  sandbox:build-operations-manager-image-if-dev:
+    desc: "Build+load de operations-manager image, maar alleen in dev-mode"
+    internal: true
+    cmds:
+      - |
+        # SANDBOX_MODE uit de omgeving wint, zodat een onbewaakte installatie dev-mode
+        # kan kiezen zonder ask-build-mode (dat is interactief).
+        MODE="${SANDBOX_MODE:-$(cat .sandbox-mode 2>/dev/null || echo demo)}"
+        if [ "$MODE" != "dev" ]; then
+          echo "Demo-mode: operations-manager komt uit de registry, niet lokaal gebouwd."
+          exit 0
+        fi
+        task sandbox:build-operations-manager-image
     silent: true
 
   sandbox:build-operations-manager-image:
