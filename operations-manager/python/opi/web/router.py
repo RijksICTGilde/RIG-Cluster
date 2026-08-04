@@ -515,14 +515,14 @@ async def keycloak_otp_code_web(request: Request, project_name: str, realm_name:
         (project.data or {})["config"]["age-private-key"], get_global_private_key()
     )
     secret = await decrypt_password_smart(encrypted_secret, project_private_key)
-    code, seconds_remaining = totp_now(secret)
+    code, _ = totp_now(secret)
 
     logger.info(f"OTP code requested for '{project_name}' realm '{realm_name}' by {user_email}")
 
     return get_templates().TemplateResponse(
         request,
         "keycloak/otp-code.html.j2",
-        {"code": code, "seconds_remaining": seconds_remaining, "project_name": project_name, "realm": realm_name},
+        {"code": code, "project_name": project_name, "realm": realm_name},
     )
 
 

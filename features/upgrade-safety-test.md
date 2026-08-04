@@ -207,13 +207,52 @@ explained away afterwards. Exactly four kinds, in the project-file diff:
 1. `schema-version` goes to 2.6.
 2. `openp-4pw` and `dp-bn7`: the invites move from a top-level `invites:` block into
    `services/invite/config` (why both were chosen).
-3. Alias values get AGE-encrypted on the next save: two blocks in `wies`, one in
-   `openp-4pw`.
-4. Nothing else. None of the six uses an uppercase reference (so the new
+3. ~~Alias values get AGE-encrypted on the next save: two blocks in `wies`, one in
+   `openp-4pw`.~~ **Disproven in ronde 2 (2026-08-04).** Measured clean, with the aliases
+   arriving unaltered from production: 0 of 15 encrypted in `openp-4pw` and 0 of 10 in
+   `wies`, before and after, with the alias content identical on both sides. These aliases
+   are pure `$`-references (`$DATABASE_SERVER_HOST` and the like) that carry no literal
+   secret, so OPI leaves them plaintext -- which is correct. Ronde 1 could not settle this
+   because its aliases had been repaired by hand.
+4. The uniform service-declaration normalization: `- keycloak:` / `- persistent-storage:`
+   become uniform records, and `config.keycloak` moves into the nested keycloak service
+   config. Judged lossless in both rounds.
+5. For the two invite carriers, the invite keys are renamed from snake_case to kebab-case
+   and `settings` is flattened: `default_language` -> `default-language` (up out of
+   `settings`), `realm_roles` -> `realm-roles`, `application_url` -> `application-url`,
+   `contact_email` -> `contact-email`, `success_title` -> `success-title`,
+   `success_button` -> `success-button`. All values carry across. A naive key comparison
+   reports this as 11 lost keys; that is a measurement artefact, not loss.
+6. Only when `KEYCLOAK_ENFORCE_ADMIN_OTP=true`: a `totp_secret` is added per realm entry.
+7. Nothing else. None of the six uses an uppercase reference (so the new
    `user-env-vars` interpolation changes nothing here), and none has a duplicate
    service entry (so that repair does nothing here either).
 
 Anything outside this list, and any identity-check (2) difference at all, is a finding.
+
+### Environment traps this test walks into
+
+Learned the hard way in ronde 1 and 2; check these before starting.
+
+- **Strip settings the old image does not know, and put them ALL back before the swap.**
+  Settings is `extra=forbid`, so the pinned old image crash-loops on anything newer than
+  itself -- `SLEEP_MODE_*` and `KEYCLOAK_ENFORCE_ADMIN_OTP`. Take the backup from git, not
+  from the live configmap: the live one may already be missing lines a previous round
+  stripped, and then the new side silently runs without them.
+- **The conversion must carry `clone-from.status` and the service revisions.** Without them
+  an existing project becomes a fresh project, and a `mode: once` clone that production
+  finished long ago is retried -- against a source that may no longer exist. Use
+  `--as-existing-project`.
+- **The conversion must replace the resource profile, not just the workload.** With
+  production requests, the six projects ask ~19 Gi on a ~16 Gi node while the probe uses
+  almost nothing, and the OPI pod itself stops being schedulable. Since deleting runs
+  through OPI, that is a deadlock. Use the probe profile (32Mi/10m request).
+- **Set the OPI deployment strategy to `Recreate` for the image swap**, or a full node
+  leaves the new pod `Pending` forever next to the old one.
+- **`sops` must be on the machine** -- the identity check shells out to `sops --decrypt`.
+- **Compare the SOPS files decrypted.** The raw diff is dominated by re-encryption churn
+  (fresh IV per encryption). Decrypting both sides turns "probably just churn" into a real
+  statement about what changed.
 
 ## Decisions taken (were open in the plan)
 
