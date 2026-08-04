@@ -10,11 +10,12 @@ from __future__ import annotations
 
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.persistent_storage.editables import PERSISTENT_STORAGE_SEQUENCE_EDITABLE
+from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.catalog.shared.storage import StorageConfig
 from opi.services.services_enums import ManagerKey, ServiceType
 
 
-class PersistentStorageService(Service):
+class PersistentStorageService(BackupsPageMixin, Service):
     service_type = ServiceType.PERSISTENT_STORAGE
     cleanup_manager_key = ManagerKey.PVC
     config_model = StorageConfig
