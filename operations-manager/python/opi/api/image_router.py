@@ -14,6 +14,7 @@ import tempfile
 from fastapi import APIRouter, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
+from opi.api.params import ProjectNamePath
 from opi.connectors.skopeo import SkopeoConnectionError, SkopeoConnector, SkopeoExecutionError, SkopeoValidationError
 from opi.core.config import settings
 from opi.manager.project_manager import ProjectManager
@@ -29,7 +30,7 @@ CHUNK_SIZE = 64 * 1024  # 64 KB
 @image_router.post("/{project_name}/images/push")
 @validate_api_token
 async def push_image(
-    project_name: str,
+    project_name: ProjectNamePath,
     request: Request,
     file: UploadFile,
     image_name: str = Query(..., description="Name of the container image"),
