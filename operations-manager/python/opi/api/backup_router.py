@@ -7,6 +7,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
+from opi.api.enums import OperationStatus
 from opi.connectors.kopia import KopiaRepositoryConfig, create_kopia_connector
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
@@ -48,7 +49,7 @@ class BackupResultModel(BaseModel):
 class BackupResponse(BaseModel):
     """Response for backup operations."""
 
-    status: str = Field(..., description="Operation status: success, partial, or failed")
+    status: OperationStatus = Field(..., description="Operation status: success, partial, or failed")
     message: str = Field(..., description="Human-readable message")
     results: list[BackupResultModel] = Field(
         default_factory=lambda: list[BackupResultModel](),
@@ -183,7 +184,7 @@ class DatabaseBackupResultModel(BaseModel):
 class DatabaseBackupResponse(BaseModel):
     """Response for database backup operations."""
 
-    status: str = Field(..., description="Operation status: success or failed")
+    status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     result: DatabaseBackupResultModel
 
@@ -207,7 +208,7 @@ class BucketBackupResultModel(BaseModel):
 class BucketBackupResponse(BaseModel):
     """Response for bucket backup operations."""
 
-    status: str = Field(..., description="Operation status: success or failed")
+    status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     result: BucketBackupResultModel
 
@@ -238,7 +239,7 @@ class DeploymentBackupRequest(BaseModel):
 class DeploymentBackupResponse(BaseModel):
     """Response for combined deployment backup operations (PVCs, databases, buckets)."""
 
-    status: str = Field(..., description="Operation status: success, partial, or failed")
+    status: OperationStatus = Field(..., description="Operation status: success, partial, or failed")
     message: str = Field(..., description="Human-readable message")
     pvc_results: list[BackupResultModel] = Field(default_factory=list, description="PVC backup results")
     database_results: list[DatabaseBackupResultModel] = Field(
@@ -770,7 +771,7 @@ async def list_backup_runs(request: Request, project_name: str, deployment_name:
 class DeleteSnapshotResponse(BaseModel):
     """Response for delete snapshot operations."""
 
-    status: str = Field(..., description="Operation status: success or failed")
+    status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     snapshot_id: str = Field(..., description="ID of the deleted snapshot")
 

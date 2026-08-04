@@ -21,6 +21,7 @@ from opi.services.project_store import get_project_store
 from opi.services.registry import get_service
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ManagerKey
+from opi.utils.naming import generate_project_admin_username, generate_project_realm_name
 
 if TYPE_CHECKING:
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
@@ -252,7 +253,12 @@ class DeleteProjectManager:
             deletion_results["errors"].append(f"Failed to delete project ArgoCD folder: {e}")
 
     async def _cleanup_project_keycloak_realm(
-        self, project_name: str, cluster: str, kc_config: dict[str, Any], deletion_results: dict[str, Any]
+        self,
+        project_name: str,
+        cluster: str,
+        kc_config: dict[str, Any],
+        deletion_results: dict[str, Any],
+        only_if_present: bool = False,
     ) -> None:
         """
         Clean up project-level Keycloak resources for a cluster.
@@ -288,6 +294,13 @@ class DeleteProjectManager:
                 admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
                 admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
             )
+
+            if only_if_present and not await keycloak.realm_exists(realm_name):
+                # Called with names derived from project + cluster rather than read from the
+                # file. A project that never used Keycloak has nothing here, and reporting
+                # three failed deletions for it would bury the failures that do matter.
+                logger.info(f"No Keycloak realm '{realm_name}' present; nothing to clean up")
+                return
 
             # 1. Delete project realm
             try:
@@ -813,6 +826,24 @@ class DeleteProjectManager:
                         cluster=current_cluster,
                         kc_config=kc_config,
                         deletion_results=deletion_results,
+                    )
+                else:
+                    # No config entry does not mean nothing was created. The realm and the
+                    # master-realm admin user are named deterministically from project and
+                    # cluster, so they can be removed without the file telling us. Skipping
+                    # here used to leave both behind silently, and an orphaned admin account
+                    # that still carries an OTP credential is not something to leave lying
+                    # around because a config block went missing.
+                    await self._cleanup_project_keycloak_realm(
+                        project_name=project_name,
+                        cluster=current_cluster,
+                        kc_config={
+                            "realm": generate_project_realm_name(project_name, current_cluster),
+                            "username": generate_project_admin_username(project_name, current_cluster),
+                            "host": self.project_manager._get_keycloak_url_for_cluster(current_cluster),
+                        },
+                        deletion_results=deletion_results,
+                        only_if_present=True,
                     )
 
             # Step 4.7: Delete the project's ArgoCD folder (AppProject, repository secret, kustomization)
