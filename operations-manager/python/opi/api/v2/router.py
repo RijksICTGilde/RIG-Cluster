@@ -63,7 +63,7 @@ from opi.services.catalog.base import ConfigLayer
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
 from opi.services.project_store import get_project_store
 from opi.services.registry import SERVICES, get_service
-from opi.services.services import service_entry_config, service_entry_name
+from opi.services.services import ServiceAdapter, service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 from opi.utils.naming import (
     HostnameFormat,
@@ -73,6 +73,7 @@ from opi.utils.naming import (
     sanitize_kubernetes_name,
 )
 from opi.utils.project_utils import validate_project_name
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -1079,27 +1080,63 @@ def _resolve_supported_layer(service, service_name: str, target: str) -> ConfigL
     return layer
 
 
-@v2_router.get("/services", tags=["v2", "services"])
-async def list_configurable_services_v2() -> JSONResponse:
+class ServiceCatalogEntry(BaseModel):
+    """One platform service, as a client discovering the catalog sees it."""
+
+    name: str = Field(..., description="Service identifier, as used in the config endpoint paths")
+    description: str = Field(
+        "",
+        description="What the service does, in Dutch, from the central service definition",
+    )
+    configurable: bool = Field(..., description="Whether the service accepts user config at any target")
+    targets: list[ConfigLayer] = Field(
+        default_factory=list,
+        description=(
+            "Config targets this service accepts. Each maps to a PUT/DELETE endpoint under "
+            "/api/v2/projects/{project_name}/services/{name}/config/{target}, where the request "
+            "body carries the service's own typed config schema. Empty for a behaviour-only service."
+        ),
+    )
+    config_schema_version: str | None = Field(
+        None,
+        description="Version of the service's config schema; null when the service has no config model",
+    )
+
+
+class ServiceCatalogResponse(BaseModel):
+    """The full service catalog."""
+
+    services: list[ServiceCatalogEntry] = Field(..., description="Every platform service, sorted by name")
+
+
+@v2_router.get("/services", tags=["v2", "services"], response_model=ServiceCatalogResponse)
+async def list_configurable_services_v2() -> ServiceCatalogResponse:
     """List platform services and the config targets each accepts (registry-driven).
 
     Project-independent metadata: no project and no API key. ``targets`` is empty
     for services that carry no user config (they are still listed so a client sees
     the full catalog).
+
+    Typed rather than a raw JSONResponse: this is the endpoint a tool asks "which services
+    exist and what can I configure", and an untyped response left ``schema: {}`` in the
+    OpenAPI document, so a generated client learned nothing here while the per-service
+    config endpoints did carry their schema.
     """
     services = []
     for service_type, service in SERVICES.items():
         targets = _supported_targets(service)
+        definition = ServiceAdapter.SERVICE_DEFINITIONS.get(service_type)
         services.append(
-            {
-                "name": service_type.value,
-                "config_schema_version": service.config_schema_version,
-                "targets": targets,
-                "configurable": bool(targets),
-            }
+            ServiceCatalogEntry(
+                name=service_type.value,
+                description=definition.description if definition else "",
+                config_schema_version=service.config_schema_version,
+                targets=[ConfigLayer(t) for t in targets],
+                configurable=bool(targets),
+            )
         )
-    services.sort(key=lambda item: item["name"])
-    return JSONResponse({"services": services})
+    services.sort(key=lambda item: item.name)
+    return ServiceCatalogResponse(services=services)
 
 
 def _collect_service_config(project_data: dict[str, Any], service_name: str, target_filter: str | None) -> list[dict]:

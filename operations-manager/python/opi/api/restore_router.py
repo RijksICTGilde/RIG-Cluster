@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
+from opi.api.enums import OperationStatus
 from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
@@ -155,7 +156,7 @@ class RestoreResultModel(BaseModel):
 class RestoreResponse(BaseModel):
     """Response for restore operations."""
 
-    status: str = Field(..., description="Operation status: success or failed")
+    status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     result: RestoreResultModel
 
@@ -180,7 +181,7 @@ class RestoreResponse(BaseModel):
 class ProjectRestoreResponse(BaseModel):
     """Response for project-based restore operations."""
 
-    status: str = Field(..., description="Operation status: success or failed")
+    status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     result: RestoreResultModel | None = None
     new_generation: int | None = Field(default=None, description="New PVC generation number")
@@ -205,7 +206,7 @@ class PVCRestoreDetail(BaseModel):
 class BackupRunRestoreResponse(BaseModel):
     """Response for restoring all PVCs from a backup run."""
 
-    status: str = Field(..., description="Operation status: success, partial, or failed")
+    status: OperationStatus = Field(..., description="Operation status: success, partial, or failed")
     message: str = Field(..., description="Human-readable message")
     backup_run_id: str = Field(..., description="The backup run ID that was restored")
     pvcs_restored: list[PVCRestoreDetail] = Field(default_factory=list)
@@ -274,7 +275,7 @@ class DatabaseRestoreResultModel(BaseModel):
 class DatabaseRestoreResponse(BaseModel):
     """Response for database restore operations."""
 
-    status: str = Field(..., description="Operation status: success or failed")
+    status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     result: DatabaseRestoreResultModel
 
@@ -321,7 +322,7 @@ class BucketRestoreResultModel(BaseModel):
 class BucketRestoreResponse(BaseModel):
     """Response for bucket restore operations."""
 
-    status: str = Field(..., description="Operation status: success or failed")
+    status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     result: BucketRestoreResultModel
 
@@ -359,7 +360,7 @@ class DeploymentRestoreRequest(BaseModel):
 class DeploymentRestoreResponse(BaseModel):
     """Response for deployment resource restore operations."""
 
-    status: str = Field(..., description="Operation status: success or failed")
+    status: OperationStatus = Field(..., description="Operation status: success or failed")
     message: str = Field(..., description="Human-readable message")
     resource_type: str = Field(..., description="Type of resource restored")
     reference_name: str = Field(..., description="Reference name of the resource")
