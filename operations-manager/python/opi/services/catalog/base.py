@@ -285,6 +285,30 @@ class DetailPageSection:
 
 
 @dataclass
+class DeploymentPageContext:
+    """Inputs a service needs to render its per-deployment detail-page block (RC-24).
+
+    ``detail_page_sections`` covers the project level; backups, metrics and the
+    deployment action buttons belong to ONE deployment, so they need their own hook.
+    Same shape on the way out (a list of ``DetailPageSection``), one context object on
+    the way in, because a deployment block needs more than the project dict.
+
+    ``project_data`` is the DECRYPTED project dict and ``deployment`` the deployment
+    being rendered. ``backend_available`` carries the optional back-ends the view
+    already probed for the page (``prometheus``, ``backups``): a service must not call
+    a connector itself, so the one place that knows passes the answer in.
+    """
+
+    project_data: dict[str, Any]
+    deployment: dict[str, Any]
+    user_role: str
+    #: The cluster this OPI instance manages (``settings.CLUSTER_MANAGER``).
+    current_cluster: str
+    #: Probed availability of optional platform back-ends, keyed by name.
+    backend_available: dict[str, bool] = field(default_factory=dict)
+
+
+@dataclass
 class DeploymentManifestContext:
     """Inputs a service needs to contribute deployment-wide manifests (RC-15).
 
@@ -504,6 +528,37 @@ class Service(ABC):
         nothing to show on the detail page returns ``[]``.
         """
         return []
+
+    def deployment_page_sections(self, ctx: DeploymentPageContext) -> list[DetailPageSection]:
+        """Read-only detail-page sections this service contributes for ONE deployment
+        (default none, RC-24).
+
+        The per-deployment counterpart of ``detail_page_sections``: same return type,
+        collected the same way (``collect_deployment_page_sections``), but asked once
+        per deployment on the Deployments tab. Blocks that describe a single deployment
+        -- its backups, its metrics -- belong here; a block about the project as a whole
+        belongs in ``detail_page_sections``.
+
+        A block several services own jointly (backups: every service with a
+        ``backup_label``) is returned by each of them and rendered once; the collector
+        drops repeats of the same template.
+        """
+        return []
+
+    def web_router(self) -> Any | None:
+        """The ``APIRouter`` carrying this service's own web endpoints, or None.
+
+        A service that delivers a section does not stop at the HTML: the backups block
+        lazy-loads its rows over ``hx-get``, the database console and the job runner are
+        modals with start/status/stop routes. Without this hook half the block stays
+        behind in the general router. ``registry.collect_service_routers()`` gathers the
+        routers and ``opi/web/router.py`` mounts them.
+
+        Return the SAME router object from every service that shares it (the backup
+        fragment belongs to all backupable services); the collector mounts each distinct
+        router once. Typed loosely so this module stays free of a FastAPI import.
+        """
+        return None
 
     def config_component_layout(self) -> list[Any]:
         """Layout node(s) this service HOOKS INTO the per-component form (default none).
