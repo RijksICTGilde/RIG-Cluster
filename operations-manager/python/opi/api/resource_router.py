@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
+from opi.api.params import ProjectNamePath
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.cluster_config import get_prefixed_namespace
@@ -65,7 +66,7 @@ def _get_project_data(project_name: str) -> tuple[dict[str, Any], str]:
 @validate_api_token
 async def tune_resources(
     request: Request,
-    project_name: str,
+    project_name: ProjectNamePath,
     deployment: str | None = Query(None, description="Specific deployment to tune (optional)"),
 ) -> JSONResponse:
     """
@@ -100,7 +101,7 @@ async def tune_resources(
 @validate_api_token
 async def sanitize_deployment(
     request: Request,
-    project_name: str,
+    project_name: ProjectNamePath,
     deployment: str | None = Query(None, description="Specific deployment to sanitize (optional)"),
 ) -> JSONResponse:
     """
@@ -126,7 +127,7 @@ async def sanitize_deployment(
 
 async def _run_sanitize(
     project_manager: ProjectManager,
-    project_name: str,
+    project_name: ProjectNamePath,
     deployment: str | None,
     filename: str,
 ) -> JSONResponse:
