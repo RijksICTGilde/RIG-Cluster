@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.api.enums import OperationStatus
+from opi.api.params import DeploymentNamePath, ProjectNamePath
 from opi.connectors.kopia import KopiaRepositoryConfig, create_kopia_connector
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
@@ -334,8 +335,8 @@ async def get_backup_status(request: Request) -> BackupStatusResponse:
 @validate_api_token
 async def backup_project_deployment(
     request: Request,
-    project_name: str,
-    deployment_name: str,
+    project_name: ProjectNamePath,
+    deployment_name: DeploymentNamePath,
     body: DeploymentBackupRequest | None = None,
 ) -> JSONResponse:
     """
@@ -641,7 +642,7 @@ async def backup_project_deployment(
 
 @backup_router.get("/runs/{project_name}/{deployment_name}", response_model=BackupRunsResponse)
 @validate_api_token
-async def list_backup_runs(request: Request, project_name: str, deployment_name: str) -> BackupRunsResponse:
+async def list_backup_runs(request: Request, project_name: ProjectNamePath, deployment_name: str) -> BackupRunsResponse:
     """
     List all backup runs for a project deployment.
 
@@ -783,8 +784,8 @@ class DeleteSnapshotResponse(BaseModel):
 @validate_api_token
 async def delete_snapshot(
     request: Request,
-    project_name: str,
-    deployment_name: str,
+    project_name: ProjectNamePath,
+    deployment_name: DeploymentNamePath,
     snapshot_id: str,
 ) -> JSONResponse:
     """

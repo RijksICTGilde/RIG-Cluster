@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.api.enums import OperationStatus
+from opi.api.params import ClusterPath, NamespacePath, ProjectNamePath
 from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
@@ -451,7 +452,7 @@ def _bucket_result_to_model(result: BucketRestoreResult) -> BucketRestoreResultM
 @restore_router.get("/snapshots/{cluster}/{namespace}", response_model=ListSnapshotsResponse)
 @validate_api_token
 async def list_snapshots(
-    request: Request, cluster: str, namespace: str, project_name: str = _PROJECT_NAME_QUERY
+    request: Request, cluster: ClusterPath, namespace: str, project_name: str = _PROJECT_NAME_QUERY
 ) -> ListSnapshotsResponse:
     """
     List all available Kopia snapshots for a namespace.
@@ -494,7 +495,7 @@ async def list_snapshots(
 @restore_router.get("/snapshots/{cluster}/{namespace}/{pvc_name}", response_model=ListSnapshotsResponse)
 @validate_api_token
 async def list_pvc_snapshots(
-    request: Request, cluster: str, namespace: str, pvc_name: str, project_name: str = _PROJECT_NAME_QUERY
+    request: Request, cluster: ClusterPath, namespace: str, pvc_name: str, project_name: str = _PROJECT_NAME_QUERY
 ) -> ListSnapshotsResponse:
     """
     List available Kopia snapshots for a specific PVC.
@@ -536,8 +537,8 @@ async def list_pvc_snapshots(
 @validate_api_token
 async def restore_pvc(
     request: Request,
-    cluster: str,
-    namespace: str,
+    cluster: ClusterPath,
+    namespace: NamespacePath,
     pvc_name: str,
     body: RestoreRequest | None = None,
     project_name: str = _PROJECT_NAME_QUERY,
@@ -644,7 +645,7 @@ async def restore_pvc(
 @validate_api_token
 async def restore_project_pvc(
     request: Request,
-    project_name: str,
+    project_name: ProjectNamePath,
     body: ProjectRestoreRequest,
 ) -> JSONResponse:
     """
@@ -890,7 +891,7 @@ class GenerationUpdate:
 
 async def _restore_snapshot(
     snapshot: SnapshotInfo,
-    project_name: str,
+    project_name: ProjectNamePath,
     deployment_name: str,
     deployment_cluster: str,
     namespace: str,
@@ -1043,7 +1044,7 @@ async def _restore_database(
     snapshot: SnapshotInfo,
     component_name: str,
     reference_name: str,
-    project_name: str,
+    project_name: ProjectNamePath,
     deployment_name: str,
     deployment_cluster: str,
     namespace: str,
@@ -1094,7 +1095,7 @@ async def _restore_bucket(
     snapshot: SnapshotInfo,
     component_name: str,
     reference_name: str,
-    project_name: str,
+    project_name: ProjectNamePath,
     deployment_name: str,
     deployment_cluster: str,
     namespace: str,
@@ -1185,7 +1186,7 @@ def _set_generation(
 @validate_api_token
 async def restore_backup_run(
     request: Request,
-    project_name: str,
+    project_name: ProjectNamePath,
     deployment_name: str,
     backup_run_id: str,
 ) -> JSONResponse:
@@ -1332,8 +1333,8 @@ async def restore_backup_run(
 @validate_api_token
 async def restore_database(
     request: Request,
-    cluster: str,
-    namespace: str,
+    cluster: ClusterPath,
+    namespace: NamespacePath,
     reference_name: str,
     body: DatabaseRestoreRequest,
     project_name: str = _PROJECT_NAME_QUERY,
@@ -1446,8 +1447,8 @@ async def restore_database(
 @validate_api_token
 async def restore_bucket(
     request: Request,
-    cluster: str,
-    namespace: str,
+    cluster: ClusterPath,
+    namespace: NamespacePath,
     reference_name: str,
     body: BucketRestoreRequest,
     project_name: str = _PROJECT_NAME_QUERY,
@@ -1810,7 +1811,7 @@ async def _restore_pvc_with_versioning(
     storage_name: str,
     snapshot_id: str,
     deployment_cluster: str,
-    namespace: str,
+    namespace: NamespacePath,
     project_data: dict[str, Any],
     project_file_handler: ProjectFileHandler,
 ) -> dict[str, Any]:
@@ -1901,7 +1902,7 @@ async def _restore_database_with_versioning(
     reference_name: str,
     snapshot_id: str,
     deployment_cluster: str,
-    namespace: str,
+    namespace: NamespacePath,
     project_data: dict[str, Any],
     project_file_handler: ProjectFileHandler,
 ) -> dict[str, Any]:
@@ -2036,7 +2037,7 @@ async def _restore_bucket_with_versioning(
     reference_name: str,
     snapshot_id: str,
     deployment_cluster: str,
-    namespace: str,
+    namespace: NamespacePath,
     project_data: dict[str, Any],
     project_file_handler: ProjectFileHandler,
 ) -> dict[str, Any]:
