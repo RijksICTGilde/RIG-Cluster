@@ -83,14 +83,24 @@ async def _call(role: str = "admin", realm: str = REALM, data: dict[str, Any] | 
     return response, captured
 
 
-async def test_returns_a_six_digit_code_and_its_remaining_validity() -> None:
+async def test_returns_a_six_digit_code() -> None:
     _, captured = await _call()
 
     assert captured["template"] == "keycloak/otp-code.html.j2"
     code = captured["context"]["code"]
     assert len(code) == 6, code
     assert code.isdigit(), code
-    assert 1 <= captured["context"]["seconds_remaining"] <= 30
+
+
+async def test_no_countdown_is_rendered() -> None:
+    """The remaining validity is deliberately absent.
+
+    It was server-rendered once and never ticked, so it was stale the moment it
+    appeared. The "Nieuwe code" button is the honest way to get a fresh code.
+    """
+    _, captured = await _call()
+
+    assert "seconds_remaining" not in captured["context"]
 
 
 async def test_the_seed_never_reaches_the_response() -> None:
