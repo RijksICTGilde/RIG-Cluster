@@ -299,6 +299,13 @@ class Settings(BaseSettings):
     # client instead of the shared admin password, so the admin account can be
     # OTP-enforced/locked without locking OPI out. The admin password is only
     # needed for first-boot self-bootstrap of this client (and as break-glass).
+    # A second, human master admin that carries an OTP credential from creation. Keycloak
+    # makes the shared KEYCLOAK_ADMIN itself at first boot, so that one can never be born
+    # with a second factor; this one can. Empty means the bootstrap step does nothing.
+    KEYCLOAK_OTP_ADMIN_USERNAME: str = ""
+    KEYCLOAK_OTP_ADMIN_PASSWORD: str = ""
+    KEYCLOAK_OTP_ADMIN_TOTP_SECRET: str = ""
+
     KEYCLOAK_ADMIN_CLIENT_ID: str = "opi-admin-service"
     KEYCLOAK_ADMIN_CLIENT_SECRET: str = ""
 
