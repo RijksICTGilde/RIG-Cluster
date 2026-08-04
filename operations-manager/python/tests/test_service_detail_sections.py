@@ -10,6 +10,8 @@ which drifted away from the config in RC-5 and silently stopped rendering.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from opi.core.templates import templates
 from opi.services.catalog.base import DetailPageSection
 from opi.services.registry import collect_detail_page_sections
@@ -60,6 +62,50 @@ def test_component_referenced_service_counts_as_selected() -> None:
         components=[{"name": "c1", "services": [{"reference": "keycloak"}]}],
     )
     assert len(collect_detail_page_sections(project, "admin")) == 1
+
+
+class TestAttachmentsSection:
+    """RC-24: the Bijlagen block is the attachments service's, including whether it
+    shows at all -- the general template used to carry that ``{% if %}`` itself."""
+
+    CATALOG: ClassVar[list[dict]] = [{"id": "keystore", "filename": "keystore.p12", "content": "<age>"}]
+
+    def _project(self) -> dict:
+        return _project(
+            [{"attachments": {"data": self.CATALOG}}],
+            components=[
+                {
+                    "name": "c1",
+                    "services": [{"reference": "attachments", "config": [{"reference": "keystore"}]}],
+                }
+            ],
+        )
+
+    def test_section_for_a_project_that_uses_attachments(self) -> None:
+        sections = collect_detail_page_sections(self._project(), "admin")
+        assert [s.template for s in sections] == ["attachments/section-detail.html.j2"]
+        assert sections[0].context["attachments"][0]["filename"] == "keystore.p12"
+        assert sections[0].context["can_edit"] is True
+
+    def test_no_section_without_the_service(self) -> None:
+        assert collect_detail_page_sections(_project(["publish-on-web"]), "admin") == []
+
+    def test_section_shows_for_a_developer_without_the_edit_buttons(self) -> None:
+        sections = collect_detail_page_sections(self._project(), "developer")
+        assert len(sections) == 1
+        assert sections[0].context["can_edit"] is False
+
+    def test_section_shows_when_the_catalog_is_still_empty(self) -> None:
+        """Selecting the service is what makes the block appear -- otherwise a user who
+        just switched it on has nowhere to click "Toevoegen"."""
+        sections = collect_detail_page_sections(_project([{"attachments": {"data": []}}]), "admin")
+        assert [s.context["attachments"] for s in sections] == [[]]
+
+    def test_template_renders_through_the_app_env(self) -> None:
+        section = collect_detail_page_sections(self._project(), "admin")[0]
+        html = templates.env.get_template(section.template).render(section=section)
+        assert "keystore.p12" in html
+        assert "Bijlagen" in html
 
 
 def test_section_template_renders_through_the_app_env() -> None:
