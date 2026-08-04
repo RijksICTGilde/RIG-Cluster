@@ -14,6 +14,7 @@ from typing import Any, NamedTuple
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
+from opi.api.params import ComponentNamePath, DeploymentNamePath, ProjectNamePath
 from opi.api.router import (  # noqa: TC002 — Pydantic models must be runtime imports for FastAPI
     AddComponentRequest,
     AddComponentToDeploymentRequest,
@@ -1180,7 +1181,7 @@ def _collect_service_config(project_data: dict[str, Any], service_name: str, tar
 @validate_api_token
 async def get_service_config_v2(
     request: Request,
-    project_name: str,
+    project_name: ProjectNamePath,
     service_name: str,
 ) -> JSONResponse:
     """Read a service's current config across every target it is set on.
@@ -1209,7 +1210,7 @@ _CONFIG_WRITE_RESPONSES = {
 
 async def _enqueue_config_write(
     request: Request,
-    project_name: str,
+    project_name: ProjectNamePath,
     service_name: str,
     target: str,
     operation: str,
@@ -1271,12 +1272,16 @@ def _config_write_route(layer: ConfigLayer) -> tuple[str, str | None]:
 def _config_write_signature(name_param: str | None, body_model: type | None) -> Signature:
     """Build the endpoint signature FastAPI introspects: request, project_name, an
     optional component/deployment name, and (for upsert) the typed config body."""
+    # The shared annotations rather than a bare ``str``: these 38 generated endpoints were
+    # 73 of the 114 parameters in the whole document that carried no description, and they
+    # all come from this one signature.
     params = [
         Parameter("request", Parameter.POSITIONAL_OR_KEYWORD, annotation=Request),
-        Parameter("project_name", Parameter.POSITIONAL_OR_KEYWORD, annotation=str),
+        Parameter("project_name", Parameter.POSITIONAL_OR_KEYWORD, annotation=ProjectNamePath),
     ]
     if name_param:
-        params.append(Parameter(name_param, Parameter.POSITIONAL_OR_KEYWORD, annotation=str))
+        annotation = DeploymentNamePath if name_param == "deployment_name" else ComponentNamePath
+        params.append(Parameter(name_param, Parameter.POSITIONAL_OR_KEYWORD, annotation=annotation))
     if body_model is not None:
         params.append(Parameter("body", Parameter.POSITIONAL_OR_KEYWORD, annotation=body_model, default=Body(...)))
     return Signature(params, return_annotation=JSONResponse)

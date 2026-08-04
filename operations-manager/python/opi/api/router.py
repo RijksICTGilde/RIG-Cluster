@@ -7,6 +7,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
+from opi.api.params import DeploymentNamePath, ProjectNamePath
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
     ADD_COMPONENT_VALIDATORS,
@@ -1820,8 +1821,8 @@ async def add_service(
 @validate_api_token
 async def update_deployment_image(
     request: Request,
-    project_name: str,
-    deployment_name: str,
+    project_name: ProjectNamePath,
+    deployment_name: DeploymentNamePath,
     image_data: UpdateImageRequest = Body(...),
     sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
@@ -2203,7 +2204,7 @@ async def refresh_deployment(
 @api_router.delete("/projects/{project_name}")
 @validate_api_token
 async def delete_project(
-    request: Request, project_name: str, delete_data: ProjectDeleteRequest = Body(...)
+    request: Request, project_name: ProjectNamePath, delete_data: ProjectDeleteRequest = Body(...)
 ) -> JSONResponse:
     """
     Delete a project and all its associated resources.
@@ -2296,8 +2297,8 @@ async def delete_project(
 @validate_api_token
 async def delete_project_deployment(
     request: Request,
-    project_name: str,
-    deployment_name: str,
+    project_name: ProjectNamePath,
+    deployment_name: DeploymentNamePath,
     sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
     """
@@ -2392,8 +2393,8 @@ async def delete_project_deployment(
 @validate_api_token
 async def clone_database_from_external(
     request: Request,
-    project_name: str,
-    deployment_name: str,
+    project_name: ProjectNamePath,
+    deployment_name: DeploymentNamePath,
     clone_data: CloneDatabaseFromExternalRequest = Body(...),
     sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
@@ -2555,8 +2556,8 @@ async def clone_database_from_external(
 @validate_api_token
 async def clone_bucket_from_external(
     request: Request,
-    project_name: str,
-    deployment_name: str,
+    project_name: ProjectNamePath,
+    deployment_name: DeploymentNamePath,
     clone_data: CloneBucketFromExternalRequest = Body(...),
     sync: bool = Query(default=False, description="Run synchronously (blocking)"),
 ) -> JSONResponse:
@@ -2715,7 +2716,9 @@ async def clone_bucket_from_external(
 
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:validate-clone")
 @validate_api_token
-async def validate_clone_configuration(request: Request, project_name: str, deployment_name: str) -> JSONResponse:
+async def validate_clone_configuration(
+    request: Request, project_name: ProjectNamePath, deployment_name: str
+) -> JSONResponse:
     """
     Validate clone configuration without executing the clone.
 
@@ -3053,7 +3056,7 @@ async def create_self_service_project(
 
 
 async def _rollback_subdomain_registration(
-    project_name: str, deployment_name: str, subdomain: str, base_domain: str
+    project_name: ProjectNamePath, deployment_name: str, subdomain: str, base_domain: str
 ) -> None:
     """Rollback a subdomain registration after project creation failure.
 
@@ -3283,7 +3286,7 @@ async def list_subdomains(
 )
 @validate_api_token
 async def add_registry_by_secret(
-    request: Request, project_name: str, registry_data: AddRegistryBySecretRequest = Body(...)
+    request: Request, project_name: ProjectNamePath, registry_data: AddRegistryBySecretRequest = Body(...)
 ) -> JSONResponse:
     """
     Add or update a container registry that references a pre-existing Kubernetes secret.
@@ -3378,7 +3381,7 @@ async def add_registry_by_secret(
 )
 @validate_api_token
 async def add_registry_by_credentials(
-    request: Request, project_name: str, registry_data: AddRegistryByCredentialsRequest = Body(...)
+    request: Request, project_name: ProjectNamePath, registry_data: AddRegistryByCredentialsRequest = Body(...)
 ) -> JSONResponse:
     """
     Add or update a container registry with username/password credentials.
