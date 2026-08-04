@@ -294,7 +294,6 @@ def migrate_project(
                                 )
 
     replace_user_env_var_values(project, project_private_key, project_public_key, name)
-    replace_alias_values(project, name)
 
     if keep_domains:
         carry_domain_capabilities(project, name)
@@ -419,33 +418,13 @@ def replace_user_env_var_values(
         logger.info(f"  [{name}] Replaced the values of {replaced} user-env-vars block(s) with a placeholder")
 
 
-def replace_alias_values(project: dict, name: str) -> None:
-    """Overwrite every component alias value, keeping the alias names.
-
-    Same reasoning as ``replace_user_env_var_values``: an alias template can hold a
-    secret. Encrypting alias values at rest is new (see ComponentAliasesEncryptGenerator),
-    so existing project files still carry them as plaintext, which means a sandbox copy
-    would publish them verbatim.
-
-    Kept plaintext here on purpose: OPI encrypts alias values lazily on the next save,
-    so leaving them plain exercises exactly that upgrade path in the test.
-    """
-    entities = list(project.get("components", []) or [])
-    for dep in project.get("deployments", []) or []:
-        if isinstance(dep, dict):
-            entities.extend(dep.get("components", []) or [])
-
-    replaced = 0
-    for entity in entities:
-        aliases = entity.get("aliases") if isinstance(entity, dict) else None
-        if not isinstance(aliases, dict) or not aliases:
-            continue
-        for key in aliases:
-            aliases[key] = SANDBOX_ENV_PLACEHOLDER
-        replaced += 1
-
-    if replaced:
-        logger.info(f"  [{name}] Replaced the values of {replaced} aliases block(s) with a placeholder")
+# NOTE: aliases are deliberately NOT sanitized, and must not be. An earlier version
+# blanked their values the way user-env-vars are blanked, reasoning that a secret could
+# hide in one. That was wrong twice over: an alias is a template of variable references,
+# and ``project_manager.py`` rejects one that references nothing ("Aliases must reference
+# at least one service variable") -- so a literal secret is not a valid alias, while the
+# placeholder that replaced it was not valid either. The RC-22 run had to restore 25
+# aliases by hand across openp-4pw and wies before either project would validate at all.
 
 
 def resolve_input_path(input_path: str, source_dir: str) -> str:
