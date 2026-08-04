@@ -92,6 +92,13 @@ class TestUserEnvVarsConfigModel:
     def test_accepts_the_legacy_mapping_shape(self) -> None:
         assert UserEnvVarsConfig.model_validate({"API_KEY": "secret"}).root == {"API_KEY": "secret"}
 
+    def test_the_stored_encrypted_shape_is_a_block_not_a_prefix(self) -> None:
+        # user-env-vars is stored as an AGE block. The single-line `base64+age:` form is
+        # what passwords elsewhere in a project file use; it is not a shape this field
+        # takes, so accepting it here would make the model lie about the format.
+        with pytest.raises(ValidationError):
+            UserEnvVarsConfig.model_validate("base64+age:UExBQ0VIT0xERVJfRU5WX1ZBUlM=")
+
     def test_rejects_a_line_that_is_neither_format(self) -> None:
         with pytest.raises(ValidationError):
             UserEnvVarsConfig.model_validate("this is not a variable")
