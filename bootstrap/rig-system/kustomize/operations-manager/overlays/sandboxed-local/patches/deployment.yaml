@@ -110,12 +110,17 @@ spec:
           readOnly: true
         - name: data
           mountPath: /data
+        # Sandbox-CPU-beleid: minimale request, geen cpu-limit — zie de toelichting in
+        # infrastructure/bootstrap/clusters/sandboxed-local/kustomization.yaml. Memory
+        # houdt wel een limit: incompressible, anders OOM-kills in plaats van vertraging.
         resources:
           limits:
-            cpu: "4"
+            # null verwijdert de cpu-limit uit de base (die staat op "1"); hem hier
+            # weglaten volstaat niet, dan wint de base-waarde gewoon weer.
+            cpu: null
             memory: 512Mi
           requests:
-            cpu: "100m"
+            cpu: "25m"
             memory: 256Mi
       volumes:
       - name: kube-api-access

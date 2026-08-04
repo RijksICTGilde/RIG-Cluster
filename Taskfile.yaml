@@ -608,11 +608,14 @@ tasks:
           kubectl rollout restart deployment/argocd-repo-server -n {{.RIG_NAMESPACE}}
           kubectl rollout restart deployment/argocd-server -n {{.RIG_NAMESPACE}}
 
+          # 300s, niet 120s: op een verse cluster moeten de argocd-image en de cmp-sidecar
+          # nog gepulld worden. Gemeten op de dev-server duurde alleen dat al ~2,5 minuut,
+          # waardoor sandbox:setup afbrak op een rollout die daarna gewoon slaagde.
           echo "Waiting for ArgoCD repo server (incl. CMP sidecar) to be ready..."
-          kubectl rollout status deployment/argocd-repo-server -n {{.RIG_NAMESPACE}} --timeout=120s
+          kubectl rollout status deployment/argocd-repo-server -n {{.RIG_NAMESPACE}} --timeout=300s
 
           echo "Waiting for ArgoCD server to be ready..."
-          kubectl rollout status deployment/argocd-server -n {{.RIG_NAMESPACE}} --timeout=120s
+          kubectl rollout status deployment/argocd-server -n {{.RIG_NAMESPACE}} --timeout=300s
 
           echo "Waiting for ArgoCD application controller to be ready..."
           kubectl rollout status statefulset/argocd-application-controller -n {{.RIG_NAMESPACE}} --timeout=120s
@@ -2565,10 +2568,15 @@ tasks:
         echo "Without SSO, the sandbox still works using a local Keycloak admin user."
         echo "Applications deployed in the sandbox will use Keycloak but cannot use SSO."
         echo ""
-        # SANDBOX_SSO from the env answers this non-interactively (e.g. SANDBOX_SSO=no)
+        # SANDBOX_SSO from the env answers this non-interactively (e.g. SANDBOX_SSO=no).
+        # SANDBOX_NONINTERACTIVE implies "no": an unattended run that sets only that flag
+        # would otherwise still block here, waiting for an answer nobody is there to give.
         if [ -n "${SANDBOX_SSO:-}" ]; then
           CONFIGURE_SSO="$SANDBOX_SSO"
           echo "Do you want to configure SSO? [y/N]: ${CONFIGURE_SSO} (from SANDBOX_SSO)"
+        elif [ "${SANDBOX_NONINTERACTIVE:-}" = "true" ]; then
+          CONFIGURE_SSO="n"
+          echo "Do you want to configure SSO? [y/N]: n (SANDBOX_NONINTERACTIVE)"
         else
           printf "Do you want to configure SSO? [y/N]: "
           read -r CONFIGURE_SSO
