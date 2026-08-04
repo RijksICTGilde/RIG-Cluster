@@ -56,6 +56,14 @@
       "section_id": "keycloak-config",
       "title": "Keycloak configuratie"
     },
+    "minio-config": {
+      "editables": [
+        "services/minio-storage/config/enable-versioning"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "minio-config",
+      "title": "Objectopslag configuratie"
+    },
     "postgresql-config": {
       "editables": [
         "services/namespace-postgresql-database/config/instances",
@@ -72,6 +80,14 @@
       "post_save_action": "process_project",
       "section_id": "postgresql-schemas-config",
       "title": "Database-schema's"
+    },
+    "redis-config": {
+      "editables": [
+        "services/redis/config/acl-key-prefix"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "redis-config",
+      "title": "Redis configuratie"
     },
     "services-edit": {
       "editables": [
@@ -123,6 +139,8 @@
         "components",
         "sleep-mode-config",
         "cross-domain-access-config",
+        "redis-config",
+        "minio-config",
         "deployment",
         "domains"
       ]
@@ -142,6 +160,8 @@
         "components",
         "sleep-mode-config",
         "cross-domain-access-config",
+        "redis-config",
+        "minio-config",
         "deployments",
         "config"
       ]
@@ -202,6 +222,13 @@
         "keycloak-config"
       ]
     },
+    "modal-edit-minio-config": {
+      "flow_id": "modal-edit-minio-config",
+      "mode": "wizard",
+      "sections": [
+        "minio-config"
+      ]
+    },
     "modal-edit-postgresql-config": {
       "flow_id": "modal-edit-postgresql-config",
       "mode": "wizard",
@@ -216,6 +243,13 @@
         "postgresql-schemas-config"
       ]
     },
+    "modal-edit-redis-config": {
+      "flow_id": "modal-edit-redis-config",
+      "mode": "wizard",
+      "sections": [
+        "redis-config"
+      ]
+    },
     "modal-edit-services": {
       "flow_id": "modal-edit-services",
       "mode": "wizard",
@@ -228,6 +262,8 @@
         "auth-wall-config",
         "sleep-mode-config",
         "cross-domain-access-config",
+        "redis-config",
+        "minio-config",
         "attachments"
       ]
     },
@@ -251,8 +287,10 @@
     "cross-domain-access": "modal-edit-cross-domain-config",
     "invite": "modal-edit-invite-config",
     "keycloak": "modal-edit-keycloak-config",
+    "minio-storage": "modal-edit-minio-config",
     "namespace-postgresql-database": "modal-edit-postgresql-config",
     "postgresql-database": "modal-edit-postgresql-schemas",
+    "redis": "modal-edit-redis-config",
     "sleep-mode": "modal-edit-sleep-mode-config"
   },
   "service_config_sections": {
@@ -295,6 +333,14 @@
       "section_id": "keycloak-config",
       "title": "Keycloak configuratie"
     },
+    "minio-storage": {
+      "editables": [
+        "services/minio-storage/config/enable-versioning"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "minio-config",
+      "title": "Objectopslag configuratie"
+    },
     "namespace-postgresql-database": {
       "editables": [
         "services/namespace-postgresql-database/config/instances",
@@ -311,6 +357,14 @@
       "post_save_action": "process_project",
       "section_id": "postgresql-schemas-config",
       "title": "Database-schema's"
+    },
+    "redis": {
+      "editables": [
+        "services/redis/config/acl-key-prefix"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "redis-config",
+      "title": "Redis configuratie"
     },
     "sleep-mode": {
       "editables": [

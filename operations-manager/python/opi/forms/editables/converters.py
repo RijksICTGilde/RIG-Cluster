@@ -327,9 +327,9 @@ class KeyValueConverter:
         If the value is AGE-encrypted and ``context_data`` is provided,
         the value is decrypted first using the project's private key.
         """
-        logger.info(
-            "[KeyValueConverter.read] write_as=%s, input type=%s, value=%r", self.write_as, type(value).__name__, value
-        )
+        # Never log the value: this converter carries user-env-vars and aliases, which
+        # hold secrets (the deploy path holds the same rule, project_manager.py).
+        logger.debug("[KeyValueConverter.read] write_as=%s, input type=%s", self.write_as, type(value).__name__)
         value = self._maybe_decrypt(value, context_data)
         if isinstance(value, dict):
             if not value:
@@ -348,19 +348,15 @@ class KeyValueConverter:
         When ``write_as="string"`` and *context_data* contains a project
         AGE public key, the result is AGE-encrypted automatically.
         """
-        logger.info(
-            "[KeyValueConverter.write] write_as=%s, input type=%s, value=%r", self.write_as, type(value).__name__, value
-        )
+        logger.debug("[KeyValueConverter.write] write_as=%s, input type=%s", self.write_as, type(value).__name__)
         result = self._write_as_string(value) if self.write_as == "string" else self._write_as_dict(value)
         if result and self.write_as == "string" and isinstance(result, str):
             result = self._maybe_encrypt(result, context_data)
         elif result and self.write_as == "dict" and isinstance(result, dict):
             # Aliases: encrypt each value independently (values may hold secrets).
             result = {k: self._maybe_encrypt(str(v), context_data) for k, v in result.items()}
-        logger.info(
-            "[KeyValueConverter.write] result type=%s, result=%r",
-            type(result).__name__ if result is not None else "None",
-            result,
+        logger.debug(
+            "[KeyValueConverter.write] result type=%s", type(result).__name__ if result is not None else "None"
         )
         return result
 
