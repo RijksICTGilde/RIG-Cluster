@@ -11,11 +11,12 @@ from typing import Any
 
 from opi.services.catalog.base import ConfigLayer, Service, config_path
 from opi.services.catalog.namespace_postgres.config_model import NamespacePostgresConfig
+from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ManagerKey, ServiceType
 
 
-class NamespacePostgresqlDatabaseService(Service):
+class NamespacePostgresqlDatabaseService(BackupsPageMixin, Service):
     service_type = ServiceType.NAMESPACE_POSTGRESQL_DATABASE
     cleanup_manager_key = ManagerKey.DATABASE
     config_model = NamespacePostgresConfig
