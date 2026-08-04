@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from opi.core.templates import templates
 from opi.services.catalog.base import DeploymentPageContext
 from opi.services.registry import collect_deployment_page_sections
@@ -144,10 +145,57 @@ class TestBackups:
         assert "Backups" in html
 
 
-def test_the_backups_fragment_route_is_mounted_exactly_once() -> None:
-    """Every backupable service hands back the SAME router object, so the shared route
-    is registered once instead of four times."""
+SERVICE_ROUTES = (
+    "/projects/details/{project_name}/backups",
+    "/projects/{project_name}/db-console/{deployment_name}/modal",
+    "/projects/{project_name}/jobs/{deployment_name}/modal",
+)
+
+
+def test_service_owned_routes_are_mounted_exactly_once() -> None:
+    """Services that share a block hand back the SAME router object, so a shared route
+    is registered once instead of once per owner."""
     from opi.web.router import web_router
 
     paths = [route.path for route in web_router.routes]
-    assert paths.count("/projects/details/{project_name}/backups") == 1
+    for path in SERVICE_ROUTES:
+        assert paths.count(path) == 1, path
+
+
+class TestDatabaseModalActions:
+    """The database console and the job runner are the PostgreSQL services' buttons.
+    The page used to render them itself, one behind its own hardcoded service-name
+    check and one unconditionally."""
+
+    def _actions(self, services: list[Any]) -> list[Any]:
+        from opi.services.registry import collect_deployment_actions
+
+        return collect_deployment_actions({"name": "proj", "services": services}, "dep-1")
+
+    def test_buttons_for_a_project_with_a_database(self) -> None:
+        actions = self._actions(["postgresql-database"])
+        assert [a.label for a in actions] == ["Databaseconsole", "Job uitvoeren"]
+        assert actions[0].modal_endpoint == "/projects/proj/db-console/dep-1/modal"
+        assert actions[1].modal_endpoint == "/projects/proj/jobs/dep-1/modal"
+        assert all(a.modal_title for a in actions)
+
+    def test_no_buttons_without_a_database(self) -> None:
+        assert self._actions(["publish-on-web"]) == []
+
+    def test_the_namespace_variant_is_an_owner_too(self) -> None:
+        assert [a.label for a in self._actions(["namespace-postgresql-database"])] == [
+            "Databaseconsole",
+            "Job uitvoeren",
+        ]
+
+    def test_both_database_services_still_give_one_pair_of_buttons(self) -> None:
+        labels = [a.label for a in self._actions(["postgresql-database", "namespace-postgresql-database"])]
+        assert labels == ["Databaseconsole", "Job uitvoeren"]
+
+    def test_an_action_cannot_be_both_a_post_and_a_modal(self) -> None:
+        from opi.services.services import DeploymentAction
+
+        with pytest.raises(ValueError, match="exactly one"):
+            DeploymentAction(label="x", icon="i", kind="secondary", endpoint="/a", modal_endpoint="/b")
+        with pytest.raises(ValueError, match="exactly one"):
+            DeploymentAction(label="x", icon="i", kind="secondary")

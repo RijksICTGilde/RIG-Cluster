@@ -1,9 +1,6 @@
 {# Deployment Actions Section - quick actions per deployment #}
 {% set deployment_service_actions = deployment_service_actions | default({}) %}
 {% if user_role in ["admin", "owner"] and project.deployments %}
-    {# Database console only makes sense when the project has a PostgreSQL service. #}
-    {% set service_values = project.services | default([]) | map(attribute='value') | list %}
-    {% set has_database = 'postgresql-database' in service_values or 'namespace-postgresql-database' in service_values %}
     {% for deployment in project.deployments | sort(attribute='name') %}
     {% set original_index = project.deployments.index(deployment) %}
     <div class="deployment-section" id="deployment-actions-{{ deployment.name }}"
@@ -26,25 +23,12 @@
                     showIcon="before"
                     icon="refresh"
                     @click="showDangerConfirmation('deployment-refresh', '{{ deployment.name }}', 'Weet u zeker dat u deployment &quot;{{ deployment.name }}&quot; wilt herverwerken? Dit synchroniseert de manifesten voor deze deployment.')" />
-                {% if has_database %}
-                <c-button
-                    label="Databaseconsole"
-                    kind="secondary"
-                    size="sm"
-                    showIcon="before"
-                    icon="database"
-                    @click="openDbConsoleModal('{{ deployment.name }}')" />
-                {% endif %}
-                <c-button
-                    label="Job uitvoeren"
-                    kind="secondary"
-                    size="sm"
-                    showIcon="before"
-                    icon="uitvoering"
-                    @click="openJobModal('{{ deployment.name }}')" />
-                {# Service-contributed action buttons (e.g. sleep-mode "wake"). A service
-                   owns its own button via ServiceDefinition.actions_provider instead of
-                   this template hardcoding the condition. #}
+                {# Service-contributed action buttons: the database console and the job
+                   runner (both PostgreSQL services), sleep-mode's wake/sleep toggle. A
+                   service owns its own button via ServiceDefinition.actions_provider,
+                   so this template holds no service name and no condition of its own.
+                   An action either POSTs to an endpoint or opens the shared modal shell
+                   on a fragment URL. #}
                 {% for action in deployment_service_actions.get(deployment.name, []) if action.visible %}
                 <c-button
                     label="{{ action.label }}"
@@ -52,7 +36,11 @@
                     size="sm"
                     showIcon="before"
                     icon="{{ action.icon }}"
+                    {% if action.modal_endpoint %}
+                    @click="openServiceModal('{{ action.modal_endpoint }}', '{{ action.modal_title }}')" />
+                    {% else %}
                     @click="runDeploymentAction('{{ action.endpoint }}', '{{ action.confirm_message }}')" />
+                    {% endif %}
                 {% endfor %}
             </c-layout-row>
         </c-layout-flow>
