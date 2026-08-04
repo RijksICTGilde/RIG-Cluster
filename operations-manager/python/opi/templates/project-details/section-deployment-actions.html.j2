@@ -29,18 +29,27 @@
                    so this template holds no service name and no condition of its own.
                    An action either POSTs to an endpoint or opens the shared modal shell
                    on a fragment URL. #}
+                {# The two branches repeat the whole button on purpose: a {% if %} INSIDE a
+                   ROOS component tag is not valid there -- the component preprocessor
+                   reads the tag before Jinja does and the page 500s. #}
                 {% for action in deployment_service_actions.get(deployment.name, []) if action.visible %}
+                {% if action.modal_endpoint %}
                 <c-button
                     label="{{ action.label }}"
                     kind="{{ action.kind }}"
                     size="sm"
                     showIcon="before"
                     icon="{{ action.icon }}"
-                    {% if action.modal_endpoint %}
                     @click="openServiceModal('{{ action.modal_endpoint }}', '{{ action.modal_title }}')" />
-                    {% else %}
+                {% else %}
+                <c-button
+                    label="{{ action.label }}"
+                    kind="{{ action.kind }}"
+                    size="sm"
+                    showIcon="before"
+                    icon="{{ action.icon }}"
                     @click="runDeploymentAction('{{ action.endpoint }}', '{{ action.confirm_message }}')" />
-                    {% endif %}
+                {% endif %}
                 {% endfor %}
             </c-layout-row>
         </c-layout-flow>
