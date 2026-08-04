@@ -89,7 +89,9 @@ class ConfigurationHandler:
             key: Environment variable name
             value: Environment variable value
         """
-        logger.info(f"ConfigHandler.add_env_var called with component='{component_name}', key='{key}', value='{value}'")
+        # Never log the value: an env var routinely holds a secret (the deploy path holds
+        # the same rule, project_manager.py). The name is enough to trace a call.
+        logger.info(f"ConfigHandler.add_env_var called with component='{component_name}', key='{key}'")
         if component_name not in self.components:
             logger.error(
                 f"ConfigHandler: Component '{component_name}' not found. Available components: {list(self.components.keys())}"
