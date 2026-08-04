@@ -25,6 +25,7 @@ Options:
                           port. Without a value uses the default probe image. Omit to
                           keep the original images and ports.
     --probe-port PORT     Probe inbound port (default 8080; only used with --probe-image)
+    --keep-domains        Laat base-domain staan zoals productie hem heeft (upgrade-veiligheidstest)
 
     # Upgrade-safety test (RC-19): swap in the probe so /status verifies each binding:
     uv run python scripts/migrate_project_to_sandbox.py wies regelrecht moza amt --probe-image
@@ -45,6 +46,7 @@ _OPI_ROOT = Path(__file__).resolve().parents[1]
 if str(_OPI_ROOT) not in sys.path:
     sys.path.insert(0, str(_OPI_ROOT))
 
+from opi.core.cluster_config import get_domain_supports_dots  # noqa: E402
 from opi.utils.age import decrypt_age_content_sync, encrypt_age_content_sync  # noqa: E402  (after sys.path bootstrap)
 from opi.utils.api_keys import generate_api_key  # noqa: E402
 from opi.utils.env_vars import _detect_env_var_format, validate_and_parse_env_vars  # noqa: E402
@@ -58,6 +60,8 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 TARGET_CLUSTER = "sandboxed-local"
+#: Where the files come from; used to read the domain capabilities they rely on.
+SOURCE_CLUSTER = "odcn-production"
 SANDBOX_DOMAIN = "sandbox.rijksapp.dev"
 
 # The e2e-allservices probe: a static workload that binds every service it is given
@@ -159,12 +163,24 @@ def migrate_project(
     sandbox_public_key: str,
     probe_image: str | None = None,
     probe_port: int = DEFAULT_PROBE_PORT,
+    keep_domains: bool = False,
 ) -> dict:
     """Apply all transformations to convert a production project to sandbox.
 
     When ``probe_image`` is given, every component workload is additionally replaced
     with the e2e-allservices probe (see ``apply_probe_workload``); otherwise the
     original images and ports are kept so the script stays usable for a plain migration.
+
+    ``keep_domains`` leaves ``base-domain`` alone. Rewriting it to the sandbox domain is
+    right for the script's original purpose (get a production project running in the
+    sandbox, where a resolvable address matters), but wrong for the upgrade-safety test:
+    the hostname is exactly what that test compares, and rewriting it changes the ingress,
+    the TLS secret, the external-dns annotation and the generated PUBLIC_HOST. It also
+    creates a combination that exists nowhere, since ``domain-format`` is left as-is: a
+    dot format like ``component.subdomain`` on a domain whose cluster config says
+    ``supports_dots: false`` is rejected by DomainConfigEnforcer. Nothing needs the
+    address to resolve either: the probe's /status is read over a port-forward, and the
+    sandbox runs no cert-manager.
     """
     project = deepcopy(data)
     name = project.get("name", "unknown")
@@ -234,8 +250,8 @@ def migrate_project(
             dep["cluster"] = TARGET_CLUSTER
             logger.info(f"  [{name}] deployment '{dep_name}': cluster -> {TARGET_CLUSTER}")
 
-        # Change base-domain
-        if "base-domain" in dep:
+        # Change base-domain, unless the caller wants the production hostnames kept.
+        if "base-domain" in dep and not keep_domains:
             dep["base-domain"] = SANDBOX_DOMAIN
             logger.info(f"  [{name}] deployment '{dep_name}': base-domain -> {SANDBOX_DOMAIN}")
 
@@ -280,10 +296,57 @@ def migrate_project(
     replace_user_env_var_values(project, project_private_key, project_public_key, name)
     replace_alias_values(project, name)
 
+    if keep_domains:
+        carry_domain_capabilities(project, name)
+
     if probe_image:
         apply_probe_workload(project, probe_image, probe_port)
 
     return project
+
+
+def carry_domain_capabilities(project: dict, name: str) -> None:
+    """Write the source cluster's domain capabilities into the project's own domain list.
+
+    Whether a dot format is allowed is looked up per domain in the TARGET cluster's config,
+    with the project's own ``allowed-domains`` entry as the fallback for domains that
+    cluster does not know. Production domains are in the odcn-production config, so a
+    production file never needs that fallback and therefore does not carry ``supports-dots``.
+    Move such a file to any other cluster and the fallback answers "no", so
+    ``regel-k4c`` (component.subdomain on rijks.app) is rejected there while being perfectly
+    valid in production.
+
+    Copying the source cluster's answer into the file makes it self-describing, which is
+    exactly what that fallback is for, and keeps the generated hostname identical to
+    production instead of degrading to a dash format.
+    """
+    # Two locations, because this runs on the RAW file: before v2.5 the block sits at the
+    # project root, after it under the publish-on-web service. Most production files are
+    # still pre-v2.5 (regel-k4c is on 2.2), so looking only under the service finds nothing.
+    entries = []
+    for domains in (project.get("domains"), _find_publish_on_web_domains(project)):
+        if isinstance(domains, dict):
+            entries.extend(domains.get("allowed-domains") or [])
+    carried = 0
+    for entry in entries:
+        if not isinstance(entry, dict) or "supports-dots" in entry:
+            continue
+        domain = entry.get("domain")
+        if domain and get_domain_supports_dots(SOURCE_CLUSTER, domain):
+            entry["supports-dots"] = True
+            carried += 1
+    if carried:
+        logger.info(f"  [{name}] Carried supports-dots from {SOURCE_CLUSTER} for {carried} domain(s)")
+
+
+def _find_publish_on_web_domains(project: dict) -> dict | None:
+    for entry in project.get("services") or []:
+        if isinstance(entry, dict):
+            name = entry.get("name") or next(iter(entry), None)
+            config = entry.get("config") or (entry.get(name) or {}).get("config") or {}
+            if name == "publish-on-web" and isinstance(config.get("domains"), dict):
+                return config["domains"]
+    return None
 
 
 def _blank_env_values(content: str) -> str:
@@ -412,6 +475,15 @@ def main() -> None:
         "--sandbox-key", default=str(repo_root / "security" / "sandbox-key.txt"), help="Sandbox AGE key file"
     )
     parser.add_argument(
+        "--keep-domains",
+        action="store_true",
+        help=(
+            "Leave base-domain as production has it. For the upgrade-safety test, where the "
+            "hostname is what gets compared; nothing needs it to resolve (the probe is read "
+            "over a port-forward)."
+        ),
+    )
+    parser.add_argument(
         "--sandbox-public-key",
         help=(
             "Target AGE recipient (age1...), instead of reading it from --sandbox-key. "
@@ -478,6 +550,7 @@ def main() -> None:
                 sandbox_public_key,
                 probe_image=args.probe_image,
                 probe_port=args.probe_port,
+                keep_domains=args.keep_domains,
             )
 
             output_path = os.path.join(args.output_dir, filename)
