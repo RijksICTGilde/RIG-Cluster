@@ -5,7 +5,6 @@ from __future__ import annotations
 from opi.forms.editables.converters import (
     ContainerImageConverter,
     IntegerConverter,
-    KeyValueConverter,
     ServiceListConverter,
 )
 from opi.forms.editables.editable import Editable
@@ -13,7 +12,6 @@ from opi.forms.editables.validators import (
     AllowedValuesValidator,
     ComponentNameValidator,
     ContainerImageValidator,
-    KeyValueValidator,
     MemoryRangeValidator,
     MemoryRequestRangeValidator,
     PathValidator,
@@ -123,20 +121,6 @@ COMPONENT_PATH_EDITABLE = Editable(
     ],
 )
 
-COMPONENT_ALIASES_EDITABLE = Editable(
-    yaml_path="components[*]/aliases",
-    converter=KeyValueConverter(fmt="env"),
-    validator=KeyValueValidator(),
-    remove_when_none=True,
-)
-
-COMPONENT_USER_ENV_VARS_EDITABLE = Editable(
-    yaml_path="components[*]/user-env-vars",
-    converter=KeyValueConverter(fmt="env", write_as="string"),
-    validator=KeyValueValidator(),
-    remove_when_none=True,
-)
-
 COMPONENTS_SEQUENCE_EDITABLE = Editable(
     yaml_path="components",
     min_items=1,
@@ -151,10 +135,9 @@ COMPONENTS_SEQUENCE_EDITABLE = Editable(
         COMPONENT_PORTS_OUTBOUND_EDITABLE,
         COMPONENT_SERVICES_EDITABLE,
         COMPONENT_PATH_EDITABLE,
-        COMPONENT_ALIASES_EDITABLE,
-        COMPONENT_USER_ENV_VARS_EDITABLE,
-        # Per-service component fields, gathered from the registry in config_component_order
-        # (persistent-storage, temp-storage, attachments, publish-on-web, metrics-scraper).
+        # Per-service component fields, gathered from the registry in config_component_order.
+        # Includes the aliases / user-env-vars system services, which own those two plain
+        # component properties (RC-25) and sort first, where they were hand-listed before.
         *component_service_editables(),
     ],
 )

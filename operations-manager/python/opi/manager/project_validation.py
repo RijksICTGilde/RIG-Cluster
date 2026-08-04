@@ -20,7 +20,7 @@ from opi.handlers.project_file_handler import validate_attachment_couplings, val
 from opi.services import ServiceAdapter
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.project import Project
-from opi.services.registry import get_service
+from opi.services.registry import get_service, property_owning_services
 from opi.services.services import service_entry_config, service_entry_name, service_entry_schema_version
 from opi.services.services_enums import ServiceType
 from opi.utils.project_utils import ComponentValidationError, validate_component_paths, validate_root_component
@@ -184,6 +184,54 @@ def validate_service_configs(project_data: dict[str, Any]) -> None:
                         project_name,
                         service_entry_schema_version(entry),
                     )
+
+    _validate_owned_properties(project_data, project_name)
+
+
+def _validate_owned_properties(project_data: dict[str, Any], project_name: str) -> None:
+    """Validate the plain component properties that SYSTEM services own (RC-25).
+
+    ``user-env-vars`` and ``aliases`` are services whose config is a property of the
+    component rather than a block in a ``services:`` list, so the walks above never see
+    them -- which is exactly why they went unvalidated until now. The services declare
+    the property (``owned_property``) and the layers they carry it on
+    (``config_editables``), so this loop names neither service.
+    """
+    for service in property_owning_services():
+        key = service.owned_property
+        assert key is not None  # property_owning_services filters on it
+        if service.config_editables(ConfigLayer.COMPONENT):
+            for component in project_data.get("components", []) or []:
+                if isinstance(component, dict) and component.get(key) is not None:
+                    _validate_owned_property(
+                        service, component[key], f"van component '{component.get('name', '(onbekend)')}'", project_name
+                    )
+        if not service.config_editables(ConfigLayer.DEPLOYMENT_COMPONENT):
+            continue
+        for deployment in project_data.get("deployments", []) or []:
+            if not isinstance(deployment, dict):
+                continue
+            dep_name = deployment.get("name", "(onbekend)")
+            for component in deployment.get("components", []) or []:
+                if isinstance(component, dict) and component.get(key) is not None:
+                    comp_name = component.get("reference") or component.get("name", "(onbekend)")
+                    _validate_owned_property(
+                        service,
+                        component[key],
+                        f"van component '{comp_name}' in deployment '{dep_name}'",
+                        project_name,
+                    )
+
+
+def _validate_owned_property(service: Service, raw: Any, where: str, project_name: str) -> None:
+    """Validate one owned-property value against its service's model; fail closed."""
+    assert service.config_model is not None  # a property-owning service is always modelled
+    try:
+        service.config_model.model_validate(raw)
+    except ValidationError as e:
+        raise ProjectIntegrityError(
+            f"Project '{project_name}': '{service.owned_property}' {where} is ongeldig: {e}."
+        ) from e
 
 
 def validate_component_references(project_data: dict, components: list, context: str = "deployment") -> dict[str, Any]:

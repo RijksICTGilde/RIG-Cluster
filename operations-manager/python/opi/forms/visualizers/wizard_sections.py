@@ -35,7 +35,6 @@ from opi.forms.visualizers.fields.deployments import (
     DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE,
     DEPLOYMENT_COMP_IMAGE,
     DEPLOYMENT_COMP_REFERENCE,
-    DEPLOYMENT_COMP_USER_ENV_VARS,
     DEPLOYMENT_COMPONENTS_SEQ,
     DEPLOYMENT_NAME,
     DEPLOYMENTS_SEQUENCE,
@@ -52,7 +51,7 @@ from opi.forms.visualizers.fields.team import USERS_SEQUENCE
 from opi.forms.visualizers.sections import FormSection
 from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.services.catalog.base import ConfigLayer
-from opi.services.registry import get_service
+from opi.services.registry import deployment_component_service_visualizers, get_service
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ServiceType
 
@@ -79,6 +78,23 @@ def _service_component_layouts() -> list[Any]:
     nodes: list[Any] = []
     for service in contributors:
         nodes.extend(service.config_component_layout())
+    return nodes
+
+
+def _service_deployment_component_layouts() -> list[Any]:
+    """Collect the per-deployment-component layout nodes each service hooks into the
+    deployment-edit form (RC-25), in ``config_component_order``.
+
+    The deployment-component counterpart of ``_service_component_layouts``. Before RC-25
+    this layer had no service-owned hook, so its one fieldset was hand-authored here.
+    """
+    contributors = sorted(
+        (get_service(service_type) for service_type in ServiceType),
+        key=lambda s: s.config_component_order,
+    )
+    nodes: list[Any] = []
+    for service in contributors:
+        nodes.extend(service.config_deployment_component_layout())
     return nodes
 
 
@@ -166,18 +182,10 @@ COMPONENTS_SECTION = FormSection(
                         Sequence(field_name="path"),
                     ],
                 ),
-                Fieldset(
-                    legend="Variabelen",
-                    description="Omgevingsvariabelen en aliassen voor dit component.",
-                    children=[
-                        "aliases",
-                        "user-env-vars",
-                    ],
-                ),
-                # Component-level services hook their fieldsets/sequences in here
-                # (persistent-storage, temp-storage, metrics-scraper), collected from the
-                # service catalog in registry order (explicit display priority is a later
-                # refinement). Kept where the storage sequences used to sit.
+                # Component-level services hook their fieldsets/sequences in here,
+                # collected from the service catalog in config_component_order. The
+                # aliases + user-env-vars system services sort first (RC-25), so they
+                # land exactly where the hand-authored "Variabelen" fieldset used to sit.
                 *_service_component_layouts(),
             ],
         ),
@@ -309,6 +317,12 @@ INVITE_CONFIG_SECTION = get_service(ServiceType.INVITE).config_form_section(Conf
 # SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
 CROSS_DOMAIN_CONFIG_SECTION = get_service(ServiceType.CROSS_DOMAIN_ACCESS).config_form_section(ConfigLayer.PROJECT)
 
+# redis and minio-storage own project-level settings that had a model and an API route but
+# no form field anywhere (RC-25); their sections are built by the services and re-exported
+# here so the derived SERVICE_CONFIG_SECTIONS picks them up by config_section_id.
+REDIS_CONFIG_SECTION = get_service(ServiceType.REDIS).config_form_section(ConfigLayer.PROJECT)
+MINIO_CONFIG_SECTION = get_service(ServiceType.MINIO_STORAGE).config_form_section(ConfigLayer.PROJECT)
+
 # ---------------------------------------------------------------------------
 # Lookup for conditional sections keyed by service name
 # ---------------------------------------------------------------------------
@@ -327,6 +341,8 @@ _CONFIG_SECTIONS_BY_ID: dict[str, FormSection] = {
         SLEEP_MODE_CONFIG_SECTION,
         INVITE_CONFIG_SECTION,
         CROSS_DOMAIN_CONFIG_SECTION,
+        REDIS_CONFIG_SECTION,
+        MINIO_CONFIG_SECTION,
     )
 }
 
@@ -640,7 +656,11 @@ def build_deployment_edit_section(
     # Build a focused sequence with only the fields we want editable
     ref_vis = replace_segment_visualizer(DEPLOYMENT_COMP_REFERENCE, old_seg, new_seg)
     image_vis = replace_segment_visualizer(DEPLOYMENT_COMP_IMAGE, old_seg, new_seg)
-    env_vis = replace_segment_visualizer(DEPLOYMENT_COMP_USER_ENV_VARS, old_seg, new_seg)
+    # Deployment-component fields the services own (RC-25: user-env-vars), instead of
+    # this function naming them one by one.
+    service_vis = [
+        replace_segment_visualizer(vis, old_seg, new_seg) for vis in deployment_component_service_visualizers()
+    ]
     attach_vis = replace_segment_visualizer(DEPLOYMENT_COMP_ATTACHMENT_USE_SEQUENCE, old_seg, new_seg)
 
     seq_vis = replace_segment_visualizer(DEPLOYMENT_COMPONENTS_SEQ, old_seg, new_seg)
@@ -650,7 +670,7 @@ def build_deployment_edit_section(
         seq_ed = dataclasses.replace(seq_vis.editable, max_items=component_count)
         seq_vis = dataclasses.replace(seq_vis, editable=seq_ed)
 
-    seq_vis = dataclasses.replace(seq_vis, children=[ref_vis, image_vis, env_vis, attach_vis])
+    seq_vis = dataclasses.replace(seq_vis, children=[ref_vis, image_vis, *service_vis, attach_vis])
 
     return FormSection(
         section_id=f"deployment-edit-{deployment_index}",
@@ -665,11 +685,7 @@ def build_deployment_edit_section(
                 child_layout=[
                     "reference",
                     "image",
-                    Fieldset(
-                        legend="Omgevingsvariabelen",
-                        description="Deployment-specifieke omgevingsvariabelen voor dit component.",
-                        children=["user-env-vars"],
-                    ),
+                    *_service_deployment_component_layouts(),
                     Sequence(field_name="services/attachments/config"),
                 ],
             ),
