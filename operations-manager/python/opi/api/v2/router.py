@@ -1056,6 +1056,12 @@ def _accepts_config_at(service, layer: ConfigLayer) -> bool:
     ``config_editables``; a component-level service hooks into the component form
     via ``config_component_layout``. Any of these means the layer is configurable.
     """
+    if service.owned_property is not None:
+        # A service that owns a plain project-file property (user-env-vars, aliases) has
+        # no config block in any ``services:`` list, so this endpoint -- which reads and
+        # writes exactly that block -- has nothing to address. Generating a route for it
+        # would let a caller write a config block that nothing ever reads (RC-25).
+        return False
     if service.config_api_fields(layer) or service.config_editables(layer):
         return True
     return layer is ConfigLayer.COMPONENT and bool(service.config_component_layout())
