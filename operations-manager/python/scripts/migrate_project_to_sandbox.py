@@ -25,7 +25,8 @@ Options:
                           port. Without a value uses the default probe image. Omit to
                           keep the original images and ports.
     --probe-port PORT     Probe inbound port (default 8080; only used with --probe-image)
-    --keep-domains        Laat base-domain staan zoals productie hem heeft (upgrade-veiligheidstest)
+    --as-existing-project Zet het project neer zoals het in productie BESTAAT: domein,
+                          kloonstatus en revisies blijven staan (upgrade-veiligheidstest)
 
     # Upgrade-safety test (RC-19): swap in the probe so /status verifies each binding:
     uv run python scripts/migrate_project_to_sandbox.py wies regelrecht moza amt --probe-image
@@ -163,7 +164,7 @@ def migrate_project(
     sandbox_public_key: str,
     probe_image: str | None = None,
     probe_port: int = DEFAULT_PROBE_PORT,
-    keep_domains: bool = False,
+    as_existing: bool = False,
 ) -> dict:
     """Apply all transformations to convert a production project to sandbox.
 
@@ -171,7 +172,9 @@ def migrate_project(
     with the e2e-allservices probe (see ``apply_probe_workload``); otherwise the
     original images and ports are kept so the script stays usable for a plain migration.
 
-    ``keep_domains`` leaves ``base-domain`` alone. Rewriting it to the sandbox domain is
+    ``as_existing`` represents the project as it EXISTS in production instead of as a fresh
+    one. It keeps three things the conversion otherwise strips, and leaves ``base-domain``
+    alone. Rewriting it to the sandbox domain is
     right for the script's original purpose (get a production project running in the
     sandbox, where a resolvable address matters), but wrong for the upgrade-safety test:
     the hostname is exactly what that test compares, and rewriting it changes the ingress,
@@ -251,7 +254,7 @@ def migrate_project(
             logger.info(f"  [{name}] deployment '{dep_name}': cluster -> {TARGET_CLUSTER}")
 
         # Change base-domain, unless the caller wants the production hostnames kept.
-        if "base-domain" in dep and not keep_domains:
+        if "base-domain" in dep and not as_existing:
             dep["base-domain"] = SANDBOX_DOMAIN
             logger.info(f"  [{name}] deployment '{dep_name}': base-domain -> {SANDBOX_DOMAIN}")
 
@@ -269,33 +272,39 @@ def migrate_project(
         dep["repository"] = "main-repo"
         logger.info(f"  [{name}] deployment '{dep_name}': repository -> main-repo")
 
-        # Strip clone-from status (keep structure, but it hasn't been cloned yet)
-        clone_from = dep.get("clone-from")
-        if isinstance(clone_from, dict) and "status" in clone_from:
-            del clone_from["status"]
-            logger.info(f"  [{name}] deployment '{dep_name}': stripped clone-from status")
+        # The three strips below turn an EXISTING project into a fresh one: they say the
+        # clones still have to happen and no generation has been provisioned yet. Right for
+        # the script's original purpose, wrong when the point is to replay a project that
+        # already exists -- see ``as_existing``.
+        if not as_existing:
+            # Strip clone-from status (keep structure, but it hasn't been cloned yet)
+            clone_from = dep.get("clone-from")
+            if isinstance(clone_from, dict) and "status" in clone_from:
+                del clone_from["status"]
+                logger.info(f"  [{name}] deployment '{dep_name}': stripped clone-from status")
 
-        # Strip service revision state (keep references, drop config with revisions)
-        for svc in dep.get("services", []):
-            if isinstance(svc, dict) and "config" in svc:
-                del svc["config"]
-                logger.info(f"  [{name}] deployment '{dep_name}': stripped service '{svc.get('name', '?')}' config")
+            # Strip service revision state (keep references, drop config with revisions)
+            for svc in dep.get("services", []):
+                if isinstance(svc, dict) and "config" in svc:
+                    del svc["config"]
+                    logger.info(f"  [{name}] deployment '{dep_name}': stripped service '{svc.get('name', '?')}' config")
 
-        # Strip component-level service revision state
-        for comp in dep.get("components", []):
-            if isinstance(comp, dict) and "services" in comp:
-                for svc_name, svc_entries in list(comp["services"].items()):
-                    if isinstance(svc_entries, list):
-                        for entry in svc_entries:
-                            if isinstance(entry, dict) and "config" in entry:
-                                del entry["config"]
-                                logger.info(
-                                    f"  [{name}] deployment '{dep_name}' component '{comp.get('name', '?')}': stripped {svc_name} config"
-                                )
+            # Strip component-level service revision state
+            for comp in dep.get("components", []):
+                if isinstance(comp, dict) and "services" in comp:
+                    for svc_name, svc_entries in list(comp["services"].items()):
+                        if isinstance(svc_entries, list):
+                            for entry in svc_entries:
+                                if isinstance(entry, dict) and "config" in entry:
+                                    del entry["config"]
+                                    logger.info(
+                                        f"  [{name}] deployment '{dep_name}' component "
+                                        f"'{comp.get('name', '?')}': stripped {svc_name} config"
+                                    )
 
     replace_user_env_var_values(project, project_private_key, project_public_key, name)
 
-    if keep_domains:
+    if as_existing:
         carry_domain_capabilities(project, name)
 
     if probe_image:
@@ -454,12 +463,13 @@ def main() -> None:
         "--sandbox-key", default=str(repo_root / "security" / "sandbox-key.txt"), help="Sandbox AGE key file"
     )
     parser.add_argument(
-        "--keep-domains",
+        "--as-existing-project",
         action="store_true",
         help=(
-            "Leave base-domain as production has it. For the upgrade-safety test, where the "
-            "hostname is what gets compared; nothing needs it to resolve (the probe is read "
-            "over a port-forward)."
+            "Represent the project as it EXISTS in production instead of as a fresh one: "
+            "keep base-domain (carrying supports-dots), clone-from status and the service "
+            "revision state. For the upgrade-safety test, whose question is exactly whether "
+            "an existing project survives the release."
         ),
     )
     parser.add_argument(
@@ -529,7 +539,7 @@ def main() -> None:
                 sandbox_public_key,
                 probe_image=args.probe_image,
                 probe_port=args.probe_port,
-                keep_domains=args.keep_domains,
+                as_existing=args.as_existing_project,
             )
 
             output_path = os.path.join(args.output_dir, filename)
