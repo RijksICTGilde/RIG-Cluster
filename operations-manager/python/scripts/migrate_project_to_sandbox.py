@@ -33,7 +33,6 @@ Options:
 import argparse
 import logging
 import os
-import secrets
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -47,6 +46,7 @@ if str(_OPI_ROOT) not in sys.path:
     sys.path.insert(0, str(_OPI_ROOT))
 
 from opi.utils.age import decrypt_age_content_sync, encrypt_age_content_sync  # noqa: E402  (after sys.path bootstrap)
+from opi.utils.api_keys import generate_api_key  # noqa: E402
 from opi.utils.env_vars import _detect_env_var_format, validate_and_parse_env_vars  # noqa: E402
 from opi.utils.yaml_util import (  # noqa: E402
     load_yaml_from_path,
@@ -195,7 +195,11 @@ def migrate_project(
 
     # 3. Generate new API key (encrypted with project's own public key)
     if project_public_key:
-        new_api_key = secrets.token_urlsafe(32)
+        # OPI's own generator, not token_urlsafe: that produces 43 chars with '-' and '_',
+        # while every real key is 32 alphanumerics. sandbox_project_tool.py scrapes the key
+        # off the details page by matching exactly 32 chars, so a urlsafe token silently
+        # yielded nothing there.
+        new_api_key = generate_api_key()
         encrypted_api_key = encrypt_age_content_sync(new_api_key, project_public_key)
         config["api-key"] = LiteralScalarString(encrypted_api_key)
         logger.info(f"  [{name}] Generated new API key")
