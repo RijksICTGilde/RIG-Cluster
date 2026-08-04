@@ -64,7 +64,20 @@
 
         {% include "project-details/section-deployment-actions.html.j2" %}
         {% include "project-details/section-deployment-argocd.html.j2" %}
-        {% include "project-details/section-metrics.html.j2" %}
+        {# Per-deployment blocks the project's services own (RC-24): metrics, backups.
+           Each service decides whether its block applies to this deployment, so the
+           general template holds no service name and no availability condition.
+           `data-deployment` is what switchDeployment() shows/hides. #}
+        {% for deployment in project.deployments | sort(attribute='name') %}
+        <div class="deployment-section" data-deployment="{{ deployment.name }}"
+             {% if not loop.first %}style="display: none;"{% endif %}>
+            <c-layout-flow gap="lg">
+                {% for section in deployment_service_sections.get(deployment.name, []) %}
+                {% include section.template %}
+                {% endfor %}
+            </c-layout-flow>
+        </div>
+        {% endfor %}
         {% include "project-details/section-deployments.html.j2" %}
         {% include "project-details/section-backups.html.j2" %}
         {% include "project-details/section-env-vars.html.j2" %}
@@ -1275,16 +1288,10 @@
             const el = document.getElementById(prefix + deploymentName);
             if (el) el.style.display = '';
         });
-
-        // HTMX: load metrics for selected deployment
-        var metricsEl = document.getElementById('metrics-content');
-        if (metricsEl && typeof htmx !== 'undefined') {
-            var projectName = metricsEl.dataset.projectName;
-            htmx.ajax('GET', '/projects/details/' + projectName + '/metrics/' + deploymentName, {
-                target: '#metrics-content',
-                swap: 'innerHTML'
-            });
-        }
+        // Service-owned blocks (RC-24) say which deployment they belong to instead of
+        // encoding it in an id prefix this list has to know about.
+        document.querySelectorAll('.deployment-section[data-deployment="' + deploymentName + '"]')
+            .forEach(el => { el.style.display = ''; });
 
         // Sync global selector and URL hash
         const gs = document.getElementById('global-deployment-selector');
