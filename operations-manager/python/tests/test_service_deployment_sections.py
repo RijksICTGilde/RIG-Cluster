@@ -12,12 +12,14 @@ that it stays away from a project that does not.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
 from opi.core.templates import templates
 from opi.services.catalog.base import DeploymentPageContext
 from opi.services.registry import collect_deployment_page_sections
+from opi.services.services_enums import ServiceType
 
 DEPLOYMENT = {"name": "dep-1", "cluster": "test-cluster", "namespace": "proj"}
 
@@ -160,6 +162,24 @@ def test_service_owned_routes_are_mounted_exactly_once() -> None:
     paths = [route.path for route in web_router.routes]
     for path in SERVICE_ROUTES:
         assert paths.count(path) == 1, path
+
+
+def test_the_general_templates_name_no_service() -> None:
+    """The point of the move: a service name in the general project-details layer is
+    knowledge that belongs to the service, and it goes stale silently when the service
+    changes. Comments are allowed to explain who owns what; code is not."""
+    from pathlib import Path
+
+    import opi
+
+    service_names = [service_type.value for service_type in ServiceType]
+    offenders: list[str] = []
+    for path in (Path(opi.__file__).parent / "templates" / "project-details").glob("*.j2"):
+        source = re.sub(r"\{#.*?#\}", "", path.read_text(), flags=re.DOTALL)
+        offenders += [
+            f"{path.name}: {name}" for name in service_names if f"'{name}'" in source or f'"{name}"' in source
+        ]
+    assert offenders == []
 
 
 class TestDatabaseModalActions:
