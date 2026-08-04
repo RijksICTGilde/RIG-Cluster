@@ -60,6 +60,10 @@ class KeycloakSetup:
 
             # Initialize connectors (uses client-credentials when configured)
             self.keycloak = await create_keycloak_connector()
+
+            # Step 0b: a human master admin that already has OTP, so a fresh cluster is
+            # not left with one shared password-only account.
+            await self.ensure_otp_master_admin()
             self.kubectl = KubectlConnector()
 
             # Build context from settings
@@ -108,6 +112,51 @@ class KeycloakSetup:
         except Exception as e:
             logger.error(f"Keycloak setup failed with exception: {e}")
             return False
+
+    async def ensure_otp_master_admin(self) -> None:
+        """Create a second master admin that carries an OTP credential from the start.
+
+        Keycloak creates the ``KEYCLOAK_ADMIN`` account itself at first boot from the
+        environment, so there is no moment where we could give it an OTP credential; and
+        Keycloak 25 imports an OTP credential only when a user is created, so retrofitting
+        means delete-and-recreate. Doing that to the one account OPI is authenticated as,
+        and that is the break-glass, is not worth it.
+
+        Creating a *second* admin does work: at creation the credential is imported
+        verbatim. A fresh cluster then has a human admin with a second factor from minute
+        one, while the shared ``admin`` stays as break-glass. That is also the better end
+        state -- named accounts rather than one shared login, so the audit log says who did
+        what.
+
+        Idempotent and opt-in: without a seed in the secret nothing happens, and an
+        existing user is left alone (recreating it would rotate the operator's OTP).
+        """
+        username = settings.KEYCLOAK_OTP_ADMIN_USERNAME
+        seed = settings.KEYCLOAK_OTP_ADMIN_TOTP_SECRET
+        password = settings.KEYCLOAK_OTP_ADMIN_PASSWORD
+
+        if not (username and seed and password):
+            logger.debug("No OTP master admin configured; skipping")
+            return
+
+        keycloak = self.keycloak or await create_keycloak_connector()
+        if await keycloak.get_user_by_username("master", username):
+            logger.debug(f"OTP master admin '{username}' already exists")
+            return
+
+        logger.info(f"Creating master admin '{username}' with an OTP credential")
+        user = await keycloak.create_user(
+            realm_name="master",
+            username=username,
+            password=password,
+            email=f"{username}@localhost",
+            first_name="Platform",
+            last_name="Administrator",
+            enabled=True,
+            totp_secret=seed,
+        )
+        await keycloak.assign_realm_roles_to_user("master", user["id"], ["admin"])
+        logger.info(f"Master admin '{username}' created with OTP; seed is in the cluster secret")
 
     async def ensure_master_admin_service_account(self) -> None:
         """First-boot self-bootstrap of OPI's client-credentials service account.
