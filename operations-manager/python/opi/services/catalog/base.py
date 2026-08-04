@@ -515,7 +515,8 @@ class Service(ABC):
 
         Answering the hook at the layer where the config actually lives is what
         ``tests/test_service_config_layers.py`` locks: a service that carries config
-        somewhere either has a section there or declares the layer OPI-managed.
+        somewhere either has a section there or names the layer in ``form_exempt_layers``
+        with the reason it has no form.
         """
         from opi.forms.visualizers.sections import FormSection
 
