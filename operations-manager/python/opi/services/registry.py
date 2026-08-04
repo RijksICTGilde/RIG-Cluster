@@ -154,11 +154,21 @@ def collect_deployment_actions(project_data: dict, deployment_name: str) -> list
     loops over data instead of hardcoding per-service conditions.
     """
     actions: list = []
+    seen: set[tuple] = set()
     for service in SERVICES.values():
         provider = service.definition.actions_provider
         if provider is None:
             continue
-        actions.extend(action for action in provider(project_data, deployment_name) if action.visible)
+        for action in provider(project_data, deployment_name):
+            if not action.visible:
+                continue
+            # Services that share a provider (both PostgreSQL variants offer the same
+            # console and job buttons) must not yield the button twice.
+            key = (action.label, action.endpoint, action.modal_endpoint)
+            if key in seen:
+                continue
+            seen.add(key)
+            actions.append(action)
     return actions
 
 
@@ -227,9 +237,9 @@ def collect_service_routers() -> list[Any]:
     """
     routers: list[Any] = []
     for service in SERVICES.values():
-        router = service.web_router()
-        if router is not None and not any(existing is router for existing in routers):
-            routers.append(router)
+        for router in service.web_routers():
+            if not any(existing is router for existing in routers):
+                routers.append(router)
     return routers
 
 

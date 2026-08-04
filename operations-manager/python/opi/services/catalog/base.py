@@ -545,20 +545,20 @@ class Service(ABC):
         """
         return []
 
-    def web_router(self) -> Any | None:
-        """The ``APIRouter`` carrying this service's own web endpoints, or None.
+    def web_routers(self) -> list[Any]:
+        """The ``APIRouter``s carrying this service's own web endpoints (default none).
 
         A service that delivers a section does not stop at the HTML: the backups block
         lazy-loads its rows over ``hx-get``, the database console and the job runner are
-        modals with start/status/stop routes. Without this hook half the block stays
-        behind in the general router. ``registry.collect_service_routers()`` gathers the
-        routers and ``opi/web/router.py`` mounts them.
+        modals with their own start/status/stop routes. Without this hook half the block
+        stays behind in the general router. ``registry.collect_service_routers()``
+        gathers them and ``opi/web/router.py`` mounts them.
 
         Return the SAME router object from every service that shares it (the backup
         fragment belongs to all backupable services); the collector mounts each distinct
         router once. Typed loosely so this module stays free of a FastAPI import.
         """
-        return None
+        return []
 
     def config_component_layout(self) -> list[Any]:
         """Layout node(s) this service HOOKS INTO the per-component form (default none).
