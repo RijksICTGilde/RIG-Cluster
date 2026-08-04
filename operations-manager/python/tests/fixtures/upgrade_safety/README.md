@@ -9,9 +9,14 @@ the test at them with `RIG_PROJECTS_DIR=/path/to/projects` and it replays those 
 addition to these.
 
 Rules for these fixtures:
-- No real secrets. Every AGE-encrypted value is the opaque placeholder
-  `base64+age:...` — the replay never decrypts, so an opaque string is enough
-  (see the plan, section 2a: Layer 1 needs no key).
+- No real secrets. Every AGE-encrypted value is an opaque placeholder — the replay
+  never decrypts, so an opaque string is enough (see the plan, section 2a: Layer 1
+  needs no key).
+- The placeholder must have the **shape the field really stores**, because validation
+  now checks shapes. Passwords and the config block use the single-line
+  `base64+age:...` form; `user-env-vars` stores an AGE *block*
+  (`-----BEGIN AGE ENCRYPTED FILE-----`), so its placeholder is a block too. A
+  placeholder in the wrong shape makes the fixture lie about production.
 - Each file is chosen to exercise a distinct migration/validation path a real
   production file would hit: a current v2 file, a legacy top-level `invites:`
   block (relocated to the invite service at v2.6), a broad multi-service project,
