@@ -12,3 +12,98 @@ resources:
   - ../../infrastructure/prometheus/controller/overlays/sandboxed-local
   - ../../infrastructure/redis/controller/overlays/sandboxed-local
   - ../../infrastructure/registry/controller/overlays/sandboxed-local
+
+# Sandbox-CPU-beleid: minimale requests, geen cpu-limits.
+#
+# Op één punt geregeld in plaats van verspreid over de component-overlays, zodat het als
+# geheel te zien en in één keer terug te draaien is.
+#
+# De dev-server heeft 4 cores. Requests bepalen scheduling, en de opgetelde requests van de
+# platformdiensten vraten de node op: keycloak paste niet meer (`Insufficient cpu`) en zonder
+# keycloak startte operations-manager niet (`secret "keycloak-admin-credentials" not found`).
+# Er bleef bovendien niets over voor tenant-workloads.
+#
+# CPU-limits zijn hier bovendien schadelijk: CPU is compressible, dus de kernel throttlet een
+# pod op zijn limit ook als de node idle is. Forgejo stond op 500m terwijl de repo-server hem
+# met git clones bestookt — precies de verkeerde plek om te knijpen. Onder druk verdeelt CFS
+# naar rato van de requests, dus de onderlinge verhouding blijft werken zonder limits.
+#
+# Memory blijft ongemoeid: dat is incompressible, daar horen requests én limits wel, anders
+# krijg je OOM-kills in plaats van vertraging. Geheugen knelde ook niet (~20% van 16Gi).
+#
+# Gemeten effect: node-requests van 2810m (70%) naar 1565m (39%).
+patches:
+  - target:
+      kind: StatefulSet
+      name: forgejo
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "50m"
+      - op: remove
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+  - target:
+      kind: Deployment
+      name: keycloak
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "50m"
+      - op: remove
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+  - target:
+      kind: Deployment
+      name: minio
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "10m"
+      - op: remove
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+  - target:
+      kind: Deployment
+      name: prometheus
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "25m"
+      - op: remove
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+  - target:
+      kind: Deployment
+      name: kube-state-metrics
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "10m"
+      - op: remove
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+  - target:
+      kind: Deployment
+      name: rig-redis
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "10m"
+      - op: remove
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+  - target:
+      kind: Deployment
+      name: rig-registry
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "10m"
+      - op: remove
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+  # CNPG Cluster zet resources op spec.resources, niet op een containers-array.
+  # Deze database staat op het kritieke pad van OPI, dus juist hier geen throttle.
+  - target:
+      kind: Cluster
+      name: rig-db
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/cpu
+        value: "50m"
+      - op: remove
+        path: /spec/resources/limits/cpu
