@@ -64,6 +64,18 @@ def test_component_referenced_service_counts_as_selected() -> None:
     assert len(collect_detail_page_sections(project, "admin")) == 1
 
 
+def test_a_v1_component_service_list_counts_as_selected() -> None:
+    """An unmigrated component carries its services under ``uses-services``. Reading only
+    ``services`` loses them, and every block owned by such a service disappears without a
+    trace -- which is how the backups block vanished from the detail-page E2E project."""
+    from opi.services.registry import selected_services
+
+    v1 = _project([], components=[{"name": "c1", "uses-services": ["persistent-storage"]}])
+    v2 = _project([], components=[{"name": "c1", "services": [{"reference": "persistent-storage"}]}])
+    names = [{s.service_type.value for s in selected_services(project)} for project in (v1, v2)]
+    assert names == [{"persistent-storage"}, {"persistent-storage"}]
+
+
 class TestAttachmentsSection:
     """RC-24: the Bijlagen block is the attachments service's, including whether it
     shows at all -- the general template used to carry that ``{% if %}`` itself."""
