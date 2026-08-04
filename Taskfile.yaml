@@ -2132,9 +2132,9 @@ tasks:
       - task: sandbox:configure-local-images
       # Phase 1: Create cluster and install operators/CRDs
       - task: sandbox:create-cluster
-      # De image moet in de cluster staan vóórdat de deployment hem probeert te pullen
-      # (imagePullPolicy: Never in dev-mode). No-op in demo-mode.
-      - task: sandbox:build-operations-manager-image-if-dev
+      # De images moeten in de cluster staan vóórdat de deployments ze proberen te
+      # pullen (imagePullPolicy: Never in dev-mode). No-op in demo-mode.
+      - task: sandbox:build-local-images-if-dev
       - task: install-ingress-nginx
       - task: install-cnpg-operator
       - task: sandbox:install-csi-snapshot
@@ -3041,8 +3041,8 @@ tasks:
         echo "*.${DOMAIN} now resolves to 127.0.0.1"
     silent: true
 
-  sandbox:build-operations-manager-image-if-dev:
-    desc: "Build+load de operations-manager image, maar alleen in dev-mode"
+  sandbox:build-local-images-if-dev:
+    desc: "Build+load de images die dev-mode lokaal verwacht (no-op in demo-mode)"
     internal: true
     cmds:
       - |
@@ -3050,9 +3050,13 @@ tasks:
         # kan kiezen zonder ask-build-mode (dat is interactief).
         MODE="${SANDBOX_MODE:-$(cat .sandbox-mode 2>/dev/null || echo demo)}"
         if [ "$MODE" != "dev" ]; then
-          echo "Demo-mode: operations-manager komt uit de registry, niet lokaal gebouwd."
+          echo "Demo-mode: images komen uit de registry, niet lokaal gebouwd."
           exit 0
         fi
+        # Beide, niet alleen operations-manager: configure-local-images zet ook de
+        # CMP-sidecar op een lokale tag met imagePullPolicy Never. Ontbreekt die, dan
+        # blijft argocd-repo-server op ErrImageNeverPull staan en komt ArgoCD niet op.
+        task sandbox:build-cmp-image
         task sandbox:build-operations-manager-image
     silent: true
 
