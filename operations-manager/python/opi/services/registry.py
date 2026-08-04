@@ -193,14 +193,16 @@ def selected_services(project_data: dict) -> list[Service]:
 
     "Uses" means selected at project level or referenced by a component -- the same
     reading for every collector that asks the project's own services what they
-    contribute to a page.
+    contribute to a page. A component's list is read through
+    ``extract_service_names_from_component``, so the v1 ``uses-services`` key counts too;
+    reading ``services`` alone silently loses every service on an unmigrated component.
     """
+    from opi.handlers.project_file_handler import extract_service_names_from_component
     from opi.services.services import service_entry_name
 
     selected: set[str | None] = {service_entry_name(entry) for entry in project_data.get("services", []) or []}
     for component in project_data.get("components", []) or []:
-        for entry in component.get("services", []) or []:
-            selected.add(service_entry_name(entry))
+        selected.update(extract_service_names_from_component(component))
     return [service for service in SERVICES.values() if service.service_type.value in selected]
 
 
