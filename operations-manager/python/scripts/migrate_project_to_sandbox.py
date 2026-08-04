@@ -16,6 +16,8 @@ Usage:
 Options:
     --prod-key PATH       Production AGE key file (default: ../../security/key.txt)
     --sandbox-key PATH    Sandbox AGE key file (default: ../../security/sandbox-key.txt)
+    --sandbox-public-key AGE1...  Target recipient directly; the private half stays on that
+                          cluster. Use this when the target cluster minted its own key.
     --output-dir PATH     Output directory (default: /tmp/sandbox-projects)
     --source-dir PATH     Source directory for project files
     --probe-image [IMG]   Replace every component workload with the e2e-allservices
@@ -405,6 +407,14 @@ def main() -> None:
     parser.add_argument(
         "--sandbox-key", default=str(repo_root / "security" / "sandbox-key.txt"), help="Sandbox AGE key file"
     )
+    parser.add_argument(
+        "--sandbox-public-key",
+        help=(
+            "Target AGE recipient (age1...), instead of reading it from --sandbox-key. "
+            "Encrypting needs only the public half, so a cluster whose private key must stay "
+            "on that cluster can still be targeted from here."
+        ),
+    )
     parser.add_argument("--output-dir", default="/tmp/sandbox-projects", help="Output directory for transformed files")
     parser.add_argument(
         "--source-dir", default=DEFAULT_SOURCE_DIR, help="Source directory for looking up project names"
@@ -431,9 +441,16 @@ def main() -> None:
 
     # Read AGE keys
     logger.info(f"Production key: {args.prod_key}")
-    logger.info(f"Sandbox key: {args.sandbox_key}")
     _, prod_private_key = read_age_key_file(args.prod_key)
-    sandbox_public_key, _ = read_age_key_file(args.sandbox_key)
+    if args.sandbox_public_key:
+        # Only the recipient is needed to encrypt. Every target cluster mints its own key
+        # (the server sandbox did on 2026-08-02), so requiring the key FILE would mean
+        # copying a private key off that cluster for no reason.
+        sandbox_public_key = args.sandbox_public_key
+        logger.info(f"Sandbox recipient (public key given directly): {sandbox_public_key}")
+    else:
+        logger.info(f"Sandbox key: {args.sandbox_key}")
+        sandbox_public_key, _ = read_age_key_file(args.sandbox_key)
     logger.info(f"Sandbox public key: {sandbox_public_key}")
 
     # Ensure output directory exists
