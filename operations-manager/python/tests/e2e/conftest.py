@@ -94,7 +94,21 @@ def _quiet_faulthandler_for_e2e() -> None:
 @pytest.fixture(scope="session")
 def browser_type_launch_args(browser_type_launch_args: dict) -> dict:
     """Add --no-sandbox for running in containers (e.g. Docker as root)."""
-    return {**browser_type_launch_args, "args": ["--no-sandbox", "--disable-setuid-sandbox"]}
+    args = ["--no-sandbox", "--disable-setuid-sandbox"]
+    # ZAD_RESOLVE_HOST laat Chromium namen naar een adres wijzen zonder /etc/hosts of een
+    # poortforward, dus zonder root. Nodig zodra de sandbox niet op 127.0.0.1 staat maar op
+    # een server: de ingress routeert op de Host-header, dus rechtstreeks het IP aanroepen
+    # levert de default backend op. Komma-gescheiden, want een run raakt meerdere namen:
+    #   "zad.sandbox.rijksapp.dev=100.65.119.96,forgejo.sandbox.rijksapp.dev=100.65.119.96"
+    # Let op: dit dekt alleen de browser. Aanroepen die de test zelf doet (httpx naar
+    # Forgejo) gaan hier niet doorheen en hebben hun eigen weg nodig.
+    resolve = os.environ.get("ZAD_RESOLVE_HOST")
+    if resolve:
+        rules = ", ".join(
+            f"MAP {host} {addr}" for host, _, addr in (m.partition("=") for m in resolve.split(",")) if addr
+        )
+        args.append(f"--host-resolver-rules={rules}")
+    return {**browser_type_launch_args, "args": args}
 
 
 @pytest.fixture(scope="session")
