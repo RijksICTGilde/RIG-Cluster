@@ -1488,10 +1488,32 @@ async def project_details(request: Request, project_name: str):
         # Deployment-level action buttons contributed by the project's services
         # (e.g. sleep-mode "wake"), keyed by deployment name. Built from the decrypted
         # project data so it can read the OPI-managed sleep state.
-        from opi.services.registry import collect_deployment_actions, collect_detail_page_sections
+        from opi.services.catalog.base import DeploymentPageContext
+        from opi.services.registry import (
+            collect_deployment_actions,
+            collect_deployment_page_sections,
+            collect_detail_page_sections,
+        )
 
         deployment_service_actions = {
             dep.get("name"): collect_deployment_actions(project_data_decrypted, dep.get("name", ""))
+            for dep in project_data_decrypted.get("deployments", [])
+        }
+
+        # Per-deployment read-only blocks the services deliver (RC-24): metrics and
+        # backups describe one deployment, so they are asked per deployment instead of
+        # being hardcoded in the Deployments tab. The availability of the optional
+        # back-ends is probed here (a service never calls a connector) and passed in.
+        deployment_service_sections = {
+            dep.get("name"): collect_deployment_page_sections(
+                DeploymentPageContext(
+                    project_data=project_data_decrypted,
+                    deployment=dep,
+                    user_role=user_role,
+                    current_cluster=current_cluster,
+                    backend_available={"prometheus": prometheus_available, "backups": backups_available},
+                )
+            )
             for dep in project_data_decrypted.get("deployments", [])
         }
 
@@ -1520,6 +1542,8 @@ async def project_details(request: Request, project_name: str):
                 "csrf_token": csrf_token,
                 "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
                 "deployment_service_actions": deployment_service_actions,
+                # Per-deployment service-owned blocks (RC-24), keyed by deployment name.
+                "deployment_service_sections": deployment_service_sections,
                 # Detail-page sections the project's services own (WP2). Replaces the
                 # hardcoded per-service includes (e.g. the Keycloak realm block, which
                 # after RC-5's config move kept reading the old project-level
