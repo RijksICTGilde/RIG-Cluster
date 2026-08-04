@@ -54,6 +54,24 @@ spec:
               name: keycloak-admin-credentials
               key: KEYCLOAK_ADMIN_CLIENT_SECRET
               optional: true
+        - name: KEYCLOAK_OTP_ADMIN_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-admin-credentials
+              key: KEYCLOAK_OTP_ADMIN_USERNAME
+              optional: true
+        - name: KEYCLOAK_OTP_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-admin-credentials
+              key: KEYCLOAK_OTP_ADMIN_PASSWORD
+              optional: true
+        - name: KEYCLOAK_OTP_ADMIN_TOTP_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-admin-credentials
+              key: KEYCLOAK_OTP_ADMIN_TOTP_SECRET
+              optional: true
         - name: KEYCLOAK_MASTER_OIDC_CLIENT_SECRET
           valueFrom:
             secretKeyRef:
