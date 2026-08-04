@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, ClassVar
 
 from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.services.catalog.base import ConfigLayer, ManifestContext, ProvisionContext, SecretFileSpec, Service
@@ -25,7 +25,7 @@ class MinioStorageService(Service):
 
     config_section_id = "minio-config"
     modal_flow_id = "modal-edit-minio-config"
-    form_exempt_layers = {
+    form_exempt_layers: ClassVar[dict[ConfigLayer, str]] = {
         ConfigLayer.DEPLOYMENT: ("clone state (generation/revisions) written by revision_manager, not by a user")
     }
 
