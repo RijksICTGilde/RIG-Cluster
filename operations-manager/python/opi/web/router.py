@@ -196,7 +196,6 @@ async def get_task_status(request: Request, task_id: str):
     not on an X-API-Key header. Reads task state from the V2 async task
     service (database-backed).
     """
-    from fastapi.responses import JSONResponse
 
     from opi.core.task_helpers import get_task_service
 
@@ -604,9 +603,22 @@ async def refresh_deployment_web(request: Request, project_name: str, deployment
     )
 
 
+def _require_deployment(project_data: dict, project_name: str, deployment_name: str) -> None:
+    """404 straight away when the deployment does not exist.
+
+    The inline version raised DeploymentNotFound from flow.sleep, so the caller heard it
+    immediately. Now that the work runs as a task, an unknown name would otherwise only
+    surface as a task that fails a moment later -- further from the click and harder to
+    read.
+    """
+    names = [d.get("name") for d in project_data.get("deployments", []) or [] if isinstance(d, dict)]
+    if deployment_name not in names:
+        raise HTTPException(status_code=404, detail=f"Deployment '{deployment_name}' niet gevonden in {project_name}")
+
+
 @web_router.post("/projects/{project_name}/deployments/{deployment_name}/wake")
 @requires_sso
-async def wake_deployment_web(request: Request, project_name: str, deployment_name: str) -> JSONResponse:
+async def wake_deployment_web(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Wake a sleeping deployment from the UI (session + CSRF + role auth).
 
     The counterpart of the API wake endpoint: same one implementation in
@@ -626,20 +638,27 @@ async def wake_deployment_web(request: Request, project_name: str, deployment_na
             detail=f"Alleen admin of owner rollen kunnen een deployment wekken. Uw rol: {user_role}",
         )
 
-    from opi.services.catalog.sleep_mode import flow
+    project = get_project_store().get(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project niet gevonden")
+    _require_deployment(project.data or {}, project_name, deployment_name)
 
-    try:
-        result = await flow.wake(project_name, deployment_name)
-    except flow.DeploymentNotFound as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    logger.info(f"Web wake for '{project_name}/{deployment_name}' by {user_email}: state={result.state}")
-    return JSONResponse({"state": result.state, "changed": result.changed})
+    logger.info(f"Web wake for '{project_name}/{deployment_name}' by {user_email}")
+    # See sleep_deployment_web: waking reprocesses too, so it runs as a followable task.
+    return await _create_task_and_render_progress(
+        request=request,
+        project_name=project_name,
+        deployment_name=deployment_name,
+        task_type="wake_deployment",
+        payload={"project_name": project_name, "deployment_name": deployment_name, "direction": "wake"},
+        current_step="Deployment wekken",
+        success_message="Deployment is gewekt",
+    )
 
 
 @web_router.post("/projects/{project_name}/deployments/{deployment_name}/sleep")
 @requires_sso
-async def sleep_deployment_web(request: Request, project_name: str, deployment_name: str) -> JSONResponse:
+async def sleep_deployment_web(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Manually put a deployment to sleep from the UI (session + CSRF + role auth).
 
     The other half of the wake toggle: same one implementation in ``sleep_mode.flow.sleep``,
@@ -658,15 +677,24 @@ async def sleep_deployment_web(request: Request, project_name: str, deployment_n
             detail=f"Alleen admin of owner rollen kunnen een deployment slapen. Uw rol: {user_role}",
         )
 
-    from opi.services.catalog.sleep_mode import flow
+    project = get_project_store().get(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project niet gevonden")
+    _require_deployment(project.data or {}, project_name, deployment_name)
 
-    try:
-        result = await flow.sleep(project_name, deployment_name)
-    except flow.DeploymentNotFound as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    logger.info(f"Web sleep for '{project_name}/{deployment_name}' by {user_email}: state={result.state}")
-    return JSONResponse({"state": result.state, "changed": result.changed})
+    logger.info(f"Web sleep for '{project_name}/{deployment_name}' by {user_email}")
+    # An async task, not an inline call: sleeping commits to git and then reprocesses,
+    # ArgoCD sync included, so doing it in the request left the page on an open POST for
+    # tens of seconds with nothing to show. Same progress fragment as reprocessing.
+    return await _create_task_and_render_progress(
+        request=request,
+        project_name=project_name,
+        deployment_name=deployment_name,
+        task_type="sleep_deployment",
+        payload={"project_name": project_name, "deployment_name": deployment_name, "direction": "sleep"},
+        current_step="Deployment in slaapstand zetten",
+        success_message="Deployment slaapt",
+    )
 
 
 @web_router.get(
@@ -715,7 +743,6 @@ async def deployment_action_confirm(
             # A service may leave the message out; still ask, rather than firing a
             # POST straight from the page.
             "message": action.confirm_message or f"Weet u zeker dat u '{action.label}' wilt uitvoeren?",
-            "busy_message": action.busy_message or "Bezig...",
         },
     )
 
@@ -1986,7 +2013,6 @@ async def get_deployment_domain_settings(request: Request, project_name: str, de
     Returns:
         JSON response with domain settings
     """
-    from fastapi.responses import JSONResponse
 
     from opi.api.router import DeploymentDomainSettingsResponse
     from opi.web.router_self_service import get_cluster_base_domains_for_template
@@ -2286,7 +2312,6 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
     Returns:
         JSON response with update status and redirect URL
     """
-    from fastapi.responses import JSONResponse
 
     from opi.connectors.subdomain import (
         validate_base_domain,
