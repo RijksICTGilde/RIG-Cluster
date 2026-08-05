@@ -17,6 +17,7 @@ from datetime import UTC
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates import get_templates
+from opi.services.disabled_state import deployment_disabled_state
 from opi.services.project import Project
 from opi.services.project_authorization import (
     get_user_role_for_project,
@@ -1868,6 +1869,10 @@ async def argocd_status_fragment(
             "argocd_status": {deployment_name: status},
             "_argocd_card_id_prefix": prefix or deployment_name,
             "current_cluster": settings.CLUSTER_MANAGER,
+            # How much of this deployment is switched off (RC-31). Read from the project
+            # file, not from the cluster: zero replicas can also mean something went wrong,
+            # and the card has to tell those two apart.
+            "disabled_state": deployment_disabled_state(project.data or {}, deployment_name),
         },
     )
 
