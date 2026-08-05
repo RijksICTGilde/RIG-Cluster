@@ -199,6 +199,50 @@ class TestOwnedPropertyValidationAtSaveTime:
         validate_service_configs(_project())
 
 
+class TestTheRejectionMessageNeverCarriesTheValue:
+    """The message from the walk above is logged at WARNING and returned to the client.
+
+    So it must not contain the value it rejected: an unparseable plaintext user-env-vars
+    is exactly where somebody pasted a secret into the wrong shape. Both the pydantic
+    ValidationError (which carries ``input_value``) and the parser's own message (which
+    quoted the offending line) used to put it there.
+    """
+
+    SECRET = "sup3r-s3cret-token"
+
+    def test_the_offending_line_is_not_echoed(self) -> None:
+        with pytest.raises(ProjectIntegrityError) as excinfo:
+            validate_service_configs(_project(**{"user-env-vars": f"not a key=value line {self.SECRET}"}))
+        assert self.SECRET not in str(excinfo.value)
+
+    def test_the_line_number_is_named_instead(self) -> None:
+        with pytest.raises(ProjectIntegrityError) as excinfo:
+            validate_service_configs(_project(**{"user-env-vars": f"A=1\nbroken line {self.SECRET}"}))
+        assert "Line 2" in str(excinfo.value)
+
+    def test_pydantic_input_value_is_not_echoed(self) -> None:
+        # A mapping with a non-string value fails on type, not in our validator, so the
+        # message comes straight from pydantic -- with `input` alongside it.
+        with pytest.raises(ProjectIntegrityError) as excinfo:
+            validate_service_configs(_project(aliases={"HOST": {"nested": self.SECRET}}))
+        assert self.SECRET not in str(excinfo.value)
+
+    def test_a_yaml_parse_failure_is_not_echoed_either(self) -> None:
+        with pytest.raises(ProjectIntegrityError) as excinfo:
+            validate_service_configs(_project(**{"user-env-vars": f"A: 1\n  B: {self.SECRET}\n\tC: 2"}))
+        assert self.SECRET not in str(excinfo.value)
+
+    def test_the_chained_validationerror_is_dropped(self) -> None:
+        # It still holds the input, so a handler that logs a traceback would leak it.
+        with pytest.raises(ProjectIntegrityError) as excinfo:
+            validate_service_configs(_project(**{"user-env-vars": f"broken {self.SECRET}"}))
+        assert excinfo.value.__cause__ is None
+
+    def test_the_reason_still_says_what_is_wrong(self) -> None:
+        with pytest.raises(ProjectIntegrityError, match="KEY=value"):
+            validate_service_configs(_project(**{"user-env-vars": "broken line"}))
+
+
 class TestTheConverterNeverLogsAValue:
     """user-env-vars and aliases hold secrets; the deploy path says so in as many words
     ("Never log the values", project_manager.py) but the form converter logged both the
