@@ -256,3 +256,17 @@ authorized_licenses = [
     "Public Domain",
     "The Unlicense (Unlicense)",
 ]
+
+[tool.ruff.lint.flake8-type-checking]
+# Both FastAPI and Pydantic read these annotations at runtime -- FastAPI to build the
+# OpenAPI schema from route signatures, Pydantic to build its models -- so the imports
+# they use cannot move into a type-checking block. Moving them would break the very spec
+# the shared aliases in opi/api/params.py and opi/api/enums.py exist to improve.
+runtime-evaluated-base-classes = ["pydantic.BaseModel"]
+runtime-evaluated-decorators = [
+    "fastapi.APIRouter.get",
+    "fastapi.APIRouter.post",
+    "fastapi.APIRouter.put",
+    "fastapi.APIRouter.patch",
+    "fastapi.APIRouter.delete",
+]
