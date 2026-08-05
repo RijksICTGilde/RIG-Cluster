@@ -90,4 +90,4 @@ The manifest naming logic is complex (ingress maps, path suffixes, per-deploymen
 ## Also Fixed in This Session
 
 - **ArgoCD freshness check** (`argo_manager.py`): changed `<=` to `<` on lines 857 and 1008 so that equal `reconciledAt` timestamps are treated as fresh (prevents infinite polling)
-- **Alias removal bug** (`router_detail_edit.py` line 258): `dict.update()` in `_apply_list_item_merge` doesn't delete keys absent from form submission — needs fix to remove keys that the form processor intentionally deleted (fields with `remove_when_none=True`)
+- **Alias removal bug** (`router_detail_edit.py` line 258): `dict.update()` in `_apply_list_item_merge` doesn't delete keys absent from form submission — needs fix to remove keys that the form processor intentionally deleted (fields with `remove_when_none=True`). *Opgelost: de opslag schrijft nu per pad in plaats van per item, en een pad dat ontbreekt terwijl zijn container is ingestuurd wordt gewist — zie [wizard-write-set.md](wizard-write-set.md).*

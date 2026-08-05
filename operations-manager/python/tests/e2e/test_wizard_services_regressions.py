@@ -48,16 +48,54 @@ def captured_yaml(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return captured
 
 
+_MAX_WIZARD_STEPS = 15
+
+
+def _current_step(page: Page) -> str:
+    """The step id from the wizard URL, e.g. ``components``."""
+    return page.url.rsplit("/step/", 1)[-1]
+
+
+def _advance_to_step(wizard: WizardHelper, page: Page, step: str) -> None:
+    """Click through the wizard until *step* is the current step.
+
+    Which config steps sit in between follows the selected services, so this
+    cannot be a fixed number of clicks: adding a service - or giving an existing
+    one a config step - silently shifted every later step by one, and the test
+    then filled the wrong page.
+    """
+    for _ in range(_MAX_WIZARD_STEPS):
+        if _current_step(page) == step:
+            return
+        if _current_step(page) == "team":
+            wizard.fill_team(email="test@example.com")
+        wizard.click_next()
+        page.wait_for_load_state("networkidle")
+    raise AssertionError(f"step {step!r} not reached within {_MAX_WIZARD_STEPS} steps; stuck at {page.url}")
+
+
 def _finish_wizard(wizard: WizardHelper, page: Page) -> None:
-    """Walk the remaining steps (team, components, deployment, domain) and submit."""
-    wizard.fill_team(email="test@example.com")
-    wizard.click_next()
-    wizard.fill_component(name="web", image="nginx:latest")
-    wizard.click_next()
-    wizard.click_next()  # deployment defaults
-    wizard.fill_domain()
-    wizard.click_next()  # -> review
-    page.wait_for_load_state("networkidle")
+    """Walk the remaining steps and submit, however many of them there are.
+
+    The step count is not fixed: every selected service inserts its own config
+    step (``redis-config``, ``keycloak-config``, ...). Counting clicks left the
+    walk one step short of the review page, where ``submit_wizard`` fell back to
+    the step's own Next button, so no project was ever created and the test
+    failed on an empty capture instead of on the thing it means to assert.
+    """
+    for _ in range(_MAX_WIZARD_STEPS):
+        if page.locator("#wizard-review-submit").count() > 0:
+            break
+        step = _current_step(page)
+        if step == "team":
+            wizard.fill_team(email="test@example.com")
+        elif step == "components":
+            wizard.fill_component(name="web", image="nginx:latest")
+        wizard.click_next()
+        page.wait_for_load_state("networkidle")
+    else:
+        raise AssertionError(f"review page not reached within {_MAX_WIZARD_STEPS} steps; stuck at {page.url}")
+
     wizard.submit_wizard()
     page.wait_for_timeout(2000)
 
@@ -150,9 +188,7 @@ def test_second_component_offers_every_project_service(app_server: str, auth_pag
     wizard.fill_services(selected)
     wizard.click_next()
 
-    wizard.click_next()  # keycloak config defaults
-    wizard.fill_team(email="test@example.com")
-    wizard.click_next()
+    _advance_to_step(wizard, auth_page, "components")
 
     # First component: untick everything but publish-on-web
     wizard.fill_component(name="web", image="nginx:latest")

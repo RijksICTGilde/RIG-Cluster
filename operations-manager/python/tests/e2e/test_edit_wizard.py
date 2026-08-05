@@ -178,11 +178,9 @@ class TestEditServices:
         labels_lower = [label.lower() for label in step_labels]
         assert any("keycloak" in label for label in labels_lower)
 
-        # Advance through keycloak config (accept defaults)
-        modal.submit_step()
-
-        # Advance through authorization-wall config (accept defaults)
-        modal.submit_step()
+        # Advance through the remaining config steps (accept defaults). Their number
+        # follows the selected services, so walk until the review rather than count.
+        modal.advance_to_review()
 
         # Should reach review
         modal.wait_for_review()
