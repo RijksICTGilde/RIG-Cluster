@@ -1368,6 +1368,7 @@ async def project_details(request: Request, project_name: str):
         # Generate ingress URLs for components with publish-on-web service
         from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
         from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.catalog.publish_on_web.urls import public_urls_for_deployment
         from opi.utils.naming import HostnameFormat, generate_public_url, get_component_ingress_map
 
         project_file_handler = ProjectFileHandler()
@@ -1375,59 +1376,11 @@ async def project_details(request: Request, project_name: str):
         # Add ingress information to deployments
         for deployment in project_details["deployments"]:
             cluster = deployment.get("cluster")
-            deployment["ingress_links"] = []
-            if cluster:
-                try:
-                    ingress_postfix = get_ingress_postfix(cluster)
-                    use_https = get_ingress_tls_enabled(cluster)
-                    subdomain = deployment.get("subdomain")
-                    base_domain = deployment.get("base-domain")
-                    hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
-                    domain_format = deployment.get("domain-format")
-
-                    # Generate ingress links for each component in this deployment
-                    for component in deployment.get("components", []):
-                        component_name = component.get("reference")
-                        if component_name:
-                            has_publish_on_web = project_file_handler.extract_component_publish_on_web(
-                                project_data, component_name
-                            )
-
-                            if has_publish_on_web:
-                                ingress_map = get_component_ingress_map(
-                                    component_name=component_name,
-                                    deployment_name=deployment["name"],
-                                    project_name=project_name,
-                                    ingress_postfix=ingress_postfix,
-                                    subdomain=subdomain,
-                                    base_domain=base_domain,
-                                    hostname_format=hostname_format,
-                                    domain_format=domain_format,
-                                    project_data=project_data,
-                                    cluster=cluster,
-                                )
-
-                                paths = project_file_handler.extract_deployment_component_paths(
-                                    project_data, deployment, component_name
-                                )
-                                for ingress_name, hostname in ingress_map.items():
-                                    for path_config in paths:
-                                        match = path_config.get("match") or "/"
-                                        public_url = generate_public_url(hostname, use_https, match)
-                                        deployment["ingress_links"].append(
-                                            {
-                                                "component_name": component_name,
-                                                "ingress_name": ingress_name,
-                                                "hostname": hostname,
-                                                "path": match,
-                                                "url": public_url,
-                                            }
-                                        )
-                except Exception as ingress_error:
-                    logger.warning(
-                        f"Failed to generate ingress links for deployment {deployment.get('name')}: {ingress_error}"
-                    )
-                    deployment["ingress_links"] = []
+            # One derivation, owned by publish-on-web: the invite form offers these same
+            # addresses as the destination of its success button.
+            deployment["ingress_links"] = public_urls_for_deployment(
+                project_data, deployment, project_name, project_file_handler
+            )
 
         # Also add ingress information directly to components for the components section
         for component in project_details["components"]:
