@@ -54,6 +54,9 @@ def sleep_actions(project_data: dict[str, Any], deployment_name: str) -> list[De
                 endpoint=f"{base}/sleep",
                 # Quote-free: rendered inline in a single-quoted JS string in the template.
                 confirm_message=f"Deployment {deployment_name} handmatig in slaapstand zetten?",
+                # The request stays open through the git commit and the full reprocess,
+                # so say what is happening rather than leaving the dialog silent.
+                busy_message="Bezig met in slaapstand zetten, dit duurt even...",
                 visible=True,
             )
         ]
@@ -64,6 +67,7 @@ def sleep_actions(project_data: dict[str, Any], deployment_name: str) -> list[De
             kind="primary",
             endpoint=f"{base}/wake",
             confirm_message=f"Deployment {deployment_name} wekken uit de slaapstand?",
+            busy_message="Bezig met wekken, dit duurt even...",
             visible=True,
         )
     ]

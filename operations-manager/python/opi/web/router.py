@@ -715,6 +715,7 @@ async def deployment_action_confirm(
             # A service may leave the message out; still ask, rather than firing a
             # POST straight from the page.
             "message": action.confirm_message or f"Weet u zeker dat u '{action.label}' wilt uitvoeren?",
+            "busy_message": action.busy_message or "Bezig...",
         },
     )
 
