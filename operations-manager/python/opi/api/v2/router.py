@@ -62,6 +62,7 @@ from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.services.catalog.base import ConfigLayer
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
+from opi.services.disabled_state import deployment_disabled_state
 from opi.services.project_store import get_project_store
 from opi.services.registry import SERVICES, get_service
 from opi.services.services import ServiceAdapter, service_entry_config, service_entry_name
@@ -169,11 +170,19 @@ class _LiveStatus(NamedTuple):
     errors: list[StatusError]
 
 
-def _collapse_argo_status(sync_raw: str | None, health_raw: str | None) -> DeploymentStatus:
+def _collapse_argo_status(
+    sync_raw: str | None, health_raw: str | None, *, fully_disabled: bool = False
+) -> DeploymentStatus:
     """Collapse Argo's (sync, health) into a single overall status.
 
     Priority: bad health states win > OutOfSync > Progressing > Healthy.
     Unknown/novel values fall through to DeploymentStatus.Unknown.
+
+    ``fully_disabled`` says the project file has every component of this deployment
+    switched off. Zero replicas is what Argo then sees, and it calls that Healthy -- so
+    the flag replaces exactly that one verdict (RC-31) and ranks below every other. A
+    deployment that is switched off AND degraded reports Degraded, or turning something
+    off would be a way to make a failure disappear.
     """
     if health_raw in ("Degraded", "Suspended", "Missing"):
         return DeploymentStatus(health_raw)
@@ -182,11 +191,11 @@ def _collapse_argo_status(sync_raw: str | None, health_raw: str | None) -> Deplo
     if health_raw == "Progressing":
         return DeploymentStatus.Progressing
     if health_raw == "Healthy":
-        return DeploymentStatus.Healthy
+        return DeploymentStatus.Disabled if fully_disabled else DeploymentStatus.Healthy
     return DeploymentStatus.Unknown
 
 
-def _extract_live_status(status_data: dict[str, Any] | None) -> _LiveStatus:
+def _extract_live_status(status_data: dict[str, Any] | None, *, fully_disabled: bool = False) -> _LiveStatus:
     """Build a _LiveStatus from an ArgoCD Application payload.
 
     Returns ``status=Pending`` when the cluster has no Application yet.
@@ -202,7 +211,7 @@ def _extract_live_status(status_data: dict[str, Any] | None) -> _LiveStatus:
     operation_state = status.get("operationState", {}) or {}
 
     return _LiveStatus(
-        status=_collapse_argo_status(sync.get("status"), health.get("status")),
+        status=_collapse_argo_status(sync.get("status"), health.get("status"), fully_disabled=fully_disabled),
         revision=sync.get("revision") or None,
         last_synced_at=operation_state.get("finishedAt") or status.get("reconciledAt"),
         errors=[],
@@ -222,6 +231,7 @@ _PROBLEM_STATUSES = frozenset(
 async def _fetch_one_live_status(
     *,
     project_name: str,
+    project_data: dict[str, Any],
     deployment: dict[str, Any],
     argo: ArgoConnector,
     kubectl: KubectlConnector,
@@ -242,7 +252,10 @@ async def _fetch_one_live_status(
         logger.info("Permission denied for %s, but OK - app may not exist yet; reporting Pending", app_name)
         status_data = None
 
-    live = _extract_live_status(status_data)
+    # Whether the deployment is switched off comes from the project file, never from the
+    # cluster: zero replicas there can also mean something went wrong (RC-31).
+    fully_disabled = deployment_disabled_state(project_data, deployment_name).is_disabled
+    live = _extract_live_status(status_data, fully_disabled=fully_disabled)
     if live.status not in _PROBLEM_STATUSES:
         return live
 
@@ -296,6 +309,7 @@ def _unavailable() -> _LiveStatus:
 
 async def _fetch_live_statuses_lenient(
     project_name: str,
+    project_data: dict[str, Any],
     deployments: list[dict[str, Any]],
 ) -> dict[str, _LiveStatus]:
     """Fetch status for many deployments. Per-deployment failures yield Unavailable.
@@ -310,7 +324,11 @@ async def _fetch_live_statuses_lenient(
     async def _safe_one(deployment: dict[str, Any]) -> _LiveStatus:
         try:
             return await _fetch_one_live_status(
-                project_name=project_name, deployment=deployment, argo=argo, kubectl=kubectl
+                project_name=project_name,
+                project_data=project_data,
+                deployment=deployment,
+                argo=argo,
+                kubectl=kubectl,
             )
         except Exception as exc:
             logger.warning(
@@ -327,6 +345,7 @@ async def _fetch_live_statuses_lenient(
 
 async def _fetch_one_live_status_strict(
     project_name: str,
+    project_data: dict[str, Any],
     deployment: dict[str, Any],
 ) -> _LiveStatus:
     """Fetch status for a single deployment. Raises 503 on any fetch failure.
@@ -336,7 +355,11 @@ async def _fetch_one_live_status_strict(
     argo, kubectl = await _connect_status_backend()
     try:
         return await _fetch_one_live_status(
-            project_name=project_name, deployment=deployment, argo=argo, kubectl=kubectl
+            project_name=project_name,
+            project_data=project_data,
+            deployment=deployment,
+            argo=argo,
+            kubectl=kubectl,
         )
     except Exception as exc:
         logger.warning(
@@ -412,7 +435,7 @@ async def list_deployments_v2(
         d for d in project_data.get("deployments", []) if d.get("cluster") == current_cluster and d.get("name")
     ]
 
-    statuses = await _fetch_live_statuses_lenient(project_name, deployments)
+    statuses = await _fetch_live_statuses_lenient(project_name, project_data, deployments)
 
     details = [
         _build_deployment_detail(depl, project_name, project_data, statuses.get(depl["name"], _unavailable()))
@@ -468,7 +491,7 @@ async def get_deployment_v2(
             detail=f"Deployment '{deployment_name}' not found in project '{project_name}' on cluster '{current_cluster}'",
         )
 
-    live = await _fetch_one_live_status_strict(project_name, deployment)
+    live = await _fetch_one_live_status_strict(project_name, project_data, deployment)
     detail = _build_deployment_detail(deployment, project_name, project_data, live)
     return JSONResponse(content=detail.model_dump())
 
