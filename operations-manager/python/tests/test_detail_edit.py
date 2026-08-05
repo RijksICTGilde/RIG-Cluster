@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from opi.web.router_detail_edit import (
-    _apply_list_item_merge,
-    _detect_list_target,
-    _seed_components_for_new_deployment,
-)
+from opi.forms.wizard.save import apply_list_item_merge as _apply_list_item_merge
+from opi.forms.wizard.save import detect_list_target as _detect_list_target
+from opi.web.router_detail_edit import _seed_components_for_new_deployment
 
 
 class TestDetectListTarget:
