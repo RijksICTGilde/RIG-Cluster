@@ -21,8 +21,9 @@ from typing import Any
 
 import pytest
 from opi.forms.editables.processor import EditableFormProcessor
+from opi.forms.visualizers.flows import get_flow
 from opi.forms.visualizers.wizard_sections import _CONFIG_SECTIONS_BY_ID
-from opi.forms.wizard.save import template_only_keys as _template_only_keys
+from opi.forms.wizard.write_set import apply_write_paths, flow_write_paths
 
 
 def _service_config(services: list[Any], name: str) -> dict[str, Any] | None:
@@ -132,33 +133,43 @@ async def test_keycloak_additional_clients_survive_final_submit() -> None:
 
 
 def test_modal_edit_keeps_virtualized_service_key() -> None:
-    """The detail-edit modal must not strip the real key behind an edited virtual key.
+    """The detail-edit modal must write the real key behind an edited virtual key.
 
-    Regression for the second RC-13 blocker: the modal save popped ``services`` as
-    template-only because the step produced only the virtual ``_services-config`` key, so
-    ``get_merged_data`` devirtualized the edit into ``services`` and it was then reverted to
-    the git baseline (the added invite / edited keycloak client vanished, the existing one
-    survived). Counting the virtual key's real target keeps ``services`` out of the strip set.
+    Regression for the second RC-13 blocker: the modal save reverted ``services`` to the
+    git baseline because the step produced only the virtual ``_services-config`` key (the
+    added invite / edited keycloak client vanished, the existing one survived). The write
+    set is derived from the invite editables, whose paths are the real ``services/invite/...``
+    ones, so the edit lands where the fold put it.
     """
-    step_data = {"invite-config": {"_services-config": [{"name": "invite", "config": {"active": [{"key": "x"}]}}]}}
-    template_data = {"name": "demo", "services": [{"name": "invite"}], "config": {"age-public-key": "..."}}
-    virt_mappings = {"_services-config": "services"}
+    flow = get_flow("modal-edit-invite-config")
+    # What get_merged_data hands over: devirtualized, with the template context alongside.
+    merged = {
+        "name": "demo",
+        "config": {"age-public-key": "..."},
+        "services": [{"name": "invite", "config": {"active": [{"key": "x"}]}}],
+    }
+    existing = {
+        "name": "demo",
+        "config": {"age-public-key": "the-real-one"},
+        "services": [{"name": "invite", "config": {"active": []}}],
+    }
 
-    stripped = _template_only_keys(step_data, template_data, virt_mappings)
+    result = apply_write_paths(existing, merged, flow_write_paths(list(flow.sections)))
 
-    assert "services" not in stripped, "the edited services list was wrongly treated as template-only"
-    assert "config" in stripped, "genuine template-only context should still be stripped"
-    assert "name" in stripped
+    assert _service_config(result["services"], "invite")["active"] == [{"key": "x"}]
+    assert result["config"] == {"age-public-key": "the-real-one"}, "template context was written over"
 
 
-def test_template_only_keys_without_virtualization() -> None:
-    """A plainly produced top-level key is never template-only; unproduced context is."""
-    step_data = {"team": {"users": [{"email": "a@b.nl"}]}}
-    template_data = {"users": [{"email": "old@b.nl"}], "config": {"k": "v"}}
+def test_write_set_leaves_context_the_flow_does_not_declare() -> None:
+    """A team edit writes users and nothing else, however much context travels along."""
+    flow = get_flow("modal-edit-team")
+    merged = {"users": [{"email": "a@b.nl", "role": "admin"}], "config": {"k": "from-the-session"}}
+    existing = {"users": [{"email": "old@b.nl", "role": "admin"}], "config": {"k": "on-disk"}}
 
-    stripped = _template_only_keys(step_data, template_data, {})
+    result = apply_write_paths(existing, merged, flow_write_paths(list(flow.sections)))
 
-    assert stripped == {"config"}
+    assert result["users"] == [{"email": "a@b.nl", "role": "admin"}]
+    assert result["config"] == {"k": "on-disk"}
 
 
 def test_single_section_modal_does_not_stash_away_its_own_step() -> None:
