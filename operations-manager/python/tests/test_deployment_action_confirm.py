@@ -220,15 +220,36 @@ def test_the_csrf_header_is_not_an_attribute_of_a_roos_button() -> None:
         assert "hx-headers" not in button
 
 
-def test_the_dialog_swaps_nothing_and_offers_a_way_out() -> None:
-    """The action endpoints answer JSON, so a swap would paste that into the modal; the
-    page reacts to the request itself (data-deployment-action)."""
+def test_the_dialog_swaps_the_running_task_in_and_offers_a_way_out() -> None:
+    """The question is replaced by the progress of the task it started.
+
+    These endpoints commit to git and then reprocess, ArgoCD sync included. As an inline
+    call the dialog sat unchanged for tens of seconds, which reads as a button that did
+    nothing; the endpoints now answer with the shared progress fragment and it swaps in
+    here, so there is something to follow.
+    """
     html = _fragment(FAKE_ACTION)
 
-    assert 'hx-swap="none"' in html
+    assert 'hx-target="this"' in html
+    assert 'hx-swap="innerHTML"' in html
     assert 'data-deployment-action="true"' in html
     assert "closeEditModal()" in html
     assert 'id="deployment-action-error"' in html
+
+
+def test_sleeping_and_waking_run_as_followable_tasks() -> None:
+    """Not an inline call: a task the page can poll, like reprocessing a deployment.
+
+    Pinned on the router because this is the property that was missing -- the endpoints
+    used to answer JSON straight from ``flow.sleep`` with the request open the whole time.
+    """
+    from opi.web import router
+
+    source = inspect.getsource(router.sleep_deployment_web) + inspect.getsource(router.wake_deployment_web)
+
+    assert "_create_task_and_render_progress" in source
+    assert "await flow.sleep(" not in source
+    assert "await flow.wake(" not in source
 
 
 def test_the_page_no_longer_confirms_in_the_browser_dialog() -> None:
@@ -256,61 +277,3 @@ def test_the_button_opens_the_confirmation_in_the_shared_modal() -> None:
     expected = f"/projects/{PROJECT}/deployments/{DEPLOYMENT}/actions/cache-legen/confirm"
     assert f"openServiceModal('{expected}'" in html
     assert FAKE_ACTION.endpoint not in html, "the endpoint belongs in the confirmation, not on the page"
-
-
-class TestTheDialogSaysItIsBusy:
-    """These endpoints are not quick, so the dialog must not look idle while one runs.
-
-    Sleeping a deployment commits to git and then runs the whole reprocessing pipeline,
-    ArgoCD sync included, with the request open the whole time. Without a waiting state
-    the dialog sits there unchanged for tens of seconds and the only reasonable
-    conclusion is that the button did nothing.
-    """
-
-    _FRAGMENT = pathlib.Path(__file__).parent.parent / "opi/templates/project-details/deployment-action-confirm.html.j2"
-
-    def _rendered(self) -> str:
-        from unittest.mock import MagicMock
-
-        from opi.core.templates import get_templates
-
-        request = MagicMock()
-        request.state.csrf_token = "TOK"
-        action = MagicMock()
-        action.label = "Deployment slapen"
-        action.kind = "secondary"
-        action.icon = "klok"
-        action.endpoint = "/projects/p/deployments/d/sleep"
-        template = get_templates().env.get_template("project-details/deployment-action-confirm.html.j2")
-        return template.render(
-            request=request, action=action, message="Zeker weten?", busy_message="Bezig met in slaapstand zetten..."
-        )
-
-    def test_the_waiting_state_is_driven_by_htmx_not_by_hand_written_javascript(self) -> None:
-        """hx-indicator means every service action gets this without asking for it."""
-        assert "hx-indicator" in self._FRAGMENT.read_text()
-
-    def test_the_busy_message_is_rendered(self) -> None:
-        assert "Bezig met in slaapstand zetten..." in self._rendered()
-
-    def test_the_busy_box_is_a_roos_alert(self) -> None:
-        """Not a hand-rolled paragraph: the page has a component for this."""
-        assert "rvo-alert" in self._rendered()
-
-    def test_the_indicator_id_occurs_exactly_once(self) -> None:
-        """ROOS copies an id onto an inner element as well, so putting it on the c-alert
-        itself yields a duplicate id and an ambiguous hx-indicator selector. The id
-        belongs on the wrapper."""
-        assert self._rendered().count('id="deployment-action-busy"') == 1
-
-    def test_every_sleep_mode_action_says_what_the_wait_is_for(self) -> None:
-        """A generic "Bezig..." is the fallback, not the intent: the service knows
-        whether it is putting something to sleep or waking it."""
-        from opi.services.catalog.sleep_mode.actions import sleep_actions
-
-        project = {"name": "p", "deployments": [{"name": "d", "cluster": "sandboxed-local"}]}
-        for state in ({}, {"sleep": {"state": "sleeping"}}):
-            deployment = {"name": "d", "cluster": "sandboxed-local", **state}
-            data = {**project, "deployments": [deployment]}
-            for action in sleep_actions(data, "d"):
-                assert action.busy_message, action.label

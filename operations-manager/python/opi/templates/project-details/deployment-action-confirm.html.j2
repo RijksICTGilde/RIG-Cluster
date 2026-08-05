@@ -8,39 +8,27 @@
 
   Expects: action (DeploymentAction), message.
 
-  The CSRF header and the swap live on the wrapping div, NOT on the button: htmx
-  inherits both from an ancestor, and a ROOS <c-button> re-emits attribute values in
-  double quotes, which mangles the JSON of hx-headers. The action endpoints answer
-  JSON, hence hx-swap="none" -- project-details.html.j2 reloads the page on success and
-  fills #deployment-action-error on failure.
+  The CSRF header lives on the wrapping div, NOT on the button: htmx inherits it from an
+  ancestor, and a ROOS <c-button> re-emits attribute values in double quotes, which
+  mangles the JSON of hx-headers.
 
-  These endpoints are NOT quick. Sleeping a deployment commits to git and then runs the
-  whole reprocessing pipeline, ArgoCD sync included, while the request stays open. So the
-  waiting state is not decoration: without it the dialog sits there unchanged for tens of
-  seconds and the only reasonable conclusion is that the button did nothing. Driven by
-  hx-indicator, so every service action gets it without asking for it.
+  On confirm the endpoint answers with the shared progress fragment and htmx swaps it
+  into this dialog, replacing the question with the running task. That is the whole
+  reason these actions are tasks: sleeping a deployment commits to git and then runs the
+  reprocessing pipeline, ArgoCD sync included, so there is real progress to follow rather
+  than a request to wait out.
 #}
 <div data-deployment-action="true"
      hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
-     hx-swap="none"
-     hx-indicator="#deployment-action-busy, #deployment-action-buttons">
+     hx-target="this"
+     hx-swap="innerHTML">
     <div class="edit-section-content">
         <c-layout-flow gap="md">
             <c-p>{{ message }}</c-p>
             <div id="deployment-action-error" class="edit-section-error" style="display: none;"></div>
-            {# htmx puts .htmx-request on the indicator targets for the duration of the
-               request; the stylesheet turns that into "show this, hide the buttons".
-
-               The id sits on this wrapper and NOT on the c-alert: ROOS copies an id onto
-               an inner element too, so the document would carry it twice and the
-               hx-indicator selector would be ambiguous. The wrapper is the behaviour
-               hook, the alert is the component that draws it. #}
-            <div id="deployment-action-busy" class="deployment-action-busy">
-                <c-alert kind="info" content="{{ busy_message }}" />
-            </div>
         </c-layout-flow>
     </div>
-    <div id="deployment-action-buttons" class="edit-section-actions">
+    <div class="edit-section-actions">
         <c-button type="button" label="Annuleren" kind="tertiary" @click="closeEditModal()" />
         <c-button
             type="button"

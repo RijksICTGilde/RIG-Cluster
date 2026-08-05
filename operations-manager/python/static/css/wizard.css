@@ -428,16 +428,3 @@ c-fieldset c-fieldset {
 .cm-kv-wrapper .cm-editor.cm-focused { outline: 2px solid #007BC7; }
 .kv-editor--error .cm-kv-wrapper { border-color: #d52b1e; }
 
-/* Waiting state of a deployment-action confirmation.
-   htmx puts .htmx-request on both indicator targets for the duration of the request, so
-   the buttons step aside for the message. Hidden by default: the dialog opens as a
-   question, not as something already running. */
-.deployment-action-busy {
-    display: none;
-}
-.deployment-action-busy.htmx-request {
-    display: block;
-}
-.edit-section-actions.htmx-request {
-    display: none;
-}
