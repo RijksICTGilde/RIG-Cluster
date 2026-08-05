@@ -89,6 +89,7 @@ def provisioning_services() -> list[Service]:
 #: separately-declared list that could drift from the implementation.
 _HOOK_DEFAULTS: dict[HookPoint, Any] = {
     HookPoint.AFTER_SYNC: Service.observe_deployment,
+    HookPoint.DEPLOYMENT_STATE: Service.deployment_state,
 }
 
 
