@@ -35,6 +35,10 @@ from opi.forms.wizard.resolver import (
     resolve_active_sections,
 )
 from opi.forms.wizard.save import apply_modal_edit
+from opi.forms.wizard.secrets import (
+    reachable_leaf_keys,
+    redact_unreachable_secrets,
+)
 from opi.forms.wizard.session import (
     clear_modal_state_by_token,
     get_modal_state_by_token,
@@ -592,7 +596,22 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # id/filename are needed to display the catalog, and carrying the encrypted blocks
     # bloats the disk-backed session. The content is re-attached from the stored project
     # at save (PreserveAttachmentContentHook).
-    step_data = _split_data_across_sections(flow, _strip_attachment_content(project_data))
+    #
+    # Then drop every other encrypted value this flow cannot edit, so the disk-backed
+    # session stops carrying (and writing back) secrets no step touches. Derived from the
+    # flow's own editables rather than a field list -- see opi.forms.wizard.secrets.
+    session_data = _strip_attachment_content(project_data)
+    keep_keys = reachable_leaf_keys([ed for section in flow.sections for ed in section.editables])
+    session_data, redacted_paths = redact_unreachable_secrets(session_data, keep_keys)
+    if redacted_paths:
+        logger.debug(
+            "Flow %s cannot edit %d encrypted value(s); kept out of the session: %s",
+            flow_id,
+            len(redacted_paths),
+            ", ".join(redacted_paths),
+        )
+
+    step_data = _split_data_across_sections(flow, session_data)
 
     # Resolve active sections with pre-filled data.
     # For single-section edit flows the section's visibility lambda may not
@@ -634,7 +653,11 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # a copy in template_data would cause get_merged_data's merge-by-index
     # to silently retain items the user removed in the UI.
     owned = _fully_owned_list_keys(flow)
-    state.template_data = {k: v for k, v in project_data.items() if k not in owned}
+    # ``session_data``, not ``project_data``: template_data is persisted to disk like
+    # step_data is, so it needs the same attachment strip and secret redaction. It read
+    # from the raw project before, which left the encrypted blocks in the session even
+    # though step_data had been stripped of them.
+    state.template_data = {k: v for k, v in session_data.items() if k not in owned}
     state.template_data["_wizard_token"] = wizard_token
 
     # Remember that this was an add: the flow is rebuilt from its id on later

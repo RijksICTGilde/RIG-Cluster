@@ -243,6 +243,34 @@ def is_age_encrypted(content: str) -> bool:
     )
 
 
+#: Prefix of the single-line encrypted form. Deliberately a plain string in the YAML (it
+#: is base64, so it needs no block scalar); ``is_age_encrypted`` does not recognise it
+#: because that function answers "can I hand this to age --decrypt", which this form
+#: cannot without being decoded first.
+BASE64_AGE_PREFIX = "base64+age:"
+
+
+def carries_encrypted_value(value: object) -> bool:
+    """Whether a value holds an encrypted secret, in EITHER stored form.
+
+    The project schema declares exactly two (``$defs/age-encrypted``): the armored block
+    and the ``base64+age:`` prefix. Which one a field uses is a storage decision -- the
+    armored block is multi-line and needs a literal scalar, the prefixed form is a plain
+    one-line string -- but for the question "is this a secret" they are equal.
+
+    Use this rather than testing for one marker: real project files carry the repository
+    password, the api key and the project private key in the prefixed form, so code that
+    only looks for the armored block silently treats those as ordinary values.
+
+    ``plain:`` is NOT covered. It marks a deliberately unencrypted password, so it is not
+    an encrypted value; it is still sensitive, which is worth knowing wherever this is used
+    to decide what may be written down.
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    return is_age_encrypted(value) or value.strip().startswith(BASE64_AGE_PREFIX)
+
+
 async def decrypt_if_encrypted(content: str, private_key: str | None) -> str:
     """
     Decrypt content if it's age-encrypted, otherwise return as-is.
