@@ -31,6 +31,7 @@ from opi.forms.wizard.resolver import (
     resolve_active_section_ids,
     resolve_active_sections,
 )
+from opi.forms.wizard.save import apply_modal_edit
 from opi.forms.wizard.session import (
     clear_modal_state_by_token,
     get_modal_state_by_token,
@@ -42,10 +43,7 @@ from opi.services.project_authorization import (
 )
 from opi.services.project_store import get_project_store
 from opi.utils.csrf import reject_misfired_form_get
-from opi.web.project_edit_security import (
-    apply_form_data_to_project,
-    require_project_edit_access,
-)
+from opi.web.project_edit_security import require_project_edit_access
 from opi.web.router_wizard import (
     _empty_sequence_item,
     _extract_section_data,
@@ -233,30 +231,6 @@ def _fully_owned_list_keys(flow: Any) -> set[str]:
     return owned
 
 
-def _template_only_keys(
-    step_data: dict[str, dict[str, Any]],
-    template_data: dict[str, Any] | None,
-    virt_mappings: dict[str, str],
-) -> set[str]:
-    """Top-level keys present only as template context, to strip before the merged data
-    overwrites the stored project.
-
-    ``template_data`` carries context the step data does not (config for AGE decryption,
-    existing names for uniqueness). Anything the step actually produced must NOT be treated
-    as template-only, or the edit is reverted to the git baseline.
-
-    Crucially, a section that produces a VIRTUAL key (e.g. ``_services-config``) owns the
-    REAL key it folds into (``services``): ``get_merged_data`` has already devirtualized the
-    edit into ``services``. Counting only the raw produced keys left ``services`` looking
-    template-only, so every project-level service-config modal edit (a new invite, a keycloak
-    template change) was popped and lost. ``virt_mappings`` maps virtual -> real, so we add
-    each produced virtual key's real target to the produced set.
-    """
-    produced = {k for sd in step_data.values() for k in sd}
-    produced |= {virt_mappings[k] for k in produced if k in virt_mappings}
-    return set(template_data or {}) - produced
-
-
 def _build_cross_domain_context(project_name: str, project_data: dict[str, Any], user_email: str) -> dict[str, Any]:
     """Precompute cross-domain-access select options (RC-15).
 
@@ -355,70 +329,6 @@ def _strip_attachment_content(project_data: dict[str, Any]) -> dict[str, Any]:
         if isinstance(att, dict):
             att.pop("content", None)
     return data
-
-
-def _detect_list_target(flow_id: str, state: Any) -> tuple[str, int, bool] | None:
-    """Detect if a flow targets a single item in a list.
-
-    Returns (list_key, index, is_new) or None for non-list flows.
-    """
-    for prefix, list_key in [
-        ("modal-edit-component-", "components"),
-        ("modal-edit-deployment-", "deployments"),
-        ("modal-add-deployment-", "deployments"),
-        ("modal-edit-domain-", "deployments"),
-        ("modal-edit-backup-schedule-", "deployments"),
-    ]:
-        if flow_id.startswith(prefix):
-            suffix = flow_id.removeprefix(prefix)
-            if suffix.isdigit():
-                idx = int(suffix)
-                is_new = prefix == "modal-add-deployment-" or (
-                    prefix == "modal-edit-component-" and state and (state.template_data or {}).get("is_new", False)
-                )
-                return list_key, idx, is_new
-    return None
-
-
-def _apply_list_item_merge(
-    existing_data: dict[str, Any],
-    merged_data: dict[str, Any],
-    list_key: str,
-    idx: int,
-    is_new: bool,
-) -> None:
-    """Merge a single list item into the existing project data.
-
-    For add: appends the new item to the list.
-    For edit: updates the item at the given index in-place, preserving
-    fields the form didn't touch (e.g. readonly ``name``).
-
-    A plain ``dict.update`` cannot express a deleted key, so a field the
-    user cleared (dropped from *item_data*) would otherwise be resurrected
-    from the existing item. ``item_data`` therefore carries ``CLEARED_FIELD``
-    tombstones for such fields (the caller builds *merged_data* with
-    ``strip_cleared=False``); after merging we drop the tombstoned keys.
-    """
-    import copy
-
-    from opi.forms.wizard.state import _strip_cleared_fields
-
-    source_list = merged_data.get(list_key)
-    if not isinstance(source_list, list) or idx >= len(source_list):
-        return
-
-    item_data = copy.deepcopy(source_list[idx])
-    existing_list = existing_data.setdefault(list_key, [])
-
-    if is_new:
-        _strip_cleared_fields(item_data)
-        existing_list.append(item_data)
-    elif idx < len(existing_list) and isinstance(existing_list[idx], dict):
-        existing_list[idx].update(item_data)
-        _strip_cleared_fields(existing_list[idx])
-    elif idx < len(existing_list):
-        _strip_cleared_fields(item_data)
-        existing_list[idx] = item_data
 
 
 def _seed_components_for_new_deployment(state: Any, dep_idx: int) -> None:
@@ -1282,23 +1192,10 @@ async def _modal_do_submit(
         )
 
     # Merge all step data. Keep CLEARED_FIELD tombstones (strip_cleared=False)
-    # so the dict.update-based merge into the stored project (which cannot
-    # express a deleted key) can honor cleared fields; _apply_list_item_merge
-    # and the defensive strip below remove the tombstones before save.
+    # so the merge into the stored project (which cannot express a deleted key
+    # by absence) can honor cleared fields; ``apply_modal_edit`` removes the
+    # tombstones before the result is saved.
     merged_data = state.get_merged_data(strip_cleared=False)
-
-    # Collect editables for hook execution and the late transient strip.
-    # Transients are intentionally preserved on merged_data here so that
-    # PRE_SAVE hooks (e.g. SubdomainRequestHook reading ``_request-subdomain``)
-    # see them after the list-item merge into ``existing_data``.
-    all_editables = [ed for section in active_sections for ed in section.editables]
-
-    # Strip template-only keys: template_data provides context for rendering
-    # and validation (e.g. config for AGE decryption, existing_deployment_names
-    # for uniqueness checks) but should not overwrite existing project data.
-    # JSON session round-trip also strips ruamel.yaml types (LiteralScalarString).
-    for key in _template_only_keys(state.step_data, state.template_data, state.virt_mappings):
-        merged_data.pop(key, None)
 
     # Merge with existing project data (preserve system-managed fields)
     project = get_project_store().get(project_name)
@@ -1317,11 +1214,10 @@ async def _modal_do_submit(
             request,
             project_manager,
             project_name,
-            flow_id,
+            flow,
             wizard_token,
             merged_data,
             active_sections,
-            all_editables,
             state,
         )
     finally:
@@ -1384,11 +1280,10 @@ async def _process_and_save_modal_edit(
     request: Request,
     project_manager: ProjectManager,
     project_name: str,
-    flow_id: str,
+    flow: FormFlow,
     wizard_token: str | None,
     merged_data: dict,
     active_sections,
-    all_editables,
     state,
 ) -> tuple[dict, HTMLResponse | None]:
     """Read, merge the modal-edit form into the project, and persist it.
@@ -1411,130 +1306,26 @@ async def _process_and_save_modal_edit(
         if isinstance(entry, dict) and entry.get("content")
     }
 
-    # Targeted list merge for flows that operate on a single list item.
-    # Instead of replacing the entire list, we add or update one entry.
-    list_target = _detect_list_target(flow_id, state)
-    if list_target:
-        list_key, idx, is_new = list_target
-        _apply_list_item_merge(existing_data, merged_data, list_key, idx, is_new)
-        merged_data.pop(list_key, None)
-
-        # New deployments need system-managed fields that the form doesn't
-        # collect. Copy cluster/namespace/repository from an existing deployment
-        # or fall back to sensible defaults.
-        if list_key == "deployments" and is_new:
-            deployments = existing_data.get("deployments", [])
-            if deployments and isinstance(deployments[-1], dict):
-                new_dep = deployments[-1]
-                # Find an existing deployment to copy system fields from
-                existing_dep = next(
-                    (d for d in deployments[:-1] if isinstance(d, dict)),
-                    None,
-                )
-                new_dep.setdefault("namespace", project_name)
-                if existing_dep:
-                    for field in ("cluster", "repository"):
-                        if field in existing_dep and field not in new_dep:
-                            new_dep[field] = existing_dep[field]
-
-    existing_data = apply_form_data_to_project(existing_data, merged_data)
-
-    # Run post_merge hooks (e.g. distribute component refs to deployments)
-    for section in active_sections:
-        if section.post_merge:
-            section.post_merge(existing_data, merged_data)
-
-    # Compute derived values (e.g. issuer from base-domain)
-    processor = EditableFormProcessor()
-    for section in active_sections:
-        processor.apply_dependent_generators(section.editables, existing_data)
-
-    # PRE_SAVE hooks: run while transients are still available so that hooks
-    # such as SubdomainRequestHook can read ``_request-subdomain`` and append
-    # the corresponding entry to ``domains.allowed-subdomains``. Mirrors the
-    # equivalent block in router_wizard.py.
-    from opi.forms.editables.editable import Editable, FormState, WidgetType
-    from opi.forms.editables.hooks import (
-        PreserveAttachmentContentHook,
-        ResolveAttachmentsHook,
-        StripTransientsHook,
-    )
-    from opi.forms.editables.lifecycle import run_hooks
-    from opi.forms.editables.resolvers import build_resolver_map
-    from opi.forms.visualizers.visualizer import EditableVisualizer
-
-    strip_hook_editable = EditableVisualizer(
-        editable=Editable(
-            yaml_path="_system/strip-transients",
-            hooks={FormState.PRE_SAVE: StripTransientsHook(all_editables)},
-        ),
-        widget=WidgetType.HIDDEN,
-        label="",
-    )
-    # Resolve any files staged during this modal session into the encrypted catalog.
-    # The project AGE key is present in existing_data here, so the hook can encrypt.
-    attachments_hook_editable = EditableVisualizer(
-        editable=Editable(
-            yaml_path="_system/resolve-attachments",
-            hooks={FormState.PRE_SAVE: ResolveAttachmentsHook()},
-        ),
-        widget=WidgetType.HIDDEN,
-        label="",
-    )
-    # Re-attach existing attachments' content stripped from the wizard session.
-    preserve_attachments_hook_editable = EditableVisualizer(
-        editable=Editable(
-            yaml_path="_system/preserve-attachment-content",
-            hooks={FormState.PRE_SAVE: PreserveAttachmentContentHook()},
-        ),
-        widget=WidgetType.HIDDEN,
-        label="",
-    )
-    hook_context = {
-        "project_name": project_name,
-        "resolvers": build_resolver_map(all_editables),
-        "staged_attachments": state.staged_attachments or {},
-        "original_attachment_content": original_attachment_content,
-    }
-    await run_hooks(
-        FormState.PRE_SAVE,
-        [
-            *all_editables,
-            attachments_hook_editable,
-            preserve_attachments_hook_editable,
-            strip_hook_editable,
-        ],
+    existing_data = await apply_modal_edit(
         existing_data,
-        hook_context,
+        merged_data,
+        flow=flow,
+        active_sections=active_sections,
+        state=state,
+        project_name=project_name,
+        original_attachment_content=original_attachment_content,
     )
-
-    # Defensive: ensure any transients not stripped by the PRE_SAVE chain
-    # are still removed before save.
-    for section in active_sections:
-        processor.strip_transients_from(existing_data, section.editables)
-
-    # Ensure AGE-encrypted multiline values use literal block scalars
-    from opi.web.router_wizard import _apply_literal_scalars
-
-    _apply_literal_scalars(existing_data)
-
-    # Defensive: drop any CLEARED_FIELD tombstones that survived the merges
-    # above (e.g. via the top-level apply_form_data_to_project path) so they
-    # never reach the saved project file.
-    from opi.forms.wizard.state import _strip_cleared_fields
-
-    _strip_cleared_fields(existing_data)
 
     # Save through the single validated path: schema + structural integrity
     # validation, canonical dumper, commit + push, and cache refresh in one shot.
     # A validation failure (e.g. pre-existing structural drift surfaced by the
     # full-project check) is returned to the caller as a review re-render.
     try:
-        await project_manager.save_and_commit_project(existing_data, f"Update {project_name} ({flow_id})")
+        await project_manager.save_and_commit_project(existing_data, f"Update {project_name} ({flow.flow_id})")
     except (ProjectSchemaError, ProjectIntegrityError) as e:
-        logger.warning("Modal wizard save rejected by validation for %s (flow=%s): %s", project_name, flow_id, e)
+        logger.warning("Modal wizard save rejected by validation for %s (flow=%s): %s", project_name, flow.flow_id, e)
         return existing_data, _render_modal_review(
-            request, wizard_token, project_name, flow_id, active_sections, state, global_errors=[str(e)]
+            request, wizard_token, project_name, flow.flow_id, active_sections, state, global_errors=[str(e)]
         )
     return existing_data, None
 
