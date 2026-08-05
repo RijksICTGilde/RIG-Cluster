@@ -8,7 +8,6 @@ to drive multi-step edit flows within the modal.
 from __future__ import annotations
 
 import logging
-import re
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -21,7 +20,11 @@ from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.service_path import smart_get_value, smart_set_value
-from opi.forms.visualizers.flows import get_flow
+from opi.forms.visualizers.flows import (
+    flow_context_from_template,
+    get_flow,
+    parse_indexed_flow_id,
+)
 from opi.forms.visualizers.wizard_sections import (
     EDIT_SECTIONS,
     _extract_services,
@@ -190,24 +193,14 @@ def _is_backup_restore_flow(flow_id: str) -> bool:
 
 
 def _flow_context_from_state(state: WizardState | None, flow_id: str) -> dict[str, Any]:
-    """Extract flow builder context from wizard state.
+    """What the flow builder for *flow_id* needs from this wizard session.
 
-    Deployment edit flows need ``component_count`` so the sequence
-    enforces a max-items limit matching the number of project components.
-    Component add flows need ``is_new`` so the name field is editable.
+    Each flow family declares that for itself (see ``INDEXED_FLOWS``); this
+    only hands it the session's template data.
     """
-    if not state or not state.template_data:
+    if not state:
         return {}
-    if flow_id.startswith(("modal-edit-deployment-", "modal-add-deployment-")):
-        components = state.template_data.get("components", [])
-        return {"component_count": len(components)}
-    if flow_id.startswith("modal-edit-component-") and state.template_data.get("is_new"):
-        return {"is_new": True}
-    if flow_id == "modal-restore":
-        # The new deployment index = total deployments - 1 (the appended empty slot)
-        deployments = state.template_data.get("deployments", [])
-        return {"deployment_index": len(deployments) - 1}
-    return {}
+    return flow_context_from_template(flow_id, state.template_data)
 
 
 def _fully_owned_list_keys(flow: Any) -> set[str]:
@@ -264,35 +257,28 @@ def _build_cross_domain_context(project_name: str, project_data: dict[str, Any],
     return {"_cross_domain_projects": projects, "_cross_domain_ports": sorted(ports)}
 
 
-def _pad_sparse_submission(body: dict[str, Any], flow_id: str, section_id: str = "") -> dict[str, Any]:
+def _pad_at(body: dict[str, Any], key: str, target_idx: int) -> dict[str, Any]:
+    """Re-pad *body*'s *key* list so its single item sits at *target_idx*."""
+    items = body.get(key)
+    if isinstance(items, list) and len(items) >= 1 and target_idx > 0:
+        return {**body, key: [{} for _ in range(target_idx)] + items}
+    return body
+
+
+def _pad_sparse_submission(body: dict[str, Any], flow: FormFlow, section_id: str = "") -> dict[str, Any]:
     """Pad sparse arrays collapsed by json-enc's cleanArrays.
 
-    Single-item edit flows (component-N, deployment-N, domain-N) produce
-    form fields at a specific array index (e.g. ``components[1]/name``).
-    json-enc's ``cleanArrays`` collapses ``{"1": {...}}`` into ``[{...}]``,
-    losing the original index.  This re-pads the array so that
-    ``get_value`` finds data at the correct position.
+    Single-item edit flows produce form fields at a specific array index
+    (e.g. ``components[1]/name``). json-enc's ``cleanArrays`` collapses
+    ``{"1": {...}}`` into ``[{...}]``, losing the original index. This
+    re-pads the array so that ``get_value`` finds data at the correct
+    position.
 
-    Uses flow_id first; falls back to section_id for flows like
-    modal-restore where the index is in the section, not the flow.
+    Uses the flow's declared target; falls back to section_id for flows like
+    modal-restore, where the index sits in the section, not on the flow.
     """
-    # Try flow_id first (most flows encode the index there)
-    for prefix, key in [
-        ("modal-edit-component-", "components"),
-        ("modal-edit-deployment-", "deployments"),
-        ("modal-edit-domain-", "deployments"),
-        ("modal-add-deployment-", "deployments"),
-        ("modal-edit-backup-schedule-", "deployments"),
-    ]:
-        if flow_id.startswith(prefix):
-            suffix = flow_id.removeprefix(prefix)
-            if suffix.isdigit():
-                target_idx = int(suffix)
-                items = body.get(key)
-                if isinstance(items, list) and len(items) >= 1 and target_idx > 0:
-                    padded = [{} for _ in range(target_idx)] + items
-                    return {**body, key: padded}
-            break
+    if flow.target is not None:
+        return _pad_at(body, flow.target.list_key, flow.target.index)
 
     # Fall back to section_id (e.g. "add-deployment-info-1" → deployments index 1)
     for prefix, key in [
@@ -303,11 +289,7 @@ def _pad_sparse_submission(body: dict[str, Any], flow_id: str, section_id: str =
         if section_id.startswith(prefix):
             suffix = section_id.removeprefix(prefix)
             if suffix.isdigit():
-                target_idx = int(suffix)
-                items = body.get(key)
-                if isinstance(items, list) and len(items) >= 1 and target_idx > 0:
-                    padded = [{} for _ in range(target_idx)] + items
-                    return {**body, key: padded}
+                return _pad_at(body, key, int(suffix))
             break
 
     return body
@@ -439,22 +421,18 @@ def _render_modal_step(
     return rendered
 
 
-_DEPLOYMENT_FLOW_RE = re.compile(r"^modal-(?:edit|add)-(?:deployment|domain)-(\d+)$")
+def _targeted_deployment_name(flow: FormFlow, project_data: dict[str, Any]) -> str | None:
+    """The name of the deployment this flow writes to, if it targets one.
 
-
-def _extract_deployment_name_from_flow(flow_id: str, project_data: dict[str, Any]) -> str | None:
-    """Extract the targeted deployment name from a deployment-scoped flow_id.
-
-    Returns the deployment name if the flow targets a specific deployment,
-    or None for project-wide flows (components, services, etc.).
+    Returns None for project-wide flows (components, services, etc.), which
+    process the whole project rather than one deployment.
     """
-    match = _DEPLOYMENT_FLOW_RE.match(flow_id)
-    if not match:
+    target = flow.target
+    if target is None or target.list_key != "deployments":
         return None
-    index = int(match.group(1))
     deployments = project_data.get("deployments", [])
-    if index < len(deployments):
-        name = deployments[index].get("name")
+    if target.index < len(deployments):
+        name = deployments[target.index].get("name")
         if name:
             return name
     return None
@@ -564,37 +542,44 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 
     project_data = project.data or {}
 
-    # Pass context to dynamic flow builders (e.g. component_count for deployment edit)
-    flow_context: dict[str, Any] = {}
-    if flow_id.startswith(("modal-edit-deployment-", "modal-add-deployment-")):
-        flow_context["component_count"] = len(project_data.get("components", []))
+    # What the flow builder needs, declared by the flow family itself.
+    flow_context: dict[str, Any] = dict(flow_context_from_template(flow_id, project_data))
 
-    # When adding a new component, ensure the components list has the target slot
-    if flow_id.startswith("modal-edit-component-"):
-        from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
+    indexed = parse_indexed_flow_id(flow_id)
+    if indexed is not None:
+        kind, idx = indexed
 
-        idx = int(flow_id.removeprefix("modal-edit-component-"))
-        components = list(project_data.get("components", []))
-        if idx >= len(components):
-            flow_context["is_new"] = True
-            while len(components) <= idx:
-                components.append(_empty_sequence_item(COMPONENTS_SEQUENCE))
-            project_data = {**project_data, "components": components}
+        # A component flow opened past the end of the list is an add: make the
+        # slot the form writes into.
+        if kind.targets_new_item_when_missing:
+            from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 
-    # When adding a new deployment (or restoring to a new one), append an
-    # empty slot so the form targets that slot instead of an existing deployment.
-    if flow_id.startswith("modal-add-deployment-") or flow_id == "modal-restore":
+            items = list(project_data.get(kind.list_key, []))
+            if idx >= len(items):
+                flow_context["is_new"] = True
+                while len(items) <= idx:
+                    items.append(_empty_sequence_item(COMPONENTS_SEQUENCE))
+                project_data = {**project_data, kind.list_key: items}
+
+        # An add flow always writes into a fresh slot at the end of the list.
+        if kind.appends_new_item:
+            from opi.core.config import settings
+
+            items = list(project_data.get(kind.list_key, []))
+            idx = len(items)
+            items.append({"cluster": settings.CLUSTER_MANAGER})
+            project_data = {**project_data, kind.list_key: items}
+            flow_id = f"{kind.prefix}{idx}"
+
+    # Restoring into a new deployment appends the same kind of slot, but the
+    # index travels as builder context: the flow id carries no index.
+    if flow_id == "modal-restore":
         from opi.core.config import settings
 
         deployments = list(project_data.get("deployments", []))
-        idx = len(deployments)
+        flow_context["deployment_index"] = len(deployments)
         deployments.append({"cluster": settings.CLUSTER_MANAGER})
         project_data = {**project_data, "deployments": deployments}
-
-        if flow_id.startswith("modal-add-deployment-"):
-            flow_id = f"modal-add-deployment-{idx}"
-        else:
-            flow_context["deployment_index"] = idx
 
     flow = get_flow(flow_id, **flow_context)
 
@@ -652,8 +637,9 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     state.template_data = {k: v for k, v in project_data.items() if k not in owned}
     state.template_data["_wizard_token"] = wizard_token
 
-    # Store is_new flag so _detect_list_target can distinguish add vs edit
-    if flow_id.startswith("modal-edit-component-") and flow_context.get("is_new"):
+    # Remember that this was an add: the flow is rebuilt from its id on later
+    # requests, and only the session knows the item did not exist yet.
+    if flow_context.get("is_new"):
         state.template_data["is_new"] = True
         existing_components = (project.data or {}).get("components", [])
         state.template_data["existing_component_names"] = [
@@ -661,7 +647,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         ]
 
     # Add-deployment and restore flows need existing names for uniqueness validation
-    if flow_id.startswith("modal-add-deployment-") or flow_id == "modal-restore":
+    if (indexed is not None and indexed[0].appends_new_item) or flow_id == "modal-restore":
         existing_deployments = (project.data or {}).get("deployments", [])
         existing_names = [d.get("name") for d in existing_deployments if isinstance(d, dict) and d.get("name")]
         state.template_data["existing_deployment_names"] = existing_names
@@ -764,7 +750,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     if seq_action in ("add", "remove"):
         yaml_data = state.get_merged_data()
         processor = EditableFormProcessor()
-        padded_body = _pad_sparse_submission(body, flow_id, section_id)
+        padded_body = _pad_sparse_submission(body, flow, section_id)
         merged, _err = await processor.process_json_submission(
             padded_body,
             section.editables,
@@ -798,7 +784,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         rendered = _render_modal_step(request, wizard_token, state, flow_id, section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
-    submitted_data = _pad_sparse_submission(body, flow_id, section_id)
+    submitted_data = _pad_sparse_submission(body, flow, section_id)
 
     # Re-render only (preview update, e.g. service checkbox toggled) — process
     # the submission to get merged data but skip validation so newly-visible
@@ -1228,8 +1214,8 @@ async def _modal_do_submit(
     logger.info("Project %s updated via modal wizard (flow=%s)", project_name, flow_id)
 
     if action == "process_project":
-        # Extract targeted deployment name from flow_id when editing a specific deployment
-        target_deployment_name = _extract_deployment_name_from_flow(flow_id, existing_data)
+        # A flow that declares a deployment target deploys only that deployment
+        target_deployment_name = _targeted_deployment_name(flow, existing_data)
         task_id = await _start_deployment(
             request,
             project_name,
