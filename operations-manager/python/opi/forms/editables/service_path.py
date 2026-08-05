@@ -173,6 +173,31 @@ def smart_get_value(data: dict[str, Any], yaml_path: str) -> Any:
         # Dict-shaped root (a form submission): a plain walk is the correct read.
         return get_value(data, yaml_path)
 
+    value = _read_from_service_list(services, yaml_path)
+    if value is None:
+        # Not under the root the path names, so try the other one. A reader asks for
+        # "services/keycloak/config/..." because that is where the value lives in the
+        # project file, but during the wizard the same config sits under the virtual
+        # root while ``services`` holds only the chosen names. Falling back here fixes
+        # every reader at once: options providers were returning empty lists in the
+        # wizard (the invite realm-role picker had nothing to choose from) purely
+        # because they asked for the real path.
+        #
+        # Reads only. A WRITE must never wander to another root, or an edit would land
+        # somewhere the form does not read back.
+        for other_root in _SERVICE_ROOTS:
+            if other_root == service_root_of(yaml_path):
+                continue
+            sibling = _service_list_at(data, other_root + "/x")
+            if sibling is not None:
+                value = _read_from_service_list(sibling, yaml_path)
+                if value is not None:
+                    break
+    return value
+
+
+def _read_from_service_list(services: list[Any], yaml_path: str) -> Any:
+    """Resolve a service-config path against one services list."""
     service_name, sub_path = parse_service_path(yaml_path)
     idx, entry = find_service_in_list(services, service_name)
 
