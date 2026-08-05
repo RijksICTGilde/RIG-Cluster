@@ -5,6 +5,7 @@
     - argocd_status: dict of deployment_name -> status
     - current_cluster: current cluster name
     - project: the project object
+    - disabled_state: DeploymentDisabledState for this deployment (opi.services.disabled_state)
   Optional:
     - _argocd_card_id_prefix: prefix for error toggle IDs (default: deployment.name)
 #}
@@ -15,8 +16,19 @@
 {% set has_errors = errors|length > 0 %}
 {% set _id_prefix = _argocd_card_id_prefix | default(deployment.name) %}
 {# Components auto-disabled (replicas 0) by the OOM/image-pull watcher or sanitize pass.
-   The flag is written inline per deployment-component (comp.disabled + comp.disabled-reason). #}
+   The flag is written inline per deployment-component (comp.disabled + comp.disabled-reason);
+   these carry the reason and drive the per-component alerts below. #}
 {% set disabled_components = deployment.components | selectattr('disabled') | list if deployment.components else [] %}
+{# Whether this card gets to show ArgoCD's badges at all. Computed up front because the
+   switched-off chip in the header only has to appear when the badge row does not (RC-31):
+   otherwise the same word would stand twice on one card. #}
+{% set has_image = deployment.components | selectattr('image', 'defined') | selectattr('image') | list | length > 0 if deployment.components else false %}
+{% set shows_argocd_status = has_image and deployment.cluster == current_cluster %}
+{# A health verdict is a problem verdict for anything that is not Healthy/Progressing.
+   Load-bearing: switching a deployment off replaces the health badge, and a component
+   that is off AND broken must keep showing that it is broken. #}
+{% set health_is_problem = health not in ('Healthy', 'Progressing') %}
+{% set disabled_replaces_health = disabled_state.is_disabled and not health_is_problem %}
 
 <c-card padding="lg" outline="true" backgroundColor="grijs-050" style="border-left: 4px solid var(--rvo-color-hemelblauw);">
     <c-layout-flow gap="md">
@@ -25,9 +37,16 @@
             <c-icon icon="applicatie" size="md" color="donkerblauw" />
             <c-heading type="h4" textContent="{{ deployment.name }}" />
             <span style="background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">{{ deployment.cluster }}</span>
-            {% if disabled_components %}
-            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: #ffcdd2; color: #b71c1c;">
-                <c-icon icon="foutmelding" size="sm" />Uitgeschakeld
+            {# Partly off is its own situation: something is still serving traffic, so the
+               health badge stays and this chip says how much is not. Fully off only needs
+               a chip here when there is no badge row to carry it. #}
+            {% if disabled_state.is_partially_disabled %}
+            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: #ffe0b2; color: #e65100;">
+                <c-icon icon="uit-aanknop" size="sm" />{{ disabled_state.disabled_count }} van {{ disabled_state.total_count }} componenten uitgeschakeld
+            </span>
+            {% elif disabled_state.is_disabled and not shows_argocd_status %}
+            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700);">
+                <c-icon icon="uit-aanknop" size="sm" />Uitgeschakeld
             </span>
             {% endif %}
         </c-layout-row>
@@ -56,9 +75,6 @@
         {% endfor %}
         {% endif %}
 
-        {# Check if any component has a container image #}
-        {% set has_image = deployment.components | selectattr('image', 'defined') | selectattr('image') | list | length > 0 if deployment.components else false %}
-
         {% if not has_image %}
         {# No components have images - deployment has no resources #}
         <c-card padding="md" backgroundColor="grijs-100" outline="true">
@@ -84,7 +100,21 @@
         {# Deployment is on current cluster - show ArgoCD status #}
         {# Status Badges Row #}
         <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+            {# Switched-off badge (RC-31). A deployment that is off has zero replicas and
+               ArgoCD calls that Healthy; showing the green badge here is the sentence the
+               user reads to know whether things are going well, and it was untrue. So it
+               takes the health badge's place -- but only when health has nothing to report:
+               a deployment that is off AND degraded shows both, or switching something off
+               would hide a real failure. #}
+            {% if disabled_state.is_disabled %}
+            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 16px; font-size: 0.8rem; font-weight: 500; background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700);">
+                <c-icon icon="uit-aanknop" size="sm" />
+                Uitgeschakeld
+            </span>
+            {% endif %}
+
             {# Health Badge #}
+            {% if not disabled_replaces_health %}
             {% set health_bg = '#c8e6c9' if health == 'Healthy' else ('#bbdefb' if health == 'Progressing' else ('#ffe0b2' if health == 'Degraded' else '#ffcdd2')) %}
             {% set health_color = '#1b5e20' if health == 'Healthy' else ('#0d47a1' if health == 'Progressing' else ('#e65100' if health == 'Degraded' else '#b71c1c')) %}
             <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 16px; font-size: 0.8rem; font-weight: 500; background: {{ health_bg }}; color: {{ health_color }};">
@@ -99,6 +129,7 @@
                 {% endif %}
                 {{ health }}
             </span>
+            {% endif %}
 
             {# Sync Badge. Unknown means ArgoCD cannot compare desired vs live state (often a
                render/CMP error) - show it red, not neutral grey, so it does not read as
