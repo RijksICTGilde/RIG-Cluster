@@ -165,6 +165,18 @@ picked by policy, sleep-mode is driven by a cluster default plus a `match` patte
 is a *decision*, not a default you inherit. If a user is supposed to enable your service,
 `hidden` must stay `False` and you owe the user a configuration screen as well.
 
+The card itself is rendered by the `service_block` macro in
+`opi/templates/widgets/_macros.html.j2` - icon, name, description and help button - and the
+services overview page (`services-overview.html.j2`) renders the same macro, so both places
+show the same thing. Do not build a second service block; `tests/test_service_help.py`
+fails if either template starts rendering its own.
+
+Every definition carries a `help_template`: a Jinja2 file in `opi/templates/help/` with the
+long explanation shown when the user clicks the question mark. The one-line `description` is
+too short to choose on, so the long text is where a user actually decides. The same test
+fails when a service has no `help_template` or points at a file that does not exist - both of
+which fail silently in the UI (no button, or an error inside the modal).
+
 Component-level selection is a second, separate list: the per-component `services` checkbox
 group uses `FilteredServiceOptionsProvider`, which shows only services the *project* already
 selected. A component-scoped service that is not selected at project level can never be
@@ -595,12 +607,18 @@ record a revocation on a domain that is already in use. Enforcement happens at p
      service (automatic), or a `FormSection` + `config_section_id` plus the four wiring steps
      for a project-level one. A user-selectable service without a config screen only works if
      it genuinely has nothing to configure.
-5. Provisions resources? Override `provision`, set `provision_order`, delegate to a manager.
-6. Server-side resources to clean up? Set `cleanup_manager_key`.
-7. Manifest contribution? `manifest_secret_class` for the simple case, otherwise override
+5. **Write the explanation.** Add `opi/templates/help/<service>.html.j2` and point
+   `help_template` at it. Follow the shape of the existing ones: one paragraph *what is it*
+   in plain language, *Wanneer gebruik je dit?* as a list of recognisable situations, and
+   *Wat wordt er ingesteld?* with what happens technically and which other services come
+   along. A system service has no "when do you use this" - explain instead that it always
+   runs and what it does for the user. Use the service's own icon and colour.
+6. Provisions resources? Override `provision`, set `provision_order`, delegate to a manager.
+7. Server-side resources to clean up? Set `cleanup_manager_key`.
+8. Manifest contribution? `manifest_secret_class` for the simple case, otherwise override
    `contribute_manifest_context` / `build_secret_files` and set `manifest_order`.
-8. Needs approval? Add `ApprovalSpec`s from `config_approvals(layer)`.
-9. Walk the UI you claim to have built: open `/projects/<name>/modal-wizard/modal-edit-services`
+9. Needs approval? Add `ApprovalSpec`s from `config_approvals(layer)`.
+10. Walk the UI you claim to have built: open `/projects/<name>/modal-wizard/modal-edit-services`
    and the create wizard, and check the card, the config step and the modal button are really
    there. "The code is complete" and "a user can reach it" are two different statements.
 
@@ -634,6 +652,7 @@ its four wiring points are listed under "Forms and wizard screens".
 ```bash
 cd operations-manager/python
 uv run pytest tests/test_service_providers.py tests/test_service_config_schema.py \
+              tests/test_service_help.py \
               tests/test_golden_manifests.py tests/test_flow_registry_snapshot.py -q
 uv run ruff check . --fix && uv run ruff format . && uv run pyright
 ```
@@ -642,6 +661,7 @@ uv run ruff check . --fix && uv run ruff format . && uv run pyright
 |---|---|
 | `test_service_providers.py` | A `ServiceType` has no service, the registry has extras, a definition drifted, or the provisioning/cleanup/manifest contract changed |
 | `test_service_config_schema.py` | A config model and its committed schema fragment diverge |
+| `test_service_help.py` | A service has no `help_template`, its file is missing or does not render, or a template stopped using the `service_block` macro |
 | `test_golden_manifests.py` | Rendered manifests changed |
 | `test_flow_registry_snapshot.py` | The registry-derived flow and section dicts changed |
 
