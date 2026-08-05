@@ -180,6 +180,27 @@ class EditableFormProcessor:
 
     def __init__(self) -> None:
         self.field_warnings: dict[str, list[str]] = {}
+        #: Project data of the submission being processed, for computed defaults.
+        self._yaml_data: dict[str, Any] = {}
+
+    def _effective_value(self, vis: EditableVisualizer, value: Any) -> Any:
+        """The submitted value, or the editable's default when nothing was submitted.
+
+        The bridge applies defaults when it RENDERS a field, so a value typed into the form
+        arrives here already filled in. A submission that never carried the field at all
+        (the API, or a section the user did not open) would otherwise reach a required check
+        with nothing in it and be rejected -- while a default for exactly that case exists.
+
+        Resolved before validation and before the write, so the default is both accepted and
+        stored: validating it but not storing it would save an invite whose page renders
+        blank, which is the failure the required flag is there to prevent.
+        """
+        if value is not None and value != "":
+            return value
+        default = vis.editable.default
+        if default is None:
+            return value
+        return default(self._yaml_data) if callable(default) else default
 
     @staticmethod
     def _validate_field(
@@ -406,6 +427,10 @@ class EditableFormProcessor:
         """
         result = copy.deepcopy(yaml_data)
         errors: dict[str, list[str]] = {}
+        # Source for computed defaults (see _effective_value). The project data, not the
+        # submission: a default derives from what the project IS, not from what this form
+        # happens to be sending.
+        self._yaml_data = yaml_data
 
         for vis in editables:
             ed = vis.editable
@@ -445,14 +470,17 @@ class EditableFormProcessor:
             elif vis.widget == WidgetType.CHECKBOX:
                 raw = _read_submitted(submitted, ed)
                 value: Any = bool(raw) if raw else False
+                value = self._effective_value(vis, value)
                 self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(ed, ed.yaml_path, value, result)
             elif vis.widget == WidgetType.CHECKBOX_GROUP:
                 value = _coerce_to_list(_read_submitted(submitted, ed))
+                value = self._effective_value(vis, value)
                 self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(ed, ed.yaml_path, value, result)
             else:
                 value = _read_submitted(submitted, ed)
+                value = self._effective_value(vis, value)
                 self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(ed, ed.yaml_path, value, result)
 
@@ -501,14 +529,17 @@ class EditableFormProcessor:
             elif child_vis.widget == WidgetType.CHECKBOX:
                 raw = _read_submitted(submitted, child_ed)
                 value: Any = bool(raw) if raw else False
+                value = self._effective_value(child_vis, value)
                 self._validate_field(child_vis, child_ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(child_ed, child_ed.yaml_path, value, result)
             elif child_vis.widget == WidgetType.CHECKBOX_GROUP:
                 value = _coerce_to_list(_read_submitted(submitted, child_ed))
+                value = self._effective_value(child_vis, value)
                 self._validate_field(child_vis, child_ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(child_ed, child_ed.yaml_path, value, result)
             else:
                 value = _read_submitted(submitted, child_ed)
+                value = self._effective_value(child_vis, value)
                 self._validate_field(child_vis, child_ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(child_ed, child_ed.yaml_path, value, result)
 
@@ -654,6 +685,7 @@ class EditableFormProcessor:
                     value = _coerce_to_list(get_value(submitted, read_path))
                     if not value and virt and read_path != concrete_path:
                         value = _coerce_to_list(smart_get_value(submitted, concrete_path))
+                    value = self._effective_value(child_vis, value)
                     self._validate_field(child_vis, concrete_path, value, errors, context)
                     self._write_field(child_ed, concrete_path, value, result)
                 else:
@@ -666,6 +698,7 @@ class EditableFormProcessor:
                     # is walked through the mixed services list, not read as a dict key.
                     if value is None and virt and read_path != concrete_path:
                         value = smart_get_value(submitted, concrete_path)
+                    value = self._effective_value(child_vis, value)
                     self._validate_field(child_vis, concrete_path, value, errors, context)
                     self._write_field(child_ed, concrete_path, value, result)
                     # Clean up virtual key from result (see _process_nested_sequence_json
@@ -778,6 +811,7 @@ class EditableFormProcessor:
                 # so a service-config real path is walked through the services list.
                 if value is None and virt:
                     value = smart_get_value(submitted, real_child_path)
+                value = self._effective_value(child_vis, value)
                 self._validate_field(child_vis, real_child_path, value, errors, context)
                 self._write_field(child_ed, real_child_path, value, result)
 

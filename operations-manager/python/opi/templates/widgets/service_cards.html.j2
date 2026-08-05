@@ -1,6 +1,6 @@
 {% from "widgets/_macros.html.j2" import helper_text, render_errors, bool_attr %}
 <div class="rvo-form-group">
-    <span class="utrecht-form-label">{{ field.label|e }}</span>
+    <span class="utrecht-form-label rvo-form-field__label-text">{{ field.label|e }}</span>
     {{ helper_text(field) }}
     <div class="service-cards-grid" id="{{ field.path|e }}-grid">
         {% for card in cards %}
