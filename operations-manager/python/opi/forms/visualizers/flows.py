@@ -47,6 +47,8 @@ from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from opi.forms.editables.editable import Editable
     from opi.forms.visualizers.sections import FormSection
 
@@ -54,6 +56,27 @@ if TYPE_CHECKING:
 class FlowMode(Enum):
     WIZARD = "wizard"
     TABS = "tabs"
+
+
+@dataclass(frozen=True)
+class FlowTarget:
+    """The one list item a flow writes to.
+
+    The index is known the moment the flow is built (that is what makes the
+    flow's sections point at ``components[3]`` rather than ``components[*]``).
+    Declaring it here keeps it a number: before, it was pushed into the
+    ``flow_id`` string and picked back out of that text in the router, in
+    several places, each with its own prefix comparison.
+    """
+
+    list_key: str
+    """Top-level list this flow writes into, e.g. ``components``."""
+
+    index: int
+    """Position in that list."""
+
+    is_new: bool = False
+    """True when the item does not exist yet and the flow appends it."""
 
 
 @dataclass
@@ -69,6 +92,12 @@ class FormFlow:
     save_per_section: bool = True
     generated_editables: list[Editable] = field(default_factory=list)
     """Editables with generators - computed at submit time, not rendered in forms."""
+    target: FlowTarget | None = None
+    """Where this flow writes, when it edits a single list item.
+
+    ``None`` for flows that write project-wide fields (identity, team,
+    service config): those write wherever their editables point.
+    """
 
 
 CREATE_FLOW = FormFlow(
@@ -330,6 +359,7 @@ def build_deployment_edit_flow(
         mode=FlowMode.WIZARD,
         show_review=False,
         sections=[section],
+        target=FlowTarget("deployments", deployment_index),
     )
 
 
@@ -354,6 +384,7 @@ def build_component_edit_flow(component_index: int, is_new: bool = False) -> For
         mode=FlowMode.WIZARD,
         show_review=True,
         sections=sections,
+        target=FlowTarget("components", component_index, is_new=is_new),
     )
 
 
@@ -378,6 +409,7 @@ def build_deployment_add_flow(
             build_deployment_add_components_section(deployment_index, component_count),
             build_deployment_add_domain_section(deployment_index),
         ],
+        target=FlowTarget("deployments", deployment_index, is_new=True),
     )
 
 
@@ -392,6 +424,7 @@ def build_backup_schedule_flow(deployment_index: int) -> FormFlow:
         mode=FlowMode.WIZARD,
         show_review=False,
         sections=[section],
+        target=FlowTarget("deployments", deployment_index),
     )
 
 
@@ -412,14 +445,118 @@ def build_domain_edit_flow(deployment_index: int) -> FormFlow:
             build_domain_section(deployment_index, edit_mode=True),
             build_domain_cert_section(deployment_index),
         ],
+        target=FlowTarget("deployments", deployment_index),
     )
+
+
+@dataclass(frozen=True)
+class IndexedFlow:
+    """A family of flows that each edit one item of one list.
+
+    One entry per family, and everything the rest of the code used to work
+    out from the flow-id text lives in it: which list the family writes to,
+    whether it appends a new item or edits an existing one, how to build the
+    flow for an index, and what the flow builder needs from the wizard
+    session (``component_count``, ``is_new``).
+    """
+
+    prefix: str
+    """Flow-id prefix; the index follows it, e.g. ``modal-edit-component-``."""
+
+    list_key: str
+    """Top-level list the family writes into."""
+
+    build: Callable[[int, dict[str, Any]], FormFlow]
+    """Build the flow for an index, given the session context."""
+
+    appends_new_item: bool = False
+    """True when opening the flow means adding an item (add-deployment)."""
+
+    targets_new_item_when_missing: bool = False
+    """True when an index past the end of the list means 'add' (component)."""
+
+    context_from_template: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    """What ``build`` needs from the wizard session's template data."""
+
+
+def _component_count_context(template_data: dict[str, Any]) -> dict[str, Any]:
+    return {"component_count": len(template_data.get("components", []))}
+
+
+def _is_new_context(template_data: dict[str, Any]) -> dict[str, Any]:
+    return {"is_new": True} if template_data.get("is_new") else {}
+
+
+INDEXED_FLOWS: tuple[IndexedFlow, ...] = (
+    IndexedFlow(
+        prefix="modal-edit-component-",
+        list_key="components",
+        build=lambda index, ctx: build_component_edit_flow(index, is_new=bool(ctx.get("is_new"))),
+        targets_new_item_when_missing=True,
+        context_from_template=_is_new_context,
+    ),
+    IndexedFlow(
+        prefix="modal-edit-deployment-",
+        list_key="deployments",
+        build=lambda index, ctx: build_deployment_edit_flow(index, component_count=ctx.get("component_count")),
+        context_from_template=_component_count_context,
+    ),
+    IndexedFlow(
+        prefix="modal-add-deployment-",
+        list_key="deployments",
+        build=lambda index, ctx: build_deployment_add_flow(index, component_count=ctx.get("component_count")),
+        appends_new_item=True,
+        context_from_template=_component_count_context,
+    ),
+    IndexedFlow(
+        prefix="modal-edit-domain-",
+        list_key="deployments",
+        build=lambda index, _ctx: build_domain_edit_flow(index),
+    ),
+    IndexedFlow(
+        prefix="modal-edit-backup-schedule-",
+        list_key="deployments",
+        build=lambda index, _ctx: build_backup_schedule_flow(index),
+    ),
+)
+
+
+def parse_indexed_flow_id(flow_id: str) -> tuple[IndexedFlow, int] | None:
+    """Match a flow id against the indexed-flow families. None if it is not one."""
+    for kind in INDEXED_FLOWS:
+        if flow_id.startswith(kind.prefix):
+            suffix = flow_id.removeprefix(kind.prefix)
+            if suffix.isdigit():
+                return kind, int(suffix)
+            return None
+    return None
+
+
+def flow_context_from_template(flow_id: str, template_data: dict[str, Any] | None) -> dict[str, Any]:
+    """What the builder for *flow_id* needs from a wizard session's template data.
+
+    Deployment flows need ``component_count`` so the sequence enforces a
+    max-items limit matching the number of project components; component add
+    flows need ``is_new`` so the name field stays editable; the restore flow
+    needs the index of the empty deployment slot appended at init.
+    """
+    if not template_data:
+        return {}
+    if flow_id == "modal-restore":
+        # The new deployment index = total deployments - 1 (the appended empty slot)
+        return {"deployment_index": len(template_data.get("deployments", [])) - 1}
+    match = parse_indexed_flow_id(flow_id)
+    if match is None or match[0].context_from_template is None:
+        return {}
+    return match[0].context_from_template(template_data)
 
 
 def get_flow(flow_id: str, **context: Any) -> FormFlow:
     """Get a FormFlow by its ID.
 
-    Supports both static registry flows and dynamic domain-edit flows
-    (``modal-edit-domain-N`` where N is the deployment index).
+    Supports both static registry flows and the indexed families in
+    ``INDEXED_FLOWS`` (``modal-edit-domain-N`` and friends, where N is the
+    list index the flow targets).
 
     Args:
         flow_id: The flow identifier.
@@ -437,41 +574,10 @@ def get_flow(flow_id: str, **context: Any) -> FormFlow:
     if flow_id == "modal-restore":
         return build_restore_flow(context.get("deployment_index", 0))
 
-    # Dynamic domain edit flows: modal-edit-domain-0, modal-edit-domain-1, ...
-    if flow_id.startswith("modal-edit-domain-"):
-        suffix = flow_id.removeprefix("modal-edit-domain-")
-        if suffix.isdigit():
-            return build_domain_edit_flow(int(suffix))
-
-    # Dynamic component edit flows: modal-edit-component-0, modal-edit-component-1, ...
-    if flow_id.startswith("modal-edit-component-"):
-        suffix = flow_id.removeprefix("modal-edit-component-")
-        if suffix.isdigit():
-            return build_component_edit_flow(int(suffix), is_new=context.get("is_new", False))
-
-    # Dynamic deployment edit flows: modal-edit-deployment-0, modal-edit-deployment-1, ...
-    if flow_id.startswith("modal-edit-deployment-"):
-        suffix = flow_id.removeprefix("modal-edit-deployment-")
-        if suffix.isdigit():
-            return build_deployment_edit_flow(
-                int(suffix),
-                component_count=context.get("component_count"),
-            )
-
-    # Dynamic backup schedule flows: modal-edit-backup-schedule-0, ...
-    if flow_id.startswith("modal-edit-backup-schedule-"):
-        suffix = flow_id.removeprefix("modal-edit-backup-schedule-")
-        if suffix.isdigit():
-            return build_backup_schedule_flow(int(suffix))
-
-    # Dynamic add-deployment flows: modal-add-deployment-0, modal-add-deployment-1, ...
-    if flow_id.startswith("modal-add-deployment-"):
-        suffix = flow_id.removeprefix("modal-add-deployment-")
-        if suffix.isdigit():
-            return build_deployment_add_flow(
-                int(suffix),
-                component_count=context.get("component_count"),
-            )
+    match = parse_indexed_flow_id(flow_id)
+    if match is not None:
+        kind, index = match
+        return kind.build(index, context)
 
     # Admin domain/subdomain approval flow
     if flow_id == "admin-approval":
