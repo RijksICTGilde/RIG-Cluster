@@ -122,6 +122,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 handle_add_component_to_deployment,
                 handle_add_service,
                 handle_configure_service,
+                handle_delete_component,
                 handle_update_component,
             )
             from opi.core.task_handlers_deployment import (  # type: ignore[reportMissingImports]
@@ -136,14 +137,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             )
             from opi.core.task_handlers_project import (  # type: ignore[reportMissingImports]
                 handle_create_project,
+                handle_delete_project,
                 handle_upsert_deployment,
             )
+            from opi.services.catalog.attachments.task import handle_delete_attachment
             from opi.services.catalog.sleep_mode.task import handle_sleep_transition
 
             _worker_instance.register_handler(TaskType.CREATE_PROJECT, handle_create_project)
             _worker_instance.register_handler(TaskType.UPSERT_DEPLOYMENT, handle_upsert_deployment)
             _worker_instance.register_handler(TaskType.UPDATE_IMAGE, handle_update_image)
             _worker_instance.register_handler(TaskType.DELETE_DEPLOYMENT, handle_delete_deployment)
+            _worker_instance.register_handler(TaskType.DELETE_PROJECT, handle_delete_project)
+            _worker_instance.register_handler(TaskType.DELETE_COMPONENT, handle_delete_component)
+            _worker_instance.register_handler(TaskType.DELETE_ATTACHMENT, handle_delete_attachment)
             _worker_instance.register_handler(TaskType.CLONE_DATABASE, handle_clone_database)
             _worker_instance.register_handler(TaskType.CLONE_BUCKET, handle_clone_bucket)
             _worker_instance.register_handler(TaskType.REFRESH_DEPLOYMENT, handle_refresh_deployment)

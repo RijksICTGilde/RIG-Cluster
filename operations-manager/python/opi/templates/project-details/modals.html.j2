@@ -1,37 +1,5 @@
 {% include "widgets/service_help_modal.html.j2" %}
 
-{# Danger Zone Confirmation Modal #}
-<div id="danger-confirm-backdrop" class="edit-section-backdrop" onclick="hideDangerConfirmation()"></div>
-<div id="danger-confirm-modal" class="edit-section-modal" role="dialog" aria-modal="true" style="width: 500px; max-width: 90vw; max-height: auto;">
-    <div style="padding: var(--rvo-space-xl);">
-        <c-layout-flow gap="lg">
-            <c-heading type="h3" id="danger-confirm-title"></c-heading>
-            <c-layout-flow gap="md" id="danger-confirm-body">
-                <p id="danger-confirm-message" style="margin: 0;"></p>
-                <div id="danger-confirm-error" style="display: none; color: var(--rvo-color-rood-600);"></div>
-                <div id="danger-confirm-success" style="display: none; color: var(--rvo-color-groen-600);"></div>
-                <div id="danger-confirm-progress" style="display: none;">
-                    <p class="rvo-text--subtle" id="danger-confirm-progress-text">Bezig...</p>
-                </div>
-                <c-layout-flow gap="sm" row="true" id="danger-confirm-actions">
-                    <c-button kind="secondary" label="Annuleren" @click="hideDangerConfirmation()" />
-                    <span id="danger-confirm-btn-delete">
-                        <c-button kind="warning" label="Verwijderen" showIcon="before" icon="verwijderen"
-                                  @click="executeDangerAction()" />
-                    </span>
-                    <span id="danger-confirm-btn-refresh" style="display: none;">
-                        <c-button id="danger-refresh-btn" kind="primary" label="Herverwerken" showIcon="before" icon="refresh"
-                                  hx-post="/projects/{{ project.name }}/refresh"
-                                  hx-headers="{&quot;X-CSRF-Token&quot;: &quot;{{ request.state.csrf_token }}&quot;}"
-                                  hx-target="#danger-confirm-body"
-                                  hx-swap="innerHTML" />
-                    </span>
-                </c-layout-flow>
-            </c-layout-flow>
-        </c-layout-flow>
-    </div>
-</div>
-
 {# Generic Edit Section Modal #}
 <div id="edit-section-backdrop" class="edit-section-backdrop" onclick="handleEditBackdropClick()"></div>
 <div id="edit-section-modal" class="edit-section-modal" role="dialog" aria-modal="true" aria-labelledby="edit-section-title" data-project-name="{{ project.name }}">

@@ -12,7 +12,7 @@
                 </div>
                 <c-button kind="secondary" size="sm" label="Project herverwerken"
                           showIcon="before" icon="refresh"
-                          @click="showDangerConfirmation('refresh', '{{ project.name }}', 'Weet u zeker dat u het project &quot;{{ project.display_name or project.name }}&quot; wilt herverwerken? Dit synchroniseert alle deployments met het projectbestand. Verwijderde deployments worden opgeruimd.')" />
+                          @click="openServiceModal('/projects/{{ project.name }}/actions/refresh-project/confirm', 'Project herverwerken')" />
             </div>
         </c-card>
 
@@ -24,7 +24,7 @@
                 </div>
                 <c-button kind="warning" size="sm" label="Project verwijderen"
                           showIcon="before" icon="verwijderen"
-                          @click="showDangerConfirmation('project', '{{ project.name }}', 'Weet u zeker dat u het volledige project &quot;{{ project.display_name or project.name }}&quot; wilt verwijderen? Dit verwijdert ALLE deployments, services en configuratie.')" />
+                          @click="openServiceModal('/projects/{{ project.name }}/actions/delete-project/confirm', 'Project verwijderen')" />
             </div>
         </c-card>
     </c-layout-flow>

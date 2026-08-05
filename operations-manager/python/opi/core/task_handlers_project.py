@@ -482,3 +482,62 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
     finally:
         if project_manager:
             await project_manager.close()
+
+
+async def handle_delete_project(payload: dict, progress: Any) -> dict:
+    """Handle async project deletion task.
+
+    Extracted from the web delete endpoint, which ran the whole teardown -- deployments,
+    ArgoCD, namespace, databases, buckets, the project file -- inside the request while
+    the browser sat on an open POST. As a task the dialog can follow it, and the answer
+    comes back through the same progress fragment as every other action.
+
+    Expected payload keys:
+        project_name: Name of the project to delete
+    """
+    from opi.manager.project_manager import create_project_manager
+
+    project_name: str = payload["project_name"]
+
+    logger.info(f"Task: deleting project {project_name}")
+
+    delete_task = progress.add_task(f"Project '{project_name}' verwijderen")
+    project_manager = create_project_manager()
+    try:
+        deletion_results = await project_manager.delete_project(project_name)
+    except Exception as exc:
+        error_msg = f"Failed to delete project: {exc}"
+        progress.fail_task(delete_task, error_msg)
+        progress.fail_project(error_msg)
+        raise
+    finally:
+        await project_manager.close()
+
+    if not deletion_results.get("success"):
+        # Deployments on another cluster are the one refusal that is not an error: this
+        # instance only manages its own cluster, so it cannot finish the job here.
+        remaining = deletion_results.get("remaining_deployments") or []
+        if remaining:
+            clusters = sorted({str(dep.get("cluster")) for dep in remaining if isinstance(dep, dict)})
+            error_msg = (
+                f"Project '{project_name}' kan niet verwijderd worden: er zijn nog deployments "
+                f"op andere clusters ({', '.join(clusters)})"
+            )
+        else:
+            errors = deletion_results.get("errors", []) or []
+            error_msg = f"Project '{project_name}' niet volledig verwijderd: " + (
+                "; ".join(str(e) for e in errors) or "onbekende fout"
+            )
+        progress.fail_task(delete_task, error_msg)
+        progress.fail_project(error_msg)
+        raise RuntimeError(error_msg)
+
+    progress.complete_task(delete_task)
+    logger.info(f"Task: project deletion completed successfully for {project_name}")
+    return {
+        "status": "completed",
+        "message": f"Project '{project_name}' deleted successfully",
+        "project": project_name,
+        "deletion_results": deletion_results,
+        "warning": "This deletion is permanent and cannot be undone",
+    }

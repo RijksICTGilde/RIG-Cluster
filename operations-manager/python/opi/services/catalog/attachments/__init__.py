@@ -106,6 +106,9 @@ class AttachmentsService(Service):
                 context={
                     "attachments": sorted(attachments, key=lambda a: a["id"]),
                     "can_edit": user_role in ("admin", "owner"),
+                    # The delete confirmation is addressed per project, and this section
+                    # reads its data from ``section.context`` only.
+                    "project_name": project_data.get("name"),
                 },
             )
         ]
