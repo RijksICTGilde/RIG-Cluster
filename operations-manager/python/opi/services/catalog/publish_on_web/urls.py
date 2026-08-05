@@ -100,6 +100,8 @@ def public_urls_for_project(project_data: dict[str, Any], project_file_handler: 
     for deployment in project_data.get("deployments", []) or []:
         if not isinstance(deployment, dict):
             continue
-        for link in public_urls_for_deployment(project_data, deployment, project_name, project_file_handler):
-            urls.append({**link, "deployment_name": deployment.get("name", "")})
+        urls.extend(
+            {**link, "deployment_name": deployment.get("name", "")}
+            for link in public_urls_for_deployment(project_data, deployment, project_name, project_file_handler)
+        )
     return urls
