@@ -712,6 +712,65 @@ class TestStandaloneKeycloakEditFlow:
         action = _determine_flow_action(keycloak_flow, keycloak_flow.sections)
         assert action == "process_project"
 
+    @pytest.mark.parametrize(
+        "existing_entry",
+        [
+            pytest.param({"keycloak": {"config": {"template": "sso-support"}}}, id="legacy-dict"),
+            pytest.param({"name": "keycloak", "config": {"template": "sso-support"}}, id="record"),
+            pytest.param("keycloak", id="bare-string"),
+        ],
+        # A service that already carries config is a dict, not a bare string, in either
+        # entry form. Folding used to match on "entry is a bare string", so the second
+        # and every later edit was dropped without an error: the modal reported success
+        # and the store logged "no change" (toets-hn7 keycloak template, 2026-08-05).
+    )
+    def test_edit_sticks_for_every_entry_form(self, existing_entry):
+        """A changed template must survive the merge whatever shape the entry has."""
+        from opi.forms.editables.service_path import smart_get_value
+
+        state = _make_state(
+            flow_id="modal-edit-keycloak-config",
+            step_data={"keycloak-config": {"_services-config": {"keycloak": {"config": {"template": "sso-only"}}}}},
+            active_sections=["keycloak-config"],
+            virt_mappings={"_services-config": "services"},
+        )
+        state.template_data = {"services": ["publish-on-web", copy.deepcopy(existing_entry)]}
+
+        merged = state.get_merged_data()
+
+        assert smart_get_value(merged, "services/keycloak/config/template") == "sso-only"
+
+    def test_edit_keeps_untouched_config_keys(self, project_data):
+        """Folding overlays the edited key; config the step did not carry stays put."""
+        from opi.forms.editables.service_path import smart_get_value
+
+        state = _make_state(
+            flow_id="modal-edit-keycloak-config",
+            step_data={"keycloak-config": {"_services-config": {"keycloak": {"config": {"template": "sso-only"}}}}},
+            active_sections=["keycloak-config"],
+            virt_mappings={"_services-config": "services"},
+        )
+        state.template_data = {"services": copy.deepcopy(project_data["services"])}
+
+        merged = state.get_merged_data()
+
+        assert smart_get_value(merged, "services/keycloak/config/template") == "sso-only"
+        assert smart_get_value(merged, "services/keycloak/config/restrict-access/realm-role") == "allowed-user"
+
+    def test_deselected_service_is_not_resurrected(self):
+        """A carrier for a service no longer selected must not add it back."""
+        state = _make_state(
+            flow_id="modal-edit-keycloak-config",
+            step_data={"keycloak-config": {"_services-config": {"keycloak": {"config": {"template": "sso-only"}}}}},
+            active_sections=["keycloak-config"],
+            virt_mappings={"_services-config": "services"},
+        )
+        state.template_data = {"services": ["publish-on-web"]}
+
+        merged = state.get_merged_data()
+
+        assert merged["services"] == ["publish-on-web"]
+
 
 class TestStandalonePostgresqlEditFlow:
     """Test the standalone postgresql config edit flow."""

@@ -22,23 +22,14 @@ import re
 from typing import Any
 
 from opi.forms.editables.path import delete_value, get_value, set_value
-from opi.services.services import service_entry_name
+from opi.services.services import service_entry_body, service_entry_name
 
 _SERVICE_CONFIG_RE = re.compile(r"^services/([^/\[]+)(/(.+))?$")
 
 
 def _service_entry_body(entry: dict[str, Any] | str, service_name: str) -> Any:
-    """The config-carrying sub-dict of a service entry, format-agnostic.
-
-    New record (``{name/reference: X, config: ...}``) carries ``config`` on the entry
-    itself, so the body is the entry. Legacy (``{X: {config: ...}}``) carries it under
-    the service-name key.
-    """
-    if not isinstance(entry, dict):
-        return None
-    if "name" in entry or "reference" in entry:
-        return entry
-    return entry.get(service_name)
+    """The config-carrying sub-dict of a service entry, format-agnostic."""
+    return service_entry_body(entry, service_name)
 
 
 def is_service_config_path(yaml_path: str) -> bool:
