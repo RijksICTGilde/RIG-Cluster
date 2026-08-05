@@ -53,7 +53,11 @@ from opi.core.config import settings
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.extensions import load_extensions
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
-from opi.generation.manifests import ManifestGenerator
+from opi.generation.manifests import (
+    CONFIG_HASH_IGNORE_LABEL_KEY,
+    CONFIG_HASH_IGNORE_LABEL_VALUE,
+    ManifestGenerator,
+)
 from opi.handlers.project_file_handler import (
     ProjectFileHandler,
     attachment_is_referenced,
@@ -402,6 +406,19 @@ class DeploymentResult:
     urls: dict[str, str] = field(default_factory=dict)  # component_name -> public_url
     status: str = "success"
     errors: list[str] = field(default_factory=list)
+
+
+def _secret_labels_for(spec: SecretFileSpec) -> dict[str, str]:
+    """The Secret's metadata labels, including the config-hash opt-out when it applies.
+
+    A service declares ``include_in_config_hash=False`` when only its own auxiliary pod
+    reads the secret; translating that into the label happens here, once, for every
+    secret the manager writes.
+    """
+    labels = dict(spec.secret_labels or {})
+    if not spec.include_in_config_hash:
+        labels[CONFIG_HASH_IGNORE_LABEL_KEY] = CONFIG_HASH_IGNORE_LABEL_VALUE
+    return labels
 
 
 class ProjectManager:
@@ -1389,6 +1406,9 @@ class ProjectManager:
             SecretFileSpec(
                 secret_name=sleep_manifests.waker_token_secret_name(unique_name),
                 secret_pairs=WakeTokenSecret(token=plain_token).to_k8s_secret_data(),
+                # Only the waker pod reads this, and it is pruned on wake. Counting it in
+                # the config hash restarted the application again right after it came up.
+                include_in_config_hash=False,
             ),
             deployment_name=deployment_name,
             namespace=namespace,
@@ -1432,7 +1452,15 @@ class ProjectManager:
         manifest_name = f"{spec.secret_name}-secret"
         secret_path = self._manifest_generator.create_manifest_file(
             template_path=template_path,
-            values={"name": spec.secret_name, "namespace": namespace, "secret_pairs": secret_data},
+            values={
+                "name": spec.secret_name,
+                "namespace": namespace,
+                "secret_pairs": secret_data,
+                # One place turns "this is not application config" into the label the
+                # ArgoCD plugin filters on, so a service states what its secret IS and
+                # never has to know a config-hash exists.
+                "secret_labels": _secret_labels_for(spec),
+            },
             output_dir=output_dir,
             output_filename=manifest_name,
             use_sops=True,
