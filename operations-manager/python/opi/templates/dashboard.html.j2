@@ -39,8 +39,19 @@
                 {% endfor %}
             </c-layout-flow>
         </c-alert>
-        {% elif health_counts.Healthy > 0 %}
-        <c-alert kind="success" heading="{% if health_counts.Healthy == 1 %}Het project is gezond{% else %}Alle {{ health_counts.Healthy }} projecten zijn gezond{% endif %}" maxWidth="lg" />
+        {% elif health_banner %}
+        {# The wording is decided in _dashboard_health_banner, not here: "Alle N projecten
+           zijn gezond" stopped being true the moment one of them ran nothing on purpose,
+           and what stands there instead is a text choice (RC-31). #}
+        <c-alert kind="{{ health_banner.kind }}" heading="{{ health_banner.heading }}" maxWidth="lg">
+            {% if health_banner.lines %}
+            <c-layout-flow gap="xs">
+                {% for line in health_banner.lines %}
+                <span class="rvo-text--sm">{{ line }}</span>
+                {% endfor %}
+            </c-layout-flow>
+            {% endif %}
+        </c-alert>
         {% elif not argocd_available %}
         <c-alert kind="info" heading="Status informatie niet beschikbaar" content="ArgoCD is niet verbonden." maxWidth="lg" />
         {% endif %}
