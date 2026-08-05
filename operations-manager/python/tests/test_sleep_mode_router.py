@@ -15,7 +15,7 @@ are replaced so each endpoint's contract can be exercised in isolation.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -146,25 +146,32 @@ async def test_web_wake_unauthorized_project_forbidden() -> None:
 
 
 @pytest.mark.parametrize("role", ["admin", "owner"])
-async def test_web_wake_privileged_role_wakes(role: str) -> None:
-    result = WakeResult(changed=True, state="waking")
+async def test_web_wake_privileged_role_starts_a_task(role: str) -> None:
+    """Not an inline call any more: waking commits to git and then reprocesses,
+    ArgoCD sync included, so it runs as a task the page can follow."""
     with (
         patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
         patch("opi.web.router.is_user_authorized_for_project", return_value=True),
         patch("opi.web.router.get_user_role_for_project", return_value=role),
-        patch.object(flow, "wake", AsyncMock(return_value=result)) as wake_mock,
+        patch("opi.web.router.get_project_store", return_value=_store_with_deployment()),
+        patch("opi.web.router._create_task_and_render_progress", AsyncMock()) as start_task,
+        patch.object(flow, "wake", AsyncMock()) as inline,
     ):
-        resp = await wake_deployment_web(_request(), PROJECT, DEPLOYMENT)
-    assert resp.status_code == 200
-    wake_mock.assert_awaited_once_with(PROJECT, DEPLOYMENT)
+        await wake_deployment_web(_request(), PROJECT, DEPLOYMENT)
+
+    inline.assert_not_called()
+    payload = start_task.await_args.kwargs
+    assert payload["task_type"] == "wake_deployment"
+    assert payload["payload"]["direction"] == "wake"
 
 
 async def test_web_wake_unknown_deployment_404() -> None:
+    """An unknown deployment is a 404 at the click, not a task that fails later."""
     with (
         patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
         patch("opi.web.router.is_user_authorized_for_project", return_value=True),
         patch("opi.web.router.get_user_role_for_project", return_value="admin"),
-        patch.object(flow, "wake", AsyncMock(side_effect=DeploymentNotFound("Deployment 'PR-1' not found"))),
+        patch("opi.web.router.get_project_store", return_value=_store_with_deployment("iets-anders")),
         pytest.raises(HTTPException) as exc,
     ):
         await wake_deployment_web(_request(), PROJECT, DEPLOYMENT)
@@ -200,26 +207,44 @@ async def test_web_sleep_unauthorized_project_forbidden() -> None:
     sleep_mock.assert_not_called()
 
 
+def _store_with_deployment(name: str = DEPLOYMENT):
+    """Stub the project store: the web endpoints look the project up before creating a
+    task, and check the deployment exists so an unknown name is a 404 at the click
+    instead of a task that fails a moment later."""
+    project = MagicMock()
+    project.data = {"name": PROJECT, "deployments": [{"name": name}]}
+    store = MagicMock()
+    store.get.return_value = project
+    return store
+
+
 @pytest.mark.parametrize("role", ["admin", "owner"])
-async def test_web_sleep_privileged_role_sleeps(role: str) -> None:
-    result = WakeResult(changed=True, state="sleeping")
+async def test_web_sleep_privileged_role_starts_a_task(role: str) -> None:
+    """Not an inline call any more: putting a deployment to sleep commits to git and then reprocesses,
+    ArgoCD sync included, so it runs as a task the page can follow."""
     with (
         patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
         patch("opi.web.router.is_user_authorized_for_project", return_value=True),
         patch("opi.web.router.get_user_role_for_project", return_value=role),
-        patch.object(flow, "sleep", AsyncMock(return_value=result)) as sleep_mock,
+        patch("opi.web.router.get_project_store", return_value=_store_with_deployment()),
+        patch("opi.web.router._create_task_and_render_progress", AsyncMock()) as start_task,
+        patch.object(flow, "sleep", AsyncMock()) as inline,
     ):
-        resp = await sleep_deployment_web(_request(), PROJECT, DEPLOYMENT)
-    assert resp.status_code == 200
-    sleep_mock.assert_awaited_once_with(PROJECT, DEPLOYMENT)
+        await sleep_deployment_web(_request(), PROJECT, DEPLOYMENT)
+
+    inline.assert_not_called()
+    payload = start_task.await_args.kwargs
+    assert payload["task_type"] == "sleep_deployment"
+    assert payload["payload"]["direction"] == "sleep"
 
 
 async def test_web_sleep_unknown_deployment_404() -> None:
+    """An unknown deployment is a 404 at the click, not a task that fails later."""
     with (
         patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
         patch("opi.web.router.is_user_authorized_for_project", return_value=True),
         patch("opi.web.router.get_user_role_for_project", return_value="admin"),
-        patch.object(flow, "sleep", AsyncMock(side_effect=DeploymentNotFound("Deployment 'PR-1' not found"))),
+        patch("opi.web.router.get_project_store", return_value=_store_with_deployment("iets-anders")),
         pytest.raises(HTTPException) as exc,
     ):
         await sleep_deployment_web(_request(), PROJECT, DEPLOYMENT)
