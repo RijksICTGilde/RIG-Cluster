@@ -1919,23 +1919,26 @@
         });
     }
 
-    // Generic runner for service-contributed deployment actions (e.g. sleep-mode wake).
-    // Confirms, POSTs to the action endpoint with the CSRF header, then reloads so the
-    // page reflects the new state (and the button disappears once awake).
-    function runDeploymentAction(endpoint, confirmMessage) {
-        if (confirmMessage && !window.confirm(confirmMessage)) return;
-        fetch(endpoint, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'X-CSRF-Token': '{{ request.state.csrf_token }}', 'X-Requested-With': 'XMLHttpRequest' },
-        })
-        .then(function(response) {
-            if (!response.ok) throw new Error('Actie mislukt (' + response.status + ')');
-            return response.json().catch(function() { return {}; });
-        })
-        .then(function() { window.location.reload(); })
-        .catch(function(err) { window.alert(err.message || 'Actie mislukt'); });
-    }
+    /* Outcome of a service-contributed deployment action (e.g. sleep-mode wake). The
+       POST is done by htmx from the confirmation fragment
+       (project-details/deployment-action-confirm.html.j2), which marks itself with
+       data-deployment-action; the endpoints answer JSON and swap nothing, so the result
+       is handled here: reload on success (the page then reflects the new state, and the
+       button disappears once awake), and show the failure inside the modal itself --
+       window.confirm/window.alert are gone. */
+    document.addEventListener('htmx:afterRequest', function(evt) {
+        var trigger = evt.detail.elt;
+        if (!trigger || !trigger.closest || !trigger.closest('[data-deployment-action]')) return;
+        var status = evt.detail.xhr ? evt.detail.xhr.status : 0;
+        if (status >= 200 && status < 300) {
+            window.location.reload();
+            return;
+        }
+        var errorEl = document.getElementById('deployment-action-error');
+        if (!errorEl) return;
+        errorEl.textContent = status ? 'Actie mislukt (' + status + ')' : 'Actie mislukt';
+        errorEl.style.display = '';
+    });
 
     /* closeEditModal / closeEditModalAndReload / handleEditBackdropClick and
        the global ``isEditSubmitting`` flag live in /static/js/edit_modal.js so

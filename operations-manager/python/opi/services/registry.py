@@ -12,6 +12,7 @@ postgresql-database, ...), NOT a connector/provider ("how OPI talks to a system"
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.aliases import AliasesService
@@ -40,6 +41,7 @@ from opi.services.services_enums import HookPoint, ServiceType
 if TYPE_CHECKING:
     from opi.forms.editables.editable import Editable
     from opi.forms.visualizers.visualizer import EditableVisualizer
+    from opi.services.services import DeploymentAction
 
 # One entry per ServiceType. The coverage guard asserts completeness.
 SERVICES: dict[ServiceType, Service] = {
@@ -174,6 +176,28 @@ def collect_deployment_actions(project_data: dict, deployment_name: str) -> list
             seen.add(key)
             actions.append(action)
     return actions
+
+
+def deployment_action_key(action: DeploymentAction) -> str:
+    """A stable, URL-safe id for a deployment action, derived from its label.
+
+    The confirmation dialog addresses an action by this key instead of by its endpoint:
+    the endpoint is then never taken from the request, only from what a service really
+    offered for this deployment (an endpoint in the URL would be an open POST target).
+    """
+    return re.sub(r"[^a-z0-9]+", "-", action.label.lower()).strip("-")
+
+
+def find_deployment_action(project_data: dict, deployment_name: str, action_key: str) -> DeploymentAction | None:
+    """The deployment action with this key, or None when no service offers it.
+
+    Re-derives the actions from the project's own services, so an action that a service
+    no longer offers (sleep-mode's wake once the deployment is awake) cannot be invoked.
+    """
+    for action in collect_deployment_actions(project_data, deployment_name):
+        if deployment_action_key(action) == action_key:
+            return action
+    return None
 
 
 def collect_detail_page_sections(project_data: dict, user_role: str) -> list:
