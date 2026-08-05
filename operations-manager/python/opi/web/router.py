@@ -1461,6 +1461,16 @@ async def project_details(request: Request, project_name: str):
             for dep in project_data_decrypted.get("deployments", [])
         }
 
+        # What the services report about each deployment (RC-28): the same facts the
+        # health check weighs, here only rendered. Without it a user sees a sleeping
+        # deployment with nothing running and no explanation why.
+        from opi.services.deployment_state import collect_deployment_state
+
+        deployment_state_facts = {
+            dep.get("name"): collect_deployment_state(project_data_decrypted, dep.get("name", "")).facts
+            for dep in project_data_decrypted.get("deployments", [])
+        }
+
         # Per-deployment read-only blocks the services deliver (RC-24): metrics and
         # backups describe one deployment, so they are asked per deployment instead of
         # being hardcoded in the Deployments tab. The availability of the optional
@@ -1503,6 +1513,7 @@ async def project_details(request: Request, project_name: str):
                 "csrf_token": csrf_token,
                 "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
                 "deployment_service_actions": deployment_service_actions,
+                "deployment_state_facts": deployment_state_facts,
                 # Per-deployment service-owned blocks (RC-24), keyed by deployment name.
                 "deployment_service_sections": deployment_service_sections,
                 # Detail-page sections the project's services own (WP2). Replaces the
