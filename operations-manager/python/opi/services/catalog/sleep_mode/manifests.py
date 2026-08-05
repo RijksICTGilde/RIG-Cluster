@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from opi.core.cluster_config import get_cluster_config
 from opi.core.config import settings
+from opi.services.catalog.base import SERVICE_ROLE_LABEL_KEY
 from opi.services.catalog.sleep_mode.secret import WakeTokenSecret
 
 if TYPE_CHECKING:
@@ -24,7 +25,9 @@ logger = logging.getLogger(__name__)
 
 #: The label that distinguishes the waker Deployment from the app Deployment while both
 #: match the same Service selector.
-WAKER_ROLE_LABEL: dict[str, str] = {"zad-role": "waker"}
+# Built from the platform key so "this pod is not the application" stays one concept:
+# every application-level pod lookup excludes anything carrying it.
+WAKER_ROLE_LABEL: dict[str, str] = {SERVICE_ROLE_LABEL_KEY: "waker"}
 #: The waker container/HTTP port.
 WAKER_PORT = 8080
 #: TLS modes the waker cannot serve (it holds no certificate of its own).
