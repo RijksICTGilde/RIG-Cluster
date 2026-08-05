@@ -1005,14 +1005,33 @@ class InviteLanguageOptionsProvider:
 
 
 class InviteAuthMethodOptionsProvider:
-    """The auth methods an invite may allow. Empty selection = fall back to the project's
-    methods (both allowed today)."""
+    """The auth methods an invite may allow, taken from the project's keycloak template.
+
+    An invite can only narrow what the realm offers, never widen it (``invite_routes``
+    computes ``realm_auth[x] and invite_auth_config[x]``). The realm follows the keycloak
+    template, and the two blueprints differ exactly here:
+
+    * ``sso-only``    -- registrationAllowed / loginWithEmailAllowed false: SSO only
+    * ``sso-support`` -- both true: SSO and local accounts
+
+    Offering "Lokaal account" under sso-only would therefore be a choice that silently does
+    nothing. Empty selection still means "fall back to whatever the realm allows".
+    """
+
+    def __init__(self, yaml_data: dict[str, Any] | None = None) -> None:
+        self.yaml_data = yaml_data or {}
 
     def get_options(self) -> list[dict[str, Any]]:
-        return [
-            {"value": "sso", "label": "Single sign-on (SSO)"},
-            {"value": "local", "label": "Lokaal account"},
-        ]
+        from opi.forms.editables.service_path import smart_get_value
+
+        options = [{"value": "sso", "label": "Single sign-on (SSO)"}]
+        # An absent template means sso-only: that is the default on KeycloakConfig.template,
+        # so it is what the realm actually gets. Reading it as "unknown, allow both" would
+        # also disagree with the field's show_when, which hides the field in that same case.
+        template = smart_get_value(self.yaml_data, "services/keycloak/config/template") or "sso-only"
+        if template != "sso-only":
+            options.append({"value": "local", "label": "Lokaal account"})
+        return options
 
 
 class InviteRealmRoleOptionsProvider:

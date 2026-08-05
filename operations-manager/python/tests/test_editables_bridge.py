@@ -285,3 +285,54 @@ class TestResolveOptionsDoesNotLeakSecrets:
         # The provider name and the kwarg names stay, because those are what make the line useful.
         assert "BackupResourceTypesOptionsProvider" in logged
         assert "yaml_data" in logged
+
+
+class TestCallableDefault:
+    """A ``default`` may be a function of the surrounding project data.
+
+    Added so a field can be prefilled with something derived (the first team member's
+    address, a text carrying the project name) instead of a constant. The rules that
+    matter: it only fills a gap, and it must be resolved before anything compares it.
+    """
+
+    def _field(self, default, yaml_data):
+        return editable_to_form_field(
+            EditableVisualizer(
+                editable=Editable(yaml_path="contact", default=default),
+                widget=WidgetType.TEXT,
+                label="Contact",
+            ),
+            yaml_data,
+        )
+
+    def test_a_callable_default_is_computed_from_the_project_data(self):
+        field = self._field(lambda data: f"beheer@{data['name']}.nl", {"name": "regel"})
+        assert field.value == "beheer@regel.nl"
+
+    def test_a_plain_default_keeps_working(self):
+        assert self._field("vast", {"name": "regel"}).value == "vast"
+
+    def test_a_stored_value_wins_over_the_callable(self):
+        """It fills a gap; it does not overwrite. Anything else would silently discard
+        what a user typed on every re-render of the form."""
+        field = self._field(lambda data: "berekend", {"name": "regel", "contact": "getypt"})
+        assert field.value == "getypt"
+
+    def test_returning_none_means_no_default(self):
+        assert self._field(lambda data: None, {"name": "regel"}).value in (None, "")
+
+    def test_a_callable_default_is_resolved_before_show_when_compares_it(self):
+        """The dependency's default decides visibility on first render, before anything is
+        stored. Comparing the function object itself would silently evaluate to False and
+        hide a field that should be visible."""
+        dependency = EditableVisualizer(
+            editable=Editable(yaml_path="mode", default=lambda data: "geavanceerd"),
+            widget=WidgetType.SELECT,
+            label="Modus",
+        )
+        dependent = EditableVisualizer(
+            editable=Editable(yaml_path="detail", depends_on="mode", show_when={"value": ["geavanceerd"]}),
+            widget=WidgetType.TEXT,
+            label="Detail",
+        )
+        assert should_render_editable(dependent, {}, siblings=[dependency, dependent]) is True

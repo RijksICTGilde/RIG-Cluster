@@ -1,8 +1,15 @@
 """Visualizers for the invite service (project-level config).
 
 One EditableVisualizer per editable, with Dutch labels and help text. The ``active``
-sequence renders each invitation as a card whose children are the invite fields; the
+sequence renders the invitation as a card whose children are the invite fields; the
 realm-roles picker is a nested sequence of selects.
+
+Two editables exist but are deliberately NOT rendered here:
+
+* ``restrict-domain`` -- restricts by email domain, which reads like a list of allowed
+  addresses and is not that. Still enforced for files that carry it.
+* ``auth-methods`` is rendered conditionally: only when the keycloak template is
+  ``sso-support``, because ``sso-only`` leaves nothing to choose.
 """
 
 from __future__ import annotations
@@ -20,7 +27,6 @@ from opi.services.catalog.invite.editables import (
     INVITE_MESSAGE_NL_EDITABLE,
     INVITE_REALM_ROLE_ITEM_EDITABLE,
     INVITE_REALM_ROLES_EDITABLE,
-    INVITE_RESTRICT_DOMAIN_EDITABLE,
     INVITE_SUCCESS_BUTTON_EN_EDITABLE,
     INVITE_SUCCESS_BUTTON_NL_EDITABLE,
     INVITE_SUCCESS_TITLE_EN_EDITABLE,
@@ -38,8 +44,11 @@ INVITE_KEY = EditableVisualizer(
     editable=INVITE_KEY_EDITABLE,
     widget=WidgetType.TEXT,
     label="Sleutel",
+    # No angle brackets here. Help text is passed to ROOS as the ``helperText`` ATTRIBUTE,
+    # and ROOS re-emits attribute values, so anything needing escaping is escaped twice and
+    # the reader sees the entities themselves ("&lt;sleutel&gt;").
     help_text=(
-        "De sleutel is onderdeel van de uitnodigingslink (/invite/<sleutel>) en de enige "
+        "De sleutel is het laatste deel van de uitnodigingslink, achter /invite/, en de enige "
         "toegangsdrempel. Laat leeg om een veilige, willekeurige sleutel te laten genereren."
     ),
 )
@@ -61,13 +70,6 @@ INVITE_REALM_ROLES = EditableVisualizer(
     children=[INVITE_REALM_ROLE_ITEM],
 )
 
-INVITE_RESTRICT_DOMAIN = EditableVisualizer(
-    editable=INVITE_RESTRICT_DOMAIN_EDITABLE,
-    widget=WidgetType.TEXT,
-    label="Domeinbeperking",
-    help_text="Beperk de uitnodiging tot e-mailadressen van dit domein (bijv. rijksoverheid.nl). Leeg = geen beperking.",
-)
-
 INVITE_CONTACT_EMAIL = EditableVisualizer(
     editable=INVITE_CONTACT_EMAIL_EDITABLE,
     widget=WidgetType.TEXT,
@@ -82,11 +84,18 @@ INVITE_APPLICATION_URL = EditableVisualizer(
     help_text="Waar de knop op de succespagina naartoe verwijst.",
 )
 
+# Only rendered when the keycloak template is sso-support; under sso-only there is nothing
+# to choose (see the editable). The wording says "beperken" on purpose: an invite can narrow
+# what the realm offers, never widen it.
 INVITE_AUTH_METHODS = EditableVisualizer(
     editable=INVITE_AUTH_METHODS_EDITABLE,
     widget=WidgetType.CHECKBOX_GROUP,
     label="Toegestane aanmeldmethoden",
-    help_text="Beperk hoe de gebruiker binnenkomt. Niets aangevinkt: val terug op de projectinstellingen (beide).",
+    help_text=(
+        "Beperk waarmee de uitgenodigde gebruiker mag inloggen. Je kunt hier alleen kiezen uit "
+        "wat de Keycloak-instelling van dit project toestaat. Niets aangevinkt betekent: alles "
+        "wat het project toestaat."
+    ),
 )
 
 INVITE_MESSAGE_NL = EditableVisualizer(
@@ -120,15 +129,16 @@ INVITE_SUCCESS_BUTTON_EN = EditableVisualizer(
     label="Knoptekst (Engels)",
 )
 
+# Still a sequence underneath (the schema allows several), but pinned to exactly one item,
+# so it reads as a single block rather than a list of one. See INVITE_ACTIVE_EDITABLE.
 INVITE_ACTIVE = EditableVisualizer(
     editable=INVITE_ACTIVE_EDITABLE,
     widget=WidgetType.SEQUENCE,
-    label="Actieve uitnodigingen",
-    help_text="Elke uitnodiging heeft een eigen link. De link is de enige toegangsdrempel; deel hem zorgvuldig.",
+    label="Uitnodiging",
+    help_text="De uitnodigingslink is de enige toegangsdrempel; deel hem zorgvuldig.",
     children=[
         INVITE_KEY,
         INVITE_REALM_ROLES,
-        INVITE_RESTRICT_DOMAIN,
         INVITE_CONTACT_EMAIL,
         INVITE_APPLICATION_URL,
         INVITE_AUTH_METHODS,

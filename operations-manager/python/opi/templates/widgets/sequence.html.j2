@@ -7,7 +7,7 @@
 {% set fixed_size = max_items is not none and min_items == max_items|int %}
 <div class="rvo-sequence" id="{{ field.path|e }}-container"
      data-min-items="{{ min_items }}" data-max-items="{{ max_items|default('', true) }}" data-current-count="{{ current_count }}">
-    <span class="utrecht-form-label">{{ field.label|e }}</span>
+    <span class="utrecht-form-label rvo-form-field__label-text">{{ field.label|e }}</span>
     {{ helper_text(field) }}
     <div class="rvo-sequence__items" id="{{ field.path|e }}-items">
         {% for item in items_html %}{{ item }}{% endfor %}
