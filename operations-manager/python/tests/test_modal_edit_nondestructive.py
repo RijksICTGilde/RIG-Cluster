@@ -5,8 +5,8 @@ MUST preserve all existing project data. These tests load a real project
 file, simulate what _modal_do_submit does, and verify that only the
 intended field changed while everything else is preserved.
 
-This catches the class of bug where a new flow ID prefix is not registered
-in _detect_list_target, causing the save to replace the entire project.
+This catches the class of bug where a flow does not declare its target,
+causing the save to replace the entire project.
 """
 
 from __future__ import annotations
@@ -17,11 +17,9 @@ from typing import ClassVar
 
 import pytest
 import yaml
+from opi.forms.visualizers.flows import get_flow
+from opi.forms.wizard.save import apply_list_item_merge as _apply_list_item_merge
 from opi.forms.wizard.state import CLEARED_FIELD
-from opi.web.router_detail_edit import (
-    _apply_list_item_merge,
-    _detect_list_target,
-)
 
 FIXTURES_DIR = Path(__file__).parent / "e2e" / "fixtures" / "projects"
 UNIT_FIXTURES_DIR = Path(__file__).parent / "fixtures" / "projects"
@@ -55,11 +53,10 @@ def _simulate_modal_save(
     result = copy.deepcopy(existing_data)
     merged = copy.deepcopy(merged_data)
 
-    list_target = _detect_list_target(flow_id, state=None)
-    if list_target:
-        list_key, idx, is_new = list_target
-        _apply_list_item_merge(result, merged, list_key, idx, is_new)
-        merged.pop(list_key, None)
+    target = get_flow(flow_id).target
+    if target is not None:
+        _apply_list_item_merge(result, merged, target.list_key, target.index, target.is_new)
+        merged.pop(target.list_key, None)
 
     result.update(merged)
     return result
@@ -265,7 +262,7 @@ class TestClearedFieldEdits:
 
 
 class TestUnregisteredFlowDetection:
-    """Verify that _detect_list_target covers all deployment-targeting flows."""
+    """Verify that every list-targeting flow family declares its target."""
 
     EXPECTED_DEPLOYMENT_PREFIXES: ClassVar[list[str]] = [
         "modal-edit-deployment-",
@@ -279,16 +276,16 @@ class TestUnregisteredFlowDetection:
     ]
 
     @pytest.mark.parametrize("prefix", EXPECTED_DEPLOYMENT_PREFIXES)
-    def test_deployment_prefix_is_registered(self, prefix: str) -> None:
-        result = _detect_list_target(f"{prefix}0", state=None)
-        assert result is not None, f"Flow prefix '{prefix}' not registered in _detect_list_target"
-        assert result[0] == "deployments"
+    def test_deployment_prefix_declares_its_target(self, prefix: str) -> None:
+        target = get_flow(f"{prefix}0").target
+        assert target is not None, f"Flow '{prefix}0' declares no target"
+        assert target.list_key == "deployments"
 
     @pytest.mark.parametrize("prefix", EXPECTED_COMPONENT_PREFIXES)
-    def test_component_prefix_is_registered(self, prefix: str) -> None:
-        result = _detect_list_target(f"{prefix}0", state=None)
-        assert result is not None, f"Flow prefix '{prefix}' not registered in _detect_list_target"
-        assert result[0] == "components"
+    def test_component_prefix_declares_its_target(self, prefix: str) -> None:
+        target = get_flow(f"{prefix}0").target
+        assert target is not None, f"Flow '{prefix}0' declares no target"
+        assert target.list_key == "components"
 
 
 class TestAgainstRealProjectFiles:

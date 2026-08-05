@@ -34,29 +34,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def detect_list_target(flow_id: str, state: Any) -> tuple[str, int, bool] | None:
-    """Detect if a flow targets a single item in a list.
-
-    Returns (list_key, index, is_new) or None for non-list flows.
-    """
-    for prefix, list_key in [
-        ("modal-edit-component-", "components"),
-        ("modal-edit-deployment-", "deployments"),
-        ("modal-add-deployment-", "deployments"),
-        ("modal-edit-domain-", "deployments"),
-        ("modal-edit-backup-schedule-", "deployments"),
-    ]:
-        if flow_id.startswith(prefix):
-            suffix = flow_id.removeprefix(prefix)
-            if suffix.isdigit():
-                idx = int(suffix)
-                is_new = prefix == "modal-add-deployment-" or (
-                    prefix == "modal-edit-component-" and state and (state.template_data or {}).get("is_new", False)
-                )
-                return list_key, idx, is_new
-    return None
-
-
 def apply_list_item_merge(
     existing_data: dict[str, Any],
     merged_data: dict[str, Any],
@@ -198,15 +175,14 @@ async def apply_modal_edit(
     for key in template_only_keys(state.step_data, state.template_data, state.virt_mappings):
         merged_data.pop(key, None)
 
-    # Targeted list merge for flows that operate on a single list item.
+    # Targeted list merge for flows that declare they write one list item.
     # Instead of replacing the entire list, we add or update one entry.
-    list_target = detect_list_target(flow.flow_id, state)
-    if list_target:
-        list_key, idx, is_new = list_target
-        apply_list_item_merge(existing_data, merged_data, list_key, idx, is_new)
-        merged_data.pop(list_key, None)
+    target = flow.target
+    if target is not None:
+        apply_list_item_merge(existing_data, merged_data, target.list_key, target.index, target.is_new)
+        merged_data.pop(target.list_key, None)
 
-        if list_key == "deployments" and is_new:
+        if target.list_key == "deployments" and target.is_new:
             _system_fields_for_new_deployment(existing_data, project_name)
 
     existing_data = apply_form_data_to_project(existing_data, merged_data)

@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.visualizers.wizard_sections import _CONFIG_SECTIONS_BY_ID
-from opi.web.router_detail_edit import _template_only_keys
+from opi.forms.wizard.save import template_only_keys as _template_only_keys
 
 
 def _service_config(services: list[Any], name: str) -> dict[str, Any] | None:
