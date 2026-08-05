@@ -238,13 +238,23 @@ def _validate_owned_property(service: Service, model: type[BaseModel], raw: Any,
 
     The model is passed in rather than read off the service again, so the narrowing the
     caller already did is carried in the signature instead of re-asserted here.
+
+    The message names only the validators' own reasons, never the value. The properties
+    these services own hold secrets (``user-env-vars`` is the component's own environment,
+    a value may be a password), and this message is both logged at WARNING and returned to
+    the caller -- so ``str(e)`` would put a pasted secret from an unparseable plaintext
+    value in the central OPI log and in an HTTP response. ``e.errors()[*]["msg"]`` carries
+    the reason without pydantic's ``input_value``, and the chain is dropped (``from None``)
+    because the ValidationError itself still holds the input for any handler that logs a
+    traceback.
     """
     try:
         model.model_validate(raw)
     except ValidationError as e:
+        reasons = "; ".join(error["msg"] for error in e.errors()) or "waarde voldoet niet aan het model"
         raise ProjectIntegrityError(
-            f"Project '{project_name}': '{service.owned_property}' {where} is ongeldig: {e}."
-        ) from e
+            f"Project '{project_name}': '{service.owned_property}' {where} is ongeldig: {reasons}."
+        ) from None
 
 
 def validate_component_references(project_data: dict, components: list, context: str = "deployment") -> dict[str, Any]:

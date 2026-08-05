@@ -334,9 +334,13 @@ class TestKeyValueValidator:
     # --- Invalid ---
 
     def test_invalid_no_separator(self):
+        # The message points at the line by NUMBER, not by quoting it back: the same
+        # parser message is logged and returned to the client on the save path, where the
+        # line may be a pasted secret (RC-25 security rework).
         errors = KeyValueValidator().validate("BADLINE")
         assert len(errors) == 1
-        assert "BADLINE" in errors[0]
+        assert "Line 1" in errors[0]
+        assert "BADLINE" not in errors[0]
 
     def test_invalid_env_line_in_multi(self):
         errors = KeyValueValidator().validate("KEY=value\nBADLINE")
