@@ -22,21 +22,14 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from opi.forms.editables.merge import deep_merge_into
+
 
 def service_name(entry: Any) -> str | None:
     """The service identity for a services-list entry, or None if unrecognised."""
     from opi.services.services import service_entry_name
 
     return service_entry_name(entry)
-
-
-def deep_merge_into(base: dict[str, Any], overlay: dict[str, Any]) -> None:
-    """Recursively overlay *overlay* onto *base*, in place. Non-dict values replace."""
-    for key, value in overlay.items():
-        if isinstance(base.get(key), dict) and isinstance(value, dict):
-            deep_merge_into(base[key], value)
-        else:
-            base[key] = copy.deepcopy(value)
 
 
 def _absorb(result: list[Any], index: dict[str, int], entry: Any) -> None:

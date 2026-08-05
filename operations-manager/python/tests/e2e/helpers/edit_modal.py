@@ -115,6 +115,29 @@ class EditModalHelper:
         """Wait for the review screen to appear (multi-step flows)."""
         self.page.locator(".wizard-review").wait_for(state="visible", timeout=timeout or self.action_timeout_ms)
 
+    def advance_to_review(self, max_steps: int = 10) -> None:
+        """Submit each remaining step until the review screen appears.
+
+        How many config steps a flow has depends on which services are selected,
+        and that number grows whenever a service gains a config step. Counting
+        submits therefore goes stale silently: the walk stops short of the review,
+        and the test then fails on a missing review instead of on its own subject.
+        Walking until the review appears is what such a test actually means.
+        """
+        for _ in range(max_steps):
+            review = self.page.locator(".wizard-review")
+            submit = self.page.locator("#modal-wizard-form button[type='submit']")
+            # The review can swap in a moment after network-idle, so wait for
+            # whichever of the two lands instead of sampling the DOM instantly:
+            # sampling raced the swap and clicked a button that was already gone.
+            review.or_(submit).first.wait_for(state="visible", timeout=self.action_timeout_ms)
+            if review.count() > 0:
+                return
+            self.submit_step()
+        raise AssertionError(
+            f"review screen not reached within {max_steps} steps; last step labels: {self.get_step_labels()}"
+        )
+
     def confirm_review(self) -> None:
         """Click the confirm button on the review page and wait for result."""
         confirm_btn = self.page.locator(

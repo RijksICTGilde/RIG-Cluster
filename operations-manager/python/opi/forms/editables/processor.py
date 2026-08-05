@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from opi.forms.editables.converters import keep_existing_ciphertext_if_unchanged
 from opi.forms.editables.editable import WidgetType, apply_virtualize
+from opi.forms.editables.merge import deep_merge_into
 from opi.forms.editables.path import get_value, resolve_path
 from opi.forms.editables.service_path import (
     is_service_config_path,
@@ -77,16 +78,6 @@ def _prune_paths(item: dict[str, Any], rel_paths: list[str]) -> dict[str, Any]:
         if isinstance(node, dict):
             node.pop(segs[-1], None)
     return item
-
-
-def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
-    """Deep-merge ``overlay`` into ``base`` in place; overlay wins on conflicts."""
-    for key, value in overlay.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            _deep_merge(base[key], value)
-        else:
-            base[key] = copy.deepcopy(value)
-    return base
 
 
 def _reorder_like(original: Any, merged: Any) -> Any:
@@ -618,7 +609,7 @@ class EditableFormProcessor:
             orig = _match_original_item(item, originals, idx)
             if isinstance(item, dict) and isinstance(orig, dict):
                 base = _prune_paths(copy.deepcopy(orig), managed_rel)
-                merged_items.append(_deep_merge(base, copy.deepcopy(item)))
+                merged_items.append(deep_merge_into(base, copy.deepcopy(item)))
             else:
                 merged_items.append(copy.deepcopy(item))
         smart_set_value(result, ed.yaml_path, merged_items)
