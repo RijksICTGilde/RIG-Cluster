@@ -10,7 +10,7 @@
  * Selectors are class-based (`.edit-section-modal` / `.edit-section-backdrop`)
  * rather than id-based so the same helpers work on every modal that follows
  * the convention — project-details (`#edit-section-modal`), admin subdomains
- * (`#approval-modal`), danger-confirm (`#danger-confirm-modal`), etc.
+ * (`#approval-modal`), etc.
  */
 (function () {
     'use strict';

@@ -123,7 +123,8 @@ def test_deployment_delete_posts_the_right_deployment(app_server: str, auth_page
     auth_page.evaluate("switchTab('deployments')")
     auth_page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
 
-    auth_page.locator("#tab-deployments button:has-text('Deployment verwijderen')").first.click()
+    card = auth_page.locator("#tab-deployments .deployment-card").first
+    card.locator("button:has-text('Verwijderen')").first.click()
     auth_page.locator("#edit-section-modal.is-open").wait_for(state="visible", timeout=10000)
     auth_page.locator("#edit-section-inner [data-confirm-action]").wait_for(state="visible", timeout=10000)
 
