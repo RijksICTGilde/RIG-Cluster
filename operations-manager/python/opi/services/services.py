@@ -746,6 +746,23 @@ class ServiceAdapter:
             # keeps it out of the picker, so no explicit hidden is needed).
             kind=ServiceKind.SYSTEM,
         ),
+        ServiceType.DEPLOYMENT_HEALTH: ServiceDefinition(
+            name="Deployment gezondheid",
+            description=(
+                "Systeemdienst: beoordeelt wat de waargenomen toestand van een draaiende "
+                "deployment betekent (OOM, CrashLoopBackOff, image ophalen mislukt) en weegt "
+                "daarbij mee wat andere diensten over die deployment melden. Draait altijd, "
+                "is niet kiesbaar."
+            ),
+            help_template="deployment-health.html.j2",
+            icon="stethoscoop",
+            color="grijs-600",
+            scope=ServiceScope.DEPLOYMENT,
+            variables=[],
+            # Always on, never in the project file -> a system service (kind=SYSTEM also
+            # keeps it out of the picker, so no explicit hidden is needed).
+            kind=ServiceKind.SYSTEM,
+        ),
         ServiceType.CROSS_DOMAIN_ACCESS: ServiceDefinition(
             name="Cross-domain toegang",
             description=(
