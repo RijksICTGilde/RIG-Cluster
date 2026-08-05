@@ -126,6 +126,26 @@ def service_entry_type(entry: Any) -> str | None:
     return None
 
 
+def service_entry_body(entry: Any, name: str | None = None) -> Any:
+    """Return the config-carrying sub-dict of a service entry, format-agnostic.
+
+    New record (``{name/reference: X, config: ...}``) carries ``config`` and its
+    siblings on the entry itself, so the body IS the entry. Legacy
+    ``{X: {config: ...}}`` carries them under the service-name key.
+
+    The returned dict is the live sub-dict, not a copy: writing to it writes to the
+    entry, in whichever form that entry happens to use. That is what lets a caller
+    merge into an entry without first knowing its shape. *name* is accepted as a
+    hint; when omitted it is derived with ``service_entry_name``.
+    """
+    if not isinstance(entry, dict):
+        return None
+    if "name" in entry or "reference" in entry:
+        return entry
+    key = name if name is not None else service_entry_name(entry)
+    return entry.get(key) if key is not None else None
+
+
 def service_entry_config(entry: Any) -> Any:
     """Return the ``config`` of a service entry, format-agnostic (None if none).
 
