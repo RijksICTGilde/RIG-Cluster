@@ -10,7 +10,9 @@ Two failures this guards, both silent:
 * The service picker and the service overview each used to build their own
   service block, and drifted: the overview lost the help button entirely. They
   now share ``service_block`` from ``widgets/_macros.html.j2``, and this checks
-  they keep sharing it.
+  they keep sharing it. The components section of the project page is the third
+  user: it showed the very same services as a line of raw names, without icon,
+  description or the question mark.
 """
 
 from __future__ import annotations
@@ -26,10 +28,11 @@ from opi.services.services import ServiceAdapter
 _TEMPLATE_ROOT = pathlib.Path(opi.__file__).parent / "templates"
 _HELP_ROOT = _TEMPLATE_ROOT / "help"
 
-# The two templates that render a service block. Both must go through the macro.
+# Every template that renders a service block. All of them go through the macro.
 _SERVICE_BLOCK_USERS = (
     "widgets/service_cards.html.j2",
     "services-overview.html.j2",
+    "project-details/section-components.html.j2",
 )
 
 
