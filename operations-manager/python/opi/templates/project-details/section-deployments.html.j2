@@ -18,7 +18,7 @@
                     <c-button kind="secondary" size="sm" label="Webadres" showIcon="before" icon="wereldbol"
                         @click="openEditModal('modal-edit-domain-{{ original_index }}', 'Webadres bewerken - {{ deployment.name }}')" />
                     <c-button kind="warning" size="sm" label="Verwijderen" showIcon="before" icon="verwijderen"
-                        @click="showDangerConfirmation('deployment', '{{ deployment.name }}', 'Weet u zeker dat u deployment &quot;{{ deployment.name }}&quot; wilt verwijderen? Dit verwijdert alle bijbehorende Kubernetes resources en ArgoCD configuratie.')" />
+                        @click="openServiceModal('/projects/{{ project.name }}/actions/delete-deployment/confirm?target={{ deployment.name | urlencode }}', 'Deployment verwijderen')" />
                     {% endif %}
                 </div>
             </div>
