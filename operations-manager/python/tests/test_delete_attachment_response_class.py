@@ -1,21 +1,25 @@
-"""Regression: the delete-attachment route must serialise as JSON.
+"""The delete-attachment route answers with the shared progress fragment.
 
-The endpoint returns a dict on success. The app's default response class is
-HTMLResponse, which would call dict.encode() and raise
-"'dict' object has no attribute 'encode'" (an unhandled 500 even though the
-delete succeeded). The route must therefore pin response_class=JSONResponse.
+It used to return a dict, which the app's HTMLResponse default would call .encode() on
+("'dict' object has no attribute 'encode'": an unhandled 500 even though the delete
+succeeded), so it pinned JSONResponse. Since RC-29 it starts a task and answers with
+rendered HTML instead, so what must hold is the opposite: the route is HTML, and it is
+the POST the shared confirmation dialog addresses.
 """
 
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from opi.web.router_attachments import attachments_router
 
 
-def test_delete_attachment_route_uses_json_response():
-    routes = [r for r in attachments_router.routes if getattr(r, "path", "").endswith("/attachments/{attachment_id}")]
+def test_delete_attachment_route_answers_html():
+    routes = [
+        r for r in attachments_router.routes if getattr(r, "path", "").endswith("/attachments/{attachment_id}/delete")
+    ]
     assert routes, "delete-attachment route not found"
 
+    assert "POST" in routes[0].methods
     response_class = getattr(routes[0].response_class, "value", routes[0].response_class)
-    assert response_class is JSONResponse
+    assert response_class is HTMLResponse
 
 
 def test_auth_user_route_uses_json_response():
