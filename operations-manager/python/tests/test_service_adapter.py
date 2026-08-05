@@ -28,14 +28,16 @@ class TestServiceType:
             "invite",
             "resource-tuning",
             "cross-domain-access",
+            "user-env-vars",
+            "aliases",
         }
         actual = {st.value for st in ServiceType}
         assert actual == expected
 
     def test_enum_count(self):
-        # 18 sinds cross-domain-access en resource-tuning er allebei bij kwamen; die
-        # landden via twee losse branches, die elk 17 verwachtten.
-        assert len(ServiceType) == 18
+        # 20 sinds user-env-vars en aliases systeemdiensten werden (RC-25); daarvoor 18,
+        # sinds cross-domain-access en resource-tuning er allebei bij kwamen.
+        assert len(ServiceType) == 20
 
 
 class TestGetAllServices:

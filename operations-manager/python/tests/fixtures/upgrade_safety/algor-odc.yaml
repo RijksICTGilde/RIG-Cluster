@@ -77,7 +77,10 @@ components:
       KEYCLOAK_URI: $OIDC_URL
       KEYCLOAK_REALM: $OIDC_REALM
       PREVIEW_URL: $PUBLIC_HOST
-    user-env-vars: base64+age:UExBQ0VIT0xERVJfRU5WX1ZBUlM=
+    user-env-vars: |-
+      -----BEGIN AGE ENCRYPTED FILE-----
+      UExBQ0VIT0xERVJfRU5WX1ZBUlM=
+      -----END AGE ENCRYPTED FILE-----
     services:
       - publish-on-web
       - keycloak
@@ -95,7 +98,10 @@ components:
         memory: 158Mi
       limits:
         memory: 158Mi
-    user-env-vars: base64+age:UExBQ0VIT0xERVJfRU5WX1ZBUlNfMg==
+    user-env-vars: |-
+      -----BEGIN AGE ENCRYPTED FILE-----
+      UExBQ0VIT0xERVJfRU5WX1ZBUlNfMg==
+      -----END AGE ENCRYPTED FILE-----
     services:
       - publish-on-web
       - keycloak

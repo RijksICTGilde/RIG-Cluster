@@ -16,7 +16,6 @@ from opi.forms.editables.fields.components import (
     COMPONENT_NAME_EDITABLE,
     COMPONENT_RESOURCES_CPU_LIMIT_EDITABLE,
     COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE,
-    COMPONENT_USER_ENV_VARS_EDITABLE,
 )
 from opi.forms.editables.fields.domains import (
     DOMAIN_BASE_DOMAIN_EDITABLE,
@@ -26,6 +25,7 @@ from opi.forms.editables.fields.domains import (
 )
 from opi.forms.editables.pipeline import convert_fields, enforce_rules, validate_fields
 from opi.forms.editables.validators import ContainerImageValidator, PathValidator, SlugValidator
+from opi.services.catalog.user_env_vars.editables import COMPONENT_USER_ENV_VARS_EDITABLE
 
 logger = logging.getLogger(__name__)
 

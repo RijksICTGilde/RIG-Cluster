@@ -12,7 +12,7 @@ and BEFORE any write or commit. Fails closed on the first violation.
 import logging
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
@@ -20,7 +20,7 @@ from opi.handlers.project_file_handler import validate_attachment_couplings, val
 from opi.services import ServiceAdapter
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.project import Project
-from opi.services.registry import get_service
+from opi.services.registry import get_service, property_owning_services
 from opi.services.services import service_entry_config, service_entry_name, service_entry_schema_version
 from opi.services.services_enums import ServiceType
 from opi.utils.project_utils import ComponentValidationError, validate_component_paths, validate_root_component
@@ -184,6 +184,77 @@ def validate_service_configs(project_data: dict[str, Any]) -> None:
                         project_name,
                         service_entry_schema_version(entry),
                     )
+
+    _validate_owned_properties(project_data, project_name)
+
+
+def _validate_owned_properties(project_data: dict[str, Any], project_name: str) -> None:
+    """Validate the plain component properties that SYSTEM services own (RC-25).
+
+    ``user-env-vars`` and ``aliases`` are services whose config is a property of the
+    component rather than a block in a ``services:`` list, so the walks above never see
+    them -- which is exactly why they went unvalidated until now. The services declare
+    the property (``owned_property``) and the layers they carry it on
+    (``config_editables``), so this loop names neither service.
+    """
+    for service in property_owning_services():
+        key, model = service.owned_property, service.config_model
+        if key is None or model is None:
+            # property_owning_services() filters on owned_property, and a service that owns
+            # one is always modelled -- but this walk is a fail-closed validation path, so
+            # it narrows explicitly instead of leaning on an assert (which `python -O`
+            # strips, turning the guarantee into a silent skip).
+            continue
+        if service.config_editables(ConfigLayer.COMPONENT):
+            for component in project_data.get("components", []) or []:
+                if isinstance(component, dict) and component.get(key) is not None:
+                    _validate_owned_property(
+                        service,
+                        model,
+                        component[key],
+                        f"van component '{component.get('name', '(onbekend)')}'",
+                        project_name,
+                    )
+        if not service.config_editables(ConfigLayer.DEPLOYMENT_COMPONENT):
+            continue
+        for deployment in project_data.get("deployments", []) or []:
+            if not isinstance(deployment, dict):
+                continue
+            dep_name = deployment.get("name", "(onbekend)")
+            for component in deployment.get("components", []) or []:
+                if isinstance(component, dict) and component.get(key) is not None:
+                    comp_name = component.get("reference") or component.get("name", "(onbekend)")
+                    _validate_owned_property(
+                        service,
+                        model,
+                        component[key],
+                        f"van component '{comp_name}' in deployment '{dep_name}'",
+                        project_name,
+                    )
+
+
+def _validate_owned_property(service: Service, model: type[BaseModel], raw: Any, where: str, project_name: str) -> None:
+    """Validate one owned-property value against its service's model; fail closed.
+
+    The model is passed in rather than read off the service again, so the narrowing the
+    caller already did is carried in the signature instead of re-asserted here.
+
+    The message names only the validators' own reasons, never the value. The properties
+    these services own hold secrets (``user-env-vars`` is the component's own environment,
+    a value may be a password), and this message is both logged at WARNING and returned to
+    the caller -- so ``str(e)`` would put a pasted secret from an unparseable plaintext
+    value in the central OPI log and in an HTTP response. ``e.errors()[*]["msg"]`` carries
+    the reason without pydantic's ``input_value``, and the chain is dropped (``from None``)
+    because the ValidationError itself still holds the input for any handler that logs a
+    traceback.
+    """
+    try:
+        model.model_validate(raw)
+    except ValidationError as e:
+        reasons = "; ".join(error["msg"] for error in e.errors()) or "waarde voldoet niet aan het model"
+        raise ProjectIntegrityError(
+            f"Project '{project_name}': '{service.owned_property}' {where} is ongeldig: {reasons}."
+        ) from None
 
 
 def validate_component_references(project_data: dict, components: list, context: str = "deployment") -> dict[str, Any]:
