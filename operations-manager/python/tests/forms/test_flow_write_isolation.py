@@ -279,6 +279,37 @@ async def test_edit_touches_only_its_own_field(
     assert dump_yaml_to_string(result) == dump_yaml_to_string(expected), f"{flow_id} changed more than {yaml_path}"
 
 
+NO_CHANGE_FLOWS = list(
+    dict.fromkeys((flow_id, path, tuple(sorted(ctx.items()))) for flow_id, path, _v, ctx in FLOW_EDITS)
+)
+
+
+@pytest.mark.parametrize(
+    ("flow_id", "yaml_path", "flow_context"),
+    NO_CHANGE_FLOWS,
+    ids=[f"{f}:{p}" for f, p, _c in NO_CHANGE_FLOWS],
+)
+@pytest.mark.asyncio
+async def test_opening_and_saving_without_changing_anything_changes_nothing(
+    flow_id: str,
+    yaml_path: str,
+    flow_context: tuple[tuple[str, Any], ...],
+) -> None:
+    """Walking a flow and pressing save must leave the file exactly as it was.
+
+    This is the return trip for every field a flow shows but the user may not
+    type in: a readonly name, an image the form only displays. They are still
+    written back, so what goes out must equal what came in - down to the key
+    order.
+    """
+    project_data = build_project()
+    current = smart_get_value(project_data, yaml_path)
+
+    result = await run_flow_edit(project_data, flow_id, yaml_path, current, **dict(flow_context))
+
+    assert dump_yaml_to_string(result) == dump_yaml_to_string(build_project()), f"{flow_id} changed something by itself"
+
+
 @pytest.mark.asyncio
 async def test_cleared_field_stays_cleared_and_takes_nothing_with_it() -> None:
     """Emptying a field the user may edit removes it, and only it.
