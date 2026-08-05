@@ -55,8 +55,13 @@ Wat die declaratie oplevert:
 ## Validatie
 
 `user-env-vars` -- `UserEnvVarsConfig` accepteert drie vormen, want alle drie komen voor:
-een AGE-blok (`-----BEGIN AGE ENCRYPTED FILE-----`), de eenregelige versleutelde vorm
-(`base64+age:...`, `age:...`), en platte tekst in `KEY=value`- of YAML-formaat. Platte
+een AGE-**blok** (`-----BEGIN AGE ENCRYPTED FILE-----`), de opgeslagen vorm; platte tekst
+in `KEY=value`- of YAML-formaat, wat het formulier post voor versleuteling en wat een
+handgeschreven projectbestand kan bevatten; en de legacy mapping (`{API_KEY: secret}`)
+van voor het veld een enkele string werd. De eenregelige `base64+age:...` is hier
+uitdrukkelijk **niet** geldig: dat is de wachtwoordvorm elders in een projectbestand, niet
+de vorm van dit veld. Ik heb dat onderweg zelf verkeerd gehad en teruggedraaid in
+d53d3144; `test_the_stored_encrypted_shape_is_a_block_not_a_prefix` houdt het vast. Platte
 tekst gaat door `validate_and_parse_env_vars`, dezelfde parser als de deploy-route, dus
 wat hier valideert deployt ook. Een dollar in een wachtwoord is geen fout: de deploy-route
 is daar bewust mild (`substitute_known_variables`), dus het model mag niet strenger zijn.
