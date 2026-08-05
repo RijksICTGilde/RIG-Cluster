@@ -493,6 +493,28 @@ Every hook a service may implement, so a new service knows what it can own:
 | `provision(ctx)` / `handle_service_removal(ctx)` | server-side resources |
 | `contribute_manifest_context(ctx)` / `build_secret_files(ctx)` | manifest + secret contributions (per component) |
 | `contribute_deployment_manifests(ctx)` | deployment-wide manifests (once per deployment, e.g. a NetworkPolicy) |
+| `observe_deployment(ctx)` | act on a just-synced deployment (`HookPoint.AFTER_SYNC`) |
+| `deployment_state(ctx)` | what this service knows about a deployment (`HookPoint.DEPLOYMENT_STATE`) |
+
+### Contributing state about a deployment
+
+A service that puts a deployment in a particular situation -- sleep-mode scaling it to
+zero and parking a waker in front of it -- reports that through `deployment_state(ctx)`.
+Generic code (`collect_deployment_state`, the health check, the deployment page) then
+learns the situation from the service that caused it instead of inferring it from what
+the cluster happens to show. Read `features/deployment-state-and-health.md` before adding
+one.
+
+Two rules, both load-bearing:
+
+- **Return facts, never a health verdict.** `DeploymentStateFact` deliberately has no
+  "healthy" field. If "I am asleep" could be phrased as "and therefore fine", a service
+  with a stale state would hide a real outage. `expects_no_application_pods` is the one
+  operational consequence a service may state, and it excuses only the ABSENCE of the
+  application's pods -- never a problem observed on a pod that is there.
+- **Answer from the project file, not the cluster.** That is where a service records what
+  it did, and it keeps the hook synchronous and connector-free, so a page render can ask
+  it as cheaply as the health check does.
 
 ## Provisioning and cleanup
 
