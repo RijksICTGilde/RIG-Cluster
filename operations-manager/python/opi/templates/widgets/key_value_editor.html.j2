@@ -2,7 +2,7 @@
 {% set initial_format = field.attributes.get('kv_format', 'env') %}
 {% set editor_id = 'kv-editor-' ~ field.path %}
 <div class="rvo-form-group kv-editor{% if field.errors %} kv-editor--error{% endif %}" id="{{ editor_id|e }}" data-format="{{ initial_format }}">
-    <span class="utrecht-form-label kv-editor__label">{{ field.label|e }}</span>
+    <span class="utrecht-form-label rvo-form-field__label-text kv-editor__label">{{ field.label|e }}</span>
     {{ helper_text(field) }}
     <div class="kv-toggle">
         <button type="button" class="kv-toggle__btn{% if initial_format == 'env' %} kv-toggle__btn--active{% endif %}" data-format="env"

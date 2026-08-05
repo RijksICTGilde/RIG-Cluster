@@ -65,9 +65,16 @@ def editable_to_form_field(
     form_path = apply_virtualize(real_path, virt) if virt else real_path
 
     # 2. Extract value from YAML using the real path (fall back to default)
+    #
+    # A callable default is computed from the surrounding project data, so a field can be
+    # prefilled with something derived (the first team member's address, a text carrying the
+    # project name) instead of a constant. It runs only when the field has no stored value,
+    # so it never overwrites what a user typed, and it may return None to mean "no default
+    # after all". Errors are deliberately not caught: a broken default is a bug in our own
+    # code, and swallowing it would silently render an empty field instead.
     raw_value = smart_get_value(yaml_data, real_path)
     if raw_value is None and default is not None:
-        raw_value = default
+        raw_value = default(yaml_data) if callable(default) else default
 
     # 3. Apply converter for display
     # For editable widgets, use read() to convert stored value → form-compatible value
@@ -232,6 +239,10 @@ def should_render_editable(
     # first render (e.g. provide-as defaults to "file" -> show the path field).
     if dep_value is None and siblings:
         dep_value = _find_default_for_path(siblings, depends_on)
+        # A computed default must be resolved before comparison: comparing the function
+        # object itself against a show_when value silently evaluates to False.
+        if callable(dep_value):
+            dep_value = dep_value(yaml_data)
 
     return evaluate_show_when(dep_value, show_when)
 

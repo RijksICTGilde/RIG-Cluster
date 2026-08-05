@@ -6,7 +6,7 @@
     <c-layout-flow gap="xs">
         <div class="rvo-display-field__header">
             <c-icon icon="{{ icon|e }}" size="md" color="{{ icon_color|e }}" />
-            <span class="utrecht-form-label">{{ field.label|e }}</span>
+            <span class="utrecht-form-label rvo-form-field__label-text">{{ field.label|e }}</span>
         </div>
         {% if val %}
             {% if val in ['Versleuteld opgeslagen', 'Geconfigureerd'] %}

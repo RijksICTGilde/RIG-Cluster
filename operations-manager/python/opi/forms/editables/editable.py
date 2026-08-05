@@ -186,6 +186,13 @@ class Editable:
     values_provider: str | None = None
     required: bool = False
     default: Any = None
+    """Value used when the field has none stored yet.
+
+    A callable is allowed and receives the surrounding project data, so a default can be
+    derived (the first team member's address, a text carrying the project name) instead of
+    being a constant. It is invoked only when nothing is stored, so it never overwrites a
+    user's input, and returning None means "no default after all".
+    """
     children: list[Editable] | None = None
     min_items: int = 0
     max_items: int | None = None
