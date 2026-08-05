@@ -42,6 +42,10 @@ class ServiceType(Enum):
     # after a sync and raises memory for a component that OOM'd (not user-selectable).
     RESOURCE_TUNING = "resource-tuning"
 
+    # Deployment health: platform-owned system service that judges what the observed pod
+    # state of a running deployment means, weighing what other services report about it.
+    DEPLOYMENT_HEALTH = "deployment-health"
+
     # Cross-domain network access: allow this project's pods to reach, and be reached by,
     # named deployments/components of other projects on explicit ports (NetworkPolicy).
     CROSS_DOMAIN_ACCESS = "cross-domain-access"

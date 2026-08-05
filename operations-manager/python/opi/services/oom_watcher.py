@@ -1,6 +1,12 @@
 """
 Deployment health watcher: OOM, ImagePullBackOff, and CrashLoopBackOff detection.
 
+This module OBSERVES (kubectl queries, scheduling, remediation). The judgement -- what
+an observation means -- belongs to the ``deployment-health`` system service
+(``opi/services/catalog/deployment_health``), which is where the state other services
+report about the deployment is weighed in. Same split as resource-tuning: the service is
+the declarative home of the decision, this module does the work.
+
 Provides two mechanisms:
 1. **Inline detection** (``create_health_check_callback``):
    Used during the ArgoCD polling loop to detect pod health issues while
@@ -31,6 +37,8 @@ from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import IMAGE_PULL_REASONS as _IMAGE_PULL_REASONS
 from opi.services.catalog.base import application_pod_selector
+from opi.services.catalog.deployment_health import deployment_health_service
+from opi.services.deployment_state import DeploymentState
 from opi.services.resource_tuning_service import get_project_data
 from opi.utils.naming import generate_unique_name
 
@@ -705,21 +713,32 @@ def schedule_oom_check(
 async def check_all_components_health(
     namespace: str,
     component_names: list[str],
+    state: DeploymentState | None = None,
 ) -> list[PodHealthResult]:
     """
     Check multiple components for health issues via kubectl.
 
+    What counts as an issue is the ``deployment-health`` service's call, not this
+    module's: it is asked per component, with the state the other services report about
+    the deployment. It answers the same way for every observed problem today -- a problem
+    on an application pod is a failure, whatever any service says -- and that is the
+    point of routing through it: the state is available at the decision and deliberately
+    gets no vote.
+
     Args:
         namespace: Kubernetes namespace
         component_names: List of unique component names (deployment prefixes)
+        state: What the services report about this deployment; empty when unknown
 
     Returns:
         List of PodHealthResult for components that have issues
     """
+    deployment_state = state if state is not None else DeploymentState()
+    health_service = deployment_health_service()
     results: list[PodHealthResult] = []
     for name in component_names:
         health = await check_pod_health(namespace, name)
-        if health.oom_detected or health.image_pull_error or health.crash_loop_detected:
+        if health_service.counts_as_failure(health, deployment_state):
             results.append(health)
     return results
 
