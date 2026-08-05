@@ -54,6 +54,31 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 {% endif %}
 {% endmacro %}
 
+{# --- Service block --- #}
+
+{#
+  One service, rendered the same everywhere: icon, name, help button, description.
+  Used by the service picker (widgets/service_cards.html.j2) and the service
+  overview page (services-overview.html.j2). Both used to build this themselves
+  and drifted apart -- the overview lost the help button. Keep it here.
+
+  The help button only appears when the service has a help_template, and needs
+  openServiceHelp() (static/js/wizard.js) plus the help modal
+  (widgets/service_help_modal.html.j2) on the page.
+#}
+{% macro service_block(name, description, icon, color, help_template=None, icon_size="lg") %}
+<div class="service-card__header">
+    <c-icon icon="{{ icon|e }}" color="{{ color|e }}" size="{{ icon_size|e }}" />
+    <span class="service-card__title">{{ name|e }}</span>
+    {% if help_template %}
+    <c-icon icon="vraagteken" size="xl" color="hemelblauw"
+            class="service-card__help-btn"
+            @click="event.stopPropagation(); openServiceHelp('{{ help_template|e }}')" />
+    {% endif %}
+</div>
+<p class="service-card__description">{{ description|e }}</p>
+{% endmacro %}
+
 {# --- Error helpers --- #}
 
 {% macro render_errors(errors) %}

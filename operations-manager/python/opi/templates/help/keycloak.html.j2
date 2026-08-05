@@ -1,0 +1,51 @@
+<c-heading type="h2">
+    <c-icon icon="sleutel" size="xl" color="groen"/>
+    Keycloak Authentication
+</c-heading>
+
+<c-p>
+    Je project krijgt een eigen afgeschermde omgeving (een realm) in Keycloak waarin je
+    gebruikers inloggen. Dat kan met hun rijksaccount via SSO Rijk, en met lokale
+    accounts die alleen in jouw realm bestaan, bijvoorbeeld voor mensen zonder
+    rijksaccount.
+</c-p>
+
+<c-heading type="h3">Wanneer gebruik je dit?</c-heading>
+
+<c-ul>
+    <c-li>Je applicatie moet weten wie de gebruiker is</c-li>
+    <c-li>Je wilt inloggen met een rijksaccount (SSO Rijk) zonder dat zelf te bouwen</c-li>
+    <c-li>Je wilt ook mensen buiten de Rijksoverheid toegang geven met een lokaal account</c-li>
+    <c-li>Je wilt rollen gebruiken om te bepalen wat iemand mag</c-li>
+</c-ul>
+
+<c-heading type="h3">Wat wordt er ingesteld?</c-heading>
+
+<c-layout-flow gap="md">
+    <c-p>
+        Er wordt een realm aangemaakt met een client voor je applicatie. Je component
+        krijgt de OIDC-gegevens als variabelen:
+        <c-strong>OIDC_DISCOVERY_URL</c-strong>,
+        <c-strong>OIDC_CLIENT_ID</c-strong>,
+        <c-strong>OIDC_CLIENT_SECRET</c-strong>,
+        <c-strong>OIDC_URL</c-strong>
+        en
+        <c-strong>OIDC_REALM</c-strong>.
+        Je applicatie praat daarmee zelf met Keycloak.
+    </c-p>
+
+    <c-p>
+        In de configuratie kies je een template (welke inlogmanieren aanstaan), extra
+        redirect-URI's, eigen realm-rollen en of toegang beperkt wordt tot gebruikers
+        met een bepaalde rol.
+    </c-p>
+
+    <c-p>
+        <c-strong>Let op:</c-strong>
+        deze service vereist
+        <c-strong>Publiceren op het web</c-strong>,
+        dat automatisch wordt meegeselecteerd. Wil je niet zelf het inloggen in je
+        applicatie bouwen, kijk dan naar de
+        <c-strong>Authorization Wall</c-strong>.
+    </c-p>
+</c-layout-flow>
