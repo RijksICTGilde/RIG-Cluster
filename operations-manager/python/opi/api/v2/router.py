@@ -15,7 +15,7 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.api.params import ComponentNamePath, DeploymentNamePath, ProjectNamePath
-from opi.api.router import (  # noqa: TC002 — Pydantic models must be runtime imports for FastAPI
+from opi.api.router import (
     AddComponentRequest,
     AddComponentToDeploymentRequest,
     AddServiceRequest,
