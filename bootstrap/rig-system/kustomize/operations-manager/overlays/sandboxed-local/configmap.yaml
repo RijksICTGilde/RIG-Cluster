@@ -66,9 +66,14 @@ data:
 
     LOG_TO_FILE=false
 
-    # Sleep-mode: the waker image is kind-loaded (task build-waker-image) under this
-    # pinned tag, so the manifest's IfNotPresent policy uses it without pulling from ghcr.
+    # Sleep-mode: pull the published waker image, same tag as production and as the code
+    # default, so a fresh sandbox works without anyone building anything first. Pinning
+    # :sandbox here made this the only place pointing at a tag that does not exist on
+    # ghcr, which fails the pull with a 403 rather than something that reads as "missing".
+    # To test a local build instead: `task build-waker-image` loads it into kind as
+    # :sandbox, and you pin that tag on this line for as long as you need it (the waker
+    # manifest uses IfNotPresent for any tag other than :latest, so it will not re-pull).
     # A short sweep interval keeps the sleep/wake cycle observable for the sandbox E2E.
     SLEEP_MODE_SCHEDULER_ENABLED=true
     SLEEP_MODE_SWEEP_MINUTES=1
-    SLEEP_MODE_WAKER_IMAGE=ghcr.io/minbzk/base-images/zad-waker:sandbox
+    SLEEP_MODE_WAKER_IMAGE=ghcr.io/minbzk/base-images/zad-waker:latest
