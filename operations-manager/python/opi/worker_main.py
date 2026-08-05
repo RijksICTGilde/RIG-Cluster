@@ -40,6 +40,7 @@ async def main() -> None:
         handle_add_component_to_deployment,
         handle_add_service,
         handle_configure_service,
+        handle_delete_component,
         handle_update_component,
     )
     from opi.core.task_handlers_deployment import (
@@ -54,14 +55,19 @@ async def main() -> None:
     )
     from opi.core.task_handlers_project import (
         handle_create_project,
+        handle_delete_project,
         handle_upsert_deployment,
     )
+    from opi.services.catalog.attachments.task import handle_delete_attachment
     from opi.services.catalog.sleep_mode.task import handle_sleep_transition
 
     worker.register_handler(TaskType.CREATE_PROJECT, handle_create_project)
     worker.register_handler(TaskType.UPSERT_DEPLOYMENT, handle_upsert_deployment)
     worker.register_handler(TaskType.UPDATE_IMAGE, handle_update_image)
     worker.register_handler(TaskType.DELETE_DEPLOYMENT, handle_delete_deployment)
+    worker.register_handler(TaskType.DELETE_PROJECT, handle_delete_project)
+    worker.register_handler(TaskType.DELETE_COMPONENT, handle_delete_component)
+    worker.register_handler(TaskType.DELETE_ATTACHMENT, handle_delete_attachment)
     worker.register_handler(TaskType.CLONE_DATABASE, handle_clone_database)
     worker.register_handler(TaskType.CLONE_BUCKET, handle_clone_bucket)
     worker.register_handler(TaskType.REFRESH_DEPLOYMENT, handle_refresh_deployment)
