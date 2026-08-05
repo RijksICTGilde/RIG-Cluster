@@ -27,6 +27,7 @@ class TestServiceType:
             "sleep-mode",
             "invite",
             "resource-tuning",
+            "deployment-health",
             "cross-domain-access",
             "user-env-vars",
             "aliases",
@@ -35,9 +36,10 @@ class TestServiceType:
         assert actual == expected
 
     def test_enum_count(self):
-        # 20 sinds user-env-vars en aliases systeemdiensten werden (RC-25); daarvoor 18,
-        # sinds cross-domain-access en resource-tuning er allebei bij kwamen.
-        assert len(ServiceType) == 20
+        # 21 sinds de gezondheidscheck een systeemdienst werd (RC-28); 20 sinds
+        # user-env-vars en aliases systeemdiensten werden (RC-25); daarvoor 18, sinds
+        # cross-domain-access en resource-tuning er allebei bij kwamen.
+        assert len(ServiceType) == 21
 
 
 class TestGetAllServices:
