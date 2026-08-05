@@ -41,15 +41,18 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
     )
 
     # Task 1: Initialize project
-    init_task = progress.add_task("Initializing project")
+    init_task = progress.add_task("Projectgegevens ophalen")
 
     from opi.manager.project_manager import ProjectManager
 
     project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+    # Attach the progress manager so the steps inside the update (commit, manifests,
+    # ArgoCD) name themselves instead of hiding behind one long-running task.
+    project_manager.set_progress_manager(progress)
     progress.complete_task(init_task)
 
     # Task 2: Update component image
-    update_task = progress.add_task("Updating component image")
+    update_task = progress.add_task(f"Image van {component_name} bijwerken naar {image}")
     try:
         result = await project_manager.update_image_and_regenerate(
             deployment_name=deployment_name,

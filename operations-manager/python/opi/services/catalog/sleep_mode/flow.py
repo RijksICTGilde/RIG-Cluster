@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,43 @@ class WakeResult:
 
     changed: bool
     state: str
+
+
+class _Steps:
+    """Names the steps of a transition on a watching task, or does nothing.
+
+    A step is only opened when the work behind it is about to run, and a step that
+    is skipped is never completed: a no-op transition says so in its own words
+    instead of showing a row of green checks for work that never happened.
+    """
+
+    def __init__(self, progress: Any | None):
+        self._progress = progress
+        self._current: str | None = None
+
+    def begin(self, name: str) -> None:
+        """Close the previous step as done and open a new one."""
+        self.done()
+        if self._progress is not None:
+            self._current = self._progress.add_task(name)
+
+    def done(self) -> None:
+        """Complete the open step, if any."""
+        if self._progress is not None and self._current is not None:
+            self._progress.complete_task(self._current)
+        self._current = None
+
+    def failed(self, error: str) -> None:
+        """Fail the open step, if any."""
+        if self._progress is not None and self._current is not None:
+            self._progress.fail_task(self._current, error)
+        self._current = None
+
+    def note(self, name: str) -> None:
+        """Record a completed statement of fact (e.g. 'nothing to do')."""
+        self.done()
+        if self._progress is not None:
+            self._progress.complete_task(self._progress.add_task(name))
 
 
 def _find_deployment(project_data: dict, deployment_name: str) -> dict | None:
@@ -61,6 +99,7 @@ async def wake(
     *,
     presented_token: str | None = None,
     now: datetime | None = None,
+    progress: Any | None = None,
 ) -> WakeResult:
     """Move a matching, sleeping deployment to ``waking`` and reprocess it.
 
@@ -68,6 +107,9 @@ async def wake(
     a non-matching deployment) is a no-op with ``changed=False`` and no commit. When
     ``presented_token`` is given (the waker pod), it is verified against the stored token;
     the web route passes ``None`` because it is session-authenticated.
+
+    ``progress`` is the task progress manager when a user is watching this run; it names
+    the steps as they happen. The waker pod passes nothing and nothing is reported.
     """
     from opi.core.config import settings
     from opi.manager.project_manager import ProjectManager
@@ -78,6 +120,7 @@ async def wake(
     from opi.services.resource_tuning_service import trigger_reprocessing
 
     now = now or datetime.now(UTC)
+    steps = _Steps(progress)
     project = get_project_store().get(project_name)
     if not project:
         raise DeploymentNotFound(f"Project '{project_name}' not found")
@@ -85,9 +128,11 @@ async def wake(
 
     project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
     try:
+        steps.begin("Projectgegevens ophalen")
         project_data = await project_manager.get_contents()
         deployment = _find_deployment(project_data, deployment_name)
         if deployment is None:
+            steps.failed(f"Deployment '{deployment_name}' bestaat niet in dit project")
             raise DeploymentNotFound(f"Deployment '{deployment_name}' not found in project '{project_name}'")
 
         if presented_token is not None:
@@ -97,25 +142,36 @@ async def wake(
         config = sleep_config.load(project_data, cluster)
         current = sleep_state.read(project_data, deployment_name)
         if config is None or not config.matches(deployment_name):
+            steps.note("Slaapstand geldt niet voor deze deployment, er is niets gewijzigd")
             return WakeResult(changed=False, state=current.state)
 
         waking_timeout = timedelta(minutes=settings.SLEEP_MODE_WAKING_TIMEOUT_MINUTES)
         if not service.begin_wake(project_data, deployment_name, now, waking_timeout):
             new = sleep_state.read(project_data, deployment_name)
+            steps.note(f"Geen wijziging nodig, de deployment is al {new.state}")
             return WakeResult(changed=False, state=new.state)
 
+        steps.begin("Wektoestand vastleggen in git")
         await project_manager.save_and_commit_project(
             project_data, f"sleep-mode: wake {deployment_name} in {project_name}"
         )
+        steps.done()
         # Only this one deployment is regenerated; Application/AppProject are untouched.
-        await trigger_reprocessing(project_name, filename, deployment_name, argocd_resources_changed=False)
+        # The reprocessing names its own steps on the same task.
+        await trigger_reprocessing(
+            project_name,
+            filename,
+            deployment_name,
+            argocd_resources_changed=False,
+            task_progress_manager=progress,
+        )
         logger.info("sleep-mode: began waking %s/%s", project_name, deployment_name)
         return WakeResult(changed=True, state=sleep_state.STATE_WAKING)
     finally:
         await project_manager.close()
 
 
-async def sleep(project_name: str, deployment_name: str) -> WakeResult:
+async def sleep(project_name: str, deployment_name: str, *, progress: Any | None = None) -> WakeResult:
     """Manually move a matching, awake deployment to ``sleeping`` and reprocess it.
 
     The counterpart of ``wake``: the same load -> transition -> commit -> reprocess
@@ -123,6 +179,9 @@ async def sleep(project_name: str, deployment_name: str) -> WakeResult:
     exactly like the sweeper's automatic SLEEP). Idempotent: only ``awake`` applies;
     already sleeping/waking, or a non-matching deployment, is a no-op with no commit.
     This is session-authenticated (admin/owner), so there is no wake token to verify.
+
+    ``progress`` is the task progress manager when a user is watching this run; it names
+    the steps as they happen. The sweeper passes nothing and nothing is reported.
     """
     from opi.handlers.project_file_handler import ProjectFileHandler
     from opi.manager.project_manager import ProjectManager
@@ -133,6 +192,7 @@ async def sleep(project_name: str, deployment_name: str) -> WakeResult:
     from opi.services.project_store import get_project_store
     from opi.services.resource_tuning_service import trigger_reprocessing
 
+    steps = _Steps(progress)
     project = get_project_store().get(project_name)
     if not project:
         raise DeploymentNotFound(f"Project '{project_name}' not found")
@@ -140,15 +200,18 @@ async def sleep(project_name: str, deployment_name: str) -> WakeResult:
 
     project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
     try:
+        steps.begin("Projectgegevens ophalen")
         project_data = await project_manager.get_contents()
         deployment = _find_deployment(project_data, deployment_name)
         if deployment is None:
+            steps.failed(f"Deployment '{deployment_name}' bestaat niet in dit project")
             raise DeploymentNotFound(f"Deployment '{deployment_name}' not found in project '{project_name}'")
 
         cluster = deployment.get("cluster", "")
         config = sleep_config.load(project_data, cluster)
         current = sleep_state.read(project_data, deployment_name)
         if config is None or not config.matches(deployment_name):
+            steps.note("Slaapstand geldt niet voor deze deployment, er is niets gewijzigd")
             return WakeResult(changed=False, state=current.state)
 
         # Mint a wake token only when a waker will actually be generated, mirroring the
@@ -161,13 +224,23 @@ async def sleep(project_name: str, deployment_name: str) -> WakeResult:
 
         if not service.to_sleeping(project_data, deployment_name, encrypted_token):
             new = sleep_state.read(project_data, deployment_name)
+            steps.note(f"Geen wijziging nodig, de deployment is al {new.state}")
             return WakeResult(changed=False, state=new.state)
 
+        steps.begin("Slaaptoestand vastleggen in git")
         await project_manager.save_and_commit_project(
             project_data, f"sleep-mode: sleep {deployment_name} in {project_name}"
         )
+        steps.done()
         # Only this one deployment is regenerated; Application/AppProject are untouched.
-        await trigger_reprocessing(project_name, filename, deployment_name, argocd_resources_changed=False)
+        # The reprocessing names its own steps on the same task.
+        await trigger_reprocessing(
+            project_name,
+            filename,
+            deployment_name,
+            argocd_resources_changed=False,
+            task_progress_manager=progress,
+        )
         logger.info("sleep-mode: manually put %s/%s to sleep", project_name, deployment_name)
         return WakeResult(changed=True, state=sleep_state.STATE_SLEEPING)
     finally:
