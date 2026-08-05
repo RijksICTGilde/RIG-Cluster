@@ -10,7 +10,8 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any
 
-from opi.forms.wizard.services_merge import deep_merge_into, merge_service_lists, service_name
+from opi.forms.editables.merge import deep_merge_into
+from opi.forms.wizard.services_merge import merge_service_lists, service_name
 from opi.services.services import service_entry_body
 
 CLEARED_FIELD = "__wizard-field-cleared__"
