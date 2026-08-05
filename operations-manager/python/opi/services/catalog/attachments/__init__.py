@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from opi.services.catalog.attachments.config_model import AttachmentsConfig
-from opi.services.catalog.base import ConfigLayer, Service
+from opi.services.catalog.base import ConfigLayer, DetailPageSection, Service
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ServiceType
 
@@ -79,3 +79,29 @@ class AttachmentsService(Service):
             )
             self._config_section_cache = cached
         return cached
+
+    def detail_page_sections(self, project_data: dict[str, Any], user_role: str) -> list[DetailPageSection]:
+        # The Bijlagen block is this service's, including the question whether it shows
+        # at all: the general template used to ask "is attachments in project.services"
+        # before including it -- service knowledge in the page. Being asked at all means
+        # the project uses the service, so there is no condition left here.
+        from opi.handlers.project_file_handler import extract_attachment_catalog, extract_attachment_usage
+
+        usage = extract_attachment_usage(project_data)
+        attachments = [
+            {
+                "id": entry["id"],
+                "filename": entry.get("filename", entry["id"]),
+                "used_by": usage.get(entry["id"], []),
+            }
+            for entry in extract_attachment_catalog(project_data).values()
+        ]
+        return [
+            DetailPageSection(
+                template="attachments/section-detail.html.j2",
+                context={
+                    "attachments": sorted(attachments, key=lambda a: a["id"]),
+                    "can_edit": user_role in ("admin", "owner"),
+                },
+            )
+        ]

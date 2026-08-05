@@ -1,6 +1,7 @@
 {# Backup snapshots for the WHOLE project, in one response.
 
-   Fetched once by section-backups.html.j2's single lazy loader. Listing snapshots
+   Fetched once by the first deployment block's lazy loader in section-backups.html.j2
+   (owned by the backupable services, RC-24). Listing snapshots
    opens a Kopia repository over S3, so it stays off the page's own render -- but as
    ONE request, not one per deployment. 'wies' has 18 deployments in one namespace;
    per-deployment loading fired 18 parallel Kopia connects and OOM-killed the pod.
@@ -11,7 +12,7 @@
 {% for deployment in deployments %}
 {% set backups = backups_by_deployment.get(deployment.name, []) %}
 <div id="backups-snapshots-{{ deployment.name }}" hx-swap-oob="true">
-    {% include "project-details/_backup-snapshots-one.html.j2" %}
+    {% include "shared/_backup-snapshots-one.html.j2" %}
 </div>
 {% if backups %}
 <span id="restore-btn-{{ deployment.name }}" hx-swap-oob="true">

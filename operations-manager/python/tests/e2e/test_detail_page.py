@@ -74,6 +74,28 @@ def test_detail_page_shows_deployments(app_server: str, auth_page: Page) -> None
     assert "local" in body  # cluster name
 
 
+def test_service_contributed_blocks_render(app_server: str, auth_page: Page) -> None:
+    """RC-24: the blocks the project's services own actually reach the page.
+
+    They are gathered per project/deployment rather than hardcoded, so a wiring mistake
+    shows up as a silently missing block -- which reads like a project that does not use
+    the service. This asserts the plumbing end to end for both hooks: the project-level
+    Keycloak block and, on the Deployments tab, the database service's action buttons
+    plus their modal opener.
+    """
+    auth_page.goto(f"{app_server}{DETAIL_URL}")
+    auth_page.wait_for_load_state("networkidle")
+    assert "Keycloak" in (auth_page.text_content("#tab-project") or "")
+
+    auth_page.evaluate("switchTab('deployments')")
+    auth_page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
+    deployments_tab = auth_page.text_content("#tab-deployments") or ""
+    assert "Databaseconsole" in deployments_tab
+    assert "Job uitvoeren" in deployments_tab
+    # The buttons call the shared opener; without it they would render but do nothing.
+    assert auth_page.evaluate("typeof openServiceModal") == "function"
+
+
 def test_detail_page_screenshot(app_server: str, auth_page: Page, screenshot_dir: Path) -> None:
     """Take full-page screenshot of the detail page."""
     auth_page.goto(f"{app_server}{DETAIL_URL}")

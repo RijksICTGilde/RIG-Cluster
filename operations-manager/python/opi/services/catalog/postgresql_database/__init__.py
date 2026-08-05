@@ -17,6 +17,8 @@ from opi.services.catalog.postgresql_database.config_model import (
     PostgresqlDatabaseConfig,
     PostgresqlDatabaseProjectConfig,
 )
+from opi.services.catalog.shared.backups import BackupsPageMixin
+from opi.services.catalog.shared.postgres_pages import DatabasePagesMixin, database_actions
 from opi.services.services_enums import ManagerKey, ServiceType
 from opi.utils.secrets import DatabaseSecret
 
@@ -26,7 +28,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class PostgresqlDatabaseService(Service):
+class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
     service_type = ServiceType.POSTGRESQL_DATABASE
     # The user-facing config is the project-layer scope decision; the deployment-layer
     # clone state is OPI-managed (see config_model_for below). config_model names the
@@ -135,3 +137,8 @@ class PostgresqlDatabaseService(Service):
                 register_secret=secret,
             )
         ]
+
+
+# Bind the console/job buttons onto the bound ServiceDefinition, the same way sleep-mode
+# binds its wake button: services.py must never import the catalog package.
+PostgresqlDatabaseService.definition.actions_provider = database_actions

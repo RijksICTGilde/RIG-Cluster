@@ -1,29 +1,34 @@
-{# Attachments overview + management section #}
-{% set can_edit = project.user_role in ['admin', 'owner'] %}
+{# Attachments detail-page section (RC-24).
+
+   Owned by the attachments service: AttachmentsService.detail_page_sections builds the
+   catalog and decides who may edit it, so the general project-details template no
+   longer asks "is attachments in project.services" before including this block.
+   Rendered via a ``section`` loop var, so it reads its data from ``section.context``. #}
+{% set ctx = section.context %}
 <div id="attachments-section">
 <c-card outline="true" padding="xl" backgroundColor="wit">
     <c-layout-flow gap="lg">
         <c-layout-flow row="true" justifyContent="space-between" alignItems="center">
             <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="map" size="xl" color="hemelblauw" />Bijlagen</c-heading>
-            {% if can_edit %}
+            {% if ctx.can_edit %}
             <c-button kind="secondary" size="sm" label="Toevoegen" showIcon="before" icon="plus"
                       @click="openEditModal('modal-edit-attachments', 'Bijlagen')" />
             {% endif %}
         </c-layout-flow>
         <p class="rvo-text--subtle">Geuploade bestanden (bijvoorbeeld certificaten) die je per component als bestand of als env-var kunt koppelen.</p>
 
-        {% if project.attachments and project.attachments|length > 0 %}
+        {% if ctx.attachments %}
         <c-layout-flow gap="md">
-            {% for att in project.attachments | sort(attribute='id') %}
+            {% for att in ctx.attachments %}
             <c-card padding="md" backgroundColor="grijs-050" outline="true">
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">
                     <div>
                         <strong>{{ att.filename }}</strong>
                         <div class="rvo-text--sm rvo-text--subtle">id: <code>{{ att.id }}</code></div>
                     </div>
-                    {% if can_edit %}
+                    {% if ctx.can_edit %}
                     <c-button kind="secondary" size="sm" label="Verwijderen"
-                              @click="showAttachmentDeleteModal('{{ att.id }}', '{{ att.used_by | default([]) | join(', ') }}')" />
+                              @click="showAttachmentDeleteModal('{{ att.id }}', '{{ att.used_by | join(', ') }}')" />
                     {% endif %}
                 </div>
             </c-card>
