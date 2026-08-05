@@ -20,6 +20,17 @@ from ruamel.yaml import YAML
 from opi.core.cluster_config import get_namespace_prefix
 from opi.core.config import settings
 
+#: Label the platform puts on a Secret or ConfigMap that must stay OUT of the config-hash
+#: the ArgoCD CMP plugin injects as ``checksum/config`` on every pod template.
+#:
+#: Services never write this themselves: they declare ``include_in_config_hash=False`` on
+#: their SecretFileSpec and the shared writer translates that here. The string is also
+#: matched by the plugin script in bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml,
+#: which is a shell/yq filter and cannot import it -- ``tests/test_config_hash_label.py``
+#: pins the two against each other so they cannot drift apart unnoticed.
+CONFIG_HASH_IGNORE_LABEL_KEY = "zad.rig/config-hash"
+CONFIG_HASH_IGNORE_LABEL_VALUE = "ignore"
+
 logger = logging.getLogger(__name__)
 
 
