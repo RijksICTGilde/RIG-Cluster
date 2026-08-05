@@ -1,0 +1,58 @@
+<c-heading type="h2">
+    <c-icon icon="database" size="xl" color="donkerblauw"/>
+    PostgreSQL Database
+</c-heading>
+
+<c-p>
+    Een PostgreSQL-database voor je project. Standaard krijg je een eigen database op de
+    gedeelde databaseserver van het platform, inclusief gebruiker, wachtwoord en backups.
+    Je hoeft zelf niets te installeren of te beheren.
+</c-p>
+
+<c-heading type="h3">Wanneer gebruik je dit?</c-heading>
+
+<c-ul>
+    <c-li>Je applicatie bewaart gegevens in een relationele database</c-li>
+    <c-li>Je wilt geen database in je eigen container draaien</c-li>
+    <c-li>Je wilt dat er backups van je gegevens gemaakt worden</c-li>
+</c-ul>
+
+<c-heading type="h3">Gedeeld of een eigen cluster?</c-heading>
+
+<c-p>
+    In de configuratie kies je bij
+    <c-strong>scope</c-strong>
+    tussen
+    <c-strong>shared</c-strong>
+    (een database op de gedeelde server, de standaard) en
+    <c-strong>project</c-strong>
+    (een eigen databasecluster voor je project). Kies een eigen cluster als je
+    extensies, een eigen image of SUPERUSER-rechten nodig hebt, of gescheiden wilt staan
+    van andere projecten. Dat is hetzelfde resultaat als de aparte service
+    <c-strong>Namespace PostgreSQL Database</c-strong>.
+    In alle andere gevallen is gedeeld eenvoudiger en zuiniger.
+</c-p>
+
+<c-heading type="h3">Wat wordt er ingesteld?</c-heading>
+
+<c-layout-flow gap="md">
+    <c-p>
+        Er worden een database, een gebruiker en een wachtwoord aangemaakt. Je component
+        krijgt onder meer
+        <c-strong>DATABASE_SERVER_HOST</c-strong>,
+        <c-strong>DATABASE_SERVER_PORT</c-strong>,
+        <c-strong>DATABASE_SERVER_USER</c-strong>,
+        <c-strong>DATABASE_PASSWORD</c-strong>
+        en
+        <c-strong>DATABASE_DB</c-strong>.
+        Er is ook een meelezende gebruiker
+        (<c-strong>DATABASE_SERVER_USER_RO</c-strong>)
+        voor rapportages of analyses.
+    </c-p>
+
+    <c-p>
+        Je kunt extra schema's binnen dezelfde database laten aanmaken. Bij het
+        verwijderen van deze service wordt de database gemarkeerd voor uitgestelde
+        verwijdering, zodat gegevens niet meteen weg zijn.
+    </c-p>
+</c-layout-flow>

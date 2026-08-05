@@ -550,6 +550,7 @@ class ServiceAdapter:
         ServiceType.PUBLISH_ON_WEB: ServiceDefinition(
             name="Publiceren op het web",
             description="Maak de applicatie toegankelijk via het publieke internet",
+            help_template="publish-on-web.html.j2",
             icon="wereldbol",
             color="hemelblauw",
             scope=ServiceScope.COMPONENT,
@@ -557,7 +558,8 @@ class ServiceAdapter:
         ),
         ServiceType.KEYCLOAK: ServiceDefinition(
             name="Keycloak Authentication",
-            description="Configureerbare Keycloak authenticatie met ondersteuning voor SSO en lokale gebruikers",
+            description="Inloggen via SSO Rijk en via lokale Keycloak-accounts in een eigen realm voor dit project",
+            help_template="keycloak.html.j2",
             icon="sleutel",
             color="groen",
             scope=ServiceScope.COMPONENT,
@@ -569,6 +571,7 @@ class ServiceAdapter:
         ServiceType.PERSISTENT_STORAGE: ServiceDefinition(
             name="Permanente opslag",
             description="Gegevens blijven bewaard tijdens de levenscyclus van de applicatie",
+            help_template="persistent-storage.html.j2",
             icon="server",
             color="grijs-600",
             scope=ServiceScope.COMPONENT,
@@ -580,6 +583,7 @@ class ServiceAdapter:
         ServiceType.TEMP_STORAGE: ServiceDefinition(
             name="Tijdelijke schijfruimte",
             description="Gegevens worden niet bewaard tijdens de levenscyclus van de applicatie",
+            help_template="temp-storage.html.j2",
             icon="klok",
             color="oranje",
             scope=ServiceScope.COMPONENT,
@@ -589,6 +593,7 @@ class ServiceAdapter:
         ServiceType.POSTGRESQL_DATABASE: ServiceDefinition(
             name="PostgreSQL Database",
             description="Database service voor applicaties",
+            help_template="postgresql-database.html.j2",
             icon="database",
             color="donkerblauw",
             scope=ServiceScope.DEPLOYMENT,
@@ -600,6 +605,7 @@ class ServiceAdapter:
         ServiceType.NAMESPACE_POSTGRESQL_DATABASE: ServiceDefinition(
             name="Namespace PostgreSQL Database",
             description="Dedicated PostgreSQL database cluster voor project",
+            help_template="namespace-postgresql-database.html.j2",
             icon="database",
             color="donkerblauw",
             scope=ServiceScope.DEPLOYMENT,
@@ -612,6 +618,7 @@ class ServiceAdapter:
         ServiceType.MINIO_STORAGE: ServiceDefinition(
             name="MinIO Object Storage",
             description="S3-compatible object storage voor documenten, afbeeldingen en grote bestanden",
+            help_template="minio-storage.html.j2",
             icon="map",
             color="rood",
             scope=ServiceScope.DEPLOYMENT,
@@ -623,6 +630,7 @@ class ServiceAdapter:
         ServiceType.REDIS: ServiceDefinition(
             name="Redis Cache",
             description="Shared Redis cache en message broker voor caching en Celery task queues",
+            help_template="redis.html.j2",
             icon="zandloper",
             color="rood",
             scope=ServiceScope.DEPLOYMENT,
@@ -633,6 +641,7 @@ class ServiceAdapter:
         ServiceType.NAMESPACE_REDIS: ServiceDefinition(
             name="Namespace Redis Cache",
             description="Dedicated Redis instance per namespace voor caching en Celery task queues",
+            help_template="namespace-redis.html.j2",
             icon="zandloper",
             color="rood",
             scope=ServiceScope.DEPLOYMENT,
@@ -644,6 +653,7 @@ class ServiceAdapter:
         ServiceType.PLATFORM: ServiceDefinition(
             name="Platform",
             description="Automatisch beschikbare platform variabelen",
+            help_template="platform.html.j2",
             icon="info",
             color="grijs-600",
             scope=ServiceScope.COMPONENT,
@@ -656,6 +666,7 @@ class ServiceAdapter:
         ServiceType.ATTACHMENTS: ServiceDefinition(
             name="Bijlagen",
             description="Geuploade bestanden (bijv. certificaten) gekoppeld als bestand of env-var aan een component",
+            help_template="attachments.html.j2",
             icon="map",
             color="grijs-600",
             scope=ServiceScope.COMPONENT,
@@ -678,6 +689,7 @@ class ServiceAdapter:
         ServiceType.METRICS_SCRAPER: ServiceDefinition(
             name="Prometheus Metrics Scraper",
             description="Zorgt dat prometheus scraping op het component wordt ingeschakeld",
+            help_template="metrics-scraper.html.j2",
             icon="grafiek",
             color="hemelblauw",
             scope=ServiceScope.COMPONENT,
@@ -689,6 +701,7 @@ class ServiceAdapter:
                 "Zet bepaalde deployments, op basis van matching, na een deadline in slaapstand "
                 "en wek ze op verzoek weer op. De deployment doet een koude start."
             ),
+            help_template="sleep-mode.html.j2",
             icon="klok",
             color="donkerblauw",
             scope=ServiceScope.DEPLOYMENT,
@@ -706,6 +719,7 @@ class ServiceAdapter:
                 "De link is de enige toegangsdrempel: wie hem heeft kan een account aanmaken. "
                 "Vereist de Keycloak-service."
             ),
+            help_template="invite.html.j2",
             icon="envelop",
             color="lichtblauw",
             # scope is not meaningful here (an invite provisions nothing), but the field is
@@ -723,6 +737,7 @@ class ServiceAdapter:
                 "Systeemdienst: houdt draaiende deployments in de gaten na een sync en hoogt "
                 "het geheugen op van een component dat OOM'd. Draait altijd, is niet kiesbaar."
             ),
+            help_template="resource-tuning.html.j2",
             icon="grafiek",
             color="grijs-600",
             scope=ServiceScope.DEPLOYMENT,
@@ -739,6 +754,7 @@ class ServiceAdapter:
                 "expliciet benoemde poort. Dit gaat over netwerktoegang tussen projecten, "
                 "niet over DNS-domeinen."
             ),
+            help_template="cross-domain-access.html.j2",
             icon="netwerk",
             color="donkerblauw",
             # The rules apply per deployment (each gets its own NetworkPolicy); the effect
@@ -755,6 +771,7 @@ class ServiceAdapter:
                 "en per deployment-component. Draait altijd, is niet kiesbaar - elk component "
                 "heeft ze. De waarden worden versleuteld opgeslagen."
             ),
+            help_template="user-env-vars.html.j2",
             icon="instellingen",
             color="grijs-600",
             scope=ServiceScope.COMPONENT,
@@ -771,6 +788,7 @@ class ServiceAdapter:
                 "kiesbaar. Een onbekende verwijzing is hier een harde fout, anders dan bij "
                 "een eigen omgevingsvariabele."
             ),
+            help_template="aliases.html.j2",
             icon="instellingen",
             color="grijs-600",
             scope=ServiceScope.COMPONENT,
@@ -785,6 +803,7 @@ class ServiceAdapter:
                 "TCP-niveau op de eerste inbound-poort. Kies deze service om een HTTP(S)-probe op een "
                 "aparte poort en paden te richten, of om probes uit te zetten met scheme: none."
             ),
+            help_template="health-check.html.j2",
             icon="stethoscoop",
             color="rood",
             scope=ServiceScope.COMPONENT,

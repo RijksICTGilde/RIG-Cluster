@@ -1,0 +1,42 @@
+<c-heading type="h2">
+    <c-icon icon="database" size="xl" color="donkerblauw"/>
+    Namespace PostgreSQL Database
+</c-heading>
+
+<c-p>
+    Een eigen PostgreSQL-cluster voor jouw project, in een eigen infrastructuurnamespace,
+    in plaats van een database op de gedeelde server. Je deelt de server dan met niemand
+    en bepaalt zelf de instellingen.
+</c-p>
+
+<c-heading type="h3">Wanneer gebruik je dit?</c-heading>
+
+<c-ul>
+    <c-li>Je hebt extensies nodig die niet op de gedeelde server staan</c-li>
+    <c-li>Je hebt SUPERUSER-rechten nodig, bijvoorbeeld voor migraties</c-li>
+    <c-li>Je wilt een eigen PostgreSQL-versie, image of eigen resources</c-li>
+    <c-li>Je wilt volledig gescheiden staan van andere projecten</c-li>
+</c-ul>
+
+<c-heading type="h3">Verschil met PostgreSQL Database</c-heading>
+
+<c-p>
+    <c-strong>PostgreSQL Database</c-strong>
+    geeft je standaard een database op de gedeelde server: minder resources, minder
+    beheer, en genoeg voor de meeste applicaties. Deze service geeft je een eigen
+    cluster. Hetzelfde bereik je met de gewone service door
+    <c-strong>scope: project</c-strong>
+    te kiezen. Begin bij gedeeld en stap over als je tegen een grens aanloopt.
+</c-p>
+
+<c-heading type="h3">Wat wordt er ingesteld?</c-heading>
+
+<c-p>
+    Er wordt een PostgreSQL-cluster (CloudNativePG) aangemaakt in een eigen namespace,
+    met een database, gebruiker en wachtwoord voor je project. Je stelt het aantal
+    instanties en de opslaggrootte in; via het projectbestand kun je ook image,
+    registry, rechten, resources en initialisatie-SQL opgeven. Je component krijgt
+    dezelfde
+    <c-strong>DATABASE_*</c-strong>-variabelen
+    als bij de gedeelde database, zodat je applicatie niet hoeft te veranderen.
+</c-p>

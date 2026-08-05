@@ -1,4 +1,5 @@
 {% extends "base.html.j2" %}
+{% from "widgets/_macros.html.j2" import service_block %}
 
 {% block content %}
     <div class="rvo-max-width-layout rvo-max-width-layout--lg">
@@ -16,22 +17,19 @@
                         <c-layout-flow gap="md">
 
                             {# Service Header #}
-                            <c-heading type="h3">
-                                <c-layout-row gap="md">
-                                    <c-icon icon="{{ service_info.definition.icon }}"
-                                           size="3xl"
-                                           color="{{ service_info.definition.color }}" />
-                                    <div>
-                                        <span>{{ service_info.definition.name }}</span>
-                                        <p class="rvo-text--sm rvo-text--subtle">
-                                            {{ service_info.definition.description }}
-                                        </p>
-                                        <p class="rvo-text--sm rvo-text--subtle">
-                                            API naam: <code>{{ service_info.service.value }}</code>
-                                        </p>
-                                    </div>
-                                </c-layout-row>
-                            </c-heading>
+                            <div>
+                                {{ service_block(
+                                    service_info.definition.name,
+                                    service_info.definition.description,
+                                    service_info.definition.icon,
+                                    service_info.definition.color,
+                                    service_info.definition.help_template,
+                                    icon_size="3xl",
+                                ) }}
+                                <p class="rvo-text--sm rvo-text--subtle">
+                                    API naam: <code>{{ service_info.service.value }}</code>
+                                </p>
+                            </div>
 
                             {# Environment Variables Section #}
                             {% if service_info.variables %}
@@ -72,4 +70,14 @@
 
         </c-layout-flow>
     </div>
+
+    {% include "widgets/service_help_modal.html.j2" %}
+{% endblock %}
+
+{% block additional_styles %}
+<link rel="stylesheet" href="/static/css/wizard.css">
+{% endblock %}
+
+{% block additional_scripts %}
+<script src="/static/js/wizard.js"></script>
 {% endblock %}
