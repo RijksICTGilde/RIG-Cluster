@@ -30,6 +30,7 @@ from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, Kub
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import IMAGE_PULL_REASONS as _IMAGE_PULL_REASONS
+from opi.services.catalog.base import application_pod_selector
 from opi.services.resource_tuning_service import get_project_data
 from opi.utils.naming import generate_unique_name
 
@@ -155,7 +156,7 @@ async def _get_current_pod_template_hash(kubectl: KubectlConnector, namespace: s
     to evaluating every pod.
     """
     try:
-        args = ["get", "replicasets", "-n", namespace, "-l", f"app={unique_name}", "-o", "json"]
+        args = ["get", "replicasets", "-n", namespace, "-l", application_pod_selector(unique_name), "-o", "json"]
         stdout, stderr, code = await kubectl.run_command(args)
         if code != 0:
             logger.warning("Failed to list replicasets for %s/%s: %s", namespace, unique_name, stderr)
@@ -219,7 +220,10 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
         return result
 
     try:
-        args = ["get", "pods", "-n", namespace, "-l", f"app={unique_name}", "-o", "json"]
+        # Only the application's own pods: a service running something alongside it
+        # (sleep-mode's waker) answers to the same app label, and reading ITS state as
+        # the component's reported failures for a component that was not even running.
+        args = ["get", "pods", "-n", namespace, "-l", application_pod_selector(unique_name), "-o", "json"]
         stdout, stderr, code = await kubectl.run_command(args)
 
         if code != 0:

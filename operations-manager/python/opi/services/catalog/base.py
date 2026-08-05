@@ -150,6 +150,31 @@ class ManifestContext:
     component_def: dict[str, Any] | None = None
 
 
+#: Label key a service puts on a pod it owns but that is NOT the application workload.
+#:
+#: The application's own pods carry ``app=<component>`` and nothing else; a pod a service
+#: runs alongside it carries the same ``app`` label (so it can take over the Service) plus
+#: this key with a value naming its role. Anything asking "how is the application doing"
+#: must therefore exclude pods that carry it.
+#:
+#: Sleep-mode is why this is named at platform level. Its waker answers to the sleeping
+#: component's ``app`` label, so the health check found the waker, read its
+#: ImagePullBackOff, and reported "frontend: image ophalen mislukt" for a component that
+#: was not running and does not use that image -- while ArgoCD reported the application
+#: Synced and Healthy. Worse, that path disables a component on an image-pull failure, so
+#: a waker that briefly cannot pull could take the real component out.
+SERVICE_ROLE_LABEL_KEY = "zad-role"
+
+
+def application_pod_selector(app_name: str) -> str:
+    """Label selector for the pods of the application itself, excluding service-owned ones.
+
+    ``!zad-role`` means "does not carry that label at all", so a service marking its pod
+    with any role is excluded without this having to know which roles exist.
+    """
+    return f"app={app_name},!{SERVICE_ROLE_LABEL_KEY}"
+
+
 @dataclass
 class SecretFileSpec:
     """A SOPS secret manifest a service needs written for a deployment (RC-5 Phase 6c).
