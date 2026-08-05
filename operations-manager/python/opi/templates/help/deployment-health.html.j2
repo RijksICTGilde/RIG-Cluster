@@ -1,0 +1,35 @@
+<c-heading type="h2">
+    <c-icon icon="stethoscoop" size="xl" color="grijs-600"/>
+    Deployment gezondheid
+</c-heading>
+
+<c-p>
+    Een systeemdienst: deze staat altijd aan en is niet iets wat je aanvinkt. Na een
+    uitrol kijkt het platform naar de pods van je deployment en beoordeelt wat het ziet.
+</c-p>
+
+<c-heading type="h3">Wat doet het voor je?</c-heading>
+
+<c-ul>
+    <c-li>Meldt tijdens het uitrollen waar een component op wacht, in plaats van je te laten raden</c-li>
+    <c-li>Herkent een container die tegen zijn geheugengrens loopt, blijft herstarten, of waarvan het image niet opgehaald kan worden</c-li>
+    <c-li>Zet een component stil waarvan het image niet bestaat, zodat het niet eindeloos blijft proberen</c-li>
+    <c-li>Weet dat een slapende deployment hoort te zwijgen, en meldt dat dan ook zo</c-li>
+</c-ul>
+
+<c-heading type="h3">Wat gebeurt er precies?</c-heading>
+
+<c-layout-flow gap="md">
+    <c-p>
+        Er wordt uitsluitend naar de pods van je applicatie gekeken. Een pod die een
+        andere dienst ernaast draait -- de wekker van de slaapstand bijvoorbeeld -- telt
+        niet mee, ook al draagt hij hetzelfde label.
+    </c-p>
+
+    <c-p>
+        Voordat er een oordeel valt, wordt eerst aan de andere diensten gevraagd wat zij
+        over deze deployment weten. Slaapt hij, dan zijn nul pods de bedoeling en is dat
+        geen storing. Wat wél waargenomen wordt op een draaiende pod blijft altijd een
+        storing: geen enkele dienst kan een echt probleem wegpraten.
+    </c-p>
+</c-layout-flow>

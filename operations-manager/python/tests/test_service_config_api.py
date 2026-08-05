@@ -362,6 +362,8 @@ EXPECTED_API_TARGETS: dict[str, list[str]] = {
     "attachments": ["component"],
     "authorization-wall": ["project"],
     "cross-domain-access": ["project", "deployment"],
+    # The health judgement takes no user config; it reads the services' own state (RC-28).
+    "deployment-health": [],
     "health-check": ["component"],
     "invite": ["project"],
     "keycloak": ["project"],
