@@ -2,47 +2,42 @@
 
 from __future__ import annotations
 
+import pytest
+from opi.forms.visualizers.flows import FlowTarget, get_flow
 from opi.forms.wizard.save import apply_list_item_merge as _apply_list_item_merge
-from opi.forms.wizard.save import detect_list_target as _detect_list_target
 from opi.web.router_detail_edit import _seed_components_for_new_deployment
 
 
-class TestDetectListTarget:
-    """Tests for _detect_list_target flow-id parsing."""
+class TestFlowTarget:
+    """A flow declares where it writes; nothing reads it back out of the id."""
 
     def test_add_deployment(self) -> None:
-        result = _detect_list_target("modal-add-deployment-2", state=None)
-        assert result == ("deployments", 2, True)
+        assert get_flow("modal-add-deployment-2").target == FlowTarget("deployments", 2, is_new=True)
 
     def test_edit_deployment(self) -> None:
-        result = _detect_list_target("modal-edit-deployment-0", state=None)
-        assert result == ("deployments", 0, False)
+        assert get_flow("modal-edit-deployment-0").target == FlowTarget("deployments", 0)
 
     def test_edit_component(self) -> None:
-        result = _detect_list_target("modal-edit-component-1", state=None)
-        # is_new is None when state is None (falsy short-circuit)
-        assert result is not None
-        assert result[0] == "components"
-        assert result[1] == 1
-        assert not result[2]  # falsy (None when state is None)
+        assert get_flow("modal-edit-component-1").target == FlowTarget("components", 1)
+
+    def test_edit_new_component(self) -> None:
+        assert get_flow("modal-edit-component-1", is_new=True).target == FlowTarget("components", 1, is_new=True)
 
     def test_edit_domain(self) -> None:
-        result = _detect_list_target("modal-edit-domain-0", state=None)
-        assert result == ("deployments", 0, False)
+        assert get_flow("modal-edit-domain-0").target == FlowTarget("deployments", 0)
 
     def test_edit_backup_schedule(self) -> None:
-        result = _detect_list_target("modal-edit-backup-schedule-0", state=None)
-        assert result == ("deployments", 0, False)
+        assert get_flow("modal-edit-backup-schedule-0").target == FlowTarget("deployments", 0)
 
     def test_edit_backup_schedule_second_deployment(self) -> None:
-        result = _detect_list_target("modal-edit-backup-schedule-1", state=None)
-        assert result == ("deployments", 1, False)
+        assert get_flow("modal-edit-backup-schedule-1").target == FlowTarget("deployments", 1)
 
-    def test_unknown_flow(self) -> None:
-        assert _detect_list_target("modal-edit-services-0", state=None) is None
+    def test_project_wide_flow_has_no_target(self) -> None:
+        assert get_flow("modal-edit-services").target is None
 
     def test_non_numeric_suffix(self) -> None:
-        assert _detect_list_target("modal-add-deployment-abc", state=None) is None
+        with pytest.raises(KeyError):
+            get_flow("modal-add-deployment-abc")
 
 
 class TestApplyListItemMerge:
