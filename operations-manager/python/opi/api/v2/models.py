@@ -13,9 +13,15 @@ class DeploymentStatus(StrEnum):
     worst-of-both priority: Degraded/Suspended/Missing > OutOfSync >
     Progressing > Healthy. Pending and Unavailable are *our* states for
     "we have no data," distinct from Argo's own Unknown.
+
+    ``Disabled`` is ours too, and it is not an Argo verdict at all: a deployment
+    whose components are all switched off runs zero replicas, which Argo reports as
+    Healthy because nothing is failing. Reporting that as Healthy is untrue, so the
+    intent recorded in the project file replaces it -- and only it (RC-31).
     """
 
     Healthy = "Healthy"
+    Disabled = "Disabled"  # every component switched off on purpose (replicas: 0)
     Degraded = "Degraded"
     Progressing = "Progressing"
     OutOfSync = "OutOfSync"  # cluster is running, but drifted from git

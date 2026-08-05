@@ -47,6 +47,7 @@ Each deployment includes:
 | Value | Meaning |
 |---|---|
 | `Healthy` | Synced and Healthy — running the desired state, all probes passing |
+| `Disabled` | Every component of this deployment is switched off in the project file (`disabled: true` → `replicas: 0`). Not an ArgoCD verdict; see below |
 | `Degraded` | One or more resources unhealthy (worst-of-both wins over sync state) |
 | `Progressing` | Mid-rollout, not yet stabilized |
 | `OutOfSync` | Cluster is running, but drifted from the desired state in git |
@@ -167,9 +168,13 @@ ArgoCD exposes two orthogonal dimensions — `sync.status` (Synced/OutOfSync) an
 Degraded / Suspended / Missing  →  use that (worst-of-both wins)
 OutOfSync                        →  "OutOfSync"  (cluster is running, but drifted from git)
 Progressing                      →  "Progressing"
-Healthy                          →  "Healthy"
+Healthy                          →  "Healthy"  (or "Disabled", see below)
 otherwise                        →  "Unknown"
 ```
+
+`Disabled` is the one value that does not come from ArgoCD. A deployment whose components are all switched off renders `replicas: 0`, and ArgoCD calls zero replicas Healthy because nothing is failing — so the intent recorded in the project file replaces that verdict, and only that one. `Degraded`, `OutOfSync`, `Progressing`, `Missing`, `Suspended` and `Unknown` are things the cluster really observed and are never masked: switching a component off must not be a way to make a failure disappear.
+
+**Behaviour change (RC-31).** A client filtering on `status == "Healthy"` no longer gets switched-off deployments back. That is the intent — they were never healthy, only unfailing — but such a client needs to add `Disabled` where it means "not broken".
 
 `last_synced_at` is the timestamp of the last reconciliation **attempt** — succeeded or failed. Combined with `sync_revision`, it tells callers "we are running commit `<sync_revision>` as of `<last_synced_at>`" only when `status` is `Healthy`. For a `Degraded` deployment, `last_synced_at` may be the time of a failed sync attempt, not a healthy one. (See follow-up issue for splitting into `last_attempt_at` + `last_success_at`.)
 
