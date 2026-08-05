@@ -91,8 +91,9 @@ class TestEditSectionDefinitions:
         assert "auth-wall-config" in EDIT_SECTIONS
 
     def test_edit_sections_registry_count(self):
-        # +1 for the postgresql-database schema-list section (RC-17).
-        assert len(EDIT_SECTIONS) == 11
+        # +1 for the postgresql-database schema-list section (RC-17), +2 for the
+        # redis / minio-storage project-level config sections (RC-25).
+        assert len(EDIT_SECTIONS) == 13
 
     def test_sleep_mode_config_section_present(self):
         assert "sleep-mode-config" in EDIT_SECTIONS

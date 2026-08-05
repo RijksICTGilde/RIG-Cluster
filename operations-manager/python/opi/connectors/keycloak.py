@@ -69,6 +69,15 @@ class KeycloakConnector:
             connection = KeycloakOpenIDConnection(
                 server_url=self.keycloak_url,
                 realm_name="master",
+                # Always authenticate against master, exactly like the admin-password path
+                # below. Without this python-keycloak takes the token realm from
+                # ``realm_name`` (openid_connection: ``user_realm_name or realm_name``), and
+                # ``change_current_realm()`` -- which OPI calls for every project realm --
+                # reassigns it. The next token refresh then asks a PROJECT realm for
+                # ``opi-admin-service``, which only exists in master, and Keycloak answers
+                # client_not_found. The first token always succeeds, so the failure only
+                # appears after a realm switch plus a token expiry.
+                user_realm_name="master",
                 client_id=client_id,
                 client_secret_key=client_secret,
                 grant_type="client_credentials",
@@ -89,6 +98,19 @@ class KeycloakConnector:
             logger.debug(f"Initialized KeycloakConnector for {keycloak_url} (admin user: {admin_username})")
 
     # ==================== Realm Operations ====================
+
+    def _refresh_admin_token(self) -> None:
+        """Mint a fresh admin access token on the underlying connection.
+
+        Needed after creating a realm: see the call site in :meth:`create_realm` for why a
+        token issued earlier cannot administer a realm created later. Best-effort -- if the
+        refresh itself fails, the caller carries on with the existing token and the
+        operation surfaces its own error rather than this one masking it.
+        """
+        try:
+            self.admin.connection.get_token()
+        except KeycloakError as e:
+            logger.warning(f"Could not refresh the Keycloak admin token: {e}")
 
     async def create_realm(
         self,
@@ -184,6 +206,22 @@ class KeycloakConnector:
                         logger.info(f"Updated settings on existing realm {realm_name}: {replay_settings}")
                 else:
                     raise
+
+            # A token minted before this realm existed cannot administer it. Keycloak
+            # creates a ``<realm>-realm`` client in master alongside every new realm and
+            # carries its admin roles in ``resource_access``; an access token issued
+            # earlier simply does not have them, so every follow-up call on the fresh
+            # realm answers 403. Measured on the sandbox: same service account, same
+            # master 'admin' role, POST /admin/realms -> 201 but
+            # GET /admin/realms/<new>/users/profile -> 403 with the token that created it,
+            # and 200 with a token minted one second later.
+            #
+            # This bites service accounts only -- an admin USER with the master 'admin'
+            # role is a super-admin over realms that did not exist when its token was
+            # issued, which is why this never showed before OPI moved to a
+            # client-credentials service account. Refreshing unconditionally keeps the two
+            # auth paths behaving the same and costs one token request per realm created.
+            self._refresh_admin_token()
 
             # Get the realm details
             realm_info = self.admin.get_realm(realm_name=realm_name)

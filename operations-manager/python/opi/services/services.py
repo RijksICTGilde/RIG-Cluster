@@ -728,6 +728,35 @@ class ServiceAdapter:
             variables=[],
             cleanup_strategy=CleanupStrategy.NONE,
         ),
+        ServiceType.USER_ENV_VARS: ServiceDefinition(
+            name="Eigen omgevingsvariabelen",
+            description=(
+                "Systeemdienst: de eigen omgevingsvariabelen van een component, per component "
+                "en per deployment-component. Draait altijd, is niet kiesbaar - elk component "
+                "heeft ze. De waarden worden versleuteld opgeslagen."
+            ),
+            icon="instellingen",
+            color="grijs-600",
+            scope=ServiceScope.COMPONENT,
+            variables=[],
+            # Always present, never in the project file's services list -> a system
+            # service (kind=SYSTEM also keeps it out of the picker).
+            kind=ServiceKind.SYSTEM,
+        ),
+        ServiceType.ALIASES: ServiceDefinition(
+            name="Aliassen",
+            description=(
+                "Systeemdienst: koppelt platform-variabelen aan de namen die een component "
+                "verwacht (POSTGRES_HOST=$DATABASE_SERVER_HOST). Draait altijd, is niet "
+                "kiesbaar. Een onbekende verwijzing is hier een harde fout, anders dan bij "
+                "een eigen omgevingsvariabele."
+            ),
+            icon="instellingen",
+            color="grijs-600",
+            scope=ServiceScope.COMPONENT,
+            variables=[],
+            kind=ServiceKind.SYSTEM,
+        ),
         ServiceType.HEALTH_CHECK: ServiceDefinition(
             name="Health check",
             description=(

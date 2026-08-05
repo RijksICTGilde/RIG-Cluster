@@ -29,8 +29,10 @@ from opi.forms.visualizers.wizard_sections import (
     IDENTITY_SECTION,
     INVITE_CONFIG_SECTION,
     KEYCLOAK_CONFIG_SECTION,
+    MINIO_CONFIG_SECTION,
     POSTGRESQL_CONFIG_SECTION,
     POSTGRESQL_SCHEMAS_SECTION,
+    REDIS_CONFIG_SECTION,
     RESTORE_SELECT_SECTION,
     RESTORE_TARGET_SECTION,
     SERVICES_EDIT_SECTION,
@@ -91,6 +93,8 @@ CREATE_FLOW = FormFlow(
         SLEEP_MODE_CONFIG_SECTION,
         # After COMPONENTS_SECTION too: the own-component select reads the draft components.
         CROSS_DOMAIN_CONFIG_SECTION,
+        REDIS_CONFIG_SECTION,
+        MINIO_CONFIG_SECTION,
         build_deployment_wizard_section(0),
         build_domain_section(0),
     ],
@@ -115,6 +119,8 @@ EDIT_FLOW = FormFlow(
         COMPONENTS_SECTION,
         SLEEP_MODE_CONFIG_SECTION,
         CROSS_DOMAIN_CONFIG_SECTION,
+        REDIS_CONFIG_SECTION,
+        MINIO_CONFIG_SECTION,
         DEPLOYMENTS_SECTION,
         CONFIG_DISPLAY_SECTION,
     ],
@@ -166,6 +172,8 @@ MODAL_EDIT_SERVICES_FLOW = FormFlow(
         AUTH_WALL_CONFIG_SECTION,
         SLEEP_MODE_CONFIG_SECTION,
         CROSS_DOMAIN_CONFIG_SECTION,
+        REDIS_CONFIG_SECTION,
+        MINIO_CONFIG_SECTION,
         ATTACHMENTS_SECTION,
     ],
 )
@@ -234,6 +242,22 @@ MODAL_EDIT_CROSS_DOMAIN_FLOW = FormFlow(
     sections=[CROSS_DOMAIN_CONFIG_SECTION],
 )
 
+MODAL_EDIT_REDIS_FLOW = FormFlow(
+    flow_id="modal-edit-redis-config",
+    title="Redis configuratie",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[REDIS_CONFIG_SECTION],
+)
+
+MODAL_EDIT_MINIO_FLOW = FormFlow(
+    flow_id="modal-edit-minio-config",
+    title="Objectopslag configuratie",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[MINIO_CONFIG_SECTION],
+)
+
 # ---------------------------------------------------------------------------
 # Backup & Restore modal flows
 # ---------------------------------------------------------------------------
@@ -277,6 +301,8 @@ FLOW_REGISTRY: dict[str, FormFlow] = {
     MODAL_EDIT_SLEEP_MODE_FLOW.flow_id: MODAL_EDIT_SLEEP_MODE_FLOW,
     MODAL_EDIT_INVITES_FLOW.flow_id: MODAL_EDIT_INVITES_FLOW,
     MODAL_EDIT_CROSS_DOMAIN_FLOW.flow_id: MODAL_EDIT_CROSS_DOMAIN_FLOW,
+    MODAL_EDIT_REDIS_FLOW.flow_id: MODAL_EDIT_REDIS_FLOW,
+    MODAL_EDIT_MINIO_FLOW.flow_id: MODAL_EDIT_MINIO_FLOW,
     MODAL_BACKUP_FLOW.flow_id: MODAL_BACKUP_FLOW,
 }
 

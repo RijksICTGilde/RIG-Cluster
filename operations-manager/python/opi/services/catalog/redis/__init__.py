@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from opi.services.catalog.base import ConfigLayer, ManifestContext, ProvisionContext, SecretFileSpec, Service
 from opi.services.catalog.redis.config_model import RedisConfig
@@ -23,10 +24,51 @@ class RedisService(Service):
     # Shared service: fires for both the shared and namespace redis variant.
     manifest_activated_by = (ServiceType.REDIS, ServiceType.NAMESPACE_REDIS)
 
+    config_section_id = "redis-config"
+    modal_flow_id = "modal-edit-redis-config"
+
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
         # acl-key-prefix is a project-level setting; derive the accepted-field hint from
         # the model so a validation error names it (checklist 3), matching the siblings.
         return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
+
+    def config_editables(self, layer: ConfigLayer):
+        if layer is not ConfigLayer.PROJECT:
+            return []
+        from opi.services.catalog.redis.editables import REDIS_ACL_KEY_PREFIX_EDITABLE
+
+        return [REDIS_ACL_KEY_PREFIX_EDITABLE]
+
+    def config_form_section(self, layer: ConfigLayer):
+        if layer is not ConfigLayer.PROJECT:
+            return super().config_form_section(layer)
+        # Cached: consumers compare section identity (EDIT_SECTIONS[...] is X).
+        cached = getattr(self, "_config_section_cache", None)
+        if cached is None:
+            from opi.forms.visualizers.sections import FormSection
+            from opi.services.catalog.base import config_path
+            from opi.services.catalog.redis.visualizers import REDIS_ACL_KEY_PREFIX
+
+            cached = FormSection(
+                section_id=self.config_section_id,
+                title="Redis configuratie",
+                icon="zandloper",
+                description="Instellingen voor de gedeelde Redis-cache",
+                visible=self._config_selected,
+                post_save_action="process_project",
+                editables=[REDIS_ACL_KEY_PREFIX],
+                layout=[config_path(ConfigLayer.PROJECT, self.service_type, "config", "acl-key-prefix")],
+            )
+            self._config_section_cache = cached
+        return cached
+
+    def _config_selected(self, project_data: dict[str, Any]) -> bool:
+        """Section visibility, derived from this service's own service_type."""
+        from opi.services.services import service_entry_name
+
+        return self.service_type.value in [
+            service_entry_name(entry) for entry in project_data.get("services", []) or []
+        ]
 
     async def provision(self, ctx: ProvisionContext) -> None:
         # redis_manager handles both the shared and namespace redis variants.
