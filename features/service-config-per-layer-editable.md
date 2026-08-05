@@ -59,6 +59,25 @@ gedeelde instantie. Zet dit alleen uit voor applicaties die hun sleutels niet ku
 voorvoegen. Te vinden onder "Redis configuratie" in de wizard, in "Services beheren", en
 achter de Configureer-knop van de dienst.
 
+**Waarom dit een self-service-vinkje is en geen approval.** Uitzetten is een echte
+verruiming, dus de vraag is terecht gesteld of hier een `ApprovalSpec` met
+`ApproverScope.PLATFORM_ADMIN` hoort, zoals bij een domein van `publish-on-web`. De
+beslissing is: nee, en wel hierom.
+
+- Het is geen nieuwe bevoegdheid. Dezelfde waarde was al te zetten via de config-API van
+  de dienst en door het projectbestand te bewerken, onder precies dezelfde autorisatie.
+  Het veld maakt een bestaande knop vindbaar; het verplaatst geen grens.
+- Een approval is niet gratis: hij vraagt om opgeslagen approval-state in het
+  projectbestand, een `list_items`/`record`/`notices_for`-drieluik, een plek in de
+  approver-interface en handhaving in `redis_manager`. Dat is een eigen wijziging, geen
+  bijproduct van het invullen van een formuliersectie.
+- Wat wél nodig was, is zichtbaarheid: `redis_manager` logt het uitzetten nu op WARNING
+  in plaats van INFO, zodat een platformbeheerder in de centrale log kan terugvinden welk
+  project de beperking heeft losgelaten.
+
+Wie de approval alsnog wil, bouwt hem als losstaande wijziging; het veld hierboven hoeft
+er dan alleen achter te worden gehangen.
+
 ### minio-storage: versiebeheer op de bucket
 
 Bewaar eerdere versies van objecten, zodat een overschrijving of verwijdering terug te

@@ -101,7 +101,10 @@ class RedisManager:
             key_prefix = generate_redis_key_prefix(project_name, deployment_name) if use_key_prefix else ""
 
             if not use_key_prefix:
-                logger.info(
+                # WARNING, not INFO: this widens the ACL user to every key in the SHARED
+                # Redis, so it is the one Redis setting a platform admin wants to be able
+                # to find back in the central log.
+                logger.warning(
                     f"ACL key prefix disabled for {project_name}/{deployment_name}, user will have access to all keys"
                 )
 
