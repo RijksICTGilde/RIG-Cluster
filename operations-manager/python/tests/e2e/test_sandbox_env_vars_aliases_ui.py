@@ -198,3 +198,18 @@ def test_deployment_component_env_vars_override_saves(
     stored = _wait_for(_stored)
     assert stored, "the deployment-level env var never reached the project file"
     assert _AGE_ARMOR in str(stored), f"deployment user-env-vars is not AGE-encrypted: {str(stored)[:60]}"
+
+    # The two layers must stay SEPARATE in the file. They are merged at deploy time
+    # (deployment-component wins per key, ProjectManager), and that merge only means
+    # anything while both values are still stored in their own place. One service owning
+    # both layers is exactly the arrangement that could accidentally write them to one
+    # spot, so assert the component-level value written by the previous test survived.
+    component_level = (_component(forgejo, envali_project, "web") or {}).get("user-env-vars")
+    assert component_level, (
+        "writing the deployment-component override wiped the component-level user-env-vars; "
+        "the two layers must be stored separately for the merge to have anything to merge"
+    )
+    assert str(component_level) != str(stored), (
+        "component and deployment-component user-env-vars hold identical ciphertext, "
+        "which suggests one write landed on both layers"
+    )
