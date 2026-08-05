@@ -1,4 +1,4 @@
-{% from "widgets/_macros.html.j2" import helper_text, render_errors, bool_attr %}
+{% from "widgets/_macros.html.j2" import helper_text, render_errors, bool_attr, service_block %}
 <div class="rvo-form-group">
     <span class="utrecht-form-label">{{ field.label|e }}</span>
     {{ helper_text(field) }}
@@ -13,16 +13,7 @@
                 {{ bool_attr("disabled", card.disabled) }}
             />
             <div class="service-card__content">
-                <div class="service-card__header">
-                    <c-icon icon="{{ card.icon|e }}" color="{{ card.color|e }}" size="lg" />
-                    <span class="service-card__title">{{ card.label|e }}</span>
-                    {% if card.help_template %}
-                    <c-icon icon="vraagteken" size="xl" color="hemelblauw"
-                            class="service-card__help-btn"
-                            @click="event.stopPropagation(); openServiceHelp('{{ card.help_template|e }}')" />
-                    {% endif %}
-                </div>
-                <p class="service-card__description">{{ card.description|e }}</p>
+                {{ service_block(card.label, card.description, card.icon, card.color, card.help_template) }}
                 {% if card.is_locked and card.dependents_labels %}
                 <p class="service-card__hint">Vereist door: {{ card.dependents_labels|join(', ')|e }}</p>
                 {% endif %}
