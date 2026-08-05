@@ -68,7 +68,9 @@ The OOM watcher is scheduled at the end of:
 
 | File | Purpose |
 |------|---------|
-| `opi/services/oom_watcher.py` | Fire-and-forget OOM check logic |
+| `opi/services/oom_watcher.py` | Fire-and-forget OOM check logic (the OBSERVING) |
+| `opi/services/catalog/deployment_health/` | The `deployment-health` system service: the JUDGEMENT over what is observed |
+| `opi/services/deployment_state.py` | What the other services report about the deployment, weighed before judging |
 | `opi/services/resource_tuning_service.py` | Extracted tune logic (shared by HTTP endpoint and watcher) |
 | `opi/api/resource_router.py` | HTTP endpoint (thin wrapper over service) |
 | `opi/core/config.py` | OOM watcher settings |
@@ -101,6 +103,9 @@ The `oom_watch_attempt` field in the task payload tracks which attempt number th
 
 ## Dependencies
 
+- [Diensten die elkaars toestand kennen](deployment-state-and-health.md) - the judgement
+  lives in the `deployment-health` system service, which weighs what other services
+  report (a sleeping deployment is meant to have no pods)
 - [Auto Resource Tuning](auto-resource-tuning.md) - the underlying tune logic
 - kubectl connectivity to the target cluster
 - Prometheus/metrics backend for computing memory recommendations
