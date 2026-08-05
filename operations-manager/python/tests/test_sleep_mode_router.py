@@ -154,7 +154,7 @@ async def test_web_wake_privileged_role_starts_a_task(role: str) -> None:
         patch("opi.web.router.is_user_authorized_for_project", return_value=True),
         patch("opi.web.router.get_user_role_for_project", return_value=role),
         patch("opi.web.router.get_project_store", return_value=_store_with_deployment()),
-        patch("opi.web.router._create_task_and_render_progress", AsyncMock()) as start_task,
+        patch("opi.web.router.create_task_and_render_progress", AsyncMock()) as start_task,
         patch.object(flow, "wake", AsyncMock()) as inline,
     ):
         await wake_deployment_web(_request(), PROJECT, DEPLOYMENT)
@@ -227,7 +227,7 @@ async def test_web_sleep_privileged_role_starts_a_task(role: str) -> None:
         patch("opi.web.router.is_user_authorized_for_project", return_value=True),
         patch("opi.web.router.get_user_role_for_project", return_value=role),
         patch("opi.web.router.get_project_store", return_value=_store_with_deployment()),
-        patch("opi.web.router._create_task_and_render_progress", AsyncMock()) as start_task,
+        patch("opi.web.router.create_task_and_render_progress", AsyncMock()) as start_task,
         patch.object(flow, "sleep", AsyncMock()) as inline,
     ):
         await sleep_deployment_web(_request(), PROJECT, DEPLOYMENT)

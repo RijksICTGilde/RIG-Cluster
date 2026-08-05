@@ -205,8 +205,8 @@ async def test_the_route_takes_no_endpoint_from_the_request(service_with_an_acti
 
 
 def _fragment(action: DeploymentAction) -> str:
-    template = templates.env.get_template("project-details/deployment-action-confirm.html.j2")
-    return template.render(request=_request(), action=action, message=action.confirm_message)
+    template = templates.env.get_template("project-details/action-confirm.html.j2")
+    return template.render(request=_request(), action=action, key="fake-key", message=action.confirm_message)
 
 
 def test_the_csrf_header_is_not_an_attribute_of_a_roos_button() -> None:
@@ -232,9 +232,9 @@ def test_the_dialog_swaps_the_running_task_in_and_offers_a_way_out() -> None:
 
     assert 'hx-target="this"' in html
     assert 'hx-swap="innerHTML"' in html
-    assert 'data-deployment-action="true"' in html
+    assert 'data-confirm-action="fake-key"' in html
     assert "closeEditModal()" in html
-    assert 'id="deployment-action-error"' in html
+    assert 'id="confirm-action-error"' in html
 
 
 def test_sleeping_and_waking_run_as_followable_tasks() -> None:
@@ -247,7 +247,7 @@ def test_sleeping_and_waking_run_as_followable_tasks() -> None:
 
     source = inspect.getsource(router.sleep_deployment_web) + inspect.getsource(router.wake_deployment_web)
 
-    assert "_create_task_and_render_progress" in source
+    assert "create_task_and_render_progress" in source
     assert "await flow.sleep(" not in source
     assert "await flow.wake(" not in source
 
@@ -260,7 +260,7 @@ def test_the_page_no_longer_confirms_in_the_browser_dialog() -> None:
     assert "runDeploymentAction" not in section
     assert "window.confirm(" not in page
     assert "window.alert(" not in page
-    assert "data-deployment-action" in page, "the page must handle the outcome of the htmx POST"
+    assert "data-confirm-action" in page, "the page must handle the outcome of the htmx POST"
 
 
 def test_the_button_opens_the_confirmation_in_the_shared_modal() -> None:
