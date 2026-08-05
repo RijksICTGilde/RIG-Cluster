@@ -372,8 +372,19 @@ data:
             done
 
             # Calculate hash of all Secrets and ConfigMaps to trigger pod restarts on config changes
-            # This hash is injected into workload pod templates as an annotation
-            CONFIG_HASH=$(yq eval-all 'select(.kind == "Secret" or .kind == "ConfigMap")' "$TEMP_OUTPUT" 2>/dev/null | sha256sum | cut -d' ' -f1)
+            # This hash is injected into workload pod templates as an annotation.
+            #
+            # Resources labelled zad.rig/config-hash=ignore are left OUT: they hold config
+            # that no application pod reads, so counting them makes the hash say "your
+            # configuration changed" when it did not. Sleep-mode's waker token Secret is
+            # the case that forced this -- it exists only while a deployment sleeps, so
+            # pruning it on wake restarted the application a second time, right after it
+            # had come back up.
+            CONFIG_HASH=$(yq eval-all '
+              select(
+                (.kind == "Secret" or .kind == "ConfigMap")
+                and (.metadata.labels["zad.rig/config-hash"] // "") != "ignore"
+              )' "$TEMP_OUTPUT" 2>/dev/null | sha256sum | cut -d' ' -f1)
             CONFIG_HASH="${CONFIG_HASH:0:16}"  # Truncate to 16 chars for readability
             echo "DEBUG: Config hash (Secrets+ConfigMaps): $CONFIG_HASH" >&2
 
