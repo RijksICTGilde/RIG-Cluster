@@ -56,7 +56,7 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
     if is_admin:
         menu_items.append({"label": "Gebruikersbeheer", "link": "/admin/users", "icon": "user"})
         menu_items.append({"label": "Gebruik & Kosten", "link": "/admin/usage", "icon": "grafiek"})
-        menu_items.append({"label": "Domeinen", "link": "/admin/approvals", "icon": "link"})
+        menu_items.append({"label": "Domeinen", "link": "/admin/approvals", "icon": "wereldbol"})
 
     # Add user-specific menu items
     if user:
