@@ -138,3 +138,59 @@ async def test_the_invite_step_hides_the_choice_when_the_template_leaves_none() 
     so SSO is the only way in and the field would be a choice that changes nothing."""
     _, offers_choice = await _change_template("sso-support", "sso-only")
     assert offers_choice is False
+
+
+# --- readers find service config wherever the wizard put it -------------------
+
+
+class TestReadersFindConfigUnderEitherRoot:
+    """Any reader asking for the real path must find the value in wizard state too.
+
+    Options providers ask for ``services/keycloak/config/...`` because that is where the
+    value lives in the project file. In wizard state that config sits under the virtual
+    root while ``services`` holds only the chosen names, so those providers returned
+    empty lists: the invite realm-role picker rendered a select with nothing in it.
+
+    Fixed in the read itself rather than per provider, so a reader added later is right
+    without knowing any of this.
+    """
+
+    @staticmethod
+    def _keycloak() -> dict[str, Any]:
+        return {
+            "name": "keycloak",
+            "config": {"restrict-access": {"realm-role": "allowed-user"}, "realm-roles": [{"name": "developer"}]},
+        }
+
+    def _wizard_state(self) -> dict[str, Any]:
+        return {"services": ["keycloak", "invite"], "_services-config": [self._keycloak()]}
+
+    def _project_file(self) -> dict[str, Any]:
+        return {"services": [self._keycloak()]}
+
+    def test_the_realm_role_picker_is_filled_in_the_wizard(self) -> None:
+        from opi.forms.visualizers.providers import InviteRealmRoleOptionsProvider
+
+        options = InviteRealmRoleOptionsProvider(yaml_data=self._wizard_state()).get_options()
+
+        assert [o["value"] for o in options] == ["", "developer", "allowed-user"]
+
+    def test_it_gives_the_same_answer_on_the_project_page(self) -> None:
+        """The two contexts must not disagree; that difference is the whole bug."""
+        from opi.forms.visualizers.providers import InviteRealmRoleOptionsProvider
+
+        in_wizard = InviteRealmRoleOptionsProvider(yaml_data=self._wizard_state()).get_options()
+        on_page = InviteRealmRoleOptionsProvider(yaml_data=self._project_file()).get_options()
+
+        assert in_wizard == on_page
+
+    def test_a_write_never_wanders_to_the_other_root(self) -> None:
+        """Reads fall back, writes must not: an edit landing under a root the form does
+        not read back would look saved and be gone on the next render."""
+        data: dict[str, Any] = {"_services-config": [self._keycloak()]}
+        smart_set_value(data, "services/keycloak/config/template", "sso-only")
+
+        assert (
+            smart_get_value({"services": data.get("services", [])}, "services/keycloak/config/template") == "sso-only"
+        )
+        assert "template" not in data["_services-config"][0]["config"]
