@@ -30,7 +30,7 @@ from opi.utils.totp import totp_now
 from opi.utils.yaml_util import load_yaml_from_string
 from opi.web.menu import get_menu_items
 from opi.web.project_actions import build_project_action
-from opi.web.task_progress import create_task_and_render_progress, on_complete_for
+from opi.web.task_progress import create_task_and_render_progress, on_complete_for, render_progress_fragment
 
 from ..utils.age import decrypt_age_content
 from .metrics_explorer_router import metrics_explorer_router
@@ -365,8 +365,10 @@ async def delete_component_web(request: Request, project_name: str, component_na
             detail=f"Alleen admin of owner rollen kunnen components verwijderen. Uw rol: {user_role}",
         )
 
-    if not get_project_store().get(project_name):
+    project = get_project_store().get(project_name)
+    if not project:
         raise HTTPException(status_code=404, detail="Project niet gevonden")
+    _require_component(project.data or {}, project_name, component_name)
 
     return await create_task_and_render_progress(
         request=request,
@@ -480,6 +482,7 @@ async def refresh_deployment_web(request: Request, project_name: str, deployment
     project = get_project_store().get(project_name)
     if not project:
         raise HTTPException(status_code=404, detail="Project niet gevonden")
+    _require_deployment(project.data or {}, project_name, deployment_name)
 
     return await create_task_and_render_progress(
         request=request,
@@ -502,11 +505,19 @@ def _require_deployment(project_data: dict, project_name: str, deployment_name: 
     The inline version raised DeploymentNotFound from flow.sleep, so the caller heard it
     immediately. Now that the work runs as a task, an unknown name would otherwise only
     surface as a task that fails a moment later -- further from the click and harder to
-    read.
+    read. It also keeps a name the project does not have out of the task, and so out of
+    everything that later renders the task's text.
     """
     names = [d.get("name") for d in project_data.get("deployments", []) or [] if isinstance(d, dict)]
     if deployment_name not in names:
         raise HTTPException(status_code=404, detail=f"Deployment '{deployment_name}' niet gevonden in {project_name}")
+
+
+def _require_component(project_data: dict, project_name: str, component_name: str) -> None:
+    """404 straight away when the component does not exist. See ``_require_deployment``."""
+    names = [c.get("name") for c in project_data.get("components", []) or [] if isinstance(c, dict)]
+    if component_name not in names:
+        raise HTTPException(status_code=404, detail=f"Component '{component_name}' niet gevonden in {project_name}")
 
 
 @web_router.post("/projects/{project_name}/deployments/{deployment_name}/wake")
@@ -2955,6 +2966,30 @@ def _build_task_hierarchy(subtasks: list[dict]) -> list[dict]:
     return main_tasks
 
 
+async def _require_task_of_project(request: Request, task_service: Any, project_name: str, task_id: str) -> dict | None:
+    """The task with this id, but only if it is this project's and this user's to see.
+
+    The task id alone used to be enough to read any task's steps, from any account with
+    a session. Both fragment routes sit under ``/projects/{project_name}/``, so scope
+    them to it: the task must be that project's own, and the user must be authorized for
+    the project -- or be the one who started the task, which is what keeps a delete
+    followable (the project is gone from the store before the task ends) and a creation
+    too (it is not in the store yet). Returns None when there is no such task, so the
+    caller answers 404.
+    """
+    user_email = (get_current_user(request) or {}).get("email", "").lower()
+
+    task = await task_service.get_task(task_id)
+    if task is None or task.get("project_name") != project_name:
+        return None
+
+    if (task.get("created_by") or "").lower() != user_email and not is_user_authorized_for_project(
+        project_name, user_email
+    ):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+    return task
+
+
 @web_router.get("/projects/{project_name}/task-progress/{task_id}", response_class=HTMLResponse)
 @requires_sso
 async def task_progress_fragment(request: Request, project_name: str, task_id: str) -> HTMLResponse:
@@ -2965,10 +3000,8 @@ async def task_progress_fragment(request: Request, project_name: str, task_id: s
     """
     from opi.core.task_helpers import get_task_service
 
-    templates = get_templates()
     task_service = get_task_service(request)
-    task = await task_service.get_task(task_id)
-
+    task = await _require_task_of_project(request, task_service, project_name, task_id)
     if task is None:
         return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
 
@@ -2977,12 +3010,9 @@ async def task_progress_fragment(request: Request, project_name: str, task_id: s
     context["progress_url"] = f"/projects/{project_name}/task-progress/{task_id}"
     context["on_complete"] = on_complete_for(task.get("task_type"))
 
-    rendered = templates.get_template("partials/task_progress_fragment.html.j2").render(context)
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
-
-    return HTMLResponse(content=rendered)
+    # Rendered once on purpose -- see render_progress_fragment for why a second pass
+    # over the rendered HTML would execute task text as Jinja.
+    return HTMLResponse(content=render_progress_fragment(context))
 
 
 @web_router.get("/projects/{project_name}/task-errors/{task_id}", response_class=HTMLResponse)
@@ -2997,16 +3027,14 @@ async def task_errors_fragment(request: Request, project_name: str, task_id: str
 
     templates = get_templates()
     task_service = get_task_service(request)
-    task = await task_service.get_task(task_id)
-
+    task = await _require_task_of_project(request, task_service, project_name, task_id)
     if task is None:
         return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
 
     context = _v2_task_to_template_context(task, project_name)
 
+    # Rendered once, like the progress fragment: the failure messages in this context
+    # come from the task, and a second pass would parse them as Jinja.
     rendered = templates.get_template("partials/_component_failures.html.j2").render(context)
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
 
     return HTMLResponse(content=rendered)

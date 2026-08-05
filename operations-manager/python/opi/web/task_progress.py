@@ -47,8 +47,6 @@ async def create_task_and_render_progress(
     Creates the task via the V2 task service and returns an HTML fragment
     with HTMX polling for progress updates.
     """
-    templates = get_templates()
-
     task = await create_async_task(
         request=request,
         task_type=task_type,
@@ -70,9 +68,18 @@ async def create_task_and_render_progress(
         "on_complete": on_complete_for(task_type),
     }
 
-    rendered = templates.get_template("partials/task_progress_fragment.html.j2").render(context)
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
+    return HTMLResponse(content=render_progress_fragment(context))
 
-    return HTMLResponse(content=rendered)
+
+def render_progress_fragment(context: dict) -> str:
+    """Render the shared progress fragment once, and only once.
+
+    Do not put the ``process_components`` filter back on the result. The fragment is a
+    template file, so the component extension already replaced its ``<c-...>`` tags at
+    compile time; running the filter over the rendered HTML would parse that HTML as a
+    Jinja template a second time. Autoescape escapes ``< > & " '`` but not ``{{``, so a
+    step name or a subtask name carrying ``{{ ... }}`` would then be executed instead of
+    shown -- template injection with code execution in the OPI pod, from any text that
+    reaches this context.
+    """
+    return get_templates().get_template("partials/task_progress_fragment.html.j2").render(context)
