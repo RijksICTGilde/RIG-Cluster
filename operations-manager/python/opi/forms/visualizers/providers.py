@@ -873,32 +873,28 @@ class WakeModeOptionsProvider:
 
 
 class SleepAfterDeployOptionsProvider:
-    """Preset deadlines for putting a deployment to sleep after deploy/activity."""
+    """How long after a deploy a deployment may go to sleep.
+
+    The list itself belongs to sleep-mode, which also decides which extra choices a
+    cluster offers (the sandbox has a five-minute one so a sleep/wake cycle fits inside
+    a test run). This only asks.
+    """
 
     def get_options(self) -> list[dict[str, Any]]:
-        return [
-            {"value": "4h", "label": "4 uur"},
-            {"value": "8h", "label": "8 uur"},
-            {"value": "12h", "label": "12 uur"},
-            {"value": "24h", "label": "1 dag"},
-            {"value": "48h", "label": "2 dagen"},
-            {"value": "72h", "label": "3 dagen"},
-            {"value": "168h", "label": "7 dagen"},
-        ]
+        from opi.core.config import settings
+        from opi.services.catalog.sleep_mode.options import sleep_after_deploy_options
+
+        return sleep_after_deploy_options(settings.CLUSTER_MANAGER)
 
 
 class SleepAfterWakeOptionsProvider:
-    """Preset deadlines for putting a deployment back to sleep after a wake."""
+    """How long a woken deployment stays awake before its deadline is set again."""
 
     def get_options(self) -> list[dict[str, Any]]:
-        return [
-            {"value": "30m", "label": "30 minuten"},
-            {"value": "1h", "label": "1 uur"},
-            {"value": "2h", "label": "2 uur"},
-            {"value": "4h", "label": "4 uur"},
-            {"value": "8h", "label": "8 uur"},
-            {"value": "24h", "label": "1 dag"},
-        ]
+        from opi.core.config import settings
+        from opi.services.catalog.sleep_mode.options import sleep_after_wake_options
+
+        return sleep_after_wake_options(settings.CLUSTER_MANAGER)
 
 
 class WakerComponentOptionsProvider:
@@ -1119,7 +1115,7 @@ class InviteApplicationUrlOptionsProvider:
         options: list[dict[str, Any]] = [{"value": "", "label": "Geen knop tonen"}]
         try:
             urls = public_urls_for_project(self.yaml_data, ProjectFileHandler())
-        except (KeyError, ValueError, AttributeError, TypeError):
+        except KeyError, ValueError, AttributeError, TypeError:
             # A half-configured project (no cluster yet, no domain chosen) must still
             # render the form: the picker then simply offers no destination.
             logger.debug("Could not derive public URLs for the invite destination", exc_info=True)
