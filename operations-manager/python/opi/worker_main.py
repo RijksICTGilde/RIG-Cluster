@@ -56,6 +56,7 @@ async def main() -> None:
         handle_create_project,
         handle_upsert_deployment,
     )
+    from opi.services.catalog.sleep_mode.task import handle_sleep_transition
 
     worker.register_handler(TaskType.CREATE_PROJECT, handle_create_project)
     worker.register_handler(TaskType.UPSERT_DEPLOYMENT, handle_upsert_deployment)
@@ -64,6 +65,8 @@ async def main() -> None:
     worker.register_handler(TaskType.CLONE_DATABASE, handle_clone_database)
     worker.register_handler(TaskType.CLONE_BUCKET, handle_clone_bucket)
     worker.register_handler(TaskType.REFRESH_DEPLOYMENT, handle_refresh_deployment)
+    worker.register_handler(TaskType.SLEEP_DEPLOYMENT, handle_sleep_transition)
+    worker.register_handler(TaskType.WAKE_DEPLOYMENT, handle_sleep_transition)
     worker.register_handler(TaskType.REFRESH_PROJECT, handle_refresh_project)
     worker.register_handler(TaskType.ADD_COMPONENT, handle_add_component)
     worker.register_handler(TaskType.UPDATE_COMPONENT, handle_update_component)
