@@ -103,7 +103,7 @@ class KeycloakService(Service):
                 section_id="keycloak-config",
                 title="Keycloak configuratie",
                 icon="sleutel",
-                description="SSO en authenticatie-instellingen",
+                description="Instellingen voor inloggen via SSO Rijk en lokale Keycloak-accounts",
                 visible=self._config_selected,
                 post_save_action="process_project",
                 editables=[
