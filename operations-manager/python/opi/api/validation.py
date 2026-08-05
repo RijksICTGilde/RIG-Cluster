@@ -2,11 +2,17 @@
 
 Maps API operations to their relevant Editable validators so that
 API endpoints enforce the same business rules as the web form pipeline.
+
+Every profile below points at the *shared* editable for the field - the same
+object the wizard section renders. Hand-written copies used to sit here
+alongside the shared ones; a rule changed on one side then validated
+differently on the other, and nothing noticed.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any
 
 from fastapi import HTTPException
@@ -14,6 +20,7 @@ from opi.forms.editables.editable import Editable, EditableEnforcer
 from opi.forms.editables.fields.components import (
     COMPONENT_IMAGE_EDITABLE,
     COMPONENT_NAME_EDITABLE,
+    COMPONENT_PATH_MATCH_EDITABLE,
     COMPONENT_RESOURCES_CPU_LIMIT_EDITABLE,
     COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE,
 )
@@ -24,7 +31,6 @@ from opi.forms.editables.fields.domains import (
     WIZARD_DEPLOYMENT_NAME_EDITABLE,
 )
 from opi.forms.editables.pipeline import convert_fields, enforce_rules, validate_fields
-from opi.forms.editables.validators import ContainerImageValidator, PathValidator, SlugValidator
 from opi.services.catalog.user_env_vars.editables import COMPONENT_USER_ENV_VARS_EDITABLE
 
 logger = logging.getLogger(__name__)
@@ -33,38 +39,42 @@ logger = logging.getLogger(__name__)
 # Validation profiles - map API field names to Editable instances
 # ---------------------------------------------------------------------------
 
+
+def _required(editable: Editable) -> Editable:
+    """The same field, but the API insists on it.
+
+    Whether a field may be left out is the endpoint's business; what the value
+    must look like is the field's. Only the first is overridden here, so the
+    rule itself stays in one place.
+    """
+    return replace(editable, required=True)
+
+
+def _optional(editable: Editable) -> Editable:
+    """The same field, but the API accepts leaving it out."""
+    return replace(editable, required=False)
+
+
 ADD_COMPONENT_VALIDATORS: dict[str, Editable] = {
     "name": COMPONENT_NAME_EDITABLE,
     "image": COMPONENT_IMAGE_EDITABLE,
-    "path": Editable(yaml_path="components[*]/path[*]/match", validator=PathValidator()),
+    "path": _optional(COMPONENT_PATH_MATCH_EDITABLE),
     "cpu_limit": COMPONENT_RESOURCES_CPU_LIMIT_EDITABLE,
     "memory_limit": COMPONENT_RESOURCES_MEMORY_LIMIT_EDITABLE,
     "env_vars": COMPONENT_USER_ENV_VARS_EDITABLE,
 }
 
 ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS: dict[str, Editable] = {
-    "component_name": Editable(
-        yaml_path="components[*]/name",
-        validator=COMPONENT_NAME_EDITABLE.validator,
-        required=True,
-    ),
+    "component_name": _required(COMPONENT_NAME_EDITABLE),
     "image": COMPONENT_IMAGE_EDITABLE,
 }
 
 UPDATE_IMAGE_VALIDATORS: dict[str, Editable] = {
-    "newImageUrl": Editable(
-        yaml_path="components[*]/image",
-        validator=ContainerImageValidator(),
-        required=True,
-    ),
+    "newImageUrl": _required(COMPONENT_IMAGE_EDITABLE),
 }
 
 UPSERT_DEPLOYMENT_VALIDATORS: dict[str, Editable] = {
-    "deploymentName": Editable(
-        yaml_path="deployments[*]/name",
-        validator=SlugValidator(),
-        required=True,
-    ),
+    "deploymentName": _required(WIZARD_DEPLOYMENT_NAME_EDITABLE),
 }
 
 CREATE_PROJECT_DOMAIN_VALIDATORS: dict[str, Editable] = {

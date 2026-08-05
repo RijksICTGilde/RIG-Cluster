@@ -13,6 +13,12 @@ from opi.api.validation import (
 )
 from opi.forms.editables.converters import ContainerImageConverter
 from opi.forms.editables.editable import Editable
+from opi.forms.editables.fields.components import (
+    COMPONENT_IMAGE_EDITABLE,
+    COMPONENT_NAME_EDITABLE,
+    COMPONENT_PATH_MATCH_EDITABLE,
+)
+from opi.forms.editables.fields.domains import WIZARD_DEPLOYMENT_NAME_EDITABLE
 from opi.forms.editables.validators import ContainerImageValidator
 
 # ---------------------------------------------------------------------------
@@ -221,3 +227,59 @@ class TestUpsertDeploymentProfile:
         with pytest.raises(HTTPException) as exc_info:
             await validate_api_payload({}, UPSERT_DEPLOYMENT_VALIDATORS)
         assert exc_info.value.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# The API and the form judge a value by the same rule
+# ---------------------------------------------------------------------------
+
+
+class TestProfilesUseTheSharedEditable:
+    """No second copy of a rule: each profile entry IS the field's own editable.
+
+    Hand-written copies used to live next to the shared ones. Compared by
+    validator identity, because that is what actually decides whether the API
+    and the wizard agree on a value.
+    """
+
+    def test_deployment_name_uses_the_wizard_rule(self) -> None:
+        assert UPSERT_DEPLOYMENT_VALIDATORS["deploymentName"].validator is WIZARD_DEPLOYMENT_NAME_EDITABLE.validator
+        assert UPSERT_DEPLOYMENT_VALIDATORS["deploymentName"].yaml_path == WIZARD_DEPLOYMENT_NAME_EDITABLE.yaml_path
+
+    def test_component_name_uses_the_component_rule(self) -> None:
+        assert ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS["component_name"].validator is COMPONENT_NAME_EDITABLE.validator
+
+    def test_image_uses_the_component_rule(self) -> None:
+        assert UPDATE_IMAGE_VALIDATORS["newImageUrl"].validator is COMPONENT_IMAGE_EDITABLE.validator
+
+    def test_path_uses_the_component_rule(self) -> None:
+        assert ADD_COMPONENT_VALIDATORS["path"].validator is COMPONENT_PATH_MATCH_EDITABLE.validator
+
+    def test_required_is_the_endpoints_own_call(self) -> None:
+        """The API may insist on a field the form leaves optional, and vice versa."""
+        assert UPDATE_IMAGE_VALIDATORS["newImageUrl"].required is True
+        assert COMPONENT_IMAGE_EDITABLE.required is False
+        assert ADD_COMPONENT_VALIDATORS["path"].required is False
+        assert COMPONENT_PATH_MATCH_EDITABLE.required is True
+
+
+class TestDeploymentNameFollowsTheWizardRule:
+    """A name the wizard refuses must not slip in through the API.
+
+    The API used to hold its own slug rule, which allowed names the wizard
+    rejects: longer than a Kubernetes name may be, or ending in a hyphen.
+    """
+
+    async def test_trailing_hyphen_is_refused(self) -> None:
+        with pytest.raises(HTTPException) as exc_info:
+            await validate_api_payload({"deploymentName": "productie-"}, UPSERT_DEPLOYMENT_VALIDATORS)
+        assert exc_info.value.status_code == 422
+
+    async def test_too_long_is_refused(self) -> None:
+        with pytest.raises(HTTPException) as exc_info:
+            await validate_api_payload({"deploymentName": "d" + "e" * 63}, UPSERT_DEPLOYMENT_VALIDATORS)
+        assert exc_info.value.status_code == 422
+
+    async def test_a_plain_name_still_passes(self) -> None:
+        payload = {"deploymentName": "productie-2"}
+        assert await validate_api_payload(payload, UPSERT_DEPLOYMENT_VALIDATORS) == payload
