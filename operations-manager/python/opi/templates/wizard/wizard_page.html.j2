@@ -28,16 +28,7 @@
     </div>
 </c-layout-flow>
 
-{# Service help modal - populated via HTMX #}
-<div id="service-help-backdrop" class="service-help-backdrop" onclick="closeServiceHelp()"></div>
-<div id="service-help-modal" class="service-help-modal" role="dialog" aria-modal="true">
-    <div class="service-help-modal__header">
-        <c-icon icon="kruis" size="xl" color="grijs-600"
-                class="service-help-modal__close"
-                @click="closeServiceHelp()" />
-    </div>
-    <div id="service-help-content" class="service-help-modal__body"></div>
-</div>
+{% include "widgets/service_help_modal.html.j2" %}
 {% endblock %}
 
 {% block additional_styles %}

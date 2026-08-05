@@ -1,0 +1,16 @@
+{#
+  Service help modal - populated via fetch from openServiceHelp() in static/js/wizard.js.
+
+  Included wherever a service block with a help button is rendered: the wizard,
+  the project-details page and the service overview. Needs /static/css/wizard.css
+  and /static/js/wizard.js on the same page.
+#}
+<div id="service-help-backdrop" class="service-help-backdrop" onclick="closeServiceHelp()"></div>
+<div id="service-help-modal" class="service-help-modal" role="dialog" aria-modal="true">
+    <div class="service-help-modal__header">
+        <c-icon icon="kruis" size="xl" color="grijs-600"
+                class="service-help-modal__close"
+                @click="closeServiceHelp()" />
+    </div>
+    <div id="service-help-content" class="service-help-modal__body"></div>
+</div>
