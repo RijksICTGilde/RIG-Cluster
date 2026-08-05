@@ -175,6 +175,20 @@ class SecretFileSpec:
     #: Typed secret to register in the deployment's secret map before writing
     #: (``_add_secret_to_create``); only postgres does this today. None = skip.
     register_secret: Any = None
+    #: Extra labels on the Secret's metadata.
+    secret_labels: dict[str, str] | None = None
+    #: Whether this secret counts as application configuration.
+    #:
+    #: Set False for a secret only the service's own auxiliary pod reads. The platform
+    #: then keeps it out of the config-hash that restarts application pods when their
+    #: configuration changes; a service says what its secret IS, and never has to know
+    #: that such a hash exists.
+    #:
+    #: Sleep-mode is why this is here. Its waker token Secret exists only while a
+    #: deployment sleeps, so pruning it on wake changed the hash and restarted the
+    #: application a second time right after it came back up -- while nothing the
+    #: application reads had changed at all.
+    include_in_config_hash: bool = True
 
 
 @dataclass
