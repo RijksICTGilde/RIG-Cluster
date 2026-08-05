@@ -164,22 +164,67 @@ def test_service_owned_routes_are_mounted_exactly_once() -> None:
         assert paths.count(path) == 1, path
 
 
+#: Places in the general layer that still name a SYSTEM service, with the move not yet done.
+#:
+#: A USER service is chosen per project, so the general layer must never know it: that is
+#: what this guard is for. A SYSTEM service is always there (ServiceKind.SYSTEM, "always
+#: runs, never in the list"), so a generic component card showing "3 omgevingsvariabelen"
+#: is not the same mistake. It is still debt though, and the plan has it moving into the
+#: service, so the exemption is a named list rather than a blanket rule: a NEW occurrence
+#: fails, and this list shrinks to nothing when step 3 of
+#: plans/env-vars-en-aliassen-als-systeemdienst.md lands.
+_SYSTEM_SERVICE_DEBT = {
+    ("section-components.html.j2", "user-env-vars"),
+    ("section-env-vars.html.j2", "user-env-vars"),
+    ("section-deployments.html.j2", "user-env-vars"),
+}
+
+
 def test_the_general_templates_name_no_service() -> None:
     """The point of the move: a service name in the general project-details layer is
     knowledge that belongs to the service, and it goes stale silently when the service
-    changes. Comments are allowed to explain who owns what; code is not."""
+    changes. Comments are allowed to explain who owns what; code is not.
+
+    System services are exempt only where _SYSTEM_SERVICE_DEBT says so, so the
+    remaining spots stay visible and cannot quietly multiply."""
     from pathlib import Path
 
     import opi
+    from opi.services.registry import SERVICES
+    from opi.services.services_enums import ServiceKind
+
+    def is_system(name: str) -> bool:
+        service = SERVICES.get(ServiceType(name))
+        definition = getattr(service, "definition", None)
+        return getattr(definition, "kind", None) is ServiceKind.SYSTEM
 
     service_names = [service_type.value for service_type in ServiceType]
     offenders: list[str] = []
     for path in (Path(opi.__file__).parent / "templates" / "project-details").glob("*.j2"):
         source = re.sub(r"\{#.*?#\}", "", path.read_text(), flags=re.DOTALL)
-        offenders += [
-            f"{path.name}: {name}" for name in service_names if f"'{name}'" in source or f'"{name}"' in source
-        ]
+        for name in service_names:
+            if f"'{name}'" not in source and f'"{name}"' not in source:
+                continue
+            if is_system(name) and (path.name, name) in _SYSTEM_SERVICE_DEBT:
+                continue
+            offenders.append(f"{path.name}: {name}")
     assert offenders == []
+
+
+def test_the_debt_list_has_no_stale_entries() -> None:
+    """An entry that no longer occurs means the move happened; drop it, so the list keeps
+    telling the truth about what is left."""
+    from pathlib import Path
+
+    import opi
+
+    stale = []
+    for template_name, service_name in _SYSTEM_SERVICE_DEBT:
+        path = Path(opi.__file__).parent / "templates" / "project-details" / template_name
+        source = re.sub(r"\{#.*?#\}", "", path.read_text(), flags=re.DOTALL) if path.exists() else ""
+        if f"'{service_name}'" not in source and f'"{service_name}"' not in source:
+            stale.append(f"{template_name}: {service_name}")
+    assert stale == [], f"remove these from _SYSTEM_SERVICE_DEBT: {stale}"
 
 
 class TestDatabaseModalActions:
