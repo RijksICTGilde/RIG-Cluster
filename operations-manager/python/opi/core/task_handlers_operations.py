@@ -53,13 +53,13 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
     project_manager: ProjectManager | None = None
     try:
         # Task 1: Initialize project manager
-        init_task = progress.add_task("Initializing project manager")
+        init_task = progress.add_task("Projectgegevens ophalen")
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
         progress.complete_task(init_task)
 
         # Task 2: Clone database
-        clone_method = "via Chisel tunnel" if tunnel else "via direct connection"
-        clone_task = progress.add_task(f"Cloning database {clone_method}")
+        clone_method = "via een Chisel-tunnel" if tunnel else "via een directe verbinding"
+        clone_task = progress.add_task(f"Database kopiëren van {source_database} {clone_method}")
 
         if tunnel:
             # Chisel tunnel-based connection
@@ -188,12 +188,12 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
     project_manager: ProjectManager | None = None
     try:
         # Task 1: Initialize project manager
-        init_task = progress.add_task("Initializing project manager")
+        init_task = progress.add_task("Projectgegevens ophalen")
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
         progress.complete_task(init_task)
 
         # Task 2: Clone bucket
-        clone_task = progress.add_task("Cloning bucket")
+        clone_task = progress.add_task(f"Bucket {source_bucket} kopiëren")
 
         if tunnel:
             # Chisel tunnel-based connection
@@ -323,7 +323,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
     project_manager = None
     try:
         # Task 1: Look up project
-        lookup_task = progress.add_task("Looking up project")
+        lookup_task = progress.add_task("Project opzoeken")
         logger.info(
             "Deployment refresh request for: %s/%s (force_clone=%s)",
             project_name,
@@ -342,7 +342,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
         progress.complete_task(lookup_task)
 
         # Task 2: Process deployment
-        deploy_task = progress.add_task("Processing deployment")
+        deploy_task = progress.add_task(f"Deployment {deployment_name} opnieuw verwerken")
         project_manager = create_project_manager()
         project_file_path = f"projects/{project.filename}"
 
@@ -457,7 +457,7 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
     project_manager = None
     try:
         # Task 1: Look up project
-        lookup_task = progress.add_task("Looking up project")
+        lookup_task = progress.add_task("Project opzoeken en wijzigingen uit git ophalen")
         logger.info("Project refresh request for: %s (force_clone=%s)", project_name, force_clone)
 
         # Pick up anything committed outside ZAD before reprocessing, so "refresh"
@@ -476,7 +476,7 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
         progress.complete_task(lookup_task)
 
         # Task 2: Process project (all deployments)
-        process_task = progress.add_task("Processing project")
+        process_task = progress.add_task("Alle deployments opnieuw verwerken")
         project_manager = create_project_manager()
         project_file_path = f"projects/{project.filename}"
 
