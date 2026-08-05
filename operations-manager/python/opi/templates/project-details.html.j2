@@ -42,9 +42,6 @@
         {% include "project-details/section-helm-charts.html.j2" %}
         {% include "project-details/section-helmfile.html.j2" %}
         {% include "project-details/section-repositories.html.j2" %}
-        {% if "attachments" in (project.services | default([]) | map(attribute="value") | list) %}
-        {% include "project-details/section-attachments.html.j2" %}
-        {% endif %}
         {% include "project-details/section-danger-zone.html.j2" %}
     </c-layout-flow>
 
@@ -64,9 +61,21 @@
 
         {% include "project-details/section-deployment-actions.html.j2" %}
         {% include "project-details/section-deployment-argocd.html.j2" %}
-        {% include "project-details/section-metrics.html.j2" %}
+        {# Per-deployment blocks the project's services own (RC-24): metrics, backups.
+           Each service decides whether its block applies to this deployment, so the
+           general template holds no service name and no availability condition.
+           `data-deployment` is what switchDeployment() shows/hides. #}
+        {% for deployment in project.deployments | sort(attribute='name') %}
+        <div class="deployment-section" data-deployment="{{ deployment.name }}"
+             {% if not loop.first %}style="display: none;"{% endif %}>
+            <c-layout-flow gap="lg">
+                {% for section in deployment_service_sections.get(deployment.name, []) %}
+                {% include section.template %}
+                {% endfor %}
+            </c-layout-flow>
+        </div>
+        {% endfor %}
         {% include "project-details/section-deployments.html.j2" %}
-        {% include "project-details/section-backups.html.j2" %}
         {% include "project-details/section-env-vars.html.j2" %}
     </c-layout-flow>
 
@@ -1271,20 +1280,14 @@
             section.style.display = 'none';
         });
         // Show sections matching this deployment
-        ['deployment-actions-', 'deployment-', 'argocd-', 'backups-'].forEach(prefix => {
+        ['deployment-actions-', 'deployment-', 'argocd-'].forEach(prefix => {
             const el = document.getElementById(prefix + deploymentName);
             if (el) el.style.display = '';
         });
-
-        // HTMX: load metrics for selected deployment
-        var metricsEl = document.getElementById('metrics-content');
-        if (metricsEl && typeof htmx !== 'undefined') {
-            var projectName = metricsEl.dataset.projectName;
-            htmx.ajax('GET', '/projects/details/' + projectName + '/metrics/' + deploymentName, {
-                target: '#metrics-content',
-                swap: 'innerHTML'
-            });
-        }
+        // Service-owned blocks (RC-24) say which deployment they belong to instead of
+        // encoding it in an id prefix this list has to know about.
+        document.querySelectorAll('.deployment-section[data-deployment="' + deploymentName + '"]')
+            .forEach(el => { el.style.display = ''; });
 
         // Sync global selector and URL hash
         const gs = document.getElementById('global-deployment-selector');
@@ -1885,11 +1888,12 @@
         });
     }
 
-    /* Database console: reuse the edit-modal shell, but load the console body
-       (form / startup monitor / running URL) from the db-console endpoint. The
-       body drives itself via HTMX (start, poll status, stop). */
-    function openDbConsoleModal(deployment) {
-        document.getElementById('edit-section-title-text').textContent = 'Databaseconsole - ' + deployment;
+    /* Service-contributed modal (RC-24): reuse the edit-modal shell and load the body
+       from the service's own fragment URL. The body drives itself via HTMX (start, poll
+       status, stop). One function for every such modal -- the database console and the
+       job runner used to have a hand-copied opener each. */
+    function openServiceModal(endpoint, title) {
+        document.getElementById('edit-section-title-text').textContent = title;
         var errorEl = document.getElementById('edit-section-error');
         if (errorEl) errorEl.style.display = 'none';
         var innerEl = document.getElementById('edit-section-inner');
@@ -1901,11 +1905,9 @@
         document.getElementById('edit-section-modal').classList.add('is-open');
         document.body.style.overflow = 'hidden';
 
-        fetch('/projects/{{ project.name }}/db-console/' + encodeURIComponent(deployment) + '/modal', {
-            credentials: 'same-origin',
-        })
+        fetch(endpoint, { credentials: 'same-origin' })
         .then(function(response) {
-            if (!response.ok) throw new Error('Fout bij het laden van de console');
+            if (!response.ok) throw new Error('Fout bij het laden van ' + title);
             return response.text();
         })
         .then(function(html) {
@@ -1917,8 +1919,6 @@
         });
     }
 
-    /* Job runner: same modal shell, loads the job body (form / status / logs link)
-       from the jobs endpoint; the body drives itself via HTMX. */
     // Generic runner for service-contributed deployment actions (e.g. sleep-mode wake).
     // Confirms, POSTs to the action endpoint with the CSRF header, then reloads so the
     // page reflects the new state (and the button disappears once awake).
@@ -1935,35 +1935,6 @@
         })
         .then(function() { window.location.reload(); })
         .catch(function(err) { window.alert(err.message || 'Actie mislukt'); });
-    }
-
-    function openJobModal(deployment) {
-        document.getElementById('edit-section-title-text').textContent = 'Job uitvoeren - ' + deployment;
-        var errorEl = document.getElementById('edit-section-error');
-        if (errorEl) errorEl.style.display = 'none';
-        var innerEl = document.getElementById('edit-section-inner');
-        innerEl.innerHTML =
-            '<div class="edit-section-content">' +
-                '<div class="edit-section-loading"><p>Laden...</p></div>' +
-            '</div>';
-        document.getElementById('edit-section-backdrop').classList.add('is-open');
-        document.getElementById('edit-section-modal').classList.add('is-open');
-        document.body.style.overflow = 'hidden';
-
-        fetch('/projects/{{ project.name }}/jobs/' + encodeURIComponent(deployment) + '/modal', {
-            credentials: 'same-origin',
-        })
-        .then(function(response) {
-            if (!response.ok) throw new Error('Fout bij het laden van de job');
-            return response.text();
-        })
-        .then(function(html) {
-            innerEl.innerHTML = html;
-            if (typeof htmx !== 'undefined') htmx.process(innerEl);
-        })
-        .catch(function(err) {
-            innerEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';
-        });
     }
 
     /* closeEditModal / closeEditModalAndReload / handleEditBackdropClick and

@@ -1,0 +1,92 @@
+{# Backups block for ONE deployment (RC-24).
+
+   Owned by the backupable services (BackupsPageMixin), so it appears for a project
+   that can back something up instead of for every project with a deployment. Every
+   action (aanmaken, herstellen, schema instellen/wijzigen) lives inside the
+   deployment's own block, so a button intrinsically targets the right deployment.
+
+   The snapshot table is filled out-of-band by ONE project-wide request, carried by the
+   first deployment's block (ctx.loads_snapshots). Per-deployment triggers would fire in
+   parallel -- 18 for 'wies' -- and each opens a Kopia repository, which OOM-killed the
+   pod. Rendered via a ``section`` loop var, so it reads its data from
+   ``section.context``. #}
+{% set ctx = section.context %}
+{% if not ctx.available %}
+<c-card outline="true" padding="lg" backgroundColor="grijs-050">
+    <c-layout-row gap="md" verticalSpacing="center">
+        <c-icon icon="info" size="lg" color="grijs-500" />
+        <div>
+            <strong>Backups niet beschikbaar</strong>
+            <p class="rvo-text--sm rvo-text--subtle">De backup service is niet verbonden. Backup informatie wordt getoond wanneer de service beschikbaar is.</p>
+        </div>
+    </c-layout-row>
+</c-card>
+{% else %}
+<c-card outline="true" padding="xl" backgroundColor="wit">
+    <c-layout-flow gap="lg">
+        <div>
+            <c-heading type="h2"><c-icon icon="database" size="xl" color="groen" />Backups</c-heading>
+            <p class="rvo-text--subtle">Backup beheer voor cluster: {{ ctx.current_cluster }}</p>
+        </div>
+
+        {% if ctx.loads_snapshots %}
+        {# ONE lazy request for the whole project. It lists each namespace once and
+           fills every deployment block via hx-swap-oob. #}
+        <div hx-get="/projects/details/{{ ctx.project_name }}/backups"
+             hx-trigger="intersect once" hx-swap="none"></div>
+        {% endif %}
+
+        <c-layout-flow gap="md">
+            {# Schedule status + actions for this deployment #}
+            <c-layout-flow row="true" justifyContent="space-between" alignItems="center" gap="md">
+                <c-layout-row gap="sm" verticalSpacing="center">
+                    {% if ctx.schedule %}
+                    <c-icon icon="vinkje" size="md" color="groen" />
+                    <span>Backups ingeschakeld: <strong>{{ ctx.schedule | rrule_schedule }}</strong></span>
+                    <c-button kind="secondary" size="xs" label="Schema wijzigen" showIcon="before" icon="instellingen"
+                              @click="openEditModal('modal-edit-backup-schedule-{{ ctx.deployment_index }}', 'Backup schema instellen')" />
+                    {% else %}
+                    <c-icon icon="info" size="md" color="grijs-500" />
+                    <span class="rvo-text--subtle">Geen backup schema ingesteld</span>
+                    <c-button kind="secondary" size="xs" label="Schema instellen" showIcon="before" icon="instellingen"
+                              @click="openEditModal('modal-edit-backup-schedule-{{ ctx.deployment_index }}', 'Backup schema instellen')" />
+                    {% endif %}
+                </c-layout-row>
+                <c-layout-row gap="sm">
+                    <c-button kind="secondary" size="sm" label="Backup aanmaken" showIcon="before" icon="iconen-toevoegen"
+                              @click="openEditModal('modal-backup', 'Backup aanmaken', {deployment: '{{ ctx.deployment_name }}'})" />
+                    {# Filled by the snapshot fragment (hx-swap-oob) once it knows
+                       whether there is anything to restore. Rendering it here would
+                       mean guessing, since the snapshots are fetched separately. #}
+                    <span id="restore-btn-{{ ctx.deployment_name }}"></span>
+                </c-layout-row>
+            </c-layout-flow>
+
+            <c-card padding="lg" outline="true" backgroundColor="grijs-050" style="border-left: 4px solid var(--rvo-color-groen);">
+                <c-layout-flow gap="md">
+                    <c-layout-row gap="sm" verticalSpacing="center">
+                        <c-icon icon="applicatie" size="md" color="donkerblauw" />
+                        <c-heading type="h4" textContent="{{ ctx.deployment_name }}" />
+                        <c-tag content="{{ ctx.namespace }}" />
+                    </c-layout-row>
+
+                    {# Filled out-of-band by the single /backups request above. #}
+                    <div id="backups-snapshots-{{ ctx.deployment_name }}">
+                        {# Same skeleton silhouette as the ArgoCD blocks, so a loading
+                           backup list reads as "loading" and not as "empty". #}
+                        <div class="argocd-skeleton" role="status" aria-label="Backups worden geladen">
+                            <div class="argocd-skeleton__row">
+                                <span class="argocd-skeleton__bone" style="width: 30%; height: 18px;"></span>
+                                <span class="argocd-skeleton__bone" style="width: 80px; height: 20px;"></span>
+                            </div>
+                            <span class="argocd-skeleton__bone" style="width: 100%; height: 14px;"></span>
+                            <span class="argocd-skeleton__bone" style="width: 100%; height: 14px;"></span>
+                            <span class="argocd-skeleton__bone" style="width: 45%; height: 14px;"></span>
+                        </div>
+                    </div>
+                </c-layout-flow>
+            </c-card>
+        </c-layout-flow>
+    </c-layout-flow>
+</c-card>
+{% endif %}

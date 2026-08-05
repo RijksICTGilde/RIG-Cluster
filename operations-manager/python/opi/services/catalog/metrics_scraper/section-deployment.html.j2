@@ -1,0 +1,42 @@
+{# metrics-scraper detail-page block for ONE deployment (RC-24).
+
+   Owned by the metrics-scraper service: MetricsScraperService.deployment_page_sections
+   decides whether this deployment gets a block at all (the project must use the
+   service, and Prometheus must be reachable), so the general template no longer
+   carries the condition. Rendered per deployment via a ``section`` loop var, so it
+   reads its data from ``section.context``. #}
+{% set ctx = section.context %}
+{% if ctx.available %}
+<c-card outline="true" padding="xl" backgroundColor="wit">
+    <c-layout-flow gap="lg">
+        <div>
+            <c-heading type="h2" style="margin-bottom: 0;">
+                <c-icon icon="grafiek" size="xl" color="groen" />Resource Metrics
+            </c-heading>
+            <p class="rvo-text--subtle">Resource usage per component</p>
+        </div>
+
+        {# Each deployment block loads its own metrics when it scrolls into view.
+           Showing a hidden block (deployment switch) makes it intersect, so no JS
+           has to fetch anything on switch. #}
+        <div id="metrics-content-{{ ctx.deployment_name }}"
+             hx-get="/projects/details/{{ ctx.project_name }}/metrics/{{ ctx.deployment_name }}"
+             hx-trigger="intersect once"
+             hx-swap="innerHTML">
+            <div class="metrics-loading">
+                <p class="rvo-text--subtle">Metrics laden...</p>
+            </div>
+        </div>
+    </c-layout-flow>
+</c-card>
+{% else %}
+<c-card outline="true" padding="lg" backgroundColor="grijs-050">
+    <c-layout-row gap="md" verticalSpacing="center">
+        <c-icon icon="info" size="lg" color="grijs-500" />
+        <div>
+            <strong>Metrics niet beschikbaar</strong>
+            <p class="rvo-text--sm rvo-text--subtle">{{ ctx.unavailable_reason }}</p>
+        </div>
+    </c-layout-row>
+</c-card>
+{% endif %}

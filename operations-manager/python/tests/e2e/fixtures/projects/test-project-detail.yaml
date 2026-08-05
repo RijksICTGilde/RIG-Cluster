@@ -14,6 +14,10 @@ users:
 services:
   - publish-on-web
   - keycloak
+  # Gives the project a database, so the service-contributed deployment buttons
+  # (Databaseconsole, Job uitvoeren) apply here -- they no longer render for every
+  # project (RC-24).
+  - postgresql-database
 
 config:
   age-public-key: "age1drxwupvn5eg8wd9cdf05nrxp6usrpk7tarc09yzk4c3m7jzzaups8757zy"
