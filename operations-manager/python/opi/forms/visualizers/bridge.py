@@ -64,15 +64,24 @@ def editable_to_form_field(
     virt = ed.virtualize or parent_virtualize
     form_path = apply_virtualize(real_path, virt) if virt else real_path
 
-    # 2. Extract value from YAML using the real path (fall back to default)
+    # 2. Extract value from YAML, real path first, then the virtual one.
     #
+    # The virtual fallback mirrors ``_read_submitted`` in the processor, and without it a
+    # value the wizard stored was invisible when the step was rendered again: wizard state
+    # keeps service CONFIG under the virtual key while the real ``services`` key holds only
+    # the chosen names. The read then returned None, the default below took over, and the
+    # user saw the default where their own choice should have been -- indistinguishable
+    # from "my change was not saved", and it did get overwritten on the next submit.
+    raw_value = smart_get_value(yaml_data, real_path)
+    if raw_value is None and virt and form_path != real_path:
+        raw_value = smart_get_value(yaml_data, form_path)
+
     # A callable default is computed from the surrounding project data, so a field can be
     # prefilled with something derived (the first team member's address, a text carrying the
     # project name) instead of a constant. It runs only when the field has no stored value,
     # so it never overwrites what a user typed, and it may return None to mean "no default
     # after all". Errors are deliberately not caught: a broken default is a bug in our own
     # code, and swallowing it would silently render an empty field instead.
-    raw_value = smart_get_value(yaml_data, real_path)
     if raw_value is None and default is not None:
         raw_value = default(yaml_data) if callable(default) else default
 
@@ -225,6 +234,18 @@ def should_render_editable(
         depends_on = depends_on.replace("[*]", f"[{index}]", 1)
 
     dep_value = smart_get_value(yaml_data, depends_on)
+
+    # Same virtual fallback as the value read in editable_to_form_field. A dependency on
+    # another service's config (e.g. the invite auth methods following the keycloak
+    # template) names the real path, but in wizard state that config lives under the
+    # virtual key while the real ``services`` key holds only the chosen names. Without
+    # this the condition always saw None and the field stayed hidden for the whole wizard.
+    if dep_value is None:
+        virt = editable.editable.virtualize
+        if virt:
+            virtual_depends_on = apply_virtualize(depends_on, virt)
+            if virtual_depends_on != depends_on:
+                dep_value = smart_get_value(yaml_data, virtual_depends_on)
 
     # Apply the dependency field's converter so show_when compares against
     # the form-compatible value (e.g. "__custom__", "DAILY") rather than
