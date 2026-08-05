@@ -19,9 +19,12 @@ from opi.core.config import BUILD_DATE, VERSION
 from opi.core.i18n import get_current_translation, get_requested_language
 from opi.core.rrule_utils import format_rrule
 from opi.core.version import get_version_info
+from opi.services.registry import deployment_action_key
 
 if TYPE_CHECKING:
     from starlette.requests import Request
+
+    from opi.services.services import ServiceDefinition
 
 # Dutch month names
 DUTCH_MONTHS = [
@@ -133,6 +136,24 @@ def get_service_name(service: str | dict[str, Any]) -> str:
     return service_entry_name(service) or ""
 
 
+def get_service_definition_for_entry(service: str | dict[str, Any]) -> ServiceDefinition | None:
+    """The ServiceDefinition behind a services-list entry, or None for an unknown name.
+
+    Lets a template show a service the way the wizard does (icon, description, help)
+    from the raw project data, which only carries the service name. Accepts every entry
+    format ``service_entry_name`` handles.
+    """
+    from opi.services.services import ServiceAdapter
+    from opi.services.services_enums import ServiceType
+
+    name = get_service_name(service)
+    try:
+        service_type = ServiceType(name)
+    except ValueError:
+        return None
+    return ServiceAdapter.SERVICE_DEFINITIONS.get(service_type)
+
+
 # Get the opi package directory (operations-manager/python/opi)
 OPI_DIR = Path(__file__).parent.parent
 TEMPLATES_DIR = OPI_DIR / "templates"
@@ -175,8 +196,12 @@ templates.env.globals["version_info"] = get_version_info
 
 # Register custom filters
 templates.env.filters["service_name"] = get_service_name
+templates.env.filters["service_definition"] = get_service_definition_for_entry
 templates.env.filters["dutch_date"] = format_dutch_date
 templates.env.filters["rrule_schedule"] = format_rrule_schedule
+# The URL-safe id of a service-contributed deployment action; the confirmation dialog
+# addresses an action by this key instead of by its endpoint (see registry).
+templates.env.filters["deployment_action_key"] = deployment_action_key
 
 # Register process_components filter for runtime-generated HTML that contains
 # component tags (e.g. form_html from render_from_editables). The extension's

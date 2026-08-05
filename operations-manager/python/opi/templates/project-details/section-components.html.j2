@@ -1,4 +1,5 @@
 {# Components Section #}
+{% from "widgets/_macros.html.j2" import service_block %}
 <c-card outline="true" padding="xl" backgroundColor="wit">
     <c-layout-flow gap="lg">
         <c-layout-flow row="true" justifyContent="space-between" alignItems="center">
@@ -63,14 +64,26 @@
                         {% if component.services %}
                         <div class="spec-item">
                             <strong>Services:</strong>
-                            {# Use the format-agnostic ``service_name`` filter: iterating a
-                               record's keys rendered a service as "Reference, Config". #}
-                            {% set svc_names = [] %}
-                            {% for svc in component.services %}
-                                {% set name = svc|service_name %}
-                                {% if name %}{% set _ = svc_names.append(name) %}{% endif %}
-                            {% endfor %}
-                            {{ svc_names|join(", ")|replace("-", " ")|title }}
+                            {# The same block as the wizard's service picker and the service
+                               overview page: icon, name, description and the question mark with
+                               the explanation. This used to be a line of raw names, so the same
+                               service looked like something else here than where it was chosen.
+                               Both filters are format-agnostic: an entry is a string,
+                               ``{naam: {...}}`` or ``{"reference": ..., "config": ...}``. #}
+                            <div class="service-cards-grid">
+                                {% for svc in component.services %}
+                                {% set definition = svc|service_definition %}
+                                <div class="service-card service-card--static">
+                                    <div class="service-card__content">
+                                        {% if definition %}
+                                        {{ service_block(definition.name, definition.description, definition.icon, definition.color, definition.help_template) }}
+                                        {% else %}
+                                        {{ svc|service_name }}
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
                         </div>
                         {% endif %}
                     </div>

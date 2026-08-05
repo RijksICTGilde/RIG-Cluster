@@ -1,0 +1,37 @@
+{#
+  Confirmation for a service-contributed deployment action (see DeploymentAction).
+
+  Loaded into the shared modal shell by openServiceModal(), so a service's action asks
+  the same way as everything else on this page instead of through window.confirm().
+  The endpoint is filled in server-side from the action the service offered; this
+  template never sees a URL from the request.
+
+  Expects: action (DeploymentAction), message.
+
+  The CSRF header and the swap live on the wrapping div, NOT on the button: htmx
+  inherits both from an ancestor, and a ROOS <c-button> re-emits attribute values in
+  double quotes, which mangles the JSON of hx-headers. The action endpoints answer
+  JSON, hence hx-swap="none" -- project-details.html.j2 reloads the page on success and
+  fills #deployment-action-error on failure.
+#}
+<div data-deployment-action="true"
+     hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
+     hx-swap="none">
+    <div class="edit-section-content">
+        <c-layout-flow gap="md">
+            <c-p>{{ message }}</c-p>
+            <div id="deployment-action-error" class="edit-section-error" style="display: none;"></div>
+        </c-layout-flow>
+    </div>
+    <div class="edit-section-actions">
+        <c-button type="button" label="Annuleren" kind="tertiary" @click="closeEditModal()" />
+        <c-button
+            type="button"
+            label="{{ action.label }}"
+            kind="{{ action.kind }}"
+            showIcon="before"
+            icon="{{ action.icon }}"
+            hx-post="{{ action.endpoint }}"
+            hx-disabled-elt="this" />
+    </div>
+</div>

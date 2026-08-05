@@ -310,6 +310,15 @@ c-fieldset c-fieldset {
     background: var(--rvo-color-hemelblauw-100, #E5F0F9);
     opacity: 0.85;
 }
+/* Read-only card (project details): same look as the picker, but nothing to pick. */
+.service-card--static,
+.service-card--static:hover {
+    cursor: default;
+    border-color: var(--rvo-color-grijs-300, #e5e5e5);
+}
+.service-card--static .service-card__content {
+    cursor: default;
+}
 .service-card__content {
     flex: 1;
     cursor: pointer;

@@ -23,7 +23,7 @@ from opi.services.project_authorization import (
     is_user_authorized_for_project,
 )
 from opi.services.project_store import get_project_store
-from opi.services.registry import collect_service_routers
+from opi.services.registry import collect_service_routers, find_deployment_action
 from opi.utils.age import decrypt_password_smart, get_global_private_key
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.totp import totp_now
@@ -667,6 +667,56 @@ async def sleep_deployment_web(request: Request, project_name: str, deployment_n
 
     logger.info(f"Web sleep for '{project_name}/{deployment_name}' by {user_email}: state={result.state}")
     return JSONResponse({"state": result.state, "changed": result.changed})
+
+
+@web_router.get(
+    "/projects/{project_name}/deployments/{deployment_name}/actions/{action_key}/confirm",
+    response_class=HTMLResponse,
+)
+@requires_sso
+async def deployment_action_confirm(
+    request: Request, project_name: str, deployment_name: str, action_key: str
+) -> HTMLResponse:
+    """The confirmation body for a service-contributed deployment action.
+
+    Loaded into the shared modal shell, so every ``DeploymentAction`` with a
+    ``confirm_message`` gets a real dialog instead of ``window.confirm()`` -- generic, so
+    a service needs no code here. The action is re-derived from the project's own
+    services and matched on its key, so the POST target this renders is always one a
+    service really offered for this deployment; an endpoint taken from the URL would be
+    an open POST target.
+    """
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    if not is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+
+    user_role = get_user_role_for_project(project_name, user_email)
+    if user_role not in ["admin", "owner"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Alleen admin of owner rollen kunnen deployment acties uitvoeren. Uw rol: {user_role}",
+        )
+
+    project = get_project_store().get(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project niet gevonden")
+
+    action = find_deployment_action(project.data or {}, deployment_name, action_key)
+    if action is None or not action.endpoint:
+        raise HTTPException(status_code=404, detail="Actie niet gevonden")
+
+    return get_templates().TemplateResponse(
+        "project-details/deployment-action-confirm.html.j2",
+        {
+            "request": request,
+            "action": action,
+            # A service may leave the message out; still ask, rather than firing a
+            # POST straight from the page.
+            "message": action.confirm_message or f"Weet u zeker dat u '{action.label}' wilt uitvoeren?",
+        },
+    )
 
 
 @web_router.get("/test-architecture", response_class=HTMLResponse)
