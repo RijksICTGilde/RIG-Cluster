@@ -24,11 +24,11 @@
    otherwise the same word would stand twice on one card. #}
 {% set has_image = deployment.components | selectattr('image', 'defined') | selectattr('image') | list | length > 0 if deployment.components else false %}
 {% set shows_argocd_status = has_image and deployment.cluster == current_cluster %}
-{# A health verdict is a problem verdict for anything that is not Healthy/Progressing.
-   Load-bearing: switching a deployment off replaces the health badge, and a component
-   that is off AND broken must keep showing that it is broken. #}
-{% set health_is_problem = health not in ('Healthy', 'Progressing') %}
-{% set disabled_replaces_health = disabled_state.is_disabled and not health_is_problem %}
+{# "Uitgeschakeld" takes the place of exactly one verdict: the green Healthy that zero
+   replicas produce. Every other verdict -- Degraded, Progressing, Unknown -- is something
+   ArgoCD really observed and keeps its badge, or switching a component off would hide a
+   real failure. #}
+{% set disabled_replaces_health = disabled_state.is_disabled and health == 'Healthy' %}
 
 <c-card padding="lg" outline="true" backgroundColor="grijs-050" style="border-left: 4px solid var(--rvo-color-hemelblauw);">
     <c-layout-flow gap="md">
