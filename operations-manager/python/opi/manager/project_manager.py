@@ -2909,6 +2909,9 @@ class ProjectManager:
 
             project_name = await self.get_name()
             deployments = await self.get_deployments(cluster_filter=True, deployment_names=targets)
+            # The project as it stands, for asking the services what they know about a
+            # deployment (RC-28). Same contents the deployments above came from.
+            sync_project_data = await self.get_contents(record_base=False)
             sync_failures: list[str] = []
             # Runtime pod-health issues (e.g. CrashLoopBackOff) are the user app crashing,
             # not a deploy/sync failure: OPI synced the manifests fine. These are logged
@@ -2919,6 +2922,7 @@ class ProjectManager:
             if deployments and project_name:
                 from opi.services.catalog.base import ComponentHealth
                 from opi.services.deployment_observation import run_after_sync_observation
+                from opi.services.deployment_state import collect_deployment_state
                 from opi.services.oom_watcher import (
                     MAIN_CONTAINER_NAME,
                     STALL_NOTICE_SECONDS,
@@ -2995,6 +2999,12 @@ class ProjectManager:
                     cluster = deployment.get("cluster", "")
                     namespace = get_prefixed_namespace(cluster, base_namespace) if base_namespace and cluster else ""
 
+                    # What the services report about this deployment (RC-28): sleep-mode
+                    # says it scaled the application to zero, so "no pods" is the intended
+                    # state and not something to report as a stalled rollout. Collected
+                    # once here, from the project file, and handed to both readers below.
+                    deployment_state = collect_deployment_state(sync_project_data, dep_name)
+
                     # Build health check callback for this deployment
                     oom_callback = None
                     component_names: list[str] = []
@@ -3018,6 +3028,7 @@ class ProjectManager:
                                 namespace,
                                 component_names,
                                 component_refs=component_refs,
+                                state=deployment_state,
                             )
 
                     # Live per-deployment progress subtask: surfaces "what are we
@@ -3036,7 +3047,9 @@ class ProjectManager:
                     async def _on_progressing(elapsed: int) -> None:
                         if app_subtask and namespace and component_names:
                             try:
-                                statuses = await describe_components_waiting(namespace, component_names, component_refs)
+                                statuses = await describe_components_waiting(
+                                    namespace, component_names, component_refs, deployment_state
+                                )
                             except Exception:
                                 statuses = []
                             if statuses:
