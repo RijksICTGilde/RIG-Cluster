@@ -666,8 +666,8 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 
     # Cross-domain-access needs a precomputed list of authorized peer projects and of the
     # project's own inbound ports. Populated only for flows that carry its section. These are
-    # template_only_keys: they never reach the saved project (they are not produced by any
-    # step's step_data), verified by the folding in _template_only_keys.
+    # template-only: they never reach the saved project. No editable names them, so they fall
+    # outside the write set and the save path does not look at them.
     if flow_id in ("modal-edit-cross-domain-config", "modal-edit-services"):
         state.template_data.update(_build_cross_domain_context(project_name, project_data, _user_email))
 
