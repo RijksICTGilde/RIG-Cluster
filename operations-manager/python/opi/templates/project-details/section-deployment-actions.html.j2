@@ -27,8 +27,10 @@
                    runner (both PostgreSQL services), sleep-mode's wake/sleep toggle. A
                    service owns its own button via ServiceDefinition.actions_provider,
                    so this template holds no service name and no condition of its own.
-                   An action either POSTs to an endpoint or opens the shared modal shell
-                   on a fragment URL. #}
+                   An action either opens the shared modal shell on a fragment URL, or
+                   POSTs to an endpoint -- and then it asks first, in that same shell:
+                   the confirm fragment re-derives the action server-side from its key
+                   and renders the POST button, so no endpoint travels through the URL. #}
                 {# The two branches repeat the whole button on purpose: a {% if %} INSIDE a
                    ROOS component tag is not valid there -- the component preprocessor
                    reads the tag before Jinja does and the page 500s. #}
@@ -48,7 +50,7 @@
                     size="sm"
                     showIcon="before"
                     icon="{{ action.icon }}"
-                    @click="runDeploymentAction('{{ action.endpoint }}', '{{ action.confirm_message }}')" />
+                    @click="openServiceModal('/projects/{{ project.name }}/deployments/{{ deployment.name }}/actions/{{ action|deployment_action_key }}/confirm', '{{ action.label }}')" />
                 {% endif %}
                 {% endfor %}
             </c-layout-row>
