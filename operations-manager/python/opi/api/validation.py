@@ -13,10 +13,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
-from opi.forms.editables.editable import Editable, EditableEnforcer
 from opi.forms.editables.fields.components import (
     COMPONENT_IMAGE_EDITABLE,
     COMPONENT_NAME_EDITABLE,
@@ -32,6 +31,9 @@ from opi.forms.editables.fields.domains import (
 )
 from opi.forms.editables.pipeline import convert_fields, enforce_rules, validate_fields
 from opi.services.catalog.user_env_vars.editables import COMPONENT_USER_ENV_VARS_EDITABLE
+
+if TYPE_CHECKING:
+    from opi.forms.editables.editable import Editable, EditableEnforcer
 
 logger = logging.getLogger(__name__)
 
