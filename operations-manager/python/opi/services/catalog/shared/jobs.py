@@ -1,11 +1,17 @@
-"""Web routes for ad-hoc job runs.
+"""The job-runner modal, owned by the PostgreSQL services (RC-24).
 
 A project member opens a modal from the deployment Acties menu, gives an image +
 command, and OPI launches a one-shot Pod wired with the deployment's database
-connection. The modal polls live pod state (starting -> running ->
-succeeded/failed) and opens the existing component log viewer to tail the logs.
+connection (migrations are the use case, which is why this belongs to the database
+services rather than to the page). The modal polls live pod state (starting -> running
+-> succeeded/failed) and opens the existing component log viewer to tail the logs.
 All routes are member-gated; live status comes from the cluster, history from the
 runs registry.
+
+The modal template lives next to this module and the routes are mounted through
+``Service.web_routers``, so the block and the endpoints that drive it travel together.
+This module is imported lazily from ``web_routers`` (never at catalog import time), so
+the catalog itself stays free of manager imports.
 """
 
 from __future__ import annotations
@@ -20,14 +26,14 @@ from opi.core.config import settings
 from opi.core.templates import get_templates
 from opi.manager.job_manager import JobError, get_job_manager
 from opi.manager.run_support import pending_state, spawn
-from opi.services.runs_service import RunKind, get_runs_service
+from opi.services.runs_service import RunKind
 from opi.web.router_detail_edit import _require_project_member_access
 
 logger = logging.getLogger(__name__)
 
 jobs_router = APIRouter(prefix="/projects", tags=["jobs"])
 
-_MODAL_TEMPLATE = "project-details/_job-modal.html.j2"
+_MODAL_TEMPLATE = "shared/_job-modal.html.j2"
 
 
 async def _render(
@@ -83,107 +89,6 @@ async def _render(
 
 # Human labels for the unified Taken table. Runs (console/job) + background
 # tasks (upserts, refreshes, ...) are shown together as one history.
-_RUN_LABELS = {"db-console": "Databaseconsole", "job": "Job"}
-_TASK_LABELS = {
-    "create_project": "Project aanmaken",
-    "refresh_project": "Project verversen",
-    "refresh_deployment": "Deployment verversen",
-    "update_image": "Image bijwerken",
-    "delete_deployment": "Deployment verwijderen",
-    "clone_database": "Database klonen",
-    "clone_bucket": "Bucket klonen",
-    "add_component": "Component toevoegen",
-    "add_component_to_deployment": "Component toevoegen",
-    "add_service": "Service toevoegen",
-    "backup": "Back-up",
-    "restore": "Herstellen",
-}
-
-
-# Dutch labels for the raw status values of both sources (the rest of the UI is
-# Dutch). succeeded/completed both read as "Voltooid".
-_STATUS_LABELS = {
-    "pending": "In wachtrij",
-    "claimed": "Gereserveerd",
-    "starting": "Wordt gestart",
-    "running": "Bezig",
-    "succeeded": "Voltooid",
-    "completed": "Voltooid",
-    "failed": "Mislukt",
-    "stopped": "Gestopt",
-    "expired": "Verlopen",
-    "cancelled": "Geannuleerd",
-}
-
-# Statuses that mean "still going" per source (used to show a live step + to
-# decide whether the "Beëindigd" column applies). Checked on the raw status.
-_RUN_ACTIVE = {"starting", "running"}
-_TASK_ACTIVE = {"pending", "claimed", "running"}
-
-
-def _normalize_run(run: dict) -> dict:
-    kind = run.get("kind") or "run"
-    status = run.get("status") or ""
-    return {
-        "soort": _RUN_LABELS.get(kind, kind),
-        "deployment": run.get("deployment"),
-        "status": _STATUS_LABELS.get(status, status),
-        "active": status in _RUN_ACTIVE,
-        "step": None,  # runs have no sub-step
-        "progress": None,
-        "door": run.get("started_by"),
-        "gestart": run.get("started_at"),
-        "beeindigd": run.get("ended_at"),
-    }
-
-
-def _normalize_task(task: dict) -> dict:
-    task_type = task.get("task_type") or "task"
-    status = task.get("status") or ""
-    return {
-        "soort": _TASK_LABELS.get(task_type, task_type.replace("_", " ").capitalize()),
-        "deployment": task.get("deployment_name"),
-        "status": _STATUS_LABELS.get(status, status),
-        "active": status in _TASK_ACTIVE,
-        "step": task.get("current_step"),
-        "progress": task.get("progress_percent"),
-        "door": task.get("created_by"),
-        "gestart": task.get("created_at"),
-        "beeindigd": task.get("completed_at"),
-    }
-
-
-@jobs_router.get("/{project_name}/tasks", response_class=HTMLResponse)
-@requires_sso
-async def project_tasks(request: Request, project_name: str) -> HTMLResponse:
-    """Unified Taken table: console/job runs + background tasks (upserts, refreshes)."""
-    _require_project_member_access(request, project_name)
-    items: list[dict] = []
-
-    try:
-        runs = await get_runs_service().list_runs(project_name, include_ended=True, limit=100)
-        items.extend(_normalize_run(r) for r in runs)
-    except Exception:
-        logger.exception("Failed to list runs for project %s", project_name)
-
-    task_service = getattr(request.app.state, "task_service", None)
-    if task_service is not None:
-        try:
-            result = await task_service.list_tasks(project_name=project_name, limit=100)
-            items.extend(_normalize_task(t) for t in result.get("tasks", []))
-        except Exception:
-            logger.exception("Failed to list background tasks for project %s", project_name)
-
-    # Newest first across both sources; cap the combined view.
-    items.sort(key=lambda i: i.get("gestart") or "", reverse=True)
-    items = items[:100]
-
-    return get_templates().TemplateResponse(
-        "project-details/section-tasks.html.j2",
-        {"request": request, "project_name": project_name, "items": items},
-    )
-
-
 @jobs_router.get("/{project_name}/jobs/{deployment_name}/modal", response_class=HTMLResponse)
 @requires_sso
 async def job_modal(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:

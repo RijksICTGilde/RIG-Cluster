@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.attachments import AttachmentsService
 from opi.services.catalog.authorization_wall import AuthorizationWallService
-from opi.services.catalog.base import ConfigLayer, Service
+from opi.services.catalog.base import ConfigLayer, DeploymentPageContext, Service
 from opi.services.catalog.cross_domain_access import CrossDomainAccessService
 from opi.services.catalog.health_check import HealthCheckService
 from opi.services.catalog.invite import InviteService
@@ -154,11 +154,21 @@ def collect_deployment_actions(project_data: dict, deployment_name: str) -> list
     loops over data instead of hardcoding per-service conditions.
     """
     actions: list = []
+    seen: set[tuple] = set()
     for service in SERVICES.values():
         provider = service.definition.actions_provider
         if provider is None:
             continue
-        actions.extend(action for action in provider(project_data, deployment_name) if action.visible)
+        for action in provider(project_data, deployment_name):
+            if not action.visible:
+                continue
+            # Services that share a provider (both PostgreSQL variants offer the same
+            # console and job buttons) must not yield the button twice.
+            key = (action.label, action.endpoint, action.modal_endpoint)
+            if key in seen:
+                continue
+            seen.add(key)
+            actions.append(action)
     return actions
 
 
@@ -171,19 +181,68 @@ def collect_detail_page_sections(project_data: dict, user_role: str) -> list:
     must be the DECRYPTED project dict (a service may surface managed credentials).
     """
     from opi.services.catalog.base import DetailPageSection
+
+    sections: list[DetailPageSection] = []
+    for service in selected_services(project_data):
+        sections.extend(service.detail_page_sections(project_data, user_role))
+    return sections
+
+
+def selected_services(project_data: dict) -> list[Service]:
+    """The services a project actually uses, in registry order.
+
+    "Uses" means selected at project level or referenced by a component -- the same
+    reading for every collector that asks the project's own services what they
+    contribute to a page. A component's list is read through
+    ``extract_service_names_from_component``, so the v1 ``uses-services`` key counts too;
+    reading ``services`` alone silently loses every service on an unmigrated component.
+    """
+    from opi.handlers.project_file_handler import extract_service_names_from_component
     from opi.services.services import service_entry_name
 
     selected: set[str | None] = {service_entry_name(entry) for entry in project_data.get("services", []) or []}
     for component in project_data.get("components", []) or []:
-        for entry in component.get("services", []) or []:
-            selected.add(service_entry_name(entry))
+        selected.update(extract_service_names_from_component(component))
+    return [service for service in SERVICES.values() if service.service_type.value in selected]
+
+
+def collect_deployment_page_sections(ctx: DeploymentPageContext) -> list:
+    """Read-only sections the project's services contribute for ONE deployment (RC-24).
+
+    The per-deployment counterpart of ``collect_detail_page_sections``: same selection
+    rule, same return type, asked once per deployment so a block about a single
+    deployment (its backups, its metrics) lives with the service that owns it.
+
+    A block owned jointly by several services -- backups belong to every service with a
+    ``backup_label`` -- is returned by each of them; the same template renders once.
+    """
+    from opi.services.catalog.base import DetailPageSection
 
     sections: list[DetailPageSection] = []
-    for service in SERVICES.values():
-        if service.service_type.value not in selected:
-            continue
-        sections.extend(service.detail_page_sections(project_data, user_role))
+    seen: set[str] = set()
+    for service in selected_services(ctx.project_data):
+        for section in service.deployment_page_sections(ctx):
+            if section.template in seen:
+                continue
+            seen.add(section.template)
+            sections.append(section)
     return sections
+
+
+def collect_service_routers() -> list[Any]:
+    """Every distinct ``APIRouter`` the services deliver, for mounting on the web app.
+
+    A service that owns a page block owns its endpoints too (the backups fragment, the
+    database-console and job modals). Routers shared by several services -- the backup
+    fragment is owned by all backupable services -- are returned as the same object and
+    mounted once, so a shared route is not registered per owner.
+    """
+    routers: list[Any] = []
+    for service in SERVICES.values():
+        for router in service.web_routers():
+            if not any(existing is router for existing in routers):
+                routers.append(router)
+    return routers
 
 
 def component_service_editables() -> list[Editable]:

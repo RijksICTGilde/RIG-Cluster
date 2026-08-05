@@ -197,7 +197,7 @@ def _fake_request():
 
 
 def _render_modal_html(**ctx) -> str:
-    tmpl = get_templates().get_template("project-details/_db-console-modal.html.j2")
+    tmpl = get_templates().get_template("shared/_db-console-modal.html.j2")
     return tmpl.render(request=_fake_request(), **ctx)
 
 
