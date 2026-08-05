@@ -13,6 +13,8 @@ import copy
 import logging
 from typing import TYPE_CHECKING, Any
 
+from fastapi import HTTPException
+
 from opi.forms.editables.editable import Editable, FormState, WidgetType
 from opi.forms.editables.hooks import (
     PreserveAttachmentContentHook,
@@ -24,7 +26,8 @@ from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.resolvers import build_resolver_map
 from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.forms.wizard.state import _strip_cleared_fields
-from opi.web.project_edit_security import apply_form_data_to_project
+from opi.forms.wizard.write_set import apply_write_paths, flow_write_paths
+from opi.web.project_edit_security import IMMUTABLE_PROJECT_FIELDS
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.flows import FormFlow
@@ -71,28 +74,19 @@ def apply_list_item_merge(
         existing_list[idx] = item_data
 
 
-def template_only_keys(
-    step_data: dict[str, dict[str, Any]],
-    template_data: dict[str, Any] | None,
-    virt_mappings: dict[str, str],
-) -> set[str]:
-    """Top-level keys present only as template context, to strip before the merged data
-    overwrites the stored project.
+def guard_immutable_paths(write_paths: list[str]) -> None:
+    """Refuse to save when a flow declares a field no form may write.
 
-    ``template_data`` carries context the step data does not (config for AGE decryption,
-    existing names for uniqueness). Anything the step actually produced must NOT be treated
-    as template-only, or the edit is reverted to the git baseline.
-
-    Crucially, a section that produces a VIRTUAL key (e.g. ``_services-config``) owns the
-    REAL key it folds into (``services``): ``get_merged_data`` has already devirtualized the
-    edit into ``services``. Counting only the raw produced keys left ``services`` looking
-    template-only, so every project-level service-config modal edit (a new invite, a keycloak
-    template change) was popped and lost. ``virt_mappings`` maps virtual -> real, so we add
-    each produced virtual key's real target to the produced set.
+    ``name`` is the on-disk filename and ``clusters`` is not editable yet. A
+    flow declaring either is a bug in the flow, not something a user did, so
+    fail loud rather than silently dropping the value.
     """
-    produced = {k for sd in step_data.values() for k in sd}
-    produced |= {virt_mappings[k] for k in produced if k in virt_mappings}
-    return set(template_data or {}) - produced
+    offending = sorted({path for path in write_paths if path.split("/")[0].split("[")[0] in IMMUTABLE_PROJECT_FIELDS})
+    if offending:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Flow declares immutable project fields: {', '.join(offending)}",
+        )
 
 
 def _system_fields_for_new_deployment(existing_data: dict[str, Any], project_name: str) -> None:
@@ -168,24 +162,28 @@ async def apply_modal_edit(
     """
     from opi.web.router_wizard import _apply_literal_scalars
 
-    # Strip template-only keys: template_data provides context for rendering
-    # and validation (e.g. config for AGE decryption, existing_deployment_names
-    # for uniqueness checks) but should not overwrite existing project data.
-    # JSON session round-trip also strips ruamel.yaml types (LiteralScalarString).
-    for key in template_only_keys(state.step_data, state.template_data, state.virt_mappings):
-        merged_data.pop(key, None)
-
-    # Targeted list merge for flows that declare they write one list item.
-    # Instead of replacing the entire list, we add or update one entry.
+    # A new list item has no stored version to protect, so it is appended
+    # whole: the empty slot the wizard was seeded with carries fields no form
+    # collects (the cluster of a new deployment) and they must come along.
     target = flow.target
-    if target is not None:
+    if target is not None and target.is_new:
         apply_list_item_merge(existing_data, merged_data, target.list_key, target.index, target.is_new)
         merged_data.pop(target.list_key, None)
 
-        if target.list_key == "deployments" and target.is_new:
+        if target.list_key == "deployments":
             _system_fields_for_new_deployment(existing_data, project_name)
 
-    existing_data = apply_form_data_to_project(existing_data, merged_data)
+    # Everything else: write only what this flow's editables declare. What no
+    # editable names is not written, and therefore does not need saving from
+    # being overwritten either - that is what the template-only strip, and the
+    # four separate leak fixes before it, were working around.
+    write_paths = flow_write_paths(list(active_sections))
+    guard_immutable_paths(write_paths)
+    existing_data = apply_write_paths(existing_data, merged_data, write_paths)
+
+    # Drop tombstones before anything downstream reads the data: a PRE_SAVE
+    # hook seeing the marker sitting in a field would take it for a value.
+    _strip_cleared_fields(existing_data)
 
     # Run post_merge hooks (e.g. distribute component refs to deployments)
     for section in active_sections:
