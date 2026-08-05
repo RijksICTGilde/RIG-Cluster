@@ -58,7 +58,8 @@ Services that existed before the wizard started are "locked" - the user cannot r
 When the last active step is submitted:
 
 1. All section data is merged via `state.get_merged_data()`
-2. Merged with existing project data (preserves system-managed fields)
+2. `apply_modal_edit()` writes only the paths this flow's editables declare onto the
+   stored project - see [wizard-write-set.md](wizard-write-set.md)
 3. Saved to project YAML file
 4. If any section has `post_save_action == "process_project"`: triggers background deployment and shows progress template
 5. If save-only: commits to git and shows success template
@@ -84,6 +85,8 @@ State is stored as JSON files under `{TEMP_DIR}/wizard-sessions/{token}.json`.
 | File | Role |
 |------|------|
 | `opi/web/router_detail_edit.py` | Modal wizard routes and submission logic |
+| `opi/forms/wizard/save.py` | `apply_modal_edit()` - the whole save path, no I/O |
+| `opi/forms/wizard/write_set.py` | Which paths a flow may write, derived from its editables |
 | `opi/forms/wizard/resolver.py` | `resolve_active_section_ids()` - conditional section resolution |
 | `opi/forms/wizard/session.py` | Modal wizard session state (file-based store) |
 | `opi/forms/wizard/state.py` | `WizardState` dataclass with step tracking and data merging |
