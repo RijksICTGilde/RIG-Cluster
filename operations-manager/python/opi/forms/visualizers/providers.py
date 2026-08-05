@@ -5,12 +5,15 @@ This module provides the OptionsProvider protocol and concrete implementations
 for populating select/radio fields with dynamic data from OPI's domain.
 """
 
+import logging
 import re
 from typing import Any, ClassVar, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
 from opi.services.services import ServiceAdapter
 from opi.services.services_enums import ServiceKind, ServiceType
+
+logger = logging.getLogger(__name__)
 
 
 class OptionsProvider(Protocol):
@@ -1091,6 +1094,50 @@ class HealthCheckSchemeOptionsProvider:
         ]
 
 
+class InviteApplicationUrlOptionsProvider:
+    """Where the success button of an invitation points: a public URL of this project.
+
+    Someone setting up an invitation knows which deployment and component they want people
+    to land on; they do not know the hostname, which is derived from the domain format,
+    the subdomain and the cluster. So the choice is offered in those terms and the URL is
+    filled in behind it.
+
+    An empty first option is deliberate: an invitation without a destination is valid and
+    simply shows no button, which is better than a button pointing somewhere wrong.
+    Anything already stored that is no longer derivable stays selectable, flagged, so
+    saving the form does not silently drop it.
+    """
+
+    def __init__(self, yaml_data: dict[str, Any] | None = None, current_value: str | None = None) -> None:
+        self.yaml_data = yaml_data or {}
+        self.current_value = current_value
+
+    def get_options(self) -> list[dict[str, Any]]:
+        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.catalog.publish_on_web.urls import public_urls_for_project
+
+        options: list[dict[str, Any]] = [{"value": "", "label": "Geen knop tonen"}]
+        try:
+            urls = public_urls_for_project(self.yaml_data, ProjectFileHandler())
+        except (KeyError, ValueError, AttributeError, TypeError):
+            # A half-configured project (no cluster yet, no domain chosen) must still
+            # render the form: the picker then simply offers no destination.
+            logger.debug("Could not derive public URLs for the invite destination", exc_info=True)
+            urls = []
+
+        seen: set[str] = set()
+        for entry in urls:
+            url = entry.get("url")
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            options.append({"value": url, "label": f"{entry['deployment_name']} / {entry['component_name']}"})
+
+        if self.current_value and self.current_value not in seen:
+            options.append({"value": self.current_value, "label": f"{self.current_value} (niet meer afleidbaar)"})
+        return options
+
+
 PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "ClusterOptionsProvider": ClusterOptionsProvider,
     "ServiceOptionsProvider": ServiceOptionsProvider,
@@ -1134,6 +1181,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "HealthCheckSchemeOptionsProvider": HealthCheckSchemeOptionsProvider,
     "InviteLanguageOptionsProvider": InviteLanguageOptionsProvider,
     "InviteAuthMethodOptionsProvider": InviteAuthMethodOptionsProvider,
+    "InviteApplicationUrlOptionsProvider": InviteApplicationUrlOptionsProvider,
     "InviteRealmRoleOptionsProvider": InviteRealmRoleOptionsProvider,
     "CrossDomainProjectOptionsProvider": CrossDomainProjectOptionsProvider,
     "CrossDomainLocalComponentOptionsProvider": CrossDomainLocalComponentOptionsProvider,
