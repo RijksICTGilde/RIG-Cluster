@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.services.catalog.base import ConfigLayer, Service
+from opi.services.catalog.base import ConfigLayer, DeploymentStateContext, DeploymentStateFact, Service
 from opi.services.catalog.sleep_mode.config_model import SleepModeConfig
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ServiceType
@@ -46,6 +46,52 @@ class SleepModeService(Service):
         from opi.services.catalog.sleep_mode.editables import SLEEP_MODE_EDITABLES
 
         return SLEEP_MODE_EDITABLES
+
+    def deployment_state(self, ctx: DeploymentStateContext) -> list[DeploymentStateFact]:
+        """Report that this deployment is asleep, or on its way back (RC-28).
+
+        Sleep-mode is the reason this hook exists: it scales the application to zero and
+        parks a waker in front of it, and nothing outside the service knew. The health
+        check and the deployment page read the situation from here.
+
+        Facts, not verdicts:
+
+        * ``sleeping`` -- the application was scaled to zero deliberately, so zero
+          application pods is the intended state (``expects_no_application_pods``).
+        * ``waking`` -- the transitional state. Pods are supposed to be coming back, so
+          this deliberately does NOT excuse their absence; a wake that never produces
+          pods must still be visible as a problem.
+        * ``awake`` -- nothing to report.
+
+        Read from the project file (the service's own record), never from the cluster.
+        """
+        from opi.services.catalog.sleep_mode.state import STATE_SLEEPING, STATE_WAKING, read
+
+        sleep = read(ctx.project_data, ctx.deployment_name)
+        if sleep.state == STATE_SLEEPING:
+            return [
+                DeploymentStateFact(
+                    service=self.service_type.value,
+                    summary=(
+                        "Deze deployment slaapt: de componenten zijn naar nul geschaald en worden "
+                        "gewekt bij het eerste bezoek."
+                    ),
+                    expects_no_application_pods=True,
+                    details={"state": sleep.state},
+                )
+            ]
+        if sleep.state == STATE_WAKING:
+            return [
+                DeploymentStateFact(
+                    service=self.service_type.value,
+                    summary="Deze deployment wordt gewekt uit de slaapstand; de componenten starten op.",
+                    # Explicitly False: during a wake the pods are supposed to return, so
+                    # their absence is exactly what should stay visible.
+                    expects_no_application_pods=False,
+                    details={"state": sleep.state, "expires-at": sleep.expires_at},
+                )
+            ]
+        return []
 
     def config_form_section(self, layer: ConfigLayer):
         if layer is not ConfigLayer.PROJECT:

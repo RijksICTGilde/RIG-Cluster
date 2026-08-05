@@ -20,6 +20,7 @@ from opi.services.catalog.attachments import AttachmentsService
 from opi.services.catalog.authorization_wall import AuthorizationWallService
 from opi.services.catalog.base import ConfigLayer, DeploymentPageContext, Service
 from opi.services.catalog.cross_domain_access import CrossDomainAccessService
+from opi.services.catalog.deployment_health import DeploymentHealthService
 from opi.services.catalog.health_check import HealthCheckService
 from opi.services.catalog.invite import InviteService
 from opi.services.catalog.keycloak import KeycloakService
@@ -63,6 +64,7 @@ SERVICES: dict[ServiceType, Service] = {
     ServiceType.INVITE: InviteService(),
     ServiceType.RESOURCE_TUNING: ResourceTuningService(),
     ServiceType.CROSS_DOMAIN_ACCESS: CrossDomainAccessService(),
+    ServiceType.DEPLOYMENT_HEALTH: DeploymentHealthService(),
     ServiceType.USER_ENV_VARS: UserEnvVarsService(),
     ServiceType.ALIASES: AliasesService(),
 }
@@ -91,6 +93,7 @@ def provisioning_services() -> list[Service]:
 #: separately-declared list that could drift from the implementation.
 _HOOK_DEFAULTS: dict[HookPoint, Any] = {
     HookPoint.AFTER_SYNC: Service.observe_deployment,
+    HookPoint.DEPLOYMENT_STATE: Service.deployment_state,
 }
 
 

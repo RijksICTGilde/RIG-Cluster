@@ -302,6 +302,55 @@ class ObservationOutcome:
 
 
 @dataclass
+class DeploymentStateContext:
+    """Inputs a service needs to answer "what do you know about this deployment"
+    (RC-28, ``HookPoint.DEPLOYMENT_STATE``).
+
+    The question is answered from the PROJECT FILE, not from the cluster: the project
+    file is where a service records what it did (sleep-mode's ``deployments[].sleep``),
+    and asking the cluster would mean deriving the answer from the very observation the
+    asker is trying to interpret. That also keeps the hook synchronous and free of
+    connectors, so a page render can ask it as cheaply as the health check does.
+    """
+
+    project_name: str
+    project_data: dict[str, Any]
+    #: The deployment being asked about.
+    deployment: dict[str, Any]
+
+    @property
+    def deployment_name(self) -> str:
+        return self.deployment.get("name", "")
+
+
+@dataclass
+class DeploymentStateFact:
+    """One thing a service knows about a deployment (RC-28).
+
+    A **fact**, deliberately not a health verdict. A service says "this deployment is
+    asleep and therefore has no application pods"; whether that makes the deployment
+    healthy is the health check's judgement, made from the fact. Without that split,
+    "I am asleep" quietly becomes "so everything is fine" and a service with a stale
+    state hides a real outage. There is therefore no ``healthy`` field here, and
+    ``tests/test_deployment_state.py`` holds the shape to it.
+
+    ``expects_no_application_pods`` is the one operational consequence a service may
+    state, and it is narrow on purpose: it says the application's own pods are meant to
+    be absent. It never excuses a problem observed on a pod that IS there.
+    """
+
+    #: ``ServiceType.value`` of the service that knows this.
+    service: str
+    #: One line, in the user's language, describing the situation.
+    summary: str
+    #: True when this service has deliberately scaled the application to zero pods.
+    expects_no_application_pods: bool = False
+    #: Extra data for a service's own rendering of the fact (never read by generic code
+    #: for a decision).
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class DetailPageSection:
     """A read-only section a service renders on the project-details page (WP2).
 
@@ -789,6 +838,21 @@ class Service(ABC):
         must not commit -- the generic runner does one commit for all outcomes.
         """
         return ObservationOutcome()
+
+    def deployment_state(self, ctx: DeploymentStateContext) -> list[DeploymentStateFact]:
+        """What this service knows about the state of one deployment (RC-28, default none).
+
+        The read counterpart of ``observe_deployment``: that hook acts after a sync, this
+        one answers a question anyone may ask at any moment. A service that put a
+        deployment in a particular situation -- sleep-mode scaling it to zero -- reports it
+        here, so generic code (the health check, the deployment page) learns the situation
+        from the service that caused it instead of guessing from what the cluster shows.
+
+        Return FACTS, never a health verdict: see ``DeploymentStateFact``. Synchronous and
+        project-file-only; a service that needs the cluster to answer is answering a
+        different question.
+        """
+        return []
 
     async def handle_service_removal(self, ctx: RemovalContext) -> dict[str, Any]:
         """Clean up this service's server-side resources when it is removed from a

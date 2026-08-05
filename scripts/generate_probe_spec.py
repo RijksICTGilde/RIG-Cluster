@@ -89,6 +89,7 @@ SKIP: set[ServiceType] = {
     ServiceType.SLEEP_MODE,
     ServiceType.INVITE,
     ServiceType.RESOURCE_TUNING,
+    ServiceType.DEPLOYMENT_HEALTH,
     ServiceType.CROSS_DOMAIN_ACCESS,
     # System services that own a plain component property; they inject no connection
     # variables of their own -- they ARE the user's own variables (RC-25).
