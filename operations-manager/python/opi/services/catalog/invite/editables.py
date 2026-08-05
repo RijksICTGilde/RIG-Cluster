@@ -99,12 +99,16 @@ INVITE_CONTACT_EMAIL_EDITABLE = Editable(
     virtualize=_VIRTUALIZE,
 )
 
-# Not required, unlike the texts: there is no default we can compute for it. Deriving it
-# would mean picking a component and a deployment and rebuilding the hostname from the
-# domain format, and a success button pointing at the wrong address is worse than a success
-# page without a button, which is what an empty value yields.
+# Picked from the project's own public addresses rather than typed. Someone setting up an
+# invitation knows which deployment and component people should land on; the hostname is
+# derived from the domain format, the subdomain and the cluster, so asking for a URL asks
+# for something they would have to look up and could get wrong.
+#
+# Still not required: a project without publish-on-web has no address to offer, and an
+# invitation without a destination simply shows no button.
 INVITE_APPLICATION_URL_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "application-url"),
+    values_provider="InviteApplicationUrlOptionsProvider",
     validator=UrlValidator(),
     converter=EmptyToNoneConverter(),
     remove_when_none=True,
