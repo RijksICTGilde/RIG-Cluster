@@ -238,6 +238,20 @@
                                 <span class="status-dot status-dot-degraded"></span>
                                 Degraded
                             </div>
+                            {# Switched off and parked get their own label, not a shared grey
+                               "niet actief" (RC-31): the first stays off until someone turns
+                               it back on, the second returns by itself. Without the labels
+                               both fell through to "Unknown", which is a different untruth. #}
+                            {% elif health == 'Disabled' %}
+                            <div class="project-status status-disabled">
+                                <span class="status-dot status-dot-disabled"></span>
+                                Uitgeschakeld
+                            </div>
+                            {% elif health == 'Inactive' %}
+                            <div class="project-status status-inactive">
+                                <span class="status-dot status-dot-inactive"></span>
+                                Niet actief
+                            </div>
                             {% else %}
                             <div class="project-status status-unknown">
                                 <span class="status-dot status-dot-unknown"></span>
@@ -446,6 +460,8 @@
     .project-card-healthy { border-top-color: var(--rvo-color-groen, #39870c); }
     .project-card-progressing { border-top-color: var(--rvo-color-oranje, #e17000); }
     .project-card-degraded { border-top-color: var(--rvo-color-rood, #d52b1e); }
+    .project-card-disabled { border-top-color: var(--rvo-color-grijs-600, #696969); }
+    .project-card-inactive { border-top-color: var(--rvo-color-hemelblauw, #007bc7); }
     .project-card-unknown { border-top-color: var(--rvo-color-grijs-400, #bbb); }
 
     .project-card:hover {
@@ -487,6 +503,8 @@
         background: var(--rvo-color-rood, #d52b1e);
         animation: statusPulse 1s ease-in-out infinite;
     }
+    .status-dot-disabled { background: var(--rvo-color-grijs-600, #696969); }
+    .status-dot-inactive { background: var(--rvo-color-hemelblauw, #007bc7); }
     .status-dot-unknown { background: var(--rvo-color-grijs-500, #999); }
 
     @keyframes statusPulse {
@@ -507,6 +525,16 @@
     .status-degraded {
         background: var(--rvo-color-rood-50);
         color: var(--rvo-color-rood);
+    }
+
+    .status-disabled {
+        background: var(--rvo-color-grijs-100);
+        color: var(--rvo-color-grijs-700);
+    }
+
+    .status-inactive {
+        background: var(--rvo-color-hemelblauw-150);
+        color: var(--rvo-color-hemelblauw-750);
     }
 
     .status-unknown {
