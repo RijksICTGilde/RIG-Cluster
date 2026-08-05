@@ -107,3 +107,26 @@ def test_the_help_template_of_every_service_exists(service: ServiceType) -> None
     assert (_HELP_ROOT / help_template).is_file(), (
         f"service {service.value!r} points at help/{help_template}, which does not exist"
     )
+
+
+@pytest.mark.parametrize("service", sorted(ServiceType, key=lambda s: s.value), ids=lambda s: s.value)
+def test_the_help_template_of_every_service_renders(service: ServiceType) -> None:
+    """The modal fetches the template at click time, so a broken one is only seen there."""
+    help_template = ServiceAdapter.get_service_definition(service).help_template
+    assert help_template is not None
+    rendered = get_templates().get_template(f"help/{help_template}").render()
+    assert rendered.strip(), f"help/{help_template} renders empty"
+    assert "<c-" not in rendered, (
+        f"help/{help_template} still contains an unprocessed ROOS component; check the component name"
+    )
+
+
+@pytest.mark.parametrize("service", sorted(ServiceType, key=lambda s: s.value), ids=lambda s: s.value)
+def test_the_help_template_uses_the_icon_of_its_service(service: ServiceType) -> None:
+    """The card and the modal should look like they belong together."""
+    definition = ServiceAdapter.get_service_definition(service)
+    assert definition.help_template is not None
+    rendered = get_templates().get_template(f"help/{definition.help_template}").render()
+    assert f"rvo-icon-{definition.icon}" in rendered, (
+        f"help/{definition.help_template} does not show the service icon {definition.icon!r}"
+    )
