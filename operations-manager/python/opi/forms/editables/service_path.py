@@ -24,7 +24,28 @@ from typing import Any
 from opi.forms.editables.path import delete_value, get_value, set_value
 from opi.services.services import service_entry_body, service_entry_name
 
-_SERVICE_CONFIG_RE = re.compile(r"^services/([^/\[]+)(/(.+))?$")
+#: The wizard keeps service SELECTION and service CONFIG apart in its state: ``services``
+#: holds the chosen names, ``_services-config`` holds their configuration. Both are
+#: service-config roots. Reading only ``services`` meant every config lookup during the
+#: wizard returned None, and the field then fell back to its own default -- so a user's
+#: choice was silently replaced by the default on the way back through the steps.
+#:
+#: The virtual root appears in TWO shapes, which is why every function below branches on
+#: the actual type instead of assuming one: a plain dict keyed by service name in a form
+#: SUBMISSION, and the services-list format in wizard STATE.
+_SERVICE_ROOTS = ("services", "_services-config")
+
+_SERVICE_CONFIG_RE = re.compile(rf"^({'|'.join(_SERVICE_ROOTS)})/([^/\[]+)(/(.+))?$")
+
+
+def _service_list_at(data: dict[str, Any], yaml_path: str) -> list[Any] | None:
+    """The services list this path addresses, or None when the root is not a list.
+
+    None means "not in list form": the caller must fall back to plain dict traversal
+    rather than treat the path as missing.
+    """
+    root = data.get(service_root_of(yaml_path))
+    return root if isinstance(root, list) else None
 
 
 def _service_entry_body(entry: dict[str, Any] | str, service_name: str) -> Any:
@@ -33,11 +54,12 @@ def _service_entry_body(entry: dict[str, Any] | str, service_name: str) -> Any:
 
 
 def is_service_config_path(yaml_path: str) -> bool:
-    """Check if a path targets a service's config inside the services list.
+    """Check if a path targets a service's config inside a services list.
 
     Returns True for paths like:
       - "services/keycloak/config/template"
       - "services/namespace-postgresql-database/config/instances"
+      - "_services-config/keycloak/config/template" (the wizard's virtual root)
 
     Returns False for:
       - "services" (top-level)
@@ -45,6 +67,19 @@ def is_service_config_path(yaml_path: str) -> bool:
       - "users[0]/email"
     """
     return _SERVICE_CONFIG_RE.match(yaml_path) is not None
+
+
+def service_root_of(yaml_path: str) -> str:
+    """The top-level key a service-config path lives under.
+
+    Callers must read and write through this rather than assuming ``services``: during the
+    wizard the very same path shape addresses ``_services-config`` instead.
+    """
+    m = _SERVICE_CONFIG_RE.match(yaml_path)
+    if not m:
+        msg = f"Not a service config path: {yaml_path!r}"
+        raise ValueError(msg)
+    return m.group(1)
 
 
 def parse_service_path(yaml_path: str) -> tuple[str, str | None]:
@@ -64,8 +99,8 @@ def parse_service_path(yaml_path: str) -> tuple[str, str | None]:
     if not m:
         msg = f"Not a service config path: {yaml_path!r}"
         raise ValueError(msg)
-    service_name = m.group(1)
-    sub_path = m.group(3)  # group(3) is the part after the second /
+    service_name = m.group(2)
+    sub_path = m.group(4)  # the part after the service name
     return service_name, sub_path
 
 
@@ -133,9 +168,10 @@ def smart_get_value(data: dict[str, Any], yaml_path: str) -> Any:
     if not is_service_config_path(yaml_path):
         return get_value(data, yaml_path)
 
-    services = data.get("services")
-    if not isinstance(services, list):
-        return None
+    services = _service_list_at(data, yaml_path)
+    if services is None:
+        # Dict-shaped root (a form submission): a plain walk is the correct read.
+        return get_value(data, yaml_path)
 
     service_name, sub_path = parse_service_path(yaml_path)
     idx, entry = find_service_in_list(services, service_name)
@@ -166,9 +202,9 @@ def smart_path_exists(data: dict[str, Any], yaml_path: str) -> bool:
     if not is_service_config_path(yaml_path):
         return bool(get_value(data, yaml_path))
 
-    services = data.get("services")
-    if not isinstance(services, list):
-        return False
+    services = _service_list_at(data, yaml_path)
+    if services is None:
+        return bool(get_value(data, yaml_path))
 
     service_name, sub_path = parse_service_path(yaml_path)
     idx, entry = find_service_in_list(services, service_name)
@@ -216,10 +252,16 @@ def smart_set_value(data: dict[str, Any], yaml_path: str, value: Any) -> dict[st
     service_name, sub_path = parse_service_path(yaml_path)
 
     # Ensure services list exists
-    if "services" not in data or not isinstance(data["services"], list):
-        data["services"] = []
+    root = service_root_of(yaml_path)
+    # A dict-shaped root is a form submission, not a services list. Writing through the
+    # list machinery would replace that dict with an empty list and throw away everything
+    # the user just submitted, so write it the plain way instead.
+    if isinstance(data.get(root), dict):
+        return set_value(data, yaml_path, value)
+    if root not in data or not isinstance(data[root], list):
+        data[root] = []
 
-    _idx, service_entry = ensure_service_in_list(data["services"], service_name)
+    _idx, service_entry = ensure_service_in_list(data[root], service_name)
     is_record = "name" in service_entry or "reference" in service_entry
 
     if sub_path is None:
@@ -265,8 +307,9 @@ def smart_delete_value(data: dict[str, Any], yaml_path: str) -> None:
         delete_value(data, yaml_path)
         return
 
-    services = data.get("services")
-    if not isinstance(services, list):
+    services = _service_list_at(data, yaml_path)
+    if services is None:
+        delete_value(data, yaml_path)
         return
 
     service_name, sub_path = parse_service_path(yaml_path)
