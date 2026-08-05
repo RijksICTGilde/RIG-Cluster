@@ -79,9 +79,13 @@ INVITE_CONTACT_EMAIL = EditableVisualizer(
 
 INVITE_APPLICATION_URL = EditableVisualizer(
     editable=INVITE_APPLICATION_URL_EDITABLE,
-    widget=WidgetType.TEXT,
-    label="Applicatie-URL",
-    help_text="Waar de knop op de succespagina naartoe verwijst.",
+    widget=WidgetType.SELECT,
+    label="Naar welke applicatie",
+    help_text=(
+        "Waar de knop op de succespagina naartoe verwijst. De keuze gaat per deployment en "
+        "component; het webadres wordt daarbij gezocht. Alleen componenten die op het web "
+        "gepubliceerd zijn staan ertussen."
+    ),
 )
 
 # Only rendered when the keycloak template is sso-support; under sso-only there is nothing

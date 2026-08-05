@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from opi.forms.editables.editable import WidgetType
 from opi.forms.visualizers.bridge import editable_to_form_field, should_render_editable
 from opi.forms.visualizers.providers import InviteAuthMethodOptionsProvider
 from opi.services.catalog.invite.editables import (
@@ -81,12 +82,29 @@ def test_the_key_is_not_required() -> None:
     assert INVITE_KEY.editable.required is False
 
 
+def _visualizer_for(path_suffix: str) -> Any:
+    """Look a child up by its yaml_path, not its label: the label is user-facing text
+    that gets reworded, and a test failing on that says nothing about behaviour."""
+    for child in INVITE_ACTIVE.children or []:
+        if child.editable.yaml_path.endswith(path_suffix):
+            return child
+    raise AssertionError(f"no invite field writes {path_suffix!r}")
+
+
 def test_the_application_url_is_not_required() -> None:
-    """No default can be computed for it (that would mean picking a component and a
-    deployment and rebuilding the hostname), and a success button pointing at the wrong
-    address is worse than a success page without one."""
-    labels = _visualizers_by_label()
-    assert labels["Applicatie-URL"].editable.required is False
+    """A project without publish-on-web has no address to offer, and an invitation
+    without a destination simply shows no button."""
+    assert _visualizer_for("application-url").editable.required is False
+
+
+def test_the_application_url_is_picked_not_typed() -> None:
+    """Someone setting up an invitation knows which deployment and component people
+    should land on, not the hostname: that is derived from the domain format, the
+    subdomain and the cluster, so typing it means looking it up and getting it wrong."""
+    visualizer = _visualizer_for("application-url")
+
+    assert visualizer.widget == WidgetType.SELECT
+    assert visualizer.editable.values_provider == "InviteApplicationUrlOptionsProvider"
 
 
 def test_every_required_field_has_a_default() -> None:
