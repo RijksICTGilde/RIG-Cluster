@@ -52,7 +52,11 @@ class AttachmentsService(Service):
 
     def config_form_section(self, layer: ConfigLayer):
         if layer is not ConfigLayer.PROJECT:
-            return None
+            # The component layer (which attachment a component couples, and how) is
+            # edited inside the component form; the base class builds that section from
+            # this service's own component visualizers + layout (RC-25). Before that the
+            # hook answered only at PROJECT while the config lived on the component.
+            return super().config_form_section(layer)
         cached = getattr(self, "_config_section_cache", None)
         if cached is None:
             from opi.forms.editables.editable import Editable, WidgetType

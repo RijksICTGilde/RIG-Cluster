@@ -355,6 +355,10 @@ class TestEndpointHelpers:
 #: ``namespace-redis``/``platform`` carry no config by design; ``postgresql-database``
 #: has a config model but declares it on no layer (a known gap, see the review report).
 EXPECTED_API_TARGETS: dict[str, list[str]] = {
+    # The two property-owning system services expose no config route: their data is a
+    # plain component property, not a block in a services list (RC-25).
+    "aliases": [],
+    "user-env-vars": [],
     "attachments": ["component"],
     "authorization-wall": ["project"],
     "cross-domain-access": ["project", "deployment"],
@@ -394,6 +398,8 @@ class TestApiConfigCoverage:
         # A service that carries config editables or a config schema on some layer
         # must expose at least one API target -- otherwise its config is UI-only.
         for st, svc in SERVICES.items():
+            if svc.owned_property is not None:
+                continue  # owns a plain component property, not a services-list block
             has_component_layout = bool(svc.config_component_layout())
             declares_config = any(svc.config_editables(layer) or svc.config_api_fields(layer) for layer in ConfigLayer)
             if declares_config or has_component_layout:

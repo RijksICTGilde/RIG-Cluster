@@ -1,0 +1,15 @@
+{
+  "anyOf": [
+    {
+      "type": "string"
+    },
+    {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "type": "object"
+    }
+  ],
+  "description": "A component's own environment variables, encrypted or plain.",
+  "title": "UserEnvVarsConfig"
+}

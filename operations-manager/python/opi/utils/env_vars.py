@@ -59,6 +59,23 @@ def _detect_env_var_format(text: str) -> str:
     return "keyvalue"
 
 
+def _yaml_failure_summary(error: Exception) -> str:
+    """Describe a YAML parse failure without echoing the text that failed.
+
+    ``str()`` on a ruamel error quotes the offending source line, and this parser runs on
+    a component's own environment variables, where a line may be a pasted secret. The
+    problem plus its position says the same thing without carrying the value into a log
+    line or an HTTP response.
+    """
+    mark = getattr(error, "problem_mark", None)
+    if mark is None:
+        # Not a marked parser error but one of the checks below, whose messages name keys
+        # and types only.
+        return str(error)
+    problem = getattr(error, "problem", None) or type(error).__name__
+    return f"{problem} at line {mark.line + 1}, column {mark.column + 1}"
+
+
 def _parse_yaml_env_vars(yaml_text: str) -> dict[str, str]:
     """
     Parse environment variables from YAML format.
@@ -116,7 +133,7 @@ def _parse_yaml_env_vars(yaml_text: str) -> dict[str, str]:
     except Exception as e:
         if "ValueError" in str(e.__class__):
             raise
-        raise ValueError(f"Failed to parse YAML: {e!s}")
+        raise ValueError(f"Failed to parse YAML: {_yaml_failure_summary(e)}")
 
 
 def validate_and_parse_env_vars(env_vars_text: str | None) -> dict[str, str]:
@@ -169,7 +186,11 @@ def validate_and_parse_env_vars(env_vars_text: str | None) -> dict[str, str]:
             continue
 
         if "=" not in line:
-            raise ValueError(f"Line {line_num}: Invalid format. Expected KEY=value, got: {line}")
+            # The line itself is never quoted back: this text is a component's own
+            # environment and a line may be a pasted secret, while the caller both logs
+            # this message and returns it to the client. The line NUMBER is enough to
+            # find it.
+            raise ValueError(f"Line {line_num}: Invalid format. Expected KEY=value")
 
         key, value = line.split("=", 1)  # Split only on first '=' to allow '=' in values
         key = key.strip()
