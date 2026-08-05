@@ -6,10 +6,12 @@ WizardSteps provides structured navigation context for templates.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import Any
 
-from opi.forms.wizard.services_merge import merge_service_lists, service_name
+from opi.forms.wizard.services_merge import deep_merge_into, merge_service_lists, service_name
+from opi.services.services import service_entry_body
 
 CLEARED_FIELD = "__wizard-field-cleared__"
 """Tombstone marker for fields the user cleared in a wizard step.
@@ -34,35 +36,66 @@ def _strip_cleared_fields(value: Any) -> None:
             _strip_cleared_fields(item)
 
 
+def _config_overlay(entry: Any, name: str | None) -> dict[str, Any] | None:
+    """The config-bearing fields of a service entry, without its identity key.
+
+    ``service_entry_body`` returns the entry itself for the record form, so its
+    identity (``name``/``reference``) sits among the fields to overlay. Carrying that
+    key into a merge grafts a stray ``name`` onto the target, so strip it here: the
+    target already knows who it is.
+    """
+    body = service_entry_body(entry, name)
+    if not isinstance(body, dict):
+        return None
+    if body is entry:
+        return {key: value for key, value in body.items() if key not in ("name", "reference")}
+    return body
+
+
 def _fold_virtual(container: dict[str, Any], real_key: str, virt_data: Any) -> None:
     """Fold one virtual payload onto its real sibling inside *container*."""
     real_data = container.get(real_key)
-    if isinstance(virt_data, list) and isinstance(real_data, list):
-        # Build lookup from virtual list entries, keyed by service identity so
-        # BOTH entry forms resolve: the uniform record ({name, config}) and the
-        # legacy single-key dict ({keycloak: {config}}). Keying on the raw dict
-        # keys understood only the legacy form, so a record's config was dropped
-        # here and every keycloak/db config edit silently vanished on merge.
-        config_by_name: dict[str, dict[str, Any]] = {}
-        for entry in virt_data:
-            if isinstance(entry, dict):
+    if isinstance(real_data, list) and isinstance(virt_data, (list, dict)):
+        # The carrier arrives in two shapes: a list of entries, or a name -> body
+        # mapping (what a single-service config section posts, e.g.
+        # {"keycloak": {"config": {...}}}). Reduce both to name -> entry so the fold
+        # below does not have to care which one it got.
+        carrier_by_name: dict[str, Any] = {}
+        if isinstance(virt_data, dict):
+            carrier_by_name = {name: {name: body} for name, body in virt_data.items() if isinstance(body, dict)}
+        else:
+            for entry in virt_data:
                 name = service_name(entry)
-                if name is not None:
-                    config_by_name[name] = entry
-        # Fold each carried config onto its selected entry. Only names already in
-        # the selection are touched: a service the user deselected must not come
-        # back from a stale carrier.
+                if name is not None and isinstance(entry, dict):
+                    carrier_by_name[name] = entry
+        # Fold each carried config onto its selected entry. Only names already in the
+        # selection are touched: a service the user deselected must not come back
+        # from a stale carrier.
+        #
+        # Merging the config-bearing FIELDS rather than whole entries is what makes
+        # this format-agnostic: ``service_entry_body`` hands back the live sub-dict for
+        # the legacy form ({keycloak: {config}}) and the entry itself for the record
+        # form ({name: keycloak, config}), so the same overlay lands correctly on
+        # either. Merging whole entries grafted the carrier's wrapper key onto the
+        # target whenever the two forms differed.
+        #
+        # Matching on identity rather than on the entry still being a bare string is
+        # what makes a SECOND edit stick. Once config has been saved the entry is a
+        # dict, and the old string-only check skipped it without a word: the modal
+        # reported success, the store logged "no change", and the project kept its
+        # previous value (toets-hn7 keycloak template, 2026-08-05).
         for i, entry in enumerate(real_data):
             name = service_name(entry)
-            if name is not None and name in config_by_name:
-                real_data[i] = merge_service_lists([entry], [config_by_name[name]])[0]
-    elif isinstance(virt_data, dict) and isinstance(real_data, list):
-        # Virtual data is a dict (name -> config), real data is a
-        # mixed list.  Replace matching plain-string entries with
-        # their config dict equivalents.
-        for i, entry in enumerate(real_data):
-            if isinstance(entry, str) and entry in virt_data:
-                real_data[i] = {entry: virt_data[entry]}
+            if name is None or name not in carrier_by_name:
+                continue
+            carrier = carrier_by_name[name]
+            target_body = service_entry_body(entry, name)
+            overlay = _config_overlay(carrier, name)
+            if isinstance(target_body, dict) and overlay is not None:
+                deep_merge_into(target_body, overlay)
+            elif not isinstance(target_body, dict):
+                # A bare selection entry has no body yet; take the carrier's own form.
+                real_data[i] = copy.deepcopy(carrier)
     elif isinstance(virt_data, dict):
         if isinstance(real_data, dict):
             real_data.update(virt_data)

@@ -30,10 +30,11 @@ def service_name(entry: Any) -> str | None:
     return service_entry_name(entry)
 
 
-def _deep_update(base: dict[str, Any], overlay: dict[str, Any]) -> None:
+def deep_merge_into(base: dict[str, Any], overlay: dict[str, Any]) -> None:
+    """Recursively overlay *overlay* onto *base*, in place. Non-dict values replace."""
     for key, value in overlay.items():
         if isinstance(base.get(key), dict) and isinstance(value, dict):
-            _deep_update(base[key], value)
+            deep_merge_into(base[key], value)
         else:
             base[key] = copy.deepcopy(value)
 
@@ -56,7 +57,7 @@ def _absorb(result: list[Any], index: dict[str, int], entry: Any) -> None:
     i = index[name]
     current = result[i]
     if isinstance(current, dict) and isinstance(entry, dict):
-        _deep_update(current, entry)
+        deep_merge_into(current, entry)
     elif isinstance(entry, dict):
         # current is a bare string; the later entry carries the config dict -> take it.
         result[i] = copy.deepcopy(entry)
