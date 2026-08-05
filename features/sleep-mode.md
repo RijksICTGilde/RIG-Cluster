@@ -178,6 +178,9 @@ de E2E), productie zet de RCR-mirror-ref (sleep-mode zelf blijft daar uit tot ge
 
 ## Afhankelijkheden
 
+- [Diensten die elkaars toestand kennen](deployment-state-and-health.md) - sleep-mode
+  meldt via `deployment_state()` dat een deployment slaapt, zodat de gezondheidscheck nul
+  pods niet als storing leest en de deploymentweergave het uitlegt.
 - `publish-on-web` (standaard-TLS) op het te wekken component, voor de wekker.
 - De tenant-netpol staat egress naar de ops-namespace toe, dus de wekker bereikt de
   OPI-API over cluster-interne DNS.

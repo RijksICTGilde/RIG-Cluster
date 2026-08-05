@@ -1,6 +1,12 @@
 """
 Deployment health watcher: OOM, ImagePullBackOff, and CrashLoopBackOff detection.
 
+This module OBSERVES (kubectl queries, scheduling, remediation). The judgement -- what
+an observation means -- belongs to the ``deployment-health`` system service
+(``opi/services/catalog/deployment_health``), which is where the state other services
+report about the deployment is weighed in. Same split as resource-tuning: the service is
+the declarative home of the decision, this module does the work.
+
 Provides two mechanisms:
 1. **Inline detection** (``create_health_check_callback``):
    Used during the ArgoCD polling loop to detect pod health issues while
@@ -30,7 +36,9 @@ from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, Kub
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import IMAGE_PULL_REASONS as _IMAGE_PULL_REASONS
-from opi.services.catalog.base import application_pod_selector
+from opi.services.catalog.base import SERVICE_ROLE_LABEL_KEY, application_pod_selector
+from opi.services.catalog.deployment_health import deployment_health_service
+from opi.services.deployment_state import DeploymentState, collect_deployment_state
 from opi.services.resource_tuning_service import get_project_data
 from opi.utils.naming import generate_unique_name
 
@@ -397,6 +405,7 @@ async def describe_components_waiting(
     namespace: str,
     component_names: list[str],
     component_refs: dict[str, str] | None = None,
+    state: DeploymentState | None = None,
 ) -> list[tuple[str, str]]:
     """Describe, in plain language, why each component is not ready yet.
 
@@ -405,6 +414,17 @@ async def describe_components_waiting(
     component whose representative pod is not yet Ready it returns a
     human-readable reason (scheduling problem, image pull, crash loop, container
     creating, readiness not passing, ...).
+
+    Two things make this honest about a deployment another service acted on:
+
+    * pods a service runs alongside the application are skipped. They carry the
+      component's ``app`` label on purpose (sleep-mode's waker takes over the
+      component's Service), so matching on that label alone reported the WAKER's
+      ``ImagePullBackOff`` as the component's reason -- the exact message the
+      original report was about, from this function.
+    * a component with no application pods is explained by whichever service says it
+      scaled the application to zero (``state``). Without such a claim the silence is
+      still reported, so a deployment that is simply not coming up stays visible.
 
     Returns a list of ``(component_reference, reason)`` for not-ready components
     only; ready components are omitted.
@@ -427,19 +447,26 @@ async def describe_components_waiting(
         logger.debug("describe_components_waiting: error for %s: %s", namespace, e)
         return []
 
-    # One representative pod per component, matched by the `app` label.
+    # One representative pod per component, matched by the `app` label -- and only the
+    # application's own pods: a pod carrying a service role is another service's
+    # workload, not this component (see SERVICE_ROLE_LABEL_KEY).
     pod_by_component: dict[str, dict] = {}
     for pod in pods_data.get("items", []):
-        app = pod.get("metadata", {}).get("labels", {}).get("app", "")
+        labels = pod.get("metadata", {}).get("labels", {})
+        if SERVICE_ROLE_LABEL_KEY in labels:
+            continue
+        app = labels.get("app", "")
         if app in wanted and app not in pod_by_component:
             pod_by_component[app] = pod
+
+    absent_pods_reason = deployment_health_service().absent_pods_are_expected(state or DeploymentState())
 
     results: list[tuple[str, str]] = []
     for unique_name in component_names:
         ref = refs.get(unique_name, unique_name)
         pod = pod_by_component.get(unique_name)
         if pod is None:
-            results.append((ref, "pods worden aangemaakt"))
+            results.append((ref, absent_pods_reason or "pods worden aangemaakt"))
             continue
         reason = _describe_pod_waiting(pod)
         if reason:
@@ -543,7 +570,22 @@ async def _run_oom_check(
 
     namespace = get_prefixed_namespace(cluster, base_namespace)
 
-    # Check each component for health issues (unified check)
+    # What the services report about this deployment. It is weighed by the judgement
+    # below, which never lets it excuse an observed problem -- the point of collecting it
+    # here is that the remediation (disabling a component on an image-pull failure) is the
+    # most destructive thing this module does, so it must run on a complete picture.
+    state = collect_deployment_state(project_data, deployment_name)
+    if state.facts:
+        logger.info(
+            "Health watcher: services report for %s/%s: %s",
+            project_name,
+            deployment_name,
+            "; ".join(state.summaries),
+        )
+
+    # Check each component for health issues (unified check); the deployment-health
+    # service decides what an observation means.
+    health_service = deployment_health_service()
     oom_component_refs: list[str] = []
     image_pull_errors: list[tuple[str, str]] = []  # (component_ref, error_message)
     components = target_dep.get("components", [])
@@ -556,6 +598,8 @@ async def _run_oom_check(
 
         unique_name = generate_unique_name(deployment_name, component_ref)
         health = await check_pod_health(namespace, unique_name)
+        if not health_service.counts_as_failure(health, state):
+            continue
 
         if health.oom_detected:
             oom_component_refs.append(component_ref)
@@ -705,21 +749,32 @@ def schedule_oom_check(
 async def check_all_components_health(
     namespace: str,
     component_names: list[str],
+    state: DeploymentState | None = None,
 ) -> list[PodHealthResult]:
     """
     Check multiple components for health issues via kubectl.
 
+    What counts as an issue is the ``deployment-health`` service's call, not this
+    module's: it is asked per component, with the state the other services report about
+    the deployment. It answers the same way for every observed problem today -- a problem
+    on an application pod is a failure, whatever any service says -- and that is the
+    point of routing through it: the state is available at the decision and deliberately
+    gets no vote.
+
     Args:
         namespace: Kubernetes namespace
         component_names: List of unique component names (deployment prefixes)
+        state: What the services report about this deployment; empty when unknown
 
     Returns:
         List of PodHealthResult for components that have issues
     """
+    deployment_state = state if state is not None else DeploymentState()
+    health_service = deployment_health_service()
     results: list[PodHealthResult] = []
     for name in component_names:
         health = await check_pod_health(namespace, name)
-        if health.oom_detected or health.image_pull_error or health.crash_loop_detected:
+        if health_service.counts_as_failure(health, deployment_state):
             results.append(health)
     return results
 
@@ -731,6 +786,7 @@ def create_health_check_callback(
     component_names: list[str],
     component_refs: dict[str, str] | None = None,
     grace_seconds: int = HEALTH_CHECK_GRACE_SECONDS,
+    state: DeploymentState | None = None,
 ) -> Callable[[int], Awaitable[None]] | None:
     """
     Build an ``on_progressing`` callback for ``wait_for_application_synced``.
@@ -748,6 +804,8 @@ def create_health_check_callback(
         component_refs: Mapping from unique name to component reference
             (user-facing name). If None, unique names are used as-is.
         grace_seconds: Seconds to wait before checking (default 30)
+        state: What the services report about this deployment (RC-28). Passed to the
+            judgement, which weighs it; an observed problem is a failure regardless.
 
     Returns:
         Async callback ``(elapsed_seconds) -> None``. Always non-None: even when
@@ -802,7 +860,7 @@ def create_health_check_callback(
             OOM_INLINE_MAX_ATTEMPTS,
         )
 
-        unhealthy = await check_all_components_health(namespace, component_names)
+        unhealthy = await check_all_components_health(namespace, component_names, state)
         if not unhealthy:
             logger.info("Health check: no issues detected in %s", namespace)
             return

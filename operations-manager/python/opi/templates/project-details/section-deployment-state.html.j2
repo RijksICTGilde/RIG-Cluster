@@ -1,0 +1,30 @@
+{# What the services report about this deployment (RC-28).
+
+   The same contribution the health check reads (HookPoint.DEPLOYMENT_STATE), only
+   rendered instead of judged: sleep-mode says a deployment sleeps, and without this a
+   user sees a deployment with nothing running and no explanation why. Generic on
+   purpose -- it loops over whatever facts the services report, so a second service that
+   parks a deployment in a situation gets this block for free and no service name
+   appears here. #}
+{% set deployment_state_facts = deployment_state_facts | default({}) %}
+{% for deployment in project.deployments | sort(attribute='name') %}
+{% set facts = deployment_state_facts.get(deployment.name, []) %}
+{% if facts %}
+<div class="deployment-section" data-deployment="{{ deployment.name }}"
+     {% if not loop.first %}style="display: none;"{% endif %}>
+    <c-layout-flow gap="md">
+        {% for fact in facts %}
+        <c-card outline="true" padding="lg" backgroundColor="grijs-050">
+            <c-layout-row gap="md" verticalSpacing="center">
+                <c-icon icon="info" size="lg" color="grijs-500" />
+                <div>
+                    <strong>{{ ServiceAdapter.get_service_definition(ServiceAdapter.get_service_by_value(fact.service)).name }}</strong>
+                    <p class="rvo-text--sm rvo-text--subtle">{{ fact.summary }}</p>
+                </div>
+            </c-layout-row>
+        </c-card>
+        {% endfor %}
+    </c-layout-flow>
+</div>
+{% endif %}
+{% endfor %}

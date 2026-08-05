@@ -59,6 +59,7 @@
         </div>
         {% endif %}
 
+        {% include "project-details/section-deployment-state.html.j2" %}
         {% include "project-details/section-deployment-actions.html.j2" %}
         {% include "project-details/section-deployment-argocd.html.j2" %}
         {# Per-deployment blocks the project's services own (RC-24): metrics, backups.
