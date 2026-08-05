@@ -5,6 +5,7 @@ import logging
 
 from fastapi import HTTPException, Request
 
+from opi.core.auth_decorators import get_current_user
 from opi.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,12 @@ async def create_async_task(
 
     task_service = get_task_service(request)
 
+    # Who started it, when a session started it. The task-progress fragment is scoped on
+    # this as well as on the project, so the one who pressed the button can still follow
+    # a task for a project that does not exist yet (creation) or no longer does (delete).
+    user = get_current_user(request)
+    created_by = (user or {}).get("email") or None
+
     federation_service = getattr(request.app.state, "federation_service", None)
     if federation_service:
         target_cluster = await federation_service.resolve_cluster(project_name, deployment_name)
@@ -57,6 +64,7 @@ async def create_async_task(
             deployment_name=deployment_name,
             target_cluster=target_cluster,
             payload=payload or {},
+            created_by=created_by,
         )
 
     return await task_service.create_task(
@@ -65,6 +73,7 @@ async def create_async_task(
         deployment_name=deployment_name,
         cluster=settings.CLUSTER_MANAGER,
         payload=payload or {},
+        created_by=created_by,
         max_attempts=max_attempts,
     )
 

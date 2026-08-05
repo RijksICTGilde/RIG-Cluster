@@ -100,6 +100,27 @@ zowel Escape als `handleEditBackdropClick()` doen dan niets. De afrondknop draag
 Dat geldt voor elke actie die dit fragment gebruikt, ook toekomstige: er is geen vlag per
 actie meer om te vergeten.
 
+## Het fragment wordt één keer gerenderd
+
+`render_progress_fragment()` (`opi/web/task_progress.py`) rendert het sjabloon en geeft
+dat terug -- zonder het daarna nog door het filter `process_components` te halen. Dat
+filter is bedoeld voor HTML die tijdens het verzoek is opgebouwd (formuliervelden); op
+een sjabloonbestand is het overbodig, want de componentextensie heeft `<c-...>` al bij
+het compileren vervangen. Het is bovendien gevaarlijk: het filter parseert de al
+gerenderde HTML nóg een keer als Jinja-sjabloon. Autoescape escapet `< > & " '` maar niet
+`{{`, dus een stapnaam of subtaaknaam met `{{ ... }}` erin zou dan worden uitgevoerd in
+plaats van getoond -- code-uitvoering in de OPI-pod. Zet het filter hier dus niet terug.
+
+Om dezelfde reden controleert elk endpoint zijn doel voordat het de taak aanmaakt:
+`_require_deployment` / `_require_component` in `opi/web/router.py` en de catalogus-check
+in `opi/web/router_attachments.py`. Een naam die het project niet heeft is een 404 bij de
+klik, en komt zo nooit in de tekst van een taak terecht.
+
+Het voortgangsfragment is verder geschermd op het project waar het onder hangt: de taak
+moet van dat project zijn, en de gebruiker moet er toegang toe hebben of degene zijn die
+de taak startte (`created_by`). Dat laatste is nodig omdat het project bij verwijderen al
+weg is voordat de taak klaar meldt.
+
 ## Een nieuwe bevestiging toevoegen
 
 - Hoort de actie bij een dienst? Geef die een `DeploymentAction` met `confirm_message` --
