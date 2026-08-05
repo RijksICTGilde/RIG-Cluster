@@ -55,8 +55,8 @@ class TestHandleUpdateImage:
             result = await handle_update_image(payload, progress)
 
         assert progress.add_task.call_count == 2
-        progress.add_task.assert_any_call("Initializing project")
-        progress.add_task.assert_any_call("Updating component image")
+        progress.add_task.assert_any_call("Projectgegevens ophalen")
+        progress.add_task.assert_any_call("Image van web bijwerken naar registry.example.com/web:v2")
         assert progress.complete_task.call_count == 2
         assert result["component"] == "web"
 
@@ -184,8 +184,8 @@ class TestHandleCloneDatabase:
             result = await handle_clone_database(payload, progress)
 
         assert progress.add_task.call_count == 2
-        progress.add_task.assert_any_call("Initializing project manager")
-        progress.add_task.assert_any_call("Cloning database via direct connection")
+        progress.add_task.assert_any_call("Projectgegevens ophalen")
+        progress.add_task.assert_any_call("Database kopiëren van mydb via een directe verbinding")
         assert progress.complete_task.call_count == 2
         assert result["rows_copied"] == 100
 
@@ -258,7 +258,7 @@ class TestHandleCloneDatabase:
         with patch(PM_PATH, return_value=mock_pm):
             await handle_clone_database(payload, progress)
 
-        progress.add_task.assert_any_call("Cloning database via Chisel tunnel")
+        progress.add_task.assert_any_call("Database kopiëren van mydb via een Chisel-tunnel")
 
 
 # ---------------------------------------------------------------------------
@@ -300,8 +300,8 @@ class TestHandleCloneBucket:
             result = await handle_clone_bucket(payload, progress)
 
         assert progress.add_task.call_count == 2
-        progress.add_task.assert_any_call("Initializing project manager")
-        progress.add_task.assert_any_call("Cloning bucket")
+        progress.add_task.assert_any_call("Projectgegevens ophalen")
+        progress.add_task.assert_any_call("Bucket mybucket kopiëren")
         assert progress.complete_task.call_count == 2
         assert result["objects_copied"] == 42
 
@@ -381,8 +381,8 @@ class TestHandleRefreshDeployment:
         )
 
         assert progress.add_task.call_count == 2
-        progress.add_task.assert_any_call("Looking up project")
-        progress.add_task.assert_any_call("Processing deployment")
+        progress.add_task.assert_any_call("Project opzoeken")
+        progress.add_task.assert_any_call("Deployment dev opnieuw verwerken")
         assert progress.complete_task.call_count == 2
 
         # Web addresses reported

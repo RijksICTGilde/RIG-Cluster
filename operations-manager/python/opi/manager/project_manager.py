@@ -1629,6 +1629,35 @@ class ProjectManager:
         """Get the task progress manager for tracking operation status."""
         return self.__progress_manager
 
+    # ------------------------------------------------------------------
+    # Progress steps
+    #
+    # A step is only reported when it is actually performed, so a step that
+    # shows up on the page always corresponds to work that ran. Skipped work
+    # gets no step at all rather than a green check it did not earn.
+    # ------------------------------------------------------------------
+
+    def _begin_step(self, name: str) -> str | None:
+        """Start a named progress step for the running task.
+
+        Returns the step id, or None when no progress manager is attached (the
+        pipeline also runs from schedulers and CLI paths that report nothing).
+        """
+        progress_manager = self.get_progress_manager()
+        if progress_manager is None:
+            return None
+        return progress_manager.add_task(name)
+
+    def _end_step(self, step_id: str | None, error: str | None = None) -> None:
+        """Close a step started with :meth:`_begin_step`: completed, or failed with a reason."""
+        progress_manager = self.get_progress_manager()
+        if progress_manager is None or step_id is None:
+            return
+        if error:
+            progress_manager.fail_task(step_id, error)
+        else:
+            progress_manager.complete_task(step_id)
+
     async def set_git_connector_for_deployment(self, name: str, git_connector: GitConnector) -> None:
         if name in self.__git_connectors_for_deployments:
             raise Exception(f"git_connector_for_deployments already set for {name}")
@@ -2103,9 +2132,7 @@ class ProjectManager:
         progress_manager = self.get_progress_manager()
         namespace_subtask = None
         if progress_manager:
-            namespace_subtask = progress_manager.add_task(
-                f"Creating infrastructure namespace {infrastructure_namespace}"
-            )
+            namespace_subtask = progress_manager.add_task(f"Namespace {infrastructure_namespace} aanmaken")
 
         try:
             # Check if namespace exists, create if needed (using shared function)
@@ -2179,7 +2206,7 @@ class ProjectManager:
         progress_manager = self.get_progress_manager()
         infra_task = None
         if progress_manager:
-            infra_task = progress_manager.add_task("Creating infrastructure resources (database cluster)")
+            infra_task = progress_manager.add_task("Databasecluster aanmaken")
 
         try:
             # STEP 1: Check for existing superuser credentials and validate them
@@ -2515,7 +2542,7 @@ class ProjectManager:
             # STEP 8: Wait for infrastructure application to be created by ArgoCD
             infra_app_name = f"{project_name}-infrastructure"
             if progress_manager and infra_task:
-                progress_manager.update_task(infra_task, "Waiting for ArgoCD to create infrastructure application")
+                progress_manager.update_task(infra_task, "Wachten tot ArgoCD de infrastructuur aanmaakt")
 
             await self._argo_manager.wait_for_application_created(
                 app_name=infra_app_name,
@@ -2537,7 +2564,7 @@ class ProjectManager:
             )
 
             if progress_manager and infra_task:
-                progress_manager.update_task(infra_task, "Waiting for database cluster to be ready")
+                progress_manager.update_task(infra_task, "Wachten tot het databasecluster klaar is")
 
             await self._argo_manager.wait_for_infrastructure_ready(
                 project_name=project_name,
@@ -2736,36 +2763,50 @@ class ProjectManager:
         logger.info(f"Processing project from Git: {relative_project_file_path}")
 
         try:
-            git_connector_for_project_files = await self.get_git_connector_for_project_files()
+            read_step = self._begin_step("Projectbestand ophalen en controleren")
+            try:
+                git_connector_for_project_files = await self.get_git_connector_for_project_files()
 
-            # Use the file handler to analyze changes
-            # TODO: change detection may turn out too difficult or unpredictable, so perhaps we should use API calls instead for partial changes
-            analysis = await self._project_file_handler.analyze_project_changes(
-                git_connector_for_project_files, relative_project_file_path
-            )
+                # Use the file handler to analyze changes
+                # TODO: change detection may turn out too difficult or unpredictable, so perhaps we should use API calls instead for partial changes
+                analysis = await self._project_file_handler.analyze_project_changes(
+                    git_connector_for_project_files, relative_project_file_path
+                )
 
-            current_yaml = analysis["current_yaml"]
+                current_yaml = analysis["current_yaml"]
 
-            # Security gate FIRST: validate against the project schema before
-            # any side-effect (including the auto-migration save+commit+push
-            # below). Without this ordering, a hostile project that happens to
-            # migrate cleanly would be written to zad-projects with our ops-
-            # manager identity *before* validation rejected it. Fails closed.
-            validate_project_schema(current_yaml)
+                # Security gate FIRST: validate against the project schema before
+                # any side-effect (including the auto-migration save+commit+push
+                # below). Without this ordering, a hostile project that happens to
+                # migrate cleanly would be written to zad-projects with our ops-
+                # manager identity *before* validation rejected it. Fails closed.
+                validate_project_schema(current_yaml)
+            except Exception as e:
+                self._end_step(read_step, str(e))
+                raise
+            self._end_step(read_step)
 
             # read_project_file auto-migrates in memory; persist to disk if needed
             if self._project_file_handler.was_migrated:
                 project_name = current_yaml.get("name", relative_project_file_path)
                 logger.info(f"Schema migration applied for project '{project_name}', committing changes")
+                # Only reported when it actually happens: on a normal run there is no
+                # migration, and a step claiming one would be a lie.
+                migrate_step = self._begin_step("Projectbestand bijwerken naar de nieuwste vorm")
                 # Central save: one locked write+commit. The previous write-then-commit
                 # pair left the migrated file uncommitted in the shared warm copy in
                 # between, where a concurrent reconcile could discard it -- after which
                 # the commit found nothing to commit and still reported success.
-                await self.save_and_commit_project(
-                    current_yaml,
-                    f"auto-migrate {project_name} to schema v{current_yaml.get('schema-version', '?')}",
-                    enforce_validation=False,
-                )
+                try:
+                    await self.save_and_commit_project(
+                        current_yaml,
+                        f"auto-migrate {project_name} to schema v{current_yaml.get('schema-version', '?')}",
+                        enforce_validation=False,
+                    )
+                except Exception as e:
+                    self._end_step(migrate_step, str(e))
+                    raise
+                self._end_step(migrate_step)
 
             previous_yaml = analysis["previous_yaml"]
             changes = analysis["changes"]
@@ -2834,6 +2875,11 @@ class ProjectManager:
             # Step 1.6: Process deployment removals BEFORE creations
             if previous_yaml is not None and deployment_changes["deleted"]:
                 logger.info("Processing %d deleted deployment(s)", len(deployment_changes["deleted"]))
+                # Only when there is something to remove; nothing to do gets no step.
+                delete_step = self._begin_step(
+                    f"Verwijderde deployments opruimen ({len(deployment_changes['deleted'])})"
+                )
+                delete_errors_before = len(critical_failures)
 
                 for value in deployment_changes["deleted"].values():
                     if isinstance(value, dict) and "name" in value:
@@ -2850,6 +2896,9 @@ class ProjectManager:
                         except Exception as e:
                             logger.exception("Failed to delete resources for deployment %s: %s", dep_name, e)
                             critical_failures.append(f"Failed to delete removed deployment '{dep_name}': {e}")
+
+                new_delete_errors = critical_failures[delete_errors_before:]
+                self._end_step(delete_step, "; ".join(new_delete_errors) if new_delete_errors else None)
 
             # Step 1.7: Detect and clean up services removed from surviving deployments
             if previous_yaml is not None:
@@ -2876,11 +2925,22 @@ class ProjectManager:
             # Step 2: Process the project with change context
             logger.info("Step 2: Processing project with change detection")
 
-            process_success = await self.process_project(
-                force_clone=force_clone, deployment_names=targets, force_reenable=force_reenable
-            )
+            process_step = self._begin_step("Diensten en manifesten bijwerken")
+            try:
+                process_success = await self.process_project(
+                    force_clone=force_clone, deployment_names=targets, force_reenable=force_reenable
+                )
+            except Exception as e:
+                self._end_step(process_step, str(e))
+                raise
             if not process_success:
                 critical_failures.append("Project processing failed - check logs for details")
+                self._end_step(
+                    process_step,
+                    self._processing_error or "Bijwerken van diensten en manifesten is mislukt",
+                )
+            else:
+                self._end_step(process_step)
 
             # Check for critical failures before triggering ArgoCD sync
             # Don't sync if there were failures during processing
@@ -2901,9 +2961,7 @@ class ProjectManager:
             )
 
             progress_manager = self.get_progress_manager()
-            argo_task = None
-            if progress_manager:
-                argo_task = progress_manager.add_task("Waiting for ArgoCD deployment sync")
+            argo_task = self._begin_step("Wachten tot ArgoCD gesynchroniseerd is")
 
             argo_connector = create_argo_connector()
 
@@ -3143,7 +3201,9 @@ class ProjectManager:
 
                 pending_apps = [(a, d) for a, d in app_deployments if not any(a in f for f in sync_failures)]
                 if progress_manager and argo_task and pending_apps:
-                    progress_manager.update_task(argo_task, f"Waiting for {len(pending_apps)} application(s) to sync")
+                    progress_manager.update_task(
+                        argo_task, f"Wachten tot {len(pending_apps)} applicatie(s) gesynchroniseerd zijn"
+                    )
                 outcomes = await asyncio.gather(*(_refresh_and_wait(a, d) for a, d in pending_apps))
 
                 # Serial remediation pass over the outcomes. OOM tuning and
@@ -3217,7 +3277,7 @@ class ProjectManager:
                         if progress_manager and argo_task:
                             progress_manager.update_task(
                                 argo_task,
-                                f"OOM detected for {oom_names} in {app_name}, tuning resources...",
+                                f"Te weinig geheugen voor {oom_names} in {app_name}, geheugenlimiet bijstellen...",
                             )
                         component_health = {
                             (f.component_reference or f.component_name): ComponentHealth(oom_detected=True)
@@ -4801,7 +4861,7 @@ class ProjectManager:
             creation_task = None
 
             if progress_manager:
-                creation_task = progress_manager.add_task("Project creation")
+                creation_task = progress_manager.add_task("Project aanmaken")
 
             # TODO: consider checking if a deployment needs to be done for this cluster instead of checking per method call
 
@@ -7892,7 +7952,13 @@ class ProjectManager:
         if generation_changes:
             storage_list = ", ".join(generation_changes.keys())
             commit_msg += f" and recreate PVCs: {storage_list}"
-        await self.save_and_commit_project(project_data, commit_msg)
+        commit_step = self._begin_step("Nieuwe image vastleggen in het projectbestand")
+        try:
+            await self.save_and_commit_project(project_data, commit_msg)
+        except Exception as e:
+            self._end_step(commit_step, str(e))
+            raise
+        self._end_step(commit_step)
         logger.info("Saved and committed project YAML changes")
 
         # 7. CRITICAL: Process entire project for this deployment
@@ -7902,23 +7968,36 @@ class ProjectManager:
         # - Application manifests (including new PVC generations)
         # - ArgoCD resources
         logger.info(f"Processing deployment {deployment_name} to apply all changes")
-        process_success = await self.process_project(deployment_name)
+        process_step = self._begin_step("Diensten en manifesten bijwerken")
+        try:
+            process_success = await self.process_project(deployment_name)
+        except Exception as e:
+            self._end_step(process_step, str(e))
+            raise
 
         if not process_success:
+            self._end_step(process_step, f"Failed to process deployment {deployment_name}")
             raise Exception(f"Failed to process deployment {deployment_name}")
+        self._end_step(process_step)
 
         # 8. Trigger ArgoCD sync
         logger.info("Triggering ArgoCD sync for updated deployment")
-        argo_connector = create_argo_connector()
+        sync_step = self._begin_step("ArgoCD laten uitrollen")
+        try:
+            argo_connector = create_argo_connector()
 
-        # Refresh user-applications (contains project definitions)
-        await argo_connector.refresh_application("user-applications")
+            # Refresh user-applications (contains project definitions)
+            await argo_connector.refresh_application("user-applications")
 
-        # Refresh the specific deployment application
-        app_name = generate_argocd_application_name(project_name, deployment_name)
-        if await argo_connector.application_exists(app_name):
-            logger.info(f"Refreshing ArgoCD application: {app_name}")
-            await argo_connector.refresh_application(app_name)
+            # Refresh the specific deployment application
+            app_name = generate_argocd_application_name(project_name, deployment_name)
+            if await argo_connector.application_exists(app_name):
+                logger.info(f"Refreshing ArgoCD application: {app_name}")
+                await argo_connector.refresh_application(app_name)
+        except Exception as e:
+            self._end_step(sync_step, str(e))
+            raise
+        self._end_step(sync_step)
 
         # Schedule fire-and-forget health watcher so an image bump to a missing
         # image (ImagePullBackOff) gets auto-disabled, same as the deploy path.
