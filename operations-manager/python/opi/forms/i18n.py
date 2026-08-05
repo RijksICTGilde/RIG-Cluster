@@ -210,8 +210,8 @@ DEFAULT_NL_TRANSLATIONS = {
     # Service labels
     "service.web": "Publiceren op het web",
     "service.web.description": "Maak de applicatie toegankelijk via het publieke internet",
-    "service.sso": "Single Sign-On Rijk",
-    "service.sso.description": "Integreer met de Rijksoverheid SSO voor veilige authenticatie",
+    "service.sso": "Keycloak Authentication",
+    "service.sso.description": "Inloggen via SSO Rijk en via lokale Keycloak-accounts in een eigen realm voor dit project",
     "service.persistent_storage": "Permanente opslag",
     "service.persistent_storage.description": "Gegevens blijven bewaard tijdens de levenscyclus",
     "service.temp_storage": "Tijdelijke schijfruimte",

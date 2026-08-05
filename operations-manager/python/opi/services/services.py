@@ -557,7 +557,7 @@ class ServiceAdapter:
         ),
         ServiceType.KEYCLOAK: ServiceDefinition(
             name="Keycloak Authentication",
-            description="Configureerbare Keycloak authenticatie met ondersteuning voor SSO en lokale gebruikers",
+            description="Inloggen via SSO Rijk en via lokale Keycloak-accounts in een eigen realm voor dit project",
             icon="sleutel",
             color="groen",
             scope=ServiceScope.COMPONENT,
