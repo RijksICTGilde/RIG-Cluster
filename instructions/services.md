@@ -180,11 +180,33 @@ for you. Pick the layer from where the value belongs, then implement that row:
 | `PROJECT` | Its own wizard step / modal, shown when the service is selected | `config_editables(PROJECT)`, `config_form_section(PROJECT)`, `config_section_id`, optionally `modal_flow_id` | Register the section and add it to the flows, see below |
 | `COMPONENT` | A fieldset inside the per-component form | `config_editables(COMPONENT)`, `config_component_visualizers()`, `config_component_layout()`, `config_component_order` | **None.** The registry collects it automatically |
 | `DEPLOYMENT` | No service-owned form hook exists today | Nothing to hook into | Fields are hand-authored in `forms/editables/fields/deployments.py`. Deployment-level config is normally OPI-managed state, not user input |
-| `DEPLOYMENT_COMPONENT` | Same as `DEPLOYMENT` | Nothing to hook into | Hand-authored too (the attachments `use` sequence is the one example) |
+| `DEPLOYMENT_COMPONENT` | A fieldset inside the per-deployment component form | `config_editables(DEPLOYMENT_COMPONENT)`, `config_deployment_component_visualizers()`, `config_deployment_component_layout()` | **None.** The registry collects it, like the component layer (RC-25) |
+
+**Every layer you carry config on needs an answer to "where do I edit this".** That answer
+is `config_form_section(layer)`, or an entry in `form_exempt_layers` naming the reason
+there is no form (OPI-written state, API-only on purpose).
+`tests/test_service_config_layers.py` fails if a layer has neither, in both directions --
+an unanswered layer and a stale exemption for a layer that no longer carries config. Before
+RC-25 half the catalog had config nobody could reach, which is what that test now prevents.
+
+For the component and deployment-component layers you get the section for free: the base
+class builds it from the visualizers and layout nodes you already declare, so it can never
+show a different field set than the component form does. Only the project layer needs a
+hand-built section (and the flow wiring below).
 
 `config_api_fields(layer)` is separate from all of this: it tells the API/YAML validator which
 field names the layer accepts, so an error message can name them. Declare it per layer, even
 when the layer has no form.
+
+### A service that owns a plain project-file property
+
+A SYSTEM service can own a *property of the component* rather than a block in a `services:`
+list -- `user-env-vars` and `aliases` do (RC-25). Declare it with `owned_property`; then
+`validate_service_configs` walks that property on every layer the service declares editables
+for, and the generic config API generates no route for the service (there is no config block
+for that endpoint to address). Everything else -- config model, schema fragment, editables,
+form sections -- is identical to any other service. See
+`features/system-services-with-a-ui.md`.
 
 ### Project-level config: what "declarative" does and does not cover
 

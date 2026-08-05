@@ -1,0 +1,8 @@
+{
+  "additionalProperties": {
+    "type": "string"
+  },
+  "description": "A component's alias map: env-var name -> template referencing platform variables.",
+  "title": "AliasesConfig",
+  "type": "object"
+}
