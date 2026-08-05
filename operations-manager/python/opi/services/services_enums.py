@@ -117,14 +117,17 @@ class HookLevel(Enum):
 
 
 class HookPoint(Enum):
-    """A moment in the deploy lifecycle at which generic code scans the registry.
+    """A moment at which generic code scans the registry.
 
-    One member for now (``AFTER_SYNC``), because that is all we need. Hook points are
-    an enum, never strings, so ``hook == "after-sync"`` is simply ``False`` and a loose
-    string cannot slip in anywhere.
+    ``AFTER_SYNC`` is a moment in the deploy lifecycle; ``DEPLOYMENT_STATE`` is a
+    question asked whenever someone needs to know what the services did to a deployment
+    (the health check before it judges, the deployment page before it renders). Hook
+    points are an enum, never strings, so ``hook == "after-sync"`` is simply ``False``
+    and a loose string cannot slip in anywhere.
     """
 
     AFTER_SYNC = "after-sync"
+    DEPLOYMENT_STATE = "deployment-state"
 
     @property
     def level(self) -> HookLevel:
@@ -132,10 +135,12 @@ class HookPoint(Enum):
 
 
 #: The level each hook point iterates over. ``AFTER_SYNC`` fires once per deployment,
-#: after the sync. Project- and component-level machinery is intentionally not built
-#: yet: with only a deployment-level hook it would be code with no caller.
+#: after the sync; ``DEPLOYMENT_STATE`` is asked about one deployment. Project- and
+#: component-level machinery is intentionally not built yet: with only deployment-level
+#: hooks it would be code with no caller.
 _HOOK_LEVELS: dict[HookPoint, HookLevel] = {
     HookPoint.AFTER_SYNC: HookLevel.DEPLOYMENT,
+    HookPoint.DEPLOYMENT_STATE: HookLevel.DEPLOYMENT,
 }
 
 
