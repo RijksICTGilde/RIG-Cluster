@@ -256,3 +256,61 @@ def test_the_button_opens_the_confirmation_in_the_shared_modal() -> None:
     expected = f"/projects/{PROJECT}/deployments/{DEPLOYMENT}/actions/cache-legen/confirm"
     assert f"openServiceModal('{expected}'" in html
     assert FAKE_ACTION.endpoint not in html, "the endpoint belongs in the confirmation, not on the page"
+
+
+class TestTheDialogSaysItIsBusy:
+    """These endpoints are not quick, so the dialog must not look idle while one runs.
+
+    Sleeping a deployment commits to git and then runs the whole reprocessing pipeline,
+    ArgoCD sync included, with the request open the whole time. Without a waiting state
+    the dialog sits there unchanged for tens of seconds and the only reasonable
+    conclusion is that the button did nothing.
+    """
+
+    _FRAGMENT = pathlib.Path(__file__).parent.parent / "opi/templates/project-details/deployment-action-confirm.html.j2"
+
+    def _rendered(self) -> str:
+        from unittest.mock import MagicMock
+
+        from opi.core.templates import get_templates
+
+        request = MagicMock()
+        request.state.csrf_token = "TOK"
+        action = MagicMock()
+        action.label = "Deployment slapen"
+        action.kind = "secondary"
+        action.icon = "klok"
+        action.endpoint = "/projects/p/deployments/d/sleep"
+        template = get_templates().env.get_template("project-details/deployment-action-confirm.html.j2")
+        return template.render(
+            request=request, action=action, message="Zeker weten?", busy_message="Bezig met in slaapstand zetten..."
+        )
+
+    def test_the_waiting_state_is_driven_by_htmx_not_by_hand_written_javascript(self) -> None:
+        """hx-indicator means every service action gets this without asking for it."""
+        assert "hx-indicator" in self._FRAGMENT.read_text()
+
+    def test_the_busy_message_is_rendered(self) -> None:
+        assert "Bezig met in slaapstand zetten..." in self._rendered()
+
+    def test_the_busy_box_is_a_roos_alert(self) -> None:
+        """Not a hand-rolled paragraph: the page has a component for this."""
+        assert "rvo-alert" in self._rendered()
+
+    def test_the_indicator_id_occurs_exactly_once(self) -> None:
+        """ROOS copies an id onto an inner element as well, so putting it on the c-alert
+        itself yields a duplicate id and an ambiguous hx-indicator selector. The id
+        belongs on the wrapper."""
+        assert self._rendered().count('id="deployment-action-busy"') == 1
+
+    def test_every_sleep_mode_action_says_what_the_wait_is_for(self) -> None:
+        """A generic "Bezig..." is the fallback, not the intent: the service knows
+        whether it is putting something to sleep or waking it."""
+        from opi.services.catalog.sleep_mode.actions import sleep_actions
+
+        project = {"name": "p", "deployments": [{"name": "d", "cluster": "sandboxed-local"}]}
+        for state in ({}, {"sleep": {"state": "sleeping"}}):
+            deployment = {"name": "d", "cluster": "sandboxed-local", **state}
+            data = {**project, "deployments": [deployment]}
+            for action in sleep_actions(data, "d"):
+                assert action.busy_message, action.label

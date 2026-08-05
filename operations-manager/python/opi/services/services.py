@@ -48,6 +48,12 @@ class DeploymentAction:
     modal_title: str | None = None
     #: Optional confirm dialog text; None means no confirmation.
     confirm_message: str | None = None
+    #: What the dialog says while the POST is running. These endpoints are not quick --
+    #: sleeping a deployment commits to git and reprocesses, ArgoCD sync included, with
+    #: the request open the whole time -- so a service says what the wait is FOR. Without
+    #: one the dialog falls back to a generic "Bezig...", which is still better than a
+    #: dialog that sits there unchanged and reads as a button that did nothing.
+    busy_message: str | None = None
     #: Whether the button should render for this deployment.
     visible: bool = True
 
