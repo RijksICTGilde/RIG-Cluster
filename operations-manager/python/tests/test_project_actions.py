@@ -5,9 +5,16 @@ have must produce nothing at all. The confirmation renders the endpoint it gets 
 and one of these endpoints deletes an entire project.
 """
 
-import pytest
+import inspect
+import re
+from typing import Any
+from unittest.mock import MagicMock, patch
 
+import pytest
+from fastapi import HTTPException
 from opi.web.project_actions import build_project_action
+from opi.web.router import project_action_confirm
+from starlette.requests import Request
 
 PROJECT = {
     "name": "demo",
@@ -114,3 +121,92 @@ def test_message_names_the_project_by_its_display_name() -> None:
 
     assert action is not None
     assert "Demo Project" in action.message
+
+
+# ---------------------------------------------------------------------------
+# The route that renders the dialog
+# ---------------------------------------------------------------------------
+
+
+CSRF = "csrf-token-value"
+
+
+def _request() -> Request:
+    """A request carrying only what the fragment needs: the CSRF token."""
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b""})
+    request.state.csrf_token = CSRF
+    return request
+
+
+async def _confirm(action_key: str, target: str | None = None, *, role: str = "admin") -> Any:
+    store = MagicMock()
+    store.get.return_value = MagicMock(data=PROJECT)
+    with (
+        patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
+        patch("opi.web.router.is_user_authorized_for_project", return_value=True),
+        patch("opi.web.router.get_user_role_for_project", return_value=role),
+        patch("opi.web.router.get_project_store", return_value=store),
+    ):
+        return await project_action_confirm(_request(), "demo", action_key, target)
+
+
+async def test_the_dialog_posts_to_the_endpoint_of_the_action() -> None:
+    response = await _confirm("delete-deployment", "acc")
+    body = response.body.decode()
+
+    assert response.status_code == 200
+    assert "acc" in body
+    # Exactly one POST target, and it is the one built server-side.
+    assert re.findall(r'hx-post="([^"]*)"', body) == ["/projects/demo/delete-deployment/acc"]
+
+
+async def test_a_target_this_project_does_not_have_is_a_404() -> None:
+    with pytest.raises(HTTPException) as exc:
+        await _confirm("delete-deployment", "somebody-elses-deployment")
+    assert exc.value.status_code == 404
+
+
+async def test_an_unknown_action_is_a_404() -> None:
+    with pytest.raises(HTTPException) as exc:
+        await _confirm("delete-everything")
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.parametrize("role", ["member", "developer", "viewer"])
+async def test_a_non_privileged_role_gets_no_dialog(role: str) -> None:
+    with pytest.raises(HTTPException) as exc:
+        await _confirm("delete-project", role=role)
+    assert exc.value.status_code == 403
+
+
+async def test_a_blocked_action_offers_no_button() -> None:
+    """An attachment still in use: the dialog explains, and there is nothing to post."""
+    project = {
+        "name": "demo",
+        "components": [
+            {
+                "name": "web",
+                "services": [{"attachments": {"config": [{"reference": "keystore", "provide-as": "file"}]}}],
+            }
+        ],
+        "services": [{"attachments": {"data": [{"id": "keystore", "filename": "keystore.p12"}]}}],
+    }
+    store = MagicMock()
+    store.get.return_value = MagicMock(data=project)
+    with (
+        patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
+        patch("opi.web.router.is_user_authorized_for_project", return_value=True),
+        patch("opi.web.router.get_user_role_for_project", return_value="admin"),
+        patch("opi.web.router.get_project_store", return_value=store),
+    ):
+        response = await project_action_confirm(_request(), "demo", "delete-attachment", "keystore")
+
+    body = response.body.decode()
+    assert "in gebruik" in body
+    assert "hx-post" not in body
+
+
+def test_the_route_takes_no_endpoint_from_the_request() -> None:
+    """The signature is the guard: project, key and target, nothing that holds a URL."""
+    parameters = set(inspect.signature(project_action_confirm).parameters)
+    assert parameters == {"request", "project_name", "action_key", "target"}
