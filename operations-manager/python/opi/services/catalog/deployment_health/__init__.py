@@ -22,7 +22,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from opi.services.catalog.base import Service
+from opi.services.catalog.base import DeploymentStateContext, DeploymentStateFact, Service
+from opi.services.disabled_state import deployment_disabled_state
 from opi.services.services_enums import ServiceType
 
 if TYPE_CHECKING:
@@ -32,6 +33,54 @@ if TYPE_CHECKING:
 
 class DeploymentHealthService(Service):
     service_type = ServiceType.DEPLOYMENT_HEALTH
+
+    def deployment_state(self, ctx: DeploymentStateContext) -> list[DeploymentStateFact]:
+        """Report that this deployment is switched off, wholly or in part (RC-31).
+
+        ``disabled: true`` is a field on a component, so no ordinary service owns it --
+        and that is exactly why it is reported here rather than through a second,
+        hook-bypassing path in ``collect_deployment_state``. The hook is the contract
+        ("who knows something about this deployment, say so"); a generic contribution
+        alongside it would mean two ways to add a fact and two places to look for one.
+        This service is the system service that already speaks for the platform itself,
+        so the platform's own fact belongs to it.
+
+        Facts, not verdicts, and the split matters here as much as it did for sleep-mode:
+
+        * fully off -- nothing of the application is meant to be running, so
+          ``expects_no_application_pods``. It excuses ABSENT pods and nothing else: a
+          component that is off and also broken keeps reporting broken.
+        * partly off -- the rest is still supposed to serve traffic, so the absence of
+          pods is NOT excused; the fact only carries the counts so a reader sees what
+          is off.
+        """
+        state = deployment_disabled_state(ctx.project_data, ctx.deployment_name)
+        if state.is_disabled:
+            return [
+                DeploymentStateFact(
+                    service=self.service_type.value,
+                    summary=(
+                        "Deze deployment staat uit: alle "
+                        f"{state.total_count} componenten zijn uitgeschakeld en blijven uit "
+                        "tot iemand ze weer aanzet."
+                    ),
+                    expects_no_application_pods=True,
+                    details={"disabled": state.disabled_count, "total": state.total_count},
+                )
+            ]
+        if state.is_partially_disabled:
+            return [
+                DeploymentStateFact(
+                    service=self.service_type.value,
+                    summary=(
+                        f"{state.disabled_count} van de {state.total_count} componenten van deze "
+                        "deployment zijn uitgeschakeld; de rest draait gewoon."
+                    ),
+                    expects_no_application_pods=False,
+                    details={"disabled": state.disabled_count, "total": state.total_count},
+                )
+            ]
+        return []
 
     def counts_as_failure(self, health: PodHealthResult, state: DeploymentState) -> bool:
         """Whether an observed pod problem is a failure of the application.
