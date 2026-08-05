@@ -1307,14 +1307,6 @@ class KeycloakManager:
             admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
         )
 
-        # Determine expected browser flow based on template
-        # sso-only: Uses External IDP Redirector flow (auto-redirect to IdP)
-        # sso-support: Uses standard browser flow (shows login form with SSO button)
-        expected_browser_flow = "External IDP Redirector" if template_name == "sso-only" else "browser"
-
-        # Ensure browser flow matches template (idempotent)
-        await keycloak.ensure_browser_flow(realm_name, expected_browser_flow)
-
         # Build minimal context for authentication flow processing
         context = {
             "realm_name": realm_name,
@@ -1326,9 +1318,24 @@ class KeycloakManager:
         if isinstance(user_variables, dict):
             context.update(user_variables)
 
-        # Process authentication flows (idempotent - updates if needed)
+        # Process authentication flows (idempotent - updates if needed). This MUST run
+        # before the browser flow is pointed at them: Keycloak rejects a browserFlow
+        # naming a flow that does not exist yet, and answers with a bare
+        # 500 {"errorMessage":"Failed to update realm"} that says nothing about the
+        # cause. Switching an existing sso-support realm to sso-only did exactly that,
+        # because "External IDP Redirector" is created here, by this call
+        # (toets-hn7, 2026-08-05).
         handler = KeycloakYamlHandler(keycloak)
         await handler.ensure_authentication_flows(yaml_path, context)
+
+        # Converge the browser flow on what the template implies. Both templates already
+        # set it themselves (sso-only through setAsBrowserFlow, sso-support through its
+        # browserFlow key), so this is normally a no-op; it stays as the explicit
+        # assertion for a realm that drifted, and for a template carrying neither signal.
+        # sso-only: External IDP Redirector flow (auto-redirect to IdP)
+        # sso-support: standard browser flow (shows login form with SSO button)
+        expected_browser_flow = "External IDP Redirector" if template_name == "sso-only" else "browser"
+        await keycloak.ensure_browser_flow(realm_name, expected_browser_flow)
 
     async def _ensure_realm_clients(
         self,
