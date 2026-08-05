@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.exc import IntegrityError
-
-if TYPE_CHECKING:
-    from starlette.responses import Response
+from starlette.responses import Response
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates import get_templates
