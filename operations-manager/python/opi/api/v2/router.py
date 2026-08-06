@@ -1369,6 +1369,49 @@ def _make_clear_endpoint(service_name: str, target: str, name_param: str | None)
     return endpoint
 
 
+#: Where a config block lands in the project file, per layer, in the caller's terms.
+_CONFIG_WRITE_PLACE = {
+    ConfigLayer.PROJECT: "the project's own `services` list",
+    ConfigLayer.COMPONENT: "the `services` list of component `{component_name}`",
+    ConfigLayer.DEPLOYMENT: "the `services` list of deployment `{deployment_name}`",
+}
+
+
+def _config_write_description(service_name: str, layer: ConfigLayer, *, clearing: bool) -> str:
+    """What a config write does, beyond what its summary already says.
+
+    A summary says which service and which layer. What a caller cannot guess is where the
+    value ends up, whether writing it starts a rollout, and what happens when there is
+    nothing there -- so that is what this says, and nothing that only repeats the name.
+    """
+    place = _CONFIG_WRITE_PLACE[layer]
+    lines = [
+        f"{'Remove' if clearing else 'Write'} the `{service_name}` config block "
+        f"{'from' if clearing else 'in'} {place}, in the project's YAML file in `zad-projects`.",
+        "",
+    ]
+    if clearing:
+        lines += [
+            f"The service stays selected; only its config goes, so `{service_name}` falls back to its "
+            "defaults. Clearing config that is not there changes nothing: no commit, no rollout, and "
+            "still a success.",
+        ]
+    elif layer is not ConfigLayer.PROJECT:
+        lines += [
+            f"Configuring `{service_name}` here also selects it at project level when it is not "
+            "selected yet, so this one call is enough.",
+        ]
+    lines += [
+        "",
+        "A change that reaches the file is rolled out: the project is processed again, manifests are "
+        "regenerated and ArgoCD applies them. This is not a save-only endpoint.",
+        "",
+        "Asynchronous: the response is 202 with a task id. Poll `/api/tasks/{task_id}` for the result; "
+        "the write and the rollout both happen inside that task.",
+    ]
+    return "\n".join(lines)
+
+
 def _register_service_config_routes(router: APIRouter) -> None:
     """Generate the typed per-service config routes from the registry.
 
@@ -1396,6 +1439,7 @@ def _register_service_config_routes(router: APIRouter) -> None:
                 tags=[service_name],
                 responses=_CONFIG_WRITE_RESPONSES,
                 summary=f"Upsert {service_name} config ({target})",
+                description=_config_write_description(service_name, layer, clearing=False),
             )
             router.add_api_route(
                 path,
@@ -1404,6 +1448,7 @@ def _register_service_config_routes(router: APIRouter) -> None:
                 tags=[service_name],
                 responses=_CONFIG_WRITE_RESPONSES,
                 summary=f"Clear {service_name} config ({target})",
+                description=_config_write_description(service_name, layer, clearing=True),
             )
 
 
