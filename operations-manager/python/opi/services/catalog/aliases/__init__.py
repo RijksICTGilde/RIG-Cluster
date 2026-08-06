@@ -22,11 +22,27 @@ from typing import Any
 
 from opi.services.catalog.aliases.config_model import AliasesConfig
 from opi.services.catalog.base import ConfigLayer, Service
-from opi.services.services_enums import ServiceType
+from opi.services.services import ServiceDefinition
+from opi.services.services_enums import ServiceBinding, ServiceKind, ServiceType
 
 
 class AliasesService(Service):
     service_type = ServiceType.ALIASES
+    definition = ServiceDefinition(
+        name="Aliassen",
+        description=(
+            "Systeemdienst: koppelt platform-variabelen aan de namen die een component "
+            "verwacht (POSTGRES_HOST=$DATABASE_SERVER_HOST). Draait altijd, is niet "
+            "kiesbaar. Een onbekende verwijzing is hier een harde fout, anders dan bij "
+            "een eigen omgevingsvariabele."
+        ),
+        help_template="aliases/help.html.j2",
+        icon="instellingen",
+        color="grijs-600",
+        binding=ServiceBinding.COMPONENT,
+        variables=[],
+        kind=ServiceKind.SYSTEM,
+    )
     config_model = AliasesConfig
     config_schema_version = "1.0"
     owned_property = "aliases"
