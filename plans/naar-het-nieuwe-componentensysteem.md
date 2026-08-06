@@ -68,15 +68,35 @@ Nee, en niet vanwege de 15 procent. De reden is dat de formulierlaag ontbreekt, 
 
 Wel is het minder werk dan het lijkt: 84 procent gaat mee zoals het is, en een deel van de rest is een hernoeming.
 
+## De indeling verandert ook, en dat bepaalt wat fase 1 moet opleveren
+
+Uitgangspunt is de bg.rijks.app-app, en niet alleen haar vormgeving: ook de structuur en indeling. Het eindbeeld is die schil, opgebouwd uit LOTC-componenten (`c-app-shell` met header-, sidebar-, main- en footer-regio's, `c-sidenav`, `c-section-head`), niet onze huidige indeling in een nieuw jasje.
+
+Zo staan onze pagina's er nu voor:
+
+```
+ 20 templates breiden base.html.j2 uit
+  5 soorten blokken in totaal (content, page_title, additional_styles,
+    additional_scripts, title)
+ 21 content-blokken, het grootste 1.509 regels
+ 35 includes over 26 deeltemplates
+```
+
+Vijf bloksoorten voor twintig pagina's betekent dat vrijwel alles in een enkel `content`-blok zit. Een pagina is daarmee een blok tekst en geen samenstelling, en dat is precies wat een herindeling duur maakt: je kunt niets verplaatsen zonder markup te verhuizen. `architecture-overview.html.j2` is het uiterste geval met 1.509 regels in een blok en 85 inline styles.
+
+**Dat scherpt fase 1 aan.** Het doel is niet mooiere markup maar verplaatsbare brokken. Investeer niet in het poetsen van markup die straks toch door LOTC-componenten vervangen wordt; trek de *grenzen* eruit (een pagina wordt een samenstelling van benoemde blokken) en laat de inhoud van die blokken voorlopig zoals hij is. Inline styling en duplicatie horen daar wel meteen uit, want die verhuizen anders mee.
+
 ## Voorstel, in die volgorde
 
-**Fase 1: opruimen wat toch moet.** Inline styling en duplicatie weg, onafhankelijk van LOTC. Elke `style=` die blijft staan verhuist mee naar het nieuwe systeem en hoort daar niet. Elk gedupliceerd blok wordt twee keer omgezet. Verifieerbaar: het aantal `style=`-attributen, `<style>`-blokken en herhaalde blokken daalt aantoonbaar, met een test die het tegenhoudt.
+**Fase 1: opdelen en opruimen.** Elke pagina wordt een samenstelling van benoemde blokken in plaats van een blok van honderden regels, en inline styling en duplicatie gaan eruit. Onafhankelijk van LOTC bruikbaar. Verifieerbaar: het aantal `style=`-attributen, `<style>`-blokken en herhaalde blokken daalt aantoonbaar, het aantal deeltemplates stijgt, en er staat een test die de terugval tegenhoudt.
 
 **Fase 2: de hernoemingen.** `c-p` naar `paragraph`, `c-menubar` naar `menu`. Mechanisch, en het verkleint het gat met de helft.
 
 **Fase 3: de twee gaten dichten, in LOTC en niet bij ons.** De lijstprimitieven en de formulierlaag horen in core thuis, niet als uitzondering in onze templates. Dat is een gesprek met het LOTC-project, geen werk in deze repo.
 
-**Fase 4: omzetten per pagina, met een visuele test per stap.** Niet alles tegelijk. Begin met een pagina die veel toont en weinig doet (het projectenoverzicht), en eindig met de wizard.
+**Fase 4: omzetten per pagina, met een visuele test per stap.** Niet alles tegelijk. Begin met een pagina die veel toont en weinig doet (het projectenoverzicht), en eindig met de wizard. Elke pagina komt eruit als een samenstelling van LOTC-componenten in de bg-indeling; de blokken uit fase 1 zijn de eenheden die je daarbij verplaatst.
+
+**Fase 5: de schil.** `base.html.j2` is nu `c-page` met een handgeschreven `rvo-demo-page`-div, header en footer. Die wordt `c-app-shell` met zijn regio's. Dit gaat als laatste, want elke pagina hangt eraan, en pas als de pagina's zelf samenstellingen zijn is de schil verwisselbaar zonder alles tegelijk aan te raken.
 
 ## Wat er aan de LOTC-kant uitgezocht moet worden
 
@@ -93,6 +113,10 @@ Dit hoort gevraagd te worden aan de nog draaiende sessie, niet geraden:
 
 **De formulierlaag is geen markup maar gedrag.** Onze velden hangen aan editables, validators, converters en foutweergave. Een `c-text-input-field` vervangen door een primitief plus handmatig label is een stap achteruit die je pas merkt als de foutmeldingen wegvallen.
 
-**Fase 1 is waardevol zonder de rest.** Als de omzetting niet doorgaat, is het opruimen nog steeds winst. Dat is de reden om ermee te beginnen en niet om erop te wachten.
+**Fase 1 is waardevol zonder de rest.** Als de omzetting niet doorgaat, is het opdelen nog steeds winst. Dat is de reden om ermee te beginnen en niet om erop te wachten.
+
+**Poets geen markup die vervangen wordt.** De verleiding bij fase 1 is om alles netjes te maken. Alles wat straks een LOTC-component wordt, hoeft alleen op de goede plek te staan, niet mooi te zijn. Grenzen trekken loont, inhoud herschrijven niet.
+
+**`architecture-overview.html.j2` verdient een eigen besluit.** 1.509 regels in een blok, 85 inline styles, een eigen `<style>`. Dat is geen pagina om mee te nemen in een omzetting; het is er een om apart te beoordelen, en misschien om te vervangen in plaats van om te zetten.
 
 **De README van LOTC is op een punt verouderd** (hij noemt `lotc-bgnldd`, dat verwijderd is). Verifieer de andere aannames in dit plan tegen de branch en niet tegen de documentatie.
