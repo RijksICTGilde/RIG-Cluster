@@ -217,6 +217,36 @@ class WizardState:
     Stored in the Starlette session. Tracks which steps are completed,
     holds validated form data per step, and resolves the active step list
     (including conditional sections).
+
+    A WIZARD IS A BASE PLUS MUTATIONS
+    ---------------------------------
+    Two things make up the result, and every flow uses both:
+
+    - the **base** (``base_data``): what was already there before the user
+      started. Empty-with-seeds for the create wizard (there is no project
+      yet); the part of the project file this flow does not own for an edit
+      flow. The base is never written by a form; it is the floor the result
+      stands on.
+    - the **mutations** (``step_data``, one entry per section): what the user
+      changed. A section stores only the fields its own editables own.
+
+    ``get_merged_data`` is base plus mutations, in that order. The create and
+    edit flows differ in what the base *is*, and in nothing else.
+
+    THE RULE FOR "ABSENT"
+    ---------------------
+    A key that is not in a mutation means *unchanged*, never *removed*. A form
+    posts what it renders, and what it does not render (a collapsed section, a
+    step the user never opened, a locked field) is simply missing -- treating
+    that as a removal is how services disappeared from project files.
+
+    Removal is therefore always explicit:
+
+    - a field the user emptied is stored as ``CLEARED_FIELD`` (a tombstone) and
+      deleted after merging;
+    - an item unticked in a SELECTION list is removed by
+      ``apply_selection_mutation`` -- but only if the form actually offered it,
+      because a name the form never showed cannot have been unticked.
     """
 
     flow_id: str
@@ -245,8 +275,23 @@ class WizardState:
     than overwritten. None for the create wizard: there is no earlier version.
     """
 
-    template_data: dict[str, Any] = field(default_factory=dict)
-    """Static project template data (repositories, etc.) - lowest priority layer."""
+    base_data: dict[str, Any] = field(default_factory=dict)
+    """The base: what was already there before this wizard started.
+
+    Lowest-priority layer of ``get_merged_data``; every mutation in
+    ``step_data`` is applied on top of it.
+
+    - create wizard: the project template plus the seeds the first steps need
+      (there is no project yet, so the base is a skeleton);
+    - edit flows: the part of the project file this flow does NOT own. Keys a
+      flow does own are deliberately left out -- see ``_fully_owned_list_keys``
+      in ``router_detail_edit`` -- because a base copy of a list would resurrect
+      items the user removed.
+
+    Also carries render-only context that is not project data (``is_new``,
+    ``existing_component_names``, ``_backup_runs``); those keys start with a
+    marker or are stripped before saving.
+    """
 
     locked_services: list[str] = field(default_factory=list)
     """Services that existed in the project before the wizard started.
@@ -278,12 +323,24 @@ class WizardState:
     (create: AttachmentStagingResolveGenerator; edit: ResolveAttachmentsHook).
     """
 
+    @property
+    def is_edit(self) -> bool:
+        """Whether this wizard has an existing project as its base.
+
+        The one question behind every create-vs-edit difference: does a project
+        already exist? Read it here rather than re-deriving
+        ``project_name is not None`` at each call site -- that derivation was
+        repeated ten times in the wizard router alone, which is how a rule can
+        hold in one flow and not in the other.
+        """
+        return self.project_name is not None
+
     def get_merged_data(self, strip_cleared: bool = True) -> dict[str, Any]:
-        """Merge template and step data into a single dict.
+        """Merge the base and the mutations into a single dict.
 
         Merge order (later overrides earlier):
-        1. template_data (static skeleton - repositories, base config)
-        2. step_data per active section (user-entered form values)
+        1. base_data (what was already there)
+        2. step_data per active section (the user's mutations)
         3. devirtualize: fold virtual keys back into real keys
 
         For list values (e.g. ``deployments``), items are merged by index
@@ -299,8 +356,8 @@ class WizardState:
         import copy
 
         merged: dict[str, Any] = {}
-        if self.template_data:
-            merged.update(copy.deepcopy(self.template_data))
+        if self.base_data:
+            merged.update(copy.deepcopy(self.base_data))
         for section_id in self.active_sections:
             if section_id not in self.step_data:
                 continue
@@ -396,7 +453,7 @@ class WizardState:
             "active_sections": self.active_sections,
             "project_name": self.project_name,
             "base_version": self.base_version,
-            "template_data": self.template_data,
+            "base_data": self.base_data,
             "stashed_data": self.stashed_data,
             "locked_services": self.locked_services,
             "virt_mappings": self.virt_mappings,
@@ -435,7 +492,9 @@ class WizardState:
             active_sections=data.get("active_sections", []),
             project_name=data.get("project_name"),
             base_version=data.get("base_version"),
-            template_data=data.get("template_data", {}),
+            # ``template_data`` is the old name for the same layer; a session written
+            # before the rename must keep working across a deploy.
+            base_data=data.get("base_data", data.get("template_data", {})),
             stashed_data=data.get("stashed_data", {}),
             locked_services=data.get("locked_services", []),
             virt_mappings=data.get("virt_mappings", {}),
