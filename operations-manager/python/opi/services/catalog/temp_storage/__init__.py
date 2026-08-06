@@ -11,11 +11,23 @@ from __future__ import annotations
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.shared.storage import StorageConfig
 from opi.services.catalog.temp_storage.editables import TEMP_STORAGE_SEQUENCE_EDITABLE
-from opi.services.services_enums import ServiceType
+from opi.services.catalog.temp_storage.variables import TempStorageVariables
+from opi.services.services import ServiceDefinition
+from opi.services.services_enums import ServiceBinding, ServiceType
 
 
 class TempStorageService(Service):
     service_type = ServiceType.TEMP_STORAGE
+    definition = ServiceDefinition(
+        name="Tijdelijke schijfruimte",
+        description="Gegevens worden niet bewaard tijdens de levenscyclus van de applicatie",
+        help_template="temp_storage/help.html.j2",
+        icon="klok",
+        color="oranje",
+        binding=ServiceBinding.COMPONENT,
+        storage_config={"name": "temp", "type": "ephemeral", "size": "500Mi", "mount-path": "/tmp"},
+        variables=[var.value for var in TempStorageVariables],
+    )
     config_model = StorageConfig
     config_schema_version = "1.0"
     config_component_order = 20

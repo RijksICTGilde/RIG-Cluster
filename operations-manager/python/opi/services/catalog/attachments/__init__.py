@@ -16,12 +16,21 @@ from typing import Any
 
 from opi.services.catalog.attachments.config_model import AttachmentsConfig
 from opi.services.catalog.base import ConfigLayer, DetailPageSection, Service
-from opi.services.services import service_entry_name
-from opi.services.services_enums import ServiceType
+from opi.services.services import ServiceDefinition, service_entry_name
+from opi.services.services_enums import ServiceBinding, ServiceType
 
 
 class AttachmentsService(Service):
     service_type = ServiceType.ATTACHMENTS
+    definition = ServiceDefinition(
+        name="Bijlagen",
+        description="Geuploade bestanden (bijv. certificaten) gekoppeld als bestand of env-var aan een component",
+        help_template="attachments/help.html.j2",
+        icon="map",
+        color="grijs-600",
+        binding=ServiceBinding.COMPONENT,
+        variables=[],
+    )
     # Component-level config is a list of couplings; the project-level entry holds the
     # catalog under ``data`` rather than ``config`` and is skipped by the config walk.
     config_model = AttachmentsConfig

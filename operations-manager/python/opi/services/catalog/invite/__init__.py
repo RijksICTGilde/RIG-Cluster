@@ -33,8 +33,8 @@ from typing import Any
 
 from opi.services.catalog.base import ConfigLayer, DetailPageSection, Service, config_path
 from opi.services.catalog.invite.config_model import InviteConfig
-from opi.services.services import service_entry_name
-from opi.services.services_enums import ServiceType
+from opi.services.services import ServiceDefinition, service_entry_name
+from opi.services.services_enums import ServiceBinding, ServiceType
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,25 @@ def _generate_invite_key() -> str:
 
 class InviteService(Service):
     service_type = ServiceType.INVITE
+    definition = ServiceDefinition(
+        name="Uitnodiging",
+        description=(
+            "Nodig gebruikers uit voor het Keycloak-realm van dit project via een deelbare link. "
+            "De link is de enige toegangsdrempel: wie hem heeft kan een account aanmaken. "
+            "Vereist de Keycloak-service."
+        ),
+        help_template="invite/help.html.j2",
+        icon="envelop",
+        color="lichtblauw",
+        # binding is not meaningful here (an invite provisions nothing), but the field is
+        # required; "component" matches keycloak/attachments.
+        binding=ServiceBinding.COMPONENT,
+        variables=[],
+        # Path-syntax requirement: auto-selects keycloak, locks it in the UI, and validates
+        # at submit that keycloak is present. An invite assigns a realm role, so keycloak
+        # must exist. Do NOT build a second dependency mechanism next to this.
+        requires=["services/keycloak"],
+    )
     config_model = InviteConfig
     config_schema_version = "1.0"
     config_section_id = "invite-config"

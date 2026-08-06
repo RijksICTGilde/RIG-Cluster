@@ -15,12 +15,29 @@ from typing import Any
 
 from opi.services.catalog.base import ConfigLayer, DeploymentStateContext, DeploymentStateFact, Service
 from opi.services.catalog.sleep_mode.config_model import SleepModeConfig
-from opi.services.services import service_entry_name
-from opi.services.services_enums import ServiceType
+from opi.services.services import ServiceDefinition, service_entry_name
+from opi.services.services_enums import ServiceBinding, ServiceType
 
 
 class SleepModeService(Service):
     service_type = ServiceType.SLEEP_MODE
+    definition = ServiceDefinition(
+        name="Slaapstand",
+        description=(
+            "Zet bepaalde deployments, op basis van matching, na een deadline in slaapstand "
+            "en wek ze op verzoek weer op. De deployment doet een koude start."
+        ),
+        help_template="sleep_mode/help.html.j2",
+        icon="klok",
+        color="donkerblauw",
+        binding=ServiceBinding.DEPLOYMENT,
+        # Selectable in the wizard with its own project-level config section
+        # (SleepModeService.config_form_section). A cluster-wide default still
+        # applies, and `match` scopes which deployments it affects.
+        variables=[],
+        # actions_provider is bound by opi/services/catalog/sleep_mode/__init__.py
+        # (the wake button); services.py must not import the catalog package.
+    )
     config_model = SleepModeConfig
     config_schema_version = "1.0"
     config_section_id = "sleep-mode-config"

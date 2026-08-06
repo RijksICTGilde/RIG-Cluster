@@ -17,9 +17,11 @@ from opi.services.catalog.postgresql_database.config_model import (
     PostgresqlDatabaseConfig,
     PostgresqlDatabaseProjectConfig,
 )
+from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.catalog.shared.postgres_pages import DatabasePagesMixin, database_actions
-from opi.services.services_enums import ManagerKey, ServiceType
+from opi.services.services import ServiceDefinition
+from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType
 from opi.utils.secrets import DatabaseSecret
 
 if TYPE_CHECKING:
@@ -30,6 +32,18 @@ logger = logging.getLogger(__name__)
 
 class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
     service_type = ServiceType.POSTGRESQL_DATABASE
+    definition = ServiceDefinition(
+        name="PostgreSQL Database",
+        description="Database service voor applicaties",
+        help_template="postgresql_database/help.html.j2",
+        icon="database",
+        color="donkerblauw",
+        binding=ServiceBinding.DEPLOYMENT,
+        secret_class="DatabaseSecret",
+        variables=[var.value for var in DatabaseVariables],
+        cleanup_strategy=CleanupStrategy.DEFERRED,
+        backup_label="database",
+    )
     # The user-facing config is the project-layer scope decision; the deployment-layer
     # clone state is OPI-managed (see config_model_for below). config_model names the
     # project model so its committed fragment documents the user config.

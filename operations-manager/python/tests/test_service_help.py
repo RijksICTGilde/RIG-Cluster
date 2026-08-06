@@ -26,7 +26,20 @@ from opi.services import ServiceType
 from opi.services.services import ServiceAdapter
 
 _TEMPLATE_ROOT = pathlib.Path(opi.__file__).parent / "templates"
+# A service's explanation lives in that service's own package (RC-36); the loader has
+# the catalog directory on its search path, so a help_template resolves against either.
+_CATALOG_ROOT = pathlib.Path(opi.__file__).parent / "services" / "catalog"
 _HELP_ROOT = _TEMPLATE_ROOT / "help"
+
+
+def _help_file(help_template: str) -> pathlib.Path | None:
+    """The file a help_template resolves to, or None when it resolves to nothing."""
+    for root in (_TEMPLATE_ROOT, _CATALOG_ROOT, _HELP_ROOT):
+        candidate = root / help_template
+        if candidate.is_file():
+            return candidate
+    return None
+
 
 # Every template that renders a service block. All of them go through the macro.
 _SERVICE_BLOCK_USERS = (
@@ -98,7 +111,7 @@ def test_every_service_has_a_help_template(service: ServiceType) -> None:
     definition = ServiceAdapter.get_service_definition(service)
     assert definition.help_template, (
         f"service {service.value!r} has no help_template, so it shows no explanation and no "
-        f"question mark -- add opi/templates/help/{service.value}.html.j2 and point at it"
+        f"question mark -- add a help.html.j2 to its package and point at it"
     )
 
 
@@ -107,8 +120,8 @@ def test_the_help_template_of_every_service_exists(service: ServiceType) -> None
     """A missing file fails silently: the button renders, the modal shows an error."""
     help_template = ServiceAdapter.get_service_definition(service).help_template
     assert help_template is not None
-    assert (_HELP_ROOT / help_template).is_file(), (
-        f"service {service.value!r} points at help/{help_template}, which does not exist"
+    assert _help_file(help_template) is not None, (
+        f"service {service.value!r} points at {help_template}, which does not exist"
     )
 
 
@@ -117,10 +130,10 @@ def test_the_help_template_of_every_service_renders(service: ServiceType) -> Non
     """The modal fetches the template at click time, so a broken one is only seen there."""
     help_template = ServiceAdapter.get_service_definition(service).help_template
     assert help_template is not None
-    rendered = get_templates().get_template(f"help/{help_template}").render()
-    assert rendered.strip(), f"help/{help_template} renders empty"
+    rendered = get_templates().get_template(help_template).render()
+    assert rendered.strip(), f"{help_template} renders empty"
     assert "<c-" not in rendered, (
-        f"help/{help_template} still contains an unprocessed ROOS component; check the component name"
+        f"{help_template} still contains an unprocessed ROOS component; check the component name"
     )
 
 
@@ -129,7 +142,7 @@ def test_the_help_template_uses_the_icon_of_its_service(service: ServiceType) ->
     """The card and the modal should look like they belong together."""
     definition = ServiceAdapter.get_service_definition(service)
     assert definition.help_template is not None
-    rendered = get_templates().get_template(f"help/{definition.help_template}").render()
+    rendered = get_templates().get_template(definition.help_template).render()
     assert f"rvo-icon-{definition.icon}" in rendered, (
-        f"help/{definition.help_template} does not show the service icon {definition.icon!r}"
+        f"{definition.help_template} does not show the service icon {definition.icon!r}"
     )

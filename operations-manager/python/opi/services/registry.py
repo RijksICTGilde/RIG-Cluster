@@ -42,7 +42,7 @@ from opi.services.services_enums import HookPoint, ServiceType
 if TYPE_CHECKING:
     from opi.forms.editables.editable import Editable
     from opi.forms.visualizers.visualizer import EditableVisualizer
-    from opi.services.services import DeploymentAction
+    from opi.services.services import DeploymentAction, ServiceDefinition
 
 # One entry per ServiceType. The coverage guard asserts completeness.
 SERVICES: dict[ServiceType, Service] = {
@@ -67,6 +67,18 @@ SERVICES: dict[ServiceType, Service] = {
     ServiceType.DEPLOYMENT_HEALTH: DeploymentHealthService(),
     ServiceType.USER_ENV_VARS: UserEnvVarsService(),
     ServiceType.ALIASES: AliasesService(),
+}
+
+#: Every service's metadata, keyed by service type -- assembled from what the services
+#: themselves declare (RC-36), so adding a service is one package plus its registration
+#: above, never an edit to a shared metadata list.
+#:
+#: The iteration order is visible (``get_backupable_labels`` documents that it follows
+#: this dict, and the service picker orders by the enum), so it is pinned explicitly to
+#: ``ServiceType`` order instead of inheriting whatever order ``SERVICES`` happens to
+#: have. That reproduces the order of the hand-written list this replaced.
+SERVICE_DEFINITIONS: dict[ServiceType, ServiceDefinition] = {
+    service_type: SERVICES[service_type].definition for service_type in ServiceType
 }
 
 

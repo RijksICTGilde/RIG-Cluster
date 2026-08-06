@@ -20,7 +20,14 @@ from opi.forms.visualizers import wizard_sections
 from opi.services.services import ServiceAdapter
 
 _STEP = pathlib.Path(opi.__file__).parent / "templates/wizard/modal_wizard_step.html.j2"
-_HELP_DIR = pathlib.Path(opi.__file__).parent / "templates/help"
+# A help_template resolves against the template root, the service catalog (a service's
+# own help.html.j2 lives in its package, RC-36), or templates/help for the few
+# explanations that belong to no single service.
+_HELP_ROOTS = (
+    pathlib.Path(opi.__file__).parent / "templates",
+    pathlib.Path(opi.__file__).parent / "services" / "catalog",
+    pathlib.Path(opi.__file__).parent / "templates" / "help",
+)
 
 _PROJECT_SECTIONS = [
     name
@@ -39,7 +46,7 @@ def test_every_service_config_section_offers_its_explanation(name: str) -> None:
     section = getattr(wizard_sections, name)
 
     assert section.help_template, f"{name} has no explanation to open"
-    assert (_HELP_DIR / section.help_template).exists(), f"{name} points at a missing template"
+    assert any((root / section.help_template).is_file() for root in _HELP_ROOTS), f"{name} points at a missing template"
 
 
 def test_the_step_template_renders_the_button() -> None:
