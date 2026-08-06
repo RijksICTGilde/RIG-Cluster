@@ -17,7 +17,7 @@ service name in a form SUBMISSION, and the services-list format in wizard STATE.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from opi.forms.editables.processor import EditableFormProcessor
@@ -194,3 +194,48 @@ class TestReadersFindConfigUnderEitherRoot:
             smart_get_value({"services": data.get("services", [])}, "services/keycloak/config/template") == "sso-only"
         )
         assert "template" not in data["_services-config"][0]["config"]
+
+
+class TestEenLezerVindtDeConfigOokAlsAlleenDeVirtueleSleutelBestaat:
+    """De wizard houdt de dienstconfig onder ``_services-config``; ``services`` bevat daar
+    alleen de gekozen namen, en soms bestaat die sleutel nog helemaal niet.
+
+    Een lezer vraagt om het echte pad, want dat is waar de waarde in het projectbestand
+    staat. De terugval naar de andere root bestond al, maar werd overgeslagen zodra de
+    genoemde root helemaal ontbrak: dat werd gelezen als "dict-vormige root, doe een gewone
+    wandeling". Gevolg: de realm-rollen bij een uitnodiging waren niet te kiezen, terwijl
+    keycloak ze in dezelfde wizard wel had.
+    """
+
+    ROLLEN: ClassVar[dict] = {"realm-roles": [{"name": "beheerder"}], "restrict-access": {"realm-role": "allowed-user"}}
+    PAD = "services/keycloak/config/realm-roles"
+
+    def test_alleen_de_virtuele_sleutel(self) -> None:
+        from opi.forms.editables.service_path import smart_get_value
+
+        data = {"_services-config": [{"name": "keycloak", "config": self.ROLLEN}]}
+        assert smart_get_value(data, self.PAD) == [{"name": "beheerder"}]
+
+    def test_namen_in_services_en_config_in_de_virtuele_sleutel(self) -> None:
+        from opi.forms.editables.service_path import smart_get_value
+
+        data = {
+            "services": ["keycloak", "invite"],
+            "_services-config": [{"name": "keycloak", "config": self.ROLLEN}],
+        }
+        assert smart_get_value(data, self.PAD) == [{"name": "beheerder"}]
+
+    def test_het_opgeslagen_project_blijft_gewoon_werken(self) -> None:
+        from opi.forms.editables.service_path import smart_get_value
+
+        data = {"services": [{"name": "keycloak", "config": self.ROLLEN}]}
+        assert smart_get_value(data, self.PAD) == [{"name": "beheerder"}]
+
+    def test_de_rollenkeuze_is_daardoor_gevuld(self) -> None:
+        """Het zichtbare gevolg, en de reden dat dit een bug was en geen detail."""
+        from opi.forms.visualizers.providers import InviteRealmRoleOptionsProvider
+
+        data = {"_services-config": [{"name": "keycloak", "config": self.ROLLEN}]}
+        waarden = [optie["value"] for optie in InviteRealmRoleOptionsProvider(yaml_data=data).get_options()]
+        assert "beheerder" in waarden
+        assert "allowed-user" in waarden, "de wall-rol hoort erbij; elk live project gebruikt hem"
