@@ -2,7 +2,7 @@
 
 import pytest
 from opi.services.services import ServiceAdapter, ServiceDefinition, VariableDefinition
-from opi.services.services_enums import ServiceScope, ServiceType
+from opi.services.services_enums import ServiceBinding, ServiceType
 
 
 class TestServiceType:
@@ -63,7 +63,7 @@ class TestGetServiceDefinition:
 
     def test_publish_on_web_definition(self):
         defn = ServiceAdapter.get_service_definition(ServiceType.PUBLISH_ON_WEB)
-        assert defn.scope is ServiceScope.COMPONENT
+        assert defn.binding is ServiceBinding.COMPONENT
         assert defn.name == "Publiceren op het web"
 
     def test_publish_on_web_exposes_public_host_and_hostname(self):
@@ -78,7 +78,7 @@ class TestGetServiceDefinition:
 
     def test_postgresql_definition(self):
         defn = ServiceAdapter.get_service_definition(ServiceType.POSTGRESQL_DATABASE)
-        assert defn.scope is ServiceScope.DEPLOYMENT
+        assert defn.binding is ServiceBinding.DEPLOYMENT
         assert defn.secret_class == "DatabaseSecret"
 
     def test_every_service_has_definition(self):
@@ -87,7 +87,7 @@ class TestGetServiceDefinition:
             assert defn is not None
             assert defn.name
             assert defn.description
-            assert defn.scope in (ServiceScope.COMPONENT, ServiceScope.DEPLOYMENT)
+            assert defn.binding in (ServiceBinding.COMPONENT, ServiceBinding.DEPLOYMENT)
 
 
 class TestGetServiceByValue:

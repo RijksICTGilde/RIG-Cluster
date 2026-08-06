@@ -56,7 +56,7 @@ Adding a service touches exactly three places:
 1. `opi/services/services_enums.py` - a `ServiceType` member. This is the typed identity,
    used with Pyright coverage across the codebase.
 2. `opi/services/services.py` - a `ServiceDefinition` in `ServiceAdapter.SERVICE_DEFINITIONS`:
-   display name, description, icon, colour, scope, the variables it exposes to an app, and
+   display name, description, icon, colour, binding, the variables it exposes to an app, and
    optionally `requires`, `backup_label`, `cleanup_strategy`. This is what the
    `/services` page renders and what a `Service` subclass binds automatically as
    `cls.definition`.
@@ -134,6 +134,36 @@ config_path(ConfigLayer.COMPONENT, ServiceType.PUBLISH_ON_WEB, "config", "tls")
 | `COMPONENT` | `components[*]/services{<svc>}` | Per-component settings (TLS mode, scrape port, storage mounts) |
 | `DEPLOYMENT` | `deployments[*]/services{<svc>}` | Per-deployment state, usually OPI-managed |
 | `DEPLOYMENT_COMPONENT` | `deployments[*]/components[*]/services{<svc>}` | Per-deployment override of a component setting |
+
+### Binding is not a config layer
+
+`ServiceDefinition.binding` (`ServiceBinding.COMPONENT` / `DEPLOYMENT`) and `ConfigLayer`
+look like the same question and are not:
+
+| | Answers | Read it for |
+|---|---|---|
+| `binding` | Does an individual component tick this service, or does a whole deployment get it at once | Selection: the per-component services checkbox group, "is this component-bound" checks |
+| `config_layers()` | At which levels of the project file this service carries settings | Configuration: which screen a setting is edited on |
+
+They genuinely disagree, so neither is a stand-in for the other. keycloak binds per
+component (each component decides whether it sits behind login) while its configuration is
+one realm for the whole project, so its config lives at `ConfigLayer.PROJECT` and nowhere
+else. The field was called `scope` until RC-33, which read like an answer to "where do I
+configure this" -- and the project-details card rendered it as literally "Component scope",
+which is how a user came to expect a keycloak settings screen per component.
+
+**Anything that tells a user where to configure something reads the layers**, via
+`service.config_layers()` / `service.config_form_section(layer)`, never `binding`.
+`opi/services/config_location.py` holds the derived, user-facing phrasing
+(`project_step_config_hint`, `binding_label`); `tests/test_service_config_location.py`
+locks which of the two is the source of truth, with keycloak as the counterexample.
+
+That module is also the answer to a service that carries no project-level config at all.
+The project-wide services step can only show sections for `ConfigLayer.PROJECT`, so ticking
+a component-only service there used to produce nothing and explain nothing. The card now
+carries one derived line ("Geen projectbrede instellingen; u stelt deze dienst per
+component, bij Componenten in."). A new service needs no template change to get it: the
+sentence is built from the layers the service declares.
 
 ## Forms and wizard screens
 
