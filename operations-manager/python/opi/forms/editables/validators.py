@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import TypeAdapter, ValidationError
 
+from opi.forms.editables.converters import command_line_has_unbalanced_quote, split_command_line
+
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
@@ -490,21 +492,23 @@ class DomainFormatValidator:
         return []
 
 
-class CommandArgumentValidator:
-    """One argument of a container's start command.
+class CommandLineValidator:
+    """Het startcommando van een container, als een regel tekst.
 
-    Deliberately permissive about content and strict about shape. A real command looks
-    like ``["/bin/sh", "-c", "<script>"]``, so spaces, quotes and newlines all belong in
-    an argument and rejecting them would rule out the case this field exists for.
+    Ruim over de inhoud en streng over de vorm. Een echt commando ziet eruit als
+    ``sh -c "<script>"``, dus spaties, quotes en operatoren horen erin thuis; die weigeren
+    zou juist het geval uitsluiten waarvoor het veld bestaat.
 
-    What is refused: an empty or blank argument (Kubernetes passes it through as an empty
-    string, which silently shifts the meaning of everything after it), and control
-    characters other than newline and tab, which cannot be typed on purpose and do reach
-    the container as-is.
+    Wat wel geweigerd wordt:
 
-    Not a defence against YAML injection: the canonical writer emits a multi-line value as
-    a literal block, so a crafted argument comes back as one string rather than as extra
-    keys. ``tests/test_component_command_field.py`` holds that property.
+    * een quote die openstaat aan het eind. Dan splitst de regel anders dan de gebruiker
+      bedoelde, en dat is precies het soort fout dat pas in een CrashLoopBackOff opvalt;
+    * stuurtekens, die je niet per ongeluk typt en die ongewijzigd de container bereiken;
+    * een regel die na het splitsen niets oplevert terwijl er wel iets stond.
+
+    Geen verdediging tegen YAML-injectie: de canonieke schrijver zet een meerregelige
+    waarde neer als literal block, dus een geknutseld argument komt terug als een string en
+    niet als extra sleutels. ``tests/test_component_command_field.py`` bewaakt dat.
     """
 
     MAX_LENGTH = 4096
@@ -514,10 +518,14 @@ class CommandArgumentValidator:
             return []
         text = str(value)
         if not text.strip():
-            return ["Een leeg argument heeft geen betekenis; laat de regel weg."]
+            return []
         if len(text) > self.MAX_LENGTH:
-            return [f"Een argument mag hoogstens {self.MAX_LENGTH} tekens zijn."]
+            return [f"Een startcommando mag hoogstens {self.MAX_LENGTH} tekens zijn."]
         verboden = [c for c in text if ord(c) < 32 and c not in "\n\t"]
         if verboden:
-            return ["Dit argument bevat een stuurteken dat niet in een commando hoort."]
+            return ["Dit commando bevat een stuurteken dat er niet in hoort."]
+        if command_line_has_unbalanced_quote(text):
+            return ['Er staat een dubbele quote open. Sluit hem, of typ "" als je er letterlijk een bedoelt.']
+        if not split_command_line(text):
+            return ["Dit commando levert geen argumenten op."]
         return []
