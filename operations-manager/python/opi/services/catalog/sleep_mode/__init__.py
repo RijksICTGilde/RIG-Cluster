@@ -35,8 +35,8 @@ class SleepModeService(Service):
         # (SleepModeService.config_form_section). A cluster-wide default still
         # applies, and `match` scopes which deployments it affects.
         variables=[],
-        # actions_provider is bound by opi/services/catalog/sleep_mode/__init__.py
-        # (the wake button); services.py must not import the catalog package.
+        # actions_provider (the wake button) is bound at the bottom of this module; see
+        # the note there for why it cannot be declared here.
     )
     config_model = SleepModeConfig
     config_schema_version = "1.0"
@@ -135,8 +135,9 @@ class SleepModeService(Service):
 
 
 # Bind the wake button onto the bound ServiceDefinition. Done here (not in services.py)
-# so services.py never imports the catalog package -- the definition is a mutable
-# dataclass, and the registry imports this module at startup, before any request.
+# The wake button lives in actions.py, which imports this package for its config and
+# state helpers -- so it cannot be imported before the class exists. The definition is a
+# mutable dataclass and the registry imports this module at startup, before any request.
 from opi.services.catalog.sleep_mode.actions import sleep_actions  # noqa: E402
 
 SleepModeService.definition.actions_provider = sleep_actions
