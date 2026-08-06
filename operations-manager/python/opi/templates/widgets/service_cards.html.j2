@@ -17,6 +17,9 @@
                 {% if card.is_locked and card.dependents_labels %}
                 <p class="service-card__hint">Vereist door: {{ card.dependents_labels|join(', ')|e }}</p>
                 {% endif %}
+                {% if card.config_hint %}
+                <p class="service-card__hint">{{ card.config_hint|e }}</p>
+                {% endif %}
             </div>
         </div>
         {% endfor %}
