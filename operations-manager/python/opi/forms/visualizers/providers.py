@@ -10,7 +10,7 @@ import re
 from typing import Any, ClassVar, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
-from opi.services.services import ServiceAdapter
+from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceKind, ServiceType
 
 logger = logging.getLogger(__name__)
@@ -929,14 +929,95 @@ class WakerComponentOptionsProvider:
         return options
 
 
+def _cross_domain_peer_side(yaml_path: str | None) -> str:
+    """Which side of the rule (``from``/``to``) the field being rendered sits on.
+
+    The peer fields are DEFINED on the peer side already (``from`` for inbound, ``to`` for
+    outbound), so the side the path names is the peer side -- the provider needs no separate
+    notion of direction. ``.../inbound[0]/from/deployment`` -> ``from``.
+    """
+    segments = (yaml_path or "").split("/")
+    return segments[-2] if len(segments) >= 2 else ""
+
+
+def _cross_domain_direction(yaml_path: str | None) -> str:
+    """``inbound`` or ``outbound``, read from the rule list the field sits in."""
+    for segment in (yaml_path or "").split("/"):
+        base = segment.split("[")[0]
+        if base in ("inbound", "outbound"):
+            return base
+    return ""
+
+
+def _cross_domain_peer_ref(row_data: dict[str, Any] | None, yaml_path: str | None) -> dict[str, Any]:
+    """The row's peer block (``{project, deployment, component}``), or an empty dict."""
+    side = _cross_domain_peer_side(yaml_path)
+    peer = (row_data or {}).get(side)
+    return peer if isinstance(peer, dict) else {}
+
+
+def _cross_domain_peer_project_data(yaml_data: dict[str, Any], project_name: str | None) -> dict[str, Any] | None:
+    """The peer project's stored data, or None when it may not or cannot be read.
+
+    Reading another project's file while rendering a form is a real dependency, so it is
+    kept narrow and lazy: only a project on the authorized ``_cross_domain_projects`` list is
+    looked up, and the lookup is the ProjectStore's in-memory cache (no I/O). A peer that was
+    deleted, or that this user may no longer see, simply yields None and the field falls back
+    to keeping whatever is stored.
+    """
+    if not project_name:
+        return None
+    if project_name not in (yaml_data.get("_cross_domain_projects") or []):
+        return None
+    from opi.services.project_store import get_project_store
+
+    summary = get_project_store().get(project_name)
+    return summary.data if summary is not None and isinstance(summary.data, dict) else None
+
+
+def _cross_domain_deployment(project_data: dict[str, Any] | None, deployment_name: str | None) -> dict[str, Any]:
+    for deployment in (project_data or {}).get("deployments") or []:
+        if isinstance(deployment, dict) and deployment.get("name") == deployment_name:
+            return deployment
+    return {}
+
+
+def _cross_domain_options(
+    names: list[str],
+    current_value: str | None,
+    *,
+    empty_label: str,
+    choose_label: str,
+    stale_suffix: str,
+) -> list[dict[str, Any]]:
+    """The shared option shape of every cross-domain select.
+
+    Nothing to offer and nothing stored -> one explanatory option instead of a blank select.
+    A stored value that is not (or no longer) in the list stays selectable, so saving the form
+    never silently drops a rule someone set deliberately.
+    """
+    if not names and not current_value:
+        return [{"value": "", "label": empty_label}]
+    options = [{"value": "", "label": choose_label}]
+    options.extend({"value": name, "label": name} for name in names)
+    if current_value and current_value not in names:
+        options.append({"value": current_value, "label": f"{current_value} {stale_suffix}"})
+    return options
+
+
 class CrossDomainProjectOptionsProvider:
     """Peer projects a cross-domain rule may reference.
 
     Reads ``_cross_domain_projects`` from ``yaml_data`` -- a precomputed list of project
-    names the logged-in user is authorized for (set by ``modal_wizard_init``), excluding the
-    own project. Empty (e.g. the create wizard, where the context is not populated) shows an
-    explanatory option instead of a blank select. A stored value that is no longer in the
-    list is kept selectable so a save does not silently drop it.
+    names the logged-in user is authorized for (set by ``build_cross_domain_context``),
+    excluding the own project. Empty (no context at all) shows an explanatory option instead
+    of a blank select. A stored value that is no longer in the list is kept selectable so a
+    save does not silently drop it.
+
+    This list is deliberately limited to projects the user is authorized for: a peer you
+    cannot see is a peer you cannot name here. That does narrow cross-domain access to
+    projects you are a member of; widening it would disclose the platform's project names to
+    every user and is a separate decision.
     """
 
     def __init__(self, yaml_data: dict[str, Any] | None = None, current_value: str | None = None) -> None:
@@ -945,13 +1026,117 @@ class CrossDomainProjectOptionsProvider:
 
     def get_options(self) -> list[dict[str, Any]]:
         names = [n for n in (self.yaml_data.get("_cross_domain_projects") or []) if n]
-        if not names and not self.current_value:
-            return [{"value": "", "label": "Geen andere projecten beschikbaar waar u toegang op heeft"}]
-        options = [{"value": "", "label": "-- Kies een project --"}]
-        options.extend({"value": name, "label": name} for name in names)
-        if self.current_value and self.current_value not in names:
-            options.append({"value": self.current_value, "label": f"{self.current_value} (niet meer beschikbaar)"})
-        return options
+        return _cross_domain_options(
+            names,
+            self.current_value,
+            empty_label="Geen andere projecten beschikbaar waar u toegang op heeft",
+            choose_label="-- Kies een project --",
+            stale_suffix="(niet meer beschikbaar)",
+        )
+
+
+class CrossDomainPeerDeploymentOptionsProvider:
+    """The deployments of the peer project chosen in THIS row.
+
+    A dependent select: the row's peer ``project`` decides the list, so the field reads
+    ``row_data`` (the sequence renderer's per-row context) rather than a precomputed union.
+    Only deployments on the cluster this instance manages are offered -- a rule pointing at a
+    deployment elsewhere resolves to nothing (``resolve.py`` skips it), so offering it would
+    be offering a rule that silently never applies.
+
+    Left empty deliberately on a project-level rule: the peer deployment may stay open there
+    and be filled per deployment (that is what the deployment layer is for), hence no
+    ``required`` on this field.
+    """
+
+    def __init__(
+        self,
+        yaml_data: dict[str, Any] | None = None,
+        row_data: dict[str, Any] | None = None,
+        yaml_path: str | None = None,
+        current_value: str | None = None,
+    ) -> None:
+        self.yaml_data = yaml_data or {}
+        self.row_data = row_data or {}
+        self.yaml_path = yaml_path
+        self.current_value = current_value
+
+    def get_options(self) -> list[dict[str, Any]]:
+        from opi.core.config import settings
+
+        peer = _cross_domain_peer_ref(self.row_data, self.yaml_path)
+        project_data = _cross_domain_peer_project_data(self.yaml_data, peer.get("project"))
+        names = [
+            deployment.get("name")
+            for deployment in (project_data or {}).get("deployments") or []
+            if isinstance(deployment, dict)
+            and deployment.get("name")
+            and deployment.get("cluster") == settings.CLUSTER_MANAGER
+        ]
+        empty_label = (
+            "Kies eerst een project" if not peer.get("project") else "Dit project heeft geen deployments op dit cluster"
+        )
+        return _cross_domain_options(
+            names,
+            self.current_value,
+            empty_label=empty_label,
+            choose_label="-- Elke deployment (per deployment invullen) --",
+            stale_suffix="(niet gevonden)",
+        )
+
+
+class CrossDomainPeerComponentOptionsProvider:
+    """The components of the peer deployment chosen in THIS row.
+
+    The next link in the same cascade: project -> deployment -> component. Without a peer
+    deployment chosen -- which is a legitimate state, a project-level rule may leave it open --
+    the list is every component the peer runs on this cluster, deduped. That is not a guess:
+    a component name is a project-level definition, deployments only reference it, so the
+    union is exactly the set of names that could be valid once a deployment is filled in.
+    """
+
+    def __init__(
+        self,
+        yaml_data: dict[str, Any] | None = None,
+        row_data: dict[str, Any] | None = None,
+        yaml_path: str | None = None,
+        current_value: str | None = None,
+    ) -> None:
+        self.yaml_data = yaml_data or {}
+        self.row_data = row_data or {}
+        self.yaml_path = yaml_path
+        self.current_value = current_value
+
+    def get_options(self) -> list[dict[str, Any]]:
+        from opi.core.config import settings
+
+        peer = _cross_domain_peer_ref(self.row_data, self.yaml_path)
+        project_data = _cross_domain_peer_project_data(self.yaml_data, peer.get("project"))
+        deployments = [
+            deployment
+            for deployment in (project_data or {}).get("deployments") or []
+            if isinstance(deployment, dict) and deployment.get("cluster") == settings.CLUSTER_MANAGER
+        ]
+        chosen = _cross_domain_deployment(project_data, peer.get("deployment"))
+        if chosen:
+            deployments = [chosen]
+        names: list[str] = []
+        for deployment in deployments:
+            for component in deployment.get("components") or []:
+                reference = component.get("reference") if isinstance(component, dict) else None
+                if reference and reference not in names:
+                    names.append(reference)
+        names.sort()
+        empty_label = (
+            "Kies eerst een project" if not peer.get("project") else "Dit project heeft geen componenten op dit cluster"
+        )
+        return _cross_domain_options(
+            names,
+            self.current_value,
+            empty_label=empty_label,
+            choose_label="-- Kies een component --",
+            stale_suffix="(niet gevonden)",
+        )
 
 
 class CrossDomainLocalComponentOptionsProvider:
@@ -971,44 +1156,112 @@ class CrossDomainLocalComponentOptionsProvider:
             for component in (self.yaml_data.get("components") or [])
             if isinstance(component, dict) and component.get("name")
         ]
-        if not names and not self.current_value:
-            return [{"value": "", "label": "Nog geen componenten: voeg eerst een component toe"}]
-        options = [{"value": "", "label": "-- Kies een component --"}]
-        options.extend({"value": name, "label": name} for name in names)
-        if self.current_value and self.current_value not in names:
-            options.append({"value": self.current_value, "label": f"{self.current_value} (bestaat niet meer)"})
-        return options
+        return _cross_domain_options(
+            names,
+            self.current_value,
+            empty_label="Nog geen componenten: voeg eerst een component toe",
+            choose_label="-- Kies een component --",
+            stale_suffix="(bestaat niet meer)",
+        )
+
+
+def _cross_domain_component_ports(component: dict[str, Any]) -> list[int]:
+    """The ports a component is reachable on: its inbound ports, plus 4180 behind the wall.
+
+    Same rule the precomputed union used, now per component: an authorization-wall fronts the
+    component with an oauth2-proxy on 4180, which is then the port the other side actually
+    reaches it on.
+    """
+    ports = [port for port in (component.get("ports") or {}).get("inbound") or [] if isinstance(port, int)]
+    for entry in component.get("services") or []:
+        if service_entry_name(entry) == ServiceType.AUTHORIZATION_WALL.value and 4180 not in ports:
+            ports.append(4180)
+    return ports
 
 
 class CrossDomainPortOptionsProvider:
-    """Ports a cross-domain rule may target.
+    """The ports of the RECEIVING side of this rule.
 
-    Reads ``_cross_domain_ports`` from ``yaml_data`` -- a precomputed list of the project's
-    own component inbound ports plus 4180 where an authorization-wall fronts a component (the
-    port the receiving side is actually reachable on). One precomputed union for now; the
-    help text explains the receiving-side and 4180 caveats. A stored value not in the list is
-    kept selectable.
+    A rule's port always sits on ``to``, but who ``to`` is differs per direction, and that is
+    exactly what this field must decide for the user instead of leaving it to them:
 
-    This used to say the framework cannot filter options per row. It can: the sequence
+    * inbound  -- ``to`` is my own component, so the list is that component's inbound ports.
+    * outbound -- ``to`` is the peer's component, so the list is read from the peer project.
+
+    Both are per-row questions (which component did THIS row pick), answered from ``row_data``.
+    It used to be one precomputed union of the project's OWN ports for both directions, on the
+    stated grounds that the framework cannot filter options per row. It can: the sequence
     renderer builds an ``item_context`` PER ROW and providers receive exactly the kwargs they
     declare in ``__init__`` (``_filter_provider_kwargs``). ``exclude_references`` has always
-    travelled that way, and ``row_data`` carries the row's own stored values, so a per-row
-    dependent select needs no framework change.
+    travelled that way, and ``row_data`` carries the row's own stored values.
+
+    With no component chosen yet the list falls back to the union of the own project's ports
+    (``_cross_domain_ports``) for inbound, and stays empty with an explanation for outbound.
     """
 
-    def __init__(self, yaml_data: dict[str, Any] | None = None, current_value: str | None = None) -> None:
+    def __init__(
+        self,
+        yaml_data: dict[str, Any] | None = None,
+        row_data: dict[str, Any] | None = None,
+        yaml_path: str | None = None,
+        current_value: str | None = None,
+    ) -> None:
         self.yaml_data = yaml_data or {}
+        self.row_data = row_data or {}
+        self.yaml_path = yaml_path
         self.current_value = current_value
 
+    def _own_ports(self) -> tuple[list[int], str]:
+        """Ports of my own component named on the ``to`` side of this inbound row."""
+        own_side = self.row_data.get("to")
+        component_name = own_side.get("component") if isinstance(own_side, dict) else None
+        for component in self.yaml_data.get("components") or []:
+            if isinstance(component, dict) and component.get("name") == component_name:
+                return _cross_domain_component_ports(component), "Dit component heeft geen inbound-poorten"
+        # No own component picked yet (or it vanished): the project-wide union, so the field
+        # is usable before the rest of the row is filled in.
+        union = [port for port in (self.yaml_data.get("_cross_domain_ports") or []) if isinstance(port, int)]
+        return union, "Geen poorten bekend: stel eerst inbound-poorten in op een component"
+
+    def _peer_ports(self) -> tuple[list[int], str]:
+        """Ports of the peer component named on the ``to`` side of this outbound row.
+
+        Read from the peer's project-level ``components`` definition, not from its deployment:
+        ports are a property of the component, and a rule may legitimately leave the peer
+        deployment open.
+        """
+        # The port always lives on ``to``, which for an outbound rule is the peer.
+        peer = _cross_domain_peer_ref(self.row_data, self.yaml_path)
+        project_data = _cross_domain_peer_project_data(self.yaml_data, peer.get("project"))
+        if not peer.get("project"):
+            return [], "Kies eerst een project"
+        if not peer.get("component"):
+            return [], "Kies eerst een component"
+        return _peer_component_ports(project_data, peer.get("component")), ("Dit component heeft geen inbound-poorten")
+
     def get_options(self) -> list[dict[str, Any]]:
-        ports = [str(p) for p in (self.yaml_data.get("_cross_domain_ports") or []) if p]
-        if not ports and not self.current_value:
-            return [{"value": "", "label": "Geen poorten bekend: stel eerst inbound-poorten in op een component"}]
-        options = [{"value": "", "label": "-- Kies een poort --"}]
-        options.extend({"value": port, "label": port} for port in ports)
-        if self.current_value and str(self.current_value) not in ports:
-            options.append({"value": str(self.current_value), "label": str(self.current_value)})
-        return options
+        ports, empty_label = (
+            self._peer_ports() if _cross_domain_direction(self.yaml_path) == "outbound" else self._own_ports()
+        )
+        return _cross_domain_options(
+            [str(port) for port in ports],
+            str(self.current_value) if self.current_value else None,
+            empty_label=empty_label,
+            choose_label="-- Kies een poort --",
+            stale_suffix="(niet in de lijst)",
+        )
+
+
+def _peer_component_ports(project_data: dict[str, Any] | None, component_name: str | None) -> list[int]:
+    """A peer component's reachable ports.
+
+    A deployment lists components by ``reference``; the ports live on the project's own
+    ``components`` definition, so the name is resolved there.
+    """
+    for component in (project_data or {}).get("components") or []:
+        if isinstance(component, dict) and component.get("name") == component_name:
+            return _cross_domain_component_ports(component)
+    return []
 
 
 class InviteLanguageOptionsProvider:
@@ -1198,6 +1451,8 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "InviteApplicationUrlOptionsProvider": InviteApplicationUrlOptionsProvider,
     "InviteRealmRoleOptionsProvider": InviteRealmRoleOptionsProvider,
     "CrossDomainProjectOptionsProvider": CrossDomainProjectOptionsProvider,
+    "CrossDomainPeerDeploymentOptionsProvider": CrossDomainPeerDeploymentOptionsProvider,
+    "CrossDomainPeerComponentOptionsProvider": CrossDomainPeerComponentOptionsProvider,
     "CrossDomainLocalComponentOptionsProvider": CrossDomainLocalComponentOptionsProvider,
     "CrossDomainPortOptionsProvider": CrossDomainPortOptionsProvider,
 }
