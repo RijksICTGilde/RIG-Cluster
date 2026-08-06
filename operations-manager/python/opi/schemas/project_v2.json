@@ -143,7 +143,7 @@
     },
 
     "attachment-data-entry": {
-      "description": "A stored attachment in the project-level attachments catalog. NOT referenced from anywhere: the project-level services list validates its envelope only, and validate_service_configs skips this entry because the catalog lives under 'data' rather than 'config'. So this shape is currently validated by nothing. Kept as the only written record of it until the attachments service models its own catalog; deleting it would make the gap invisible rather than fix it.",
+      "description": "A stored attachment in the project-level attachments catalog. Still not referenced from anywhere in this document -- the project-level services list validates its envelope only -- but no longer validated by nothing: the attachments service models its catalog itself (catalog/attachments/catalog_model.py, AttachmentCatalog) and validate_service_configs now walks the DEFINE-side 'data' block through Service.data_model_for. That model is the authority (it also rejects duplicate ids and unencrypted content); this shape is kept as the written record of what the envelope holds.",
       "type": "object",
       "required": ["id", "filename", "content"],
       "additionalProperties": false,

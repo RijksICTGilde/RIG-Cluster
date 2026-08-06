@@ -21,7 +21,12 @@ from opi.services import ServiceAdapter
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.project import Project
 from opi.services.registry import get_service, property_owning_services
-from opi.services.services import service_entry_config, service_entry_name, service_entry_schema_version
+from opi.services.services import (
+    service_entry_config,
+    service_entry_data,
+    service_entry_name,
+    service_entry_schema_version,
+)
 from opi.services.services_enums import ServiceType
 from opi.utils.project_utils import ComponentValidationError, validate_component_paths, validate_root_component
 
@@ -86,6 +91,31 @@ def _validate_one_config(
         ) from e
 
 
+def _validate_one_data_block(name: str, raw: Any, layer: ConfigLayer, where: str, project_name: str) -> None:
+    """Validate one service's DEFINE-side ``data`` block against its provider's model.
+
+    The counterpart of ``_validate_one_config`` for the definitions a service stores
+    rather than the configuration of a use. Skips services that define nothing at the
+    layer. Fails closed, and reports only the validators' own reasons -- a definition
+    holds the thing itself (an attachment's content), so pydantic's ``input_value``
+    would put an encrypted blob, or worse a plaintext one, in the log and the response.
+    """
+    try:
+        service_type = ServiceType(name)
+    except ValueError:
+        return  # unknown service name -- other validation handles it
+    model = get_service(service_type).data_model_for(layer)
+    if model is None:
+        return  # service defines nothing at this layer
+    try:
+        model.model_validate(raw)
+    except ValidationError as e:
+        reasons = "; ".join(error["msg"] for error in e.errors()) or "waarde voldoet niet aan het model"
+        raise ProjectIntegrityError(
+            f"Project '{project_name}': gegevens van service '{name}' {where} zijn ongeldig: {reasons}."
+        ) from None
+
+
 def validate_service_configs(project_data: dict[str, Any]) -> None:
     """Validate every service's config against its provider's typed model (RC-5 A:
     the per-service config-validation chokepoint).
@@ -102,10 +132,18 @@ def validate_service_configs(project_data: dict[str, Any]) -> None:
 
     # Project-level service definitions.
     for name in ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", [])):
+        entry = view.service_entry(name)
+        # The DEFINE side first: what the service stores under ``data`` (the attachments
+        # catalog today). It was validated by nothing at all -- this walk only ever
+        # looked at ``config`` -- so a catalog entry with a missing filename or an id
+        # that cannot become a volume name was committed and failed at deploy time.
+        data = service_entry_data(entry)
+        if data is not None:
+            _validate_one_data_block(name, data, ConfigLayer.PROJECT, "op projectniveau", project_name)
         raw = view.service_config(name)
         if raw is None:
             continue  # bare service / no project-level config to validate
-        from_version = service_entry_schema_version(view.service_entry(name))
+        from_version = service_entry_schema_version(entry)
         _validate_one_config(name, raw, ConfigLayer.PROJECT, "op projectniveau", project_name, from_version)
 
     # Component-level service references (storage mounts, metrics port/path). Their
