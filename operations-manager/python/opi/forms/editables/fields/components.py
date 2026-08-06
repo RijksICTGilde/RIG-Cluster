@@ -10,6 +10,7 @@ from opi.forms.editables.converters import (
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.validators import (
     AllowedValuesValidator,
+    CommandArgumentValidator,
     ComponentNameValidator,
     ContainerImageValidator,
     MemoryRangeValidator,
@@ -106,6 +107,7 @@ COMPONENT_SERVICES_EDITABLE = Editable(
 #: schema demands minItems 1, so an empty list would not even validate.
 COMPONENT_COMMAND_ITEM_EDITABLE = Editable(
     yaml_path="components[*]/command[*]",
+    validator=CommandArgumentValidator(),
 )
 
 COMPONENT_COMMAND_EDITABLE = Editable(

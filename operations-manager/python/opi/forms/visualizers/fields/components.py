@@ -165,7 +165,9 @@ COMPONENT_COMMAND = EditableVisualizer(
         "Laat dit leeg tenzij je zeker weet dat het moet, en zeker weet wat erin hoort. "
         "Een waarde hier VERVANGT het startcommando dat in het image zit, dus de eigen "
         "opstartlogica van het image vervalt. Klopt het commando niet, dan start het "
-        "component helemaal niet. Elk argument is een eigen regel, zoals in een Dockerfile."
+        "component helemaal niet. Elk argument is een eigen regel, zoals in een Dockerfile. "
+        "Een samengesteld commando zet je in deze ene lijst: /bin/sh, dan -c, dan het script "
+        "als derde regel."
     ),
     children=[COMPONENT_COMMAND_ITEM],
 )
