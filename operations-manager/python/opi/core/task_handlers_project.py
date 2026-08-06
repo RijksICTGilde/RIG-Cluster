@@ -10,6 +10,8 @@ import logging
 import time
 from typing import Any
 
+from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
+
 logger = logging.getLogger(__name__)
 
 
@@ -379,58 +381,77 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
         # ------------------------------------------------------------------
         # Step 3: Process deployment
         # ------------------------------------------------------------------
-        deploy_task = progress.add_task("Deployment processing")
-        progress.update_current_step(f"Processing deployment '{deployment_name}'")
-
         # ArgoCD Application/AppProject resources only change when a new
         # deployment is created.  Image updates don't touch ArgoCD resources.
         is_new_deployment = result.get("created", False)
-
-        processing_result = await project_manager.process_project_from_git(
-            project_file_relative_path,
-            task_progress_manager=progress,
-            deployment_name=deployment_name,
-            force_clone=force_clone,
-            argocd_resources_changed=is_new_deployment,
-        )
-
         action = "created" if is_new_deployment else "updated"
 
-        # Collect URLs from deployment results
         urls: dict[str, dict[str, Any]] = {}
-        deployment_results = project_manager.get_deployment_results(deployment_name)
-        for dep_name, dep_result in deployment_results.items():
-            urls[dep_name] = {
-                "cluster": dep_result.cluster,
-                "urls": dep_result.urls,
-            }
-            # Report web addresses for each component URL
-            for url_name, url_value in (dep_result.urls or {}).items():
-                progress.update_component_web_address(url_name, url_value)
 
-        if processing_result:
-            progress.complete_task(deploy_task)
-
-            # Schedule fire-and-forget OOM watcher
-            from opi.core.config import settings
-            from opi.services.oom_watcher import schedule_oom_check
-
-            if settings.OOM_WATCHER_ENABLED:
-                oom_attempt = payload.get("oom_watch_attempt", 1)
-                schedule_oom_check(
-                    project_name,
-                    deployment_name,
-                    attempt=oom_attempt,
-                )
+        if not rollout_requested(payload):
+            note_rollout_skipped(progress)
+            succeeded = True
+            processing: dict[str, Any] = skipped_processing()
         else:
-            processing_error = project_manager.get_processing_error() or "Deployment processing failed"
-            progress.fail_task(deploy_task, processing_error)
-            progress.fail_project(processing_error)
+            deploy_task = progress.add_task("Deployment processing")
+            progress.update_current_step(f"Processing deployment '{deployment_name}'")
+
+            processing_result = await project_manager.process_project_from_git(
+                project_file_relative_path,
+                task_progress_manager=progress,
+                deployment_name=deployment_name,
+                force_clone=force_clone,
+                argocd_resources_changed=is_new_deployment,
+            )
+
+            # Collect URLs from deployment results
+            deployment_results = project_manager.get_deployment_results(deployment_name)
+            for dep_name, dep_result in deployment_results.items():
+                urls[dep_name] = {
+                    "cluster": dep_result.cluster,
+                    "urls": dep_result.urls,
+                }
+                # Report web addresses for each component URL
+                for url_name, url_value in (dep_result.urls or {}).items():
+                    progress.update_component_web_address(url_name, url_value)
+
+            if processing_result:
+                progress.complete_task(deploy_task)
+
+                # Schedule fire-and-forget OOM watcher
+                from opi.core.config import settings
+                from opi.services.oom_watcher import schedule_oom_check
+
+                if settings.OOM_WATCHER_ENABLED:
+                    oom_attempt = payload.get("oom_watch_attempt", 1)
+                    schedule_oom_check(
+                        project_name,
+                        deployment_name,
+                        attempt=oom_attempt,
+                    )
+            else:
+                processing_error = project_manager.get_processing_error() or "Deployment processing failed"
+                progress.fail_task(deploy_task, processing_error)
+                progress.fail_project(processing_error)
+
+            succeeded = bool(processing_result)
+            processing = {
+                "status": "completed" if succeeded else "failed",
+                **(
+                    {"error": project_manager.get_processing_error()}
+                    if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
+                **(
+                    {"component_failures": component_failures}
+                    if (component_failures := project_manager.get_component_failures())
+                    else {}
+                ),
+            }
 
         # ------------------------------------------------------------------
         # Build response
         # ------------------------------------------------------------------
-        succeeded = bool(processing_result)
         response: dict[str, Any] = {
             "status": "success" if succeeded else "failed",
             "message": (
@@ -452,19 +473,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                 "created": result.get("created", False),
             },
             "urls": urls,
-            "processing": {
-                "status": "completed" if succeeded else "failed",
-                **(
-                    {"error": project_manager.get_processing_error()}
-                    if not succeeded and project_manager.get_processing_error()
-                    else {}
-                ),
-                **(
-                    {"component_failures": component_failures}
-                    if (component_failures := project_manager.get_component_failures())
-                    else {}
-                ),
-            },
+            "processing": processing,
         }
         if result.get("warnings"):
             response["warnings"] = result["warnings"]
