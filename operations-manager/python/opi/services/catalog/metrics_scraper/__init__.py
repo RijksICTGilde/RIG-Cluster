@@ -14,11 +14,12 @@ from opi.services.catalog.base import (
     SecretFileSpec,
     Service,
 )
+from opi.services.catalog.events import on
 from opi.services.catalog.metrics_scraper.config_model import MetricsScraperConfig
 from opi.services.catalog.metrics_scraper.editables import METRICS_PATH_EDITABLE, METRICS_PORT_EDITABLE
 from opi.services.catalog.metrics_scraper.variables import MetricsScraperVariables
 from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
-from opi.services.services_enums import ServiceBinding, ServiceType
+from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
 from opi.utils.secrets import MetricsAuthSecret
 
 logger = logging.getLogger(__name__)
@@ -72,7 +73,8 @@ class MetricsScraperService(Service):
             )
         ]
 
-    def deployment_page_sections(self, ctx: DeploymentPageContext) -> list[DetailPageSection]:
+    @on(UIEvent.DEPLOYMENT_SECTIONS)
+    def metrics_block(self, ctx: DeploymentPageContext) -> list[DetailPageSection]:
         # The Resource Metrics block belongs to this service: it exists because the
         # project scrapes metrics. The general template used to render it for every
         # project with a reachable Prometheus, service or no service.

@@ -6881,7 +6881,7 @@ class ProjectManager:
                 )
                 state_notices: list[str] = []
                 if upsert_deployment_dict is not None:
-                    state_notices = run_redeploy_hooks(
+                    state_notices = await run_redeploy_hooks(
                         project_name,
                         project_data,
                         upsert_deployment_dict,
@@ -7916,7 +7916,7 @@ class ProjectManager:
         # used to be one hardcoded ``if`` for image-pull disables plus a call into
         # sleep-mode, which left an OOM-disabled component switched off after its image
         # was fixed (RC-37).
-        state_notices = run_redeploy_hooks(project_name, project_data, deployment, [component_name])
+        state_notices = await run_redeploy_hooks(project_name, project_data, deployment, [component_name])
 
         # 4. Process service actions (e.g., increment PVC generations for persistent-storage)
         generation_changes = {}

@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import dataclasses
 
-from opi.services.catalog.base import DeploymentStateFact, Service
+from opi.services.catalog.base import DeploymentStateFact
 from opi.services.catalog.sleep_mode.state import STATE_SLEEPING, STATE_WAKING, SleepState, write
 from opi.services.deployment_state import collect_deployment_state
-from opi.services.registry import services_for_hook
-from opi.services.services_enums import HookPoint, ServiceType
+from opi.services.registry import listeners
+from opi.services.services_enums import ServiceType, UIEvent
 
 
 def _project(sleep_state: str | None = None) -> dict:
@@ -94,11 +94,11 @@ class TestAServiceCannotDeclareADeploymentHealthy:
         assert fact.expects_no_application_pods is True
 
 
-class TestTheHookIsRegistryDriven:
-    def test_participation_is_derived_from_overriding_the_hook(self) -> None:
-        """Same rule as AFTER_SYNC: a service is in because it implements the hook, never
-        because a list somewhere names it."""
-        participants = services_for_hook(HookPoint.DEPLOYMENT_STATE)
+class TestTheEventIsRegistryDriven:
+    def test_participation_is_derived_from_declaring_a_handler(self) -> None:
+        """Same rule as AFTER_SYNC: a service is in because it declares a handler for the
+        event, never because a list somewhere names it."""
+        participants = listeners(UIEvent.DEPLOYMENT_STATE)
 
         assert ServiceType.SLEEP_MODE in {service.service_type for service in participants}
-        assert all(type(service).deployment_state is not Service.deployment_state for service in participants)
+        assert all(service.listens_to(UIEvent.DEPLOYMENT_STATE) for service in participants)

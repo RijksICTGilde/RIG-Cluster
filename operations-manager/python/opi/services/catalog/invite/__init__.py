@@ -31,10 +31,11 @@ import logging
 import secrets
 from typing import Any
 
-from opi.services.catalog.base import ConfigLayer, DetailPageSection, Service, config_path
+from opi.services.catalog.base import ConfigLayer, DetailPageSection, ProjectPageContext, Service, config_path
+from opi.services.catalog.events import on
 from opi.services.catalog.invite.config_model import InviteConfig
 from opi.services.services import ServiceDefinition, service_entry_name
-from opi.services.services_enums import ServiceBinding, ServiceType
+from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
 
 logger = logging.getLogger(__name__)
 
@@ -169,18 +170,19 @@ class InviteService(Service):
             self._config_section_cache = cached
         return cached
 
-    def detail_page_sections(self, project_data: dict[str, Any], user_role: str):
+    @on(UIEvent.PROJECT_SECTIONS)
+    def invites_block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
         # The link is the secret, so this is an authorization choice, not a display one:
         # admin/owner only, like the keycloak realm block.
-        if user_role not in ("admin", "owner"):
+        if ctx.user_role not in ("admin", "owner"):
             return []
         from opi.handlers.project_file_handler import ProjectFileHandler
 
         handler = ProjectFileHandler()
-        invites = handler.get_all_active_invites(project_data)
+        invites = handler.get_all_active_invites(ctx.project_data)
         if not invites:
             return []
-        default_language = handler.get_invite_settings(project_data).get("default_language", "nl")
+        default_language = handler.get_invite_settings(ctx.project_data).get("default_language", "nl")
         context = {
             "invites": [
                 {
