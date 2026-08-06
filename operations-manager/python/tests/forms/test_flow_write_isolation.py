@@ -152,7 +152,7 @@ def _seed_state(flow: Any, flow_id: str, project_data: dict[str, Any]) -> Wizard
     state.active_sections = [section.section_id for section in flow.sections]
     state.populate_virt_mappings(flow.sections)
     owned = _fully_owned_list_keys(flow)
-    state.template_data = {k: v for k, v in copy.deepcopy(project_data).items() if k not in owned}
+    state.base_data = {k: v for k, v in copy.deepcopy(project_data).items() if k not in owned}
     return state
 
 
