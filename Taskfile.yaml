@@ -927,7 +927,7 @@ tasks:
     cmds:
       - echo "Starting Skaffold in hot-reload mode..."
       - echo "Files will sync automatically and uvicorn will auto-reload"
-      - SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" skaffold dev --port-forward -f operations-manager/skaffold.yaml
+      - SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" skaffold dev --kube-context kind-{{.KIND_CLUSTER_NAME}} --port-forward -f operations-manager/skaffold.yaml
 
   skaffold-debug:
     desc: "Instructions for running Skaffold in debug mode"
@@ -3116,14 +3116,17 @@ tasks:
     cmds:
       - echo "Starting Skaffold in hot-reload mode (sandboxed-local)..."
       - task: version:generate
-      - SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" skaffold dev --port-forward -f operations-manager/skaffold-sandboxed-local.yaml
+      # Vastgepind, niet afgeleid van de huidige context: skaffold rolt anders uit naar
+      # waar kubectl toevallig staat. Dat is een keer op het integratietest-cluster
+      # geland en levert een muur van "namespaces rig-system not found" op.
+      - SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" skaffold dev --kube-context kind-rig-sandbox --port-forward -f operations-manager/skaffold-sandboxed-local.yaml
 
   sandbox:skaffold-debug:
     desc: "Start Skaffold in debug mode for sandbox development (debugpy on port 5678)"
     cmds:
       - echo "Starting Skaffold in debug mode (sandboxed-local)..."
       - 'echo "Attach IntelliJ debugger: Run → Debug Remote Debug - Operations Manager (localhost:5678)"'
-      - SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" skaffold dev --port-forward -f operations-manager/skaffold-sandboxed-local-debug.yaml
+      - SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" skaffold dev --kube-context kind-rig-sandbox --port-forward -f operations-manager/skaffold-sandboxed-local-debug.yaml
 
   sandbox:build-cmp-image:
     desc: "Build CMP kustomize-sops image and load into Kind (no ArgoCD restart)"
