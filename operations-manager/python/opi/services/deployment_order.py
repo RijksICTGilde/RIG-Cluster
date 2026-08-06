@@ -68,6 +68,11 @@ def order_deployments_by_clone_dependency(deployments: list[dict[str, Any]]) -> 
 
     def place(deployment: dict[str, Any]) -> None:
         name = deployment.get("name")
+        if not name:
+            # Nothing can clone from a nameless deployment and nothing resolves to it,
+            # so it keeps its file position instead of taking part in the ordering.
+            ordered.append(deployment)
+            return
         if name in placed:
             return
         if name in visiting:

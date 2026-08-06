@@ -407,7 +407,7 @@ class ConfigurationHandler:
             Dictionary representation of the configuration
         """
         logger.info(f"ConfigHandler.to_dict called. Components in handler: {list(self.components.keys())}")
-        config = {
+        config: dict[str, Any] = {
             "project_name": self.project_name,
             "generation_timestamp": None,  # Will be set when serializing
             "global_config": self.global_config,
@@ -416,7 +416,7 @@ class ConfigurationHandler:
 
         for name, component in self.components.items():
             logger.info(f"ConfigHandler: Processing component '{name}' with namespace '{component.namespace}'")
-            component_dict = {
+            component_dict: dict[str, Any] = {
                 "name": component.name,
                 "type": component.type,
             }

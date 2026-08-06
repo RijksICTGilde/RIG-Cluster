@@ -227,7 +227,8 @@ class KeycloakSetup:
 
         # Execute YAML template (creates realm, IDP, client scopes, invite client)
         yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / f"{template_name}.yaml"
-        handler = KeycloakYamlHandler(self.keycloak)
+        keycloak = self.keycloak or await create_keycloak_connector()
+        handler = KeycloakYamlHandler(keycloak)
         await handler.execute_config(yaml_path, context)
         logger.info(f"Created OPI realm '{OPERATIONS_REALM_NAME}' using template '{template_name}'")
 

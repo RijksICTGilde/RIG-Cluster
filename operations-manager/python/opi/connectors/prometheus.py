@@ -10,7 +10,12 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC
 from typing import Any
 
-from prometheus_api_client import PrometheusConnect  # type: ignore[import-untyped]
+# Imported from the submodule, not the package root: the package root exposes its
+# classes through a module-level __getattr__ shim, so a type checker resolves
+# `prometheus_api_client.PrometheusConnect` to the union of everything that shim can
+# return (Metric, MetricsList, ...) and then rejects perfectly valid constructor
+# arguments. The submodule path resolves to the class itself.
+from prometheus_api_client.prometheus_connect import PrometheusConnect
 
 from opi.core.config import settings
 from opi.utils.naming import generate_unique_name

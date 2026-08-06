@@ -18,7 +18,7 @@ from opi.forms.editables.enforcers import (
     UniqueReferencesEnforcer,
     extract_service_names,
 )
-from opi.forms.layout import DisplayBlock, Fieldset, Sequence, TemplatePartial
+from opi.forms.layout import DisplayBlock, Fieldset, LayoutElement, Sequence, TemplatePartial
 from opi.forms.visualizers.display_blocks import compute_url_preview as _compute_url_preview
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY, API_KEY
@@ -225,15 +225,23 @@ CONFIG_DISPLAY_SECTION = FormSection(
 # forms layer; the service references them.
 
 
-def _with_service_help(section: FormSection | None, service_type: ServiceType) -> FormSection | None:
+def _with_service_help(section: FormSection | None, service_type: ServiceType) -> FormSection:
     """Stamp the service's own explanation onto its config section.
 
     The question mark that opens it already exists on the service card and in the
     overview; the config screen is where someone actually has to decide something, and
     it was the one place without it. Done here, where the sections are collected, so a
     service declares its help once on its ServiceDefinition and every surface picks it up.
+
+    ``config_form_section`` may legitimately answer None (a service with no fields at
+    that layer), but every section that goes through here is listed as a step in a flow.
+    A None would travel into ``FormFlow.sections`` and surface as an AttributeError
+    halfway through the wizard; refusing it here says so at import time instead.
     """
-    if section is not None and section.help_template is None:
+    if section is None:
+        msg = f"Dienst {service_type.value} heeft geen configuratiesectie op projectniveau"
+        raise ValueError(msg)
+    if section.help_template is None:
         section.help_template = ServiceAdapter.get_service_definition(service_type).help_template
     return section
 
@@ -917,7 +925,7 @@ def build_deployment_add_info_section(
     name_vis = editables[0]
     editables[0] = dataclasses.replace(name_vis, readonly_on_edit=False)
 
-    layout = [f"deployments[{deployment_index}]/name"]
+    layout: list[LayoutElement | str] = [f"deployments[{deployment_index}]/name"]
     if include_clone_from:
         layout.append(f"deployments[{deployment_index}]/clone-from")
 

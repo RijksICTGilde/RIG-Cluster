@@ -49,7 +49,11 @@ def fragment_dir(provider: Service) -> Path:
 
 
 def fragment_path(provider: Service) -> Path:
-    return fragment_dir(provider) / fragment_filename(provider.service_type.value, provider.config_schema_version)
+    version = provider.config_schema_version
+    if version is None:
+        msg = f"Service '{provider.service_type.value}' has no config_schema_version, so it has no schema fragment"
+        raise ValueError(msg)
+    return fragment_dir(provider) / fragment_filename(provider.service_type.value, version)
 
 
 def render_service_config_schema(provider: Service) -> str:

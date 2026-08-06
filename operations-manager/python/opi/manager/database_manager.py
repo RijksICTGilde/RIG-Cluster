@@ -592,6 +592,8 @@ class DatabaseManager:
             if clone_type == CloneFromType.REMOTE_SOURCE.value:
                 # Handle remote source cloning directly
                 remote_source_name = clone_from.get("reference")
+                if not remote_source_name:
+                    raise ValueError(f"remote-source clone without a reference: {deployment.get('name')}")
                 if project_data is None:
                     raise ValueError(f"project_data is required for remote-source clone: {deployment.get('name')}")
 
@@ -731,6 +733,12 @@ class DatabaseManager:
             # Extra schemas (RC-17) live in the same database and must come along, or a
             # clone would lose their data. Their names embed the deployment, so the
             # source uses the source deployment and the target uses this deployment.
+            if project_data is None:
+                msg = (
+                    f"project_data is required to clone '{deployment_name}': without it the extra schemas "
+                    "cannot be resolved, and a clone that silently drops them loses their data"
+                )
+                raise ValueError(msg)
             extra_clone_pairs = [
                 (
                     generate_extra_database_schema(project_name, clone_source_ref, postfix),
