@@ -7,7 +7,7 @@ the dashboard banner, the deployment card and the V2 API. The result was a page 
 
 This reading lives inside the deployment-health package because that service is the one
 that reports it (RC-35): "switched off" is a fact about a deployment like any other, and
-it reaches every display through ``HookPoint.DEPLOYMENT_STATE`` -- there is no second
+it reaches every display through ``UIEvent.DEPLOYMENT_STATE`` -- there is no second
 mechanism beside the hook any more, and no display reads this module to decide what to
 show. Two callers outside the hook remain, and both need something the generic facts
 deliberately do not express: the V2 API needs ``DeploymentStatus.Disabled`` as its own

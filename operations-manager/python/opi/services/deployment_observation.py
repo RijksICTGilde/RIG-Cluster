@@ -2,11 +2,11 @@
 
 Both the inline deploy path (``project_manager``) and the fire-and-forget watcher
 (``oom_watcher``) route their post-sync remediation through this one scan, so no caller
-hardcodes a specific service. It reads the project fresh from git, scans the
-``AFTER_SYNC`` hook, lets every applicable service observe the running deployment (and
+hardcodes a specific service. It reads the project fresh from git, fires
+``ActionEvent.AFTER_SYNC``, lets every applicable service observe the running deployment (and
 mutate ``project_data``), commits once for all outcomes together, and reports back what
-happened. The single commit is the contract: a hook never commits itself, so two
-services on this hook cannot race to two commits or a lost update.
+happened. The single commit is the contract of the whole ``ActionEvent`` family: a handler never
+commits itself, so two services on this event cannot race to two commits or a lost update.
 """
 
 from __future__ import annotations
@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.services.catalog.base import ComponentHealth, DeploymentObservationContext
-from opi.services.registry import services_for_hook
-from opi.services.services_enums import HookPoint
+from opi.services.registry import listeners
+from opi.services.services_enums import ActionEvent
 
 logger = logging.getLogger(__name__)
 
@@ -37,14 +37,14 @@ async def run_after_sync_observation(
     deployment_name: str,
     component_health: dict[str, ComponentHealth],
 ) -> AfterSyncObservation:
-    """Scan the ``AFTER_SYNC`` hook for one deployment and commit any changes once.
+    """Fire ``AFTER_SYNC`` for one deployment and commit any changes once.
 
     Args:
         project_name: The project.
         deployment_name: The deployment that just synced.
         component_health: Observed pod health per component reference.
     """
-    services = services_for_hook(HookPoint.AFTER_SYNC)
+    services = listeners(ActionEvent.AFTER_SYNC)
     if not services:
         return AfterSyncObservation()
 
@@ -82,14 +82,14 @@ async def run_after_sync_observation(
     for service in services:
         if not service.applies_to(project_data, deployment_name):
             continue
-        outcome = await service.observe_deployment(ctx)
-        changed = changed or outcome.project_data_changed
-        result.requeue_refresh = result.requeue_refresh or outcome.requeue_refresh
-        result.failures.extend(outcome.failures)
-        result.notices.extend(outcome.notices)
+        for outcome in await service.handle_action(ActionEvent.AFTER_SYNC, ctx):
+            changed = changed or outcome.project_data_changed
+            result.requeue_refresh = result.requeue_refresh or outcome.requeue_refresh
+            result.failures.extend(outcome.failures)
+            result.notices.extend(outcome.notices)
 
     if changed:
-        # One commit for every hook outcome; no connector is threaded in, so no caller
+        # One commit for every outcome of the scan; no connector is threaded in, so no caller
         # holds -- or closes -- the warm working copy.
         project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
         commit_msg = f"auto-tune: after-sync resource changes for {deployment_name} in {project_name}"
