@@ -46,7 +46,7 @@ class FormField:
     Attributes:
         name: Field name (e.g., "display_name")
         path: Full path for nested fields (e.g., "components[0].name")
-        schema_type: Python type of the field
+        schema_type: Python type of the field (None when the model declares none)
         widget_type: Widget type string ("text", "select", etc.)
         label: Translated label text
         description: Translated help text
@@ -69,7 +69,8 @@ class FormField:
 
     name: str
     path: str
-    schema_type: type
+    #: None when the source model declares no annotation for the field.
+    schema_type: type | None
     widget_type: str
     label: str
     required: bool = False

@@ -177,7 +177,7 @@ class HttpConnector:
             username = self.auth_config.get("username")
             password = self.auth_config.get("password")
 
-            if not all([client_id, username, password]):
+            if not client_id or not username or not password:
                 msg = "client_id, username, and password required for keycloak-password auth"
                 raise ValueError(msg)
 
@@ -196,7 +196,7 @@ class HttpConnector:
             client_id = self.auth_config.get("client_id")
             client_secret = self.auth_config.get("client_secret")
 
-            if not all([client_id, client_secret]):
+            if not client_id or not client_secret:
                 msg = "client_id and client_secret required for keycloak-client auth"
                 raise ValueError(msg)
 

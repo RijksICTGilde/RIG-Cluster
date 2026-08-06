@@ -42,6 +42,7 @@ not change.
 import asyncio
 import contextlib
 import copy
+import inspect
 import logging
 import os
 import re
@@ -526,9 +527,11 @@ class GitProjectStore(ProjectStore):
                 if current is None:
                     raise ProjectNotFoundError(f"Project '{name}' does not exist")
 
-                mutated = change(copy.deepcopy(current))
-                if asyncio.iscoroutine(mutated):
-                    mutated = await mutated
+                # A ChangeFunction may be sync or async. Awaiting into a second name
+                # keeps the awaited result's type visible; reassigning the same name
+                # left it a union with the un-awaited Awaitable for everything below.
+                changed = change(copy.deepcopy(current))
+                mutated = await changed if inspect.isawaitable(changed) else changed
 
                 if mutated is None:
                     # Idempotent no-op: the change is already applied.

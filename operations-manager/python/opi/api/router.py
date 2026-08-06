@@ -388,12 +388,12 @@ class BasicProjectCreateRequest(BaseModel):
 
 
 class ComponentReference(BaseModel):
-    reference: str = Field(..., max_length=63, description="Component reference name", example="frontend")
-    image: str = Field(..., max_length=512, description="Image URL for this component", example="nginx:1.21")
+    reference: str = Field(..., max_length=63, description="Component reference name", examples=["frontend"])
+    image: str = Field(..., max_length=512, description="Image URL for this component", examples=["nginx:1.21"])
 
 
 class UpsertDeploymentRequest(BaseModel):
-    deploymentName: str = Field(..., max_length=63, description="Name of the deployment", example="production")
+    deploymentName: str = Field(..., max_length=63, description="Name of the deployment", examples=["production"])
     components: list[ComponentReference] = Field(..., description="List of components for this deployment")
     cloneFrom: str | None = Field(
         None, description="Deployment name to clone data from (only on create, or if forceClone is true)"
@@ -405,7 +405,7 @@ class UpsertDeploymentRequest(BaseModel):
             "URL format template ID that controls how hostnames are generated. "
             "Formats containing 'subdomain' require the subdomain field to be set."
         ),
-        example="component-deployment-subdomain",
+        examples=["component-deployment-subdomain"],
     )
     subdomain: str | None = Field(
         None,
@@ -413,13 +413,13 @@ class UpsertDeploymentRequest(BaseModel):
             "Subdomain for URL generation. Required when domain_format contains 'subdomain'. "
             "Must be a valid DNS label: lowercase letters, digits, and hyphens, starting with a letter."
         ),
-        example="myapp",
+        examples=["myapp"],
         max_length=63,
     )
     base_domain: str | None = Field(
         None,
         description="Base domain for URL generation (e.g., 'rijksapp.nl'). Must be a cluster-supported domain.",
-        example="rijksapp.nl",
+        examples=["rijksapp.nl"],
         max_length=255,
     )
 
@@ -442,7 +442,7 @@ class UpsertDeploymentRequest(BaseModel):
 
 
 class StorageAction(BaseModel):
-    action: str = Field(..., description="Action to perform on the storage (recreate, keep)", example="recreate")
+    action: str = Field(..., description="Action to perform on the storage (recreate, keep)", examples=["recreate"])
 
 
 # Response Models
@@ -451,19 +451,19 @@ class StorageAction(BaseModel):
 class DeploymentUrls(BaseModel):
     """URLs for a single deployment."""
 
-    cluster: str = Field(..., description="Cluster where the deployment runs", example="local")
+    cluster: str = Field(..., description="Cluster where the deployment runs", examples=["local"])
     urls: dict[str, str] = Field(
         ...,
         description="Component URLs (component name -> public URL)",
-        example={"frontend": "https://frontend-main-myproject.rig.dev.local"},
+        examples=[{"frontend": "https://frontend-main-myproject.rig.dev.local"}],
     )
 
 
 class DeploymentInfo(BaseModel):
     """Information about a deployment."""
 
-    name: str = Field(..., description="Deployment name", example="main")
-    project: str = Field(..., description="Project name", example="myproject")
+    name: str = Field(..., description="Deployment name", examples=["main"])
+    project: str = Field(..., description="Project name", examples=["myproject"])
     components: list[ComponentReference] = Field(..., description="Components in this deployment")
     forceClone: bool = Field(..., description="Whether force clone was used")
     created: bool = Field(..., description="True if deployment was newly created, False if updated")
@@ -472,7 +472,7 @@ class DeploymentInfo(BaseModel):
 class ProcessingStatus(BaseModel):
     """Processing status information."""
 
-    status: str = Field(..., description="Processing status", example="completed")
+    status: str = Field(..., description="Processing status", examples=["completed"])
     message: str | None = Field(None, description="Status message")
     result: Any | None = Field(None, description="Processing result details")
 
@@ -480,18 +480,20 @@ class ProcessingStatus(BaseModel):
 class UpsertDeploymentResponse(BaseModel):
     """Response for upsert deployment endpoint."""
 
-    status: str = Field(..., description="Operation status", example="success")
-    message: str = Field(..., description="Human-readable message", example="Deployment 'main' created successfully")
+    status: str = Field(..., description="Operation status", examples=["success"])
+    message: str = Field(..., description="Human-readable message", examples=["Deployment 'main' created successfully"])
     deployment: DeploymentInfo = Field(..., description="Deployment information")
     urls: dict[str, DeploymentUrls] = Field(
         default_factory=dict,
         description="Public URLs per deployment",
-        example={
-            "main": {
-                "cluster": "local",
-                "urls": {"frontend": "https://frontend-main-myproject.rig.dev.local"},
+        examples=[
+            {
+                "main": {
+                    "cluster": "local",
+                    "urls": {"frontend": "https://frontend-main-myproject.rig.dev.local"},
+                }
             }
-        },
+        ],
     )
     processing: ProcessingStatus = Field(..., description="Processing status")
 
@@ -522,34 +524,36 @@ class UpsertDeploymentResponse(BaseModel):
 class ProjectInfo(BaseModel):
     """Project information."""
 
-    name: str = Field(..., description="Project name", example="myproject")
-    file_path: str = Field(..., description="Path to project YAML file", example="projects/myproject.yaml")
+    name: str = Field(..., description="Project name", examples=["myproject"])
+    file_path: str = Field(..., description="Path to project YAML file", examples=["projects/myproject.yaml"])
 
 
 class RefreshProjectResponse(BaseModel):
     """Response for refresh project endpoint."""
 
-    status: str = Field(..., description="Operation status", example="success")
+    status: str = Field(..., description="Operation status", examples=["success"])
     message: str = Field(
-        ..., description="Human-readable message", example="Project 'myproject' refreshed and processed successfully"
+        ..., description="Human-readable message", examples=["Project 'myproject' refreshed and processed successfully"]
     )
     project: ProjectInfo = Field(..., description="Project information")
     urls: dict[str, DeploymentUrls] = Field(
         default_factory=dict,
         description="Public URLs per deployment",
-        example={
-            "main": {
-                "cluster": "local",
-                "urls": {
-                    "frontend": "https://frontend-main-myproject.rig.dev.local",
-                    "api": "https://api-main-myproject.rig.dev.local",
+        examples=[
+            {
+                "main": {
+                    "cluster": "local",
+                    "urls": {
+                        "frontend": "https://frontend-main-myproject.rig.dev.local",
+                        "api": "https://api-main-myproject.rig.dev.local",
+                    },
                 },
-            },
-            "staging": {
-                "cluster": "staging",
-                "urls": {"frontend": "https://frontend-staging-myproject.rig.dev.local"},
-            },
-        },
+                "staging": {
+                    "cluster": "staging",
+                    "urls": {"frontend": "https://frontend-staging-myproject.rig.dev.local"},
+                },
+            }
+        ],
     )
     processing: ProcessingStatus = Field(..., description="Processing status")
 
@@ -584,8 +588,8 @@ class ServiceReference(BaseModel):
 
 
 class UpdateImageRequest(BaseModel):
-    componentName: str = Field(..., description="Name of the component to update", example="frontend")
-    newImageUrl: str = Field(..., description="New image URL", example="nginx:1.21")
+    componentName: str = Field(..., description="Name of the component to update", examples=["frontend"])
+    newImageUrl: str = Field(..., description="New image URL", examples=["nginx:1.21"])
     registry: str | None = Field(
         None,
         max_length=63,
@@ -595,7 +599,7 @@ class UpdateImageRequest(BaseModel):
     services: dict[str, ServiceReference] | None = Field(
         None,
         description="Service-specific actions for storage recreation. Key is service type (e.g., 'persistent-storage')",
-        example={"persistent-storage": {"reference": {"data": {"action": "recreate"}}}},
+        examples=[{"persistent-storage": {"reference": {"data": {"action": "recreate"}}}}],
     )
 
     model_config = {
@@ -618,12 +622,12 @@ class UpdateImageRequest(BaseModel):
 
 
 class ProjectDeleteRequest(BaseModel):
-    confirmDeletion: bool = Field(False, description="Safety flag - must be true to confirm deletion", example=True)
+    confirmDeletion: bool = Field(False, description="Safety flag - must be true to confirm deletion", examples=[True])
     force: bool = Field(
         False,
         description="Force deletion mode - continues on errors and cleans up stuck resources. "
         "Use when a previous deletion failed partially or resources are in an inconsistent state.",
-        example=False,
+        examples=[False],
     )
 
     model_config = {"json_schema_extra": {"example": {"confirmDeletion": True, "force": False}}}
@@ -638,28 +642,30 @@ class ChiselTunnelConfig(BaseModel):
     """
 
     serverUrl: str = Field(
-        ..., description="Chisel server URL in source cluster", example="https://chisel.source-cluster.example.com"
+        ..., description="Chisel server URL in source cluster", examples=["https://chisel.source-cluster.example.com"]
     )
-    username: str = Field(..., description="Chisel authentication username", example="admin")
-    password: str = Field(..., description="Chisel authentication password", example="secret")
+    username: str = Field(..., description="Chisel authentication username", examples=["admin"])
+    password: str = Field(..., description="Chisel authentication password", examples=["secret"])
     remoteHost: str = Field(
-        ..., description="Remote service hostname in source cluster", example="postgres.namespace.svc.cluster.local"
+        ..., description="Remote service hostname in source cluster", examples=["postgres.namespace.svc.cluster.local"]
     )
-    remotePort: int = Field(..., description="Remote service port in source cluster", example=5432)
+    remotePort: int = Field(..., description="Remote service port in source cluster", examples=[5432])
 
 
 class CloneDatabaseFromExternalRequest(BaseModel):
     sourceHost: str | None = Field(
-        None, description="External source database host (not needed if using tunnel)", example="localhost"
+        None, description="External source database host (not needed if using tunnel)", examples=["localhost"]
     )
     sourcePort: int | None = Field(
-        None, description="External source database port (not needed if using tunnel)", example=15432
+        None, description="External source database port (not needed if using tunnel)", examples=[15432]
     )
-    sourceUsername: str = Field(..., description="Username for external source connection", example="postgres")
-    sourcePassword: str = Field(..., description="Password for external source connection", example="password")
-    sourceDatabase: str = Field(..., description="Source database name", example="amt_staging")
-    sourceSchema: str = Field(..., description="Source schema name", example="amt_staging")
-    forceClone: bool = Field(False, description="If true, drop existing target database before cloning", example=True)
+    sourceUsername: str = Field(..., description="Username for external source connection", examples=["postgres"])
+    sourcePassword: str = Field(..., description="Password for external source connection", examples=["password"])
+    sourceDatabase: str = Field(..., description="Source database name", examples=["amt_staging"])
+    sourceSchema: str = Field(..., description="Source schema name", examples=["amt_staging"])
+    forceClone: bool = Field(
+        False, description="If true, drop existing target database before cloning", examples=[True]
+    )
     tunnel: ChiselTunnelConfig | None = Field(
         None, description="Optional Chisel tunnel configuration for accessing remote source"
     )
@@ -697,16 +703,16 @@ class CloneDatabaseFromExternalRequest(BaseModel):
 
 class CloneBucketFromExternalRequest(BaseModel):
     sourceHost: str | None = Field(
-        None, description="External source MinIO host (not needed if using tunnel)", example="localhost"
+        None, description="External source MinIO host (not needed if using tunnel)", examples=["localhost"]
     )
     sourcePort: int | None = Field(
-        None, description="External source MinIO port (not needed if using tunnel)", example=19000
+        None, description="External source MinIO port (not needed if using tunnel)", examples=[19000]
     )
-    sourceAccessKey: str = Field(..., description="Access key for external source connection", example="minioadmin")
-    sourceSecretKey: str = Field(..., description="Secret key for external source connection", example="minioadmin")
-    sourceBucket: str = Field(..., description="Source bucket name", example="amt-staging")
-    sourceSecure: bool = Field(False, description="Whether source uses HTTPS", example=False)
-    forceClone: bool = Field(False, description="If true, overwrite existing target bucket", example=True)
+    sourceAccessKey: str = Field(..., description="Access key for external source connection", examples=["minioadmin"])
+    sourceSecretKey: str = Field(..., description="Secret key for external source connection", examples=["minioadmin"])
+    sourceBucket: str = Field(..., description="Source bucket name", examples=["amt-staging"])
+    sourceSecure: bool = Field(False, description="Whether source uses HTTPS", examples=[False])
+    forceClone: bool = Field(False, description="If true, overwrite existing target bucket", examples=[True])
     tunnel: ChiselTunnelConfig | None = Field(
         None, description="Optional Chisel tunnel configuration for accessing remote source"
     )
@@ -748,7 +754,7 @@ class DeploymentDomainSettingsRequest(BaseModel):
     domain_mode: str = Field(
         ...,
         description="URL mode: 'component-specific', 'deployment-name', 'custom', or 'nice-url'",
-        example="nice-url",
+        examples=["nice-url"],
         max_length=32,
     )
     domain_format: DomainFormatId | None = Field(
@@ -757,7 +763,7 @@ class DeploymentDomainSettingsRequest(BaseModel):
             "URL format template ID that controls how hostnames are generated. "
             "Formats containing 'subdomain' require the subdomain field to be set."
         ),
-        example="component-deployment-subdomain",
+        examples=["component-deployment-subdomain"],
     )
     subdomain: str | None = Field(
         None,
@@ -765,13 +771,13 @@ class DeploymentDomainSettingsRequest(BaseModel):
             "Subdomain for URL generation. Required when domain_format contains 'subdomain'. "
             "Must be a valid DNS label: lowercase letters, digits, and hyphens, starting with a letter."
         ),
-        example="myapp",
+        examples=["myapp"],
         max_length=63,
     )
     base_domain: str | None = Field(
         None,
         description="Base domain for URL generation (e.g., 'rijks.app'). Must be a cluster-supported domain.",
-        example="rijks.app",
+        examples=["rijks.app"],
         max_length=255,
     )
     root_component: str | None = Field(
@@ -781,7 +787,7 @@ class DeploymentDomainSettingsRequest(BaseModel):
             "(e.g., 'component.deployment.subdomain') - the root component receives traffic at the "
             "bare subdomain without a component prefix."
         ),
-        example="frontend",
+        examples=["frontend"],
         max_length=63,
     )
 
@@ -939,7 +945,7 @@ class SelfServiceProjectRequest(BaseModel):
         "component-specific",
         max_length=32,
         description="URL mode: 'component-specific', 'deployment-name', 'custom', or 'nice-url'",
-        example="component-specific",
+        examples=["component-specific"],
     )
     domain_format: DomainFormatId | None = Field(
         None,
@@ -947,7 +953,7 @@ class SelfServiceProjectRequest(BaseModel):
             "URL format template ID that controls how hostnames are generated. "
             "Formats containing 'subdomain' require the subdomain field to be set."
         ),
-        example="component-deployment-project",
+        examples=["component-deployment-project"],
     )
     subdomain: str | None = Field(
         None,
@@ -957,7 +963,7 @@ class SelfServiceProjectRequest(BaseModel):
             "(e.g., 'component-deployment-subdomain'). Must be a valid DNS label: lowercase letters, "
             "digits, and hyphens, starting with a letter."
         ),
-        example="myapp",
+        examples=["myapp"],
     )
 
     # External Domain Configuration (for public domains with Let's Encrypt)
@@ -965,19 +971,19 @@ class SelfServiceProjectRequest(BaseModel):
         None,
         max_length=255,
         description="Base domain for URL generation (e.g., 'rijks.app'). Must be a cluster-supported domain.",
-        example="rijks.app",
+        examples=["rijks.app"],
     )
     issuer: str | None = Field(
         None,
         max_length=64,
         description="TLS certificate issuer: 'letsencrypt', 'letsencrypt-staging', or a custom issuer name",
-        example="letsencrypt",
+        examples=["letsencrypt"],
     )
     contact_email: str | None = Field(
         None,
         max_length=254,
         description="Contact email for Let's Encrypt certificate notifications (overrides cluster default)",
-        example="team@example.com",
+        examples=["team@example.com"],
     )
 
     # Users (from array fields)
@@ -1165,7 +1171,7 @@ async def upsert_deployment(
                 "no_repositories": 422,  # Unprocessable Entity
                 "internal_error": 500,  # Internal Server Error
             }
-            status_code = error_status_codes.get(result.get("error_type"), 400)
+            status_code = error_status_codes.get(result.get("error_type", ""), 400)
 
             content = {
                 "status": "failed",
@@ -1372,7 +1378,7 @@ async def add_component(
                 "invalid_deployments": 400,
                 "internal_error": 500,
             }
-            status_code = error_status_codes.get(result.get("error_type"), 400)
+            status_code = error_status_codes.get(result.get("error_type", ""), 400)
 
             content = {
                 "status": "failed",
@@ -1490,7 +1496,7 @@ async def update_component(
                 "validation_error": 400,
                 "internal_error": 500,
             }
-            status_code = error_status_codes.get(result.get("error_type"), 400)
+            status_code = error_status_codes.get(result.get("error_type", ""), 400)
             content = {
                 "status": "failed",
                 "message": f"Failed to update component '{component_name}'",
@@ -1646,7 +1652,7 @@ async def add_component_to_deployment(
                 "validation_error": 400,
                 "internal_error": 500,
             }
-            status_code = error_status_codes.get(result.get("error_type"), 400)
+            status_code = error_status_codes.get(result.get("error_type", ""), 400)
 
             content = {
                 "status": "failed",
@@ -1797,7 +1803,7 @@ async def add_service(
                 "invalid_components": 400,
                 "internal_error": 500,
             }
-            status_code = error_status_codes.get(result.get("error_type"), 400)
+            status_code = error_status_codes.get(result.get("error_type", ""), 400)
 
             content = {
                 "status": "failed",
@@ -3082,11 +3088,11 @@ async def _rollback_subdomain_registration(
 class SubdomainCheckResponse(BaseModel):
     """Response for subdomain availability check."""
 
-    subdomain: str = Field(..., description="The subdomain that was checked", example="myapp")
-    base_domain: str = Field(..., description="The base domain", example="rijks.app")
-    available: bool = Field(..., description="Whether the subdomain is available", example=True)
+    subdomain: str = Field(..., description="The subdomain that was checked", examples=["myapp"])
+    base_domain: str = Field(..., description="The base domain", examples=["rijks.app"])
+    available: bool = Field(..., description="Whether the subdomain is available", examples=[True])
     validation_error: str | None = Field(
-        None, description="Validation error message if subdomain format is invalid", example=None
+        None, description="Validation error message if subdomain format is invalid", examples=[None]
     )
 
 
@@ -3094,11 +3100,11 @@ class SubdomainRegistration(BaseModel):
     """Subdomain registration details."""
 
     id: int = Field(..., description="Registration ID")
-    subdomain: str = Field(..., description="The subdomain", example="myapp")
-    base_domain: str = Field(..., description="The base domain", example="rijks.app")
-    project_name: str = Field(..., description="Project that owns this subdomain", example="my-project")
-    deployment_name: str = Field(..., description="Deployment using this subdomain", example="prod")
-    cluster: str = Field(..., description="Cluster where deployed", example="odcn-production")
+    subdomain: str = Field(..., description="The subdomain", examples=["myapp"])
+    base_domain: str = Field(..., description="The base domain", examples=["rijks.app"])
+    project_name: str = Field(..., description="Project that owns this subdomain", examples=["my-project"])
+    deployment_name: str = Field(..., description="Deployment using this subdomain", examples=["prod"])
+    cluster: str = Field(..., description="Cluster where deployed", examples=["odcn-production"])
     created_at: str | None = Field(None, description="Registration timestamp")
     created_by: str | None = Field(None, description="Who created the registration")
 
@@ -3453,7 +3459,7 @@ async def add_registry_by_credentials(
             error_status_codes = {
                 "missing_public_key": 400,
             }
-            status_code = error_status_codes.get(result.get("error_type"), 400)
+            status_code = error_status_codes.get(result.get("error_type", ""), 400)
             return JSONResponse(
                 content={
                     "status": "failed",
