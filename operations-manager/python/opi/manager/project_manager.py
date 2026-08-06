@@ -61,6 +61,9 @@ from opi.generation.manifests import (
 from opi.handlers.project_file_handler import (
     ProjectFileHandler,
     attachment_is_referenced,
+    ensure_attachment_data_list,
+    extract_attachment_catalog,
+    extract_component_attachment_uses,
     extract_service_names_from_component,
     find_attachment_data_list,
 )
@@ -70,6 +73,7 @@ from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
 from opi.services.catalog.base import (
+    ConfigLayer,
     DeploymentManifestContext,
     ManifestContext,
     ProvisionContext,
@@ -87,6 +91,7 @@ from opi.utils.age import (
     decrypt_password_smart,
     decrypt_password_smart_auto,
     encrypt_age_content,
+    encrypt_file_to_age_block_sync,
     get_decoded_project_private_key,
     get_project_public_key,
     is_age_encrypted,
@@ -7447,6 +7452,125 @@ class ProjectManager:
 
         except Exception as e:
             error_msg = f"Error removing attachment '{attachment_id}': {e}"
+            logger.exception(error_msg)
+            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+
+    async def upsert_attachment(
+        self,
+        attachment_id: str,
+        filename: str,
+        content: bytes,
+        *,
+        on_existing: str,
+        on_absent: str,
+        component_name: str | None = None,
+        binding: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Put one attachment in the project's catalog, optionally bound to a component.
+
+        The write side of the attachments service's DEFINE role: the file is encrypted
+        with the project's AGE public key and stored in the catalog under
+        ``attachment_id``. With ``component_name`` and ``binding`` the same call also
+        records the component's *use* of it (which attachment) and its *binding* (as a
+        file at a path, or as an env-var), so "upload and couple" is one request rather
+        than two that can half-fail.
+
+        ``on_existing`` / ``on_absent`` carry the verb's promise (see
+        ``services/catalog/actions.py``): ``reject`` refuses, ``replace`` overwrites
+        without asking, ``create`` adds. Replacing is deliberately silent -- the caller
+        asked for an upsert -- and that is exactly why only the upsert verb passes
+        ``replace`` with an absent-id ``create``.
+
+        Uses the single ProjectManager path: fresh contents from Git, mutate, save and
+        commit, so the catalog model and the coupling checks run before anything lands.
+        """
+        try:
+            project_data = await self.get_contents()
+            project_name = await self.get_name()
+
+            catalog = extract_attachment_catalog(project_data)
+            exists = attachment_id in catalog
+            if exists and on_existing == "reject":
+                return {
+                    "success": False,
+                    "error": f"Bijlage '{attachment_id}' bestaat al in project '{project_name}'",
+                    "error_type": "conflict",
+                }
+            if not exists and on_absent == "reject":
+                return {
+                    "success": False,
+                    "error": f"Bijlage '{attachment_id}' bestaat niet in project '{project_name}'",
+                    "error_type": "not_found",
+                }
+
+            public_key = (project_data.get("config") or {}).get("age-public-key")
+            if not public_key:
+                # Fail closed rather than store the bytes unencrypted: the catalog is
+                # committed to the projects repository, and attachments are certificates.
+                return {
+                    "success": False,
+                    "error": f"Project '{project_name}' heeft geen AGE-publieke sleutel",
+                    "error_type": "no_encryption_key",
+                }
+
+            if component_name and not any(
+                isinstance(c, dict) and c.get("name") == component_name
+                for c in project_data.get("components", []) or []
+            ):
+                return {
+                    "success": False,
+                    "error": f"Component '{component_name}' bestaat niet in project '{project_name}'",
+                    "error_type": "not_found",
+                }
+
+            # The service must be selected on the project (and on the component, when one
+            # is named) or the reference has nothing to resolve against.
+            ServiceAdapter.add_services_to_project(
+                project_data, [ServiceType.ATTACHMENTS.value], [component_name] if component_name else None
+            )
+
+            data_list = ensure_attachment_data_list(project_data.setdefault("services", []))
+            entry = {
+                "id": attachment_id,
+                "filename": filename,
+                "content": LiteralScalarString(encrypt_file_to_age_block_sync(content, public_key)),
+            }
+            for index, existing in enumerate(data_list):
+                if isinstance(existing, dict) and existing.get("id") == attachment_id:
+                    data_list[index] = entry
+                    break
+            else:
+                data_list.append(entry)
+
+            if component_name and binding:
+                component = next(
+                    c for c in project_data["components"] if isinstance(c, dict) and c.get("name") == component_name
+                )
+                uses = [
+                    use for use in extract_component_attachment_uses(component) if use.get("reference") != attachment_id
+                ]
+                uses.append({"reference": attachment_id, **binding})
+                ServiceAdapter.set_service_config(
+                    project_data,
+                    ServiceType.ATTACHMENTS.value,
+                    ConfigLayer.COMPONENT,
+                    uses,
+                    component_name=component_name,
+                )
+
+            where = f" and coupled to component '{component_name}'" if component_name and binding else ""
+            try:
+                await self.save_and_commit_project(
+                    project_data, f"Upsert attachment '{attachment_id}' in project '{project_name}'{where}"
+                )
+            except (ProjectSchemaError, ProjectIntegrityError) as e:
+                return {"success": False, "error": str(e), "error_type": "validation_error"}
+
+            logger.info(f"Upserted attachment '{attachment_id}' in project '{project_name}'{where}")
+            return {"success": True, "attachment": attachment_id, "replaced": exists, "component": component_name}
+
+        except Exception as e:
+            error_msg = f"Error upserting attachment '{attachment_id}': {e}"
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
