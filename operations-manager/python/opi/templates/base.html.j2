@@ -6,7 +6,12 @@
 #}
 
 {% set page_title_value %}{% block page_title %}Self Service Portal{% endblock %}{% endset %}
-<c-page title="{{ page_title_value }}" lang="nl" bodyClass="rvo-theme rvo-responsive" additionalJs='<script src="/static/js/json-enc.js"></script><script src="/static/js/edit_modal.js"></script>'>
+{# additionalJs is a single-quoted ROOS attribute holding raw HTML, so a static_url('...')
+   call cannot be written inline there - its quotes would end the attribute value. Resolve
+   the URLs first and reference them by name. #}
+{% set json_enc_js = static_url("js/json-enc.js") %}
+{% set edit_modal_js = static_url("js/edit_modal.js") %}
+<c-page title="{{ page_title_value }}" lang="nl" bodyClass="rvo-theme rvo-responsive" additionalJs='<script src="{{ json_enc_js }}"></script><script src="{{ edit_modal_js }}"></script>'>
 
     <div class="rvo-demo-page">
         {# ===================================================================

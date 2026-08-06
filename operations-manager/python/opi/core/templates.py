@@ -5,6 +5,7 @@ This module sets up Jinja2 templates with ROOS components for the operations-man
 Includes Babel i18n integration for multi-language support.
 """
 
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -162,6 +163,48 @@ TEMPLATES_DIR = OPI_DIR / "templates"
 # service deliver its own detail-page section (WP2) instead of the general template
 # hardcoding an include (see UIEvent.PROJECT_SECTIONS / DetailPageSection).
 CATALOG_DIR = OPI_DIR / "services" / "catalog"
+# Own static files (operations-manager/python/static), mounted at /static.
+STATIC_DIR = OPI_DIR.parent / "static"
+
+# Content hash per static file, keyed by relative path, valued by ((mtime_ns, size), hash).
+# The stat tuple is the invalidation key: one os.stat per render is negligible and it is
+# exactly what makes this work in the skaffold loop - a synced file gets a new mtime, the
+# hash is recomputed, the URL changes, no restart needed.
+_STATIC_HASHES: dict[str, tuple[tuple[int, int], str]] = {}
+
+
+def static_url(path: str) -> str:
+    """URL for an own static file, with a content hash as ``?v=`` parameter.
+
+    ``static_url("js/wizard.js")`` -> ``/static/js/wizard.js?v=1a2b3c4d``. Because the URL
+    changes whenever the contents change, a browser can never serve a stale copy of a
+    replaced file - it is a different URL. The ``?v=`` parameter is also what earns the
+    long cache lifetime; see CacheControlledStaticFiles in opi/core/static_files.py.
+
+    ROOS assets are deliberately NOT routed through here: they live under the separate
+    /static/roos/dist mount and ROOS emits those URLs itself, so we do not control them.
+    Adding a hash there is not possible without patching ROOS, and pinning them long-term
+    without a hash would be wrong.
+
+    A file that does not exist gets an unversioned URL, which falls back to no-cache
+    rather than being pinned for a year.
+    """
+    relative_path = path.lstrip("/")
+    file_path = STATIC_DIR / relative_path
+    try:
+        stat_result = file_path.stat()
+    except OSError:
+        return f"/static/{relative_path}"
+
+    stat_key = (stat_result.st_mtime_ns, stat_result.st_size)
+    cached = _STATIC_HASHES.get(relative_path)
+    if cached is None or cached[0] != stat_key:
+        digest = hashlib.sha256(file_path.read_bytes()).hexdigest()[:8]
+        _STATIC_HASHES[relative_path] = (stat_key, digest)
+    else:
+        digest = cached[1]
+    return f"/static/{relative_path}?v={digest}"
+
 
 # Create templates instance
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -193,6 +236,8 @@ templates.env.globals["build_date"] = BUILD_DATE
 # Live version metadata (reads opi/version.json each call, so hot-synced dev builds
 # are reflected without a restart). See opi/core/version.py.
 templates.env.globals["version_info"] = get_version_info
+# Content-hashed URLs for own static files; see static_url above.
+templates.env.globals["static_url"] = static_url
 
 # Register custom filters
 templates.env.filters["service_name"] = get_service_name
