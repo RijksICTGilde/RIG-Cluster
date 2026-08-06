@@ -1,6 +1,6 @@
-# Eén haaksysteem, op events
+# Twee event-lijsten, één manier van inhaken
 
-Status: plan, 6 augustus 2026. Niet gebouwd. Aanleiding: elke nieuwe uitbreiding vraagt nu een nieuwe methode op de basisklasse plus een nieuwe plek die de registry scant. Het vermoeden was dat dat uit de hand loopt; de meting bevestigt dat.
+Status: plan, 6 augustus 2026. Niet gebouwd, en pas beginnen ná RC-36 (dat verhuist de servicedefinitie naar het pakket en raakt dezelfde bestanden). Aanleiding: elke nieuwe uitbreiding vraagt nu een nieuwe methode op de basisklasse plus een nieuwe plek die de registry scant.
 
 ## De meting
 
@@ -10,59 +10,61 @@ Status: plan, 6 augustus 2026. Niet gebouwd. Aanleiding: elke nieuwe uitbreiding
  2 leden in de HookPoint-enum
 ```
 
-Van de negenentwintig uitbreidingspunten lopen er dus **twee** via de enum (`AFTER_SYNC`, `DEPLOYMENT_STATE`). De rest is een methode met een eigen naam, die generieke code bij naam aanroept op een plek die daarvoor bedacht is.
+Van de negenentwintig uitbreidingspunten lopen er dus twee via de enum. De rest is een methode met een eigen naam, die generieke code bij naam aanroept op een plek die daarvoor bedacht is. Zes van die haken hebben **één** bewoner (`config_approvals`, `contribute_deployment_manifests`, `deployment_page_sections`, `observe_deployment`, en de twee `deployment_component`-varianten); dat is maatwerk op de basisklasse, geen contract.
 
-Hoeveel diensten elke haak echt gebruikt, want dat scheidt contract van maatwerk:
+## De vorm, en waarom het bezwaar ertegen niet standhield
 
-| Haak | Diensten |
-|---|---|
-| `config_editables` | 17 |
-| `config_api_fields` | 12 |
-| `config_form_section` | 10 |
-| `config_component_layout` / `..._visualizers` | 8 |
-| `build_secret_files`, `provision` | 4 |
-| `config_model_for`, `contribute_manifest_context`, `detail_page_sections` | 3 |
-| `deployment_state` | 2 |
-| `config_approvals`, `contribute_deployment_manifests`, `deployment_page_sections`, `observe_deployment`, `config_deployment_component_layout`, `..._visualizers` | 1 |
+Het bezwaar tegen een generieke dispatch was dat je typecontrole verliest. Dat is gemeten en het klopt niet. Eén methode met een enum en een payload per event houdt de controle gewoon:
 
-Zes haken hebben één bewoner. Dat zijn geen contracten maar maatwerk dat op de basisklasse is beland, en ze kosten wel iedereen die de klasse leest aandacht.
+```python
+class Service:
+    @overload
+    def handle(self, event: Literal[HookEvent.ROLLOUT], payload: RolloutPayload) -> None: ...
+    @overload
+    def handle(self, event: Literal[HookEvent.RENDER], payload: RenderPayload) -> str | None: ...
+```
 
-## Wat we willen
+Een verkeerde payload levert dan:
 
-Een dienst luistert op een event uit een enum, en generieke code publiceert dat event. Geen nieuwe methode per uitbreiding, geen nieuwe scanplek. Hetzelfde geldt voor de UI: een dienst haakt op dezelfde manier in op waar hij zichtbaar is.
+```
+error: No overloads for "handle" match the provided arguments
+error: Argument of type "RenderPayload" cannot be assigned to parameter "payload" of type "RolloutPayload"
+```
 
-## De spanning die eerst beslecht moet worden
+Sterker nog: dit levert **meer** controle op dan wat er nu staat. Dit project draait pyright met `reportCallIssue = false` en `reportArgumentType = false`, dus aanroepargumenten worden vandaag helemaal niet nagekeken. De 29 getypeerde methoden geven documentatie en editorhulp, geen afdwinging. Een payload-object is een echt type; losse argumenten die niemand controleert zijn dat niet.
 
-Dit is geen kwestie van doorvoeren, want er zit een echte afweging in.
+(Dat die uitgezette controles het nakijken waard zijn, is een eigen punt en staat apart op de lijst.)
 
-De haken van vandaag zijn **getypeerd en vindbaar**: `detail_page_sections(project_data, user_role)` zegt wat het krijgt en wat het teruggeeft, pyright controleert het, en je vindt de gebruikers met één zoekopdracht. Een generieke event-bus met `handle(event, payload)` is uniform maar verliest precies dat: de payload wordt een dict, de typecontrole valt weg, en "wie luistert hierop" is niet meer te zien zonder te draaien.
+## Twee families, twee lijsten
 
-Voor een codebase waar we vandaag drie keer een fout vonden doordat een test of een type iets vasthield, is dat geen kleine prijs.
+Haken doen twee wezenlijk verschillende dingen, en die horen niet in één enum:
 
-De uitweg is waarschijnlijk niet kiezen maar splitsen: **de enum wordt de index en het dispatch-mechanisme, de contracten blijven getypeerd.** Eén plek die weet welke events er zijn en wie erop zit, terwijl een handler nog steeds een getypeerde methode is. Dan verdwijnen de 38 scanplekken en blijft de vindbaarheid.
+**UI-events: waar ben ik zichtbaar.** `detail_page_sections`, `deployment_page_sections`, `config_form_section`, de acties, de uitleg. Een dienst krijgt context en geeft iets terug om te tonen. Ze muteren niets en falen zichtbaar: een sectie die niets teruggeeft betekent gewoon geen sectie.
 
-Beslis dat expliciet voordat er iets verbouwd wordt, en schrijf de reden op.
+**Actie-events: wat doe ik als er iets gebeurt.** De rollout-haak uit RC-37, `observe_deployment`, de resource-tuning na een sync. Een dienst krijgt context en verandert de toestand. Deze hebben een contract dat de UI-kant niet heeft: **een actie-haak committeert niet zelf.** Hij muteert `ctx.project_data`, en de aanroeper doet ná de scan één `save_and_commit_project()` voor alle uitkomsten samen. Twee diensten die allebei committen geven twee commits en een lost-update-race.
+
+Één enum voor allebei zou dat verschil verstoppen, en juist dat contract is het soort ding dat stilletjes sneuvelt. Dus twee lijsten, en de dispatch mag hetzelfde mechanisme zijn.
 
 ## Voorstel
 
-1. **Inventariseer per haak wat hij is**: een contract met meerdere bewoners, of maatwerk met één. De zes met één bewoner horen waarschijnlijk niet op de basisklasse.
-2. **Beslis de vorm** (de spanning hierboven), en leg hem vast in `instructions/services.md`.
-3. **Eén dispatch-punt** met de enum als index, waar de 38 scanplekken naartoe verhuizen. Verifiëren: het aantal plekken dat zelf over `SERVICES` itereert daalt aantoonbaar.
-4. **De UI-kant meenemen**, want dat is dezelfde vraag: `detail_page_sections`, `deployment_page_sections` en de acties zijn allemaal "waar ben ik zichtbaar", en horen dus op dezelfde manier in te haken.
+1. **Twee enums**, `UIEvent` en `ActionEvent`, met per event een payload-type.
+2. **Eén dispatch per familie**, met de enum als index: hier staat wie er luistert, in plaats van 38 plekken die zelf itereren.
+3. **De zes eenmalige haken beoordelen**: verhuizen naar een event, of eruit omdat ze maatwerk zijn. Niet automatisch meenemen.
+4. **De contracten blijven getypeerd** via overloads per event, zoals hierboven bewezen.
 
 ## Volgorde
 
-1. De inventarisatie, want die bepaalt of dit een grote of een middelgrote klus is.
-2. De vormbeslissing, met de argumenten uit dit plan erbij.
-3. Het dispatch-punt met twee bestaande haken als eerste bewoners, gedrag ongewijzigd.
-4. De rest in groepen, met na elke groep dezelfde verificatie.
+1. De inventarisatie: welke van de 29 is een UI-event, welke een actie-event, en welke is geen van beide. Die uitkomst bepaalt of dit een grote of middelgrote klus is.
+2. `ActionEvent` eerst, met de rollout-haak van RC-37 en `observe_deployment` als bewoners. Die familie is het kleinst en het contract is het scherpst.
+3. `UIEvent` daarna, in groepen, met na elke groep de volledige suite groen.
+4. De 38 scanplekken opruimen. Verifiëren: dat aantal daalt aantoonbaar, want dat is de hele opbrengst.
 
 ## Waar op te letten
 
-**Dit is geen opruiming maar een verbouwing van het contract.** Alles in `catalog/` hangt eraan. Doe het niet in één klap en houd na elke groep de suite groen, anders is een fout niet meer te herleiden naar een stap.
+**Dit is een verbouwing van het contract, geen opruiming.** Alles in `catalog/` hangt eraan. Doe het in groepen en houd de suite na elke groep groen, anders is een fout niet meer te herleiden naar een stap.
 
-**Uniformiteit is geen doel op zich.** De 17 diensten op `config_editables` werken prima; dat is een contract dat zijn werk doet. De winst zit in de 38 scanplekken en de zes eenmalige haken, niet in het gelijkschakelen van wat al goed loopt.
+**Uniformiteit is geen doel op zich.** De 17 diensten op `config_editables` werken prima. De winst zit in de 38 scanplekken en de zes eenmalige haken, niet in het gelijkschakelen van wat al loopt.
 
-**Een hook die het projectbestand muteert committeert niet zelf.** Dat contract staat al in `plans/oom-auto-tune-deployment-scoped.md` en geldt straks voor meer haken tegelijk: muteer `ctx.project_data`, en de aanroeper doet er één `save_and_commit_project()` overheen. Twee diensten die allebei committen geven een lost-update-race.
+**Een actie-haak committeert niet zelf.** Dit contract staat al in `plans/oom-auto-tune-deployment-scoped.md` en wordt met meer bewoners belangrijker, niet minder. Leg het vast op de `ActionEvent`-familie zelf, niet in een opmerking bij één haak.
 
-**Doe dit na RC-36.** Dat plan verhuist de servicedefinitie naar het pakket en raakt dezelfde bestanden. Twee verbouwingen tegelijk op `services.py` en `catalog/` levert een merge op die niemand meer kan nakijken.
+**Doe het na RC-36.** Twee verbouwingen tegelijk op `services.py` en `catalog/` levert een merge op die niemand meer kan nakijken.
