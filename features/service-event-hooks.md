@@ -15,9 +15,10 @@ haak, en zes van die methoden hadden precies één bewoner: maatwerk op een gede
 basisklasse, geen contract.
 
 Het bezwaar tegen een generieke dispatch was verlies van typecontrole. Dat klopte niet:
-één payload-object per event mét overloads levert méér controle op dan losse argumenten,
-want dit project draait pyright met `reportCallIssue` en `reportArgumentType` uit -- die
-argumentenlijsten werden nergens nagekeken.
+één payload-object per event mét overloads levert méér *afdwingbare* controle op dan losse
+argumenten, want dit project draait pyright met `reportCallIssue` en `reportArgumentType`
+uit -- die argumentenlijsten werden nergens nagekeken. Zie regel 3 hieronder voor wat er
+vandaag wél en niet uitkomt.
 
 ## Zelf inhaken
 
@@ -79,7 +80,15 @@ Elk event noemt ook wat het doorloopt (`event.level`: project, deployment of com
    te implementeren, en ook niet andersom.
 3. **De payload is één object per event.** Een echt type, gekoppeld aan het event via de
    overloads op `handle_ui` / `handle_action`. Een verkeerde payload geeft
-   `No overloads for "handle_ui" match the provided arguments`.
+   `No overloads for "handle_ui" match the provided arguments` plus de regel welk type
+   niet past.
+
+   Nagemeten, en met een kanttekening: die fouten verschijnen alleen met
+   `reportCallIssue` en `reportArgumentType` aan, en dit project heeft ze allebei uit --
+   dus vandaag wordt hij hier onderdrukt, net zoals bij de losse argumenten die dit
+   vervangt. Het verschil is dat de koppeling nu een echt type is: die controles
+   aanzetten begint hem meteen af te dwingen, zonder verdere verbouwing. Dat aanzetten
+   staat als apart punt op de lijst, precies zoals het plan zegt.
 
 ## Wie luistert er
 
