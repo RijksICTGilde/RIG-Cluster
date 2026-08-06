@@ -1218,9 +1218,18 @@ class CrossDomainPortOptionsProvider:
         for component in self.yaml_data.get("components") or []:
             if isinstance(component, dict) and component.get("name") == component_name:
                 return _cross_domain_component_ports(component), "Dit component heeft geen inbound-poorten"
-        # No own component picked yet (or it vanished): the project-wide union, so the field
-        # is usable before the rest of the row is filled in.
-        union = [port for port in (self.yaml_data.get("_cross_domain_ports") or []) if isinstance(port, int)]
+        # No own component picked yet (or it vanished): the union over my components, so the
+        # field is usable before the rest of the row is filled in. Derived from the form's own
+        # data rather than precomputed per flow, which is what left it empty in the create
+        # wizard; ``_cross_domain_ports`` is the pre-RC-42 precomputed union and is still read
+        # so an older wizard session in flight keeps working.
+        union: list[int] = [port for port in (self.yaml_data.get("_cross_domain_ports") or []) if isinstance(port, int)]
+        for component in self.yaml_data.get("components") or []:
+            if not isinstance(component, dict):
+                continue
+            for port in _cross_domain_component_ports(component):
+                if port not in union:
+                    union.append(port)
         return union, "Geen poorten bekend: stel eerst inbound-poorten in op een component"
 
     def _peer_ports(self) -> tuple[list[int], str]:

@@ -472,6 +472,46 @@ class TestOptionsProviders:
         assert [o["value"] for o in provider.get_options()] == ["", "8080", "4180"]
 
 
+class TestSharedFormContext:
+    """One builder for both flows, so "works when editing, empty in the create wizard" -- the
+    state that made this step unusable -- cannot come back."""
+
+    def _build(self, monkeypatch, project_name: str) -> dict:
+        import opi.services.catalog.cross_domain_access.context as context_mod
+
+        class _Summary:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+        monkeypatch.setattr(
+            context_mod,
+            "get_project_store",
+            lambda: type(
+                "S", (), {"get_all": lambda self: [_Summary("regelrecht"), _Summary("me"), _Summary("verboden")]}
+            )(),
+        )
+        monkeypatch.setattr(context_mod, "is_user_authorized_for_project", lambda name, email: name != "verboden")
+        return context_mod.build_cross_domain_context(project_name, "u@example.com")
+
+    def test_lists_authorized_peers_without_the_own_project(self, monkeypatch) -> None:
+        assert self._build(monkeypatch, "me")["_cross_domain_projects"] == ["regelrecht"]
+
+    def test_unauthorized_projects_are_not_named(self, monkeypatch) -> None:
+        assert "verboden" not in self._build(monkeypatch, "me")["_cross_domain_projects"]
+
+    def test_create_wizard_has_no_own_project_to_exclude(self, monkeypatch) -> None:
+        # The create wizard passes an empty name: the project does not exist yet.
+        assert self._build(monkeypatch, "")["_cross_domain_projects"] == ["me", "regelrecht"]
+
+    def test_both_flows_call_the_same_builder(self) -> None:
+        import inspect
+
+        from opi.web import router_detail_edit, router_wizard
+
+        for module in (router_detail_edit, router_wizard):
+            assert "build_cross_domain_context(" in inspect.getsource(module)
+
+
 # --- the per-row cascade (RC-42) --------------------------------------------------------
 
 _PEER_WITH_PORTS = {
@@ -601,8 +641,19 @@ class TestPortIsTheReceivingSide:
         assert self._ports(row, "inbound[0]/to/port") == ["", "8080", "4180"]
 
     def test_inbound_without_a_component_falls_back_to_the_project_union(self) -> None:
+        # Union over my own components (3000 from web, 8080 + 4180 from the walled worker),
+        # derived from the form's own data so the create wizard has it too.
         row = {"name": "r", "from": {"project": "regelrecht"}, "to": {}}
-        assert self._ports(row, "inbound[0]/to/port") == ["", "8080", "3000"]
+        assert self._ports(row, "inbound[0]/to/port") == ["", "8080", "3000", "4180"]
+
+    def test_inbound_union_needs_no_precomputed_context(self) -> None:
+        yaml_data = {k: v for k, v in _OWN.items() if k != "_cross_domain_ports"}
+        from opi.forms.visualizers.providers import CrossDomainPortOptionsProvider
+
+        options = CrossDomainPortOptionsProvider(
+            yaml_data=yaml_data, row_data={"name": "r", "to": {}}, yaml_path="inbound[0]/to/port"
+        ).get_options()
+        assert [o["value"] for o in options] == ["", "3000", "8080", "4180"]
 
     def test_outbound_offers_the_peer_components_ports(self) -> None:
         row = _out_row(project="regelrecht", deployment="prod", component="api")

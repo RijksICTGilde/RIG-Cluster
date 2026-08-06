@@ -45,6 +45,7 @@ from opi.forms.wizard.session import (
     init_modal_state_tokenized,
     save_modal_state_by_token,
 )
+from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.project_authorization import (
     is_user_authorized_for_project,
 )
@@ -226,39 +227,6 @@ def _fully_owned_list_keys(flow: Any) -> set[str]:
             if "/" not in path and "[" not in path:
                 owned.add(path)
     return owned
-
-
-def _build_cross_domain_context(project_name: str, project_data: dict[str, Any], user_email: str) -> dict[str, Any]:
-    """Precompute cross-domain-access select options (RC-15).
-
-    ``_cross_domain_projects``: peer projects the user is authorized for, excluding the own
-    project. ``_cross_domain_ports``: the project's own component inbound ports, plus 4180
-    where an authorization-wall fronts a component (the port the receiving side is actually
-    reachable on). One flat port union -- the form cannot filter options per row. Both are
-    template-only context (no step produces them), so they never reach the saved project.
-    """
-    from opi.services.services import service_entry_name
-    from opi.services.services_enums import ServiceType
-
-    projects = sorted(
-        summary.name
-        for summary in get_project_store().get_all()
-        if summary.name != project_name and is_user_authorized_for_project(summary.name, user_email)
-    )
-    ports: list[int] = []
-    has_auth_wall = False
-    for component in project_data.get("components", []) or []:
-        if not isinstance(component, dict):
-            continue
-        for entry in component.get("services", []) or []:
-            if service_entry_name(entry) == ServiceType.AUTHORIZATION_WALL.value:
-                has_auth_wall = True
-        for port in (component.get("ports") or {}).get("inbound") or []:
-            if isinstance(port, int) and port not in ports:
-                ports.append(port)
-    if has_auth_wall and 4180 not in ports:
-        ports.append(4180)
-    return {"_cross_domain_projects": projects, "_cross_domain_ports": sorted(ports)}
 
 
 def _pad_at(body: dict[str, Any], key: str, target_idx: int) -> dict[str, Any]:
@@ -687,12 +655,12 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
                 backup_context["_selected_deployment"] = requested_dep
         state.template_data.update(backup_context)
 
-    # Cross-domain-access needs a precomputed list of authorized peer projects and of the
-    # project's own inbound ports. Populated only for flows that carry its section. These are
-    # template-only: they never reach the saved project. No editable names them, so they fall
-    # outside the write set and the save path does not look at them.
+    # Cross-domain-access needs the list of authorized peer projects; the same builder the
+    # create wizard uses, so the two flows cannot drift apart again. Populated only for flows
+    # that carry its section. Template-only: no editable names it, so it falls outside the
+    # write set and never reaches the saved project.
     if flow_id in ("modal-edit-cross-domain-config", "modal-edit-services"):
-        state.template_data.update(_build_cross_domain_context(project_name, project_data, _user_email))
+        state.template_data.update(build_cross_domain_context(project_name, _user_email))
 
     # Mark all sections with data as completed (for step indicator)
     for section_id in active_section_ids:

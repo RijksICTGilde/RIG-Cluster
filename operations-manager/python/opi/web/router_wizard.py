@@ -27,6 +27,7 @@ from opi.forms.wizard.session import (
     save_wizard_state,
 )
 from opi.forms.wizard.state import CLEARED_FIELD
+from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.schema_migration import normalize_service_entries
 from opi.utils.csrf import reject_misfired_form_get
 from opi.web.menu import get_menu_items
@@ -342,6 +343,11 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
 
         # Seed the team step with the current user as administrator
         user_email = (user or {}).get("email", "")
+
+        # The same peer-project list the edit flow gets. Without it the cross-domain step had
+        # three required fields whose select was empty, so the step could not be saved at all.
+        # The project does not exist yet, hence the empty name: nothing to exclude.
+        state.template_data.update(build_cross_domain_context("", user_email))
         if user_email:
             state.store_step_data("team", {"users": [{"email": user_email, "role": "admin"}]})
 
