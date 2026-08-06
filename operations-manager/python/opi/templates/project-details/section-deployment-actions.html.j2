@@ -22,7 +22,7 @@
                     size="sm"
                     showIcon="before"
                     icon="refresh"
-                    @click="showDangerConfirmation('deployment-refresh', '{{ deployment.name }}', 'Weet u zeker dat u deployment &quot;{{ deployment.name }}&quot; wilt herverwerken? Dit synchroniseert de manifesten voor deze deployment.')" />
+                    @click="openServiceModal('/projects/{{ project.name }}/actions/refresh-deployment/confirm?target={{ deployment.name | urlencode }}', 'Deployment herverwerken')" />
                 {# Service-contributed action buttons: the database console and the job
                    runner (both PostgreSQL services), sleep-mode's wake/sleep toggle. A
                    service owns its own button via ServiceDefinition.actions_provider,

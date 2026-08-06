@@ -625,3 +625,60 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
     finally:
         if project_manager:
             await project_manager.close()
+
+
+async def handle_delete_component(payload: dict, progress: Any) -> dict:
+    """Handle async component deletion task.
+
+    Two steps that always belonged together: remove the component from the project file,
+    then reprocess the project so the deletion actually lands in the cluster. The web
+    endpoint used to do the first inline and queue the second, so the dialog reported
+    success while the real work had not started.
+
+    Expected payload keys:
+        project_name: Name of the project
+        component_name: Name of the component to remove
+    """
+    from opi.core.task_handlers_operations import handle_refresh_project
+    from opi.manager.project_manager import ProjectManager
+
+    project_name: str = payload["project_name"]
+    component_name: str = payload["component_name"]
+
+    logger.info(f"Task: deleting component {component_name} from {project_name}")
+
+    remove_task = progress.add_task(f"Component '{component_name}' verwijderen")
+    # Mutate through the single ProjectManager path: it reads fresh contents from Git,
+    # then saves and commits, so a lagging read cache can never overwrite newer Git state.
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
+    try:
+        result = await project_manager.delete_component(component_name)
+    finally:
+        await project_manager.close()
+
+    if not result["success"]:
+        error_msg = result["error"]
+        progress.fail_task(remove_task, error_msg)
+        progress.fail_project(error_msg)
+        raise RuntimeError(error_msg)
+
+    progress.complete_task(remove_task)
+
+    # delete_component already refreshed the read cache via save_and_commit_project;
+    # reprocess from Git to apply the deletion.
+    refresh_result = await handle_refresh_project({"project_name": project_name, "force_clone": True}, progress)
+
+    # A reprocess that failed must stay visible: it reports failure by returning, not by
+    # raising, so wrapping it in a fixed "completed" would swallow it.
+    failed = isinstance(refresh_result, dict) and refresh_result.get("status") == "failed"
+    return {
+        "status": "failed" if failed else "completed",
+        "message": (
+            refresh_result.get("message", "Herverwerken mislukt")
+            if failed
+            else f"Component '{component_name}' succesvol verwijderd"
+        ),
+        "project": project_name,
+        "component": component_name,
+        "processing": refresh_result.get("processing") if isinstance(refresh_result, dict) else None,
+    }
