@@ -16,10 +16,10 @@ from opi.forms.editables.enforcers import FieldError, UniqueInviteKeyEnforcer
 from opi.forms.editables.validators import InviteKeyValidator
 from opi.forms.visualizers.providers import InviteRealmRoleOptionsProvider
 from opi.handlers.project_file_handler import ProjectFileHandler
-from opi.services.catalog.base import ConfigLayer
+from opi.services.catalog.base import ConfigLayer, ProjectPageContext
 from opi.services.catalog.invite import InviteService
 from opi.services.catalog.invite.config_model import InviteConfig
-from opi.services.services_enums import ServiceType
+from opi.services.services_enums import ServiceType, UIEvent
 from pydantic import ValidationError
 
 
@@ -212,9 +212,15 @@ class TestInviteRealmRoleOptionsProvider:
 
 
 class TestDetailPageSections:
+    @staticmethod
+    def _sections(project: dict[str, Any], user_role: str) -> list:
+        return InviteService().handle_ui(
+            UIEvent.PROJECT_SECTIONS, ProjectPageContext(project_data=project, user_role=user_role)
+        )
+
     def test_admin_sees_the_block(self) -> None:
         project = _invite_service_project([_production_invite_config_entry()])
-        sections = InviteService().detail_page_sections(project, "admin")
+        sections = self._sections(project, "admin")
         assert len(sections) == 1
         assert sections[0].template == "invite/section-detail.html.j2"
         assert sections[0].context["invites"][0]["key"] == "invulhulpen"
@@ -222,10 +228,10 @@ class TestDetailPageSections:
 
     def test_developer_sees_nothing(self) -> None:
         project = _invite_service_project([_production_invite_config_entry()])
-        assert InviteService().detail_page_sections(project, "developer") == []
+        assert self._sections(project, "developer") == []
 
     def test_no_invites_gives_nothing(self) -> None:
-        assert InviteService().detail_page_sections(_invite_service_project([]), "admin") == []
+        assert self._sections(_invite_service_project([]), "admin") == []
 
 
 def _production_invite_config_entry() -> dict[str, Any]:

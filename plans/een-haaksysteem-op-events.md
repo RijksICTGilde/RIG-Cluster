@@ -1,6 +1,6 @@
 # Twee event-lijsten, één manier van inhaken
 
-Status: plan, 6 augustus 2026. Niet gebouwd. RC-36 is inmiddels gemerged, dus de blokkade is weg: de servicedefinitie staat nu in het servicepakket (nul `ServiceDefinition`-blokken in `services.py`) en dit plan bouwt daarop voort. Aanleiding: elke nieuwe uitbreiding vraagt nu een nieuwe methode op de basisklasse plus een nieuwe plek die de registry scant.
+Status: gebouwd in RC-39 (6 augustus 2026); zie `features/service-event-hooks.md` voor de uitkomst, inclusief de inventarisatie van de 29 methoden. RC-36 is inmiddels gemerged, dus de blokkade is weg: de servicedefinitie staat nu in het servicepakket (nul `ServiceDefinition`-blokken in `services.py`) en dit plan bouwt daarop voort. Aanleiding: elke nieuwe uitbreiding vraagt nu een nieuwe methode op de basisklasse plus een nieuwe plek die de registry scant.
 
 ## De meting
 

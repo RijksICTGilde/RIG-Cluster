@@ -537,13 +537,13 @@ happened to the Keycloak realm block when RC-5 relocated the realms into the ser
 
 | Hook | Returns | Collected by |
 |---|---|---|
-| `detail_page_sections(project_data, user_role)` | `DetailPageSection`s (a template + its context) | `registry.collect_detail_page_sections()` |
-| `deployment_page_sections(ctx)` | the same, for ONE deployment | `registry.collect_deployment_page_sections()` |
+| `@on(UIEvent.PROJECT_SECTIONS)` on a method taking `ProjectPageContext` | `DetailPageSection`s (a template + its context) | `registry.collect_detail_page_sections()` |
+| `@on(UIEvent.DEPLOYMENT_SECTIONS)` on a method taking `DeploymentPageContext` | the same, for ONE deployment | `registry.collect_deployment_page_sections()` |
 | `definition.actions_provider(project_data, deployment_name)` | `DeploymentAction`s (buttons) | `registry.collect_deployment_actions()` |
 | `web_routers()` | the `APIRouter`s that serve this service's own fragments/modals | `registry.collect_service_routers()` |
 
-- `project_data` is the **decrypted** project dict, so a service can surface managed
-  credentials; `user_role` lets the service gate on the viewer (return `[]` to omit).
+- `ctx.project_data` is the **decrypted** project dict, so a service can surface managed
+  credentials; `ctx.user_role` lets the service gate on the viewer (return `[]` to omit).
 - Only services the project actually uses (project-level or referenced by a component)
   are asked; sections render in registry order, in place of a hardcoded `{% include %}`.
 - Put the template **next to the service** under `opi/services/catalog/<svc>/` and address
@@ -551,10 +551,10 @@ happened to the Keycloak realm block when RC-5 relocated the realms into the ser
   `opi/core/templates.py`). The include gets the `DetailPageSection` as `section`, so the
   template reads its data from `section.context`.
 
-### Which of the two section hooks
+### Which of the two section events
 
-`detail_page_sections` is about the project (the Keycloak realms, the invite links, the
-attachment catalog). `deployment_page_sections` is about ONE deployment (its metrics, its
+`UIEvent.PROJECT_SECTIONS` is about the project (the Keycloak realms, the invite links, the
+attachment catalog). `UIEvent.DEPLOYMENT_SECTIONS` is about ONE deployment (its metrics, its
 backups) and is asked once per deployment on the Deployments tab. Its `ctx`
 (`DeploymentPageContext`) adds the deployment, the managed cluster, and
 `backend_available` -- the availability of optional back-ends (`prometheus`, `backups`)
@@ -566,8 +566,9 @@ Backups belong to every service with a `backup_label`; the two modals belong to 
 PostgreSQL services. Such a block is delivered by each owner (through a shared mixin in
 `catalog/shared/`), and the collectors keep one copy: sections dedupe on template name,
 actions on (label, endpoint), routers on object identity -- so return the SAME router
-object from every owner. Page mixins are cooperative (`super()`), since a service can
-carry more than one.
+object from every owner. Page mixins do NOT have to cooperate through `super()` (RC-39):
+a service carries every handler it inherits, and the dispatch concatenates what they
+return. A mixin that forgot to chain used to swallow the other one's block silently.
 
 ### Endpoints belong with the block
 
@@ -581,8 +582,8 @@ A modal button is a `DeploymentAction` with `modal_endpoint` + `modal_title` ins
 `endpoint`; the shared modal shell loads that URL (`openServiceModal`). One or the other,
 never both.
 
-`KeycloakService.detail_page_sections` is the reference implementation for the project
-level, `MetricsScraperService.deployment_page_sections` for the deployment level, and
+`KeycloakService.realm_block` is the reference implementation for the project level,
+`MetricsScraperService.metrics_block` for the deployment level, and
 `catalog/shared/backups.py` for a jointly-owned block with its own route.
 
 ## Hooks at a glance
@@ -597,22 +598,61 @@ Every hook a service may implement, so a new service knows what it can own:
 | `api_actions()` | extra API actions the service declares (fields, verbs, example) beyond the generic config endpoints |
 | `config_form_section(layer)` | project-level wizard/edit config step |
 | `config_component_layout()` / `config_component_visualizers()` | per-component form fields |
-| `detail_page_sections(project_data, user_role)` | read-only detail-page block (project level) |
-| `deployment_page_sections(ctx)` | read-only detail-page block for one deployment |
 | `web_routers()` | the endpoints those blocks need (fragments, modals) |
 | `config_approvals(layer)` | values that need approval before taking effect |
 | `provision(ctx)` / `handle_service_removal(ctx)` | server-side resources |
 | `contribute_manifest_context(ctx)` / `build_secret_files(ctx)` | manifest + secret contributions (per component) |
 | `contribute_deployment_manifests(ctx)` | deployment-wide manifests (once per deployment, e.g. a NetworkPolicy) |
-| `observe_deployment(ctx)` | act on a just-synced deployment (`HookPoint.AFTER_SYNC`) |
-| `deployment_state(ctx)` | what this service knows about a deployment (`HookPoint.DEPLOYMENT_STATE`) |
-| `on_redeploy(ctx)` | clear the state you recorded about content that was just replaced (`HookPoint.REDEPLOY`) |
+
+### Events: the one way to hook into a moment
+
+Everything above is the *shape* of a service (its config, its manifests, its resources).
+What a service does at a *moment* -- when a page renders, when something happened -- is an
+event, and there is exactly one way to hook into one (RC-39): put `@on(event)` on the
+method that does the work. The method name is free. `registry.listeners(event)` is the
+only index of who listens, so a new event costs an enum member plus a payload type, never
+a method on the base class and never a new scan.
+
+Read `features/service-event-hooks.md` before adding one. Two families, because the
+contracts genuinely differ:
+
+| `UIEvent` (sync, mutates nothing) | Payload | Contributes |
+|---|---|---|
+| `PROJECT_SECTIONS` | `ProjectPageContext` | read-only detail-page block (project level) |
+| `DEPLOYMENT_SECTIONS` | `DeploymentPageContext` | read-only detail-page block for one deployment |
+| `DEPLOYMENT_STATE` | `DeploymentStateContext` | what this service knows about a deployment |
+
+| `ActionEvent` (async, changes state, NEVER commits) | Payload | Contributes |
+|---|---|---|
+| `AFTER_SYNC` | `DeploymentObservationContext` | act on a just-synced deployment |
+| `REDEPLOY` | `RedeployContext` | clear the state you recorded about content that was just replaced |
+
+```python
+class SleepModeService(Service):
+    @on(UIEvent.DEPLOYMENT_STATE)
+    def report_sleep_state(self, ctx: DeploymentStateContext) -> list[DeploymentStateFact]:
+        ...
+
+    @on(ActionEvent.REDEPLOY)
+    async def wake_on_rollout(self, ctx: RedeployContext) -> list[str]:
+        ...
+```
+
+Three rules hold the mechanism together: a handler always returns a LIST of contributions
+(so two handlers on one service both count); participation is DERIVED from the declaration
+(never a second list to keep in sync); and the payload is ONE object per event, paired with
+that event through `@overload` on `Service.handle_ui` / `handle_action`.
+
+**An `ActionEvent` handler mutates `ctx.project_data` in place and never commits.** The
+caller commits once for the whole scan; two services committing means two commits and a
+lost-update race. That contract belongs to the family, not to one hook.
 
 ### Contributing state about a deployment
 
 A service that puts a deployment in a particular situation -- sleep-mode scaling it to
-zero and parking a waker in front of it -- reports that through `deployment_state(ctx)`.
-Generic code (`collect_deployment_state`, the health check, the deployment page) then
+zero and parking a waker in front of it -- reports that through a
+`@on(UIEvent.DEPLOYMENT_STATE)` handler. Generic code
+(`collect_deployment_state`, the health check, the deployment page) then
 learns the situation from the service that caused it instead of inferring it from what
 the cluster happens to show. Read `features/deployment-state-and-health.md` before adding
 one.
@@ -630,10 +670,10 @@ Two rules, both load-bearing:
 
 ### Clearing state when new content is rolled out
 
-`deployment_state(ctx)` reports what a service did to a deployment; `on_redeploy(ctx)` is
-where it undoes it. The hook fires when a deliberate action puts new content on a
-deployment -- an image update, an upsert of an existing deployment -- and every state a
-service recorded about the previous content stops holding at that moment. Read
+`UIEvent.DEPLOYMENT_STATE` reports what a service did to a deployment;
+`ActionEvent.REDEPLOY` is where it undoes it. The event fires when a deliberate action puts
+new content on a deployment -- an image update, an upsert of an existing deployment -- and
+every state a service recorded about the previous content stops holding at that moment. Read
 `features/redeploy-clears-recorded-state.md` before adding one.
 
 Three rules:

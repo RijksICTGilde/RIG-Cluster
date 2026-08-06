@@ -114,7 +114,8 @@ POST /projects/{project}/deployments/{deployment}/sleep # sessie + CSRF, voor de
 - Een **rollout wekt de deployment**: een image-update of een upsert zet de staat op
   `awake` met een verse `sleep-after-deploy`-deadline. Nieuwe inhoud op nul replicas is
   niet uitgerold -- er start geen pod, dus niets pakt hem op. Sleep-mode doet dat zelf via
-  `on_redeploy` (zie `features/redeploy-clears-recorded-state.md`); tot RC-37 riep
+  zijn `@on(ActionEvent.REDEPLOY)`-handler (zie
+  `features/redeploy-clears-recorded-state.md`); tot RC-37 riep
   `project_manager` deze dienst daarvoor bij naam aan.
 - De API-endpoints (wekkerpod) gebruiken een **wektoken per deployment** (`X-Wake-Token`),
   bewust niet de project-API-key: een gelekt wektoken kan één deployment wekken en verder

@@ -8,8 +8,8 @@ hadden vastgelegd op dat moment niet meer op. Een component dat uitstond omdat d
 image OOM'de, een deployment die sliep omdat er niets gebeurde: de nieuwe inhoud is het
 signaal dat die situatie voorbij is.
 
-`HookPoint.REDEPLOY` is het moment waarop elke dienst zijn eigen toestand opruimt. Het is
-de tegenhanger van [`HookPoint.DEPLOYMENT_STATE`](deployment-state-and-health.md): daar
+`ActionEvent.REDEPLOY` is het moment waarop elke dienst zijn eigen toestand opruimt. Het is
+de tegenhanger van [`UIEvent.DEPLOYMENT_STATE`](deployment-state-and-health.md): daar
 vertelt een dienst wát hij deed, hier maakt hij het ongedaan.
 
 ## Waarom het er is
@@ -88,7 +88,8 @@ Staat sleep-mode uit voor dit cluster/project, of valt de deployment buiten de
 ## Zelf aanhaken
 
 ```python
-def on_redeploy(self, ctx: RedeployContext) -> list[str]:
+@on(ActionEvent.REDEPLOY)
+async def wake_on_rollout(self, ctx: RedeployContext) -> list[str]:
     if not <ik heb hier iets vastgelegd>:
         return []
     <ruim het op in ctx.project_data>
@@ -102,12 +103,15 @@ bijzonder; een per-component toestand heeft dan niets op te ruimen, een toestand
 hele deployment wel.
 
 **Nooit zelf committen.** De aanroeper commit de rollout en alle opruimingen in één keer,
-zodat twee diensten niet om twee commits kunnen racen.
+zodat twee diensten niet om twee commits kunnen racen. Dat is het contract van de hele
+`ActionEvent`-familie, niet van deze ene haak (`features/service-event-hooks.md`); een test
+meet het op de broncode van elke actie-handler.
 
 ## Waar het vandaan komt
 
-- Haakpunt en context: `opi/services/services_enums.py` (`HookPoint.REDEPLOY`),
-  `opi/services/catalog/base.py` (`RedeployContext`, `Service.on_redeploy`)
+- Event en context: `opi/services/services_enums.py` (`ActionEvent.REDEPLOY`),
+  `opi/services/catalog/events.py` (`@on`), `opi/services/catalog/base.py`
+  (`RedeployContext`, `Service.handle_action`)
 - De scan: `opi/services/redeploy.py` (`run_redeploy_hooks`)
 - Bewoners: `opi/services/catalog/deployment_health/__init__.py`,
   `opi/services/catalog/sleep_mode/__init__.py`

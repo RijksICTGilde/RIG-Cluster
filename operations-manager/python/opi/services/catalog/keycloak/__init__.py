@@ -10,11 +10,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.services.catalog.base import ConfigLayer, ProvisionContext, Service, config_path
+from opi.services.catalog.base import (
+    ConfigLayer,
+    DetailPageSection,
+    ProjectPageContext,
+    ProvisionContext,
+    Service,
+    config_path,
+)
+from opi.services.catalog.events import on
 from opi.services.catalog.keycloak.config_model import KeycloakConfig
 from opi.services.catalog.keycloak.variables import KeycloakVariables
 from opi.services.services import ServiceDefinition, service_entry_name
-from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType
+from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType, UIEvent
 from opi.utils.secrets import KeycloakSecret
 
 
@@ -75,19 +83,19 @@ class KeycloakService(Service):
             KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE,
         ]
 
-    def detail_page_sections(self, project_data: dict[str, Any], user_role: str):
+    @on(UIEvent.PROJECT_SECTIONS)
+    def realm_block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
         # Realm admin details (host / realm / admin credentials) for the detail page.
         # Admin-only, and only when realms exist. Read from the service config where
         # RC-5 relocated them; the general template used to read the old project-level
         # ``config.keycloak``, which no longer exists, so the section silently stopped
         # rendering. Owning the block here keeps it pinned to the config's real home.
-        if user_role not in ("admin", "owner"):
+        if ctx.user_role not in ("admin", "owner"):
             return []
-        from opi.services.catalog.base import DetailPageSection
         from opi.services.project import Project
 
         realms = (
-            Project(project_data).get(config_path(ConfigLayer.PROJECT, self.service_type, "config", "realms")) or []
+            Project(ctx.project_data).get(config_path(ConfigLayer.PROJECT, self.service_type, "config", "realms")) or []
         )
         if not realms:
             return []
