@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 from opi.core.project_schema import ProjectSchemaError, validate_project_schema
+from opi.services.catalog.shared.storage import StorageEntry
+from pydantic import ValidationError
 from ruamel.yaml import YAML
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -37,7 +39,14 @@ def _valid_project() -> dict:
                 "name": "frontend",
                 "type": "deployment",
                 "ports": {"inbound": [8080], "outbound": [443]},
-                "storage": [{"type": "persistent", "size": "10Gi", "mount-path": "/data"}],
+                # No v1 `storage:` block: that form only lives in the v1 schema now
+                # (RC-32), and this fixture is meant to be valid at the latest version.
+                "services": [
+                    {
+                        "reference": "persistent-storage",
+                        "config": [{"name": "data", "mount-path": "/data", "size": "10Gi"}],
+                    }
+                ],
             }
         ],
         "deployments": [
@@ -266,28 +275,31 @@ def test_mount_path_with_dotdot_traversal_is_rejected() -> None:
     The earlier pattern `^/[\\w./-]+$` allowed `/var/../etc/passwd` because
     `..` is not forbidden in the character class. Container-side this can
     escape the intended storage root if any tool resolves the path.
-    """
-    project = _valid_project()
-    project["components"][0]["storage"][0]["mount-path"] = "/var/../etc/passwd"
 
-    with pytest.raises(ProjectSchemaError):
-        validate_project_schema(project)
+    The guard moved (RC-32): it used to sit in the JSON schema on the v1
+    `storage:` block, which meant it only ever applied to v1 files and never to
+    the service-config shape people write today. It now lives on StorageEntry,
+    which describes that shape.
+    """
+    with pytest.raises(ValidationError):
+        StorageEntry(name="data", size="10Gi", **{"mount-path": "/var/../etc/passwd"})
 
 
 def test_mount_path_with_double_dot_in_middle_is_rejected() -> None:
     """`..` anywhere in the path is rejected, not just at the start."""
-    project = _valid_project()
-    project["components"][0]["storage"][0]["mount-path"] = "/data/../secrets"
+    with pytest.raises(ValidationError):
+        StorageEntry(name="data", size="10Gi", **{"mount-path": "/data/../secrets"})
 
-    with pytest.raises(ProjectSchemaError):
-        validate_project_schema(project)
+
+def test_mount_path_must_be_absolute() -> None:
+    with pytest.raises(ValidationError):
+        StorageEntry(name="data", size="10Gi", **{"mount-path": "data/files"})
 
 
 def test_mount_path_normal_value_is_accepted() -> None:
     """Sanity: normal mount paths (dots in filenames are fine) still pass."""
-    project = _valid_project()
-    project["components"][0]["storage"][0]["mount-path"] = "/data/v1.0/files"
-    validate_project_schema(project)
+    entry = StorageEntry(name="data", size="10Gi", **{"mount-path": "/data/v1.0/files"})
+    assert entry.mount_path == "/data/v1.0/files"
 
 
 # ---------------------------------------------------------------------------
