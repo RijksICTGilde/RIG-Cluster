@@ -182,6 +182,16 @@ COMPONENTS_SECTION = FormSection(
                         Sequence(field_name="path"),
                     ],
                 ),
+                Fieldset(
+                    legend="Startcommando",
+                    description=(
+                        "Alleen invullen als je zeker weet dat het moet. Laat je dit leeg, dan start het "
+                        "component zoals het image dat zelf doet, en dat is bijna altijd de bedoeling."
+                    ),
+                    children=[
+                        Sequence(field_name="command"),
+                    ],
+                ),
                 # Component-level services hook their fieldsets/sequences in here,
                 # collected from the service catalog in config_component_order. The
                 # aliases + user-env-vars system services sort first (RC-25), so they
