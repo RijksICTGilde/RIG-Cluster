@@ -75,6 +75,12 @@ class ServiceBinding(Enum):
 
     COMPONENT = "component"
     DEPLOYMENT = "deployment"
+    #: Niet gebonden: de dienst geldt voor het project als geheel en verschijnt dus niet in
+    #: de keuze per component of per deployment. Toegevoegd omdat die keuze er niet was:
+    #: invite koos noodgedwongen COMPONENT ("binding is not meaningful here, but the field
+    #: is required"), waarna de UI meldde dat je hem per component kiest en de dienst ook
+    #: echt in de componentkeuze verscheen, terwijl een uitnodiging bij het project hoort.
+    PROJECT = "project"
 
 
 class CleanupStrategy(Enum):

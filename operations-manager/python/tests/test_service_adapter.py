@@ -87,7 +87,14 @@ class TestGetServiceDefinition:
             assert defn is not None
             assert defn.name
             assert defn.description
-            assert defn.binding in (ServiceBinding.COMPONENT, ServiceBinding.DEPLOYMENT)
+            # Drie mogelijkheden sinds RC: een dienst die aan niets bindt hoort bij het
+            # project als geheel. Invite was de aanleiding; die stond op COMPONENT omdat er
+            # geen andere waarde was, waarna hij in de componentkeuze verscheen.
+            assert defn.binding in (
+                ServiceBinding.COMPONENT,
+                ServiceBinding.DEPLOYMENT,
+                ServiceBinding.PROJECT,
+            )
 
 
 class TestGetServiceByValue:
@@ -350,12 +357,28 @@ class TestFilterComponentAndDeploymentServices:
         assert ServiceAdapter.filter_component_services([]) == []
         assert ServiceAdapter.filter_deployment_services([]) == []
 
-    def test_all_services_are_either_component_or_deployment(self):
+    def test_every_service_is_bound_in_exactly_one_way(self):
+        """Component, deployment of geen van beide, en nooit twee tegelijk.
+
+        Het was eerder een tweedeling die alle diensten moest dekken. Dat klopte niet: een
+        uitnodiging bindt aan niets en werd daardoor als componentdienst opgevoerd, met als
+        zichtbaar gevolg dat hij in de componentkeuze stond en dat de UI meldde dat je hem
+        per component kiest.
+        """
+        from opi.services.registry import SERVICES
+        from opi.services.services_enums import ServiceBinding
+
         all_services = ServiceAdapter.get_all_services()
-        component = ServiceAdapter.filter_component_services(all_services)
-        deployment = ServiceAdapter.filter_deployment_services(all_services)
-        assert set(component) | set(deployment) == set(all_services)
-        assert set(component) & set(deployment) == set()
+        component = set(ServiceAdapter.filter_component_services(all_services))
+        deployment = set(ServiceAdapter.filter_deployment_services(all_services))
+        project = {
+            service for service in all_services if SERVICES[service].definition.binding is ServiceBinding.PROJECT
+        }
+
+        assert component & deployment == set(), "een dienst bindt niet aan twee dingen tegelijk"
+        assert component & project == set()
+        assert deployment & project == set()
+        assert component | deployment | project == set(all_services), "elke dienst hoort in precies een bak"
 
 
 class TestResolveServiceDependencies:
