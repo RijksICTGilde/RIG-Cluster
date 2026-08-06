@@ -14,7 +14,7 @@ from opi.connectors.git import start_monitoring_task
 from opi.connectors.kubectl import KubectlExecutionError, create_kubectl_connector
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
-from opi.core.project_schema import ProjectSchemaError, validate_project_schema
+from opi.core.project_schema import ProjectSchemaError, validate_declared_project_schema
 from opi.manager.project_manager import ProjectManager, enforce_namespace_pin
 
 if TYPE_CHECKING:
@@ -130,15 +130,24 @@ async def file_change_handler(file_path: str, content: dict) -> None:
     """
     logger.info(f"Detected changes in {file_path}")
 
-    # Security gate: validate against the project schema before any
-    # processing. Fails closed - a schema violation aborts handling so a
-    # hostile project committed directly to git never reaches the connectors.
+    # Security gate: validate before any processing, and before any migration.
+    # Fails closed - a violation aborts handling so a hostile project committed
+    # directly to git never reaches the connectors, and never gets written back
+    # under our own identity because it happened to migrate clean.
+    #
+    # Validation is against the version the file DECLARES, not against the newest
+    # schema (RC-32). A file that has not been reprocessed for months is held to
+    # the rules of its own version; that is what lets the newest schema drop forms
+    # whose migration is long written.
     try:
-        validate_project_schema(content)
+        validate_declared_project_schema(content)
     except ProjectSchemaError as e:
-        # A rejected project file is expected input handling, not an ops-actionable
-        # error: warn (do not feed the ERR log-watch), skip the file, keep polling.
-        logger.warning(f"Projectbestand {file_path} afgekeurd door schemavalidatie: {e}")
+        # This used to be a warning, on the grounds that a rejection is expected
+        # input handling. It is not, any more: every version a file may declare has
+        # a schema, so a rejection means a genuinely broken or hostile file - and
+        # the old silence meant 22 production files were being skipped here with
+        # nobody able to see it. Skip the file, keep polling, but say so loudly.
+        logger.error(f"Projectbestand {file_path} afgekeurd door schemavalidatie en NIET verwerkt: {e}")
         return
 
     # Check if this is a project file with deployments
