@@ -244,6 +244,25 @@ def test_schema_error_is_placed_on_the_step_that_owns_the_field() -> None:
     assert editable_path == "components[0]/command"
 
 
+def test_a_placed_message_actually_reaches_the_rendered_step() -> None:
+    """Placing it is only half the job: the step must render it at the field.
+
+    The renderer looks errors up by the resolved yaml_path, so the key produced by
+    ``_schema_path_to_editable_path`` has to be exactly that. This pins the two ends
+    together -- a mismatch would silently show no message at all.
+    """
+    from opi.forms.visualizers.wizard_sections import COMPONENTS_SECTION
+    from opi.web.router_wizard import _render_step_html
+
+    html = _render_step_html(
+        COMPONENTS_SECTION,
+        yaml_data={"components": [{"name": "web", "image": "nginx:1.25"}]},
+        errors={_schema_path_to_editable_path("components/0/command"): ["Het startcommando is ongeldig"]},
+    )
+
+    assert "Het startcommando is ongeldig" in html
+
+
 def test_unplaceable_schema_error_returns_none() -> None:
     """No step owns this, so the caller falls back to a step-level message."""
     sections = get_flow("create-project").sections
