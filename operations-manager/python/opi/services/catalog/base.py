@@ -913,11 +913,12 @@ class Service(ABC):
         """What this service contributes at a UI event: sections, facts, nothing.
 
         The overloads above are the typed contract: an event is paired with exactly one
-        payload type, so passing a ``DeploymentPageContext`` where a ``RedeployContext``
-        belongs is an error the type checker names ("no overloads match"). That is more
-        than the named methods this replaces ever gave -- pyright runs here with
-        ``reportCallIssue`` and ``reportArgumentType`` off, so their argument lists were
-        checked nowhere.
+        payload type, so a ``DeploymentPageContext`` where a ``DeploymentStateContext``
+        belongs is ``No overloads for "handle_ui" match the provided arguments``. Measured
+        with ``reportCallIssue`` / ``reportArgumentType`` on; this repo has both OFF, so
+        the error is suppressed here today -- exactly as it was for the loose arguments of
+        the named methods this replaces. The difference is that the pairing is now a real
+        type, so switching those checks on starts enforcing it without another change.
 
         Every handler this service declares for the event contributes, in ``order``, and
         the results are concatenated: a service that is backupable AND brings its own
