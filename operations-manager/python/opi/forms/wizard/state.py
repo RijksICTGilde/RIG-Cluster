@@ -14,6 +14,9 @@ from opi.forms.editables.merge import deep_merge_into
 from opi.forms.wizard.services_merge import merge_service_lists, service_name
 from opi.services.services import service_entry_body
 
+#: The keys whose value is a services list: the selection and the virtual config key.
+_SERVICE_LIST_KEYS = ("services", "_services-config")
+
 CLEARED_FIELD = "__wizard-field-cleared__"
 """Tombstone marker for fields the user cleared in a wizard step.
 
@@ -302,10 +305,17 @@ class WizardState:
             if section_id not in self.step_data:
                 continue
             for key, value in self.step_data[section_id].items():
-                if key == "services" and isinstance(merged.get(key), list) and isinstance(value, list):
+                if key in _SERVICE_LIST_KEYS and isinstance(merged.get(key), list) and isinstance(value, list):
                     # Services is a selection set keyed by service name, not positional.
                     # Merge by name so a section still carrying the pre-edit list cannot
                     # index-swap or duplicate services (see services_merge).
+                    #
+                    # The same holds for the virtual key that carries the CONFIG, and that
+                    # was missing: each step stores only the services it configures, so a
+                    # plain replace made the keycloak step's config vanish behind the
+                    # invite step's. It stayed hidden while every step still carried a copy
+                    # of everything -- then the last copy won, stale value and all, which is
+                    # what made the keycloak template reappear with its old value.
                     merged[key] = merge_service_lists(merged[key], value)
                 elif key in merged and isinstance(merged[key], list) and isinstance(value, list):
                     # Selection lists (all-scalar) replace entirely. Structural lists
