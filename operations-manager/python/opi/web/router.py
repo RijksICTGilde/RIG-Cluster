@@ -17,6 +17,8 @@ from datetime import UTC
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates import get_templates
+from opi.services.deployment_state import collect_deployment_state
+from opi.services.disabled_state import deployment_disabled_state
 from opi.services.project import Project
 from opi.services.project_authorization import (
     get_user_role_for_project,
@@ -777,15 +779,78 @@ def _deployment_dashboard_status(status_data: dict[str, Any] | None) -> str:
     return status_data.get("status", {}).get("health", {}).get("status", "Unknown")
 
 
+def _deployment_inactivity(project_data: dict[str, Any], deployment_name: str) -> str | None:
+    """Why this deployment deliberately runs nothing, or None (RC-31).
+
+    Read from the project file, never from the cluster: zero replicas there can also mean
+    something went wrong, and the whole point is telling those two apart.
+
+    ``Disabled`` and ``Inactive`` stay separate because they ask different things of the
+    reader: switched off stays off until someone turns it back on, while a deployment a
+    service parked (today: sleep-mode) comes back by itself on the first visit. One grey
+    "niet actief" for both would leave a user unable to tell whether to act.
+    """
+    if deployment_disabled_state(project_data, deployment_name).is_disabled:
+        return "Disabled"
+    if collect_deployment_state(project_data, deployment_name).expects_no_application_pods:
+        return "Inactive"
+    return None
+
+
 def _derive_project_health(statuses: list[str]) -> str:
-    """Worst-status-wins aggregation of a project's deployment statuses."""
-    if "Degraded" in statuses:
-        return "Degraded"
-    if "Progressing" in statuses:
-        return "Progressing"
+    """Worst-status-wins aggregation of a project's deployment statuses.
+
+    ``Disabled``/``Inactive`` rank just above ``Healthy``: a project with a switched-off
+    deployment is not one the banner may count among "alle projecten zijn gezond", but it
+    also does not deserve to outrank a deployment that is genuinely degraded.
+    """
+    for status in ("Degraded", "Progressing", "Disabled", "Inactive"):
+        if status in statuses:
+            return status
     if "Healthy" in statuses:
         return "Healthy"
     return "Unknown"
+
+
+def _dashboard_health_banner(health_counts: dict[str, int]) -> dict[str, Any] | None:
+    """The banner sentence for the healthy/switched-off/inactive case, or None.
+
+    Kept in Python rather than in the template because it is a text choice, not a
+    rendering detail: "Alle N projecten zijn gezond" was untrue as soon as one of them had
+    nothing running, and what should stand there instead had to be decided, not derived.
+
+    The choice: as long as nothing is switched off or parked, the old sentence stands
+    unchanged. The moment something is, the banner drops the word "alle", states how many
+    of the total really are healthy, and names the rest in their own words. Degraded and
+    Progressing are handled by the template, which lists the affected projects.
+    """
+    healthy = health_counts.get("Healthy", 0)
+    disabled = health_counts.get("Disabled", 0)
+    inactive = health_counts.get("Inactive", 0)
+    if not (healthy or disabled or inactive):
+        return None
+
+    if not disabled and not inactive:
+        heading = "Het project is gezond" if healthy == 1 else f"Alle {healthy} projecten zijn gezond"
+        return {"kind": "success", "heading": heading, "lines": []}
+
+    lines: list[str] = []
+    if disabled:
+        lines.append(
+            f"{disabled} project{'' if disabled == 1 else 'en'} "
+            f"{'heeft' if disabled == 1 else 'hebben'} een uitgeschakelde deployment"
+        )
+    if inactive:
+        lines.append(
+            f"{inactive} project{'' if inactive == 1 else 'en'} "
+            f"{'heeft' if inactive == 1 else 'hebben'} een deployment die tijdelijk niet actief is"
+        )
+    total = sum(health_counts.values())
+    return {
+        "kind": "info",
+        "heading": f"{healthy} van de {total} projecten {'is' if healthy == 1 else 'zijn'} gezond",
+        "lines": lines,
+    }
 
 
 @web_router.get("/dashboard", response_class=HTMLResponse)
@@ -845,6 +910,9 @@ async def dashboard(request: Request):
                     "display_name": project_data.get("display-name", project_name),
                     "description": project_data.get("description", ""),
                     "deployments": deployments,
+                    # Needed to read whether a deployment deliberately runs nothing (RC-31);
+                    # that intent lives in the project file, not in the cluster.
+                    "project_data": project_data,
                     "users": users,
                     "deployment_count": len(deployments),
                     "user_count": len(users),
@@ -1054,7 +1122,15 @@ async def dashboard(request: Request):
                             app_name = generate_argocd_application_name(project["name"], deployment_name)
                             status_data = await argo_connector.get_application_status(app_name)
                             if status_data:
-                                deployment_statuses.append(_deployment_dashboard_status(status_data))
+                                # A deployment that runs nothing on purpose reports zero
+                                # replicas, which ArgoCD calls Healthy. That is the only
+                                # verdict the intent replaces (RC-31): Degraded and
+                                # Progressing are things ArgoCD really observed and stand.
+                                argo_status = _deployment_dashboard_status(status_data)
+                                inactivity = _deployment_inactivity(project["project_data"], deployment_name)
+                                if inactivity and argo_status == "Healthy":
+                                    argo_status = inactivity
+                                deployment_statuses.append(argo_status)
                                 # Extract last deployed timestamp
                                 operation_state = status_data.get("status", {}).get("operationState", {})
                                 finished_at = operation_state.get("finishedAt") or status_data.get("status", {}).get(
@@ -1077,9 +1153,10 @@ async def dashboard(request: Request):
                 project["health"] = "Unknown"
 
         # Compute health counts for summary banner
-        health_counts = {"Healthy": 0, "Progressing": 0, "Degraded": 0, "Unknown": 0}
+        health_counts = {"Healthy": 0, "Progressing": 0, "Degraded": 0, "Disabled": 0, "Inactive": 0, "Unknown": 0}
         for p in user_projects:
             health_counts[p.get("health", "Unknown")] += 1
+        health_banner = _dashboard_health_banner(health_counts)
 
         return templates.TemplateResponse(
             "dashboard.html.j2",
@@ -1095,6 +1172,7 @@ async def dashboard(request: Request):
                 "metrics": metrics,
                 "projects": user_projects,
                 "health_counts": health_counts,
+                "health_banner": health_banner,
                 "total_cpu_usage": total_cpu_usage,
             },
         )
@@ -1819,6 +1897,10 @@ async def argocd_status_fragment(
             "argocd_status": {deployment_name: status},
             "_argocd_card_id_prefix": prefix or deployment_name,
             "current_cluster": settings.CLUSTER_MANAGER,
+            # How much of this deployment is switched off (RC-31). Read from the project
+            # file, not from the cluster: zero replicas can also mean something went wrong,
+            # and the card has to tell those two apart.
+            "disabled_state": deployment_disabled_state(project.data or {}, deployment_name),
         },
     )
 
