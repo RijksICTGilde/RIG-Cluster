@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE
 from opi.forms.editables.path import delete_value, get_value, set_value
 from opi.services.services import service_entry_body, service_entry_name
 
@@ -33,7 +34,11 @@ from opi.services.services import service_entry_body, service_entry_name
 #: The virtual root appears in TWO shapes, which is why every function below branches on
 #: the actual type instead of assuming one: a plain dict keyed by service name in a form
 #: SUBMISSION, and the services-list format in wizard STATE.
-_SERVICE_ROOTS = ("services", "_services-config")
+#:
+#: The pair itself is declared once, in ``editable.py``: the service packages use it to
+#: DECLARE virtualization and this module uses it to RESOLVE it, and they must not be able
+#: to drift apart.
+_SERVICE_ROOTS = SERVICE_VIRTUALIZE
 
 _SERVICE_CONFIG_RE = re.compile(rf"^({'|'.join(_SERVICE_ROOTS)})/([^/\[]+)(/(.+))?$")
 
@@ -181,25 +186,33 @@ def smart_get_value(data: dict[str, Any], yaml_path: str) -> Any:
 
     value = _read_from_service_list(services, yaml_path)
     if value is None:
-        # Not under the root the path names, so try the other one. A reader asks for
-        # "services/keycloak/config/..." because that is where the value lives in the
-        # project file, but during the wizard the same config sits under the virtual
-        # root while ``services`` holds only the chosen names. Falling back here fixes
-        # every reader at once: options providers were returning empty lists in the
-        # wizard (the invite realm-role picker had nothing to choose from) purely
-        # because they asked for the real path.
-        #
-        # Reads only. A WRITE must never wander to another root, or an edit would land
-        # somewhere the form does not read back.
-        for other_root in _SERVICE_ROOTS:
-            if other_root == service_root_of(yaml_path):
-                continue
-            sibling = _service_list_at(data, other_root + "/x")
-            if sibling is not None:
-                value = _read_from_service_list(sibling, yaml_path)
-                if value is not None:
-                    break
+        value = _read_from_sibling_roots(data, yaml_path)
     return value
+
+
+def _read_from_sibling_roots(data: dict[str, Any], yaml_path: str) -> Any:
+    """Resolve *yaml_path* against the OTHER service root, when its own has nothing.
+
+    A reader asks for "services/keycloak/config/..." because that is where the value
+    lives in the project file, but during the wizard the same config sits under the
+    virtual root while ``services`` holds only the chosen names. Falling back here fixes
+    every reader at once: options providers were returning empty lists in the wizard (the
+    invite realm-role picker had nothing to choose from) purely because they asked for
+    the real path.
+
+    Reads only. A WRITE must never wander to another root, or an edit would land
+    somewhere the form does not read back.
+    """
+    own_root = service_root_of(yaml_path)
+    for other_root in _SERVICE_ROOTS:
+        if other_root == own_root:
+            continue
+        sibling = _service_list_at(data, other_root + "/x")
+        if sibling is not None:
+            value = _read_from_service_list(sibling, yaml_path)
+            if value is not None:
+                return value
+    return None
 
 
 def _read_from_service_list(services: list[Any], yaml_path: str) -> Any:
@@ -234,14 +247,24 @@ def smart_path_exists(data: dict[str, Any], yaml_path: str) -> bool:
         return bool(get_value(data, yaml_path))
 
     services = _service_list_at(data, yaml_path)
-    if services is None:
+    if services is None and service_root_of(yaml_path) in data:
+        # Dict-shaped root (a form submission): a plain walk is the correct read.
         return bool(get_value(data, yaml_path))
+    if services is None:
+        # The named root is missing entirely -- the normal state mid-wizard, where the
+        # config only exists under the virtual root. Not "absent": look next door.
+        services = []
 
     service_name, sub_path = parse_service_path(yaml_path)
     idx, entry = find_service_in_list(services, service_name)
 
     if idx == -1:
-        return False
+        # Same fallback as ``smart_get_value``: mid-wizard the config lives under the
+        # virtual root while ``services`` holds only the chosen names, so a requirement
+        # written as a real path (``services/keycloak/config/restrict-access`` -- the only
+        # way to write it, since that is where it lands in the project file) would read as
+        # unmet while the user is looking straight at the value they entered.
+        return bool(_read_from_sibling_roots(data, yaml_path))
 
     # "services/keycloak" - service just needs to be in the list
     if sub_path is None:

@@ -27,7 +27,7 @@ from typing import Any
 
 import pytest
 from opi.forms.editables.processor import EditableFormProcessor
-from opi.forms.editables.service_path import smart_get_value
+from opi.forms.editables.service_path import check_requirements, smart_get_value
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 from opi.forms.visualizers.wizard_sections import SERVICES_EDIT_SECTION, SERVICES_SECTION
 from opi.forms.wizard.mutation import (
@@ -160,6 +160,38 @@ def test_a_reader_finds_the_config_in_a_saved_project_too() -> None:
     project = {"services": [{"name": "keycloak", "config": {"realm-roles": ["beheerder"]}}]}
 
     assert smart_get_value(project, "services/keycloak/config/realm-roles") == ["beheerder"]
+
+
+def test_a_requirement_is_met_when_only_the_virtual_key_carries_it() -> None:
+    """``smart_path_exists`` is the same reader wearing a different hat -- it decides
+    whether a service's ``requires`` is satisfied. It lacked the fallback, so a
+    requirement written as a real path (the only way to write it) read as unmet
+    mid-wizard while the user was looking straight at the value they had entered."""
+    wizard_state = {"_services-config": [{"keycloak": {"config": {"restrict-access": {"realm-role": "beheerder"}}}}]}
+
+    assert check_requirements(["services/keycloak/config/restrict-access"], wizard_state) == []
+
+
+def test_an_unmet_requirement_is_still_unmet() -> None:
+    wizard_state = {"_services-config": [{"keycloak": {"config": {}}}]}
+
+    assert check_requirements(["services/keycloak/config/restrict-access"], wizard_state) == [
+        "services/keycloak/config/restrict-access"
+    ]
+
+
+def test_the_pair_of_keys_is_declared_exactly_once() -> None:
+    """Service packages DECLARE virtualization with this pair and the path resolver
+    RESOLVES it with the same pair; letting the two drift is a silent failure."""
+    from opi.forms.editables.editable import SERVICE_VIRTUALIZE
+    from opi.forms.editables.service_path import _SERVICE_ROOTS
+    from opi.forms.wizard.state import _SERVICE_LIST_KEYS
+    from opi.services.catalog.keycloak.editables import KEYCLOAK_TEMPLATE_EDITABLE
+
+    assert SERVICE_VIRTUALIZE == ("services", "_services-config")
+    assert _SERVICE_ROOTS is SERVICE_VIRTUALIZE
+    assert _SERVICE_LIST_KEYS is SERVICE_VIRTUALIZE
+    assert KEYCLOAK_TEMPLATE_EDITABLE.virtualize is SERVICE_VIRTUALIZE
 
 
 # ---------------------------------------------------------------------------

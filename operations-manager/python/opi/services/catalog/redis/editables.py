@@ -8,7 +8,7 @@ was to hand-edit the project file. This is that field.
 from __future__ import annotations
 
 from opi.forms.editables.converters import BooleanConverter
-from opi.forms.editables.editable import Editable
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.services_enums import ServiceType
 
@@ -16,5 +16,5 @@ REDIS_ACL_KEY_PREFIX_EDITABLE = Editable(
     yaml_path=config_path(ConfigLayer.PROJECT, ServiceType.REDIS, "config", "acl-key-prefix"),
     converter=BooleanConverter(),
     default=True,
-    virtualize=("services", "_services-config"),
+    virtualize=SERVICE_VIRTUALIZE,
 )

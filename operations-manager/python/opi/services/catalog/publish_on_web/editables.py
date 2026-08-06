@@ -6,13 +6,13 @@ domain wizard and root ``domains:`` handling are platform-infra, not owned by th
 
 from __future__ import annotations
 
-from opi.forms.editables.editable import Editable
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 
 PUBLISH_ON_WEB_TLS_EDITABLE = Editable(
     yaml_path="components[*]/services{publish-on-web}/config/tls",
     values_provider="PublishTlsModeOptionsProvider",
     default="standard",
-    virtualize=("services", "_services-config"),
+    virtualize=SERVICE_VIRTUALIZE,
     depends_on="components[*]/services",
     show_when={"contains": "publish-on-web"},
 )
@@ -20,7 +20,7 @@ PUBLISH_ON_WEB_TLS_EDITABLE = Editable(
 PUBLISH_ON_WEB_ATTACHMENT_EDITABLE = Editable(
     yaml_path="components[*]/services{publish-on-web}/config/attachment",
     values_provider="AttachmentOptionsProvider",
-    virtualize=("services", "_services-config"),
+    virtualize=SERVICE_VIRTUALIZE,
     remove_when_none=True,
     depends_on="components[*]/services{publish-on-web}/config/tls",
     show_when={"value": ["provided"]},
