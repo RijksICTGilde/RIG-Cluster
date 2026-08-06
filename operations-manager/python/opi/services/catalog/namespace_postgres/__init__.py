@@ -11,14 +11,31 @@ from typing import Any
 
 from opi.services.catalog.base import ConfigLayer, Service, config_path
 from opi.services.catalog.namespace_postgres.config_model import NamespacePostgresConfig
+from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.catalog.shared.postgres_pages import DatabasePagesMixin, database_actions
-from opi.services.services import service_entry_name
-from opi.services.services_enums import ManagerKey, ServiceType
+from opi.services.services import ServiceDefinition, service_entry_name
+from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType
 
 
 class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
     service_type = ServiceType.NAMESPACE_POSTGRESQL_DATABASE
+    definition = ServiceDefinition(
+        name="Namespace PostgreSQL Database",
+        description="Dedicated PostgreSQL database cluster voor project",
+        help_template="namespace_postgres/help.html.j2",
+        icon="database",
+        color="donkerblauw",
+        binding=ServiceBinding.DEPLOYMENT,
+        secret_class="DatabaseSecret",
+        variables=[var.value for var in DatabaseVariables],
+        hidden=True,
+        cleanup_strategy=CleanupStrategy.DEFERRED,
+        backup_label="database",
+        # The console and job buttons; the collector keeps one of each when a project
+        # happens to use both PostgreSQL variants.
+        actions_provider=database_actions,
+    )
     cleanup_manager_key = ManagerKey.DATABASE
     config_model = NamespacePostgresConfig
     config_schema_version = "1.0"
@@ -69,8 +86,3 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
             )
             self._config_section_cache = cached
         return cached
-
-
-# Same two buttons as the shared PostgreSQL service; the collector keeps one of each
-# when a project happens to use both.
-NamespacePostgresqlDatabaseService.definition.actions_provider = database_actions

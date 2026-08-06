@@ -23,13 +23,16 @@ Het vraagteken opent een modal
 
 ## Waar de teksten staan
 
-Eén bestand per service in `opi/templates/help/<service>.html.j2`, met
-`help_template="<service>.html.j2"` op de `ServiceDefinition` in
-`opi/services/services.py`. Het zijn gewone Jinja2-sjablonen met ROOS-componenten; ze
-krijgen geen context mee.
+Eén bestand per service in zijn eigen map: `opi/services/catalog/<pakket>/help.html.j2`,
+met `help_template="<pakket>/help.html.j2"` op de `ServiceDefinition` van diezelfde
+service. De uitleg hoort bij de service, dus staat hij naast zijn andere sjablonen en
+niet in een gedeelde map (RC-36). Het zijn gewone Jinja2-sjablonen met ROOS-componenten;
+ze krijgen geen context mee.
 
 Dezelfde haak bestaat op veldniveau (`Editable.help_template`, bijvoorbeeld
-`help/container-image.html.j2`) en werkt via dezelfde modal.
+`container-image.html.j2`) en werkt via dezelfde modal. Uitleg die van geen enkele
+service is blijft in `opi/templates/help/`; de route herkent beide vormen aan het
+mapsegment.
 
 ## De vorm van een uitleg
 

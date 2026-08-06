@@ -1063,20 +1063,31 @@ def _list_contains_item(items: list[Any], candidate: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
-@wizard_router.get("/help/{template_name}", response_model=None)
+@wizard_router.get("/help/{template_name:path}", response_model=None)
 @requires_sso
 async def service_help(request: Request, template_name: str) -> HTMLResponse:
-    """Render a help template inside a modal-friendly HTML fragment."""
+    """Render a help template inside a modal-friendly HTML fragment.
+
+    Two shapes are accepted, both resolved by the same Jinja loader:
+
+    * ``<service-package>/help.html.j2`` -- a service's own explanation, which lives
+      in that service's package next to its other templates (RC-36).
+    * ``<name>.html.j2`` -- a help text that belongs to no single service (the
+      container-image note), still under ``templates/help/``.
+
+    The directory segment deliberately disallows ``.``, so no combination of the two
+    can walk out of the search path.
+    """
     import re
 
-    # Restrict to safe filenames: alphanumeric, hyphens, dots (no path traversal)
-    if not re.fullmatch(r"[a-zA-Z0-9._-]+\.html\.j2", template_name):
+    if not re.fullmatch(r"(?:[a-zA-Z0-9_-]+/)?[a-zA-Z0-9._-]+\.html\.j2", template_name):
         raise HTTPException(status_code=400, detail="Invalid template name")
 
+    template_path = template_name if "/" in template_name else f"help/{template_name}"
     templates = get_templates()
     try:
         return templates.TemplateResponse(
-            f"help/{template_name}",
+            template_path,
             {"request": request},
         )
     except Exception:

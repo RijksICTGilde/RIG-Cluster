@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from opi.services.services import ServiceAdapter, ServiceDefinition
+from opi.services.services import ServiceDefinition
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -489,11 +489,12 @@ class DeploymentManifestSpec:
 class Service(ABC):
     """One subclass per ``ServiceType``; the single declarative home for a service.
 
-    A subclass sets ``service_type``; the matching ``ServiceDefinition`` is bound
-    automatically from ``ServiceAdapter.SERVICE_DEFINITIONS`` (see
-    ``__init_subclass__``) so the definition can never drift from the provider.
-    ``SERVICE_DEFINITIONS`` remains the metadata source of truth during the
-    migration -- the provider composes with it, it does not replace it.
+    A subclass sets ``service_type`` AND its own ``definition`` (RC-36): the metadata
+    of a service lives in that service's own package, next to its config model, its
+    editables and its templates, so taking a service over is "copy the directory".
+    ``ServiceAdapter.SERVICE_DEFINITIONS`` is derived from what the services declare
+    here (see ``opi.services.registry``), not the other way around, so there is no
+    shared list to keep in sync. ``__init_subclass__`` enforces the pairing.
 
     Config shape + versioning (RC-5 Phase 2)
     ----------------------------------------
@@ -519,7 +520,9 @@ class Service(ABC):
 
     #: The service this provider handles. Set by each concrete subclass.
     service_type: ClassVar[ServiceType]
-    #: The existing metadata dataclass, bound automatically from service_type.
+    #: This service's metadata (name, icon, binding, variables, ...). Declared by the
+    #: concrete subclass in its own package, so nothing about a service lives outside
+    #: its directory. ``__init_subclass__`` rejects a subclass that forgets it.
     definition: ClassVar[ServiceDefinition]
 
     #: Pydantic model for this service's config, or None if it takes no config.
@@ -593,12 +596,20 @@ class Service(ABC):
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
-        # A concrete provider must declare which service it is; the definition is
-        # then derived, not duplicated. Abstract intermediate subclasses (no
-        # service_type) are allowed and simply skipped.
+        # A concrete provider must declare which service it is AND what that service
+        # is (its definition), both in its own package. Abstract intermediate
+        # subclasses (no service_type) are allowed and simply skipped.
         service_type = cls.__dict__.get("service_type")
-        if service_type is not None:
-            cls.definition = ServiceAdapter.SERVICE_DEFINITIONS[service_type]
+        if service_type is None:
+            return
+        definition = cls.__dict__.get("definition")
+        if definition is None:
+            raise TypeError(
+                f"{cls.__name__} declares service_type {service_type.value!r} but no 'definition'. "
+                f"Every service carries its own ServiceDefinition in its own package."
+            )
+        if not isinstance(definition, ServiceDefinition):
+            raise TypeError(f"{cls.__name__}.definition must be a ServiceDefinition, got {type(definition).__name__}")
 
     def config_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
         """The model that validates this service's config *at ``layer``*.
