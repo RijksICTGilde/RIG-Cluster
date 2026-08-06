@@ -19,8 +19,11 @@ These tests hold the new arrangement in place:
 """
 
 import json
+import logging
 
 import pytest
+from opi.core import git_monitor
+from opi.core.git_monitor import file_change_handler
 from opi.core.project_schema import (
     LEGACY_PATCH_DIR,
     ProjectSchemaError,
@@ -148,3 +151,43 @@ class TestMigrationsCanBeFinished:
         validate_project_schema(data, schema_version=2)
         with pytest.raises(ProjectSchemaError, match="root"):
             validate_project_schema(data, schema_version=2.1)
+
+
+class TestGitMonitorGate:
+    """The gate is wired to the declared version, and says so when it rejects."""
+
+    @pytest.mark.asyncio
+    async def test_file_without_declared_version_is_rejected_and_logged(self, caplog) -> None:
+        data = _project(deployments=[{"name": "prod", "cluster": "local", "namespace": "voorbeeld"}])
+        del data["schema-version"]
+
+        with caplog.at_level(logging.ERROR, logger="opi.core.git_monitor"):
+            await file_change_handler("voorbeeld.yaml", data)
+
+        # Loud, and explicit that the file was skipped: the old silent warning is
+        # exactly how 22 production files went unprocessed unnoticed.
+        assert any("NIET verwerkt" in record.message for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_legacy_file_is_no_longer_rejected_by_the_gate(self, monkeypatch) -> None:
+        # A v2.2 file with the pre-v2.3 config.keycloak block: rejected by the old
+        # gate (it validated against the newest schema), accepted now.
+        data = _project(
+            **{
+                "schema-version": 2.2,
+                "config": {"keycloak": [{"host": "https://kc", "realm": "r", "username": "u"}]},
+            }
+        )
+        validate_declared_project_schema(data)
+
+        seen: list[dict] = []
+
+        async def _fake_process(self, project_data):
+            seen.append(project_data)
+            return True
+
+        monkeypatch.setattr(git_monitor.ProjectManager, "process_project_data", _fake_process, raising=False)
+        await file_change_handler("voorbeeld.yaml", data)
+        # No deployments block, so nothing downstream runs; the point is that the
+        # gate did not reject it.
+        assert seen == []
