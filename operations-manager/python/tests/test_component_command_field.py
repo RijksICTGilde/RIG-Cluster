@@ -16,8 +16,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.forms.editables.fields.components import COMPONENT_COMMAND_EDITABLE
+from opi.forms.editables.fields.components import COMPONENT_COMMAND_EDITABLE, COMPONENT_COMMAND_ITEM_EDITABLE
 from opi.forms.visualizers.fields.components import COMPONENT_COMMAND, COMPONENTS_SEQUENCE
+from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
 
 
 def _paths(visualizer: Any) -> list[str]:
@@ -61,3 +62,63 @@ def test_each_argument_is_its_own_entry() -> None:
     turn `sh -c "x y"` into a single argument."""
     assert COMPONENT_COMMAND_EDITABLE.children
     assert COMPONENT_COMMAND_EDITABLE.children[0].yaml_path.endswith("command[*]")
+
+
+def test_een_argument_mag_een_heel_shellscript_zijn() -> None:
+    """De reden dat dit veld bestaat: een gecombineerd commando.
+
+    Openproject start als ``["/bin/sh", "-c", "<script>"]``. Spaties, aanhalingstekens en
+    regeleindes horen dus in een argument thuis; een validator die die weigert maakt het
+    veld nutteloos voor precies het geval waarvoor het is gebouwd.
+    """
+    validator = COMPONENT_COMMAND_ITEM_EDITABLE.validator
+    assert validator is not None, "het argumentveld hoort een validator te hebben"
+
+    for argument in ["/bin/sh", "-c", "bundle exec rails s -b 0.0.0.0", 'echo "hoi" && ls', "regel1\nregel2"]:
+        assert validator.validate(argument) == [], f"{argument!r} hoort toegestaan te zijn"
+
+
+def test_een_leeg_argument_wordt_geweigerd() -> None:
+    """Kubernetes geeft een leeg argument gewoon door, en dat verschuift alles erna."""
+    validator = COMPONENT_COMMAND_ITEM_EDITABLE.validator
+    assert validator is not None
+    assert validator.validate("   ") != []
+    assert validator.validate("a\x00b") != [], "een stuurteken hoort niet in een commando"
+
+
+def test_het_schema_weigert_wat_de_validator_weigert() -> None:
+    """Het formulier is niet de enige weg naar binnen; de API en een handmatige bewerking
+    komen langs het schema. Die twee horen hetzelfde te vinden."""
+    from opi.core.project_schema import validate_declared_project_schema
+
+    def keurt_goed(command: list[str]) -> bool:
+        project = {
+            "schema-version": 2.6,
+            "name": "demo",
+            "components": [{"name": "web", "image": "x:1", "command": command}],
+        }
+        try:
+            validate_declared_project_schema(project)
+            return True
+        except Exception:
+            return False
+
+    assert keurt_goed(["/bin/sh", "-c", "bundle exec rails s"]), "het openproject-patroon hoort te mogen"
+    assert not keurt_goed(["/bin/sh", ""]), "een leeg argument hoort ook via het schema te sneuvelen"
+    assert not keurt_goed([]), "een leeg commando hoort weggelaten te worden, niet leeg opgeslagen"
+
+
+def test_een_commando_kan_het_document_niet_openbreken() -> None:
+    """De zorg bij een vrij tekstveld: een waarde die de YAML eromheen herschrijft.
+
+    De canonieke schrijver zet een meerregelige waarde neer als literal block, dus wat
+    eruit komt is één string en geen extra sleutels. Deze test bewaakt dat, want het is
+    een eigenschap van de schrijver en niet van dit veld: als de schrijver verandert,
+    verandert het risico hier mee.
+    """
+    aanval = ["/bin/sh", "-c", 'echo hoi\ncommand: ["rm", "-rf", "/"]\n']
+    geschreven = dump_yaml_to_string({"components": [{"name": "web", "command": aanval}]})
+
+    teruggelezen = load_yaml_from_string(geschreven)
+    assert teruggelezen is not None
+    assert teruggelezen["components"][0]["command"] == aanval, "de waarde hoort ongewijzigd terug te komen"

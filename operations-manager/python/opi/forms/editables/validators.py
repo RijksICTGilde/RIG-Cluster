@@ -452,3 +452,36 @@ class DomainFormatValidator:
         if str(value) not in DOMAIN_FORMAT_TEMPLATES:
             return [f"Onbekend URL-formaat: {value}"]
         return []
+
+
+class CommandArgumentValidator:
+    """One argument of a container's start command.
+
+    Deliberately permissive about content and strict about shape. A real command looks
+    like ``["/bin/sh", "-c", "<script>"]``, so spaces, quotes and newlines all belong in
+    an argument and rejecting them would rule out the case this field exists for.
+
+    What is refused: an empty or blank argument (Kubernetes passes it through as an empty
+    string, which silently shifts the meaning of everything after it), and control
+    characters other than newline and tab, which cannot be typed on purpose and do reach
+    the container as-is.
+
+    Not a defence against YAML injection: the canonical writer emits a multi-line value as
+    a literal block, so a crafted argument comes back as one string rather than as extra
+    keys. ``tests/test_component_command_field.py`` holds that property.
+    """
+
+    MAX_LENGTH = 4096
+
+    def validate(self, value: Any) -> list[str]:
+        if value is None or value == "":
+            return []
+        text = str(value)
+        if not text.strip():
+            return ["Een leeg argument heeft geen betekenis; laat de regel weg."]
+        if len(text) > self.MAX_LENGTH:
+            return [f"Een argument mag hoogstens {self.MAX_LENGTH} tekens zijn."]
+        verboden = [c for c in text if ord(c) < 32 and c not in "\n\t"]
+        if verboden:
+            return ["Dit argument bevat een stuurteken dat niet in een commando hoort."]
+        return []

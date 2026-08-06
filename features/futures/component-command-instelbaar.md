@@ -1,6 +1,6 @@
 # Het startcommando van een component instelbaar maken
 
-Status: idee, 6 augustus 2026. Niet gebouwd, en bewust nog geen plan: de vraag is eerst óf we dit willen aanbieden, en pas daarna hoe.
+Status: gebouwd, 6 augustus 2026. Het veld bestaat nu als editable met validatie; wat hieronder stond als open vraag is beslist en de uitkomst staat onderaan.
 
 ## Wat er al is
 
@@ -36,3 +36,17 @@ Daar komt bij dat `command` in Kubernetes het `ENTRYPOINT` van het image **verva
 ## Waarom nu opgeschreven
 
 De mogelijkheid staat in het schema en in de generator, dus iemand die het projectbestand leest denkt terecht dat het kan. Zonder dit document is de enige manier om te ontdekken dat het niet via de UI kan, het zelf proberen.
+
+## Wat er uiteindelijk gebouwd is
+
+Het veld bestaat als `COMPONENT_COMMAND_EDITABLE` met een kind per argument, zichtbaar als "Startcommando" met een waarschuwing dat het de entrypoint van het image vervangt. Leeg laten schrijft niets (`remove_when_none`), dus het image houdt zijn eigen commando.
+
+**Validatie op twee plekken, want er zijn twee wegen naar binnen.** De editable weigert een leeg of blanco argument en stuurtekens; het schema doet nu hetzelfde met `minLength: 1` en `maxItems: 10` op allebei de lagen. Dat tweede is nodig omdat de API en een handmatige bewerking niet langs het formulier komen.
+
+**Een samengesteld commando kan, maar in één lijst.** Kubernetes kent `command` (entrypoint) en `args` (cmd); ZAD kent alleen `command`, en `manifests/deployment.yaml.jinja` rendert ook alleen dat. De vorm `command: ["/bin/sh", "-c"]` met een apart `args:` is dus niet uit te drukken. Het equivalent is `["/bin/sh", "-c", "<script>"]` in één lijst, en dat draait identiek: Kubernetes plakt `args` achter `command`, dus het verschil is puur waar je de knip legt. `args` toevoegen zou een schemaveld, een templateregel en een editable kosten voor nul extra mogelijkheden.
+
+**Een commando kan het projectbestand niet openbreken.** De zorg bij een vrij tekstveld is een waarde die de YAML eromheen herschrijft. De canonieke schrijver zet een meerregelige waarde neer als literal block, dus wat teruggelezen wordt is één string en geen extra sleutels. Dat is een eigenschap van de schrijver, niet van dit veld, en staat daarom als aparte test in `tests/test_component_command_field.py`.
+
+**Wat niet gebouwd is:** de laag `deployments[].components[].command` heeft geen formulierveld. Het schema staat het toe en de generator rendert het, maar "in deze omgeving een ander startcommando" is zeldzaam genoeg om er geen UI voor te maken. Via de API hoort het wel te kunnen, en dat hangt aan `plans/diensten-ontsluiten-definieren-gebruiken-binden.md`.
+
+**Blijft staan als zwakke plek:** een verkeerd commando geeft nog steeds `CrashLoopBackOff` zonder dat iets de exec-fout doorvertelt. De waarschuwing bij het veld is preventie, geen diagnose.
