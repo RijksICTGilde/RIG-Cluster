@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 from opi.core.auth_decorators import requires_sso
 from opi.core.templates import get_templates
-from opi.forms.editables.validators import AttachmentIdValidator, RequiredValidator
+from opi.forms.editables.pipeline import validate_field
 from opi.forms.wizard.session import (
     get_modal_state_by_token,
     get_wizard_state,
@@ -42,6 +42,8 @@ from opi.handlers.project_file_handler import (
     find_attachment_data_list,
 )
 from opi.services import upload_staging
+from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_KB
+from opi.services.catalog.attachments.editables import ATTACHMENT_ID_EDITABLE
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +114,15 @@ def _id_field_response(request: Request, error: str | None, attachment_id: str):
     )
 
 
+def _validate_attachment_id(attachment_id: str, existing: list[str]) -> list[str]:
+    """Validate an attachment id against the shared editable, with this session's ids.
+
+    Returns the error messages (empty when valid). The uniqueness half of the rule needs
+    to know which ids are taken, which is per-session knowledge the editable cannot carry.
+    """
+    return validate_field(ATTACHMENT_ID_EDITABLE, attachment_id, {"existing_attachment_ids": existing})
+
+
 def _session_services(state: Any) -> list:
     """The project services carried in the wizard session (includes the attachments catalog)."""
     if state is None:
@@ -156,16 +167,22 @@ async def stage_attachment(
 
     staged = _staged(state)
     existing = list(staged.keys()) + _catalog_ids(state)
-    # The id becomes part of the Secret/volume name, so an empty id must be rejected
-    # here (AttachmentIdValidator defers emptiness to RequiredValidator by convention).
+    # One rule per field: the shared ATTACHMENT_ID_EDITABLE is what the API upload
+    # validates against too, so an id the wizard accepts is an id the API accepts.
+    # Emptiness rides on the editable's ``required``; uniqueness needs the ids this
+    # session already knows about, which is why the context is passed here and not there.
     attachment_id = attachment_id.strip()
-    errors = RequiredValidator().validate(attachment_id) or AttachmentIdValidator().validate(
-        attachment_id, {"existing_attachment_ids": existing}
-    )
+    errors = _validate_attachment_id(attachment_id, existing)
     if errors:
         return _attachments_list_response(request, state, wizard_token, error="; ".join(errors))
 
     raw = await file.read()
+    if len(raw) > MAX_ATTACHMENT_BYTES:
+        # The same ceiling the API upload enforces (catalog_model.MAX_ATTACHMENT_BYTES):
+        # a limit only one road honours just moves the problem to the other one.
+        return _attachments_list_response(
+            request, state, wizard_token, error=f"Bestand te groot (max {MAX_ATTACHMENT_KB} KB)"
+        )
     try:
         token = upload_staging.stage_file(raw, file.filename or attachment_id)
     except ValueError as exc:
@@ -195,7 +212,7 @@ async def validate_attachment_id(
     error: str | None = None
     if attachment_id:
         existing = list(staged.keys()) + _catalog_ids(state)
-        errors = AttachmentIdValidator().validate(attachment_id, {"existing_attachment_ids": existing})
+        errors = _validate_attachment_id(attachment_id, existing)
         error = "; ".join(errors) if errors else None
     return _id_field_response(request, error, attachment_id)
 

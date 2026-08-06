@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from opi.forms.editables.editable import Editable
     from opi.forms.visualizers.sections import FormSection
     from opi.forms.visualizers.visualizer import EditableVisualizer
+    from opi.services.catalog.actions import ServiceAction
     from opi.services.catalog.approval import ApprovalSpec
     from opi.services.services_enums import HookPoint, ManagerKey, ServiceType
     from opi.utils.secrets import BaseSecret
@@ -776,6 +777,24 @@ class Service(ABC):
             layout=layout,
             post_save_action="process_project",
         )
+
+    def api_actions(self) -> list[ServiceAction]:
+        """Extra API actions this service declares beyond the generic config endpoints.
+
+        Editables are the starting point of the API surface and stay so: for most of the
+        catalog "configure this service here" is the whole story, and generating that from
+        the fields the wizard already declares keeps the two in step. But editables and the
+        API will never coincide exactly, and they do not have to -- the point is that they
+        live next to each other and that a difference is deliberate and visible.
+
+        An action is where a service says "I can do something the form has no field for".
+        Uploading an attachment is the first one: a file is not a config block, it arrives
+        as multipart, and without it an API client could reference an attachment it had no
+        way to create. The declaration (``opi/services/catalog/actions.py``) carries the
+        fields, their meaning, their verbs and an example; route and documentation are
+        derived from it.
+        """
+        return []
 
     def config_layers(self) -> list[ConfigLayer]:
         """The layers at which this service carries config, measured from its own hooks.
