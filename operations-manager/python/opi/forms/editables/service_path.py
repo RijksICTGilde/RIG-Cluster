@@ -169,9 +169,15 @@ def smart_get_value(data: dict[str, Any], yaml_path: str) -> Any:
         return get_value(data, yaml_path)
 
     services = _service_list_at(data, yaml_path)
-    if services is None:
+    if services is None and service_root_of(yaml_path) in data:
         # Dict-shaped root (a form submission): a plain walk is the correct read.
         return get_value(data, yaml_path)
+    if services is None:
+        # De genoemde root ontbreekt helemaal. Dat is geen "niet gevonden" maar de normale
+        # toestand in de wizard, waar de config alleen onder de virtuele root staat. Hier
+        # teruggeven zou de terugval hieronder overslaan, en dat deed het: de realm-rollen
+        # bij een uitnodiging waren leeg omdat de provider het echte pad vraagt.
+        services = []
 
     value = _read_from_service_list(services, yaml_path)
     if value is None:
