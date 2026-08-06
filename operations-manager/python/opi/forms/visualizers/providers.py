@@ -985,9 +985,15 @@ class CrossDomainPortOptionsProvider:
 
     Reads ``_cross_domain_ports`` from ``yaml_data`` -- a precomputed list of the project's
     own component inbound ports plus 4180 where an authorization-wall fronts a component (the
-    port the receiving side is actually reachable on). The framework cannot filter options
-    per row, so this is one precomputed union; the help text explains the receiving-side and
-    4180 caveats. A stored value not in the list is kept selectable.
+    port the receiving side is actually reachable on). One precomputed union for now; the
+    help text explains the receiving-side and 4180 caveats. A stored value not in the list is
+    kept selectable.
+
+    This used to say the framework cannot filter options per row. It can: the sequence
+    renderer builds an ``item_context`` PER ROW and providers receive exactly the kwargs they
+    declare in ``__init__`` (``_filter_provider_kwargs``). ``exclude_references`` has always
+    travelled that way, and ``row_data`` carries the row's own stored values, so a per-row
+    dependent select needs no framework change.
     """
 
     def __init__(self, yaml_data: dict[str, Any] | None = None, current_value: str | None = None) -> None:
