@@ -117,11 +117,11 @@ class ServiceKind(Enum):
 
 
 class HookLevel(Enum):
-    """What a hook point iterates over.
+    """What an event iterates over.
 
     A bare ``Enum`` (not ``StrEnum``), like ``ServiceType`` and ``ConfigLayer``: a
     stray string can never masquerade as a level. Naming the axis costs one line and
-    makes it explicit what generic code must iterate when a hook fires.
+    makes it explicit what generic code must iterate when an event fires.
     """
 
     PROJECT = "project"
@@ -129,44 +129,83 @@ class HookLevel(Enum):
     COMPONENT = "component"
 
 
-class HookPoint(Enum):
-    """A moment at which generic code scans the registry.
+class ActionEvent(Enum):
+    """Something happened; a service changes state (RC-39).
 
-    ``AFTER_SYNC`` is a moment in the deploy lifecycle; ``DEPLOYMENT_STATE`` is a
-    question asked whenever someone needs to know what the services did to a deployment
-    (the health check before it judges, the deployment page before it renders). Hook
-    points are an enum, never strings, so ``hook == "after-sync"`` is simply ``False``
-    and a loose string cannot slip in anywhere.
+    The writing family. A service gets context and mutates it, and the family carries one
+    contract the UI family does not have:
 
-    ``REDEPLOY`` is the counterpart of ``DEPLOYMENT_STATE`` on the writing side: a service
-    that put a deployment in a state gets the moment new content is deliberately rolled
-    out onto it, and clears the state that described the old content. It is named after
-    the action, not after one trigger of it: an image update and a deployment upsert both
-    replace what runs there, and a hook called "image replaced" would have left the upsert
-    to be bolted on as an exception -- which is exactly the shape being removed here.
-    Without it every state needs its own ``if`` in ``project_manager``, which is how a
-    component disabled for anything other than an image-pull error stayed switched off
-    after its image was fixed (RC-37).
+    **An action handler never commits.** It mutates ``payload.project_data`` in place and
+    the caller does ONE ``save_and_commit_project()`` after the scan, for every outcome
+    together. Two services that each commit give two commits and a lost update. The
+    contract sits on the family rather than in a note next to one handler, because that
+    is exactly the kind of thing that quietly dies when a second inhabitant arrives.
+
+    An action handler is ``async`` (a UI handler is not): acting on the world is the side
+    that may await, and the split keeps the two dispatches free of "await it if it happens
+    to be awaitable".
+
+    ``AFTER_SYNC`` is a moment in the deploy lifecycle. ``REDEPLOY`` is the writing
+    counterpart of ``UIEvent.DEPLOYMENT_STATE``: a service that put a deployment in a
+    state gets the moment new content is deliberately rolled out onto it, and clears the
+    state that described the old content. It is named after the action, not after one
+    trigger of it: an image update and a deployment upsert both replace what runs there,
+    and an event called "image replaced" would have left the upsert to be bolted on as an
+    exception. Without it every state needs its own ``if`` in ``project_manager``, which
+    is how a component disabled for anything other than an image-pull error stayed
+    switched off after its image was fixed (RC-37).
     """
 
     AFTER_SYNC = "after-sync"
-    DEPLOYMENT_STATE = "deployment-state"
     REDEPLOY = "redeploy"
 
     @property
     def level(self) -> HookLevel:
-        return _HOOK_LEVELS[self]
+        return _EVENT_LEVELS[self]
 
 
-#: The level each hook point iterates over. ``AFTER_SYNC`` fires once per deployment,
-#: after the sync; ``DEPLOYMENT_STATE`` is asked about one deployment; ``REDEPLOY`` names
-#: the components the rollout put new content on, which is why it is the first
-#: component-level hook. Project-level machinery is still intentionally not built: it
-#: would be code with no caller.
-_HOOK_LEVELS: dict[HookPoint, HookLevel] = {
-    HookPoint.AFTER_SYNC: HookLevel.DEPLOYMENT,
-    HookPoint.DEPLOYMENT_STATE: HookLevel.DEPLOYMENT,
-    HookPoint.REDEPLOY: HookLevel.COMPONENT,
+class UIEvent(Enum):
+    """Where am I visible; a service returns something to show (RC-39).
+
+    The reading family. A service gets context and returns contributions -- sections,
+    facts -- and mutates nothing. It fails visibly: a service that returns nothing simply
+    has no section, so there is no state left half-written behind the answer.
+
+    A UI handler is synchronous. A block that needs data from a connector gets it from the
+    caller through its payload (``DeploymentPageContext.backend_available``) or lazy-loads
+    it over its own route, so rendering a page never fans out into cluster calls.
+
+    ``DEPLOYMENT_STATE`` is in this family and not in ``ActionEvent`` for exactly that
+    reason: it is a question ("what do you know about this deployment"), answered from the
+    project file, mutating nothing -- even though its most important reader is the health
+    check rather than a template.
+    """
+
+    PROJECT_SECTIONS = "project-sections"
+    DEPLOYMENT_SECTIONS = "deployment-sections"
+    DEPLOYMENT_STATE = "deployment-state"
+
+    @property
+    def level(self) -> HookLevel:
+        return _EVENT_LEVELS[self]
+
+
+#: A service event: one of the two families. Generic code that only indexes listeners
+#: (the registry) is written against this union; anything that dispatches picks a family,
+#: because the two have different contracts.
+ServiceEvent = ActionEvent | UIEvent
+
+
+#: The level each event iterates over. ``AFTER_SYNC`` fires once per deployment, after the
+#: sync; ``DEPLOYMENT_STATE`` and ``DEPLOYMENT_SECTIONS`` are asked about one deployment;
+#: ``REDEPLOY`` names the components the rollout put new content on, which is why it is the
+#: only component-level event. ``PROJECT_SECTIONS`` is the one project-level event.
+_EVENT_LEVELS: dict[ServiceEvent, HookLevel] = {
+    ActionEvent.AFTER_SYNC: HookLevel.DEPLOYMENT,
+    ActionEvent.REDEPLOY: HookLevel.COMPONENT,
+    UIEvent.PROJECT_SECTIONS: HookLevel.PROJECT,
+    UIEvent.DEPLOYMENT_SECTIONS: HookLevel.DEPLOYMENT,
+    UIEvent.DEPLOYMENT_STATE: HookLevel.DEPLOYMENT,
 }
 
 

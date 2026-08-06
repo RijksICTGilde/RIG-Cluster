@@ -160,7 +160,7 @@ TEMPLATES_DIR = OPI_DIR / "templates"
 # Service-owned templates live next to their service under services/catalog/<svc>/ and
 # are addressed as "<svc>/<file>". Putting the catalog dir on the search path lets a
 # service deliver its own detail-page section (WP2) instead of the general template
-# hardcoding an include (see Service.detail_page_sections / DetailPageSection).
+# hardcoding an include (see UIEvent.PROJECT_SECTIONS / DetailPageSection).
 CATALOG_DIR = OPI_DIR / "services" / "catalog"
 
 # Create templates instance

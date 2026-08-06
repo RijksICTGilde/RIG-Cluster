@@ -249,8 +249,8 @@ Auto-tuning is **on by default**. A component opts out with `auto-tune-resources
 |------|---------|
 | `opi/services/resource_analyzer.py` | Pure computation: usage/VPA target → memory & CPU recommendation, asymmetric gate |
 | `opi/services/resource_tuning_service.py` | `apply_resource_tuning` (mutate project_data in place: analysis, root floor, margin) + `tune_deployment_resources` (git read + single commit) |
-| `opi/services/catalog/resource_tuning/` | The resource-tuning **system service**: its owned config (`config.py`/`config_model.py`) and the `observe_deployment` after-sync hook |
-| `opi/services/deployment_observation.py` | Generic after-sync hook runner: scans `HookPoint.AFTER_SYNC`, lets each service observe, commits once |
+| `opi/services/catalog/resource_tuning/` | The resource-tuning **system service**: its owned config (`config.py`/`config_model.py`) and its `@on(ActionEvent.AFTER_SYNC)` handler |
+| `opi/services/deployment_observation.py` | Generic after-sync runner: asks `registry.listeners(ActionEvent.AFTER_SYNC)`, lets each service observe, commits once |
 | `opi/core/resource_tuning_scheduler.py` | Nightly fleet-wide tuner (off-peak sweep + rollout pacing) |
 | `opi/connectors/vpa.py` | Parse VPA `.status.recommendation` (CPU→m, memory→Mi) |
 | `opi/api/resource_router.py` | On-demand API endpoint |
@@ -317,9 +317,10 @@ appears in a project's `services` list, and is not shown in the wizard's service
 picker. It plugs into a generic **after-sync hook** rather than being hardcoded in the
 deploy code:
 
-- `HookPoint.AFTER_SYNC` (an enum, never a string) fires once per deployment after the
-  sync. `registry.services_for_hook(AFTER_SYNC)` returns the services that override the
-  hook, filtered by `Service.applies_to()` (a system service applies to every project).
+- `ActionEvent.AFTER_SYNC` (an enum, never a string) fires once per deployment after the
+  sync. `registry.listeners(ActionEvent.AFTER_SYNC)` returns the services that declared a
+  handler for it with `@on(...)`, filtered by `Service.applies_to()` (a system service
+  applies to every project).
 - `deployment_observation.run_after_sync_observation()` reads the project fresh from
   git, builds a `DeploymentObservationContext` (per-component `ComponentHealth`), lets
   each applicable service observe and mutate `project_data`, and **commits once** for
@@ -328,9 +329,10 @@ deploy code:
   (`project_manager`, on `DeploymentHealthError`) and the fire-and-forget watcher
   (`oom_watcher`). Neither names the resource-tuning service.
 
-The resource-tuning service's `observe_deployment` tunes only the components that OOM'd
-(via `apply_resource_tuning`), compacts the resource history, and reports whether a
-refresh is needed. Image-pull and crash-loop handling remain inline for now.
+The resource-tuning service's after-sync handler (`tune_after_oom`) tunes only the
+components that OOM'd (via `apply_resource_tuning`), compacts the resource history, and
+reports whether a refresh is needed. Image-pull and crash-loop handling remain inline for
+now.
 
 See `instructions/services.md` for the service system and `features/oom-kill-watcher.md`
 for the health watcher.

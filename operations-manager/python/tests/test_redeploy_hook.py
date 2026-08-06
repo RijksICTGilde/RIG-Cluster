@@ -7,20 +7,21 @@ the OOM watcher had switched off stayed off, at zero replicas, with nothing sayi
 
 These tests hold the rule that replaced it: a deliberate rollout (image update, deployment
 upsert) clears every state a service recorded about the previous content, whatever the
-reason said, and the services do that themselves through ``HookPoint.REDEPLOY``. They also
+reason said, and the services do that themselves through ``ActionEvent.REDEPLOY``. They also
 hold the boundaries -- the cases that must NOT be cleared -- because "clear everything
 always" and "clear what this rollout replaced" only differ there.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
-from opi.services.catalog.base import RedeployContext, Service
+from opi.services.catalog.base import RedeployContext
 from opi.services.catalog.sleep_mode.state import STATE_AWAKE, STATE_SLEEPING, SleepState, read, write
 from opi.services.redeploy import run_redeploy_hooks
-from opi.services.registry import services_for_hook
-from opi.services.services_enums import HookPoint, ServiceType
+from opi.services.registry import SERVICES, listeners
+from opi.services.services_enums import ActionEvent, ServiceType
 
 CLUSTER = "sandboxed-local"  # the cluster where sleep-mode ships enabled
 
@@ -43,33 +44,37 @@ def _project(*, components: list[dict[str, Any]], with_sleep_mode: bool = False)
 
 
 def _rollout(project: dict[str, Any], component_names: list[str]) -> list[str]:
-    """Run the hook the way the rollout paths do, on the deployment WITHIN project."""
+    """Fire the event the way the rollout paths do, on the deployment WITHIN project."""
     deployment = project["deployments"][0]
-    return run_redeploy_hooks("proj", project, deployment, component_names)
+    return asyncio.run(run_redeploy_hooks("proj", project, deployment, component_names))
 
 
 def _component(project: dict[str, Any], reference: str) -> dict[str, Any]:
     return next(c for c in project["deployments"][0]["components"] if c["reference"] == reference)
 
 
-class TestTheHookIsWiredUp:
-    def test_the_two_services_that_record_state_answer_the_hook(self) -> None:
-        """Both inhabitants are found by scanning the registry, not by name.
+class TestTheEventIsWiredUp:
+    def test_the_two_services_that_record_state_listen_to_the_event(self) -> None:
+        """Both inhabitants come from the listener index, not from a name.
 
-        The point of the hook is that ``project_manager`` names nobody; if a service
-        stopped answering, the rollout paths would silently clear nothing.
+        The point of the event is that ``project_manager`` names nobody; if a service
+        stopped listening, the rollout paths would silently clear nothing.
         """
-        answering = {service.service_type for service in services_for_hook(HookPoint.REDEPLOY)}
+        answering = {service.service_type for service in listeners(ActionEvent.REDEPLOY)}
 
         assert ServiceType.DEPLOYMENT_HEALTH in answering
         assert ServiceType.SLEEP_MODE in answering
 
-    def test_a_service_with_nothing_to_do_with_rollouts_does_not_answer(self) -> None:
-        """A hook nobody is forced to answer: the default is silence, not a duty."""
-        answering = {service.service_type for service in services_for_hook(HookPoint.REDEPLOY)}
+    def test_a_service_with_nothing_to_do_with_rollouts_does_not_listen(self) -> None:
+        """An event nobody is forced to answer: the default is silence, not a duty."""
+        answering = {service.service_type for service in listeners(ActionEvent.REDEPLOY)}
 
         assert ServiceType.KEYCLOAK not in answering
-        assert Service.on_redeploy(Service(), RedeployContext("proj", {}, {})) == []  # type: ignore[abstract]
+        keycloak = SERVICES[ServiceType.KEYCLOAK]
+        assert keycloak.listens_to(ActionEvent.REDEPLOY) is False
+        # Dispatching anyway is not an error, it is simply nothing: a caller never has to
+        # ask first whether a service cares.
+        assert asyncio.run(keycloak.handle_action(ActionEvent.REDEPLOY, RedeployContext("proj", {}, {}))) == []
 
 
 class TestDisabledComponentsComeBack:

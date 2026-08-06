@@ -32,7 +32,7 @@
         {% include "project-details/section-config.html.j2" %}
         {# Read-only sections the project's services own (WP2). Each service delivers
            its own block (e.g. the Keycloak realm admin details) via
-           Service.detail_page_sections; the loop renders whatever the selected
+           UIEvent.PROJECT_SECTIONS; the loop renders whatever the selected
            services return instead of hardcoding a per-service include here. #}
         {% for section in service_detail_sections %}
         {% include section.template %}
