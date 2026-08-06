@@ -26,6 +26,7 @@ from opi.core import git_monitor
 from opi.core.git_monitor import file_change_handler
 from opi.core.project_schema import (
     LEGACY_PATCH_DIR,
+    SCHEMA_PATH,
     ProjectSchemaError,
     check_schema_versions,
     known_schema_versions,
@@ -151,6 +152,42 @@ class TestMigrationsCanBeFinished:
         validate_project_schema(data, schema_version=2)
         with pytest.raises(ProjectSchemaError, match="root"):
             validate_project_schema(data, schema_version=2.1)
+
+    def test_root_domains_block_accepted_at_2_4_rejected_at_2_5(self) -> None:
+        data = _project(domains={"allowed-domains": [{"domain": "rijksapps.nl", "status": "approved"}]})
+        validate_project_schema(data, schema_version=2.4)
+        with pytest.raises(ProjectSchemaError, match="domains"):
+            validate_project_schema(data, schema_version=2.5)
+
+    def test_root_invites_block_accepted_at_2_5_rejected_at_2_6(self) -> None:
+        data = _project(invites={"settings": {"default_language": "nl"}, "active": []})
+        validate_project_schema(data, schema_version=2.5)
+        with pytest.raises(ProjectSchemaError, match="invites"):
+            validate_project_schema(data, schema_version=2.6)
+
+    def test_uses_services_accepted_at_v1_rejected_at_v2(self) -> None:
+        data = _project(components=[{"name": "frontend", "uses-services": ["publish-on-web"]}])
+        validate_project_schema(data, schema_version=1)
+        with pytest.raises(ProjectSchemaError, match="uses-services"):
+            validate_project_schema(data, schema_version=2)
+
+    def test_v0_publish_on_web_boolean_accepted_at_v1_rejected_at_v2(self) -> None:
+        data = _project(components=[{"name": "frontend", "publish-on-web": True}])
+        validate_project_schema(data, schema_version=1)
+        with pytest.raises(ProjectSchemaError, match="publish-on-web"):
+            validate_project_schema(data, schema_version=2)
+
+    def test_the_newest_schema_is_the_newest_shape_only(self) -> None:
+        # The regression this locks: someone re-adds a legacy form to the newest
+        # schema "so the gate stops rejecting file X". That is what made the schema
+        # unfinishable; the form belongs in the patch of X's own version.
+        latest = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        assert "domains" not in latest["properties"]
+        assert "invites" not in latest["properties"]
+        component = latest["$defs"]["component"]["properties"]
+        assert "uses-services" not in component
+        assert "storage" not in component
+        assert "publish-on-web" not in component
 
 
 class TestGitMonitorGate:
