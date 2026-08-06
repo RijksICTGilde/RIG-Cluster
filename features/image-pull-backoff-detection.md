@@ -23,7 +23,7 @@ Deployment running
        |
   User pushes new image via API
        |
-  update_image_and_regenerate() detects disabled-reason contains "ImagePullBackOff"
+  The rollout hook (HookPoint.REDEPLOY) fires; deployment-health clears the disable
        |
   Component re-enabled (disabled: false) --> replicas: 1 --> new image pulled
 ```
@@ -50,16 +50,19 @@ Events are filtered by:
 - **Component name**: only events for the specific component's pods (matched by `unique_name` prefix)
 - **Age**: only events from the last hour (`max_age_hours=1`)
 
-## Auto-reset on image change
+## Auto-reset on a rollout
 
-When `update_image_and_regenerate()` is called (via the image push API or deployment update), it checks:
+A rollout -- an image push or an upsert of an existing deployment -- re-enables the
+component before reprocessing, so the new image gets a chance to pull without manual
+intervention.
 
-1. Is the component currently disabled?
-2. Does the `disabled-reason` contain "ImagePullBackOff"?
-
-If both are true, the component is automatically re-enabled before reprocessing. This ensures the new image gets a chance to pull without manual intervention.
-
-Components disabled for other reasons (e.g. OOMKilled, crash loops) are not affected by this reset.
+Since RC-37 this is no longer a reason check in `update_image_and_regenerate()`, and it is
+no longer limited to image-pull disables. The rollout paths fire `HookPoint.REDEPLOY` and
+the deployment-health service clears the disable **whatever the reason said** -- OOMKilled
+and crash loops included -- because every automatic disable is a judgement about content
+that was just replaced. See `features/redeploy-clears-recorded-state.md` for the reasoning
+and for the one case that is left alone (a `disabled` flag on the component definition,
+which is a project-wide decision by a person).
 
 ## Configuration
 
@@ -74,10 +77,12 @@ No additional configuration needed. The detection uses the existing sanitize inf
 | File | Purpose |
 |------|---------|
 | `opi/api/resource_router.py` | Sanitize endpoint with ImagePullBackOff event check |
-| `opi/manager/project_manager.py` | Auto-reset in `update_image_and_regenerate()` |
+| `opi/services/redeploy.py` | The rollout scan that lets the services clear their state |
+| `opi/services/catalog/deployment_health/` | Clears the disable on a rollout |
 | `opi/connectors/kubectl.py` | `get_namespace_events()` for event retrieval |
 
 ## Related features
 
 - [oom-kill-watcher.md](oom-kill-watcher.md) -- Similar pattern for OOM detection and auto-tuning
 - [auto-resource-tuning.md](auto-resource-tuning.md) -- Resource tuning via the same sanitize endpoint
+- [redeploy-clears-recorded-state.md](redeploy-clears-recorded-state.md) -- The hook that re-enables the component
