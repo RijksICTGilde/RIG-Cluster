@@ -331,3 +331,11 @@ class CrossDomainAccessService(Service):
                 )
             )
         return specs
+
+
+# The per-deployment patch button lives in actions.py: the service owns the condition for
+# showing it (see that module). Bound after the class so the import order holds, exactly as
+# sleep-mode does it.
+from opi.services.catalog.cross_domain_access.actions import cross_domain_actions  # noqa: E402
+
+CrossDomainAccessService.definition.actions_provider = cross_domain_actions

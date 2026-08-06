@@ -28,6 +28,7 @@ from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.forms.wizard.secrets import restore_redacted_secrets
 from opi.forms.wizard.state import _strip_cleared_fields
 from opi.forms.wizard.write_set import apply_write_paths, flow_write_paths
+from opi.services.schema_migration import normalize_service_entries
 from opi.web.project_edit_security import IMMUTABLE_PROJECT_FIELDS
 
 if TYPE_CHECKING:
@@ -225,6 +226,14 @@ async def apply_modal_edit(
     # are still removed before save.
     for section in active_sections:
         processor.strip_transients_from(existing_data, section.editables)
+
+    # The editables write service config in the legacy name-as-key shape
+    # ({cross-domain-access: {config: ...}}), which the schema's component and deployment
+    # service envelopes reject. The create wizard already normalizes at save
+    # (``router_wizard.submit_wizard``); the modal-edit path did not, which is invisible
+    # until a form writes a service block through this route -- the per-deployment
+    # cross-domain patch is the first that does. Same normalizer, one canonical shape.
+    normalize_service_entries(existing_data)
 
     # Ensure AGE-encrypted multiline values use literal block scalars
     _apply_literal_scalars(existing_data)

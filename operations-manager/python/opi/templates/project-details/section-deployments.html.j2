@@ -17,10 +17,6 @@
                         @click="openEditModal('modal-edit-deployment-{{ original_index }}', 'Deployment bewerken - {{ deployment.name }}')" />
                     <c-button kind="secondary" size="sm" label="Webadres" showIcon="before" icon="wereldbol"
                         @click="openEditModal('modal-edit-domain-{{ original_index }}', 'Webadres bewerken - {{ deployment.name }}')" />
-                    {% if 'cross-domain-access' in project_service_names %}
-                    <c-button kind="secondary" size="sm" label="Cross-domain" showIcon="before" icon="netwerk"
-                        @click="openEditModal('modal-edit-cross-domain-deployment-{{ original_index }}', 'Cross-domain toegang - {{ deployment.name }}')" />
-                    {% endif %}
                     <c-button kind="warning" size="sm" label="Verwijderen" showIcon="before" icon="verwijderen"
                         @click="openServiceModal('/projects/{{ project.name }}/actions/delete-deployment/confirm?target={{ deployment.name | urlencode }}', 'Deployment verwijderen')" />
                     {% endif %}
