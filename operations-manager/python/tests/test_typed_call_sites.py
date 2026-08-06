@@ -234,6 +234,48 @@ class TestDomainSettingsResponse:
         assert body["subdomain"] == "shop"
 
 
+class TestFieldExamples:
+    """``Field(..., example=...)`` is not a parameter of ``Field``.
+
+    Pydantic v2 swept unknown keyword arguments into ``json_schema_extra`` with a
+    deprecation warning and will stop accepting them in v3; the API models did this 64
+    times. ``examples`` is the real parameter, and it is what OpenAPI 3.1 expects.
+    """
+
+    def test_no_field_call_passes_the_singular_example(self) -> None:
+        offenders: list[str] = []
+        for path in Path("opi").rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if any(kw.arg == "example" for kw in node.keywords):
+                    offenders.append(f"{path}:{node.lineno}")
+
+        assert offenders == []
+
+    def test_examples_reach_the_openapi_schema(self) -> None:
+        from opi.api.router import ComponentReference
+
+        schema = ComponentReference.model_json_schema()
+
+        assert schema["properties"]["reference"]["examples"] == ["frontend"]
+        assert schema["properties"]["image"]["examples"] == ["nginx:1.21"]
+
+    def test_defining_the_models_raises_no_pydantic_deprecation(self) -> None:
+        """Re-executing the module is the only way to see a class-definition warning."""
+        import importlib
+        import warnings
+
+        import opi.api.router
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            importlib.reload(opi.api.router)
+
+        assert [str(w.message) for w in caught if "json_schema_extra" in str(w.message)] == []
+
+
 class TestPrometheusConnectorConstruction:
     """The package root hands its classes out through a module-level ``__getattr__``.
 
