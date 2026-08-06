@@ -161,19 +161,25 @@ class TestWhatARolloutMustNotClear:
         assert _component(project, "api")["disabled"] is True
         assert notices == []
 
-    def test_a_project_wide_disable_on_the_component_definition_is_left_alone(self) -> None:
-        """``disabled`` on the component DEFINITION is a person's decision over every
-        deployment. Rolling out one deployment is not the moment to flip it, and writing
-        ``disabled: false`` on this deployment-component would do exactly that for one
-        deployment while the switch says off."""
+    def test_a_disable_on_the_component_definition_is_cleared_too(self) -> None:
+        """No exception for a definition-level disable either.
+
+        An earlier version spared it, reading it as a deliberate project-wide decision by
+        a person. Measured on 6 August: ``set_component_disabled`` has NO callers, there
+        is no editable and no route, so a user cannot make that decision anywhere in OPI.
+        The exception protected a case that does not occur, and a value hand-edited into a
+        file would have kept the component off forever -- new image and all.
+        """
         project = _project(components=[{"reference": "web", "image": "reg/app:v2"}])
         project["components"][0]["disabled"] = True
 
         notices = _rollout(project, ["web"])
 
-        assert project["components"][0]["disabled"] is True
-        assert "disabled" not in _component(project, "web")
-        assert notices == []
+        # Written on the deployment-component, which wins over the definition: the
+        # fallback in extract_deployment_component_disabled only applies when the
+        # deployment-component says nothing.
+        assert _component(project, "web")["disabled"] is False
+        assert len(notices) == 1
 
     def test_a_component_that_was_never_disabled_produces_no_notice(self) -> None:
         project = _project(components=[{"reference": "web", "image": "reg/app:v2"}])
@@ -250,3 +256,40 @@ class TestBothServicesActOnTheSameRollout:
         assert _component(project, "web")["disabled"] is False
         assert read(project, "preview-42").state == STATE_AWAKE
         assert len(notices) == 2
+
+
+class TestTheDeliberateDisableDoesNotExist:
+    """Why there is no exception for a "deliberate" disable: nobody can make one.
+
+    The distinction was dropped on 6 August after measuring it. If a route or an editable
+    for this ever appears, this test fails and the question becomes real again -- which is
+    exactly when someone should reconsider whether a rollout may clear it.
+    """
+
+    def test_nothing_calls_the_definition_level_setter(self) -> None:
+        """``set_component_disabled`` writes the project-wide flag. It has no callers, so
+        the flag can only reach a file by hand-editing."""
+        import pathlib
+        import re
+
+        import opi
+
+        root = pathlib.Path(opi.__file__).parent
+        callers = [
+            path.relative_to(root)
+            for path in root.rglob("*.py")
+            if re.search(r"(?<!def )set_component_disabled\(", path.read_text(encoding="utf-8"))
+        ]
+        assert callers == [], f"a caller appeared: {callers}. Reconsider whether a rollout may clear it."
+
+    def test_no_form_offers_it(self) -> None:
+        """No editable writes ``disabled``, so no wizard or edit screen can set it."""
+        from opi.services.catalog.base import ConfigLayer
+        from opi.services.registry import SERVICES
+
+        for service in SERVICES.values():
+            for layer in ConfigLayer:
+                for entry in service.config_editables(layer) or []:
+                    # Services return an Editable directly or wrapped in a visualizer.
+                    path = getattr(getattr(entry, "editable", entry), "yaml_path", "")
+                    assert not path.endswith("/disabled"), f"{service.definition.name} offers {path}"
