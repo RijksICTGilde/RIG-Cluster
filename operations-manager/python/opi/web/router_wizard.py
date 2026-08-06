@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from opi.core.auth_decorators import get_current_user, requires_sso
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
+from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
@@ -1857,6 +1857,75 @@ def _section_has_errors(
     return False
 
 
+def _schema_path_to_editable_path(field_path: str) -> str:
+    """Rewrite a schema field path as an editable yaml_path.
+
+    The schema names a list item with a path segment of its own
+    (``components/0/command``); editables index the field they hang under
+    (``components[0]/command``). Same location, two notations.
+    """
+    parts: list[str] = []
+    for part in field_path.split("/"):
+        if part.isdigit() and parts:
+            parts[-1] = f"{parts[-1]}[{part}]"
+        else:
+            parts.append(part)
+    return "/".join(parts)
+
+
+def _locate_schema_error(
+    sections: list[FormSection],
+    field_path: str,
+) -> tuple[FormSection, str] | None:
+    """Find the step and editable path a schema violation belongs to.
+
+    Returns None when no step owns the field -- the violation sits on a block
+    rather than on a field, or on something the wizard does not edit. The caller
+    shows the message at step level then; not being able to place it is no reason
+    to drop it.
+    """
+    editable_path = _schema_path_to_editable_path(field_path)
+    for section in sections:
+        if _section_has_errors(_collect_all_editable_paths(section.editables), {editable_path: []}):
+            return section, editable_path
+    return None
+
+
+def _validate_finished_project(data: dict[str, Any], *, project_name: str) -> None:
+    """Schema-check a FINISHED project file while the wizard can still show the error.
+
+    Call this at the single point where *data* is the complete file that is about to
+    be handed to the storage layer -- not earlier. Before that point the create flow
+    still adds to it (staged attachments, generated keys, the assembled deployment),
+    so an earlier check would reject a file that was merely not finished yet; after
+    it the wizard is gone and the same rejection surfaces from the git step, where
+    there is nothing left to go back to.
+
+    Validates exactly what the storage layer validates: ``validate_project_schema``
+    on the data as it will be persisted. No migration is applied first, because the
+    write path does not apply one either -- validating a migrated copy would let the
+    wizard approve a file that the store then rejects.
+
+    Reaching this with an invalid file is a bug in the form, not user error: it means
+    a field wrote something the schema forbids without a validator saying so. Hence
+    the WARNING with the field path -- that path is where the missing validation is.
+
+    Raises:
+        ProjectSchemaError: with ``field_path`` set when the violation was locatable.
+    """
+    try:
+        validate_project_schema(data)
+    except ProjectSchemaError as e:
+        logger.warning(
+            "Wizard built an invalid project file for %s (field=%s): %s -- a form field wrote a "
+            "value the schema rejects, so validation is missing on that field",
+            project_name or "(new)",
+            e.field_path or "(unknown)",
+            e,
+        )
+        raise
+
+
 async def _do_submit(
     request: Request,
     flow_id: str,
@@ -2041,13 +2110,27 @@ async def _do_submit(
         # Re-render the wizard with the validation message instead of 500ing
         # (e.g. pre-existing structural drift surfaced by the full-project check).
         logger.warning("Wizard save rejected by validation for %s: %s", state.project_name or "(new)", e)
-        error_section = active_sections[0]
+        field_path = getattr(e, "field_path", None)
+        located = _locate_schema_error(active_sections, field_path) if field_path else None
+        if located is not None:
+            error_section, editable_path = located
+            field_errors = {editable_path: [str(e)]}
+            global_errors = []
+        else:
+            # Not placeable (a violation on a whole block, or a field no step owns):
+            # show it on the step the user submitted from, with the raw message. A
+            # message that cannot be attached to a field is still a message.
+            error_section = active_sections[-1]
+            field_errors = {}
+            global_errors = [str(e)]
         state.current_step = error_section.section_id
         save_wizard_state(request, state)
         step_html = _render_step_html(
-            error_section, yaml_data=yaml_data, errors={}, edit_mode=state.project_name is not None
+            error_section, yaml_data=yaml_data, errors=field_errors, edit_mode=state.project_name is not None
         )
-        context = _build_step_context(request, flow_id, error_section, step_html, errors={}, global_errors=[str(e)])
+        context = _build_step_context(
+            request, flow_id, error_section, step_html, errors=field_errors, global_errors=global_errors
+        )
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
     except Exception:
         logger.exception("Wizard submit failed")
@@ -2073,6 +2156,11 @@ async def _save_existing_project(
     try:
         existing_data = await project_manager.get_contents()
         existing_data = apply_form_data_to_project(existing_data, data)
+
+        # The complete file only exists after the merge with the stored project -- the
+        # form itself writes a subset. Same check the store makes, one step earlier, so
+        # a rejection lands in the wizard with the field named instead of in the save.
+        _validate_finished_project(existing_data, project_name=project_name)
 
         # Persist through the single validated path: schema + structural integrity
         # validation, canonical dumper, commit + push, and cache refresh in one shot.
@@ -2116,6 +2204,11 @@ async def _start_project_creation(
 
     # Ensure multiline AGE-encrypted values use literal block scalars
     _apply_literal_scalars(data)
+
+    # The file is complete here: generators ran, the deployment is assembled, staged
+    # attachments are merged and the service entries are normalized. This is the last
+    # moment the wizard still exists, so it is where the schema is checked.
+    _validate_finished_project(data, project_name=project_name)
 
     # Serialize to YAML string via the single canonical writer
     yaml_content = dump_yaml_to_string(data)
