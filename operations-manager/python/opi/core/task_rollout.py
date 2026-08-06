@@ -46,6 +46,13 @@ NON_DEFERRABLE_REASONS: dict[str, str] = {
     "clone_bucket": "cloning acts on the cluster directly and writes nothing to the project file",
 }
 
+# Task types that reconcile the WHOLE project and therefore clear every deferred change
+# before them. A refresh is what the API tells the caller to run, and delete-component runs
+# the same refresh internally. Deliberately narrow: a task that processes only one
+# deployment (add_component, refresh_deployment) leaves the rest of the file ahead of the
+# cluster, so counting it as a rollout would hide real drift.
+ROLLOUT_CLEARING_TASK_TYPES = frozenset({"refresh_project", "delete_component"})
+
 # What the caller sees in ``processing`` when the rollout was skipped. ``skipped`` is the
 # status the handlers already use for "no processing happened"; the reason distinguishes
 # "you asked for this" from "there was nothing to do".

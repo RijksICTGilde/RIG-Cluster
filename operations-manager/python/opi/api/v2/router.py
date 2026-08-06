@@ -538,6 +538,50 @@ NoDeferQuery = Annotated[
 ]
 
 
+class PendingRolloutResponse(BaseModel):
+    """Changes that were saved but deliberately not rolled out."""
+
+    project: str = Field(..., description="Technical name of the project.")
+    count: int = Field(..., description="Number of saved changes that have not been rolled out yet. 0 means in sync.")
+    since: str | None = Field(
+        default=None,
+        description=(
+            "ISO timestamp of the OLDEST change still waiting, so a caller can tell a change "
+            "made minutes ago from one that has been waiting a week. Null when count is 0."
+        ),
+    )
+    task_types: list[str] = Field(
+        default_factory=list,
+        description="Which kinds of change are waiting (e.g. 'configure_service'), deduplicated and sorted.",
+    )
+
+
+@v2_router.get(
+    "/projects/{project_name}/pending-rollout",
+    tags=["v2", "projects"],
+    summary="Saved changes that have not been rolled out",
+    response_model=PendingRolloutResponse,
+)
+@validate_api_token
+async def pending_rollout_v2(request: Request, project_name: ProjectNamePath) -> JSONResponse:
+    """Report how far the project file runs ahead of the cluster.
+
+    Every change saved with ``rollout=false`` is counted until the project is rolled out
+    again with ``POST /api/v2/projects/{project_name}/:refresh``, which reconciles the whole
+    file at once. Use it to warn before drift becomes invisible: a saved change that nobody
+    rolls out is a project quietly out of step.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    task_service = getattr(request.app.state, "task_service", None)
+    if task_service is None:
+        raise HTTPException(status_code=503, detail="Task service not available")
+
+    pending = await task_service.get_deferred_rollouts(project_name)
+    return JSONResponse(content=PendingRolloutResponse(project=project_name, **pending).model_dump())
+
+
 def _reject_deferred_rollout(rollout: bool, task_type: str) -> None:
     """Refuse rollout=false on an operation that cannot honour it, with the reason."""
     if rollout:

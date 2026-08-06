@@ -16,9 +16,29 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import aliased
 
 from opi.core.db import session_scope
+from opi.core.task_rollout import PAYLOAD_KEY as ROLLOUT_PAYLOAD_KEY
+from opi.core.task_rollout import ROLLOUT_CLEARING_TASK_TYPES
 from opi.services.persistence.async_tasks import AsyncTask
 
 logger = logging.getLogger(__name__)
+
+
+def _deferred(task=AsyncTask):
+    """Rows that wrote to the project file and deliberately did not roll it out (RC-46).
+
+    ``is_not_distinct_from`` rather than ``==``: a task whose payload has no rollout key at
+    all yields SQL NULL, and a NULL here would propagate through the NOT in cleanup and stop
+    old tasks being deleted. Null-safe comparison keeps it a real boolean.
+    """
+    return task.payload[ROLLOUT_PAYLOAD_KEY].astext.is_not_distinct_from("false")
+
+
+def _rolled_out(task=AsyncTask):
+    """Rows that reconciled the whole project, clearing every deferred change before them."""
+    return task.task_type.in_(tuple(ROLLOUT_CLEARING_TASK_TYPES)) & (
+        task.payload[ROLLOUT_PAYLOAD_KEY].astext.is_distinct_from("false")
+    )
+
 
 # Statuses that count as "in flight" for concurrency / dedup purposes.
 _ACTIVE_STATES = ("claimed", "running")
@@ -546,19 +566,80 @@ class AsyncTaskService:
             ).scalar_one_or_none()
             return row.to_dict() if row else None
 
+    async def get_deferred_rollouts(self, project_name: str) -> dict[str, Any]:
+        """Changes saved with ``rollout=false`` that have not been rolled out since (RC-46).
+
+        Drift is measured from the tasks themselves, because they are the record of the
+        writes: a completed task whose payload said ``rollout: false`` wrote to the project
+        file and deliberately did not process. Any later task that DID roll out reconciles
+        the whole file, so it clears everything before it -- one refresh is enough, the
+        deferred changes do not have to be replayed one by one.
+
+        Returns ``{"count": int, "since": str | None, "task_types": list[str]}``. ``since``
+        is the ISO timestamp of the oldest change still waiting, so the UI can say how long
+        the project has been running ahead of the cluster rather than only that it is.
+        """
+        async with session_scope() as session:
+            last_rollout_at = (
+                await session.execute(
+                    select(func.max(AsyncTask.completed_at)).where(
+                        AsyncTask.project_name == project_name,
+                        AsyncTask.status == "completed",
+                        _rolled_out(),
+                    )
+                )
+            ).scalar_one_or_none()
+
+            conds = [
+                AsyncTask.project_name == project_name,
+                AsyncTask.status == "completed",
+                _deferred(),
+            ]
+            if last_rollout_at is not None:
+                conds.append(AsyncTask.completed_at > last_rollout_at)
+
+            rows = (
+                (await session.execute(select(AsyncTask).where(*conds).order_by(AsyncTask.completed_at.asc())))
+                .scalars()
+                .all()
+            )
+
+        oldest = rows[0].completed_at if rows else None
+        return {
+            "count": len(rows),
+            "since": oldest.isoformat() if oldest else None,
+            "task_types": sorted({row.task_type for row in rows}),
+        }
+
     async def cleanup_old_tasks(self, retention_hours: int = 168) -> int:
         """Delete old completed/failed/cancelled tasks beyond the retention period.
+
+        A deferred rollout that has not been rolled out yet is kept regardless of age: it
+        is the only record that the project file runs ahead of the cluster, and drift that
+        disappears after a week is exactly the silent drift this is meant to surface.
 
         Returns:
             The number of tasks deleted.
         """
         # make_interval positional args: (years, months, weeks, days, hours, ...).
         cutoff = func.now() - func.make_interval(0, 0, 0, 0, retention_hours)
+        later = aliased(AsyncTask)
+        still_pending_rollout = _deferred() & ~(
+            select(later.id)
+            .where(
+                later.project_name == AsyncTask.project_name,
+                later.status == "completed",
+                _rolled_out(later),
+                later.completed_at > AsyncTask.completed_at,
+            )
+            .exists()
+        )
         async with session_scope() as session:
             result = await session.execute(
                 delete(AsyncTask).where(
                     AsyncTask.status.in_(_TERMINAL_STATES),
                     AsyncTask.completed_at < cutoff,
+                    ~still_pending_rollout,
                 )
             )
             deleted_count = result.rowcount
