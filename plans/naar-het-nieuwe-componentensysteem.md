@@ -86,6 +86,23 @@ Vijf bloksoorten voor twintig pagina's betekent dat vrijwel alles in een enkel `
 
 **Dat scherpt fase 1 aan.** Het doel is niet mooiere markup maar verplaatsbare brokken. Investeer niet in het poetsen van markup die straks toch door LOTC-componenten vervangen wordt; trek de *grenzen* eruit (een pagina wordt een samenstelling van benoemde blokken) en laat de inhoud van die blokken voorlopig zoals hij is. Inline styling en duplicatie horen daar wel meteen uit, want die verhuizen anders mee.
 
+## Navigatie is het startpunt
+
+Het idee blijft hetzelfde als vandaag: een menu, eventueel een submenu, en tabjes. Dat is de navigatie waarmee als eerste gespeeld kan worden, en dat is om drie redenen de juiste keuze.
+
+Ze is **klein**: 32 aanroepen in totaal (`c-menubar` 13, `c-header` 12, `c-tab-item` 3, `c-footer` 3, `c-tabs` 1). Ze is **zichtbaar**, dus of het klopt zie je meteen. En ze hangt aan **geen enkele formulierlogica**, dus de laag die het dunst gedekt is blijft erbuiten.
+
+De afbeelding is bovendien bijna een-op-een:
+
+| onze navigatie | in LOTC |
+|---|---|
+| `c-menubar` | `c-menu type="bar"`, in de utility-slot van `c-header` |
+| submenu | `c-sidenav` + `c-sidenav-group` + `c-sidenav-item`, met actieve staat via `aria-current` |
+| `c-tabs` / `c-tab-item` | `c-tabs` / `c-tab` |
+| schil eromheen | `c-app-shell`, met slots voor header, sidebar en footer |
+
+Daarmee is de navigatie ook de **proef op de som voor de hele gereedschapsketen**: installeren, `setup_components` met het gekozen design system, de statische bestanden erbij, en een visuele test die de uitkomst vastlegt. Dat allemaal een keer doorlopen op iets kleins is meer waard dan een grote omzetting die op stap een strandt.
+
 ## Voorstel, in die volgorde
 
 **Fase 1: opdelen en opruimen.** Elke pagina wordt een samenstelling van benoemde blokken in plaats van een blok van honderden regels, en inline styling en duplicatie gaan eruit. Onafhankelijk van LOTC bruikbaar. Verifieerbaar: het aantal `style=`-attributen, `<style>`-blokken en herhaalde blokken daalt aantoonbaar, het aantal deeltemplates stijgt, en er staat een test die de terugval tegenhoudt.
@@ -93,6 +110,8 @@ Vijf bloksoorten voor twintig pagina's betekent dat vrijwel alles in een enkel `
 **Fase 2: de hernoemingen.** `c-p` naar `paragraph`, `c-menubar` naar `menu`. Mechanisch, en het verkleint het gat met de helft.
 
 **Fase 3: de twee gaten dichten, in LOTC en niet bij ons.** De lijstprimitieven en de formulierlaag horen in core thuis, niet als uitzondering in onze templates. Dat is een gesprek met het LOTC-project, geen werk in deze repo.
+
+**Fase 3b: de navigatie omzetten, als proef.** Menu, submenu en tabjes, plus de schil eromheen. Hier wordt de keten voor het eerst end-to-end gelopen. Verifieerbaar met een screenshot-vergelijking, en met de bestaande e2e-navigatietest die gewoon groen moet blijven: de links moeten nog steeds werken, hoe ze er ook uitzien.
 
 **Fase 4: omzetten per pagina, met een visuele test per stap.** Niet alles tegelijk. Begin met een pagina die veel toont en weinig doet (het projectenoverzicht), en eindig met de wizard. Elke pagina komt eruit als een samenstelling van LOTC-componenten in de bg-indeling; de blokken uit fase 1 zijn de eenheden die je daarbij verplaatst.
 
