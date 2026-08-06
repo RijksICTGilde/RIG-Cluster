@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 
-from pydantic import RootModel, field_validator
+from pydantic import Field, RootModel, field_validator
 
 #: An environment-variable name: the shape an alias key must have to become one.
 ENV_VAR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -25,6 +25,15 @@ ENV_VAR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 class AliasesConfig(RootModel[dict[str, str]]):
     """A component's alias map: env-var name -> template referencing platform variables."""
+
+    root: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Aliases for this component: the environment variable name the application expects, "
+            "mapped to a template referencing a platform variable, e.g. "
+            "POSTGRES_HOST: $DATABASE_SERVER_HOST."
+        ),
+    )
 
     @field_validator("root")
     @classmethod

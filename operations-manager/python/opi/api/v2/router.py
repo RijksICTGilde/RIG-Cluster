@@ -1081,11 +1081,17 @@ def _service_or_404(service_name: str):
 def _accepts_config_at(service, layer: ConfigLayer) -> bool:
     """Whether a service accepts a config block at ``layer``.
 
-    Derived from the service's own declarations -- never a hardcoded name list. A
-    flat-field service declares ``config_api_fields``; a sequence-config service
-    (storage is a ``RootModel[list]``, so it has no flat field names) declares
-    ``config_editables``; a component-level service hooks into the component form
-    via ``config_component_layout``. Any of these means the layer is configurable.
+    Two questions, both answered by the service itself: does it carry config at this
+    layer (``config_layers()`` -- editables, API fields, layout nodes, a modelled
+    payload), and is there a model to validate a write against
+    (``config_model_for(layer)``). Never a hardcoded name list.
+
+    Asking ``config_layers()`` rather than re-deriving the same three hooks here is
+    RC-38's correction: the surface was assembled out of what the *wizard* happened to
+    declare, so a layer with a model and no form field silently had no endpoint, and
+    ``_supported_targets`` (which this feeds) could name a target no route existed for.
+    The registry answers both with one derivation now, and
+    ``tests/test_service_config_api.py`` pins that the two stay one.
     """
     if service.owned_property is not None:
         # A service that owns a plain project-file property (user-env-vars, aliases) has
@@ -1093,9 +1099,7 @@ def _accepts_config_at(service, layer: ConfigLayer) -> bool:
         # writes exactly that block -- has nothing to address. Generating a route for it
         # would let a caller write a config block that nothing ever reads (RC-25).
         return False
-    if service.config_api_fields(layer) or service.config_editables(layer):
-        return True
-    return layer is ConfigLayer.COMPONENT and bool(service.config_component_layout())
+    return layer in service.config_layers() and service.config_model_for(layer) is not None
 
 
 def _supported_targets(service) -> list[str]:
@@ -1377,8 +1381,11 @@ def _register_service_config_routes(router: APIRouter) -> None:
         for layer in ConfigLayer:
             if not _accepts_config_at(service, layer) or layer not in _CONFIG_WRITE_LAYERS:
                 continue
+            # Not None by construction: _accepts_config_at already requires the model, and
+            # the route body IS that model. Narrowed rather than re-tested, so the two
+            # cannot come apart into "supported target with no route".
             model = service.config_model_for(layer)
-            if model is None:
+            if model is None:  # pragma: no cover - guarded by _accepts_config_at
                 continue
             suffix, name_param = _config_write_route(layer)
             path = f"/projects/{{project_name}}/services/{service_name}{suffix}"

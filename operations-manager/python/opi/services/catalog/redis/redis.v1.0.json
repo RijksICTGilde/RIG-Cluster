@@ -3,6 +3,7 @@
   "properties": {
     "acl-key-prefix": {
       "default": true,
+      "description": "Restrict this project's Redis user to keys prefixed with {deployment}-{project}:. Turning it off gives the user every key in the shared instance, so it is a deliberate widening for applications that cannot prefix their keys.",
       "title": "Acl-Key-Prefix",
       "type": "boolean"
     }

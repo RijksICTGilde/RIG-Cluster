@@ -22,5 +22,8 @@ from opi.services.catalog.shared.revisions import CloneState
 class MinioStorageConfig(CloneState):
     """Bucket settings plus clone state."""
 
-    #: Keep previous object versions in the bucket. Project-level, set by the user.
-    enable_versioning: bool | None = Field(default=None, alias="enable-versioning")
+    enable_versioning: bool | None = Field(
+        default=None,
+        alias="enable-versioning",
+        description="Keep previous versions of an object in the bucket instead of overwriting it.",
+    )

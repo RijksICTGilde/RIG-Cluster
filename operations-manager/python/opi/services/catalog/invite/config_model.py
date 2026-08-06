@@ -40,8 +40,8 @@ class I18nText(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    nl: str | None = None
-    en: str | None = None
+    nl: str | None = Field(default=None, description="Dutch text.")
+    en: str | None = Field(default=None, description="English text.")
 
 
 class InviteEntry(BaseModel):
@@ -50,22 +50,46 @@ class InviteEntry(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    key: str
-    #: Deprecated. Same effect as ``realm_roles`` (both are merged in assign_invite_permissions);
-    #: kept so existing files validate. The UI offers ``realm_roles`` only.
-    roles: list[str] = Field(default_factory=list)
-    realm_roles: list[str] = Field(default_factory=list, alias="realm-roles")
-    #: Advanced pass-through (not offered in the UI): per-client role assignments.
-    client_roles: dict[str, list[str]] = Field(default_factory=dict, alias="client-roles")
-    #: Advanced pass-through (not offered in the UI): realm groups to join.
-    groups: list[str] = Field(default_factory=list)
-    restrict_domain: str | None = Field(default=None, alias="restrict-domain")
-    auth_methods: list[AuthMethod] = Field(default_factory=list, alias="auth-methods")
-    contact_email: str | None = Field(default=None, alias="contact-email")
-    application_url: str | None = Field(default=None, alias="application-url")
-    message: I18nText | None = None
-    success_title: I18nText | None = Field(default=None, alias="success-title")
-    success_button: I18nText | None = Field(default=None, alias="success-button")
+    key: str = Field(description="The secret in the invitation link; whoever holds it can redeem the invite.")
+    roles: list[str] = Field(
+        default_factory=list,
+        description="Deprecated spelling of 'realm-roles', kept so existing files validate. Use realm-roles.",
+    )
+    realm_roles: list[str] = Field(
+        default_factory=list, alias="realm-roles", description="Realm roles the redeeming user is given."
+    )
+    client_roles: dict[str, list[str]] = Field(
+        default_factory=dict,
+        alias="client-roles",
+        description="Per client, the client roles the redeeming user is given. Advanced; not offered in the portal.",
+    )
+    groups: list[str] = Field(
+        default_factory=list,
+        description="Realm groups the redeeming user joins. Advanced; not offered in the portal.",
+    )
+    restrict_domain: str | None = Field(
+        default=None,
+        alias="restrict-domain",
+        description="Only accept an email address in this domain, so the link cannot be passed on freely.",
+    )
+    auth_methods: list[AuthMethod] = Field(
+        default_factory=list,
+        alias="auth-methods",
+        description="The sign-in methods this invite offers; empty means every method the realm supports.",
+    )
+    contact_email: str | None = Field(
+        default=None, alias="contact-email", description="Address shown to a user who needs help redeeming."
+    )
+    application_url: str | None = Field(
+        default=None, alias="application-url", description="Where the user is sent after redeeming."
+    )
+    message: I18nText | None = Field(default=None, description="Text shown on the invitation page.")
+    success_title: I18nText | None = Field(
+        default=None, alias="success-title", description="Heading shown after a successful redemption."
+    )
+    success_button: I18nText | None = Field(
+        default=None, alias="success-button", description="Label of the button leading to the application."
+    )
 
 
 class InviteConfig(BaseModel):
@@ -77,5 +101,11 @@ class InviteConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    default_language: str = Field(default="nl", alias="default-language")
-    active: list[InviteEntry] = Field(default_factory=list)
+    default_language: str = Field(
+        default="nl",
+        alias="default-language",
+        description="Language the invitation page opens in when the visitor expresses no preference.",
+    )
+    active: list[InviteEntry] = Field(
+        default_factory=list, description="The invitations that can currently be redeemed."
+    )

@@ -32,36 +32,48 @@ DomainApprovalStatus = Literal["requested", "approved", "denied"]
 class DomainHistoryEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    date: str
-    status: DomainApprovalStatus
-    by: str | None = None
-    message: str | None = None
+    date: str = Field(description="When this decision was recorded, ISO 8601.")
+    status: DomainApprovalStatus = Field(description="What was decided: requested, approved or denied.")
+    by: str | None = Field(default=None, description="Who decided it.")
+    message: str | None = Field(default=None, description="The reason given with the decision.")
 
 
 class AllowedSubdomainDetail(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    name: str
-    status: DomainApprovalStatus
-    history: list[DomainHistoryEntry] = []
+    name: str = Field(description="The subdomain, without the domain it sits under.")
+    status: DomainApprovalStatus = Field(description="Approval state of this subdomain.")
+    history: list[DomainHistoryEntry] = Field(default=[], description="Every decision made about it, oldest first.")
 
 
 class AllowedSubdomainEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    domain: str
-    subdomains: list[AllowedSubdomainDetail] = []
+    domain: str = Field(description="The domain these subdomains sit under.")
+    subdomains: list[AllowedSubdomainDetail] = Field(
+        default=[], description="The subdomains requested under it, with their approval state."
+    )
 
 
 class AllowedDomainEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    domain: str
-    status: DomainApprovalStatus
-    supports_dots: bool | None = Field(default=None, alias="supports-dots")
-    issuer: str | None = None
-    restricted_subdomains: bool | None = Field(default=None, alias="restricted-subdomains")
-    history: list[DomainHistoryEntry] = []
+    domain: str = Field(description="The domain this project may publish on.")
+    status: DomainApprovalStatus = Field(description="Approval state of the domain itself.")
+    supports_dots: bool | None = Field(
+        default=None,
+        alias="supports-dots",
+        description="Whether a dotted subdomain is allowed under it; a wildcard certificate covers one level only.",
+    )
+    issuer: str | None = Field(
+        default=None, description="Certificate issuer to use for this domain; the platform default when absent."
+    )
+    restricted_subdomains: bool | None = Field(
+        default=None,
+        alias="restricted-subdomains",
+        description="Whether every subdomain under it needs its own approval.",
+    )
+    history: list[DomainHistoryEntry] = Field(default=[], description="Every decision made about it, oldest first.")
 
 
 class DomainsConfig(BaseModel):
@@ -69,17 +81,36 @@ class DomainsConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    allowed_subdomains: list[AllowedSubdomainEntry] = Field(default_factory=list, alias="allowed-subdomains")
-    allowed_domains: list[AllowedDomainEntry] = Field(default_factory=list, alias="allowed-domains")
+    allowed_subdomains: list[AllowedSubdomainEntry] = Field(
+        default_factory=list,
+        alias="allowed-subdomains",
+        description="Per domain, the subdomains this project requested and their approval state.",
+    )
+    allowed_domains: list[AllowedDomainEntry] = Field(
+        default_factory=list,
+        alias="allowed-domains",
+        description="The domains this project may publish on, with their approval state.",
+    )
 
 
 class PublishOnWebConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    tls: TlsMode | None = None
-    #: Name of the catalog attachment holding the certificate PEM; required for ``provided``.
-    attachment: str | None = None
-    domains: DomainsConfig | None = None
+    tls: TlsMode | None = Field(
+        default=None,
+        description=(
+            "How TLS is terminated: 'standard' uses the platform certificate, 'passthrough' lets the pod "
+            "present its own, 'provided' terminates a certificate you supply as an attachment. Absent means "
+            "inherit (deployment > component > root > standard)."
+        ),
+    )
+    attachment: str | None = Field(
+        default=None,
+        description="Id of the attachment holding the certificate PEM. Required when tls is 'provided'.",
+    )
+    domains: DomainsConfig | None = Field(
+        default=None, description="Project-level domain approvals. Written by the platform's approval flow."
+    )
 
     @model_validator(mode="after")
     def _provided_needs_an_attachment(self) -> PublishOnWebConfig:
