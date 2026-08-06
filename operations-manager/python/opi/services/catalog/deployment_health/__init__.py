@@ -24,7 +24,8 @@ from typing import TYPE_CHECKING
 
 from opi.services.catalog.base import DeploymentStateContext, DeploymentStateFact, Service
 from opi.services.disabled_state import deployment_disabled_state
-from opi.services.services_enums import ServiceType
+from opi.services.services import ServiceDefinition
+from opi.services.services_enums import ServiceBinding, ServiceKind, ServiceType
 
 if TYPE_CHECKING:
     from opi.services.deployment_state import DeploymentState
@@ -33,6 +34,23 @@ if TYPE_CHECKING:
 
 class DeploymentHealthService(Service):
     service_type = ServiceType.DEPLOYMENT_HEALTH
+    definition = ServiceDefinition(
+        name="Deployment gezondheid",
+        description=(
+            "Systeemdienst: beoordeelt wat de waargenomen toestand van een draaiende "
+            "deployment betekent (OOM, CrashLoopBackOff, image ophalen mislukt) en weegt "
+            "daarbij mee wat andere diensten over die deployment melden. Draait altijd, "
+            "is niet kiesbaar."
+        ),
+        help_template="deployment_health/help.html.j2",
+        icon="stethoscoop",
+        color="grijs-600",
+        binding=ServiceBinding.DEPLOYMENT,
+        variables=[],
+        # Always on, never in the project file -> a system service (kind=SYSTEM also
+        # keeps it out of the picker, so no explicit hidden is needed).
+        kind=ServiceKind.SYSTEM,
+    )
 
     def deployment_state(self, ctx: DeploymentStateContext) -> list[DeploymentStateFact]:
         """Report that this deployment is switched off, wholly or in part (RC-31).

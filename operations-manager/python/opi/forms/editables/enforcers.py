@@ -468,7 +468,7 @@ class UniqueSchemaEnforcer:
 
     async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
         from opi.forms.editables.service_path import smart_get_value
-        from opi.services.services import reserved_database_variable_names
+        from opi.services.catalog.postgresql_database.variables import reserved_database_variable_names
         from opi.utils.naming import generate_extra_database_schema, generate_schema_variable_name
 
         schemas = smart_get_value(value, self._PATH) or []
