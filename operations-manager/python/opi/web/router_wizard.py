@@ -1433,8 +1433,12 @@ def _extract_section_data(
 
     # Collect which top-level keys this section uses, and for indexed list
     # paths, which sub-fields it owns (e.g. deployments -> {name}).
+    from opi.forms.editables.service_path import is_service_config_path, parse_service_path
+    from opi.services.services import service_entry_name
+
     section_keys: set[str] = set()
     indexed_fields: dict[str, set[str]] = {}  # top_key -> set of owned field names
+    owned_services: dict[str, set[str]] = {}  # top_key -> service names this section configures
     # real_key -> virtual_key for virtualized editables
     virt_mapping: dict[str, str] = {}
 
@@ -1453,6 +1457,14 @@ def _extract_section_data(
 
             if ed.virtualize:
                 virt_mapping[ed.virtualize[0]] = ed.virtualize[1]
+
+            # Which service's config this section actually writes. Without this a section
+            # that configures ONE service copies the WHOLE services list, other services'
+            # config included, and then overwrites theirs on the merge because it happens
+            # to come later in the section order. Measured: the invite step carried a stale
+            # copy of the keycloak template and won over the keycloak step itself.
+            if is_service_config_path(ed.yaml_path):
+                owned_services.setdefault(top_key, set()).add(parse_service_path(ed.yaml_path)[0])
 
             if "[" in top and len(parts) >= 2:
                 # e.g. deployments[0]/base-domain -> owns "base-domain"
@@ -1486,6 +1498,17 @@ def _extract_section_data(
                 else:
                     pruned.append(copy.deepcopy(item))
             result[store_key] = pruned
+        elif key in owned_services and isinstance(value, list):
+            # Same reasoning as the indexed pruning above, one level up: keep only the
+            # services this section configures. A bare string entry (a chosen service
+            # without config) stays, because that is the selection and not someone
+            # else's config.
+            keep = owned_services[key]
+            result[store_key] = [
+                copy.deepcopy(entry)
+                for entry in value
+                if not isinstance(entry, dict) or service_entry_name(entry) in keep
+            ]
         else:
             result[store_key] = copy.deepcopy(value)
 
