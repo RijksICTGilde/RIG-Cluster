@@ -12,23 +12,6 @@
  * detail-page edit modal (fetch to /sequence endpoint).
  * ======================================================================== */
 
-/* Houdt de meereizende hidden input van een vergrendelde dienst in stand. Zie de aanroep
-   in updateAllVisuals voor het waarom. */
-function _syncLockedHiddenInput(card, checkbox, nodig) {
-    var bestaand = card.querySelector('input[type="hidden"][data-locked-value]');
-    if (!nodig) {
-        if (bestaand) bestaand.remove();
-        return;
-    }
-    if (bestaand) return;
-    var verborgen = document.createElement('input');
-    verborgen.type = 'hidden';
-    verborgen.name = checkbox.name;
-    verborgen.value = checkbox.value;
-    verborgen.setAttribute('data-locked-value', '');
-    checkbox.parentNode.insertBefore(verborgen, checkbox.nextSibling);
-}
-
 function sequenceAdd(path) {
     _sequenceDispatch('add', path, '');
 }
@@ -294,20 +277,13 @@ function initServiceCards(grid) {
             }
 
             if (cb) {
-                cb.disabled = locked;
-                /* Een disabled checkbox verstuurt zijn waarde niet, en juist een
-                   vergrendelde dienst is er een die AAN moet blijven: iets anders vereist
-                   hem. Zonder deze meereizende hidden input valt hij uit de POST en meldt
-                   het overzicht dat hij verwijderd wordt. De server rendert er al een voor
-                   wat bij het laden al vergrendeld was; dit dekt het geval dat je hem hier
-                   aanvinkt, want dan vergrendelt hij pas op dit moment. */
-                _syncLockedHiddenInput(card, cb, locked && checked);
-                /* Sync ROOS label class with current checked state */
-                var label = cb.closest('label[data-roos-component="checkbox"]');
-                if (label) {
-                    label.classList.toggle('rvo-checkbox--checked', checked);
-                    label.classList.toggle('rvo-checkbox--not-checked', !checked);
-                }
+                /* Bewust GEEN cb.disabled = locked. Vergrendeld betekent "niet aanpasbaar",
+                   en disabled betekent daarnaast "niet versturen" -- dat tweede bedoelen we
+                   niet, en juist daardoor viel een vergrendelde dienst uit de POST. Het slot
+                   wordt bewaakt door de change-handler hieronder (die de wijziging
+                   terugdraait) en door de server. */
+                cb.setAttribute('aria-disabled', locked ? 'true' : 'false');
+                syncLabel(cb);
             }
 
             /* Only the dependency hint: a card can carry other hint lines (e.g. where a
@@ -343,20 +319,36 @@ function initServiceCards(grid) {
         updateAllVisuals();
     }
 
+    /* Zet de ROOS-labelklasse gelijk aan de stand van de checkbox. */
+    function syncLabel(cb) {
+        var label = cb.closest('label[data-roos-component="checkbox"]');
+        if (!label) return;
+        label.classList.toggle('rvo-checkbox--checked', cb.checked);
+        label.classList.toggle('rvo-checkbox--not-checked', !cb.checked);
+    }
+
     /* change event from native checkbox click */
     grid.addEventListener('change', function(e) {
         if (processing) return;
         var card = e.target.closest('.service-card');
         if (!card) return;
         var svc = card.dataset.service;
-        processing = true;
-        /* Sync the ROOS label class for the clicked checkbox */
-        var label = e.target.closest('label[data-roos-component="checkbox"]');
-        if (label) {
-            var checked = e.target.checked;
-            label.classList.toggle('rvo-checkbox--checked', checked);
-            label.classList.toggle('rvo-checkbox--not-checked', !checked);
+
+        /* Hier is het slot een slot. De checkbox is niet disabled -- anders zou hij zijn
+           waarde niet versturen -- dus wordt het uitvinken teruggedraaid en wordt gezegd
+           waarom. */
+        if (card.classList.contains('service-card--locked-checked') && !e.target.checked) {
+            processing = true;
+            e.target.checked = true;
+            syncLabel(e.target);
+            processing = false;
+            var slotHint = card.querySelector('.service-card__hint--depends');
+            if (slotHint) alert(slotHint.textContent);
+            return;
         }
+
+        processing = true;
+        syncLabel(e.target);
         handleToggle(svc);
         processing = false;
     });

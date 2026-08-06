@@ -65,11 +65,12 @@ def merge_service_lists(existing: list[Any], incoming: list[Any]) -> list[Any]:
     promoted to ``incoming``'s dict form when only ``incoming`` carries the config.
 
     Folding one entry at a time means a name occurring twice *within* a single list
-    collapses on the same rules. The services picker can post a name twice (a locked
-    service renders both a disabled checkbox and a hidden input; unlocking it client-side
-    re-enables the checkbox while the hidden input stays), and nothing downstream would
-    have caught it: the duplicate reached the project file as a config record plus a
-    stray bare string.
+    collapses on the same rules. The picker used to post a name twice (a locked service
+    rendered both a disabled checkbox and a hidden input carrying the same value), and
+    nothing downstream would have caught it: the duplicate reached the project file as a
+    config record plus a stray bare string. That hidden input is gone -- a locked
+    checkbox is no longer disabled, so it posts its own value once -- but the collapse
+    stays: a selection is a set keyed by name, and this is where that is enforced.
     """
     result: list[Any] = []
     index: dict[str, int] = {}
