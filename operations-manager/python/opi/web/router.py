@@ -17,9 +17,9 @@ from datetime import UTC
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates import get_templates
+from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.config_location import binding_label, project_step_config_hint
 from opi.services.deployment_state import collect_deployment_state
-from opi.services.disabled_state import deployment_disabled_state
 from opi.services.project import Project
 from opi.services.project_authorization import (
     get_user_role_for_project,
@@ -1575,16 +1575,9 @@ async def project_details(request: Request, project_name: str):
         # deployment with nothing running and no explanation why.
         from opi.services.deployment_state import collect_deployment_state
 
-        _deployment_states = {
-            dep.get("name"): collect_deployment_state(project_data_decrypted, dep.get("name", ""))
+        deployment_state_facts = {
+            dep.get("name"): collect_deployment_state(project_data_decrypted, dep.get("name", "")).facts
             for dep in project_data_decrypted.get("deployments", [])
-        }
-        deployment_state_facts = {name: state.facts for name, state in _deployment_states.items()}
-        # Whether the application's own pods are meant to be absent. The card uses it to
-        # leave out what only makes sense while something runs: there are no logs to view
-        # in a deployment that is asleep, and offering the button suggests otherwise.
-        deployment_expects_no_pods = {
-            name: state.expects_no_application_pods for name, state in _deployment_states.items()
         }
 
         # Per-deployment read-only blocks the services deliver (RC-24): metrics and
@@ -1634,7 +1627,6 @@ async def project_details(request: Request, project_name: str):
                 "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
                 "deployment_service_actions": deployment_service_actions,
                 "deployment_state_facts": deployment_state_facts,
-                "deployment_expects_no_pods": deployment_expects_no_pods,
                 # Per-deployment service-owned blocks (RC-24), keyed by deployment name.
                 "deployment_service_sections": deployment_service_sections,
                 # Detail-page sections the project's services own (WP2). Replaces the
@@ -1911,10 +1903,10 @@ async def argocd_status_fragment(
             "argocd_status": {deployment_name: status},
             "_argocd_card_id_prefix": prefix or deployment_name,
             "current_cluster": settings.CLUSTER_MANAGER,
-            # How much of this deployment is switched off (RC-31). Read from the project
+            # What the services report about this deployment (RC-35). Read from the project
             # file, not from the cluster: zero replicas can also mean something went wrong,
             # and the card has to tell those two apart.
-            "disabled_state": deployment_disabled_state(project.data or {}, deployment_name),
+            "deployment_states": {deployment_name: collect_deployment_state(project.data or {}, deployment_name)},
         },
     )
 

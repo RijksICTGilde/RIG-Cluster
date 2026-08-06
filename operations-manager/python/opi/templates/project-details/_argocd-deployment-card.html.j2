@@ -5,7 +5,7 @@
     - argocd_status: dict of deployment_name -> status
     - current_cluster: current cluster name
     - project: the project object
-    - disabled_state: DeploymentDisabledState for this deployment (opi.services.disabled_state)
+    - deployment_states: dict of deployment_name -> DeploymentState (opi.services.deployment_state)
   Optional:
     - _argocd_card_id_prefix: prefix for error toggle IDs (default: deployment.name)
 #}
@@ -24,11 +24,18 @@
    otherwise the same word would stand twice on one card. #}
 {% set has_image = deployment.components | selectattr('image', 'defined') | selectattr('image') | list | length > 0 if deployment.components else false %}
 {% set shows_argocd_status = has_image and deployment.cluster == current_cluster %}
-{# "Uitgeschakeld" takes the place of exactly one verdict: the green Healthy that zero
+{# What the services report about this deployment (RC-35). The card names no service: it
+   reads the badges the facts carry, so switched off, asleep, and whatever parks a
+   deployment next all arrive here the same way. #}
+{% set deployment_state = (deployment_states | default({})).get(deployment.name) %}
+{% set state_badges = deployment_state.replacing_badges if deployment_state else [] %}
+{% set accompanying_badges = deployment_state.accompanying_badges if deployment_state else [] %}
+{% set expects_no_pods = deployment_state.expects_no_application_pods if deployment_state else false %}
+{# A state badge takes the place of exactly one verdict: the green Healthy that zero
    replicas produce. Every other verdict -- Degraded, Progressing, Unknown -- is something
    ArgoCD really observed and keeps its badge, or switching a component off would hide a
    real failure. #}
-{% set disabled_replaces_health = disabled_state.is_disabled and health == 'Healthy' %}
+{% set state_replaces_health = state_badges and health == 'Healthy' %}
 
 <c-card padding="lg" outline="true" backgroundColor="grijs-050" style="border-left: 4px solid var(--rvo-color-hemelblauw);">
     <c-layout-flow gap="md">
@@ -37,17 +44,21 @@
             <c-icon icon="applicatie" size="md" color="donkerblauw" />
             <c-heading type="h4" textContent="{{ deployment.name }}" />
             <span style="background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">{{ deployment.cluster }}</span>
-            {# Partly off is its own situation: something is still serving traffic, so the
-               health badge stays and this chip says how much is not. Fully off only needs
-               a chip here when there is no badge row to carry it. #}
-            {% if disabled_state.is_partially_disabled %}
+            {# A badge that does not replace the health verdict belongs here: something is
+               still serving traffic, so the health badge stays and this says what else is
+               true. A replacing badge only needs a chip here when there is no badge row
+               below to carry it, or the same word would stand twice on one card. #}
+            {% for badge in accompanying_badges %}
             <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: #ffe0b2; color: #e65100;">
-                <c-icon icon="uit-aanknop" size="sm" />{{ disabled_state.disabled_count }} van {{ disabled_state.total_count }} componenten uitgeschakeld
+                <c-icon icon="uit-aanknop" size="sm" />{{ badge }}
             </span>
-            {% elif disabled_state.is_disabled and not shows_argocd_status %}
+            {% endfor %}
+            {% if not shows_argocd_status %}
+            {% for badge in state_badges %}
             <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700);">
-                <c-icon icon="uit-aanknop" size="sm" />Uitgeschakeld
+                <c-icon icon="uit-aanknop" size="sm" />{{ badge }}
             </span>
+            {% endfor %}
             {% endif %}
         </c-layout-row>
 
@@ -100,21 +111,21 @@
         {# Deployment is on current cluster - show ArgoCD status #}
         {# Status Badges Row #}
         <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-            {# Switched-off badge (RC-31). A deployment that is off has zero replicas and
-               ArgoCD calls that Healthy; showing the green badge here is the sentence the
-               user reads to know whether things are going well, and it was untrue. So it
-               takes the health badge's place -- but only when health has nothing to report:
-               a deployment that is off AND degraded shows both, or switching something off
-               would hide a real failure. #}
-            {% if disabled_state.is_disabled %}
+            {# State badges (RC-31, generic since RC-35). A deployment that is off or asleep
+               has zero replicas and ArgoCD calls that Healthy; the green badge is the
+               sentence the user reads to know whether things are going well, and it was
+               untrue. So this takes its place -- but only when health has nothing else to
+               report: a deployment that is off AND degraded shows both, or switching
+               something off would hide a real failure. #}
+            {% for badge in state_badges %}
             <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 16px; font-size: 0.8rem; font-weight: 500; background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700);">
                 <c-icon icon="uit-aanknop" size="sm" />
-                Uitgeschakeld
+                {{ badge }}
             </span>
-            {% endif %}
+            {% endfor %}
 
             {# Health Badge #}
-            {% if not disabled_replaces_health %}
+            {% if not state_replaces_health %}
             {% set health_bg = '#c8e6c9' if health == 'Healthy' else ('#bbdefb' if health == 'Progressing' else ('#ffe0b2' if health == 'Degraded' else '#ffcdd2')) %}
             {% set health_color = '#1b5e20' if health == 'Healthy' else ('#0d47a1' if health == 'Progressing' else ('#e65100' if health == 'Degraded' else '#b71c1c')) %}
             <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 16px; font-size: 0.8rem; font-weight: 500; background: {{ health_bg }}; color: {{ health_color }};">
@@ -168,9 +179,8 @@
 
         {# Logs, but only while something runs. A sleeping or switched-off deployment has
            no pods and therefore no logs; offering the button suggests it has. The flag
-           comes from the same service facts the state block renders, so a second service
-           that parks a deployment gets this for free. #}
-        {% set expects_no_pods = (deployment_expects_no_pods | default({})).get(deployment.name, false) %}
+           comes from the same service facts the badges do, so a second service that parks
+           a deployment gets this for free. #}
         {% if deployment.components and not expects_no_pods %}
         <div style="margin-top: var(--rvo-space-sm);">
             <button type="button" class="log-viewer-btn"

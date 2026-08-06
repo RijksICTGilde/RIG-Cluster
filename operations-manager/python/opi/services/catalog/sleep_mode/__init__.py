@@ -77,6 +77,10 @@ class SleepModeService(Service):
                         "gewekt bij het eerste bezoek."
                     ),
                     expects_no_application_pods=True,
+                    # Sleeping and switched off must never collapse into one word (RC-35):
+                    # a sleeping deployment comes back by itself on the first visit, a
+                    # switched-off one waits for someone to turn it on.
+                    badge="Slaapstand",
                     details={"state": sleep.state},
                 )
             ]
