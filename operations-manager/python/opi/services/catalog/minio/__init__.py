@@ -8,8 +8,10 @@ from typing import Any, ClassVar
 from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.services.catalog.base import ConfigLayer, ManifestContext, ProvisionContext, SecretFileSpec, Service
 from opi.services.catalog.minio.config_model import MinioStorageConfig
+from opi.services.catalog.minio.variables import MinIOVariables
 from opi.services.catalog.shared.backups import BackupsPageMixin
-from opi.services.services_enums import ManagerKey, ServiceType
+from opi.services.services import ServiceDefinition
+from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType
 from opi.utils.secrets import MinIOSecret
 
 logger = logging.getLogger(__name__)
@@ -17,6 +19,18 @@ logger = logging.getLogger(__name__)
 
 class MinioStorageService(BackupsPageMixin, Service):
     service_type = ServiceType.MINIO_STORAGE
+    definition = ServiceDefinition(
+        name="MinIO Object Storage",
+        description="S3-compatible object storage voor documenten, afbeeldingen en grote bestanden",
+        help_template="minio/help.html.j2",
+        icon="map",
+        color="rood",
+        binding=ServiceBinding.DEPLOYMENT,
+        secret_class="MinIOSecret",
+        variables=[var.value for var in MinIOVariables],
+        cleanup_strategy=CleanupStrategy.DEFERRED,
+        backup_label="minio",
+    )
     config_model = MinioStorageConfig
     config_schema_version = "1.0"
     cleanup_manager_key = ManagerKey.MINIO

@@ -26,11 +26,28 @@ from typing import Any
 
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.user_env_vars.config_model import UserEnvVarsConfig
-from opi.services.services_enums import ServiceType
+from opi.services.services import ServiceDefinition
+from opi.services.services_enums import ServiceBinding, ServiceKind, ServiceType
 
 
 class UserEnvVarsService(Service):
     service_type = ServiceType.USER_ENV_VARS
+    definition = ServiceDefinition(
+        name="Eigen omgevingsvariabelen",
+        description=(
+            "Systeemdienst: de eigen omgevingsvariabelen van een component, per component "
+            "en per deployment-component. Draait altijd, is niet kiesbaar - elk component "
+            "heeft ze. De waarden worden versleuteld opgeslagen."
+        ),
+        help_template="user_env_vars/help.html.j2",
+        icon="instellingen",
+        color="grijs-600",
+        binding=ServiceBinding.COMPONENT,
+        variables=[],
+        # Always present, never in the project file's services list -> a system
+        # service (kind=SYSTEM also keeps it out of the picker).
+        kind=ServiceKind.SYSTEM,
+    )
     config_model = UserEnvVarsConfig
     config_schema_version = "1.0"
     owned_property = "user-env-vars"

@@ -12,13 +12,26 @@ from typing import Any
 
 from opi.services.catalog.base import ConfigLayer, ProvisionContext, Service, config_path
 from opi.services.catalog.keycloak.config_model import KeycloakConfig
-from opi.services.services import service_entry_name
-from opi.services.services_enums import ManagerKey, ServiceType
+from opi.services.catalog.keycloak.variables import KeycloakVariables
+from opi.services.services import ServiceDefinition, service_entry_name
+from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType
 from opi.utils.secrets import KeycloakSecret
 
 
 class KeycloakService(Service):
     service_type = ServiceType.KEYCLOAK
+    definition = ServiceDefinition(
+        name="Keycloak Authentication",
+        description="Inloggen via SSO Rijk en via lokale Keycloak-accounts in een eigen realm voor dit project",
+        help_template="keycloak/help.html.j2",
+        icon="sleutel",
+        color="groen",
+        binding=ServiceBinding.COMPONENT,
+        secret_class="KeycloakSecret",
+        variables=[var.value for var in KeycloakVariables],
+        requires=["services/publish-on-web"],
+        cleanup_strategy=CleanupStrategy.IMMEDIATE,
+    )
     cleanup_manager_key = ManagerKey.KEYCLOAK
     config_model = KeycloakConfig
     config_schema_version = "1.0"

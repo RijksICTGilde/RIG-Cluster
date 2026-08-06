@@ -33,12 +33,20 @@ Redis the service and Redis the connector are different things and live in diffe
 
 ```
 opi/services/catalog/keycloak/
-├── __init__.py          the Service subclass: all hooks and declarations
-├── config_model.py      Pydantic model for its config block
-├── editables.py         Editable definitions (yaml paths, validators, converters)
-├── visualizers.py       EditableVisualizer definitions (widgets, labels, help texts)
-└── keycloak.v1.0.json   generated JSON-schema fragment, committed and drift-locked
+├── __init__.py            the Service subclass: its ServiceDefinition, all hooks and declarations
+├── config_model.py        Pydantic model for its config block
+├── editables.py           Editable definitions (yaml paths, validators, converters)
+├── variables.py           the env variables it hands to a deployment
+├── visualizers.py         EditableVisualizer definitions (widgets, labels, help texts)
+├── help.html.j2           the long explanation behind the question mark
+├── section-detail.html.j2 its block on the project page
+└── keycloak.v1.0.json     generated JSON-schema fragment, committed and drift-locked
 ```
+
+Everything a service *is* lives here (RC-36): its metadata, its variables and its
+explanation used to sit in shared files, so taking a service over meant editing three of
+them. `tests/test_service_package_is_self_contained.py` fails if any of it creeps back
+out. The measure is literal: copy the directory, rename it, and it works.
 
 Only `__init__.py` is required. A behaviour-only service is a few lines
 (`opi/services/catalog/redis/__init__.py`); keycloak and namespace-postgres use every file.
@@ -55,11 +63,12 @@ Adding a service touches exactly three places:
 
 1. `opi/services/services_enums.py` - a `ServiceType` member. This is the typed identity,
    used with Pyright coverage across the codebase.
-2. `opi/services/services.py` - a `ServiceDefinition` in `ServiceAdapter.SERVICE_DEFINITIONS`:
-   display name, description, icon, colour, binding, the variables it exposes to an app, and
-   optionally `requires`, `backup_label`, `cleanup_strategy`. This is what the
-   `/services` page renders and what a `Service` subclass binds automatically as
-   `cls.definition`.
+2. `catalog/<name>/__init__.py` - a `ServiceDefinition` as the class attribute
+   `definition`: display name, description, icon, colour, binding, the variables it exposes
+   to an app, and optionally `requires`, `backup_label`, `cleanup_strategy`. This is what the
+   `/services` page renders. `ServiceAdapter.SERVICE_DEFINITIONS` is assembled from what the
+   services declare, in `ServiceType` order; there is no shared list to add to. A subclass
+   that sets `service_type` without a `definition` is refused at class-creation time.
 3. `opi/services/registry.py` - one line in `SERVICES`.
 
 `tests/test_service_providers.py` fails CI if a `ServiceType` has no entry, so you cannot
@@ -201,8 +210,10 @@ services overview page (`services-overview.html.j2`) renders the same macro, so 
 show the same thing. Do not build a second service block; `tests/test_service_help.py`
 fails if either template starts rendering its own.
 
-Every definition carries a `help_template`: a Jinja2 file in `opi/templates/help/` with the
-long explanation shown when the user clicks the question mark. The one-line `description` is
+Every definition carries a `help_template`: `"<package>/help.html.j2"`, the Jinja2 file in
+the service's own package with the long explanation shown when the user clicks the question
+mark. (`opi/templates/help/` still holds the few explanations that belong to no single
+service, such as the container-image note.) The one-line `description` is
 too short to choose on, so the long text is where a user actually decides. The same test
 fails when a service has no `help_template` or points at a file that does not exist - both of
 which fail silently in the UI (no button, or an error inside the modal).
@@ -671,8 +682,9 @@ record a revocation on a domain that is already in use. Enforcement happens at p
 
 ## Adding a service
 
-1. `ServiceType` member + `ServiceDefinition` entry.
-2. `catalog/<name>/__init__.py` with a `Service` subclass, and one line in `SERVICES`.
+1. `ServiceType` member.
+2. `catalog/<name>/__init__.py` with a `Service` subclass carrying its own `definition`, and
+   one line in `SERVICES`. Variables it exposes go in `variables.py` in the same package.
 3. Config? Add `config_model.py`, set `config_model` + `config_schema_version`, run
    `uv run python -m opi.services.config_schema`, commit the fragment.
 4. **Decide the UI, explicitly, and write down the decision.** Two questions:
@@ -684,8 +696,8 @@ record a revocation on a domain that is already in use. Enforcement happens at p
      service (automatic), or a `FormSection` + `config_section_id` plus the four wiring steps
      for a project-level one. A user-selectable service without a config screen only works if
      it genuinely has nothing to configure.
-5. **Write the explanation.** Add `opi/templates/help/<service>.html.j2` and point
-   `help_template` at it. Follow the shape of the existing ones: one paragraph *what is it*
+5. **Write the explanation.** Add `catalog/<name>/help.html.j2` and point `help_template` at
+   `"<name>/help.html.j2"`. Follow the shape of the existing ones: one paragraph *what is it*
    in plain language, *Wanneer gebruik je dit?* as a list of recognisable situations, and
    *Wat wordt er ingesteld?* with what happens technically and which other services come
    along. A system service has no "when do you use this" - explain instead that it always
