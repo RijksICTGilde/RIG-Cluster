@@ -67,9 +67,11 @@ class InviteService(Service):
         help_template="invite/help.html.j2",
         icon="envelop",
         color="lichtblauw",
-        # binding is not meaningful here (an invite provisions nothing), but the field is
-        # required; "component" matches keycloak/attachments.
-        binding=ServiceBinding.COMPONENT,
+        # Niet per component en niet per deployment: een uitnodiging geldt voor het
+        # Keycloak-realm van het project. Stond op COMPONENT omdat er geen andere waarde
+        # was, met als gevolg dat de dienst in de componentkeuze verscheen en de UI meldde
+        # dat je hem per component kiest.
+        binding=ServiceBinding.PROJECT,
         variables=[],
         # Path-syntax requirement: auto-selects keycloak, locks it in the UI, and validates
         # at submit that keycloak is present. An invite assigns a realm role, so keycloak
