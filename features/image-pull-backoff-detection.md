@@ -23,7 +23,7 @@ Deployment running
        |
   User pushes new image via API
        |
-  The rollout hook (HookPoint.REDEPLOY) fires; deployment-health clears the disable
+  The rollout event (ActionEvent.REDEPLOY) fires; deployment-health clears the disable
        |
   Component re-enabled (disabled: false) --> replicas: 1 --> new image pulled
 ```
@@ -57,7 +57,7 @@ component before reprocessing, so the new image gets a chance to pull without ma
 intervention.
 
 Since RC-37 this is no longer a reason check in `update_image_and_regenerate()`, and it is
-no longer limited to image-pull disables. The rollout paths fire `HookPoint.REDEPLOY` and
+no longer limited to image-pull disables. The rollout paths fire `ActionEvent.REDEPLOY` and
 the deployment-health service clears the disable **whatever the reason said** -- OOMKilled
 and crash loops included -- because every automatic disable is a judgement about content
 that was just replaced. See `features/redeploy-clears-recorded-state.md` for the reasoning

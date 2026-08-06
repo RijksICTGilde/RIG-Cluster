@@ -1,6 +1,6 @@
 {# Invite detail-page section (RC-13).
 
-   Owned by the invite service: InviteService.detail_page_sections builds the ``invites``
+   Owned by the invite service: InviteService.invites_block builds the ``invites``
    context and gates on the viewer's role (admin/owner only -- the link is the secret), so
    this block lives with the service instead of hardcoded in the general project-details
    template. Rendered via a ``section`` loop var, so it reads from ``section.context``.

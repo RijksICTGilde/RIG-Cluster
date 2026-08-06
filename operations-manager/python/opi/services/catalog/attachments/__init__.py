@@ -16,9 +16,16 @@ from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.attachments.catalog_model import AttachmentCatalog
 from opi.services.catalog.attachments.config_model import AttachmentsConfig
-from opi.services.catalog.base import ConfigLayer, ConfigRole, DetailPageSection, Service
+from opi.services.catalog.base import (
+    ConfigLayer,
+    ConfigRole,
+    DetailPageSection,
+    ProjectPageContext,
+    Service,
+)
+from opi.services.catalog.events import on
 from opi.services.services import ServiceDefinition, service_entry_name
-from opi.services.services_enums import ServiceBinding, ServiceType
+from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -149,31 +156,32 @@ class AttachmentsService(Service):
             self._config_section_cache = cached
         return cached
 
-    def detail_page_sections(self, project_data: dict[str, Any], user_role: str) -> list[DetailPageSection]:
+    @on(UIEvent.PROJECT_SECTIONS)
+    def attachments_block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
         # The Bijlagen block is this service's, including the question whether it shows
         # at all: the general template used to ask "is attachments in project.services"
         # before including it -- service knowledge in the page. Being asked at all means
         # the project uses the service, so there is no condition left here.
         from opi.handlers.project_file_handler import extract_attachment_catalog, extract_attachment_usage
 
-        usage = extract_attachment_usage(project_data)
+        usage = extract_attachment_usage(ctx.project_data)
         attachments = [
             {
                 "id": entry["id"],
                 "filename": entry.get("filename", entry["id"]),
                 "used_by": usage.get(entry["id"], []),
             }
-            for entry in extract_attachment_catalog(project_data).values()
+            for entry in extract_attachment_catalog(ctx.project_data).values()
         ]
         return [
             DetailPageSection(
                 template="attachments/section-detail.html.j2",
                 context={
                     "attachments": sorted(attachments, key=lambda a: a["id"]),
-                    "can_edit": user_role in ("admin", "owner"),
+                    "can_edit": ctx.user_role in ("admin", "owner"),
                     # The delete confirmation is addressed per project, and this section
                     # reads its data from ``section.context`` only.
-                    "project_name": project_data.get("name"),
+                    "project_name": ctx.project_data.get("name"),
                 },
             )
         ]

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 from opi.services.catalog.aliases import AliasesService
 from opi.services.catalog.attachments import AttachmentsService
 from opi.services.catalog.authorization_wall import AuthorizationWallService
-from opi.services.catalog.base import ConfigLayer, DeploymentPageContext, Service
+from opi.services.catalog.base import ConfigLayer, DeploymentPageContext, ProjectPageContext, Service
 from opi.services.catalog.cross_domain_access import CrossDomainAccessService
 from opi.services.catalog.deployment_health import DeploymentHealthService
 from opi.services.catalog.health_check import HealthCheckService
@@ -37,7 +37,7 @@ from opi.services.catalog.resource_tuning import ResourceTuningService
 from opi.services.catalog.sleep_mode import SleepModeService
 from opi.services.catalog.temp_storage import TempStorageService
 from opi.services.catalog.user_env_vars import UserEnvVarsService
-from opi.services.services_enums import HookPoint, ServiceType
+from opi.services.services_enums import ActionEvent, ServiceEvent, ServiceType, UIEvent
 
 if TYPE_CHECKING:
     from opi.forms.editables.editable import Editable
@@ -100,27 +100,52 @@ def provisioning_services() -> list[Service]:
     return sorted(overriding, key=lambda s: s.provision_order)
 
 
-#: The default (no-op) method backing each hook point. A service participates at a hook
-#: exactly when it overrides that method, so participation is derived, never a
-#: separately-declared list that could drift from the implementation.
-_HOOK_DEFAULTS: dict[HookPoint, Any] = {
-    HookPoint.AFTER_SYNC: Service.observe_deployment,
-    HookPoint.DEPLOYMENT_STATE: Service.deployment_state,
-    HookPoint.REDEPLOY: Service.on_redeploy,
-}
+def _build_listener_index() -> dict[ServiceEvent, list[Service]]:
+    """Who listens to what (RC-39): the single index of service events.
 
+    Built once from the ``@on(...)`` declarations in the catalog. This is the payoff of
+    the event mechanism -- "which services care about X" is a lookup, not a scan written
+    again at every place that fires an event, and adding an event needs no line in this
+    module at all.
 
-def services_for_hook(hook: HookPoint) -> list[Service]:
-    """Services participating at ``hook``, in their order for that point (task 8).
-
-    Same override-detection pattern as ``provisioning_services()``, keyed by the hook's
-    enum: a service is in only if it overrides the hook's default method. Order comes
-    from ``hook_order[hook]`` (default 100), per-hook so a service on two points does
-    not share one order.
+    Order within an event is the handler's ``order`` (default 100); services with equal
+    order keep registry (``ServiceType``) order, so a listener list never depends on
+    import order.
     """
-    default = _HOOK_DEFAULTS[hook]
-    overriding = [s for s in SERVICES.values() if getattr(type(s), default.__name__) is not default]
-    return sorted(overriding, key=lambda s: s.hook_order.get(hook, 100))
+    index: dict[ServiceEvent, list[Service]] = {}
+    for event in (*ActionEvent, *UIEvent):
+        listeners = [service for service in SERVICES.values() if service.listens_to(event)]
+        index[event] = sorted(listeners, key=lambda service: _listener_order(service, event))
+    return index
+
+
+def _listener_order(service: Service, event: ServiceEvent) -> int:
+    """A service's position among an event's listeners: its earliest handler's order.
+
+    Read from the index, not off the bound method: a service may override an inherited
+    handler by name without repeating the decorator, and then the method carries no marker.
+    """
+    return min((order for _name, order in service.event_handlers.get(event, ())), default=100)
+
+
+_LISTENERS: dict[ServiceEvent, list[Service]] = _build_listener_index()
+
+
+def listeners(event: ServiceEvent, project_data: dict[str, Any] | None = None) -> list[Service]:
+    """The services that listen to ``event``, in order.
+
+    ``project_data`` narrows the list to the services the project actually uses, which is
+    what a page wants: a block only belongs on a project that has the service. Leave it
+    out to ask everyone, which is what state-clearing events want -- a service's record in
+    the project file has to be dealt with even when the project no longer lists the
+    service today (sleep-mode can be switched on per cluster without a project selecting
+    it), and a service that recorded nothing returns nothing anyway.
+    """
+    found = _LISTENERS.get(event, [])
+    if project_data is None:
+        return found
+    selected = selected_services(project_data)
+    return [service for service in found if service in selected]
 
 
 def manifest_secret_services() -> list[Service]:
@@ -226,9 +251,10 @@ def collect_detail_page_sections(project_data: dict, user_role: str) -> list:
     """
     from opi.services.catalog.base import DetailPageSection
 
+    payload = ProjectPageContext(project_data=project_data, user_role=user_role)
     sections: list[DetailPageSection] = []
-    for service in selected_services(project_data):
-        sections.extend(service.detail_page_sections(project_data, user_role))
+    for service in listeners(UIEvent.PROJECT_SECTIONS, project_data):
+        sections.extend(service.handle_ui(UIEvent.PROJECT_SECTIONS, payload))
     return sections
 
 
@@ -264,8 +290,8 @@ def collect_deployment_page_sections(ctx: DeploymentPageContext) -> list:
 
     sections: list[DetailPageSection] = []
     seen: set[str] = set()
-    for service in selected_services(ctx.project_data):
-        for section in service.deployment_page_sections(ctx):
+    for service in listeners(UIEvent.DEPLOYMENT_SECTIONS, ctx.project_data):
+        for section in service.handle_ui(UIEvent.DEPLOYMENT_SECTIONS, ctx):
             if section.template in seen:
                 continue
             seen.add(section.template)

@@ -5,7 +5,7 @@ application to zero and parks a waker in front of it -- and until now nothing ou
 that service knew. Generic code then had to infer the situation from the cluster, which
 is how a waker's ``ImagePullBackOff`` got reported as the component's own failure.
 
-This module asks instead: it scans ``HookPoint.DEPLOYMENT_STATE`` and returns the facts
+This module asks instead: it scans ``UIEvent.DEPLOYMENT_STATE`` and returns the facts
 the services report, so no caller names a service. The result is deliberately a set of
 facts plus one narrow consequence (``expects_no_application_pods``), never a health
 verdict -- see ``DeploymentStateFact``.
@@ -17,8 +17,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from opi.services.catalog.base import DeploymentStateContext, DeploymentStateFact
-from opi.services.registry import services_for_hook
-from opi.services.services_enums import HookPoint
+from opi.services.registry import listeners
+from opi.services.services_enums import UIEvent
 
 
 @dataclass
@@ -94,13 +94,14 @@ def collect_deployment_state(project_data: dict[str, Any], deployment_name: str)
         deployment=deployment,
     )
 
-    # Deliberately NOT filtered through ``applies_to``: a service records what it did in
-    # the project file, and that record outranks whether the project happens to list the
+    # Deliberately asked of every listener, not only of the project's own services (no
+    # ``project_data`` to ``listeners``): a service records what it did in the project
+    # file, and that record outranks whether the project happens to list the
     # service today. Sleep-mode is the case in point -- it can be switched on for a whole
     # cluster without a project selecting it, so a selection filter would drop the state
     # of exactly the deployments that are asleep. A service that did nothing reports
     # nothing, so asking everyone costs nothing.
     facts: list[DeploymentStateFact] = []
-    for service in services_for_hook(HookPoint.DEPLOYMENT_STATE):
-        facts.extend(service.deployment_state(ctx))
+    for service in listeners(UIEvent.DEPLOYMENT_STATE):
+        facts.extend(service.handle_ui(UIEvent.DEPLOYMENT_STATE, ctx))
     return DeploymentState(facts=facts)

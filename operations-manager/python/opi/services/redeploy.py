@@ -7,7 +7,7 @@ state by name (``is_image_pull_disable_reason``), so a component disabled by the
 watcher stayed switched off after its image was fixed: the task succeeded, no deployment
 appeared, and nothing said why.
 
-This module scans ``HookPoint.REDEPLOY`` instead, so the rollout paths never name a
+This module fires ``ActionEvent.REDEPLOY`` instead, so the rollout paths never name a
 service and the next service that records state gets the moment for free. It only
 mutates ``project_data`` in memory; the caller commits, because the caller is committing
 the rollout itself and one commit for both is the point.
@@ -19,13 +19,13 @@ import logging
 from typing import Any
 
 from opi.services.catalog.base import RedeployContext
-from opi.services.registry import services_for_hook
-from opi.services.services_enums import HookPoint
+from opi.services.registry import listeners
+from opi.services.services_enums import ActionEvent
 
 logger = logging.getLogger(__name__)
 
 
-def run_redeploy_hooks(
+async def run_redeploy_hooks(
     project_name: str,
     project_data: dict[str, Any],
     deployment: dict[str, Any],
@@ -45,8 +45,8 @@ def run_redeploy_hooks(
         One line per thing a service cleared, in the user's language, for the caller to
         surface. Empty when there was no state to clear.
     """
-    # Deliberately NOT filtered through ``applies_to``, for the same reason
-    # ``collect_deployment_state`` is not: a service records what it did in the project
+    # Deliberately asked of every listener, not only of the project's own services, for
+    # the same reason ``collect_deployment_state`` asks everyone: a service records what it did in the project
     # file, and that record has to be cleaned up even if the project no longer lists the
     # service today. Sleep-mode is the case in point -- it can be switched on for a whole
     # cluster without a project selecting it. A service that recorded nothing returns
@@ -58,9 +58,12 @@ def run_redeploy_hooks(
         component_names=component_names,
     )
 
+    # One commit for the rollout and every cleanup together is the caller's job, so the
+    # handlers only mutate ``project_data``; awaited one at a time, because they all write
+    # to that one dict (see ``ActionEvent``).
     notices: list[str] = []
-    for service in services_for_hook(HookPoint.REDEPLOY):
-        notices.extend(service.on_redeploy(ctx))
+    for service in listeners(ActionEvent.REDEPLOY):
+        notices.extend(await service.handle_action(ActionEvent.REDEPLOY, ctx))
 
     for notice in notices:
         logger.info(

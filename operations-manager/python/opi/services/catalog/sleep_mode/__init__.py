@@ -20,9 +20,10 @@ from opi.services.catalog.base import (
     RedeployContext,
     Service,
 )
+from opi.services.catalog.events import on
 from opi.services.catalog.sleep_mode.config_model import SleepModeConfig
 from opi.services.services import ServiceDefinition, service_entry_name
-from opi.services.services_enums import ServiceBinding, ServiceType
+from opi.services.services_enums import ActionEvent, ServiceBinding, ServiceType, UIEvent
 
 
 class SleepModeService(Service):
@@ -70,10 +71,11 @@ class SleepModeService(Service):
 
         return SLEEP_MODE_EDITABLES
 
-    def deployment_state(self, ctx: DeploymentStateContext) -> list[DeploymentStateFact]:
+    @on(UIEvent.DEPLOYMENT_STATE)
+    def report_sleep_state(self, ctx: DeploymentStateContext) -> list[DeploymentStateFact]:
         """Report that this deployment is asleep, or on its way back (RC-28).
 
-        Sleep-mode is the reason this hook exists: it scales the application to zero and
+        Sleep-mode is the reason this event exists: it scales the application to zero and
         parks a waker in front of it, and nothing outside the service knew. The health
         check and the deployment page read the situation from here.
 
@@ -120,7 +122,8 @@ class SleepModeService(Service):
             ]
         return []
 
-    def on_redeploy(self, ctx: RedeployContext) -> list[str]:
+    @on(ActionEvent.REDEPLOY)
+    async def wake_on_rollout(self, ctx: RedeployContext) -> list[str]:
         """Wake the deployment and start the sleep clock again (RC-37).
 
         Somebody rolling something out is the strongest activity signal there is, so the
@@ -138,7 +141,7 @@ class SleepModeService(Service):
         No-op when sleep-mode is off for this cluster/project, or when the deployment does
         not match the configured selection. Until RC-37 this lived as
         ``project_manager._reset_sleep_deadline_on_activity`` -- generic code reaching into
-        one named service, which is what the hook removes.
+        one named service, which is what the event removes.
         """
         from datetime import UTC, datetime
 

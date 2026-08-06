@@ -28,6 +28,8 @@ from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import requires_sso
 from opi.services.catalog.base import DeploymentPageContext, DetailPageSection
+from opi.services.catalog.events import on
+from opi.services.services_enums import UIEvent
 
 logger = logging.getLogger(__name__)
 
@@ -95,13 +97,16 @@ class BackupsPageMixin:
     and mounts each of them once -- so the block appears for a project that can back
     something up, and exactly once.
 
-    Cooperative (``super()``): a service can carry more than one page mixin -- the
-    PostgreSQL services are backupable AND bring the console/job modals -- and a mixin
-    that simply returned its own list would silently swallow the other's.
+    No cooperative ``super()`` needed since RC-39: a service can carry more than one page
+    mixin -- the PostgreSQL services are backupable AND bring the console/job modals --
+    and the event dispatch concatenates what every handler of the event returns, so
+    neither mixin has to know the other exists. Before, a mixin that forgot to chain
+    through ``super()`` silently swallowed the other's block.
     """
 
-    def deployment_page_sections(self, ctx: DeploymentPageContext) -> list[DetailPageSection]:
-        return [*super().deployment_page_sections(ctx), *backup_deployment_sections(ctx)]  # type: ignore[misc]
+    @on(UIEvent.DEPLOYMENT_SECTIONS)
+    def backups_block(self, ctx: DeploymentPageContext) -> list[DetailPageSection]:
+        return backup_deployment_sections(ctx)
 
     def web_routers(self) -> list[Any]:
         return [*super().web_routers(), backups_router]  # type: ignore[misc]

@@ -7,7 +7,7 @@ while the observing itself (the kubectl calls, the scheduling, the remediation) 
 service is the declarative home of the decision, the business module does the work.
 
 Why it is a service at all: the check has to weigh what OTHER services report about a
-deployment (``HookPoint.DEPLOYMENT_STATE``), and "a check that consults the registry"
+deployment (``UIEvent.DEPLOYMENT_STATE``), and "a check that consults the registry"
 belongs in the catalog next to the services it consults, not as loose platform code.
 
 The judgement is deliberately asymmetric, and that asymmetry is the safety property:
@@ -24,8 +24,9 @@ from typing import TYPE_CHECKING
 
 from opi.services.catalog.base import DeploymentStateContext, DeploymentStateFact, RedeployContext, Service
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
+from opi.services.catalog.events import on
 from opi.services.services import ServiceDefinition
-from opi.services.services_enums import ServiceBinding, ServiceKind, ServiceType
+from opi.services.services_enums import ActionEvent, ServiceBinding, ServiceKind, ServiceType, UIEvent
 
 if TYPE_CHECKING:
     from opi.services.deployment_state import DeploymentState
@@ -52,12 +53,13 @@ class DeploymentHealthService(Service):
         kind=ServiceKind.SYSTEM,
     )
 
-    def deployment_state(self, ctx: DeploymentStateContext) -> list[DeploymentStateFact]:
+    @on(UIEvent.DEPLOYMENT_STATE)
+    def report_disabled_state(self, ctx: DeploymentStateContext) -> list[DeploymentStateFact]:
         """Report that this deployment is switched off, wholly or in part (RC-31).
 
         ``disabled: true`` is a field on a component, so no ordinary service owns it --
         and that is exactly why it is reported here rather than through a second,
-        hook-bypassing path in ``collect_deployment_state``. The hook is the contract
+        event-bypassing path in ``collect_deployment_state``. The event is the contract
         ("who knows something about this deployment, say so"); a generic contribution
         alongside it would mean two ways to add a fact and two places to look for one.
         This service is the system service that already speaks for the platform itself,
@@ -106,7 +108,8 @@ class DeploymentHealthService(Service):
             ]
         return []
 
-    def on_redeploy(self, ctx: RedeployContext) -> list[str]:
+    @on(ActionEvent.REDEPLOY)
+    async def reenable_on_rollout(self, ctx: RedeployContext) -> list[str]:
         """Switch a component back on when new content is rolled out onto it (RC-37).
 
         Every automatic disable is a judgement about the content that was running:

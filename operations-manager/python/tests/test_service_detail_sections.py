@@ -1,8 +1,9 @@
 """WP2: services deliver their own project-details sections.
 
 The read-only counterpart of ``config_form_section``. A service owns the presentation
-of its own data on the detail page (``Service.detail_page_sections``); the view collects
-these across the project's selected services (``collect_detail_page_sections``) instead
+of its own data on the detail page (a ``@on(UIEvent.PROJECT_SECTIONS)`` handler since
+RC-39); the view collects these across the project's selected services
+(``collect_detail_page_sections``) instead
 of the general template hardcoding a per-service include. Keycloak is the first mover:
 its realm-admin block used to be a hardcoded include reading a context var the view set,
 which drifted away from the config in RC-5 and silently stopped rendering.
