@@ -58,15 +58,43 @@ Wat overblijft zijn twee echte gaten:
 
 **De lijstprimitieven** (`ul` 40, `li` 15, `tr`/`thead`/`tbody` 8). LOTC heeft `data-list` en `table`, maar geen kale lijst. Klein om toe te voegen.
 
-**De formulierlaag** (`text-input-field` 28, `secret-field` 9, `fieldset` 9, `action-group` 8, `select-field` 5, plus `date-input-field`, `file-input-field`, `textarea-field`, `radio-button-field`, `checkbox-field`). LOTC heeft de primitieven (`checkbox`, `radio`, `select`, `text-input`, `textarea`) maar niet de veld-omhulsels: label, hulptekst, foutmelding en invoer als een geheel.
+**De formulierlaag** (`text-input-field` 28, `secret-field` 9, `fieldset` 9, `action-group` 8, `select-field` 5, plus `date-input-field`, `file-input-field`, `textarea-field`, `radio-button-field`, `checkbox-field`). De core-woordenschat heeft de primitieven (`checkbox`, `radio`, `select`, `text-input`, `textarea`) maar niet de veld-omhulsels: label, hulptekst, foutmelding en invoer als een geheel.
 
-**Dat is de kern van de bevinding.** LOTC is gebouwd en bewezen op de *pagina*-laag, en bg.rijks.app is een overzichtspagina. OPI is voor een groot deel een *formulier*-applicatie: de wizard, de service-config, de detailbewerking. Precies de laag die het dunst gedekt is.
+### En dat gat zit niet in NLDD
+
+Dit is de belangrijkste correctie op een eerdere lezing van deze inventarisatie. NLDD heeft de formulierlaag wel degelijk, en rijk: **21** componenten in zijn registry.
+
+```
+text-field  password-field  date-field  number-field  multi-line-text-field
+search-field  checkbox-field  radio-button-field  radio-button-group
+form  form-field  form-field-error-text  form-field-help-text
+form-section  form-actions  combo-box  dropdown  switch-field  token-field
+```
+
+Onze namen vallen daar bijna een-op-een op:
+
+| onze naam | aantal | NLDD |
+|---|---|---|
+| `text-input-field` | 28 | `text-field` |
+| `secret-field` | 9 | `password-field` |
+| `fieldset` | 9 | `form-section` |
+| `action-group` | 8 | `form-actions` |
+| `select-field` | 5 | `dropdown` of `combo-box` |
+| `checkbox-field` | | `checkbox-field` (zelfde naam) |
+| `radio-button-field` | | `radio-button-field` (zelfde naam) |
+| `date-input-field` | | `date-field` |
+| `textarea-field` | | `multi-line-text-field` |
+| `file-input-field` | | geen zichtbare tegenhanger |
+
+**Het gat zit dus in de core-woordenschat, niet in de implementatie.** NLDD kan die velden renderen; er is alleen nog geen thema-agnostisch `<c-*>`-component dat erop afbeeldt. Dat is een wezenlijk andere klus dan een formulierlaag bouwen: het is definities toevoegen die op bestaande implementaties wijzen.
+
+Wat dat voor RVO betekent is een open vraag: als een core-definitie er komt, moet RVO hem ook implementeren, en daar hebben we vandaag onze `c-text-input-field` van jinja-roos-components.
 
 ## Past het in een keer?
 
-Nee, en niet vanwege de 15 procent. De reden is dat de formulierlaag ontbreekt, en dat is de laag waar onze validatie, onze editables en onze foutweergave aan hangen. Dat is geen omzetting van markup maar het opnieuw beleggen van gedrag.
+Waarschijnlijk niet, maar de reden is minder zwaar dan het leek. 84 procent gaat mee zoals het is, een deel van de rest is een hernoeming, en de formulierlaag bestaat aan de NLDD-kant al. Wat resteert is het definieren van core-componenten voor die velden, en dat is werk in het LOTC-project.
 
-Wel is het minder werk dan het lijkt: 84 procent gaat mee zoals het is, en een deel van de rest is een hernoeming.
+De kans dat het in een keer past hangt op precies een vraag: worden die core-definities er, en implementeert RVO ze ook. Zolang dat open staat, is een fasering veiliger dan een grote sprong.
 
 ## De indeling verandert ook, en dat bepaalt wat fase 1 moet opleveren
 
