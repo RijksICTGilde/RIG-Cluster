@@ -219,12 +219,23 @@ class TestEenVergrendeldeDienstOverleeftHetVersturen:
     def test_de_vergrendelde_checkbox_is_niet_disabled(self) -> None:
         # keycloak vereist publish-on-web, dus die kaart is vergrendeld.
         card = self._card(self._render(["keycloak", "publish-on-web"]), "publish-on-web")
-        assert "disabled" not in card, "een disabled checkbox verstuurt niets; dan verdwijnt de dienst bij het opslaan"
+        # ``:disabled="true"`` is wat bool_attr rendert. ``aria-disabled`` staat er WEL en
+        # is iets anders: dat zegt "niet aanpasbaar", niet "niet versturen".
+        assert ':disabled="true"' not in card, (
+            "een disabled checkbox verstuurt niets; dan verdwijnt de dienst bij het opslaan"
+        )
 
     def test_de_kaart_is_wel_zichtbaar_vergrendeld(self) -> None:
         html = self._render(["keycloak", "publish-on-web"])
         assert "service-card--locked-checked" in html
-        assert "Vereist door:" in self._card(html, "publish-on-web")
+        card = self._card(html, "publish-on-web")
+        assert "Vereist door:" in card
+        # Vanaf het eerste beeld, niet pas nadat de JS een keuze heeft gezien.
+        assert 'aria-disabled="true"' in card
+
+    def test_een_niet_vergrendelde_kaart_zegt_dat_ook(self) -> None:
+        card = self._card(self._render(["keycloak", "publish-on-web"]), "redis")
+        assert 'aria-disabled="false"' in card
 
     def test_er_reist_geen_verborgen_waarde_meer_mee(self) -> None:
         """De pleister mag weg zodra de koppeling zelf weg is; anders staat de dienst

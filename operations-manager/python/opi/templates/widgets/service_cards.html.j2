@@ -11,6 +11,10 @@
                 value="{{ card.value|e }}"
                 {{ bool_attr("checked", card.checked) }}
                 {{ bool_attr("disabled", card.disabled) }}
+                {# Vergrendeld is aria-disabled, niet disabled: de waarde moet mee de POST in,
+                   alleen aanpassen mag niet. Server-side gezet zodat het klopt vanaf het
+                   eerste beeld; wizard.js houdt het bij zodra een keuze het slot verplaatst. #}
+                aria-disabled="{{ 'true' if card.is_locked else 'false' }}"
             />
             <div class="service-card__content">
                 {{ service_block(card.label, card.description, card.icon, card.color, card.help_template) }}
