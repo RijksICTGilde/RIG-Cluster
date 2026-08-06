@@ -27,18 +27,34 @@ class HealthCheckConfig(BaseModel):
     # retired ``probe`` block enforced through project_v2.json's jsonschema validator.
     model_config = ConfigDict(extra="forbid", populate_by_name=True, regex_engine="python-re")
 
-    # none | tcp | http | https. None -> the generic base default (tcp, or none when
-    # the component has no inbound port the kubelet could reach).
-    scheme: Literal["none", "tcp", "http", "https"] | None = None
-    # Port to probe. None -> the component's first inbound port (application port).
-    # Non-privileged only (>=1024): images run non-root, so an application port
-    # below 1024 can never be bound or reached.
-    port: int | None = Field(default=None, ge=1024, le=65535)
-    # Path for the liveness and startup probes; ignored when scheme is tcp/none.
-    # None -> the template default "/". The pattern matches every other manifest-bound
-    # string in project_v2.json (match/rewrite/env-name): the value is interpolated
-    # unquoted into the generated pod spec, so it must not carry YAML control chars.
-    liveness_path: str | None = Field(default=None, alias="liveness-path", pattern=PATH_PATTERN)
-    # Path for the readiness probe; ignored when scheme is tcp/none.
-    # None -> the template default "/".
-    readiness_path: str | None = Field(default=None, alias="readiness-path", pattern=PATH_PATTERN)
+    scheme: Literal["none", "tcp", "http", "https"] | None = Field(
+        default=None,
+        description=(
+            "How the component is probed: 'tcp' opens a connection, 'http'/'https' request a path, 'none' "
+            "disables probing. Left out means tcp, or none when the component has no inbound port."
+        ),
+    )
+    port: int | None = Field(
+        default=None,
+        ge=1024,
+        le=65535,
+        description=(
+            "Port to probe; the component's first inbound port when left out. Must be 1024 or higher: images "
+            "run non-root and cannot bind below that."
+        ),
+    )
+    liveness_path: str | None = Field(
+        default=None,
+        alias="liveness-path",
+        pattern=PATH_PATTERN,
+        description=(
+            "Path for the liveness and startup probes, '/' when left out. Only used with an http(s) scheme. "
+            "Absolute, and limited to safe URL characters: it is interpolated into the generated pod spec."
+        ),
+    )
+    readiness_path: str | None = Field(
+        default=None,
+        alias="readiness-path",
+        pattern=PATH_PATTERN,
+        description="Path for the readiness probe, '/' when left out. Only used with an http(s) scheme.",
+    )

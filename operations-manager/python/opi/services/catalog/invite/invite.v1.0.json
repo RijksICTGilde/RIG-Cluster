@@ -14,6 +14,7 @@
             }
           ],
           "default": null,
+          "description": "English text.",
           "title": "En"
         },
         "nl": {
@@ -26,6 +27,7 @@
             }
           ],
           "default": null,
+          "description": "Dutch text.",
           "title": "Nl"
         }
       },
@@ -46,9 +48,11 @@
             }
           ],
           "default": null,
+          "description": "Where the user is sent after redeeming.",
           "title": "Application-Url"
         },
         "auth-methods": {
+          "description": "The sign-in methods this invite offers; empty means every method the realm supports.",
           "items": {
             "enum": [
               "sso",
@@ -66,6 +70,7 @@
             },
             "type": "array"
           },
+          "description": "Per client, the client roles the redeeming user is given. Advanced; not offered in the portal.",
           "title": "Client-Roles",
           "type": "object"
         },
@@ -79,9 +84,11 @@
             }
           ],
           "default": null,
+          "description": "Address shown to a user who needs help redeeming.",
           "title": "Contact-Email"
         },
         "groups": {
+          "description": "Realm groups the redeeming user joins. Advanced; not offered in the portal.",
           "items": {
             "type": "string"
           },
@@ -89,6 +96,7 @@
           "type": "array"
         },
         "key": {
+          "description": "The secret in the invitation link; whoever holds it can redeem the invite.",
           "title": "Key",
           "type": "string"
         },
@@ -101,9 +109,11 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Text shown on the invitation page."
         },
         "realm-roles": {
+          "description": "Realm roles the redeeming user is given.",
           "items": {
             "type": "string"
           },
@@ -120,9 +130,11 @@
             }
           ],
           "default": null,
+          "description": "Only accept an email address in this domain, so the link cannot be passed on freely.",
           "title": "Restrict-Domain"
         },
         "roles": {
+          "description": "Deprecated spelling of 'realm-roles', kept so existing files validate. Use realm-roles.",
           "items": {
             "type": "string"
           },
@@ -138,7 +150,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Label of the button leading to the application."
         },
         "success-title": {
           "anyOf": [
@@ -149,7 +162,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Heading shown after a successful redemption."
         }
       },
       "required": [
@@ -163,6 +177,7 @@
   "description": "Project-level invite config: a default language and the list of active invites.\n\n``settings`` is gone (it was a second level meaning the same as ``config``);\n``default-language`` sits next to ``active``.",
   "properties": {
     "active": {
+      "description": "The invitations that can currently be redeemed.",
       "items": {
         "$ref": "#/$defs/InviteEntry"
       },
@@ -171,6 +186,7 @@
     },
     "default-language": {
       "default": "nl",
+      "description": "Language the invitation page opens in when the visitor expresses no preference.",
       "title": "Default-Language",
       "type": "string"
     }

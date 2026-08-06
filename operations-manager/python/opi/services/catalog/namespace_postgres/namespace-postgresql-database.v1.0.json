@@ -28,14 +28,16 @@
           "default": {
             "cpu": "500m",
             "memory": "512Mi"
-          }
+          },
+          "description": "What the database pod may use at most; exceeding memory kills it."
         },
         "requests": {
           "$ref": "#/$defs/RequestsQuantities",
           "default": {
             "cpu": "100m",
             "memory": "256Mi"
-          }
+          },
+          "description": "What the database pod asks for; used for scheduling."
         }
       },
       "title": "DatabaseResources",
@@ -47,11 +49,13 @@
       "properties": {
         "cpu": {
           "default": "500m",
+          "description": "CPU ceiling for the database pod, e.g. 500m.",
           "title": "Cpu",
           "type": "string"
         },
         "memory": {
           "default": "512Mi",
+          "description": "Memory ceiling for the database pod, e.g. 512Mi.",
           "title": "Memory",
           "type": "string"
         }
@@ -65,11 +69,13 @@
       "properties": {
         "cpu": {
           "default": "100m",
+          "description": "CPU the database pod requests, e.g. 100m.",
           "title": "Cpu",
           "type": "string"
         },
         "memory": {
           "default": "256Mi",
+          "description": "Memory the database pod requests, e.g. 256Mi.",
           "title": "Memory",
           "type": "string"
         }
@@ -83,16 +89,19 @@
   "properties": {
     "image": {
       "default": "ghcr.io/cloudnative-pg/postgresql:17",
+      "description": "PostgreSQL image for the cluster. Must be CNPG-compatible (a postgres user with UID 26).",
       "title": "Image",
       "type": "string"
     },
     "instances": {
       "default": 1,
+      "description": "Number of PostgreSQL instances; more than one gives a replicated cluster.",
       "minimum": 1,
       "title": "Instances",
       "type": "integer"
     },
     "postInitSQL": {
+      "description": "SQL statements run once, when the database is first created (extensions, dictionaries).",
       "items": {
         "type": "string"
       },
@@ -100,6 +109,7 @@
       "type": "array"
     },
     "privileges": {
+      "description": "Extra PostgreSQL role privileges for the project's database user, from the allowed set.",
       "items": {
         "$ref": "#/$defs/DatabasePrivilege"
       },
@@ -116,6 +126,7 @@
         }
       ],
       "default": null,
+      "description": "Named registry from the project's 'registries' list to pull the image from; none means public.",
       "title": "Registry"
     },
     "resources": {
@@ -129,10 +140,12 @@
           "cpu": "100m",
           "memory": "256Mi"
         }
-      }
+      },
+      "description": "CPU and memory requests and limits for the database pods."
     },
     "storage": {
       "default": "10Gi",
+      "description": "Size of the database volume as a Kubernetes quantity, e.g. 10Gi.",
       "title": "Storage",
       "type": "string"
     }

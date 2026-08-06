@@ -12,6 +12,7 @@
         }
       ],
       "default": null,
+      "description": "Path for the liveness and startup probes, '/' when left out. Only used with an http(s) scheme. Absolute, and limited to safe URL characters: it is interpolated into the generated pod spec.",
       "title": "Liveness-Path"
     },
     "port": {
@@ -26,6 +27,7 @@
         }
       ],
       "default": null,
+      "description": "Port to probe; the component's first inbound port when left out. Must be 1024 or higher: images run non-root and cannot bind below that.",
       "title": "Port"
     },
     "readiness-path": {
@@ -39,6 +41,7 @@
         }
       ],
       "default": null,
+      "description": "Path for the readiness probe, '/' when left out. Only used with an http(s) scheme.",
       "title": "Readiness-Path"
     },
     "scheme": {
@@ -57,6 +60,7 @@
         }
       ],
       "default": null,
+      "description": "How the component is probed: 'tcp' opens a connection, 'http'/'https' request a path, 'none' disables probing. Left out means tcp, or none when the component has no inbound port.",
       "title": "Scheme"
     }
   },

@@ -59,9 +59,13 @@ class PeerRef(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    project: str = Field(pattern=DNS1123_LABEL)
-    deployment: str | None = Field(default=None, pattern=DNS1123_LABEL)
-    component: str = Field(pattern=DNS1123_LABEL)
+    project: str = Field(pattern=DNS1123_LABEL, description="Project of the peer, as a DNS-1123 label.")
+    deployment: str | None = Field(
+        default=None,
+        pattern=DNS1123_LABEL,
+        description="Deployment of the peer; may be left open on a project-level rule and filled in per deployment.",
+    )
+    component: str = Field(pattern=DNS1123_LABEL, description="Component of the peer, as a DNS-1123 label.")
 
 
 class PeerTarget(BaseModel):
@@ -69,10 +73,14 @@ class PeerTarget(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    project: str = Field(pattern=DNS1123_LABEL)
-    deployment: str | None = Field(default=None, pattern=DNS1123_LABEL)
-    component: str = Field(pattern=DNS1123_LABEL)
-    port: int = Field(ge=1, le=65535)
+    project: str = Field(pattern=DNS1123_LABEL, description="Project of the peer, as a DNS-1123 label.")
+    deployment: str | None = Field(
+        default=None,
+        pattern=DNS1123_LABEL,
+        description="Deployment of the peer; may be left open on a project-level rule and filled in per deployment.",
+    )
+    component: str = Field(pattern=DNS1123_LABEL, description="Component of the peer, as a DNS-1123 label.")
+    port: int = Field(ge=1, le=65535, description="Port on the peer component that is reached.")
 
 
 class LocalRef(BaseModel):
@@ -81,7 +89,7 @@ class LocalRef(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    component: str = Field(pattern=DNS1123_LABEL)
+    component: str = Field(pattern=DNS1123_LABEL, description="My component the rule is about.")
 
 
 class LocalTarget(BaseModel):
@@ -89,8 +97,8 @@ class LocalTarget(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    component: str = Field(pattern=DNS1123_LABEL)
-    port: int = Field(ge=1, le=65535)
+    component: str = Field(pattern=DNS1123_LABEL, description="My component the peer reaches.")
+    port: int = Field(ge=1, le=65535, description="Port on my component the peer reaches it on.")
 
 
 class InboundRule(BaseModel):
@@ -98,10 +106,14 @@ class InboundRule(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    name: str = Field(pattern=DNS1123_LABEL, max_length=_NAME_MAX_LENGTH)
-    from_: PeerRef = Field(alias="from")
-    to: LocalTarget
-    disabled: bool = False
+    name: str = Field(
+        pattern=DNS1123_LABEL,
+        max_length=_NAME_MAX_LENGTH,
+        description="Name of this rule; it is the key a deployment-level rule patches on.",
+    )
+    from_: PeerRef = Field(alias="from", description="The peer that is allowed to reach me.")
+    to: LocalTarget = Field(description="My component and port the peer is allowed to reach.")
+    disabled: bool = Field(default=False, description="Keep the rule but do not apply it.")
 
 
 class OutboundRule(BaseModel):
@@ -109,10 +121,14 @@ class OutboundRule(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    name: str = Field(pattern=DNS1123_LABEL, max_length=_NAME_MAX_LENGTH)
-    from_: LocalRef = Field(alias="from")
-    to: PeerTarget
-    disabled: bool = False
+    name: str = Field(
+        pattern=DNS1123_LABEL,
+        max_length=_NAME_MAX_LENGTH,
+        description="Name of this rule; it is the key a deployment-level rule patches on.",
+    )
+    from_: LocalRef = Field(alias="from", description="My component that is allowed to reach out.")
+    to: PeerTarget = Field(description="The peer component and port it may reach.")
+    disabled: bool = Field(default=False, description="Keep the rule but do not apply it.")
 
 
 # --- stored (patch) models: everything but ``name`` optional --------------------------
@@ -121,49 +137,81 @@ class OutboundRule(BaseModel):
 class PeerRefPatch(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    project: str | None = Field(default=None, pattern=DNS1123_LABEL)
-    deployment: str | None = Field(default=None, pattern=DNS1123_LABEL)
-    component: str | None = Field(default=None, pattern=DNS1123_LABEL)
+    project: str | None = Field(
+        default=None, pattern=DNS1123_LABEL, description="Project of the peer, as a DNS-1123 label."
+    )
+    deployment: str | None = Field(
+        default=None,
+        pattern=DNS1123_LABEL,
+        description="Deployment of the peer; may be left open on a project-level rule and filled in per deployment.",
+    )
+    component: str | None = Field(
+        default=None, pattern=DNS1123_LABEL, description="Component of the peer, as a DNS-1123 label."
+    )
 
 
 class PeerTargetPatch(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    project: str | None = Field(default=None, pattern=DNS1123_LABEL)
-    deployment: str | None = Field(default=None, pattern=DNS1123_LABEL)
-    component: str | None = Field(default=None, pattern=DNS1123_LABEL)
-    port: int | None = Field(default=None, ge=1, le=65535)
+    project: str | None = Field(
+        default=None, pattern=DNS1123_LABEL, description="Project of the peer, as a DNS-1123 label."
+    )
+    deployment: str | None = Field(
+        default=None,
+        pattern=DNS1123_LABEL,
+        description="Deployment of the peer; may be left open on a project-level rule and filled in per deployment.",
+    )
+    component: str | None = Field(
+        default=None, pattern=DNS1123_LABEL, description="Component of the peer, as a DNS-1123 label."
+    )
+    port: int | None = Field(default=None, ge=1, le=65535, description="Port on the peer component that is reached.")
 
 
 class LocalRefPatch(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    component: str | None = Field(default=None, pattern=DNS1123_LABEL)
+    component: str | None = Field(default=None, pattern=DNS1123_LABEL, description="My component the rule is about.")
 
 
 class LocalTargetPatch(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    component: str | None = Field(default=None, pattern=DNS1123_LABEL)
-    port: int | None = Field(default=None, ge=1, le=65535)
+    component: str | None = Field(default=None, pattern=DNS1123_LABEL, description="My component the peer reaches.")
+    port: int | None = Field(default=None, ge=1, le=65535, description="Port on my component the peer reaches it on.")
 
 
 class InboundRulePatch(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    name: str = Field(pattern=DNS1123_LABEL, max_length=_NAME_MAX_LENGTH)
-    from_: PeerRefPatch | None = Field(default=None, alias="from")
-    to: LocalTargetPatch | None = None
-    disabled: bool = False
+    name: str = Field(
+        pattern=DNS1123_LABEL,
+        max_length=_NAME_MAX_LENGTH,
+        description="Name of this rule; a deployment-level entry with the same name patches the project rule.",
+    )
+    from_: PeerRefPatch | None = Field(
+        default=None, alias="from", description="The peer that is allowed to reach me; may be partial."
+    )
+    to: LocalTargetPatch | None = Field(
+        default=None, description="My component and port the peer reaches; may be partial."
+    )
+    disabled: bool = Field(default=False, description="Keep the rule but do not apply it.")
 
 
 class OutboundRulePatch(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    name: str = Field(pattern=DNS1123_LABEL, max_length=_NAME_MAX_LENGTH)
-    from_: LocalRefPatch | None = Field(default=None, alias="from")
-    to: PeerTargetPatch | None = None
-    disabled: bool = False
+    name: str = Field(
+        pattern=DNS1123_LABEL,
+        max_length=_NAME_MAX_LENGTH,
+        description="Name of this rule; a deployment-level entry with the same name patches the project rule.",
+    )
+    from_: LocalRefPatch | None = Field(
+        default=None, alias="from", description="My component that reaches out; may be partial."
+    )
+    to: PeerTargetPatch | None = Field(
+        default=None, description="The peer component and port it may reach; may be partial."
+    )
+    disabled: bool = Field(default=False, description="Keep the rule but do not apply it.")
 
 
 class CrossDomainAccessConfig(BaseModel):
@@ -176,8 +224,12 @@ class CrossDomainAccessConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    inbound: list[InboundRulePatch] = Field(default_factory=list)
-    outbound: list[OutboundRulePatch] = Field(default_factory=list)
+    inbound: list[InboundRulePatch] = Field(
+        default_factory=list, description="Rules letting another project's component reach one of mine."
+    )
+    outbound: list[OutboundRulePatch] = Field(
+        default_factory=list, description="Rules letting one of my components reach another project's."
+    )
 
     @model_validator(mode="after")
     def _names_unique_per_direction(self) -> CrossDomainAccessConfig:

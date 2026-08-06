@@ -17,6 +17,12 @@ from pydantic import BaseModel, ConfigDict, Field
 class RedisConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    #: Restrict the ACL user to keys prefixed with ``{deployment}-{project}:``. Off means
-    #: the user reaches every key in the shared instance, so it is a deliberate widening.
-    acl_key_prefix: bool = Field(default=True, alias="acl-key-prefix")
+    acl_key_prefix: bool = Field(
+        default=True,
+        alias="acl-key-prefix",
+        description=(
+            "Restrict this project's Redis user to keys prefixed with {deployment}-{project}:. Turning it off "
+            "gives the user every key in the shared instance, so it is a deliberate widening for applications "
+            "that cannot prefix their keys."
+        ),
+    )

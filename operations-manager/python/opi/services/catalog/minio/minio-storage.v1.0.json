@@ -6,6 +6,7 @@
       "properties": {
         "actions": {
           "default": [],
+          "description": "Audit trail of what was done to this generation.",
           "items": {
             "$ref": "#/$defs/RevisionAction"
           },
@@ -13,18 +14,22 @@
           "type": "array"
         },
         "created_at": {
+          "description": "When this generation was provisioned, ISO 8601.",
           "title": "Created At",
           "type": "string"
         },
         "generation": {
+          "description": "The generation number this revision records.",
           "title": "Generation",
           "type": "integer"
         },
         "resource": {
+          "description": "The provisioned resource this generation points at (database name, bucket name).",
           "title": "Resource",
           "type": "string"
         },
         "status": {
+          "description": "'active' for the generation in use, 'superseded' once a newer one took over.",
           "title": "Status",
           "type": "string"
         },
@@ -38,6 +43,7 @@
             }
           ],
           "default": null,
+          "description": "When it was retired; absent on the active generation.",
           "title": "Superseded At"
         }
       },
@@ -55,14 +61,17 @@
       "description": "One entry in a revision's audit trail (created, cloned, restored, ...).",
       "properties": {
         "source": {
+          "description": "Where it came from: the deployment, project or external source cloned from.",
           "title": "Source",
           "type": "string"
         },
         "timestamp": {
+          "description": "When it happened, ISO 8601.",
           "title": "Timestamp",
           "type": "string"
         },
         "type": {
+          "description": "What happened: created, cloned, restored, ...",
           "title": "Type",
           "type": "string"
         }
@@ -89,6 +98,7 @@
         }
       ],
       "default": null,
+      "description": "Keep previous versions of an object in the bucket instead of overwriting it.",
       "title": "Enable-Versioning"
     },
     "generation": {
@@ -101,10 +111,12 @@
         }
       ],
       "default": null,
+      "description": "Current generation, incremented on each clone. Written by the platform.",
       "title": "Generation"
     },
     "revisions": {
       "default": [],
+      "description": "Every generation this resource has had, newest last. Written by the platform.",
       "items": {
         "$ref": "#/$defs/Revision"
       },

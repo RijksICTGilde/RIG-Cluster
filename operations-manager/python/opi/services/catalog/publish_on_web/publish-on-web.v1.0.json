@@ -4,11 +4,13 @@
       "additionalProperties": false,
       "properties": {
         "domain": {
+          "description": "The domain this project may publish on.",
           "title": "Domain",
           "type": "string"
         },
         "history": {
           "default": [],
+          "description": "Every decision made about it, oldest first.",
           "items": {
             "$ref": "#/$defs/DomainHistoryEntry"
           },
@@ -25,6 +27,7 @@
             }
           ],
           "default": null,
+          "description": "Certificate issuer to use for this domain; the platform default when absent.",
           "title": "Issuer"
         },
         "restricted-subdomains": {
@@ -37,9 +40,11 @@
             }
           ],
           "default": null,
+          "description": "Whether every subdomain under it needs its own approval.",
           "title": "Restricted-Subdomains"
         },
         "status": {
+          "description": "Approval state of the domain itself.",
           "enum": [
             "requested",
             "approved",
@@ -58,6 +63,7 @@
             }
           ],
           "default": null,
+          "description": "Whether a dotted subdomain is allowed under it; a wildcard certificate covers one level only.",
           "title": "Supports-Dots"
         }
       },
@@ -73,6 +79,7 @@
       "properties": {
         "history": {
           "default": [],
+          "description": "Every decision made about it, oldest first.",
           "items": {
             "$ref": "#/$defs/DomainHistoryEntry"
           },
@@ -80,10 +87,12 @@
           "type": "array"
         },
         "name": {
+          "description": "The subdomain, without the domain it sits under.",
           "title": "Name",
           "type": "string"
         },
         "status": {
+          "description": "Approval state of this subdomain.",
           "enum": [
             "requested",
             "approved",
@@ -104,11 +113,13 @@
       "additionalProperties": false,
       "properties": {
         "domain": {
+          "description": "The domain these subdomains sit under.",
           "title": "Domain",
           "type": "string"
         },
         "subdomains": {
           "default": [],
+          "description": "The subdomains requested under it, with their approval state.",
           "items": {
             "$ref": "#/$defs/AllowedSubdomainDetail"
           },
@@ -135,9 +146,11 @@
             }
           ],
           "default": null,
+          "description": "Who decided it.",
           "title": "By"
         },
         "date": {
+          "description": "When this decision was recorded, ISO 8601.",
           "title": "Date",
           "type": "string"
         },
@@ -151,9 +164,11 @@
             }
           ],
           "default": null,
+          "description": "The reason given with the decision.",
           "title": "Message"
         },
         "status": {
+          "description": "What was decided: requested, approved or denied.",
           "enum": [
             "requested",
             "approved",
@@ -175,6 +190,7 @@
       "description": "The project-wide domain approval block.",
       "properties": {
         "allowed-domains": {
+          "description": "The domains this project may publish on, with their approval state.",
           "items": {
             "$ref": "#/$defs/AllowedDomainEntry"
           },
@@ -182,6 +198,7 @@
           "type": "array"
         },
         "allowed-subdomains": {
+          "description": "Per domain, the subdomains this project requested and their approval state.",
           "items": {
             "$ref": "#/$defs/AllowedSubdomainEntry"
           },
@@ -205,6 +222,7 @@
         }
       ],
       "default": null,
+      "description": "Id of the attachment holding the certificate PEM. Required when tls is 'provided'.",
       "title": "Attachment"
     },
     "domains": {
@@ -216,7 +234,8 @@
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "description": "Project-level domain approvals. Written by the platform's approval flow."
     },
     "tls": {
       "anyOf": [
@@ -233,6 +252,7 @@
         }
       ],
       "default": null,
+      "description": "How TLS is terminated: 'standard' uses the platform certificate, 'passthrough' lets the pod present its own, 'provided' terminates a certificate you supply as an attachment. Absent means inherit (deployment > component > root > standard).",
       "title": "Tls"
     }
   },
