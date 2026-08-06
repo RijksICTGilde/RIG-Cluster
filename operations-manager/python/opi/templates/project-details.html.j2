@@ -16,6 +16,10 @@
 
     {% include "project-details/section-header.html.j2" %}
 
+    {# Above the tabs on purpose: drift is about the whole project, and it must be
+       visible without first picking the right tab. #}
+    {% include "project-details/section-pending-rollout.html.j2" %}
+
     {# Tab Navigation #}
     <c-tabs>
         <c-tab-item label="Project" href="#" selected="true" @click="switchTab('project', event)" />
