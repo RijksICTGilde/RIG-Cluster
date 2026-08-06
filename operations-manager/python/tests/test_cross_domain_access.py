@@ -472,6 +472,103 @@ class TestOptionsProviders:
         assert [o["value"] for o in provider.get_options()] == ["", "8080", "4180"]
 
 
+class TestDeploymentLayerForm:
+    """A patch editor, not a second rule editor: the name (the merge key) and the peer
+    deployment (the field a project rule may leave open), and nothing else."""
+
+    def _service(self):
+        from opi.services.registry import get_service
+
+        return get_service(ServiceType.CROSS_DOMAIN_ACCESS)
+
+    def test_the_layer_has_a_form_and_needs_no_exemption(self) -> None:
+        from opi.services.catalog.base import ConfigLayer
+
+        service = self._service()
+        assert service.config_form_section(ConfigLayer.DEPLOYMENT) is not None
+        assert ConfigLayer.DEPLOYMENT not in service.form_exempt_layers
+
+    def test_only_the_name_and_the_peer_deployment_are_editable(self) -> None:
+        from opi.services.catalog.cross_domain_access.editables import CROSS_DOMAIN_DEPLOYMENT_EDITABLES
+
+        leaves = [
+            child.yaml_path.rsplit("/", 1)[-1] for seq in CROSS_DOMAIN_DEPLOYMENT_EDITABLES for child in seq.children
+        ]
+        assert sorted(set(leaves)) == ["deployment", "name"]
+
+    def test_paths_are_materialized_to_one_deployment(self) -> None:
+        section = self._service().deployment_form_section(3)
+        paths = [v.editable.yaml_path for v in section.editables]
+        assert paths == [
+            "deployments[3]/services{cross-domain-access}/config/inbound",
+            "deployments[3]/services{cross-domain-access}/config/outbound",
+        ]
+
+    def test_the_peer_deployment_is_not_required_at_either_layer(self) -> None:
+        from opi.services.catalog.cross_domain_access.editables import (
+            DEPLOYMENT_INBOUND_PEER_DEPLOYMENT_EDITABLE,
+            INBOUND_PEER_DEPLOYMENT_EDITABLE,
+        )
+
+        # Open on a project rule is a valid, intended state; a patch may also only disable.
+        assert not INBOUND_PEER_DEPLOYMENT_EDITABLE.required
+        assert not DEPLOYMENT_INBOUND_PEER_DEPLOYMENT_EDITABLE.required
+
+    def test_the_modal_flow_exists_for_a_deployment_index(self) -> None:
+        from opi.forms.visualizers.flows import get_flow
+
+        flow = get_flow("modal-edit-cross-domain-deployment-1")
+        assert flow.target is not None
+        assert (flow.target.list_key, flow.target.index) == ("deployments", 1)
+
+    def test_the_rule_name_select_offers_the_project_rules(self) -> None:
+        from opi.forms.visualizers.providers import CrossDomainRuleNameOptionsProvider
+
+        yaml_data = {
+            "services": [
+                {
+                    "name": "cross-domain-access",
+                    "config": {"inbound": [{"name": "van-regelrecht"}], "outbound": [{"name": "naar-api"}]},
+                }
+            ]
+        }
+        path = "deployments[0]/services{cross-domain-access}/config/inbound[0]/name"
+        options = CrossDomainRuleNameOptionsProvider(yaml_data=yaml_data, yaml_path=path).get_options()
+        assert [o["value"] for o in options] == ["", "van-regelrecht"]
+
+    def test_a_patch_row_borrows_the_peer_project_from_the_rule_it_patches(self, monkeypatch) -> None:
+        # The patch row carries only a name; the peer project lives on the project rule, and
+        # without borrowing it the peer-deployment select -- the whole point of this form --
+        # would be empty.
+        import opi.services.project_store as store_mod
+        from opi.core.config import settings
+        from opi.forms.visualizers.providers import CrossDomainPeerDeploymentOptionsProvider
+
+        class _Summary:
+            data = _PEER_WITH_PORTS
+
+        monkeypatch.setattr(
+            store_mod, "get_project_store", lambda: type("S", (), {"get": lambda self, n: _Summary()})()
+        )
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", _CLUSTER)
+        yaml_data = {
+            "_cross_domain_projects": ["regelrecht"],
+            "services": [
+                {
+                    "name": "cross-domain-access",
+                    "config": {
+                        "inbound": [{"name": "van-regelrecht", "from": {"project": "regelrecht", "component": "api"}}]
+                    },
+                }
+            ],
+        }
+        path = "deployments[0]/services{cross-domain-access}/config/inbound[0]/from/deployment"
+        options = CrossDomainPeerDeploymentOptionsProvider(
+            yaml_data=yaml_data, row_data={"name": "van-regelrecht"}, yaml_path=path
+        ).get_options()
+        assert [o["value"] for o in options] == ["", "prod", "dev"]
+
+
 class TestFieldRulesComeFromTheConfigModel:
     """The form points at the model's rule instead of restating it (RC-38's move, one layer
     down). Restating it is how the form came to reject names the schema, the API and the

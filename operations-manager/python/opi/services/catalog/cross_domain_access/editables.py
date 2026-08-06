@@ -158,3 +158,52 @@ OUTBOUND_SEQUENCE_EDITABLE = Editable(
 )
 
 CROSS_DOMAIN_EDITABLES = [INBOUND_SEQUENCE_EDITABLE, OUTBOUND_SEQUENCE_EDITABLE]
+
+
+# --- the deployment layer: a PATCH, not a second rule editor -----------------------------
+# Two fields only, and that is the point. The deployment layer overrides a project rule keyed
+# on its name (merge.py); the field it exists for is the peer deployment, which a project rule
+# may deliberately leave open. Repeating the whole rule here would not be a patch but a second
+# truth, and the two would have to be kept in step by hand.
+#
+# The peer deployment is NOT required at either layer: open on the project rule is a valid,
+# intended state, and a patch that only wants to disable a rule leaves it open too.
+
+
+def _dp(*segments: str) -> str:
+    return config_path(ConfigLayer.DEPLOYMENT, ServiceType.CROSS_DOMAIN_ACCESS, "config", *segments)
+
+
+def _patch_name(direction: str) -> Editable:
+    return Editable(
+        yaml_path=_dp(f"{direction}[*]", "name"),
+        values_provider="CrossDomainRuleNameOptionsProvider",
+        validator=_label(InboundRulePatch, "name", "Regelnaam"),
+        required=True,
+    )
+
+
+def _patch_peer_deployment(direction: str, side: str) -> Editable:
+    return Editable(
+        yaml_path=_dp(f"{direction}[*]", side, "deployment"),
+        values_provider="CrossDomainPeerDeploymentOptionsProvider",
+        validator=_label(PeerRefPatch, "deployment", "Deployment"),
+        remove_when_none=True,
+    )
+
+
+DEPLOYMENT_INBOUND_NAME_EDITABLE = _patch_name("inbound")
+DEPLOYMENT_INBOUND_PEER_DEPLOYMENT_EDITABLE = _patch_peer_deployment("inbound", "from")
+DEPLOYMENT_INBOUND_SEQUENCE_EDITABLE = Editable(
+    yaml_path=_dp("inbound"),
+    children=[DEPLOYMENT_INBOUND_NAME_EDITABLE, DEPLOYMENT_INBOUND_PEER_DEPLOYMENT_EDITABLE],
+)
+
+DEPLOYMENT_OUTBOUND_NAME_EDITABLE = _patch_name("outbound")
+DEPLOYMENT_OUTBOUND_PEER_DEPLOYMENT_EDITABLE = _patch_peer_deployment("outbound", "to")
+DEPLOYMENT_OUTBOUND_SEQUENCE_EDITABLE = Editable(
+    yaml_path=_dp("outbound"),
+    children=[DEPLOYMENT_OUTBOUND_NAME_EDITABLE, DEPLOYMENT_OUTBOUND_PEER_DEPLOYMENT_EDITABLE],
+)
+
+CROSS_DOMAIN_DEPLOYMENT_EDITABLES = [DEPLOYMENT_INBOUND_SEQUENCE_EDITABLE, DEPLOYMENT_OUTBOUND_SEQUENCE_EDITABLE]
