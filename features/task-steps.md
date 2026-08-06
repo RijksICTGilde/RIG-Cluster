@@ -2,7 +2,7 @@
 
 **Status**: Implemented
 **Date**: 2026-08-05
-**Related**: [Async Task System](./async-task-system.md)
+**Related**: [Async Task System](./async-task-system.md), [Eén voortgangsweergave](./task-progress-view.md)
 
 ## Wat het is
 
