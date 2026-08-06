@@ -7,12 +7,13 @@ against editable validators, converters, and enforcers.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
+from opi.forms.editables.processor import _validator_accepts_context
 from opi.forms.editables.validators import RequiredValidator
 
 if TYPE_CHECKING:
-    from opi.forms.editables.editable import Editable, EditableEnforcer
+    from opi.forms.editables.editable import ContextAwareEditableValidator, Editable, EditableEnforcer
 
 
 def validate_field(editable: Editable, value: Any, context: dict[str, Any] | None = None) -> list[str]:
@@ -39,13 +40,14 @@ def validate_field(editable: Editable, value: Any, context: dict[str, Any] | Non
             return req_errors
 
     if editable.validator and value is not None and value != "":
-        if context is None:
-            errors.extend(editable.validator.validate(value))
+        # Welke aanroepvorm geldt is een eigenschap van de validator, niet iets om met
+        # een TypeError te ontdekken: die ving ook een TypeError uit de validator zelf
+        # en draaide hem dan stilletjes opnieuw zonder context (zelfde vorm als
+        # FormProcessor sinds RC-40).
+        if context is not None and _validator_accepts_context(type(editable.validator)):
+            errors.extend(cast("ContextAwareEditableValidator", editable.validator).validate(value, context))
         else:
-            try:
-                errors.extend(editable.validator.validate(value, context=context))
-            except TypeError:
-                errors.extend(editable.validator.validate(value))
+            errors.extend(editable.validator.validate(value))
 
     return errors
 
