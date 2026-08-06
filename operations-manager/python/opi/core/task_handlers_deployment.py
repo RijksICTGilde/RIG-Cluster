@@ -12,6 +12,8 @@ the sync path or poll an async task.
 import logging
 from typing import Any
 
+from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,6 +54,7 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
     progress.complete_task(init_task)
 
     # Task 2: Update component image
+    rollout = rollout_requested(payload)
     update_task = progress.add_task(f"Image van {component_name} bijwerken naar {image}")
     try:
         result = await project_manager.update_image_and_regenerate(
@@ -60,12 +63,15 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
             new_image_url=image,
             service_actions=service_actions,
             registry=registry,
+            rollout=rollout,
         )
 
         progress.complete_task(update_task)
+        if not rollout:
+            note_rollout_skipped(progress)
         logger.info(f"Task: image update completed for {project_name}/{deployment_name}/{component_name}")
 
-        return {
+        response: dict[str, Any] = {
             "status": result.get("status", "success"),
             "message": result.get("message", f"Image updated for component '{component_name}'"),
             "project": project_name,
@@ -74,6 +80,9 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
             "updates": result.get("updates", {}),
             "actions_performed": result.get("actions_performed", []),
         }
+        if not rollout:
+            response["processing"] = skipped_processing()
+        return response
     except Exception as exc:
         error_msg = f"Failed to update image: {exc}"
         progress.fail_task(update_task, error_msg)
