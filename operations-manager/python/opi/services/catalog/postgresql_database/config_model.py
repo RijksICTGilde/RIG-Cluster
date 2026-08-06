@@ -54,12 +54,25 @@ class SchemaEntry(BaseModel):
 
     # Lowercase, digits, underscore, starting with a letter -- a safe identifier and
     # (uppercased) a safe env-variable suffix.
-    postfix: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
-    description: str = ""
+    postfix: str = Field(
+        pattern=r"^[a-z][a-z0-9_]*$",
+        description=(
+            "Short name of the extra schema. The full name becomes {project}_{deployment}_{postfix} and its "
+            "connection details are exposed as DATABASE_SCHEMA_{POSTFIX}."
+        ),
+    )
+    description: str = Field(default="", description="What this schema is for, for whoever reads the project file.")
     # Removing a schema from the list marks it rather than dropping it, so a schema (and
     # its data) is never silently discarded on a routine save (RC-17 section 6). The
     # provisioner leaves a marked schema in place and stops exposing its variable.
-    marked_for_deletion: bool = Field(default=False, alias="marked-for-deletion")
+    marked_for_deletion: bool = Field(
+        default=False,
+        alias="marked-for-deletion",
+        description=(
+            "Marks the schema as no longer wanted instead of dropping it: the schema and its data stay, and "
+            "its variable is no longer exposed."
+        ),
+    )
 
 
 class SharedScopeConfig(BaseModel):
@@ -71,8 +84,12 @@ class SharedScopeConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    scope: Literal["shared"] = "shared"
-    schemas: list[SchemaEntry] = Field(default_factory=list)
+    scope: Literal["shared"] = Field(
+        default="shared", description="A database on the shared cluster instance; the default."
+    )
+    schemas: list[SchemaEntry] = Field(
+        default_factory=list, description="Extra schemas alongside the default one, shared by every deployment."
+    )
 
 
 class ProjectScopeConfig(DedicatedPostgresFields):
@@ -82,8 +99,12 @@ class ProjectScopeConfig(DedicatedPostgresFields):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    scope: Literal["project"]
-    schemas: list[SchemaEntry] = Field(default_factory=list)
+    scope: Literal["project"] = Field(
+        description="One dedicated PostgreSQL cluster for this project, shared by all its deployments."
+    )
+    schemas: list[SchemaEntry] = Field(
+        default_factory=list, description="Extra schemas alongside the default one, shared by every deployment."
+    )
 
 
 class PostgresqlDatabaseProjectConfig(RootModel):
@@ -93,7 +114,16 @@ class PostgresqlDatabaseProjectConfig(RootModel):
     scope validates as a shared database and its behaviour is unchanged.
     """
 
-    root: Annotated[SharedScopeConfig | ProjectScopeConfig, Field(discriminator="scope")]
+    root: Annotated[
+        SharedScopeConfig | ProjectScopeConfig,
+        Field(
+            discriminator="scope",
+            description=(
+                "The project's database configuration, by scope: 'shared' (a database on the shared instance) "
+                "or 'project' (a dedicated cluster). Absent scope reads as 'shared'."
+            ),
+        ),
+    ]
 
     @model_validator(mode="before")
     @classmethod

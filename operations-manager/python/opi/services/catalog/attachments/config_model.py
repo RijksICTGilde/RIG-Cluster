@@ -35,13 +35,25 @@ class AttachmentUse(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    #: The ``id`` of an entry in the project-level attachments catalog.
-    reference: str = Field(max_length=40)
-    provide_as: ProvideAs = Field(alias="provide-as")
-    #: Absolute mount path; required when ``provide-as`` is ``file``.
-    path: str | None = None
-    #: Environment variable name; required when ``provide-as`` is ``env-var``.
-    env_name: str | None = Field(default=None, alias="env-name")
+    reference: str = Field(
+        max_length=40,
+        description="Id of the attachment in the project's catalog that this component uses.",
+    )
+    provide_as: ProvideAs = Field(
+        alias="provide-as",
+        description=(
+            "How the component receives it: 'file' mounts it at 'path', 'env-var' puts its content in the "
+            "variable named by 'env-name'."
+        ),
+    )
+    path: str | None = Field(
+        default=None, description="Absolute path to mount the attachment at. Required when provide-as is 'file'."
+    )
+    env_name: str | None = Field(
+        default=None,
+        alias="env-name",
+        description="Environment variable to put the content in. Required when provide-as is 'env-var'.",
+    )
 
     @field_validator("reference")
     @classmethod
@@ -77,4 +89,7 @@ class AttachmentUse(BaseModel):
 class AttachmentsConfig(RootModel[list[AttachmentUse]]):
     """The component-level attachments config: a list of couplings."""
 
-    root: list[AttachmentUse]
+    root: list[AttachmentUse] = Field(
+        default_factory=list,
+        description="Which catalog attachments this component uses, and how each one reaches it.",
+    )

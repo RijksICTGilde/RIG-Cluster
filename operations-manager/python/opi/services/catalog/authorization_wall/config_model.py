@@ -9,11 +9,10 @@ service to activate, but that is a cross-service dependency (handled by
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AuthorizationWallConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # Optional sign-in banner text shown on the oauth2-proxy page.
-    banner: str | None = None
+    banner: str | None = Field(default=None, description="Text shown on the sign-in page in front of the application.")

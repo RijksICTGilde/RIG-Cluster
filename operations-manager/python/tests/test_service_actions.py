@@ -66,7 +66,8 @@ class TestEveryDeclarationIsHonest:
 
     @pytest.mark.parametrize(("service_name", "action"), _ACTIONS, ids=_IDS)
     def test_roles_are_the_service_vocabulary(self, service_name: str, action: ServiceAction) -> None:
-        assert action.roles and all(isinstance(role, ConfigRole) for role in action.roles)
+        assert action.roles
+        assert all(isinstance(role, ConfigRole) for role in action.roles)
 
 
 class TestTheDeclarationRefusesToBeSloppy:
@@ -126,7 +127,8 @@ class TestTheVerbTable:
 
     def test_only_create_addresses_a_collection(self) -> None:
         assert not ActionVerb.CREATE.targets_existing
-        assert ActionVerb.UPDATE.targets_existing and ActionVerb.UPSERT.targets_existing
+        assert ActionVerb.UPDATE.targets_existing
+        assert ActionVerb.UPSERT.targets_existing
 
 
 class TestTheAttachmentActions:
@@ -232,7 +234,8 @@ class TestTheOpenApiDocument:
     def test_the_field_combinations_reach_the_spec(self, spec) -> None:
         path = "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachments"
         description = spec["paths"][path]["post"]["description"]
-        assert "provide-as=file" in description and "path" in description
+        assert "provide-as=file" in description
+        assert "path" in description
 
     def test_the_upsert_flag_is_documented_on_the_put(self, spec) -> None:
         path = "/api/v2/projects/{project_name}/services/attachments/attachments/{attachment_id}"
