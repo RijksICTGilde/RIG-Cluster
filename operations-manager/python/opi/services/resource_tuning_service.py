@@ -115,6 +115,7 @@ async def trigger_reprocessing(
     filename: str,
     deployment_name: str | None = None,
     argocd_resources_changed: bool = True,
+    task_progress_manager: Any | None = None,
 ) -> bool:
     """
     Trigger project reprocessing via the standard pipeline.
@@ -125,6 +126,9 @@ async def trigger_reprocessing(
         deployment_name: Optional specific deployment to reprocess
         argocd_resources_changed: Whether ArgoCD Application/AppProject manifests
             may have changed.  False for operations like resource tuning.
+        task_progress_manager: Optional progress manager. Pass it when a user is
+            watching a task, so the pipeline's own steps (manifests, ArgoCD sync)
+            are named on the page instead of disappearing into one long wait.
 
     Returns:
         True if reprocessing succeeded
@@ -133,6 +137,7 @@ async def trigger_reprocessing(
     try:
         result = await project_manager.process_project_from_git(
             f"projects/{filename}",
+            task_progress_manager=task_progress_manager,
             deployment_name=deployment_name,
             argocd_resources_changed=argocd_resources_changed,
         )
