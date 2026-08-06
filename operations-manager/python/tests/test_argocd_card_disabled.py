@@ -13,7 +13,7 @@ health check.
 from __future__ import annotations
 
 from opi.core.templates import templates
-from opi.services.disabled_state import deployment_disabled_state
+from opi.services.deployment_state import collect_deployment_state
 
 TEMPLATE = "project-details/_argocd-deployment-card.html.j2"
 CLUSTER = "odcn-production"
@@ -43,7 +43,7 @@ def _render(project_data: dict, *, health: str = "Healthy", sync: str = "Synced"
         project={"name": project_data["name"]},
         argocd_status={deployment["name"]: {"health": health, "sync": sync, "errors": []}},
         current_cluster=CLUSTER,
-        disabled_state=deployment_disabled_state(project_data, deployment["name"]),
+        deployment_states={deployment["name"]: collect_deployment_state(project_data, deployment["name"])},
     )
 
 
