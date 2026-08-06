@@ -3,7 +3,6 @@
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 from opi.core.static_files import IMMUTABLE_CACHE_CONTROL, REVALIDATE_CACHE_CONTROL, CacheControlledStaticFiles
 from opi.core.templates import STATIC_DIR, static_url
 
