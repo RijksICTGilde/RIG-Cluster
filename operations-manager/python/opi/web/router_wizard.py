@@ -339,7 +339,7 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
         # Seed template data (repositories, base config) as the lowest-priority layer
         from opi.forms.editables.template import load_project_template
 
-        state.template_data = load_project_template()
+        state.base_data = load_project_template()
 
         # Seed the team step with the current user as administrator
         user_email = (user or {}).get("email", "")
@@ -347,7 +347,7 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
         # The same peer-project list the edit flow gets. Without it the cross-domain step had
         # three required fields whose select was empty, so the step could not be saved at all.
         # The project does not exist yet, hence the empty name: nothing to exclude.
-        state.template_data.update(build_cross_domain_context("", user_email))
+        state.base_data.update(build_cross_domain_context("", user_email))
         if user_email:
             state.store_step_data("team", {"users": [{"email": user_email, "role": "admin"}]})
 
@@ -397,7 +397,7 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
     step_html = _render_step_html(
         section,
         yaml_data=yaml_data,
-        edit_mode=state.project_name is not None,
+        edit_mode=state.is_edit,
     )
 
     active_sections = resolve_active_sections(flow, state.step_data)
@@ -618,7 +618,7 @@ async def _navigate_to_step(
     )
 
     yaml_data = state.get_merged_data()
-    edit_mode = state.project_name is not None
+    edit_mode = state.is_edit
 
     # Validate on load only for steps the user has explicitly completed (forward-validated).
     # Steps that merely have saved data from back-navigation should not show errors.
@@ -683,7 +683,7 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
     save_wizard_state(request, state)
 
     yaml_data = state.get_merged_data()
-    edit_mode = state.project_name is not None
+    edit_mode = state.is_edit
 
     # Validate on load only for completed steps (not just saved from back-navigation)
     errors: dict[str, list[str]] | None = None
@@ -795,7 +795,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
     processor = EditableFormProcessor()
     yaml_data = state.get_merged_data()
-    edit_mode = state.project_name is not None
+    edit_mode = state.is_edit
 
     # Build enforcer context with out-of-scope metadata
     enforcer_context = {"project_name": state.project_name, "edit_mode": edit_mode}
@@ -1011,7 +1011,7 @@ async def toggle_preset(
     step_html = _render_step_html(
         section,
         yaml_data=yaml_data,
-        edit_mode=state.project_name is not None,
+        edit_mode=state.is_edit,
     )
 
     templates = get_templates()
@@ -1144,7 +1144,7 @@ async def _handle_sequence_action(
     # Process the submitted JSON to get current yaml with correct values/counts
     processor = EditableFormProcessor()
     yaml_data = state.get_merged_data()
-    edit_mode = state.project_name is not None
+    edit_mode = state.is_edit
     yaml_data, _errors = await processor.process_json_submission(
         submitted_data,
         section.editables,
@@ -1890,7 +1890,7 @@ async def _do_submit(
     # Compute derived values (e.g. issuer from base-domain)
     processor.apply_dependent_generators(all_editables, yaml_data)
 
-    enforcer_context = {"project_name": state.project_name, "edit_mode": state.project_name is not None}
+    enforcer_context = {"project_name": state.project_name, "edit_mode": state.is_edit}
 
     # Validate and build final YAML in a single pass.
     # The merged yaml_data is both the "submitted" values and the base.
@@ -1899,7 +1899,7 @@ async def _do_submit(
         yaml_data,
         all_editables,
         yaml_data,
-        edit_mode=state.project_name is not None,
+        edit_mode=state.is_edit,
         enforcer_context=enforcer_context,
         strip_transients=False,
     )
@@ -1921,7 +1921,7 @@ async def _do_submit(
             error_section,
             yaml_data=yaml_data,
             errors=errors,
-            edit_mode=state.project_name is not None,
+            edit_mode=state.is_edit,
         )
         context = _build_step_context(
             request,
@@ -2044,9 +2044,7 @@ async def _do_submit(
         error_section = active_sections[0]
         state.current_step = error_section.section_id
         save_wizard_state(request, state)
-        step_html = _render_step_html(
-            error_section, yaml_data=yaml_data, errors={}, edit_mode=state.project_name is not None
-        )
+        step_html = _render_step_html(error_section, yaml_data=yaml_data, errors={}, edit_mode=state.is_edit)
         context = _build_step_context(request, flow_id, error_section, step_html, errors={}, global_errors=[str(e)])
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
     except Exception:

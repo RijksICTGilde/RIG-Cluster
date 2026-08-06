@@ -661,7 +661,7 @@ class BackupDeploymentOptionsProvider:
     """Provides deployment options for the manual backup modal.
 
     Reads ``_cluster_deployments`` from ``yaml_data`` (set by
-    ``_build_backup_restore_context_async`` via template_data merge).
+    ``_build_backup_restore_context_async`` via base_data merge).
     """
 
     def __init__(self, yaml_data: dict[str, Any] | None = None) -> None:
