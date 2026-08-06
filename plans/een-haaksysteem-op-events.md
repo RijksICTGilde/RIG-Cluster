@@ -1,6 +1,6 @@
 # Twee event-lijsten, één manier van inhaken
 
-Status: plan, 6 augustus 2026. Niet gebouwd, en pas beginnen ná RC-36 (dat verhuist de servicedefinitie naar het pakket en raakt dezelfde bestanden). Aanleiding: elke nieuwe uitbreiding vraagt nu een nieuwe methode op de basisklasse plus een nieuwe plek die de registry scant.
+Status: plan, 6 augustus 2026. Niet gebouwd. RC-36 is inmiddels gemerged, dus de blokkade is weg: de servicedefinitie staat nu in het servicepakket (nul `ServiceDefinition`-blokken in `services.py`) en dit plan bouwt daarop voort. Aanleiding: elke nieuwe uitbreiding vraagt nu een nieuwe methode op de basisklasse plus een nieuwe plek die de registry scant.
 
 ## De meting
 
@@ -67,4 +67,4 @@ Haken doen twee wezenlijk verschillende dingen, en die horen niet in één enum:
 
 **Een actie-haak committeert niet zelf.** Dit contract staat al in `plans/oom-auto-tune-deployment-scoped.md` en wordt met meer bewoners belangrijker, niet minder. Leg het vast op de `ActionEvent`-familie zelf, niet in een opmerking bij één haak.
 
-**Doe het na RC-36.** Twee verbouwingen tegelijk op `services.py` en `catalog/` levert een merge op die niemand meer kan nakijken.
+**RC-38 loopt en raakt de API-kant van diensten.** Dat plan declareert acties bij de dienst zelf; deze verbouwt hoe diensten inhaken. Ze bijten elkaar niet, maar kijk bij het mergen naar `services/registry.py` en `catalog/base.py`, want daar komen ze samen.
