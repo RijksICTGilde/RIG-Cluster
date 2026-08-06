@@ -188,11 +188,11 @@ class ServiceListConverter:
         if not isinstance(value, list):
             return []
 
-        # The picker can post the same service twice: a locked service renders both a
-        # disabled checkbox and a hidden input, and unlocking it client-side re-enables
-        # the checkbox while the hidden input stays behind. The selection is a set keyed
-        # by service name, so collapse it here rather than letting the duplicate reach
-        # the project file (where only the first entry gets promoted to a config record).
+        # The selection is a set keyed by service name, so collapse duplicates here rather
+        # than letting one reach the project file (where only the first entry gets promoted
+        # to a config record). The picker used to produce them itself, via the hidden input
+        # that travelled alongside a locked-and-therefore-disabled checkbox; that input is
+        # gone, but a set is still a set.
         value = dedupe_service_list(value)
 
         if self._preserve_catalog_data:

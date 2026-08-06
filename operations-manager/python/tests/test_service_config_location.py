@@ -181,13 +181,18 @@ class TestEenVergrendeldeDienstOverleeftHetVersturen:
     """Een vergrendelde dienst is een dienst die AAN moet blijven, en juist die viel weg.
 
     Een dienst wordt vergrendeld zodra een andere hem vereist (keycloak vereist
-    publish-on-web). Vergrendeld betekent ``disabled`` op de checkbox, en een disabled
-    checkbox verstuurt zijn waarde niet. Zonder vangnet valt hij dus uit de selectie en
-    meldt het overzicht dat hij verwijderd wordt, terwijl de gebruiker hem niet heeft
-    uitgezet en hem ook niet uit KAN zetten.
+    publish-on-web). Vergrendeld BETEKENDE ``disabled`` op de checkbox, en een disabled
+    checkbox verstuurt zijn waarde niet. De dienst viel dus uit de selectie juist omdat
+    hij verplicht is, terwijl de gebruiker hem niet had uitgezet en dat ook niet KON.
 
     Gemeten op een echte wizardsessie: de servicesstap had
     ``["keycloak", "invite", "cross-domain-access"]`` opgeslagen, zonder publish-on-web.
+
+    De reparatie was eerst een meereizende hidden input naast de disabled checkbox. Die
+    is er niet meer: vergrendeld en niet-verstuurd zijn losgekoppeld. Vergrendeld is nu
+    alleen nog een UI-eigenschap (``aria-disabled`` plus een JS-handler die het uitvinken
+    terugdraait), de checkbox verstuurt gewoon zijn eigen waarde, en de server vult een
+    vereiste dienst hoe dan ook aan (``apply_services_mutation``).
     """
 
     def _render(self, selected: list[str]) -> str:
@@ -206,24 +211,23 @@ class TestEenVergrendeldeDienstOverleeftHetVersturen:
         )
         return ROOSWidgetAdapter().render_service_cards(field)
 
-    def _hidden(self, html: str) -> list[str]:
-        import re
+    def _card(self, html: str, service: str) -> str:
+        """De HTML van één kaart, tot aan het begin van de volgende."""
+        after = html.split(f'data-service="{service}"', 1)[1]
+        return after.split("data-service=", 1)[0]
 
-        return re.findall(r'<input type="hidden" name="services\[\]" value="([^"]+)"', html)
-
-    def test_de_vereiste_dienst_wordt_alsnog_meegestuurd(self) -> None:
+    def test_de_vergrendelde_checkbox_is_niet_disabled(self) -> None:
         # keycloak vereist publish-on-web, dus die kaart is vergrendeld.
-        html = self._render(["keycloak", "publish-on-web"])
-        assert "publish-on-web" in self._hidden(html), (
-            "een vergrendelde dienst moet meegestuurd worden, anders verdwijnt hij bij het opslaan"
-        )
+        card = self._card(self._render(["keycloak", "publish-on-web"]), "publish-on-web")
+        assert "disabled" not in card, "een disabled checkbox verstuurt niets; dan verdwijnt de dienst bij het opslaan"
 
-    def test_een_gewone_dienst_krijgt_er_geen(self) -> None:
-        """Anders zou een dienst twee keer in de POST staan; de merge vangt dat wel op,
-        maar een dubbele waarde versturen is geen oplossing maar een tweede probleem."""
+    def test_de_kaart_is_wel_zichtbaar_vergrendeld(self) -> None:
         html = self._render(["keycloak", "publish-on-web"])
-        assert "keycloak" not in self._hidden(html)
+        assert "service-card--locked-checked" in html
+        assert "Vereist door:" in self._card(html, "publish-on-web")
 
-    def test_een_niet_gekozen_dienst_krijgt_er_geen(self) -> None:
-        html = self._render([])
-        assert self._hidden(html) == []
+    def test_er_reist_geen_verborgen_waarde_meer_mee(self) -> None:
+        """De pleister mag weg zodra de koppeling zelf weg is; anders staat de dienst
+        twee keer in de POST."""
+        html = self._render(["keycloak", "publish-on-web"])
+        assert '<input type="hidden" name="services[]"' not in html
