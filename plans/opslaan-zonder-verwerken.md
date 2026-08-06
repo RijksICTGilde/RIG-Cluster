@@ -23,6 +23,31 @@ Aan de API-kant is er geen enkele weg. De v2-router maakt **twaalf** taaktypes a
 
 Een vlag op elk endpoint dat normaal verwerkt: schrijf de wijziging weg in het projectbestand, sla de verwerking over. Daarna verwerk je in één keer. Dat laatste bestaat al als `refresh_project`.
 
+```
+PUT /api/v2/projects/{project}/services/keycloak/config/project?rollout=false
+  -> de wijziging staat in het projectbestand
+  -> geen manifestgeneratie, geen uitrol
+
+POST /api/v2/projects/{project}/_refresh
+  -> nu wel
+```
+
+### De naam, en waarom niet de voor de hand liggende
+
+`rollout=false`, besloten op 7 augustus. Positief geformuleerd, zodat er geen dubbele ontkenning ontstaat (`no_rollout=true` moet je twee keer lezen). Het woord sluit aan op hoe er hier over gepraat wordt: uitrollen.
+
+Wat afviel, met de reden erbij, want anders komt het terug:
+
+| Naam | Waarom niet |
+|---|---|
+| `no-sync` / `skip-sync` | "Sync" is bezet door ArgoCD (178 vermeldingen, `sync_application()`). Die sync gebeurt juist wél zodra de manifesten er staan, dus de naam zou liegen. |
+| `save_only` | Bestaat aan de formulierkant (`post_save_action`), maar leest als "alleen opslaan" terwijl er ook gevalideerd en gecommit wordt. |
+| `skip_processing` | Sluit aan op `processing_status: "skipped"`, maar "processing" is een intern woord; een CLI-gebruiker weet niet wat het omvat. |
+| `deploy=false` | Te breed: 6848 vermeldingen, en het woord dekt hier zowel het ArgoCD-object als de handeling. |
+| `apply=false` | 236 vermeldingen, waarvan een deel `kubectl apply`. Dezelfde botsing als bij sync. |
+| `dry_run` | Suggereert dat er niets wordt opgeslagen, en dat is juist wel zo. |
+| `defer` | Suggereert dat het vanzelf later gebeurt. Het gebeurt pas als je expliciet refresht. |
+
 ## Het echte vraagstuk is niet de vlag, het is de drift
 
 De vlag zelf is klein. Wat hem gevaarlijk maakt is dat het projectbestand daarna voorloopt op het cluster, en dat niemand ziet hoe lang al. Stille drift is erger dan een trage uitrol, want een trage uitrol merk je.
