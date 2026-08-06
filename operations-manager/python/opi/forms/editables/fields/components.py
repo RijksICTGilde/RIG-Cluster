@@ -98,6 +98,24 @@ COMPONENT_SERVICES_EDITABLE = Editable(
     values_provider="FilteredServiceOptionsProvider",
 )
 
+#: The container's start command. Kubernetes replaces the image's ENTRYPOINT with this,
+#: so a value here silently discards whatever start-up logic the image brought along, and
+#: a command the image does not have gives a pod that never starts with an error that
+#: points nowhere ("exec: \"sh\": executable file not found in $PATH" is a real one from
+#: our own test images). Optional, and it stays out of the file when left empty: the
+#: schema demands minItems 1, so an empty list would not even validate.
+COMPONENT_COMMAND_ITEM_EDITABLE = Editable(
+    yaml_path="components[*]/command[*]",
+)
+
+COMPONENT_COMMAND_EDITABLE = Editable(
+    yaml_path="components[*]/command",
+    min_items=0,
+    max_items=10,
+    children=[COMPONENT_COMMAND_ITEM_EDITABLE],
+    remove_when_none=True,
+)
+
 COMPONENT_PATH_MATCH_EDITABLE = Editable(
     yaml_path="components[*]/path[*]/match",
     default="/",
@@ -127,6 +145,7 @@ COMPONENTS_SEQUENCE_EDITABLE = Editable(
     children=[
         COMPONENT_NAME_EDITABLE,
         COMPONENT_IMAGE_EDITABLE,
+        COMPONENT_COMMAND_EDITABLE,
         COMPONENT_RESOURCES_CPU_REQUEST_EDITABLE,
         COMPONENT_RESOURCES_CPU_LIMIT_EDITABLE,
         COMPONENT_RESOURCES_MEMORY_REQUEST_EDITABLE,

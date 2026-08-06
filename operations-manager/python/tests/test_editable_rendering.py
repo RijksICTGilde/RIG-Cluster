@@ -184,10 +184,10 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 13 children: storage/attachment sequences hidden (no storage services),
-        # path (with nested match/rewrite) always visible, plus the publish-on-web
-        # TLS field (component enables publish-on-web).
-        assert len(first_item.children) == 13
+        # 14 children: storage/attachment sequences hidden (no storage services),
+        # path (with nested match/rewrite) always visible, the publish-on-web TLS field
+        # (component enables publish-on-web), and the optional start command.
+        assert len(first_item.children) == 14
 
     def test_components_item_has_storage_with_storage_services(self):
         renderer = _create_renderer()
@@ -210,10 +210,10 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 14 children: storage sequence visible (persistent-storage enabled),
-        # path (with nested match/rewrite) always visible, plus the publish-on-web
-        # TLS field (component enables publish-on-web).
-        assert len(first_item.children) == 14
+        # 15 children: storage sequence visible (persistent-storage enabled),
+        # path (with nested match/rewrite) always visible, the publish-on-web TLS field
+        # (component enables publish-on-web), and the optional start command.
+        assert len(first_item.children) == 15
 
 
 class TestNestedSequenceRendering:
