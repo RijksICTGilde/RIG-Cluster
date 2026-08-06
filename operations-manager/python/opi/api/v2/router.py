@@ -11,7 +11,8 @@ import logging
 from inspect import Parameter, Signature
 from typing import Any, NamedTuple
 
-from fastapi import APIRouter, Body, HTTPException, Query, Request
+from fastapi import APIRouter, Body, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import Path as FastAPIPath
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.api.params import ComponentNamePath, DeploymentNamePath, ProjectNamePath
@@ -60,6 +61,13 @@ from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.services.catalog.actions import (
+    ActionContext,
+    ActionFieldKind,
+    ActionVerb,
+    ServiceAction,
+    UploadedFile,
+)
 from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
@@ -1397,3 +1405,187 @@ def _register_service_config_routes(router: APIRouter) -> None:
 _CONFIG_WRITE_LAYERS = (ConfigLayer.PROJECT, ConfigLayer.COMPONENT, ConfigLayer.DEPLOYMENT)
 
 _register_service_config_routes(v2_router)
+
+
+# --- declared per-service actions (RC-38) ------------------------------------
+# Beyond "configure this service here", a service may declare actions of its own
+# (opi/services/catalog/actions.py): what it can do that the wizard has no field
+# for. Attachments is the first -- uploading a file is not a config block, and
+# without it an API client could reference an attachment it had no way to create.
+# Route, multipart signature, per-field documentation and the OpenAPI example are
+# all derived from the declaration; nothing here names a service.
+
+
+def _param_name(field_name: str) -> str:
+    """A declared field name as a Python parameter name (``provide-as`` -> ``provide_as``)."""
+    return field_name.replace("-", "_")
+
+
+def _action_routes(action: ServiceAction) -> list[tuple[str, tuple[ActionVerb, ...]]]:
+    """Group an action's verbs into the routes that serve them.
+
+    CREATE is a POST on the collection. UPDATE and UPSERT are both a PUT on one item and
+    therefore one route: they differ in what they promise about an id, not in what they
+    address, and that difference is the ``upsert`` flag the caller sets. Which is the
+    point -- replacing has to be asked for, and asking for it is one query parameter, not
+    a second endpoint that happens to overwrite.
+    """
+    routes: list[tuple[str, tuple[ActionVerb, ...]]] = []
+    if ActionVerb.CREATE in action.verbs:
+        routes.append(("POST", (ActionVerb.CREATE,)))
+    put_verbs = tuple(v for v in (ActionVerb.UPDATE, ActionVerb.UPSERT) if v in action.verbs)
+    if put_verbs:
+        routes.append(("PUT", put_verbs))
+    return routes
+
+
+def _action_path(service_name: str, action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> str:
+    """The route for one group of verbs.
+
+    The id is in the path exactly when the request addresses something that is supposed
+    to be there already, which is what separates "add this" from "change that one".
+    """
+    base = f"/projects/{{project_name}}/services/{service_name}"
+    if action.layer is ConfigLayer.COMPONENT:
+        base += "/component/{component_name}"
+    path = f"{base}/{action.action_id}"
+    return f"{path}/{{{action.id_param}}}" if verbs[0].targets_existing else path
+
+
+def _action_signature(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> Signature:
+    """The signature FastAPI introspects: path params, the upsert flag when the route
+    serves both PUT verbs, and one multipart field per declared field -- each carrying
+    its own description, so the OpenAPI document says what every field means."""
+    addressed = verbs[0].targets_existing
+    params = [
+        Parameter("request", Parameter.POSITIONAL_OR_KEYWORD, annotation=Request),
+        Parameter("project_name", Parameter.POSITIONAL_OR_KEYWORD, annotation=ProjectNamePath),
+    ]
+    if action.layer is ConfigLayer.COMPONENT:
+        params.append(Parameter("component_name", Parameter.POSITIONAL_OR_KEYWORD, annotation=ComponentNamePath))
+    if addressed:
+        params.append(
+            Parameter(
+                action.id_param,
+                Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=str,
+                default=FastAPIPath(..., description=f"The {action.action_id} entry this request addresses"),
+            )
+        )
+    if ActionVerb.UPSERT in verbs and len(verbs) > 1:
+        params.append(
+            Parameter(
+                "upsert",
+                Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=bool,
+                default=Query(
+                    False,
+                    description=(
+                        "Write regardless of whether the id exists, replacing what is there without "
+                        "asking. Off by default: an update refuses an id that is not there, and only "
+                        "an explicit upsert replaces."
+                    ),
+                ),
+            )
+        )
+    for action_field in action.fields:
+        if addressed and action_field.name == action.id_param:
+            continue  # addressed by the path, not sent again as a field
+        # Mandatory only when every verb on this route insists on it; the verb actually
+        # used decides the rest, at validation time.
+        required = all(action_field.is_required_for(verb) for verb in verbs)
+        if action_field.kind is ActionFieldKind.FILE:
+            default = File(... if required else None, description=action_field.description)
+            annotation = UploadFile if required else UploadFile | None
+        else:
+            default = Form(
+                ... if required else None,
+                description=action_field.description,
+                alias=action_field.name,
+                examples=[action_field.example] if action_field.example else None,
+            )
+            annotation = str if required else str | None
+        params.append(
+            Parameter(
+                _param_name(action_field.name),
+                Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=annotation,
+                default=default,
+            )
+        )
+    return Signature(params, return_annotation=JSONResponse)
+
+
+def _action_description(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> str:
+    """The OpenAPI description: what the action does, what each verb on this route
+    promises about an id that already exists, which field combinations hold, and a call
+    that works."""
+    lines = [action.description, "", "Verbs on this route:"]
+    lines += [
+        f"- `{verb.value}`: id bestaat al -> {verb.on_existing}; id bestaat nog niet -> {verb.on_absent}"
+        for verb in verbs
+    ]
+    if action.combinations:
+        lines += ["", "Field combinations:"]
+        lines += [f"- when `{c.when}`: `{'`, `'.join(c.requires)}` required" for c in action.combinations]
+    lines += ["", "Example:", "```", action.example, "```"]
+    return "\n".join(lines)
+
+
+def _make_action_endpoint(action: ServiceAction, verbs: tuple[ActionVerb, ...]):
+    """Build the endpoint for one route: resolve the verb, validate against the service's
+    own editables, then hand the values to the service's handler."""
+
+    async def endpoint(**kwargs: Any) -> JSONResponse:
+        verb = ActionVerb.UPSERT if (len(verbs) > 1 and kwargs.get("upsert")) else verbs[0]
+        values: dict[str, Any] = {}
+        uploads: dict[str, UploadedFile] = {}
+        for action_field in action.fields:
+            if verb.targets_existing and action_field.name == action.id_param:
+                continue
+            raw = kwargs.get(_param_name(action_field.name))
+            if action_field.kind is ActionFieldKind.FILE:
+                if raw is not None:
+                    uploads[action_field.name] = UploadedFile(
+                        filename=raw.filename or action_field.name, content=await raw.read()
+                    )
+                continue
+            if raw is not None:
+                values[action_field.name] = raw
+        # The same rules the wizard runs: the profile is the service's own shared
+        # editables, and only "may this be left out" is decided by the endpoint.
+        await validate_api_payload(values, action.editables_for(verb))
+        values.update(uploads)
+
+        result = await action.handler(
+            ActionContext(
+                project_name=kwargs["project_name"],
+                verb=verb,
+                values=values,
+                item_id=kwargs.get(action.id_param),
+                component_name=kwargs.get("component_name"),
+            )
+        )
+        return JSONResponse(result.body, status_code=result.status_code)
+
+    endpoint.__signature__ = _action_signature(action, verbs)
+    endpoint.__name__ = f"{verbs[0].value}_{action.action_id}_{action.layer.value}".replace("-", "_")
+    return endpoint
+
+
+def _register_service_action_routes(router: APIRouter) -> None:
+    """Generate the declared action routes for every service in the registry."""
+    for service_type, service in SERVICES.items():
+        for action in service.api_actions():
+            for method, verbs in _action_routes(action):
+                router.add_api_route(
+                    _action_path(service_type.value, action, verbs),
+                    validate_api_token(_make_action_endpoint(action, verbs)),
+                    methods=[method],
+                    tags=["v2", "services", service_type.value],
+                    summary=f"{action.summary} ({'/'.join(v.value for v in verbs)})",
+                    description=_action_description(action, verbs),
+                )
+
+
+_register_service_action_routes(v2_router)

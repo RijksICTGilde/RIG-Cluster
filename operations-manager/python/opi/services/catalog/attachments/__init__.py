@@ -23,6 +23,8 @@ from opi.services.services_enums import ServiceBinding, ServiceType
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
+    from opi.services.catalog.actions import ServiceAction
+
 
 class AttachmentsService(Service):
     service_type = ServiceType.ATTACHMENTS
@@ -78,6 +80,18 @@ class AttachmentsService(Service):
         if layer in (ConfigLayer.COMPONENT, ConfigLayer.DEPLOYMENT_COMPONENT):
             return (ConfigRole.USE, ConfigRole.BIND)
         return ()
+
+    def api_actions(self) -> list[ServiceAction]:
+        """Uploading an attachment, at project level and at component level.
+
+        The two things the API could not do: put a file in the catalog at all, and do
+        that plus the coupling in one request. Both are declared in this package's
+        ``api.py``; the routes and their documentation are derived from those
+        declarations.
+        """
+        from opi.services.catalog.attachments.api import ATTACHMENT_ACTIONS
+
+        return ATTACHMENT_ACTIONS
 
     def _config_selected(self, project_data: dict[str, Any]) -> bool:
         return self.service_type.value in [
