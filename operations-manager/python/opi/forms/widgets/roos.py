@@ -222,7 +222,11 @@ class ROOSWidgetAdapter(WidgetAdapter):
             # after this step. Say where it IS configured instead of leaving the user with
             # nothing happening (RC-33). Derived from the registry, so the template never
             # names a service.
-            config_hint = config_hint_for_value(value) if checked else None
+            #
+            # Rendered for every service that has one, ticked or not, and revealed by CSS
+            # on the selected card: the user ticks a box and moves on with Next, so a
+            # server-rendered line only reaches them on a page they would never revisit.
+            config_hint = config_hint_for_value(value)
             cards.append(
                 {
                     "value": value,
