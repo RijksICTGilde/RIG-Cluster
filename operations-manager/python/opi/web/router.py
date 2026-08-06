@@ -29,6 +29,8 @@ from opi.utils.csrf import ensure_csrf_token
 from opi.utils.totp import totp_now
 from opi.utils.yaml_util import load_yaml_from_string
 from opi.web.menu import get_menu_items
+from opi.web.project_actions import build_project_action
+from opi.web.task_progress import create_task_and_render_progress, on_complete_for, render_progress_fragment
 
 from ..utils.age import decrypt_age_content
 from .metrics_explorer_router import metrics_explorer_router
@@ -266,223 +268,116 @@ async def roos_project_form(request: Request):
         raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
 
 
-@web_router.post("/projects/delete/{project_name}")
+@web_router.post("/projects/delete/{project_name}", response_class=HTMLResponse)
 @requires_sso
-async def delete_project_web(request: Request, project_name: str):
+async def delete_project_web(request: Request, project_name: str) -> HTMLResponse:
+    """Delete a whole project from the UI, as a task you can follow.
+
+    Deleting tears down git, ArgoCD, the namespace, databases and buckets. Inline that
+    left the page on an open POST for minutes with nothing to show, and the dialog was
+    dismissable while it ran. It answers with the same shared progress fragment as
+    reprocessing, so there is one way an action reports back.
     """
-    Delete a project via web interface with SSO validation.
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
 
-    This endpoint provides SSO-validated project deletion for the web interface.
-    It validates that the current user has the necessary permissions (admin or owner role)
-    to delete the specified project.
+    logger.info(f"Web project deletion request for '{project_name}' by user: {user_email}")
 
-    Args:
-        request: The FastAPI request object
-        project_name: Name of the project to delete
+    if not is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
 
-    Returns:
-        JSON response with deletion results for AJAX consumption
+    user_role = get_user_role_for_project(project_name, user_email)
+    if user_role not in ["admin", "owner"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Alleen admin of owner rollen kunnen projecten verwijderen. Uw rol: {user_role}",
+        )
+
+    if not get_project_store().get(project_name):
+        raise HTTPException(status_code=404, detail="Project niet gevonden")
+
+    return await create_task_and_render_progress(
+        request=request,
+        project_name=project_name,
+        task_type="delete_project",
+        payload={"project_name": project_name},
+        current_step=f"Project '{project_name}' verwijderen gestart...",
+        success_message=f"Project '{project_name}' succesvol verwijderd",
+    )
+
+
+@web_router.post("/projects/{project_name}/delete-deployment/{deployment_name}", response_class=HTMLResponse)
+@requires_sso
+async def delete_deployment_web(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
+    """Delete one deployment from the UI, as a task you can follow."""
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    logger.info(f"Web deployment deletion request for '{deployment_name}' in '{project_name}' by user: {user_email}")
+
+    if not is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+
+    user_role = get_user_role_for_project(project_name, user_email)
+    if user_role not in ["admin", "owner"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Alleen admin of owner rollen kunnen deployments verwijderen. Uw rol: {user_role}",
+        )
+
+    project = get_project_store().get(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project niet gevonden")
+    _require_deployment(project.data or {}, project_name, deployment_name)
+
+    return await create_task_and_render_progress(
+        request=request,
+        project_name=project_name,
+        deployment_name=deployment_name,
+        task_type="delete_deployment",
+        payload={"project_name": project_name, "deployment_name": deployment_name},
+        current_step=f"Deployment '{deployment_name}' verwijderen gestart...",
+        success_message=f"Deployment '{deployment_name}' succesvol verwijderd",
+    )
+
+
+@web_router.post("/projects/{project_name}/delete-component/{component_name}", response_class=HTMLResponse)
+@requires_sso
+async def delete_component_web(request: Request, project_name: str, component_name: str) -> HTMLResponse:
+    """Delete a component from the UI, as a task you can follow.
+
+    Removing the component from the project file is the quick half; the reprocessing
+    that applies it is not, and it always ran as a task already. Both now live in one
+    task, so the dialog follows the whole thing instead of reporting success halfway.
     """
-    try:
-        from fastapi.responses import JSONResponse
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
 
-        from opi.manager.project_manager import create_project_manager
+    logger.info(f"Web component deletion request for '{component_name}' in '{project_name}' by user: {user_email}")
 
-        # Get current user from SSO
-        user = get_current_user(request)
-        user_email = user.get("email", "").lower()
+    if not is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
 
-        logger.info(f"Web project deletion request for '{project_name}' by user: {user_email}")
-
-        # Get project service to validate authorization
-
-        # Check if project exists and user has access
-        if not is_user_authorized_for_project(project_name, user_email):
-            logger.warning(f"User {user_email} not authorized to access project: {project_name}")
-            return JSONResponse(content={"error": "You are not authorized to access this project"}, status_code=403)
-
-        # Check if user has admin or owner role for deletion
-        user_role = get_user_role_for_project(project_name, user_email)
-        if user_role not in ["admin", "owner"]:
-            logger.warning(f"User {user_email} with role '{user_role}' cannot delete project: {project_name}")
-            return JSONResponse(
-                content={"error": f"Only admin or owner roles can delete projects. Your role: {user_role}"},
-                status_code=403,
-            )
-
-        # Get project API key for deletion
-        # Create project manager for deletion
-        project_manager = create_project_manager()
-
-        logger.info(f"Starting project deletion for '{project_name}' by {user_email} (role: {user_role})")
-
-        # Perform the deletion using the deployment-aware deletion logic
-        deletion_results = await project_manager.delete_project(project_name)
-
-        # Determine response status and message based on deletion results
-        if deletion_results["success"]:
-            status_code = 200
-            message = f"Project '{project_name}' deleted successfully"
-            status = "completed"
-            logger.info(f"Project deletion completed successfully for: {project_name}")
-        elif deletion_results.get("remaining_deployments"):
-            # Project deletion was blocked due to deployments on other clusters
-            status_code = 409  # Conflict - cannot complete due to conflicting state
-            remaining_deployments = deletion_results["remaining_deployments"]
-            other_clusters = {dep["cluster"] for dep in remaining_deployments}
-            message = f"Project '{project_name}' cannot be deleted because it has deployments on other clusters: {', '.join(other_clusters)}"
-            status = "blocked"
-            logger.warning(
-                f"Project deletion blocked for {project_name}: deployments on other clusters: {other_clusters}"
-            )
-        else:
-            # Partial success or errors during deletion
-            status_code = 207  # Multi-Status - partial success
-            message = f"Project '{project_name}' deletion completed with some errors"
-            status = "partial"
-            logger.warning(f"Project deletion completed with errors for: {project_name}")
-
-        return JSONResponse(
-            content={
-                "status": status,
-                "message": message,
-                "project": project_name,
-                "deletion_results": deletion_results,
-                "success": deletion_results["success"],
-            },
-            status_code=status_code,
+    user_role = get_user_role_for_project(project_name, user_email)
+    if user_role not in ["admin", "owner"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Alleen admin of owner rollen kunnen components verwijderen. Uw rol: {user_role}",
         )
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error processing web project deletion: {e!s}")
-        return JSONResponse(content={"error": f"Error deleting project: {e!s}"}, status_code=500)
+    project = get_project_store().get(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project niet gevonden")
+    _require_component(project.data or {}, project_name, component_name)
 
-
-@web_router.post("/projects/{project_name}/delete-deployment/{deployment_name}")
-@requires_sso
-async def delete_deployment_web(request: Request, project_name: str, deployment_name: str):
-    """Delete a deployment via web interface with SSO validation."""
-    try:
-        from fastapi.responses import JSONResponse
-
-        from opi.manager.project_manager import create_project_manager
-
-        user = get_current_user(request)
-        user_email = user.get("email", "").lower()
-
-        logger.info(
-            f"Web deployment deletion request for '{deployment_name}' in '{project_name}' by user: {user_email}"
-        )
-
-        if not is_user_authorized_for_project(project_name, user_email):
-            return JSONResponse(content={"error": "Geen toegang tot dit project"}, status_code=403)
-
-        user_role = get_user_role_for_project(project_name, user_email)
-        if user_role not in ["admin", "owner"]:
-            return JSONResponse(
-                content={"error": f"Alleen admin of owner rollen kunnen deployments verwijderen. Uw rol: {user_role}"},
-                status_code=403,
-            )
-
-        project_manager = create_project_manager()
-
-        logger.info(f"Starting deployment deletion for '{deployment_name}' in '{project_name}' by {user_email}")
-        deletion_results = await project_manager.delete_deployment(project_name, deployment_name)
-
-        if deletion_results["success"]:
-            logger.info(f"Deployment deletion completed successfully: {deployment_name}")
-            return JSONResponse(
-                content={
-                    "success": True,
-                    "message": f"Deployment '{deployment_name}' succesvol verwijderd",
-                    "deletion_results": deletion_results,
-                },
-                status_code=200,
-            )
-        else:
-            errors = deletion_results.get("errors", [])
-            message = f"Deployment '{deployment_name}' verwijderen mislukt"
-            if errors:
-                message += f": {'; '.join(str(e) for e in errors)}"
-            logger.warning(f"Deployment deletion failed for {deployment_name}: {errors}")
-            return JSONResponse(
-                content={"success": False, "error": message, "deletion_results": deletion_results},
-                status_code=207,
-            )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error processing web deployment deletion: {e!s}")
-        return JSONResponse(content={"error": f"Fout bij verwijderen van deployment: {e!s}"}, status_code=500)
-
-
-@web_router.post("/projects/{project_name}/delete-component/{component_name}")
-@requires_sso
-async def delete_component_web(request: Request, project_name: str, component_name: str):
-    """Delete a component from a project via web interface."""
-    try:
-        from fastapi.responses import JSONResponse
-
-        user = get_current_user(request)
-        user_email = user.get("email", "").lower()
-
-        logger.info(f"Web component deletion request for '{component_name}' in '{project_name}' by user: {user_email}")
-
-        if not is_user_authorized_for_project(project_name, user_email):
-            return JSONResponse(content={"error": "Geen toegang tot dit project"}, status_code=403)
-
-        user_role = get_user_role_for_project(project_name, user_email)
-        if user_role not in ["admin", "owner"]:
-            return JSONResponse(
-                content={"error": f"Alleen admin of owner rollen kunnen components verwijderen. Uw rol: {user_role}"},
-                status_code=403,
-            )
-
-        project = get_project_store().get(project_name)
-        if not project:
-            return JSONResponse(content={"error": "Project niet gevonden"}, status_code=404)
-
-        # Mutate through the single ProjectManager path: it reads fresh contents from Git,
-        # then saves and commits, so a lagging read cache can never overwrite newer Git state.
-        from opi.core.task_helpers import create_async_task
-        from opi.manager.project_manager import ProjectManager
-
-        # Explicitly close the ProjectManager so its temp git clone is cleaned up.
-        project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
-        try:
-            result = await project_manager.delete_component(component_name)
-        finally:
-            await project_manager.close()
-        if not result["success"]:
-            status = 404 if result.get("error_type") == "not_found" else 500
-            return JSONResponse(content={"error": result["error"]}, status_code=status)
-
-        # delete_component already refreshed the read cache via save_and_commit_project;
-        # reprocess from Git to apply the deletion.
-        logger.info(f"Component '{component_name}' removed from '{project_name}', triggering reprocessing")
-
-        await create_async_task(
-            request=request,
-            task_type="refresh_project",
-            project_name=project_name,
-            payload={"project_name": project_name, "force_clone": True},
-        )
-
-        return JSONResponse(
-            content={"success": True, "message": f"Component '{component_name}' succesvol verwijderd"},
-            status_code=200,
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error processing web component deletion: {e!s}")
-        from fastapi.responses import JSONResponse
-
-        return JSONResponse(content={"error": f"Fout bij verwijderen van component: {e!s}"}, status_code=500)
+    return await create_task_and_render_progress(
+        request=request,
+        project_name=project_name,
+        task_type="delete_component",
+        payload={"project_name": project_name, "component_name": component_name},
+        current_step=f"Component '{component_name}' verwijderen gestart...",
+        success_message=f"Component '{component_name}' succesvol verwijderd",
+    )
 
 
 @web_router.get("/projects/{project_name}/keycloak/{realm_name}/otp-code", response_class=HTMLResponse)
@@ -554,7 +449,7 @@ async def refresh_project_web(request: Request, project_name: str) -> HTMLRespon
     if not project:
         raise HTTPException(status_code=404, detail="Project niet gevonden")
 
-    return await _create_task_and_render_progress(
+    return await create_task_and_render_progress(
         request=request,
         project_name=project_name,
         task_type="refresh_project",
@@ -587,8 +482,9 @@ async def refresh_deployment_web(request: Request, project_name: str, deployment
     project = get_project_store().get(project_name)
     if not project:
         raise HTTPException(status_code=404, detail="Project niet gevonden")
+    _require_deployment(project.data or {}, project_name, deployment_name)
 
-    return await _create_task_and_render_progress(
+    return await create_task_and_render_progress(
         request=request,
         project_name=project_name,
         task_type="refresh_deployment",
@@ -609,11 +505,19 @@ def _require_deployment(project_data: dict, project_name: str, deployment_name: 
     The inline version raised DeploymentNotFound from flow.sleep, so the caller heard it
     immediately. Now that the work runs as a task, an unknown name would otherwise only
     surface as a task that fails a moment later -- further from the click and harder to
-    read.
+    read. It also keeps a name the project does not have out of the task, and so out of
+    everything that later renders the task's text.
     """
     names = [d.get("name") for d in project_data.get("deployments", []) or [] if isinstance(d, dict)]
     if deployment_name not in names:
         raise HTTPException(status_code=404, detail=f"Deployment '{deployment_name}' niet gevonden in {project_name}")
+
+
+def _require_component(project_data: dict, project_name: str, component_name: str) -> None:
+    """404 straight away when the component does not exist. See ``_require_deployment``."""
+    names = [c.get("name") for c in project_data.get("components", []) or [] if isinstance(c, dict)]
+    if component_name not in names:
+        raise HTTPException(status_code=404, detail=f"Component '{component_name}' niet gevonden in {project_name}")
 
 
 @web_router.post("/projects/{project_name}/deployments/{deployment_name}/wake")
@@ -645,7 +549,7 @@ async def wake_deployment_web(request: Request, project_name: str, deployment_na
 
     logger.info(f"Web wake for '{project_name}/{deployment_name}' by {user_email}")
     # See sleep_deployment_web: waking reprocesses too, so it runs as a followable task.
-    return await _create_task_and_render_progress(
+    return await create_task_and_render_progress(
         request=request,
         project_name=project_name,
         deployment_name=deployment_name,
@@ -686,7 +590,7 @@ async def sleep_deployment_web(request: Request, project_name: str, deployment_n
     # An async task, not an inline call: sleeping commits to git and then reprocesses,
     # ArgoCD sync included, so doing it in the request left the page on an open POST for
     # tens of seconds with nothing to show. Same progress fragment as reprocessing.
-    return await _create_task_and_render_progress(
+    return await create_task_and_render_progress(
         request=request,
         project_name=project_name,
         deployment_name=deployment_name,
@@ -736,13 +640,60 @@ async def deployment_action_confirm(
         raise HTTPException(status_code=404, detail="Actie niet gevonden")
 
     return get_templates().TemplateResponse(
-        "project-details/deployment-action-confirm.html.j2",
+        "project-details/action-confirm.html.j2",
         {
             "request": request,
             "action": action,
+            "key": action_key,
             # A service may leave the message out; still ask, rather than firing a
             # POST straight from the page.
             "message": action.confirm_message or f"Weet u zeker dat u '{action.label}' wilt uitvoeren?",
+        },
+    )
+
+
+@web_router.get("/projects/{project_name}/actions/{action_key}/confirm", response_class=HTMLResponse)
+@requires_sso
+async def project_action_confirm(
+    request: Request, project_name: str, action_key: str, target: str | None = None
+) -> HTMLResponse:
+    """The confirmation body for a dangerous project action (delete, reprocess).
+
+    The second, equally narrow entrance next to ``deployment_action_confirm``: deleting
+    does not come from a service, but it keeps the same property. The page names the
+    action by key and, where it applies, which deployment/component/attachment it is
+    about; the POST target is built here from the project's own data. An endpoint taken
+    from the request would be an open POST target, and one of these deletes a project.
+    """
+    user = get_current_user(request)
+    user_email = user.get("email", "").lower()
+
+    if not is_user_authorized_for_project(project_name, user_email):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+
+    user_role = get_user_role_for_project(project_name, user_email)
+    if user_role not in ["admin", "owner"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Alleen admin of owner rollen kunnen deze actie uitvoeren. Uw rol: {user_role}",
+        )
+
+    project = get_project_store().get(project_name)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project niet gevonden")
+
+    action = build_project_action(project_name, project.data or {}, action_key, target)
+    if action is None:
+        raise HTTPException(status_code=404, detail="Actie niet gevonden")
+
+    return get_templates().TemplateResponse(
+        "project-details/action-confirm.html.j2",
+        {
+            "request": request,
+            "action": action,
+            "key": action.key,
+            "message": action.message,
+            "blocked_reason": action.blocked_reason,
         },
     )
 
@@ -2960,54 +2911,6 @@ async def decrypt_text(request: Request):
         return JSONResponse(content={"error": f"Decryption failed: {e!s}"}, status_code=500)
 
 
-async def _create_task_and_render_progress(
-    request: Request,
-    project_name: str,
-    task_type: str,
-    payload: dict,
-    current_step: str,
-    success_message: str,
-    deployment_name: str | None = None,
-) -> HTMLResponse:
-    """Create a V2 async task and return a rendered progress fragment.
-
-    Shared helper for all web UI endpoints that trigger async processing.
-    Creates the task via the V2 task service and returns an HTML fragment
-    with HTMX polling for progress updates.
-    """
-    from opi.core.task_helpers import create_async_task
-
-    templates = get_templates()
-
-    task = await create_async_task(
-        request=request,
-        task_type=task_type,
-        project_name=project_name,
-        deployment_name=deployment_name,
-        payload=payload,
-        max_attempts=1,
-    )
-    task_id = str(task["task_id"])
-
-    context = {
-        "task_id": task_id,
-        "progress_url": f"/projects/{project_name}/task-progress/{task_id}",
-        "progress": 0,
-        "current_step": current_step,
-        "tasks": [],
-        "status": "running",
-        "success_message": success_message,
-        "on_complete": "location.reload()",
-    }
-
-    rendered = templates.get_template("partials/task_progress_fragment.html.j2").render(context)
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
-
-    return HTMLResponse(content=rendered)
-
-
 def _v2_task_to_template_context(task: dict, project_name: str) -> dict:
     """Map a V2 async task dict to the template context expected by progress fragments.
 
@@ -3063,6 +2966,30 @@ def _build_task_hierarchy(subtasks: list[dict]) -> list[dict]:
     return main_tasks
 
 
+async def _require_task_of_project(request: Request, task_service: Any, project_name: str, task_id: str) -> dict | None:
+    """The task with this id, but only if it is this project's and this user's to see.
+
+    The task id alone used to be enough to read any task's steps, from any account with
+    a session. Both fragment routes sit under ``/projects/{project_name}/``, so scope
+    them to it: the task must be that project's own, and the user must be authorized for
+    the project -- or be the one who started the task, which is what keeps a delete
+    followable (the project is gone from the store before the task ends) and a creation
+    too (it is not in the store yet). Returns None when there is no such task, so the
+    caller answers 404.
+    """
+    user_email = (get_current_user(request) or {}).get("email", "").lower()
+
+    task = await task_service.get_task(task_id)
+    if task is None or task.get("project_name") != project_name:
+        return None
+
+    if (task.get("created_by") or "").lower() != user_email and not is_user_authorized_for_project(
+        project_name, user_email
+    ):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+    return task
+
+
 @web_router.get("/projects/{project_name}/task-progress/{task_id}", response_class=HTMLResponse)
 @requires_sso
 async def task_progress_fragment(request: Request, project_name: str, task_id: str) -> HTMLResponse:
@@ -3073,24 +3000,19 @@ async def task_progress_fragment(request: Request, project_name: str, task_id: s
     """
     from opi.core.task_helpers import get_task_service
 
-    templates = get_templates()
     task_service = get_task_service(request)
-    task = await task_service.get_task(task_id)
-
+    task = await _require_task_of_project(request, task_service, project_name, task_id)
     if task is None:
         return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
 
     context = _v2_task_to_template_context(task, project_name)
     context["task_id"] = task_id
     context["progress_url"] = f"/projects/{project_name}/task-progress/{task_id}"
-    context["on_complete"] = "location.reload()"
+    context["on_complete"] = on_complete_for(task.get("task_type"))
 
-    rendered = templates.get_template("partials/task_progress_fragment.html.j2").render(context)
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
-
-    return HTMLResponse(content=rendered)
+    # Rendered once on purpose -- see render_progress_fragment for why a second pass
+    # over the rendered HTML would execute task text as Jinja.
+    return HTMLResponse(content=render_progress_fragment(context))
 
 
 @web_router.get("/projects/{project_name}/task-errors/{task_id}", response_class=HTMLResponse)
@@ -3105,16 +3027,14 @@ async def task_errors_fragment(request: Request, project_name: str, task_id: str
 
     templates = get_templates()
     task_service = get_task_service(request)
-    task = await task_service.get_task(task_id)
-
+    task = await _require_task_of_project(request, task_service, project_name, task_id)
     if task is None:
         return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
 
     context = _v2_task_to_template_context(task, project_name)
 
+    # Rendered once, like the progress fragment: the failure messages in this context
+    # come from the task, and a second pass would parse them as Jinja.
     rendered = templates.get_template("partials/_component_failures.html.j2").render(context)
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
 
     return HTMLResponse(content=rendered)
