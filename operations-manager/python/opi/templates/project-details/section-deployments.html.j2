@@ -27,7 +27,7 @@
             {% for notice in approval_notices.get(deployment.name, []) %}
             <c-alert kind="{{ 'error' if notice.status == 'denied' else 'warning' }}">
                 {{ notice.text }}
-                {% if notice.by %}<br />Besluit door {{ notice.by }}{% if notice.date %} op {{ notice.date[:10] }}{% endif %}.{% endif %}
+                {% if notice.by %}<br />Besluit door {{ notice.by }}{% if notice.date %} op {{ notice.date | dutch_date(include_time=False) }}{% endif %}.{% endif %}
                 {% if notice.message %}<br />Toelichting: {{ notice.message }}{% endif %}
             </c-alert>
             {% endfor %}
