@@ -13,7 +13,9 @@ a client point a component at attachment ``my-cert`` while giving it no way to p
 
 * project level -- put a file in the catalog (DEFINE);
 * component level -- put a file in the catalog *and* couple it in the same request
-  (DEFINE + USE + BIND), because doing it in two calls can half-succeed.
+  (DEFINE + USE + BIND), because doing it in two calls can half-succeed; or, with a
+  ``reference`` instead of a file, couple an attachment that is already in the catalog
+  (USE + BIND) and leave its content alone.
 
 Each field points at the shared ``Editable`` that already defines what a valid value looks
 like, exactly as ``opi/api/validation.py`` does for the component endpoints. The one field
@@ -84,7 +86,16 @@ _FILE_FIELD = ActionField(
 
 #: On a component the id names *new* content, and new content is one of two ways in, so
 #: it is required together with the file rather than always (see ``_SOURCE_RULE``).
-_COMPONENT_ID_FIELD = replace(_ID_FIELD, required_for=())
+_COMPONENT_ID_FIELD = replace(
+    _ID_FIELD,
+    required_for=(),
+    description=(
+        "Identifier to store the uploaded file under; a component references it by this id. "
+        "Lowercase letters, digits and dashes, starting with a letter, at most 40 characters. "
+        "Required together with 'file', left out when 'reference' names an attachment that already "
+        "exists, and part of the path when updating or upserting."
+    ),
+)
 
 _OPTIONAL_FILE_FIELD = replace(_FILE_FIELD, required_for=())
 
@@ -150,9 +161,9 @@ def check_attachment_source(values: dict[str, Any], *, addressed: bool) -> str |
     there is no choice to make: the path is the reference, and a file, if given, replaces
     its content.
     """
-    has_file = values.get("file") is not None
     if addressed:
         return None
+    has_file = values.get("file") is not None
     has_reference = bool(values.get("reference"))
     if has_file and has_reference:
         return "Geef een 'file' of een 'reference', niet allebei"
