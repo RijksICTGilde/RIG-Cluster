@@ -29,6 +29,7 @@ from opi.forms.visualizers.wizard_sections import (
     EDIT_SECTIONS,
     _extract_services,
 )
+from opi.forms.wizard.mutation import apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
     resolve_active_section_ids,
@@ -833,11 +834,10 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         # call in the create wizard.
         processor.clear_hidden_depends_on(section.editables, submitted_yaml)
 
-        # Auto-add service dependencies
-        if section_id == "services-edit" and isinstance(submitted_yaml.get("services"), list):
-            from opi.services.services import ServiceAdapter
-
-            submitted_yaml["services"] = ServiceAdapter.resolve_service_dependencies(submitted_yaml["services"])
+        # Verzoen de dienstselectie met de basis (zie apply_services_mutation). Dit hing aan
+        # de sectienaam "services-edit": elke andere flow met een dienstenlijst kreeg geen
+        # aanvulling, en dat is dezelfde fout als 94478afb, een laag verderop.
+        apply_services_mutation(section.editables, yaml_data, submitted_yaml)
 
         # Run section-level enforcer (cross-field validation). Capture warnings
         # too: without a field_warnings dict a FieldWarning (e.g. a subdomain that

@@ -15,6 +15,7 @@ from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.visualizers.flows import get_flow
+from opi.forms.wizard.mutation import apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
     resolve_active_section_ids,
@@ -846,20 +847,12 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     is_forward = goto in ("next", "review")
     logger.info("[submit_step %s] goto=%r, is_forward=%s", section_id, goto, is_forward)
 
-    # Vul ontbrekende dienst-afhankelijkheden aan zodra een stap een selectie meestuurt.
-    #
-    # Dit hing aan de sectienaam "services", en de bewerk-flow heet "services-edit", dus
-    # daar liep het nooit. Zichtbaar gevolg: een dienst die door een andere vereist wordt
-    # is in de UI vergrendeld, en een vergrendelde checkbox is disabled, en een disabled
-    # checkbox verstuurt zijn waarde niet. De dienst viel dus uit de selectie juist omdat
-    # hij verplicht is, en het overzicht meldde dat hij verwijderd werd.
-    #
-    # De voorwaarde is nu wat hij beschrijft: draagt deze stap een dienstenlijst, vul hem
-    # dan aan. Een naam is geen eigenschap om gedrag aan op te hangen.
-    if isinstance(submitted_yaml.get("services"), list):
-        from opi.services.services import ServiceAdapter
-
-        submitted_yaml["services"] = ServiceAdapter.resolve_service_dependencies(submitted_yaml["services"])
+    # Verzoen de meegestuurde dienstselectie met de basis: wat het formulier niet aanbood
+    # kan de gebruiker niet hebben uitgevinkt, en een vereiste dienst vult de server aan.
+    # Beide regels wonen in apply_services_mutation, en beide flows lopen er doorheen -- de
+    # aanleiding is dat deze regel eerst aan de sectienaam "services" hing en de bewerk-flow
+    # "services-edit" heet, dus daar liep hij nooit.
+    apply_services_mutation(section.editables, yaml_data, submitted_yaml)
 
     # Forward navigation (Next / Review): block on field-level validation errors
     if is_forward and errors:
