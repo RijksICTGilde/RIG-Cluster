@@ -611,3 +611,144 @@ class TestV2TaskPolling:
         assert poll_response.status_code == 200
         assert poll_response.json()["status"] == "failed"
         assert "timed out" in poll_response.json()["error_message"]
+
+
+# ---------------------------------------------------------------------------
+# rollout=false (RC-46)
+# ---------------------------------------------------------------------------
+
+
+class TestV2RolloutFlag:
+    """The flag must reach the task payload, and be refused where it cannot be honoured."""
+
+    def test_default_payload_says_roll_out(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="add_component")
+
+        v2_client.post(
+            "/api/v2/projects/test-project/components",
+            headers={"X-API-Key": API_KEY},
+            json={"name": "web", "image": "example.com/web:v1", "deployment_names": ["main"]},
+        )
+
+        assert mock_task_service.create_task.call_args[1]["payload"]["rollout"] is True
+
+    def test_add_component_forwards_rollout_false(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="add_component")
+
+        response = v2_client.post(
+            "/api/v2/projects/test-project/components?rollout=false",
+            headers={"X-API-Key": API_KEY},
+            json={"name": "web", "image": "example.com/web:v1", "deployment_names": ["main"]},
+        )
+
+        _assert_accepted(response, "add_component")
+        assert mock_task_service.create_task.call_args[1]["payload"]["rollout"] is False
+
+    def test_update_image_forwards_rollout_false(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="update_image")
+
+        v2_client.put(
+            "/api/v2/projects/test-project/deployments/main/image?rollout=false",
+            headers={"X-API-Key": API_KEY},
+            json={"componentName": "web", "newImageUrl": "example.com/web:v2"},
+        )
+
+        assert mock_task_service.create_task.call_args[1]["payload"]["rollout"] is False
+
+    def test_service_config_route_forwards_rollout_false(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        """The generated per-service config routes take the flag too."""
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+
+        response = v2_client.delete(
+            "/api/v2/projects/test-project/services/keycloak/config/project?rollout=false",
+            headers={"X-API-Key": API_KEY},
+        )
+
+        _assert_accepted(response, "configure_service")
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        assert payload["rollout"] is False
+        assert payload["operation"] == "clear"
+
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("post", "/api/v2/projects/test-project/:refresh?rollout=false"),
+            ("post", "/api/v2/projects/test-project/deployments/main/:refresh?rollout=false"),
+            ("delete", "/api/v2/projects/test-project/staging?rollout=false"),
+        ],
+    )
+    def test_refused_where_it_cannot_be_honoured(
+        self, v2_client: TestClient, mock_task_service: AsyncMock, method: str, path: str
+    ) -> None:
+        response = getattr(v2_client, method)(path, headers={"X-API-Key": API_KEY})
+
+        assert response.status_code == 422, response.text
+        assert "rollout=false is not supported" in response.json()["detail"]
+        # Refused, not quietly rolled out anyway.
+        mock_task_service.create_task.assert_not_awaited()
+
+    def test_clone_endpoints_refuse(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        response = v2_client.post(
+            "/api/v2/projects/test-project/deployments/main/:clone-database?rollout=false",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "sourceHost": "db.example.com",
+                "sourcePort": 5432,
+                "sourceDatabase": "app",
+                "sourceUsername": "u",
+                "sourcePassword": "p",
+            },
+        )
+
+        assert response.status_code == 422
+        mock_task_service.create_task.assert_not_awaited()
+
+    def test_refusal_still_allows_the_normal_call(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        """rollout unset (or true) on a non-deferrable endpoint behaves exactly as before."""
+        mock_task_service.create_task.return_value = _make_task(task_type="refresh_project")
+
+        response = v2_client.post(
+            "/api/v2/projects/test-project/:refresh",
+            headers={"X-API-Key": API_KEY},
+        )
+
+        _assert_accepted(response, "refresh_project")
+        assert "rollout" not in mock_task_service.create_task.call_args[1]["payload"]
+
+    def test_pending_rollout_endpoint_reports_the_drift(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        mock_task_service.get_deferred_rollouts.return_value = {
+            "count": 2,
+            "since": "2026-08-01T09:30:00+00:00",
+            "task_types": ["add_component", "configure_service"],
+        }
+
+        response = v2_client.get(
+            "/api/v2/projects/test-project/pending-rollout",
+            headers={"X-API-Key": API_KEY},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "project": "test-project",
+            "count": 2,
+            "since": "2026-08-01T09:30:00+00:00",
+            "task_types": ["add_component", "configure_service"],
+        }
+
+    def test_pending_rollout_endpoint_reports_being_in_sync(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        mock_task_service.get_deferred_rollouts.return_value = {"count": 0, "since": None, "task_types": []}
+
+        response = v2_client.get(
+            "/api/v2/projects/test-project/pending-rollout",
+            headers={"X-API-Key": API_KEY},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["count"] == 0
+        assert response.json()["since"] is None

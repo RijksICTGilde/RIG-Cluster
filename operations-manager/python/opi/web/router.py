@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from sqlalchemy.exc import SQLAlchemyError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -1609,6 +1610,18 @@ async def project_details(request: Request, project_name: str):
         # credentials (e.g. keycloak realm admin details).
         service_detail_sections = collect_detail_page_sections(project_data_decrypted, role_for_services)
 
+        # Changes saved with rollout=false that nobody has rolled out yet (RC-46). Shown
+        # above the tabs, because a project file that silently runs ahead of the cluster is
+        # worse than a slow rollout. A task service that is not up must not take the page
+        # down with it, so a failure here degrades to "no notice".
+        pending_rollout: dict[str, Any] = {"count": 0, "since": None, "task_types": []}
+        task_service = getattr(request.app.state, "task_service", None)
+        if task_service is not None:
+            try:
+                pending_rollout = await task_service.get_deferred_rollouts(project_name)
+            except SQLAlchemyError:
+                logger.exception("Could not determine deferred rollouts for project %s", project_name)
+
         return templates.TemplateResponse(
             "project-details.html.j2",
             {
@@ -1630,6 +1643,7 @@ async def project_details(request: Request, project_name: str):
                 "current_cluster": current_cluster,
                 "cluster_base_domains": cluster_base_domains,
                 "csrf_token": csrf_token,
+                "pending_rollout": pending_rollout,
                 "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
                 "deployment_service_actions": deployment_service_actions,
                 "deployment_state_facts": deployment_state_facts,
