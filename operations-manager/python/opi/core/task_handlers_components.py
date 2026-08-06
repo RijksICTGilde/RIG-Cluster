@@ -565,6 +565,9 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
                 service_name, target, component_name=component_name, deployment_name=deployment_name
             )
         else:
+            if config is None:
+                msg = f"Upsert van service '{service_name}' zonder config"
+                raise ValueError(msg)
             result = await project_manager.configure_service(
                 service_name, target, config, component_name=component_name, deployment_name=deployment_name
             )

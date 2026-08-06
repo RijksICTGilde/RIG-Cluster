@@ -150,7 +150,7 @@ from opi.utils.yaml_util import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from opi.core.task_manager import TaskProgressManager
+    from opi.core.persistent_task_progress import AnyTaskProgressManager
     from opi.manager.database_manager import DatabaseManager
 
 # TypeVar for generic secret types
@@ -544,7 +544,7 @@ class ProjectManager:
         from opi.utils.naming import generate_postgres_superuser_secret_name
 
         project_data = await self.get_contents(record_base=False)
-        project_name = project_data.get("name")
+        project_name = await self.get_name()
 
         # A dedicated (project-scoped) cluster needs the infrastructure-namespace
         # superuser; the shared instance uses the cluster admin. Both
@@ -577,6 +577,12 @@ class ProjectManager:
 
                 admin_username = secret_data.get("username")
                 admin_password = secret_data.get("password")
+                if not admin_username or not admin_password:
+                    raise RuntimeError(
+                        f"Superuser secret '{secret_name}' in '{infrastructure_namespace}' has no username "
+                        f"or password. Without them every database operation fails one step later, with an "
+                        f"error that points at the database instead of at the secret."
+                    )
                 logger.info(f"Initializing DatabaseManager with namespace-specific PostgreSQL: {db_host}")
         else:
             # Shared database
@@ -1425,6 +1431,9 @@ class ProjectManager:
         spec (``Service.build_secret_files``); this stays service-agnostic.
         """
         if spec.register_secret is not None:
+            if not spec.secret_type:
+                msg = f"SecretFileSpec '{spec.secret_name}' registers a secret without a secret_type to file it under"
+                raise ValueError(msg)
             self._add_secret_to_create(deployment_name, spec.secret_type, spec.register_secret)
 
         secret_data = dict(spec.secret_pairs)
@@ -1585,7 +1594,7 @@ class ProjectManager:
             await self.__git_connector_for_argocd.close()
             self.__git_connector_for_argocd = None
 
-    def set_progress_manager(self, task_progress_manager: TaskProgressManager) -> None:
+    def set_progress_manager(self, task_progress_manager: AnyTaskProgressManager) -> None:
         """Set the task progress manager for tracking operation status."""
         self.__progress_manager = task_progress_manager
 
@@ -1612,7 +1621,7 @@ class ProjectManager:
                 return dep
         return None
 
-    def get_progress_manager(self) -> TaskProgressManager | None:
+    def get_progress_manager(self) -> AnyTaskProgressManager | None:
         """Get the task progress manager for tracking operation status."""
         return self.__progress_manager
 
@@ -1996,6 +2005,9 @@ class ProjectManager:
         logger.info(f"Checking SOPS secret for project {project_name} in namespace {namespace}")
 
         public_key = get_project_public_key(project_data)
+        if not public_key:
+            msg = f"Project {project_name} has no AGE public key; a SOPS secret cannot be written without it"
+            raise RuntimeError(msg)
         private_key = await get_decoded_project_private_key(project_data)
 
         existing_secret = await self._kubectl_connector.get_sops_secret_from_namespace(namespace)
@@ -2683,7 +2695,7 @@ class ProjectManager:
     async def process_project_from_git(
         self,
         relative_project_file_path: str,
-        task_progress_manager: TaskProgressManager | None = None,
+        task_progress_manager: AnyTaskProgressManager | None = None,
         deployment_name: str | None = None,
         force_clone: bool = False,
         argocd_resources_changed: bool = True,
@@ -3592,7 +3604,7 @@ class ProjectManager:
         """
         project_data = await self.get_contents()
         project_name = await self.get_name()
-        deployment_name = deployment.get("name")
+        deployment_name = deployment["name"]
         cluster_name = deployment["cluster"]
 
         repo_path = await self.get_repository_path(deployment["repository"])

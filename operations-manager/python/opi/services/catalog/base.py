@@ -654,6 +654,9 @@ class Service(ABC):
         """
         if self.config_model is None:
             raise TypeError(f"Service '{self.service_type.value}' takes no config")
+        if self.config_schema_version is None:
+            msg = f"Service '{self.service_type.value}' has a config_model but no config_schema_version"
+            raise TypeError(msg)
         config: ServiceConfigData = {} if raw_config is None else raw_config
         migrated = self.migrate_config(config, from_version or self.config_schema_version)
         return self.config_model.model_validate(migrated)

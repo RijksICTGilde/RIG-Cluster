@@ -10,8 +10,20 @@ import socket
 import subprocess
 import time
 from contextlib import contextmanager
+from typing import TypedDict
 
 logger = logging.getLogger(__name__)
+
+
+class TunnelEndpoint(TypedDict):
+    """The local side of a chisel tunnel.
+
+    A ``dict[str, str | int]`` made every caller's ``endpoint["host"]`` a ``str | int``,
+    so passing it to anything typed lost the distinction the dict has always had.
+    """
+
+    host: str
+    port: int
 
 
 class ChiselConnector:
@@ -185,7 +197,7 @@ class ChiselConnector:
         self.process = None
         self.local_port = None
 
-    def get_local_endpoint(self) -> dict[str, str | int]:
+    def get_local_endpoint(self) -> TunnelEndpoint:
         """
         Get the local endpoint for the tunneled service.
 

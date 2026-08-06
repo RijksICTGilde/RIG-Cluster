@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from opi.core.task_manager import (
     ProjectInfo,
+    TaskProgressManager,
     TaskStatus,
     _projects,
 )
@@ -433,3 +434,9 @@ class PersistentTaskProgressManager:
         if self._task_id in _projects:
             _projects[self._task_id].events = self._events
         self._mark_dirty()
+
+
+#: Either progress manager. They are unrelated classes with the same synchronous
+#: interface (this module is the drop-in replacement for the in-memory one), so a
+#: signature naming only one of them rejects half its real callers.
+AnyTaskProgressManager = TaskProgressManager | PersistentTaskProgressManager

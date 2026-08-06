@@ -11,6 +11,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from opi.manager.project_manager import ProjectManager
 
 from datetime import UTC
@@ -1580,6 +1582,10 @@ async def project_details(request: Request, project_name: str):
             for dep in project_data_decrypted.get("deployments", [])
         }
 
+        # A viewer whose role could not be determined is not a member with a role; the
+        # services gate on the role string, and an empty one matches no gate.
+        role_for_services = user_role or ""
+
         # Per-deployment read-only blocks the services deliver (RC-24): metrics and
         # backups describe one deployment, so they are asked per deployment instead of
         # being hardcoded in the Deployments tab. The availability of the optional
@@ -1589,7 +1595,7 @@ async def project_details(request: Request, project_name: str):
                 DeploymentPageContext(
                     project_data=project_data_decrypted,
                     deployment=dep,
-                    user_role=user_role,
+                    user_role=role_for_services,
                     current_cluster=current_cluster,
                     backend_available={"prometheus": prometheus_available, "backups": backups_available},
                 )
@@ -1601,7 +1607,7 @@ async def project_details(request: Request, project_name: str):
         # service owns its own block instead of the general template hardcoding an
         # include. Built from the decrypted data so a service can surface its managed
         # credentials (e.g. keycloak realm admin details).
-        service_detail_sections = collect_detail_page_sections(project_data_decrypted, user_role)
+        service_detail_sections = collect_detail_page_sections(project_data_decrypted, role_for_services)
 
         return templates.TemplateResponse(
             "project-details.html.j2",
@@ -2131,7 +2137,7 @@ async def get_deployment_domain_settings(request: Request, project_name: str, de
         raise HTTPException(status_code=500, detail="An error occurred while fetching domain settings.")
 
 
-async def _validate_csrf(request: Request, form_data: dict | None = None) -> None:
+async def _validate_csrf(request: Request, form_data: Mapping[str, Any] | None = None) -> None:
     """
     Validate CSRF protection (double-submit token + Origin/Referer).
 
@@ -2143,7 +2149,8 @@ async def _validate_csrf(request: Request, form_data: dict | None = None) -> Non
 
     Args:
         request: The FastAPI request object
-        form_data: Optional pre-parsed form data (to avoid parsing twice)
+        form_data: Optional pre-parsed form data (to avoid parsing twice). Any mapping;
+            the handlers pass starlette's ``FormData``, which is not a dict.
 
     Raises:
         HTTPException: If CSRF validation fails
@@ -2450,12 +2457,18 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
         if existing_subdomain:
             old_subdomain_info = existing_subdomain  # Store for potential rollback
 
-        # Validate nice-url settings if nice-url mode is selected
+        # Validate nice-url settings if nice-url mode is selected. The two validated
+        # values are kept separately: the registration further down needs them, and by
+        # then nothing can still tell that this branch proved they are set.
+        nice_url_subdomain = ""
+        nice_url_base_domain = ""
         if domain_mode == "nice-url":
             if not subdomain:
                 raise HTTPException(status_code=400, detail="Subdomain is required for nice-url mode")
             if not base_domain:
                 raise HTTPException(status_code=400, detail="Base domain is required for nice-url mode")
+            nice_url_subdomain = subdomain
+            nice_url_base_domain = base_domain
 
             # Validate subdomain format
             is_valid, error_msg = validate_subdomain(subdomain)
@@ -2570,8 +2583,8 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
             if domain_mode == "nice-url":
                 # Reuse the subdomain_connector created earlier
                 await subdomain_connector.register_or_update_for_deployment(
-                    subdomain=subdomain,
-                    base_domain=base_domain,
+                    subdomain=nice_url_subdomain,
+                    base_domain=nice_url_base_domain,
                     project_name=project_name,
                     deployment_name=deployment_name,
                     cluster=cluster,
