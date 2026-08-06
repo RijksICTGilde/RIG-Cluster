@@ -94,6 +94,29 @@ def walk_create_wizard(
     assert project_name in body_text, f"Project '{project_name}' not visible on review page"
     wizard.submit_wizard()
     page.wait_for_load_state("networkidle")
+    assert_progress_page_is_server_rendered(page)
+
+
+def assert_progress_page_is_server_rendered(page: Page) -> None:
+    """The page the wizard lands on shows the task, from the server.
+
+    This is the first thing a user sees after creating a project. It used to build its
+    own HTML in JavaScript from a JSON endpoint; it now renders the shared progress
+    fragment and lets htmx poll it. Skipped when the wizard did not redirect here (an
+    edit flow reuses this walker), so it only measures the create landing.
+    """
+    if "/projects/progress/" not in page.url:
+        return
+
+    container = page.locator("#project-progress")
+    assert container.count() == 1, f"No server-rendered progress fragment on {page.url}"
+    poll_url = container.get_attribute("hx-get") or ""
+    assert poll_url.startswith("/projects/progress/"), f"Progress fragment polls elsewhere: {poll_url!r}"
+    assert poll_url.endswith("/fragment"), f"Progress fragment polls elsewhere: {poll_url!r}"
+    # The step line is part of the first paint, not something JavaScript fills in later.
+    assert (page.locator(".edit-progress-step").first.text_content() or "").strip(), (
+        "Progress page rendered without a current step"
+    )
 
 
 # The services a user can select in the CREATE wizard (hidden types -
