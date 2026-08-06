@@ -19,10 +19,14 @@
                         {% set service_def = ServiceAdapter.get_service_definition(service.enum) %}
                         <div>
                             <c-heading type="h3"><c-icon icon="{{ service_def.icon }}" size="xl" color="{{ service_def.color }}" />{{ service_def.name }}</c-heading>
-                            <div class="service-scope">{{ service_def.scope.value|title }} scope</div>
+                            <div class="service-scope">{{ service_binding_label(service.enum) }}</div>
                         </div>
                     </div>
                     <p class="rvo-text--sm">{{ service_def.description }}</p>
+                    {% set config_hint = service_config_hint(service.enum) %}
+                    {% if config_hint %}
+                    <p class="rvo-text--sm rvo-text--subtle">{{ config_hint }}</p>
+                    {% endif %}
                     {% if user_role in ["admin", "owner"] and service.value in service_config_sections %}
                     <c-button
                         label="Configureer"
