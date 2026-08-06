@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from opi.services.catalog.base import DeploymentStateContext, DeploymentStateFact, Service
-from opi.services.disabled_state import deployment_disabled_state
+from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import ServiceBinding, ServiceKind, ServiceType
 
@@ -83,6 +83,7 @@ class DeploymentHealthService(Service):
                         "tot iemand ze weer aanzet."
                     ),
                     expects_no_application_pods=True,
+                    badge="Uitgeschakeld",
                     details={"disabled": state.disabled_count, "total": state.total_count},
                 )
             ]
@@ -95,6 +96,11 @@ class DeploymentHealthService(Service):
                         "deployment zijn uitgeschakeld; de rest draait gewoon."
                     ),
                     expects_no_application_pods=False,
+                    # No ``expects_no_application_pods``, so this word stands NEXT to the
+                    # health verdict instead of taking its place: the rest of the
+                    # deployment is still supposed to serve traffic and its health is
+                    # still the thing to report.
+                    badge=f"{state.disabled_count} van {state.total_count} componenten uitgeschakeld",
                     details={"disabled": state.disabled_count, "total": state.total_count},
                 )
             ]
