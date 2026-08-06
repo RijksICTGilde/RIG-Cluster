@@ -358,14 +358,19 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
             "components",
             {
                 "components": [
+                    # Resources stonden hier ook, met eigen waarden, en die seed won van
+                    # Editable.default -- dus een default aanpassen bij het veld had geen
+                    # effect op de create-wizard. Ze staan er niet meer in: de renderer
+                    # vult een ontbrekende waarde met de default van de editable.
+                    #
+                    # De uitgaande poorten blijven hier wel staan, ook al hebben ze een
+                    # default op hun editable: de stap toont er geen veld voor, en een
+                    # default springt alleen in als het veld gerenderd wordt. Weghalen
+                    # zou ze uit nieuwe projecten laten verdwijnen.
                     {
                         "name": "",
                         "path": "/",
                         "ports": {"inbound": [8080], "outbound": [80, 443]},
-                        "resources": {
-                            "requests": {"cpu": "50m", "memory": "256Mi"},
-                            "limits": {"cpu": "1", "memory": "512Mi"},
-                        },
                     },
                 ],
             },
