@@ -428,6 +428,26 @@ def build_backup_schedule_flow(deployment_index: int) -> FormFlow:
     )
 
 
+def build_cross_domain_deployment_flow(deployment_index: int) -> FormFlow:
+    """The per-deployment cross-domain PATCH form (RC-42).
+
+    One step, owned by the service: which project rule, and which peer deployment it points
+    at for THIS deployment. Everything else the rule already says at project level.
+    """
+    from opi.services.registry import get_service
+    from opi.services.services_enums import ServiceType
+
+    section = get_service(ServiceType.CROSS_DOMAIN_ACCESS).deployment_form_section(deployment_index)
+    return FormFlow(
+        flow_id=f"modal-edit-cross-domain-deployment-{deployment_index}",
+        title="Cross-domain toegang per deployment",
+        mode=FlowMode.WIZARD,
+        show_review=False,
+        sections=[section],
+        target=FlowTarget("deployments", deployment_index),
+    )
+
+
 def build_domain_edit_flow(deployment_index: int) -> FormFlow:
     """Build a modal edit flow for a specific deployment's domain config.
 
@@ -517,6 +537,11 @@ INDEXED_FLOWS: tuple[IndexedFlow, ...] = (
         prefix="modal-edit-backup-schedule-",
         list_key="deployments",
         build=lambda index, _ctx: build_backup_schedule_flow(index),
+    ),
+    IndexedFlow(
+        prefix="modal-edit-cross-domain-deployment-",
+        list_key="deployments",
+        build=lambda index, _ctx: build_cross_domain_deployment_flow(index),
     ),
 )
 
