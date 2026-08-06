@@ -8,7 +8,7 @@
     {# Hero Section #}
     <section class="rvo-hero rvo-hero--lg rvo-hero--with-image" data-roos-component="hero" data-roos-size="lg">
         <div class="rvo-hero__image-container">
-            <img src="/static/cloud.jpg" alt="Cloud architecture and modern development" class="rvo-hero__image" />
+            <img src="{{ static_url('cloud.jpg') }}" alt="Cloud architecture and modern development" class="rvo-hero__image" />
         </div>
         <div class="rvo-hero__content">
             <h1 class="utrecht-heading-1 rvo-hero__title">Built for Developers, By Developers</h1>
@@ -22,7 +22,7 @@
     {# Promo Video #}
     <section style="display: flex; justify-content: center;">
         <video controls preload="metadata" style="width: 100%; border-radius: 8px; border: 1px solid #e0e0e0; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);">
-            <source src="/static/promo.mp4" type="video/mp4">
+            <source src="{{ static_url('promo.mp4') }}" type="video/mp4">
         </video>
     </section>
 
@@ -367,7 +367,7 @@
 
                 <c-card padding="lg" background="color" backgroundColor="wit" :outline="true" style="text-align: center;">
                     <c-layout-flow gap="md">
-                        <img src="/static/LSS_S_MR-1_resized.jpg" alt="Less is More - Smart Resource Sharing Visualization"/>
+                        <img src="{{ static_url('LSS_S_MR-1_resized.jpg') }}" alt="Less is More - Smart Resource Sharing Visualization"/>
                         <p class="rvo-text--xs" style="font-style: italic; color: var(--rvo-color-grijs-700);">
                             Smart resource sharing: efficiency through intelligent design
                         </p>
