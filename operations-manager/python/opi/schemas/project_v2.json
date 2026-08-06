@@ -276,9 +276,11 @@
           }
         },
         "command": {
+          "description": "Het startcommando van de container, als losse argumenten. Vervangt de ENTRYPOINT van het image, dus de eigen opstartlogica van het image vervalt. Laat weg om het image zijn eigen commando te laten gebruiken; een lege lijst is daarom ongeldig. Een gecombineerd commando zoals [\"/bin/sh\", \"-c\", \"<script>\"] mag, dus spaties, aanhalingstekens en regeleindes horen in een argument thuis.",
           "type": "array",
-          "items": { "type": "string" },
-          "minItems": 1
+          "items": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "minItems": 1,
+          "maxItems": 10
         },
         "aliases": {
           "type": "object",
@@ -376,9 +378,11 @@
           "additionalProperties": { "type": "string", "pattern": "^[^\\r\\n\\u0000]*\\Z" }
         },
         "command": {
+          "description": "Het startcommando van de container, als losse argumenten. Vervangt de ENTRYPOINT van het image, dus de eigen opstartlogica van het image vervalt. Laat weg om het image zijn eigen commando te laten gebruiken; een lege lijst is daarom ongeldig. Een gecombineerd commando zoals [\"/bin/sh\", \"-c\", \"<script>\"] mag, dus spaties, aanhalingstekens en regeleindes horen in een argument thuis.",
           "type": "array",
-          "items": { "type": "string" },
-          "minItems": 1
+          "items": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "minItems": 1,
+          "maxItems": 10
         },
         "disabled": { "type": "boolean" },
         "disabled-reason": { "type": "string" },
