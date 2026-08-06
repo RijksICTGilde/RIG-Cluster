@@ -9,7 +9,7 @@ The effective defaults live in generic code and the template, not here.
 from __future__ import annotations
 
 from opi.forms.editables.converters import IntegerConverter
-from opi.forms.editables.editable import Editable
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 from opi.forms.editables.validators import PathValidator, RangeValidator
 
 HEALTH_CHECK_SCHEME_EDITABLE = Editable(
@@ -18,7 +18,7 @@ HEALTH_CHECK_SCHEME_EDITABLE = Editable(
     remove_when_none=True,
     depends_on="components[*]/services",
     show_when={"contains": "health-check"},
-    virtualize=("services", "_services-config"),
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 HEALTH_CHECK_PORT_EDITABLE = Editable(
@@ -28,7 +28,7 @@ HEALTH_CHECK_PORT_EDITABLE = Editable(
     remove_when_none=True,
     depends_on="components[*]/services",
     show_when={"contains": "health-check"},
-    virtualize=("services", "_services-config"),
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 HEALTH_CHECK_LIVENESS_PATH_EDITABLE = Editable(
@@ -37,7 +37,7 @@ HEALTH_CHECK_LIVENESS_PATH_EDITABLE = Editable(
     remove_when_none=True,
     depends_on="components[*]/services",
     show_when={"contains": "health-check"},
-    virtualize=("services", "_services-config"),
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 HEALTH_CHECK_READINESS_PATH_EDITABLE = Editable(
@@ -46,5 +46,5 @@ HEALTH_CHECK_READINESS_PATH_EDITABLE = Editable(
     remove_when_none=True,
     depends_on="components[*]/services",
     show_when={"contains": "health-check"},
-    virtualize=("services", "_services-config"),
+    virtualize=SERVICE_VIRTUALIZE,
 )
