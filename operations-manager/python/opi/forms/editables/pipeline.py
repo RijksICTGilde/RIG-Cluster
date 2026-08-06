@@ -15,11 +15,18 @@ if TYPE_CHECKING:
     from opi.forms.editables.editable import Editable, EditableEnforcer
 
 
-def validate_field(editable: Editable, value: Any) -> list[str]:
+def validate_field(editable: Editable, value: Any, context: dict[str, Any] | None = None) -> list[str]:
     """Validate a single value against an editable's constraints.
 
     Runs the required check (if editable.required) and then the
     editable's validator (if present).
+
+    ``context`` carries what a validator cannot know from the value alone -- the ids
+    already taken, for a uniqueness check. It is passed only when given, following the
+    same convention as ``EditableFormProcessor._validate_field``: a validator that takes
+    no context raises TypeError and is called plainly. This is what lets a caller outside
+    the form pipeline (the attachment upload endpoints) run the *shared* rule instead of
+    reaching past the editable to instantiate its validator itself.
 
     Returns:
         List of error message strings (empty = valid).
@@ -32,7 +39,13 @@ def validate_field(editable: Editable, value: Any) -> list[str]:
             return req_errors
 
     if editable.validator and value is not None and value != "":
-        errors.extend(editable.validator.validate(value))
+        if context is None:
+            errors.extend(editable.validator.validate(value))
+        else:
+            try:
+                errors.extend(editable.validator.validate(value, context=context))
+            except TypeError:
+                errors.extend(editable.validator.validate(value))
 
     return errors
 
