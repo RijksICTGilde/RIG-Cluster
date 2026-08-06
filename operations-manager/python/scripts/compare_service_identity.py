@@ -62,7 +62,7 @@ import yaml
 
 # The identity of a service is the value of these generated secret/env keys. The key
 # names are the canonical env-var names OPI writes into each deployment's secret (see
-# opi/services/services.py: DatabaseVariables, KeycloakVariables, MinIOVariables). We
+# the ``variables.py`` in each service's own package under opi/services/catalog/). We
 # read the value BY NAME, so a renamed value is caught as a difference.
 #
 # ``web`` is special: the published host is not a secret but the Ingress host, so it is
