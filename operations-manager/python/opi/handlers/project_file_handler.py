@@ -3316,6 +3316,31 @@ def find_attachment_data_list(services: Any) -> list[Any] | None:
     return None
 
 
+def ensure_attachment_data_list(services: list[Any]) -> list[Any]:
+    """Return the attachments ``data`` list within a services list, creating it if absent.
+
+    The write counterpart of :func:`find_attachment_data_list`, so a caller that adds to
+    the catalog does not have to know where the catalog lives or which of the two entry
+    shapes it is in. A bare ``"attachments"`` selection (the services picker writes the
+    service name as a plain string) is upgraded to its dict form in place rather than
+    duplicated, which is the same repair ``ResolveAttachmentsHook`` makes on save.
+    """
+    for index, entry in enumerate(services):
+        if isinstance(entry, dict) and isinstance(entry.get("attachments"), dict):
+            data = entry["attachments"].setdefault("data", [])
+            if isinstance(data, list):
+                return data
+            entry["attachments"]["data"] = []
+            return entry["attachments"]["data"]
+        if entry == "attachments":
+            created: list[Any] = []
+            services[index] = {"attachments": {"data": created}}
+            return created
+    created = []
+    services.append({"attachments": {"data": created}})
+    return created
+
+
 def extract_component_attachment_uses(component: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract a component's attachment ``config`` coupling entries from its services list.
 

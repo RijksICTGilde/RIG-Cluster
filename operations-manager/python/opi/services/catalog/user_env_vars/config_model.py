@@ -18,7 +18,7 @@ valid environment-variable names. That is the same parser the deploy path uses
 
 from __future__ import annotations
 
-from pydantic import RootModel, field_validator
+from pydantic import Field, RootModel, field_validator
 
 from opi.utils.age import is_age_encrypted
 from opi.utils.env_vars import validate_and_parse_env_vars
@@ -26,6 +26,14 @@ from opi.utils.env_vars import validate_and_parse_env_vars
 
 class UserEnvVarsConfig(RootModel[str | dict[str, str]]):
     """A component's own environment variables, encrypted or plain."""
+
+    root: str | dict[str, str] = Field(
+        description=(
+            "The component's own environment variables: an AGE-encrypted block (the stored shape), "
+            "a plain KEY=value or YAML text block, or a mapping. Values may hold secrets and are "
+            "encrypted with the project's key before they are stored."
+        ),
+    )
 
     @field_validator("root")
     @classmethod

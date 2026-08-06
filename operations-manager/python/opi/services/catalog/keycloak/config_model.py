@@ -40,10 +40,16 @@ class RestrictAccessConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    enabled: bool = False
-    role: str | None = None
-    realm_role: str | None = Field(default=None, alias="realm-role")
-    error_message: str = Field(default="${accessDeniedNoPermission}", alias="error-message")
+    enabled: bool = Field(default=False, description="Whether sign-in is limited to users holding the role below.")
+    role: str | None = Field(default=None, description="Client role a user must hold to be let in.")
+    realm_role: str | None = Field(
+        default=None, alias="realm-role", description="Realm role a user must hold to be let in."
+    )
+    error_message: str = Field(
+        default="${accessDeniedNoPermission}",
+        alias="error-message",
+        description="Message shown to a user without the role; a ${...} value is a Keycloak message key.",
+    )
 
 
 class KeycloakClientEntry(BaseModel):
@@ -53,7 +59,7 @@ class KeycloakClientEntry(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    name: str
+    name: str = Field(description="Client id of the extra client to create in the realm.")
 
 
 class KeycloakRealmRoleEntry(BaseModel):
@@ -61,7 +67,7 @@ class KeycloakRealmRoleEntry(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    name: str
+    name: str = Field(description="Name of the realm role to create.")
 
 
 class KeycloakRealm(BaseModel):
@@ -75,14 +81,17 @@ class KeycloakRealm(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    host: str
-    realm: str
-    username: str
-    password: str
-    # Shared TOTP seed for the realm-admin account (AGE-encrypted or ``plain:``-
-    # prefixed, like ``password``). Only present when KEYCLOAK_ENFORCE_ADMIN_OTP
-    # provisioned it; absent on pre-OTP realms.
-    totp_secret: str | None = None
+    host: str = Field(description="Keycloak base URL this realm lives on. Written by the platform.")
+    realm: str = Field(description="Realm name, {project}-{cluster}. Written by the platform.")
+    username: str = Field(description="Realm-admin account the platform manages the realm with.")
+    password: str = Field(description="That account's password, AGE-encrypted or 'plain:'-prefixed.")
+    totp_secret: str | None = Field(
+        default=None,
+        description=(
+            "Shared TOTP seed for the realm-admin account, stored like the password. Only present when the "
+            "cluster provisions admin OTP."
+        ),
+    )
 
 
 class KeycloakConfig(BaseModel):
@@ -90,12 +99,35 @@ class KeycloakConfig(BaseModel):
     # host/realm/client-id/client-secret) and must not reject real files.
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
-    template: str = "sso-only"
-    # OPI-managed per-cluster admin connections, relocated from project config.keycloak.
-    realms: list[KeycloakRealm] = Field(default_factory=list)
-    variables: dict[str, Any] = Field(default_factory=dict)
-    additional_redirect_uris: list[str] = Field(default_factory=list)
-    restrict_access: RestrictAccessConfig | None = Field(default=None, alias="restrict-access")
-    additional_clients: list[KeycloakClientEntry] = Field(default_factory=list, alias="additional-clients")
-    realm_roles: list[KeycloakRealmRoleEntry] = Field(default_factory=list, alias="realm-roles")
-    account_link: AccountLink | None = Field(default=None, alias="account-link")
+    template: str = Field(
+        default="sso-only",
+        description="Realm template the realm is created from; 'sso-only' is single sign-on without extras.",
+    )
+    realms: list[KeycloakRealm] = Field(
+        default_factory=list,
+        description="Per-cluster realm admin connections. Written and managed by the platform.",
+    )
+    variables: dict[str, Any] = Field(
+        default_factory=dict, description="Values filled into the realm template's placeholders."
+    )
+    additional_redirect_uris: list[str] = Field(
+        default_factory=list,
+        description="Extra redirect URIs the client accepts, on top of the deployment URLs (e.g. localhost for development).",
+    )
+    restrict_access: RestrictAccessConfig | None = Field(
+        default=None, alias="restrict-access", description="Limit sign-in to users holding a given role."
+    )
+    additional_clients: list[KeycloakClientEntry] = Field(
+        default_factory=list, alias="additional-clients", description="Extra Keycloak clients to create in the realm."
+    )
+    realm_roles: list[KeycloakRealmRoleEntry] = Field(
+        default_factory=list, alias="realm-roles", description="Realm roles to create."
+    )
+    account_link: AccountLink | None = Field(
+        default=None,
+        alias="account-link",
+        description=(
+            "How an existing account is linked when a user signs in through an identity provider: "
+            "automatic, confirm or verify."
+        ),
+    )

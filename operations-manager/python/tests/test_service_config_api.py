@@ -406,3 +406,30 @@ class TestApiConfigCoverage:
             declares_config = any(svc.config_editables(layer) or svc.config_api_fields(layer) for layer in ConfigLayer)
             if declares_config or has_component_layout:
                 assert _supported_targets(svc), f"{st.value} carries config but exposes no API target"
+
+    def test_every_supported_target_actually_has_a_route(self) -> None:
+        # The pairing RC-38 makes one derivation: a target the API says it supports must
+        # have a generated write route, and a generated route must be on a supported
+        # target. They used to be two derivations (_accepts_config_at re-deriving the
+        # form hooks, the registration loop separately requiring a model), so a service
+        # with editables but no model at a layer could be advertised and not exist.
+        from opi.api.v2.router import _CONFIG_WRITE_LAYERS, _supported_targets
+        from opi.server import app
+        from opi.services.registry import SERVICES
+
+        routed: dict[str, set[str]] = {st.value: set() for st in SERVICES}
+        for route in app.routes:
+            path = getattr(route, "path", "")
+            marker = "/services/"
+            if not path.startswith("/api/v2/projects/") or marker not in path or "/config/" not in path:
+                continue
+            service_name, _, rest = path.split(marker, 1)[1].partition("/config/")
+            if service_name in routed:
+                routed[service_name].add(rest.split("/")[0])
+
+        for service_type, service in SERVICES.items():
+            advertised = {t for t in _supported_targets(service) if ConfigLayer(t) in _CONFIG_WRITE_LAYERS}
+            assert routed[service_type.value] == advertised, (
+                f"'{service_type.value}': routes {sorted(routed[service_type.value])} do not match the "
+                f"advertised targets {sorted(advertised)}"
+            )

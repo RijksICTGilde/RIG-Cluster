@@ -48,8 +48,8 @@ class RequestsQuantities(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    memory: str = "256Mi"
-    cpu: str = "100m"
+    memory: str = Field(default="256Mi", description="Memory the database pod requests, e.g. 256Mi.")
+    cpu: str = Field(default="100m", description="CPU the database pod requests, e.g. 100m.")
 
 
 class LimitsQuantities(BaseModel):
@@ -57,8 +57,8 @@ class LimitsQuantities(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    memory: str = "512Mi"
-    cpu: str = "500m"
+    memory: str = Field(default="512Mi", description="Memory ceiling for the database pod, e.g. 512Mi.")
+    cpu: str = Field(default="500m", description="CPU ceiling for the database pod, e.g. 500m.")
 
 
 class DatabaseResources(BaseModel):
@@ -66,8 +66,12 @@ class DatabaseResources(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    requests: RequestsQuantities = RequestsQuantities()
-    limits: LimitsQuantities = LimitsQuantities()
+    requests: RequestsQuantities = Field(
+        default=RequestsQuantities(), description="What the database pod asks for; used for scheduling."
+    )
+    limits: LimitsQuantities = Field(
+        default=LimitsQuantities(), description="What the database pod may use at most; exceeding memory kills it."
+    )
 
 
 class DedicatedPostgresFields(BaseModel):
@@ -79,17 +83,30 @@ class DedicatedPostgresFields(BaseModel):
     validates to the same merged result the old ``dict.get()`` merge produced.
     """
 
-    # CNPG-compatible image (has a postgres user with UID 26).
-    image: str = "ghcr.io/cloudnative-pg/postgresql:17"
-    # Optional named registry the image is pulled from (see project 'registries').
-    registry: str | None = None
-    instances: int = Field(default=1, ge=1)
-    # Kubernetes storage quantity, e.g. "10Gi". Not pattern-constrained to match
-    # today's behaviour (required, non-empty); tighten via a future version.
-    storage: str = "10Gi"
-    privileges: list[DatabasePrivilege] = Field(default_factory=list)
-    postInitSQL: list[str] = Field(default_factory=list)
-    resources: DatabaseResources = DatabaseResources()
+    image: str = Field(
+        default="ghcr.io/cloudnative-pg/postgresql:17",
+        description="PostgreSQL image for the cluster. Must be CNPG-compatible (a postgres user with UID 26).",
+    )
+    registry: str | None = Field(
+        default=None,
+        description="Named registry from the project's 'registries' list to pull the image from; none means public.",
+    )
+    instances: int = Field(
+        default=1, ge=1, description="Number of PostgreSQL instances; more than one gives a replicated cluster."
+    )
+    # Not pattern-constrained, matching today's behaviour (required, non-empty).
+    storage: str = Field(default="10Gi", description="Size of the database volume as a Kubernetes quantity, e.g. 10Gi.")
+    privileges: list[DatabasePrivilege] = Field(
+        default_factory=list,
+        description="Extra PostgreSQL role privileges for the project's database user, from the allowed set.",
+    )
+    postInitSQL: list[str] = Field(
+        default_factory=list,
+        description="SQL statements run once, when the database is first created (extensions, dictionaries).",
+    )
+    resources: DatabaseResources = Field(
+        default=DatabaseResources(), description="CPU and memory requests and limits for the database pods."
+    )
 
     @field_validator("privileges", mode="before")
     @classmethod

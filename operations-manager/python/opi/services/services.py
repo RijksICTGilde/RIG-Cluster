@@ -164,6 +164,26 @@ def service_entry_config(entry: Any) -> Any:
     return body
 
 
+def service_entry_data(entry: Any) -> Any:
+    """Return the ``data`` of a service entry, format-agnostic (None if none).
+
+    The DEFINE-side counterpart of :func:`service_entry_config`. A definition (today:
+    the attachments catalog) sits under ``data`` rather than ``config``, because it is
+    not configuration of a use -- it is the thing being used. Both entry shapes are
+    handled: the record form (``{"name": "attachments", "data": [...]}``) and the legacy
+    single-key form (``{"attachments": {"data": [...]}}``).
+    """
+    if not isinstance(entry, dict):
+        return None
+    if "name" in entry or "reference" in entry:
+        return entry.get("data")
+    name = service_entry_name(entry)
+    body = entry.get(name) if name is not None else None
+    if isinstance(body, dict):
+        return body.get("data")
+    return None
+
+
 @dataclass
 class VariableDefinition:
     """
