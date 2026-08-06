@@ -9,7 +9,7 @@ Read-only GET endpoints return deployment state directly (no task queue).
 import asyncio
 import logging
 from inspect import Parameter, Signature
-from typing import Any, NamedTuple
+from typing import Annotated, Any, NamedTuple
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi import Path as FastAPIPath
@@ -60,6 +60,7 @@ from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
 from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
+from opi.core.task_rollout import NON_DEFERRABLE_REASONS
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.services.catalog.actions import (
     ActionContext,
@@ -508,6 +509,47 @@ async def get_deployment_v2(
 # Mutation endpoints
 # ---------------------------------------------------------------------------
 
+# --- rollout flag (RC-46) ----------------------------------------------------
+# Every endpoint below that normally processes the project accepts ``rollout``.
+# The flag only travels: it is stored in the task payload and read once, in the
+# handler, at the point where it would process. See opi/core/task_rollout.py.
+
+RolloutQuery = Annotated[
+    bool,
+    Query(
+        description=(
+            "Set to false to save the change to the project file WITHOUT rolling it out: no "
+            "manifests are generated, no services are provisioned and nothing reaches the "
+            "cluster. The project file then runs ahead of the cluster until you roll it out "
+            "yourself with POST /api/v2/projects/{project_name}/:refresh. Use it to make "
+            "several changes and roll them out in one go. Defaults to true."
+        )
+    ),
+]
+
+NoDeferQuery = Annotated[
+    bool,
+    Query(
+        description=(
+            "Accepted only as true. This operation cannot defer its rollout, so rollout=false "
+            "is refused with 422 instead of being silently ignored."
+        )
+    ),
+]
+
+
+def _reject_deferred_rollout(rollout: bool, task_type: str) -> None:
+    """Refuse rollout=false on an operation that cannot honour it, with the reason."""
+    if rollout:
+        return
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            f"rollout=false is not supported for this operation: {NON_DEFERRABLE_REASONS[task_type]}. "
+            "Leave rollout unset (or true)."
+        ),
+    )
+
 
 @v2_router.post(
     "/projects/{project_name}/:upsert-deployment",
@@ -522,6 +564,7 @@ async def upsert_deployment_v2(
     request: Request,
     project_name: str,
     deployment_data: UpsertDeploymentRequest = Body(...),
+    rollout: RolloutQuery = True,
 ) -> JSONResponse:
     """Create or update a deployment (async).
 
@@ -570,6 +613,7 @@ async def upsert_deployment_v2(
             "domain_format": deployment_data.domain_format,
             "subdomain": deployment_data.subdomain,
             "base_domain": deployment_data.base_domain,
+            "rollout": rollout,
         },
     )
     return _accepted_response(task, "upsert_deployment")
@@ -593,6 +637,7 @@ async def refresh_project_v2(
     request: Request,
     project_name: str,
     force_clone: bool = Query(default=False, description="Force clone even if target resources exist"),
+    rollout: NoDeferQuery = True,
 ) -> JSONResponse:
     """Refresh a project from git (async).
 
@@ -602,6 +647,8 @@ async def refresh_project_v2(
     Headers:
         X-API-Key: The API key for the project (required)
     """
+    _reject_deferred_rollout(rollout, "refresh_project")
+
     logger.info("V2 refresh project: %s (force_clone=%s)", project_name, force_clone)
 
     if not validate_project_name(project_name):
@@ -635,6 +682,7 @@ async def delete_deployment_v2(
     request: Request,
     project_name: str,
     deployment_name: str,
+    rollout: NoDeferQuery = True,
 ) -> JSONResponse:
     """Delete a deployment (async).
 
@@ -643,6 +691,8 @@ async def delete_deployment_v2(
     Headers:
         X-API-Key: The API key for the project (required)
     """
+    _reject_deferred_rollout(rollout, "delete_deployment")
+
     logger.info("V2 delete deployment: %s/%s", project_name, deployment_name)
 
     task = await create_async_task(
@@ -672,6 +722,7 @@ async def update_image_v2(
     project_name: str,
     deployment_name: str,
     image_data: UpdateImageRequest = Body(...),
+    rollout: RolloutQuery = True,
 ) -> JSONResponse:
     """Update a component image (async).
 
@@ -706,6 +757,7 @@ async def update_image_v2(
             "image": image_data.newImageUrl,
             "service_actions": service_actions,
             "registry": image_data.registry,
+            "rollout": rollout,
         },
     )
     return _accepted_response(task, "update_image")
@@ -725,6 +777,7 @@ async def clone_database_v2(
     project_name: str,
     deployment_name: str,
     clone_data: CloneDatabaseFromExternalRequest = Body(...),
+    rollout: NoDeferQuery = True,
 ) -> JSONResponse:
     """Clone a database from an external source (async).
 
@@ -733,6 +786,8 @@ async def clone_database_v2(
     Headers:
         X-API-Key: The API key for the project (required)
     """
+    _reject_deferred_rollout(rollout, "clone_database")
+
     logger.info("V2 clone database for %s/%s", project_name, deployment_name)
 
     task = await create_async_task(
@@ -763,6 +818,7 @@ async def clone_bucket_v2(
     project_name: str,
     deployment_name: str,
     clone_data: CloneBucketFromExternalRequest = Body(...),
+    rollout: NoDeferQuery = True,
 ) -> JSONResponse:
     """Clone a MinIO bucket from an external source (async).
 
@@ -771,6 +827,8 @@ async def clone_bucket_v2(
     Headers:
         X-API-Key: The API key for the project (required)
     """
+    _reject_deferred_rollout(rollout, "clone_bucket")
+
     logger.info("V2 clone bucket for %s/%s", project_name, deployment_name)
 
     task = await create_async_task(
@@ -801,6 +859,7 @@ async def refresh_deployment_v2(
     project_name: str,
     deployment_name: str,
     force_clone: bool = Query(default=False, description="Force clone even if target resources exist"),
+    rollout: NoDeferQuery = True,
 ) -> JSONResponse:
     """Refresh a deployment from git (async).
 
@@ -810,6 +869,8 @@ async def refresh_deployment_v2(
     Headers:
         X-API-Key: The API key for the project (required)
     """
+    _reject_deferred_rollout(rollout, "refresh_deployment")
+
     logger.info("V2 refresh deployment: %s/%s (force_clone=%s)", project_name, deployment_name, force_clone)
 
     if not validate_project_name(project_name):
@@ -845,6 +906,7 @@ async def add_component_v2(
     request: Request,
     project_name: str,
     component_data: AddComponentRequest = Body(...),
+    rollout: RolloutQuery = True,
 ) -> JSONResponse:
     """Add a new component to a project (async).
 
@@ -893,6 +955,7 @@ async def add_component_v2(
             "env_vars": component_data.env_vars,
             "aliases": component_data.aliases,
             "root": component_data.root,
+            "rollout": rollout,
         },
     )
     return _accepted_response(task, "add_component")
@@ -912,6 +975,7 @@ async def update_component_v2(
     project_name: str,
     component_name: str,
     component_data: UpdateComponentRequest = Body(...),
+    rollout: RolloutQuery = True,
 ) -> JSONResponse:
     """Update fields of an existing component (async, partial update).
 
@@ -944,6 +1008,7 @@ async def update_component_v2(
             "services": component_data.services,
             "cpu_limit": component_data.cpu_limit,
             "memory_limit": component_data.memory_limit,
+            "rollout": rollout,
         },
     )
     return _accepted_response(task, "update_component")
@@ -963,6 +1028,7 @@ async def add_component_to_deployment_v2(
     project_name: str,
     deployment_name: str,
     component_data: AddComponentToDeploymentRequest = Body(...),
+    rollout: RolloutQuery = True,
 ) -> JSONResponse:
     """Add an existing component to a deployment (async).
 
@@ -1007,6 +1073,7 @@ async def add_component_to_deployment_v2(
             "deployment_name": deployment_name,
             "component_name": component_data.component_name,
             "image": component_data.image,
+            "rollout": rollout,
         },
     )
     return _accepted_response(task, "add_component_to_deployment")
@@ -1026,6 +1093,7 @@ async def add_service_v2(
     request: Request,
     project_name: str,
     service_data: AddServiceRequest = Body(...),
+    rollout: RolloutQuery = True,
 ) -> JSONResponse:
     """Add a service to a project by name (async). DEPRECATED.
 
@@ -1052,6 +1120,7 @@ async def add_service_v2(
             "project_name": project_name,
             "service": service_data.service,
             "components": service_data.components,
+            "rollout": rollout,
         },
     )
     return _accepted_response(task, "add_service")
@@ -1259,6 +1328,7 @@ async def _enqueue_config_write(
     config: dict[str, Any] | list[Any] | None = None,
     component: str | None = None,
     deployment: str | None = None,
+    rollout: bool = True,
 ) -> JSONResponse:
     """Validate the (service, target) pair and enqueue a configure_service task.
 
@@ -1284,6 +1354,7 @@ async def _enqueue_config_write(
             "config": config,
             "component": component,
             "deployment": deployment,
+            "rollout": rollout,
         },
     )
     return _accepted_response(task, "configure_service")
@@ -1325,6 +1396,9 @@ def _config_write_signature(name_param: str | None, body_model: type | None) -> 
         params.append(Parameter(name_param, Parameter.POSITIONAL_OR_KEYWORD, annotation=annotation))
     if body_model is not None:
         params.append(Parameter("body", Parameter.POSITIONAL_OR_KEYWORD, annotation=body_model, default=Body(...)))
+    # Writing a service config is a project-file change like any other, so these routes
+    # take the same rollout flag as the hand-written ones (RC-46).
+    params.append(Parameter("rollout", Parameter.POSITIONAL_OR_KEYWORD, annotation=RolloutQuery, default=True))
     return Signature(params, return_annotation=JSONResponse)
 
 
@@ -1344,6 +1418,7 @@ def _make_upsert_endpoint(service_name: str, target: str, name_param: str | None
             config=config,
             component=kwargs.get("component_name"),
             deployment=kwargs.get("deployment_name"),
+            rollout=kwargs.get("rollout", True),
         )
 
     endpoint.__signature__ = _config_write_signature(name_param, config_model)
@@ -1363,6 +1438,7 @@ def _make_clear_endpoint(service_name: str, target: str, name_param: str | None)
             "clear",
             component=kwargs.get("component_name"),
             deployment=kwargs.get("deployment_name"),
+            rollout=kwargs.get("rollout", True),
         )
 
     endpoint.__signature__ = _config_write_signature(name_param, None)
