@@ -49,6 +49,8 @@ Wat ontbreekt is een moment "de image van dit component is vervangen", waarop ee
 
 **Dit raakt een gemelde storing.** Als dit de oorzaak is van Maarten-Jans melding, dan is stap 2 de fix en verdient die een aantekening in de release. Vraag eerst wat er bij `disabled-reason` staat, want dan weet je of je het goede probleem oplost.
 
+**Dit is een derde soort haak, en dat bepaalt het contract.** De twee bestaande doen iets anders: `AFTER_SYNC` kijkt naar het cluster na een sync, `DEPLOYMENT_STATE` leest alleen. Deze muteert het projectbestand, en daarvoor geldt het contract dat al in `plans/oom-auto-tune-deployment-scoped.md` staat: **een hook committeert niet zelf.** Hij muteert alleen `ctx.project_data`, en de generieke aanroeper doet na de scan één `save_and_commit_project()` voor alle uitkomsten samen. Twee diensten die allebei committen leveren twee commits en een lost-update-race op, en het breekt het single-save-path dat er juist is om dat te voorkomen.
+
 **Een toestand opruimen is niet hetzelfde als hem negeren.** Een component dat uit staat omdat het geheugen op is, mag niet stilletjes weer aan gaan zonder dat iemand ziet waarom het uit stond. Log wat er opgeruimd wordt en waarom, in dezelfde vorm als de andere diensten dat doen.
 
 **Niet elke dienst wil dit.** Een haakpunt waar niemand op luistert is prima; een haakpunt dat diensten dwingt iets te doen is dat niet. Een dienst die niets met een nieuwe image te maken heeft, hoort de haak gewoon niet te beantwoorden.
