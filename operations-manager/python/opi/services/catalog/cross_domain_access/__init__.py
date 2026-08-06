@@ -121,23 +121,23 @@ class CrossDomainAccessService(Service):
         return []
 
     def config_editables(self, layer: ConfigLayer):
-        if layer is not ConfigLayer.PROJECT:
-            return []
-        from opi.services.catalog.cross_domain_access.editables import CROSS_DOMAIN_EDITABLES
+        if layer is ConfigLayer.PROJECT:
+            from opi.services.catalog.cross_domain_access.editables import CROSS_DOMAIN_EDITABLES
 
-        return CROSS_DOMAIN_EDITABLES
+            return CROSS_DOMAIN_EDITABLES
+        if layer is ConfigLayer.DEPLOYMENT:
+            from opi.services.catalog.cross_domain_access.editables import CROSS_DOMAIN_DEPLOYMENT_EDITABLES
 
-    # The deployment layer is a per-deployment PATCH on the project rules (see merge.py).
-    # It is user config, not OPI state, but it has no form yet: the project-level rule
-    # editor is the whole UI today and a patch editor is its own piece of work. Declared
-    # rather than left silent so the gap is visible instead of looking like an oversight.
-    form_exempt_layers: ClassVar[dict[ConfigLayer, str]] = {
-        ConfigLayer.DEPLOYMENT: (
-            "per-deployment patch on the project rules; alleen via API/projectbestand, nog geen formulier (RC-25)"
-        )
-    }
+            return CROSS_DOMAIN_DEPLOYMENT_EDITABLES
+        return []
+
+    # Both layers have a form now (RC-42): the deployment layer got the patch editor this
+    # entry used to record as missing.
+    form_exempt_layers: ClassVar[dict[ConfigLayer, str]] = {}
 
     def config_form_section(self, layer: ConfigLayer):
+        if layer is ConfigLayer.DEPLOYMENT:
+            return self._deployment_form_section()
         if layer is not ConfigLayer.PROJECT:
             return super().config_form_section(layer)
         cached = getattr(self, "_config_section_cache", None)
@@ -175,6 +175,53 @@ class CrossDomainAccessService(Service):
             )
             self._config_section_cache = cached
         return cached
+
+    def _deployment_form_section(self, deployment_index: int | None = None):
+        """The per-deployment PATCH form: rule name + peer deployment, nothing else.
+
+        With ``deployment_index`` the wildcard paths are materialized to that deployment, which
+        is what the modal flow opens; without it the section describes the layer (what
+        ``config_form_section`` answers, and what ``test_service_config_layers`` measures).
+        """
+        from opi.forms.editables.reindex import materialize_wildcard_visualizer
+        from opi.forms.layout import Fieldset, Sequence
+        from opi.forms.visualizers.sections import FormSection
+        from opi.services.catalog.cross_domain_access.visualizers import CROSS_DOMAIN_DEPLOYMENT_VISUALIZERS
+
+        index = 0 if deployment_index is None else deployment_index
+        visualizers = [materialize_wildcard_visualizer(v, index) for v in CROSS_DOMAIN_DEPLOYMENT_VISUALIZERS]
+        suffix = "" if deployment_index is None else f"-{deployment_index}"
+
+        def dp(direction: str) -> str:
+            return config_path(ConfigLayer.DEPLOYMENT, self.service_type, "config", direction).replace(
+                "deployments[*]", f"deployments[{index}]"
+            )
+
+        return FormSection(
+            section_id=f"cross-domain-access-deployment-config{suffix}",
+            title="Cross-domain toegang per deployment",
+            icon="netwerk",
+            description=(
+                "Een regel van het project geldt voor elke deployment. Hier stel je per deployment bij met "
+                "welke deployment van de ander die praat. Alles wat je hier niet invult, erft de projectregel."
+            ),
+            post_save_action="process_project",
+            editables=visualizers,
+            layout=[
+                Fieldset(
+                    legend="Inkomend (wie mag bij mij binnen)",
+                    children=[Sequence(field_name=dp("inbound"))],
+                ),
+                Fieldset(
+                    legend="Uitgaand (waar mag ik heen)",
+                    children=[Sequence(field_name=dp("outbound"))],
+                ),
+            ],
+        )
+
+    def deployment_form_section(self, deployment_index: int):
+        """The patch form materialized for one deployment; the modal flow's single step."""
+        return self._deployment_form_section(deployment_index)
 
     # --- config reading ---------------------------------------------------------
 
@@ -284,3 +331,11 @@ class CrossDomainAccessService(Service):
                 )
             )
         return specs
+
+
+# The per-deployment patch button lives in actions.py: the service owns the condition for
+# showing it (see that module). Bound after the class so the import order holds, exactly as
+# sleep-mode does it.
+from opi.services.catalog.cross_domain_access.actions import cross_domain_actions  # noqa: E402
+
+CrossDomainAccessService.definition.actions_provider = cross_domain_actions

@@ -118,10 +118,18 @@ bereikbare poort.
 
 ## Beperkingen
 
-- **Kapotte verwijzingen falen nooit de generatie.** Bestaat het doelproject/-deployment/
-  -component niet (meer), draait het op een andere cluster, of verwijst een regel naar het
-  eigen project, dan wordt die regel met een WARNING overgeslagen — de manifest-generatie gaat
-  door.
+- **Kapotte verwijzingen falen nooit de generatie.** Bestaat het doeldeployment of -component
+  niet (meer) in een project dat deze cluster wél kent, draait het op een andere cluster, of
+  verwijst een regel naar het eigen project, dan wordt die regel met een WARNING overgeslagen —
+  de manifest-generatie gaat door.
+- **Een peer-project dat deze cluster niet kent, is geen kapotte verwijzing.** Cross-*domain*
+  betekent dat de andere kant elders beheerd kan worden of nog niet bestaat (project A wordt
+  ingericht vóór project B). Zo'n regel levert wél een policy op, met een WARNING; de namespace
+  volgt dan de conventie *namespace = projectnaam* (plus het clusterprefix), want er is geen
+  projectbestand om hem uit te lezen. Dat geeft niemand toegang die hij anders niet had: een
+  NetworkPolicy-peer zegt alleen wie er mág praten, en de **ontvanger** bepaalt met zijn eigen
+  policy of hij binnenlaat. De pod-labels blijven bovendien `project: <peer>` eisen, dus een
+  namespace die toevallig zo heet maar van iemand anders is, matcht niets.
 - **Staleness.** De verwijzing wordt opgelost op het moment dat project A verwerkt wordt.
   Hernoemt project B daarna zijn namespace of component, dan is A's policy stil verouderd tot A
   opnieuw verwerkt wordt. Verwijderen is onschadelijk (de regel wijst naar iets dat niet
@@ -153,6 +161,16 @@ Aanzetten doe je met de service-selectie (wizard-kaart of `POST /api/projects/{n
 configureren met de UI-modal of de config-API hierboven. De service provisioneert niets
 server-side: het effect zit volledig in de gegenereerde manifests, en de generieke
 service-manifest-prune ruimt de policy-bestanden op zodra de service wordt uitgezet.
+
+## Bewijs (waar de keten getest wordt)
+
+- `tests/test_cross_domain_access.py` — merge, resolve, template en het formulier per onderdeel.
+- `tests/test_cross_domain_chain.py` — de keten vanaf de formulier-processor: submissie →
+  projectbestand → manifest, inclusief de per-deployment patch.
+- `tests/e2e/test_wizard_cross_domain_policy.py` — dezelfde keten, maar begonnen in de
+  **browser**: de create-wizard wordt echt doorlopen en ingevuld (de trapsgewijze selects
+  inbegrepen), en de YAML die de wizard indient levert een NetworkPolicy op. Draai met
+  `-m "e2e and not sandbox"`.
 
 ## Afhankelijkheden
 

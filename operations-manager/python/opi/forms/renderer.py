@@ -591,11 +591,14 @@ class FormRenderer:
 
         children: list[FormField] = []
         for index in range(len(items)):
-            # Compute per-item provider context with reference exclusions
-            item_context = provider_context
+            # Per-item provider context. ``row_data`` is this row's own stored values, so a
+            # provider can answer a question about the row it is rendered in ("which
+            # deployments does the project chosen in THIS row have"). ``exclude_references``
+            # is the older, narrower case: what the other rows already took.
+            row = items[index] if isinstance(items[index], dict) else {}
+            item_context: dict[str, Any] = {**(provider_context or {}), "row_data": row}
             if ref_field_name and used_refs_by_index:
-                other_refs = [r for i, r in used_refs_by_index.items() if i != index]
-                item_context = {**(provider_context or {}), "exclude_references": other_refs}
+                item_context["exclude_references"] = [r for i, r in used_refs_by_index.items() if i != index]
 
             item_children: list[FormField] = []
             seq_children = editable.children or []
