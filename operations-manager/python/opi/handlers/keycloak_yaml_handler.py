@@ -536,6 +536,9 @@ class KeycloakYamlHandler:
                 existing["identityProviderMapper"] = mapper_config["identityProviderMapper"]
                 existing["config"].update(mapper_config["config"])
                 mapper_id = existing.get("id")
+                if not mapper_id:
+                    msg = f"Existing mapper '{mapper_name}' on '{provider_alias}' has no id to update"
+                    raise ValueError(msg)
                 logger.info(f"Updating existing mapper: {mapper_name}")
                 await self.keycloak.update_identity_provider_mapper(realm_name, provider_alias, mapper_id, existing)
             else:
@@ -1087,6 +1090,10 @@ class KeycloakYamlHandler:
                     if cred.get("type") == "password":
                         password = cred.get("value")
                         break
+
+            if not password:
+                msg = f"User '{username}' in realm '{realm_name}' has no password credential"
+                raise ValueError(msg)
 
             logger.info(f"Creating user: {username} in realm {realm_name}")
             user_info = await self.keycloak.create_user(

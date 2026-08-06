@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, ClassVar
 
 from opi.services.catalog.base import ConfigLayer, ManifestContext, ProvisionContext, SecretFileSpec, Service
 from opi.services.catalog.redis.config_model import RedisConfig
@@ -37,7 +37,7 @@ class RedisService(Service):
     # Shared service: fires for both the shared and namespace redis variant.
     manifest_activated_by = (ServiceType.REDIS, ServiceType.NAMESPACE_REDIS)
 
-    config_section_id = "redis-config"
+    config_section_id: ClassVar[str] = "redis-config"
     modal_flow_id = "modal-edit-redis-config"
 
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:

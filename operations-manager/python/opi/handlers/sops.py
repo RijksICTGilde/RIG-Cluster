@@ -458,8 +458,10 @@ class SopsHandler:
                     self.stdout = stdout
                     self.stderr = stderr
 
+            # communicate() has awaited the exit, so returncode is set; the annotation
+            # cannot know that, and defaulting to 0 would report a failure as a success.
             return AsyncResult(
-                returncode=process.returncode,
+                returncode=process.returncode if process.returncode is not None else -1,
                 stdout=stdout.decode("utf-8") if stdout else "",
                 stderr=stderr.decode("utf-8") if stderr else "",
             )

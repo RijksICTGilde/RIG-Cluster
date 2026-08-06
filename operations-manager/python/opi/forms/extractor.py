@@ -93,7 +93,7 @@ def extract_single_field(
         path=path,
         schema_type=python_type,
         widget_type=widget_type,
-        label=form_meta.label if form_meta else name.replace("_", " ").title(),
+        label=(form_meta.label if form_meta else None) or name.replace("_", " ").title(),
         required=is_required,
         description=form_meta.description if form_meta else None,
         placeholder=form_meta.placeholder if form_meta else None,
