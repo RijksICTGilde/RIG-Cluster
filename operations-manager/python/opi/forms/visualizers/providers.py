@@ -949,10 +949,38 @@ def _cross_domain_direction(yaml_path: str | None) -> str:
     return ""
 
 
-def _cross_domain_peer_ref(row_data: dict[str, Any] | None, yaml_path: str | None) -> dict[str, Any]:
-    """The row's peer block (``{project, deployment, component}``), or an empty dict."""
+def cross_domain_project_rules(yaml_data: dict[str, Any], direction: str) -> list[dict[str, Any]]:
+    """The PROJECT-level rules of one direction, as stored on the project's service entry."""
+    for entry in yaml_data.get("services") or []:
+        if service_entry_name(entry) != ServiceType.CROSS_DOMAIN_ACCESS.value:
+            continue
+        config = entry.get("config") if isinstance(entry, dict) else None
+        if isinstance(config, dict):
+            return [rule for rule in config.get(direction) or [] if isinstance(rule, dict)]
+    return []
+
+
+def _cross_domain_peer_ref(
+    row_data: dict[str, Any] | None, yaml_path: str | None, yaml_data: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """The row's peer block (``{project, deployment, component}``), or an empty dict.
+
+    A DEPLOYMENT-layer row is a patch keyed on the rule's ``name``: it carries only the field
+    it overrides, so the peer project sits on the project-level rule of the same name. Falling
+    back to that rule is what makes the peer-deployment select work at the patch layer, where
+    it is the whole point of the form.
+    """
     side = _cross_domain_peer_side(yaml_path)
     peer = (row_data or {}).get(side)
+    if isinstance(peer, dict) and peer.get("project"):
+        return peer
+    name = (row_data or {}).get("name")
+    if yaml_data and name:
+        for rule in cross_domain_project_rules(yaml_data, _cross_domain_direction(yaml_path)):
+            if rule.get("name") == name:
+                inherited = rule.get(side)
+                if isinstance(inherited, dict):
+                    return {**inherited, **(peer if isinstance(peer, dict) else {})}
     return peer if isinstance(peer, dict) else {}
 
 
@@ -1064,7 +1092,7 @@ class CrossDomainPeerDeploymentOptionsProvider:
     def get_options(self) -> list[dict[str, Any]]:
         from opi.core.config import settings
 
-        peer = _cross_domain_peer_ref(self.row_data, self.yaml_path)
+        peer = _cross_domain_peer_ref(self.row_data, self.yaml_path, self.yaml_data)
         project_data = _cross_domain_peer_project_data(self.yaml_data, peer.get("project"))
         names = [
             deployment.get("name")
@@ -1110,7 +1138,7 @@ class CrossDomainPeerComponentOptionsProvider:
     def get_options(self) -> list[dict[str, Any]]:
         from opi.core.config import settings
 
-        peer = _cross_domain_peer_ref(self.row_data, self.yaml_path)
+        peer = _cross_domain_peer_ref(self.row_data, self.yaml_path, self.yaml_data)
         project_data = _cross_domain_peer_project_data(self.yaml_data, peer.get("project"))
         deployments = [
             deployment
@@ -1136,6 +1164,42 @@ class CrossDomainPeerComponentOptionsProvider:
             empty_label=empty_label,
             choose_label="-- Kies een component --",
             stale_suffix="(niet gevonden)",
+        )
+
+
+class CrossDomainRuleNameOptionsProvider:
+    """The names of the PROJECT-level rules a deployment patch can address.
+
+    At the deployment layer the name is not a free-text label but a REFERENCE: a patch with
+    the same name overrides that project rule (``merge.py``). Offering the existing names is
+    what makes the difference between patching a rule and silently creating a second one.
+    A name that is not among them is still kept -- that is how a deployment adds a rule of its
+    own, which the merge explicitly allows.
+    """
+
+    def __init__(
+        self,
+        yaml_data: dict[str, Any] | None = None,
+        yaml_path: str | None = None,
+        current_value: str | None = None,
+    ) -> None:
+        self.yaml_data = yaml_data or {}
+        self.yaml_path = yaml_path
+        self.current_value = current_value
+
+    def get_options(self) -> list[dict[str, Any]]:
+        direction = _cross_domain_direction(self.yaml_path)
+        names = [
+            rule["name"]
+            for rule in cross_domain_project_rules(self.yaml_data, direction)
+            if isinstance(rule.get("name"), str)
+        ]
+        return _cross_domain_options(
+            names,
+            self.current_value,
+            empty_label="Dit project heeft nog geen regels op projectniveau",
+            choose_label="-- Kies een regel --",
+            stale_suffix="(alleen in deze deployment)",
         )
 
 
@@ -1240,7 +1304,7 @@ class CrossDomainPortOptionsProvider:
         deployment open.
         """
         # The port always lives on ``to``, which for an outbound rule is the peer.
-        peer = _cross_domain_peer_ref(self.row_data, self.yaml_path)
+        peer = _cross_domain_peer_ref(self.row_data, self.yaml_path, self.yaml_data)
         project_data = _cross_domain_peer_project_data(self.yaml_data, peer.get("project"))
         if not peer.get("project"):
             return [], "Kies eerst een project"
@@ -1461,6 +1525,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "InviteRealmRoleOptionsProvider": InviteRealmRoleOptionsProvider,
     "CrossDomainProjectOptionsProvider": CrossDomainProjectOptionsProvider,
     "CrossDomainPeerDeploymentOptionsProvider": CrossDomainPeerDeploymentOptionsProvider,
+    "CrossDomainRuleNameOptionsProvider": CrossDomainRuleNameOptionsProvider,
     "CrossDomainPeerComponentOptionsProvider": CrossDomainPeerComponentOptionsProvider,
     "CrossDomainLocalComponentOptionsProvider": CrossDomainLocalComponentOptionsProvider,
     "CrossDomainPortOptionsProvider": CrossDomainPortOptionsProvider,

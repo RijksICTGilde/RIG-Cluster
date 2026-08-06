@@ -11,6 +11,12 @@ from __future__ import annotations
 from opi.forms.editables.editable import WidgetType
 from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.services.catalog.cross_domain_access.editables import (
+    DEPLOYMENT_INBOUND_NAME_EDITABLE,
+    DEPLOYMENT_INBOUND_PEER_DEPLOYMENT_EDITABLE,
+    DEPLOYMENT_INBOUND_SEQUENCE_EDITABLE,
+    DEPLOYMENT_OUTBOUND_NAME_EDITABLE,
+    DEPLOYMENT_OUTBOUND_PEER_DEPLOYMENT_EDITABLE,
+    DEPLOYMENT_OUTBOUND_SEQUENCE_EDITABLE,
     INBOUND_LOCAL_COMPONENT_EDITABLE,
     INBOUND_NAME_EDITABLE,
     INBOUND_PEER_COMPONENT_EDITABLE,
@@ -141,3 +147,53 @@ OUTBOUND_SEQUENCE = EditableVisualizer(
 )
 
 CROSS_DOMAIN_VISUALIZERS = [INBOUND_SEQUENCE, OUTBOUND_SEQUENCE]
+
+
+# --- deployment layer (RC-42) ------------------------------------------------------------
+# Deliberately two fields: the rule NAME (the key the patch merges on) and the peer
+# deployment (the field a project rule may leave open). See the editables module for why the
+# rest of the rule is not repeated here.
+
+DEPLOYMENT_INBOUND_NAME = EditableVisualizer(
+    editable=DEPLOYMENT_INBOUND_NAME_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Regel",
+    help_text="De regel op projectniveau die deze deployment aanpast.",
+    attributes=_CASCADE,
+)
+DEPLOYMENT_INBOUND_PEER_DEPLOYMENT = EditableVisualizer(
+    editable=DEPLOYMENT_INBOUND_PEER_DEPLOYMENT_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Bron-deployment",
+    help_text="De deployment van de ander die voor DEZE deployment geldt.",
+)
+DEPLOYMENT_INBOUND_SEQUENCE = EditableVisualizer(
+    editable=DEPLOYMENT_INBOUND_SEQUENCE_EDITABLE,
+    widget=WidgetType.SEQUENCE,
+    label="Inkomend",
+    help_text="Per regel: welke deployment van de ander voor deze deployment geldt.",
+    children=[DEPLOYMENT_INBOUND_NAME, DEPLOYMENT_INBOUND_PEER_DEPLOYMENT],
+)
+
+DEPLOYMENT_OUTBOUND_NAME = EditableVisualizer(
+    editable=DEPLOYMENT_OUTBOUND_NAME_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Regel",
+    help_text="De regel op projectniveau die deze deployment aanpast.",
+    attributes=_CASCADE,
+)
+DEPLOYMENT_OUTBOUND_PEER_DEPLOYMENT = EditableVisualizer(
+    editable=DEPLOYMENT_OUTBOUND_PEER_DEPLOYMENT_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Doel-deployment",
+    help_text="De deployment van de ander die voor DEZE deployment geldt.",
+)
+DEPLOYMENT_OUTBOUND_SEQUENCE = EditableVisualizer(
+    editable=DEPLOYMENT_OUTBOUND_SEQUENCE_EDITABLE,
+    widget=WidgetType.SEQUENCE,
+    label="Uitgaand",
+    help_text="Per regel: welke deployment van de ander voor deze deployment geldt.",
+    children=[DEPLOYMENT_OUTBOUND_NAME, DEPLOYMENT_OUTBOUND_PEER_DEPLOYMENT],
+)
+
+CROSS_DOMAIN_DEPLOYMENT_VISUALIZERS = [DEPLOYMENT_INBOUND_SEQUENCE, DEPLOYMENT_OUTBOUND_SEQUENCE]
