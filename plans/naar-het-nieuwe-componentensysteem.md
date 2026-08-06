@@ -145,7 +145,29 @@ Daarmee is de navigatie ook de **proef op de som voor de hele gereedschapsketen*
 
 **Fase 5: de schil.** `base.html.j2` is nu `c-page` met een handgeschreven `rvo-demo-page`-div, header en footer. Die wordt `c-app-shell` met zijn regio's. Dit gaat als laatste, want elke pagina hangt eraan, en pas als de pagina's zelf samenstellingen zijn is de schil verwisselbaar zonder alles tegelijk aan te raken.
 
-## Wat er aan de LOTC-kant uitgezocht moet worden
+## De antwoorden van het LOTC-project
+
+Binnengekomen op 7 augustus, gemeten tegen hun code van vandaag, met NLDD gepind op 0.8.72. Volledig na te lezen in hun repo als `docs/ANTWOORDEN-RIG-CLUSTER.md`.
+
+**1. Core-definities voor de veld-omhulsels: nog niet besloten, richting is ja.** Vandaag bestaan ze niet. De rijke NLDD-veldlaag is een *thema-gebonden* fragment, gegenereerd uit de NLDD custom-elements-manifest, en resolvet dus niet onder RVO. De richting is wel ja, want het past in de missie en het is dezelfde lift die ze al deden voor de app-componenten. Maar het is niet gebouwd en niet ingepland. **Hun advies: plan er niet hard op.** En hun aanbod: zeg het, dan zetten ze het vooraan.
+
+**2. RVO zou die wrapper ook krijgen: ja, als intentie.** Twee redenen dat dat haalbaar is: jinja-roos heeft de onderliggende wrapper al (onze `c-text-input-field`), dus de RVO-implementatie kan die inpakken; en hun vaste patroon is een nieuw core-component meteen in beide thema's te leveren. Uitdrukkelijk: een omzetting naar een core-wrapper is bedoeld om ons roos-gebruik te behouden, niet te vervangen. Wel met een slag om de arm, want gedeeltelijke dekking is toegestaan.
+
+**3. `file-input-field` is een bevestigd gat.** In de NLDD-manifest zit geen file- of upload-element. RVO heeft het wel. Komt er ooit een core-wrapper, dan heeft NLDD een eigen implementatie nodig, of het blijft daar een gat en valt terug op een zichtbare placeholder.
+
+**4. De namen zijn stabiel.** De core-componenten (onze 84 procent) zijn handgeschreven en stabiel; de grote hernoeming (`name` naar `label`) is al geland en er staat niets meer gepland. De NLDD-afgeleide laag is gepind op een exacte versie, met `npm run nldd:diff` om vóór een bump te zien wat er schuift. **1280 aanroepen omzetten is dus redelijk veilig**, mits tegen een gepinde versie.
+
+**5. `lotc-layout` is in de praktijk vereist.** Formeel opt-in, maar de structuurprimitieven (`app-shell`, `grid`, `stack`, `columns`, `bar`) renderen uitsluitend via dat pakket; zonder valt `<c-stack>` terug op `<div class="lotc-unimplemented">`. NLDD levert de vormgeving, `lotc-layout` de structuur. Dus `design-systems="lotc-layout nldd"` is de juiste combinatie en geen toevalligheid.
+
+En de README is inmiddels rechtgezet.
+
+### Wat dat betekent voor de fasering
+
+De enige echte blokkade is punt 1, en die is geen technisch probleem maar een prioriteitsvraag bij het LOTC-project. Fase 1 en 2 kunnen zonder. Fase 3b (de navigatieproef) kan ook zonder, want navigatie raakt de formulierlaag niet. Fase 4 loopt vast op de wizard zolang de veld-omhulsels er niet zijn.
+
+**Er ligt dus een beslissing:** vragen we het LOTC-project om de veld-omhulsels vooraan te zetten? Zo ja, dan is de weg vrij. Zo nee, dan houdt de omzetting op bij de niet-formulierpagina's, en dat is nog steeds een groot deel.
+
+## Wat er aan de LOTC-kant uitgezocht moet worden (beantwoord, hierboven)
 
 Dit hoort gevraagd te worden aan de nog draaiende sessie, niet geraden:
 
