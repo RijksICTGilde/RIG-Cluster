@@ -525,6 +525,7 @@ Every hook a service may implement, so a new service knows what it can own:
 | `contribute_deployment_manifests(ctx)` | deployment-wide manifests (once per deployment, e.g. a NetworkPolicy) |
 | `observe_deployment(ctx)` | act on a just-synced deployment (`HookPoint.AFTER_SYNC`) |
 | `deployment_state(ctx)` | what this service knows about a deployment (`HookPoint.DEPLOYMENT_STATE`) |
+| `on_redeploy(ctx)` | clear the state you recorded about content that was just replaced (`HookPoint.REDEPLOY`) |
 
 ### Contributing state about a deployment
 
@@ -545,6 +546,30 @@ Two rules, both load-bearing:
 - **Answer from the project file, not the cluster.** That is where a service records what
   it did, and it keeps the hook synchronous and connector-free, so a page render can ask
   it as cheaply as the health check does.
+
+### Clearing state when new content is rolled out
+
+`deployment_state(ctx)` reports what a service did to a deployment; `on_redeploy(ctx)` is
+where it undoes it. The hook fires when a deliberate action puts new content on a
+deployment -- an image update, an upsert of an existing deployment -- and every state a
+service recorded about the previous content stops holding at that moment. Read
+`features/redeploy-clears-recorded-state.md` before adding one.
+
+Three rules:
+
+- **Named after the action, not after the trigger.** An image update and an upsert are the
+  same event as far as recorded state is concerned. The hook this replaced was a hardcoded
+  `if` on one disable reason in `project_manager`, and every further case would have been
+  another exception beside it.
+- **Clear unconditionally; do not reason about the new content.** Whatever the recorded
+  reason said, it was about content that is gone. If the new content has the same problem,
+  the observing path records it again -- against the thing that actually caused it.
+- **Say what you cleared.** Return one line per cleared item, in the user's language. State
+  that disappears silently leaves a component switched back on with nobody able to see why
+  it was off.
+
+Mutate `ctx.project_data` in place and never commit: the caller commits the rollout and
+every cleanup in one commit, so two services cannot race to two commits.
 
 ## Provisioning and cleanup
 

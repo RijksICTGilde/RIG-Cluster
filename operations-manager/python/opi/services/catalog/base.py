@@ -368,6 +368,42 @@ class DeploymentStateFact:
 
 
 @dataclass
+class RedeployContext:
+    """Inputs a service needs when new content is rolled out onto a deployment (RC-37,
+    ``HookPoint.REDEPLOY``).
+
+    The writing counterpart of ``DeploymentStateContext``: that hook asks a service what
+    state it put a deployment in, this one tells it that the state describes content that
+    is no longer there. Deliberately about the ACTION, not about the image: an image
+    update and a deployment upsert are the same event as far as recorded state is
+    concerned, and a context named after the image would have made the second one an
+    exception.
+
+    ``project_data`` is the in-memory dict the caller is about to commit, and a hook
+    mutates it in place -- exactly like ``DeploymentObservationContext``, and for the same
+    reason: the caller does ONE commit for the rollout and every state cleanup together,
+    so two services cannot race to two commits.
+    """
+
+    project_name: str
+    project_data: dict[str, Any]  # in-memory, mutable
+    #: The deployment being rolled out, as it appears in ``project_data``.
+    deployment: dict[str, Any]
+    #: ``reference`` of every component this rollout put new content on. Empty means the
+    #: action touched no component in particular; a service whose state is per-component
+    #: then has nothing to clear, while a per-deployment state (sleep) still does.
+    component_names: list[str] = field(default_factory=list)
+
+    @property
+    def deployment_name(self) -> str:
+        return self.deployment.get("name", "")
+
+    @property
+    def cluster(self) -> str:
+        return self.deployment.get("cluster", "")
+
+
+@dataclass
 class DetailPageSection:
     """A read-only section a service renders on the project-details page (WP2).
 
@@ -868,6 +904,29 @@ class Service(ABC):
         Return FACTS, never a health verdict: see ``DeploymentStateFact``. Synchronous and
         project-file-only; a service that needs the cluster to answer is answering a
         different question.
+        """
+        return []
+
+    def on_redeploy(self, ctx: RedeployContext) -> list[str]:
+        """Clear the state this service recorded about content that is now replaced
+        (RC-37, ``HookPoint.REDEPLOY``, default none).
+
+        Fires when a deliberate action puts new content on a deployment -- an image
+        update, a deployment upsert. Everything this service recorded about the previous
+        content stops holding at that moment: a component switched off because the old
+        image OOM'd, a deployment put to sleep because the old content sat idle. The new
+        content is the signal that the old situation no longer applies, so a service
+        clears its state unconditionally rather than reasoning about whether the new
+        content will hit the same problem. If it does, the watcher records it again --
+        against the image that actually caused it.
+
+        Return one line per thing cleared, in the user's language: clearing state without
+        saying so leaves a component silently switched back on and nobody able to see why
+        it was off. Mutate ``ctx.project_data`` in place and never commit -- the caller
+        commits once for the rollout and every cleanup together.
+
+        A service that recorded nothing about this deployment returns ``[]``; a service
+        that has nothing to do with rollouts does not answer the hook at all.
         """
         return []
 
