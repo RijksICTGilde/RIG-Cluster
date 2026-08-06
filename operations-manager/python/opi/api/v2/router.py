@@ -89,7 +89,6 @@ logger = logging.getLogger(__name__)
 
 v2_router: APIRouter = APIRouter(
     prefix="/api/v2",
-    tags=["v2"],
     responses={404: {"description": "Not found"}},
     default_response_class=JSONResponse,
 )
@@ -418,7 +417,7 @@ def _build_deployment_detail(
 
 @v2_router.get(
     "/projects/{project_name}/deployments",
-    tags=["v2", "deployments"],
+    tags=["deployments"],
     response_model=DeploymentListResponse,
 )
 @validate_api_token
@@ -461,7 +460,7 @@ async def list_deployments_v2(
 
 @v2_router.get(
     "/projects/{project_name}/deployments/{deployment_name}",
-    tags=["v2", "deployments"],
+    tags=["deployments"],
     response_model=DeploymentDetail,
 )
 @validate_api_token
@@ -511,7 +510,7 @@ async def get_deployment_v2(
 
 @v2_router.post(
     "/projects/{project_name}/:upsert-deployment",
-    tags=["v2", "deployments"],
+    tags=["deployments"],
     responses={
         200: {"model": TaskResponse[UpsertDeploymentResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -582,7 +581,7 @@ async def upsert_deployment_v2(
 
 @v2_router.post(
     "/projects/{project_name}/:refresh",
-    tags=["v2", "projects"],
+    tags=["projects"],
     responses={
         200: {"model": TaskResponse[RefreshProjectResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -624,7 +623,7 @@ async def refresh_project_v2(
 
 @v2_router.delete(
     "/projects/{project_name}/{deployment_name}",
-    tags=["v2", "deployments"],
+    tags=["deployments"],
     responses={
         200: {"model": TaskResponse[DeleteDeploymentResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -660,7 +659,7 @@ async def delete_deployment_v2(
 
 @v2_router.put(
     "/projects/{project_name}/deployments/{deployment_name}/image",
-    tags=["v2", "deployments"],
+    tags=["deployments"],
     responses={
         200: {"model": TaskResponse[UpdateImageResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -713,7 +712,7 @@ async def update_image_v2(
 
 @v2_router.post(
     "/projects/{project_name}/deployments/{deployment_name}/:clone-database",
-    tags=["v2", "operations"],
+    tags=["operations"],
     responses={
         200: {"model": TaskResponse[CloneDatabaseResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -751,7 +750,7 @@ async def clone_database_v2(
 
 @v2_router.post(
     "/projects/{project_name}/deployments/{deployment_name}/:clone-bucket",
-    tags=["v2", "operations"],
+    tags=["operations"],
     responses={
         200: {"model": TaskResponse[CloneBucketResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -789,7 +788,7 @@ async def clone_bucket_v2(
 
 @v2_router.post(
     "/projects/{project_name}/deployments/{deployment_name}/:refresh",
-    tags=["v2", "deployments"],
+    tags=["deployments"],
     responses={
         200: {"model": TaskResponse[RefreshDeploymentResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -834,7 +833,7 @@ async def refresh_deployment_v2(
 
 @v2_router.post(
     "/projects/{project_name}/components",
-    tags=["v2", "components"],
+    tags=["components"],
     responses={
         200: {"model": TaskResponse[AddComponentResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -900,7 +899,7 @@ async def add_component_v2(
 
 @v2_router.patch(
     "/projects/{project_name}/components/{component_name}",
-    tags=["v2", "components"],
+    tags=["components"],
     responses={
         200: {"model": TaskResponse[AddComponentResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -951,7 +950,7 @@ async def update_component_v2(
 
 @v2_router.post(
     "/projects/{project_name}/deployments/{deployment_name}/components",
-    tags=["v2", "components"],
+    tags=["components"],
     responses={
         200: {"model": TaskResponse[AddComponentToDeploymentResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -1014,7 +1013,7 @@ async def add_component_to_deployment_v2(
 
 @v2_router.post(
     "/projects/{project_name}/services",
-    tags=["v2", "services"],
+    tags=["services"],
     responses={
         200: {"model": TaskResponse[AddServiceResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -1151,7 +1150,7 @@ class ServiceCatalogResponse(BaseModel):
     services: list[ServiceCatalogEntry] = Field(..., description="Every platform service, sorted by name")
 
 
-@v2_router.get("/services", tags=["v2", "services"], response_model=ServiceCatalogResponse)
+@v2_router.get("/services", tags=["services"], response_model=ServiceCatalogResponse)
 async def list_configurable_services_v2() -> ServiceCatalogResponse:
     """List platform services and the config targets each accepts (registry-driven).
 
@@ -1218,7 +1217,7 @@ def _collect_service_config(project_data: dict[str, Any], service_name: str, tar
     return found
 
 
-@v2_router.get("/projects/{project_name}/services/{service_name}/config", tags=["v2", "services"])
+@v2_router.get("/projects/{project_name}/services/{service_name}/config", tags=["services"])
 @validate_api_token
 async def get_service_config_v2(
     request: Request,
@@ -1394,7 +1393,7 @@ def _register_service_config_routes(router: APIRouter) -> None:
                 path,
                 validate_api_token(_make_upsert_endpoint(service_name, target, name_param, model)),
                 methods=["PUT"],
-                tags=["v2", "services", service_name],
+                tags=[service_name],
                 responses=_CONFIG_WRITE_RESPONSES,
                 summary=f"Upsert {service_name} config ({target})",
             )
@@ -1402,7 +1401,7 @@ def _register_service_config_routes(router: APIRouter) -> None:
                 path,
                 validate_api_token(_make_clear_endpoint(service_name, target, name_param)),
                 methods=["DELETE"],
-                tags=["v2", "services", service_name],
+                tags=[service_name],
                 responses=_CONFIG_WRITE_RESPONSES,
                 summary=f"Clear {service_name} config ({target})",
             )
@@ -1589,7 +1588,7 @@ def _register_service_action_routes(router: APIRouter) -> None:
                     _action_path(service_type.value, action, verbs),
                     validate_api_token(_make_action_endpoint(action, verbs)),
                     methods=[method],
-                    tags=["v2", "services", service_type.value],
+                    tags=[service_type.value],
                     summary=f"{action.summary} ({'/'.join(v.value for v in verbs)})",
                     description=_action_description(action, verbs),
                 )
