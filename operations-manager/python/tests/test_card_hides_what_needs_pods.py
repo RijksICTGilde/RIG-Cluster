@@ -21,7 +21,7 @@ _CARD = pathlib.Path(opi.__file__).parent / "templates/project-details/_argocd-d
 def test_the_logs_button_depends_on_the_service_facts() -> None:
     source = _CARD.read_text(encoding="utf-8")
 
-    assert "deployment_expects_no_pods" in source
+    assert "expects_no_application_pods" in source
     assert "not expects_no_pods" in source
 
 

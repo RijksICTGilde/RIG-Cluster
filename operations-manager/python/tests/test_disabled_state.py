@@ -11,8 +11,8 @@ off, and the tests hold that difference.
 
 from __future__ import annotations
 
+from opi.services.catalog.deployment_health.disabled import DisabledState, deployment_disabled_state
 from opi.services.deployment_state import collect_deployment_state
-from opi.services.disabled_state import DisabledState, deployment_disabled_state
 from opi.services.services_enums import ServiceType
 
 
