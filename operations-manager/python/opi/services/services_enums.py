@@ -137,10 +137,21 @@ class HookPoint(Enum):
     (the health check before it judges, the deployment page before it renders). Hook
     points are an enum, never strings, so ``hook == "after-sync"`` is simply ``False``
     and a loose string cannot slip in anywhere.
+
+    ``REDEPLOY`` is the counterpart of ``DEPLOYMENT_STATE`` on the writing side: a service
+    that put a deployment in a state gets the moment new content is deliberately rolled
+    out onto it, and clears the state that described the old content. It is named after
+    the action, not after one trigger of it: an image update and a deployment upsert both
+    replace what runs there, and a hook called "image replaced" would have left the upsert
+    to be bolted on as an exception -- which is exactly the shape being removed here.
+    Without it every state needs its own ``if`` in ``project_manager``, which is how a
+    component disabled for anything other than an image-pull error stayed switched off
+    after its image was fixed (RC-37).
     """
 
     AFTER_SYNC = "after-sync"
     DEPLOYMENT_STATE = "deployment-state"
+    REDEPLOY = "redeploy"
 
     @property
     def level(self) -> HookLevel:
@@ -148,12 +159,14 @@ class HookPoint(Enum):
 
 
 #: The level each hook point iterates over. ``AFTER_SYNC`` fires once per deployment,
-#: after the sync; ``DEPLOYMENT_STATE`` is asked about one deployment. Project- and
-#: component-level machinery is intentionally not built yet: with only deployment-level
-#: hooks it would be code with no caller.
+#: after the sync; ``DEPLOYMENT_STATE`` is asked about one deployment; ``REDEPLOY`` names
+#: the components the rollout put new content on, which is why it is the first
+#: component-level hook. Project-level machinery is still intentionally not built: it
+#: would be code with no caller.
 _HOOK_LEVELS: dict[HookPoint, HookLevel] = {
     HookPoint.AFTER_SYNC: HookLevel.DEPLOYMENT,
     HookPoint.DEPLOYMENT_STATE: HookLevel.DEPLOYMENT,
+    HookPoint.REDEPLOY: HookLevel.COMPONENT,
 }
 
 

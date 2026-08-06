@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from opi.services.catalog.base import DeploymentStateContext, DeploymentStateFact, Service
+from opi.services.catalog.base import DeploymentStateContext, DeploymentStateFact, RedeployContext, Service
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.services_enums import ServiceType
 
@@ -87,6 +87,50 @@ class DeploymentHealthService(Service):
                 )
             ]
         return []
+
+    def on_redeploy(self, ctx: RedeployContext) -> list[str]:
+        """Switch a component back on when new content is rolled out onto it (RC-37).
+
+        Every automatic disable is a judgement about the content that was running:
+        ``ImagePullBackOff`` about an image that could not be fetched, ``OOMKilled`` about
+        one that ran out of memory, a crash loop about one that would not stay up. A
+        rollout replaces exactly that content, so the judgement is about something that is
+        no longer there and the component goes back on -- whatever the reason said.
+
+        This is deliberately unconditional, and the alternative was really considered: an
+        OOM will probably come back, so only lifting an image-pull disable would avoid one
+        cycle of off-on-off. It is the wrong trade. A new image is often precisely the
+        memory-leak fix, nothing else ever clears an OOM disable (the re-enable sweep keys
+        on ``disabled-image``, which only image-pull disables carry), and a component that
+        is off forever with no path back is a worse failure than one that goes off again
+        five minutes later -- with the reason then pointing at the image that actually
+        caused it. It also cannot flap on its own: the only thing that lifts a disable
+        here is a person rolling something out.
+
+        Only a disable recorded ON the deployment-component is cleared. A ``disabled``
+        flag on the component *definition* is a project-wide decision by a person and
+        governs every deployment, so rolling out one of them is not the moment to flip it.
+        """
+        from opi.handlers.project_file_handler import ProjectFileHandler
+
+        handler = ProjectFileHandler()
+        notices: list[str] = []
+        for component in ctx.deployment.get("components", []) or []:
+            reference = component.get("reference", "")
+            if reference not in ctx.component_names:
+                continue
+            # ``"disabled" in component``: the deployment-component's own record, not the
+            # definition-level fallback ``extract_deployment_component_disabled`` adds.
+            if "disabled" not in component or not component.get("disabled"):
+                continue
+            reason = str(component.get("disabled-reason", ""))
+            handler.set_deployment_component_disabled(ctx.project_data, ctx.deployment_name, reference, False, "")
+            notices.append(
+                f"Component '{reference}' stond uitgeschakeld"
+                + (f" ({reason})" if reason else "")
+                + " en is weer aangezet, want er is nieuwe inhoud uitgerold."
+            )
+        return notices
 
     def counts_as_failure(self, health: PodHealthResult, state: DeploymentState) -> bool:
         """Whether an observed pod problem is a failure of the application.
