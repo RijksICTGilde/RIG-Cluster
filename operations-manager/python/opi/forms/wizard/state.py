@@ -291,8 +291,9 @@ class WizardState:
       items the user removed.
 
     Also carries render-only context that is not project data (``is_new``,
-    ``existing_component_names``, ``_backup_runs``); those keys start with a
-    marker or are stripped before saving.
+    ``existing_component_names``, ``_backup_runs``). Those never reach a project
+    file because a save writes only the yaml_paths the flow's editables declare
+    (see ``wizard/write_set.py``), not everything the session happens to hold.
     """
 
     locked_services: list[str] = field(default_factory=list)
