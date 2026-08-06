@@ -289,3 +289,102 @@ async def test_cleanup_old_tasks(orm_db):
     deleted = await svc.cleanup_old_tasks(retention_hours=168)
     assert deleted == 1
     assert await svc.get_task(created["task_id"]) is None
+
+
+# ---------------------------------------------------------------------------
+# Deferred rollouts (RC-46): the drift the UI shows must be measured, not guessed.
+# ---------------------------------------------------------------------------
+
+
+async def _completed(svc, *, project, task_type, payload):
+    row = await _create(svc, project=project, deployment=None, task_type=task_type, payload=payload)
+    await svc.complete_task(row["task_id"])
+    return row
+
+
+async def test_no_deferred_rollouts_when_nothing_was_deferred(orm_db):
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web"})
+
+    pending = await svc.get_deferred_rollouts("p1")
+    assert pending == {"count": 0, "since": None, "task_types": []}
+
+
+async def test_deferred_rollouts_are_counted_and_dated(orm_db):
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    await _completed(svc, project="p1", task_type="configure_service", payload={"svc": "keycloak", "rollout": False})
+
+    pending = await svc.get_deferred_rollouts("p1")
+    assert pending["count"] == 2
+    assert pending["since"] is not None
+    assert pending["task_types"] == ["add_component", "configure_service"]
+
+
+async def test_deferred_rollouts_are_scoped_to_one_project(orm_db):
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+
+    assert (await svc.get_deferred_rollouts("p2"))["count"] == 0
+
+
+async def test_a_refresh_clears_everything_before_it(orm_db):
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    await _completed(svc, project="p1", task_type="refresh_project", payload={"force_clone": False})
+
+    assert (await svc.get_deferred_rollouts("p1"))["count"] == 0
+
+
+async def test_a_change_deferred_after_the_refresh_still_counts(orm_db):
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="refresh_project", payload={"force_clone": False})
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+
+    pending = await svc.get_deferred_rollouts("p1")
+    assert pending["count"] == 1
+    assert pending["task_types"] == ["add_component"]
+
+
+async def test_a_partial_rollout_does_not_clear_the_drift(orm_db):
+    """refresh_deployment reconciles ONE deployment, so the rest of the file stays ahead."""
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    await _completed(svc, project="p1", task_type="refresh_deployment", payload={"deployment_name": "dev"})
+
+    assert (await svc.get_deferred_rollouts("p1"))["count"] == 1
+
+
+async def test_cleanup_keeps_a_deferred_rollout_that_was_never_rolled_out(orm_db):
+    """Drift that disappears after a week is exactly the silent drift this must surface."""
+    svc = _svc()
+    row = await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    async with session_scope() as session:
+        await session.execute(
+            update(AsyncTask)
+            .where(AsyncTask.id == uuid.UUID(row["task_id"]))
+            .values(completed_at=func.now() - func.make_interval(0, 0, 0, 0, 200))
+        )
+
+    assert await svc.cleanup_old_tasks(retention_hours=168) == 0
+    assert (await svc.get_deferred_rollouts("p1"))["count"] == 1
+
+
+async def test_cleanup_removes_a_deferred_rollout_once_it_was_rolled_out(orm_db):
+    svc = _svc()
+    deferred = await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    rolled = await _completed(svc, project="p1", task_type="refresh_project", payload={"force_clone": False})
+    # Both beyond the retention window, but the refresh strictly after the deferred change.
+    async with session_scope() as session:
+        await session.execute(
+            update(AsyncTask)
+            .where(AsyncTask.id == uuid.UUID(deferred["task_id"]))
+            .values(completed_at=func.now() - func.make_interval(0, 0, 0, 0, 200))
+        )
+        await session.execute(
+            update(AsyncTask)
+            .where(AsyncTask.id == uuid.UUID(rolled["task_id"]))
+            .values(completed_at=func.now() - func.make_interval(0, 0, 0, 0, 190))
+        )
+
+    assert await svc.cleanup_old_tasks(retention_hours=168) == 2
