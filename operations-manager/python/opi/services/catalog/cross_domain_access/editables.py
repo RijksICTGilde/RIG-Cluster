@@ -6,13 +6,13 @@ select does inside the deployment-components sequence -- so create AND edit read
 prefill naturally, with no transient split step.
 
 The peer side (the side carrying ``project``) uses three plain fields rather than one
-composite select: the framework cannot cascade per-row dependent selects, and a composite
-select would have no natural edit-prefill path back from the stored ``from``/``to`` object.
-Three direct fields avoid both problems and keep the stored form (nested ``from``/``to``,
-2.3) the single source of truth. The peer ``project`` is a select fed from the authorized
-projects; ``deployment`` and ``component`` are free text (a component name cannot be
-cascaded from the chosen project without per-row dependent options). The own side and the
-port are selects fed from the project's own components / ports.
+composite select: a composite select would have no natural edit-prefill path back from the
+stored ``from``/``to`` object. Three direct fields keep the stored form (nested
+``from``/``to``, 2.3) the single source of truth, and they cascade: ``project`` is a select
+fed from the authorized projects, ``deployment`` is fed from the project chosen in the SAME
+row, ``component`` from that deployment (RC-42, via the renderer's per-row ``row_data``).
+The own side is a select on the project's own components, and the port is a select on the
+RECEIVING side of the rule -- mine for inbound, the peer's for outbound.
 """
 
 from __future__ import annotations
@@ -53,6 +53,7 @@ def _peer_deployment(direction: str, side: str) -> Editable:
     # layer to fill (2.3). remove_when_none so an empty field leaves no key.
     return Editable(
         yaml_path=_cp(f"{direction}[*]", side, "deployment"),
+        values_provider="CrossDomainPeerDeploymentOptionsProvider",
         validator=KubernetesNameValidator("Deployment"),
         remove_when_none=True,
         virtualize=_VIRTUALIZE,
@@ -62,6 +63,7 @@ def _peer_deployment(direction: str, side: str) -> Editable:
 def _peer_component(direction: str, side: str) -> Editable:
     return Editable(
         yaml_path=_cp(f"{direction}[*]", side, "component"),
+        values_provider="CrossDomainPeerComponentOptionsProvider",
         validator=KubernetesNameValidator("Component"),
         required=True,
         virtualize=_VIRTUALIZE,
