@@ -124,6 +124,37 @@ For paths into a service's config use `smart_get_value` / `smart_set_value`
   `uv run python -m opi.services.config_schema`.
 - Managers validate through `provider.validate_config(...)`, not raw `dict.get()`.
 
+### Three kinds of config: define, use, bind
+
+"Service config" is one word for three different things, and until RC-38 nothing said
+which one a layer meant. `ConfigRole` (`catalog/base.py`) names them, and a service
+answers per layer through `config_roles(layer)`:
+
+| Role | Means | Where it lives |
+|---|---|---|
+| `DEFINE` | put something into the project that nothing uses yet | under `data` on the project-level service entry |
+| `USE` | this component/deployment uses this service, this thing | under `config` |
+| `BIND` | *how* the used thing reaches the workload | under `config`, next to the use |
+
+For nearly the whole catalog the answer is `USE` at every layer it carries config on, and
+that is the default -- there is nothing to define, and the binding is implied by the
+service itself. Attachments is the first service where the three come apart: it defines a
+catalog at project level, and a component both uses one (`reference`) and binds it
+(`provide-as` / `path` / `env-name`).
+
+A DEFINE layer needs a model of its own, because a definition is not a config block:
+`data_model_for(layer)` returns it, and `validate_service_configs` walks the `data` block
+through it. That walk is why the attachments catalog is validated at all -- it sat under
+`data`, the config walk only looked at `config`, and the shape was guarded by nothing.
+
+The roles also answer whether a layer deserves an endpoint. "Config on a layer, so an
+endpoint" is the right direction but not a law: check per service that the endpoint would
+mean something. Attachments has no project-level *config* route (there is no config block
+there) and instead declares an upload action for its DEFINE side.
+
+`tests/test_service_config_roles.py` holds every service to naming a role for each layer
+it carries config on.
+
 ### Config layers
 
 The same service can carry config at four levels, each with its own yaml-path shape.
@@ -446,11 +477,15 @@ per-service endpoint file** -- every service's endpoint is identical apart from 
 model, so one generator beats 13 copies. What a service owns is the *contract* (the
 model + the layer hooks); the router owns the uniform *exposure*.
 
-- Which targets a service exposes is measured from its own declarations:
-  `config_api_fields(layer)` **or** `config_editables(layer)` **or** (for the
-  component layer) `config_component_layout()`. A sequence-config service (storage is
-  a `RootModel[list]`) has no flat `config_api_fields` but is still reached through
-  its editables.
+- Which targets a service exposes is measured from its own declarations: the layer is
+  in `config_layers()` (editables, API fields, layout nodes or a modelled payload) **and**
+  `config_model_for(layer)` gives something to validate a write against. A sequence-config
+  service (storage is a `RootModel[list]`) has no flat `config_api_fields` but is still
+  reached through its editables. Before RC-38 this re-derived the same hooks separately,
+  so the target list and the generated routes could come apart.
+- **Every config field carries a `description`.** It is what the schema fragment and the
+  OpenAPI document show a caller, and `tests/test_service_config_field_descriptions.py`
+  fails on a field without one -- nested value objects included.
 - Validation is the model itself (the same one the wizard's save runs through
   `validate_service_configs`), so there is no second validation path. The typed body
   also rejects a bad value synchronously (422) before the async task is enqueued.
@@ -460,6 +495,38 @@ model + the layer hooks); the router owns the uniform *exposure*.
 
 Full reference: `features/service-config-api.md`. So a new service needs to do
 nothing beyond declaring its `config_model` (and layer hooks) to be API-configurable.
+
+### When editables are not enough: declared actions
+
+Editables stay the starting point, and editables and the API will never coincide exactly
+-- that is fine, as long as the difference is deliberate and both live with the service.
+Where a service can do something the form has no field for, it declares an **action**
+(`catalog/actions.py`, `api_actions()`), in its own package's `api.py`.
+
+The declaration says once: the layer and its `ConfigRole`s, the fields and what each one
+means (that text lands in the OpenAPI document), the verbs, the valid field combinations
+with a dotted pointer to where that rule is *already* enforced, and a worked example.
+Route, multipart signature and documentation are generated from it.
+
+**A field points at the shared `Editable`; it never restates a rule.** Same move as
+`opi/api/validation.py` (RC-26): reference the object the wizard renders, wrap it in
+"required here" or "optional here" and nothing else. A field with genuinely no editable
+(a file's bytes) sets `no_editable_reason` -- a written exception, not a second validator.
+
+The verbs are a contract, not a style choice:
+
+| Verb | HTTP | Id already exists | Id absent |
+|---|---|---|---|
+| create | `POST` | 409, refuse | create |
+| update | `PUT` | replace | 404, refuse |
+| upsert | `PUT ?upsert=true` | replace, without asking | create |
+
+Replacing on id without warning is only ever the upsert, and the caller has to ask for it:
+a `POST` that quietly overwrites lies about what it did.
+
+Attachments is the first inhabitant: uploading a file into the catalog (project level) and
+uploading plus coupling in one request (component level). See
+`features/service-api-actions.md`.
 
 ## Detail page (read-only presentation)
 
@@ -525,6 +592,9 @@ Every hook a service may implement, so a new service knows what it can own:
 | Hook | Purpose |
 |---|---|
 | `config_editables(layer)` / `config_api_fields(layer)` | config data + accepted API fields; also determine which API config targets the service exposes |
+| `config_roles(layer)` | what the config at a layer is: define, use and/or bind |
+| `data_model_for(layer)` | model for the DEFINE-side payload (under `data`), for a service that defines something |
+| `api_actions()` | extra API actions the service declares (fields, verbs, example) beyond the generic config endpoints |
 | `config_form_section(layer)` | project-level wizard/edit config step |
 | `config_component_layout()` / `config_component_visualizers()` | per-component form fields |
 | `detail_page_sections(project_data, user_role)` | read-only detail-page block (project level) |

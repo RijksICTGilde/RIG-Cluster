@@ -15,9 +15,13 @@ from pydantic import BaseModel, ConfigDict, Field
 class MetricsScraperConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # Scrape target; when None the deployment falls back to the application port.
-    # Non-privileged only (>=1024): images run non-root, so a scrape port below
-    # 1024 can never be bound or reached.
-    port: int | None = Field(default=None, ge=1024, le=65535)
-    # Metrics path; when None the template falls back to "/metrics".
-    path: str | None = None
+    port: int | None = Field(
+        default=None,
+        ge=1024,
+        le=65535,
+        description=(
+            "Port metrics are scraped from; the application port when left out. Must be 1024 or higher: "
+            "images run non-root and cannot bind below that."
+        ),
+    )
+    path: str | None = Field(default=None, description="Path metrics are scraped from; /metrics when left out.")

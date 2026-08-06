@@ -12,12 +12,18 @@ guardrailed by the attachment-data-entry / attachment-use-entry $defs in project
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from opi.services.catalog.attachments.catalog_model import AttachmentCatalog
 from opi.services.catalog.attachments.config_model import AttachmentsConfig
-from opi.services.catalog.base import ConfigLayer, DetailPageSection, Service
+from opi.services.catalog.base import ConfigLayer, ConfigRole, DetailPageSection, Service
 from opi.services.services import ServiceDefinition, service_entry_name
 from opi.services.services_enums import ServiceBinding, ServiceType
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from opi.services.catalog.actions import ServiceAction
 
 
 class AttachmentsService(Service):
@@ -36,6 +42,56 @@ class AttachmentsService(Service):
     config_model = AttachmentsConfig
     config_schema_version = "1.0"
     config_component_order = 25
+
+    def data_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
+        """The catalog model, at the project layer where the catalog lives.
+
+        This is what closes the gap the ``attachment-data-entry`` ``$def`` describes: the
+        catalog sat under ``data``, the config walk only looks at ``config``, so nothing
+        validated it. ``validate_service_configs`` now asks every service for this and
+        validates the ``data`` block against it.
+        """
+        return AttachmentCatalog if layer is ConfigLayer.PROJECT else None
+
+    def config_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
+        """The coupling list, on the two layers where a coupling means something.
+
+        A component couples an attachment, and a deployment-component may override that
+        coupling for one deployment. The project layer holds the catalog (under ``data``)
+        and the deployment layer holds nothing at all -- yet ``config_model`` alone
+        answered at all four, which is how the API came to claim a project-level config
+        block nothing reads. Saying it per layer keeps the generated routes and the
+        validation walk on the layers that have a use to configure.
+        """
+        return AttachmentsConfig if layer in (ConfigLayer.COMPONENT, ConfigLayer.DEPLOYMENT_COMPONENT) else None
+
+    def config_roles(self, layer: ConfigLayer) -> tuple[ConfigRole, ...]:
+        """Attachments is the service where define, use and bind come apart.
+
+        PROJECT defines: the catalog entry (id, filename, encrypted content) is put
+        into the project and used by nothing until a component says so. COMPONENT does
+        both of the other two in one entry: ``reference`` is the use (which attachment)
+        and ``provide-as``/``path``/``env-name`` the binding (how it reaches the pod).
+        A deployment-component overrides that same use-and-binding for one deployment.
+        A deployment as a whole neither defines nor uses an attachment.
+        """
+        if layer is ConfigLayer.PROJECT:
+            return (ConfigRole.DEFINE,)
+        if layer in (ConfigLayer.COMPONENT, ConfigLayer.DEPLOYMENT_COMPONENT):
+            return (ConfigRole.USE, ConfigRole.BIND)
+        return ()
+
+    def api_actions(self) -> list[ServiceAction]:
+        """Uploading an attachment, at project level and at component level.
+
+        The two things the API could not do: put a file in the catalog at all, and do
+        that plus the coupling in one request. Both are declared in this package's
+        ``api.py``; the routes and their documentation are derived from those
+        declarations.
+        """
+        from opi.services.catalog.attachments.api import ATTACHMENT_ACTIONS
+
+        return ATTACHMENT_ACTIONS
 
     def _config_selected(self, project_data: dict[str, Any]) -> bool:
         return self.service_type.value in [
