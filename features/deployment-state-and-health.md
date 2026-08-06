@@ -63,6 +63,40 @@ def deployment_state(self, ctx: DeploymentStateContext) -> list[DeploymentStateF
 uitspreken. Hij zegt dat de eigen pods van de applicatie horen te ontbreken -- niets over
 pods die er wél zijn.
 
+### De badge: het woord op de kaart (RC-35)
+
+Naast `summary` draagt een feit een optionele `badge`: het ene of twee woorden waarmee de
+deploymentkaart de situatie benoemt. Tekst, verder niets -- geen kleur, geen icoon, want een
+kaart vol door diensten gekozen opmaak leest niet meer als één platform.
+
+Samen met `expects_no_application_pods` bepaalt de badge waar het woord terechtkomt:
+
+| Feit | Waar het woord staat |
+|---|---|
+| badge + `expects_no_application_pods=True` | **In plaats van** de groene `Healthy` die nul replicas oplevert |
+| badge, `expects_no_application_pods=False` | **Naast** de gezondheidsbadge |
+| geen badge | Niet op de kaart; alleen de `summary` in het toestandsblok |
+
+Alleen de groene `Healthy` wordt ooit vervangen. `Degraded`, `Progressing` en `Unknown`
+zijn iets dat echt is waargenomen, en een toestand die die verbergt zou van iets
+uitschakelen een manier maken om een storing te laten verdwijnen.
+
+Melden twee diensten tegelijk een vervangende badge -- een deployment die slaapt én
+helemaal uit staat -- dan krijgen ze **allebei** hun woord, gesorteerd op dienstnaam zodat
+de weergave niet van de volgorde van de registry afhangt. Eén gedeelde badge "niet actief"
+zou verbergen of er iets van de gebruiker verwacht wordt: slapen gaat vanzelf over,
+uitgeschakeld blijft tot iemand het aanzet.
+
+Wat waar staat, ligt daarmee vast: de **badge** benoemt de situatie, het **blok** eronder
+draagt de zin die niet op een badge past (waarom het zo is, en wat het beëindigt). Geen van
+beide is een verkorte versie van de ander.
+
+```python
+state = collect_deployment_state(project_data, deployment_name)
+state.replacing_badges     # woorden die de plaats van Healthy innemen
+state.accompanying_badges  # woorden die ernaast staan
+```
+
 ### Iets vraagt de toestand op
 
 ```python
@@ -107,6 +141,11 @@ feiten. Het is dezelfde bijdrage, alleen gerenderd in plaats van beoordeeld: de 
 loopt over wat er gemeld wordt en noemt geen dienst, dus een volgende dienst die een
 deployment in een situatie zet krijgt het blok gratis. Meldt niemand iets, dan is er geen
 blok.
+
+De deploymentkaart (`project-details/_argocd-deployment-card.html.j2`) leest sinds RC-35
+uit dezelfde feiten: de badge, en of er dingen weggelaten moeten worden die alleen zin
+hebben zolang er iets draait (de logs-knop). De kaart kent dus geen enkele dienst bij
+naam; hij krijgt `deployment_states` (naam → `DeploymentState`) mee en leidt de rest af.
 
 ## Configuratie
 
