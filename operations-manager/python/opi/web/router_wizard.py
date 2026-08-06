@@ -846,8 +846,17 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     is_forward = goto in ("next", "review")
     logger.info("[submit_step %s] goto=%r, is_forward=%s", section_id, goto, is_forward)
 
-    # Auto-add service dependencies when leaving the services step
-    if section_id == "services" and isinstance(submitted_yaml.get("services"), list):
+    # Vul ontbrekende dienst-afhankelijkheden aan zodra een stap een selectie meestuurt.
+    #
+    # Dit hing aan de sectienaam "services", en de bewerk-flow heet "services-edit", dus
+    # daar liep het nooit. Zichtbaar gevolg: een dienst die door een andere vereist wordt
+    # is in de UI vergrendeld, en een vergrendelde checkbox is disabled, en een disabled
+    # checkbox verstuurt zijn waarde niet. De dienst viel dus uit de selectie juist omdat
+    # hij verplicht is, en het overzicht meldde dat hij verwijderd werd.
+    #
+    # De voorwaarde is nu wat hij beschrijft: draagt deze stap een dienstenlijst, vul hem
+    # dan aan. Een naam is geen eigenschap om gedrag aan op te hangen.
+    if isinstance(submitted_yaml.get("services"), list):
         from opi.services.services import ServiceAdapter
 
         submitted_yaml["services"] = ServiceAdapter.resolve_service_dependencies(submitted_yaml["services"])
