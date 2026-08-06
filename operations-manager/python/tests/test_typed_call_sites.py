@@ -249,6 +249,16 @@ class TestFieldExamples:
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
                     continue
+                # Alleen Pydantic's ``Field``: daar is ``example`` een extra kwarg die
+                # Pydantic v2 afkeurt en die in de OpenAPI-spec verdwijnt. Andere
+                # aanroepen mogen een echte parameter ``example`` hebben, en die hebben
+                # ze ook: ``ActionField(example=...)`` uit RC-38 declareert hem gewoon.
+                # De oorspronkelijke check keek naar elke aanroep en zou die dus als
+                # fout aanwijzen terwijl er niets mis mee is.
+                callee = node.func
+                naam = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
+                if naam != "Field":
+                    continue
                 if any(kw.arg == "example" for kw in node.keywords):
                     offenders.append(f"{path}:{node.lineno}")
 
