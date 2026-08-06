@@ -21,7 +21,6 @@ from opi.services.catalog.authorization_wall import AuthorizationWallService
 from opi.services.catalog.base import ConfigLayer, DeploymentPageContext, ProjectPageContext, Service
 from opi.services.catalog.cross_domain_access import CrossDomainAccessService
 from opi.services.catalog.deployment_health import DeploymentHealthService
-from opi.services.catalog.events import EVENT_MARKER
 from opi.services.catalog.health_check import HealthCheckService
 from opi.services.catalog.invite import InviteService
 from opi.services.catalog.keycloak import KeycloakService
@@ -121,9 +120,12 @@ def _build_listener_index() -> dict[ServiceEvent, list[Service]]:
 
 
 def _listener_order(service: Service, event: ServiceEvent) -> int:
-    """A service's position among an event's listeners: its earliest handler's order."""
-    orders = [getattr(getattr(service, name), EVENT_MARKER)[1] for name in service.event_handlers.get(event, []) or []]
-    return min(orders, default=100)
+    """A service's position among an event's listeners: its earliest handler's order.
+
+    Read from the index, not off the bound method: a service may override an inherited
+    handler by name without repeating the decorator, and then the method carries no marker.
+    """
+    return min((order for _name, order in service.event_handlers.get(event, ())), default=100)
 
 
 _LISTENERS: dict[ServiceEvent, list[Service]] = _build_listener_index()

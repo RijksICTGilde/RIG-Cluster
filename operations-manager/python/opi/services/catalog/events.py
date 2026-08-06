@@ -75,15 +75,20 @@ def on(event: ServiceEvent, *, order: int = 100) -> Callable[[F], F]:
     return decorate
 
 
-def collect_event_handlers(cls: type) -> dict[ServiceEvent, list[str]]:
-    """Index the decorated handlers of ``cls``: event -> method names, in ``order``.
+def collect_event_handlers(cls: type) -> dict[ServiceEvent, list[tuple[str, int]]]:
+    """Index the decorated handlers of ``cls``: event -> ``(method name, order)``, sorted.
 
     Walks the full MRO, so a handler a service inherits from a mixin (the backups block)
     counts as that service's own. A name found on a more derived class wins: overriding a
     handler by name replaces it rather than adding a second one, which is what overriding
     means everywhere else.
+
+    The ``order`` travels with the name because an override does not have to repeat the
+    decorator -- that is what "replaces it" means. Reading the order back off the bound
+    method later would then hit a plain function with no marker on it, so the index keeps
+    what it sorted by.
     """
-    handlers: dict[ServiceEvent, list[tuple[int, str]]] = {}
+    handlers: dict[ServiceEvent, list[tuple[str, int]]] = {}
     seen: set[str] = set()
     for klass in cls.__mro__:
         for name, member in vars(klass).items():
@@ -94,5 +99,5 @@ def collect_event_handlers(cls: type) -> dict[ServiceEvent, list[str]]:
                 continue
             seen.add(name)
             event, order = marker
-            handlers.setdefault(event, []).append((order, name))
-    return {event: [name for _, name in sorted(entries)] for event, entries in handlers.items()}
+            handlers.setdefault(event, []).append((name, order))
+    return {event: sorted(entries, key=lambda entry: (entry[1], entry[0])) for event, entries in handlers.items()}

@@ -21,6 +21,7 @@ import inspect
 from typing import Any
 
 import pytest
+from opi.services import registry
 from opi.services.catalog.base import (
     DeploymentPageContext,
     DeploymentStateContext,
@@ -38,7 +39,11 @@ ALL_EVENTS = [*ActionEvent, *UIEvent]
 
 def _handlers(service: Service) -> list[tuple[Any, Any]]:
     """(event, function) for every handler a service declares."""
-    return [(event, getattr(type(service), name)) for event, names in service.event_handlers.items() for name in names]
+    return [
+        (event, getattr(type(service), name))
+        for event, entries in service.event_handlers.items()
+        for name, _order in entries
+    ]
 
 
 class TestTheTwoFamiliesStayApart:
@@ -227,7 +232,7 @@ class TestTheDeclaration:
             def early(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
                 return []
 
-        assert _Ordered.event_handlers[UIEvent.PROJECT_SECTIONS] == ["early", "late"]
+        assert _Ordered.event_handlers[UIEvent.PROJECT_SECTIONS] == [("early", 5), ("late", 50)]
 
     def test_the_default_order_is_the_documented_one_hundred(self) -> None:
         def handler(self, ctx: Any) -> list[Any]:
@@ -251,6 +256,28 @@ class TestTheDeclaration:
         sections = _Derived().handle_ui(UIEvent.PROJECT_SECTIONS, ProjectPageContext({}, "admin"))
 
         assert [section.template for section in sections] == ["derived"]
+
+    def test_an_overriding_service_still_gets_indexed_as_a_listener(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The same override, but through the index instead of the dispatch. An override
+        does not repeat the decorator, so its method carries no marker; the order has to
+        come from the index. Reading it back off the bound method raised AttributeError at
+        import of ``registry``, which means the first catalog service to override a handler
+        would stop the app from starting."""
+
+        class _Base(Service):
+            @on(UIEvent.PROJECT_SECTIONS, order=20)
+            def block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
+                return [DetailPageSection(template="base")]
+
+        class _Overriding(_Base):
+            def block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
+                return [DetailPageSection(template="derived")]
+
+        overriding = _Overriding()
+        monkeypatch.setitem(registry.SERVICES, ServiceType.INVITE, overriding)
+        monkeypatch.setattr(registry, "_LISTENERS", registry._build_listener_index())
+
+        assert overriding in listeners(UIEvent.PROJECT_SECTIONS)
 
     def test_a_class_without_handlers_has_an_empty_index(self) -> None:
         class _Quiet(Service):
