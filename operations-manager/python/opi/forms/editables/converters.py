@@ -819,3 +819,113 @@ class CommaSeparatedListConverter:
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
         return self.read(value, context_data=context_data)
+
+
+class CommandLineConverter:
+    """Een startcommando als een regel tekst, opgeslagen als lijst argumenten.
+
+    Kubernetes wil ``command`` als losse argumenten, maar niemand typt een lijst. Dit veld
+    toont dus een regel zoals je hem in een terminal schrijft en splitst hem hier, zodat
+    het projectbestand de vorm houdt die het cluster verwacht:
+
+        sh -c "/app/docker/prod/seeder && exec /app/docker/prod/web"
+
+    wordt
+
+        ["sh", "-c", "/app/docker/prod/seeder && exec /app/docker/prod/web"]
+
+    De regels, bewust klein gehouden:
+
+    * witruimte scheidt argumenten;
+    * wat tussen dubbele quotes staat blijft bij elkaar, spaties incluis;
+    * een dubbele quote is een scheidingsteken en bereikt de container niet. Wil je er echt
+      een doorgeven, dan verdubbel je hem (``""``), zoals in een spreadsheet.
+
+    Geen backslash-escapes, anders dan een shell. Een backslash in een commando is meestal
+    een pad op Windows of een regeleinde, en die stilzwijgend opeten is erger dan hem
+    doorgeven. Wie een letterlijke quote nodig heeft, heeft ``""``.
+    """
+
+    QUOTE = '"'
+
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        """Lijst -> de regel die de gebruiker ziet."""
+        if not isinstance(value, list):
+            return "" if value is None else str(value)
+        return " ".join(self._quote(str(argument)) for argument in value)
+
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str] | None:
+        """De getypte regel -> de lijst die het cluster krijgt.
+
+        Leeg levert None, zodat ``remove_when_none`` de sleutel weghaalt: het schema eist
+        minstens een argument, dus een lege lijst opslaan zou het project afkeuren.
+        """
+        if isinstance(value, list):
+            argumenten = [str(item) for item in value if str(item).strip()]
+            return argumenten or None
+        argumenten = split_command_line(str(value or ""))
+        return argumenten or None
+
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        """Alleen-lezen weergave: dezelfde regel die je zou typen."""
+        if not value:
+            return "Zoals in het image"
+        return self.read(value, context_data)
+
+    def _quote(self, argument: str) -> str:
+        verdubbeld = argument.replace(self.QUOTE, self.QUOTE * 2)
+        if argument == "" or any(teken.isspace() for teken in argument) or self.QUOTE in argument:
+            return f"{self.QUOTE}{verdubbeld}{self.QUOTE}"
+        return verdubbeld
+
+
+def split_command_line(regel: str) -> list[str]:
+    """Splits een commandoregel in argumenten. Zie ``CommandLineConverter`` voor de regels.
+
+    Een niet-gesloten quote wordt hier afgesloten alsof hij aan het eind stond; het is de
+    validator die daarover klaagt, zodat de gebruiker een foutmelding krijgt in plaats van
+    een stilzwijgend ander commando.
+    """
+    argumenten: list[str] = []
+    huidig: list[str] = []
+    begonnen = False
+    in_quote = False
+    index = 0
+    while index < len(regel):
+        teken = regel[index]
+        if teken == CommandLineConverter.QUOTE:
+            if regel[index + 1 : index + 2] == CommandLineConverter.QUOTE:
+                huidig.append(CommandLineConverter.QUOTE)
+                begonnen = True
+                index += 2
+                continue
+            in_quote = not in_quote
+            begonnen = True
+            index += 1
+            continue
+        if teken.isspace() and not in_quote:
+            if begonnen:
+                argumenten.append("".join(huidig))
+                huidig, begonnen = [], False
+            index += 1
+            continue
+        huidig.append(teken)
+        begonnen = True
+        index += 1
+    if begonnen:
+        argumenten.append("".join(huidig))
+    return argumenten
+
+
+def command_line_has_unbalanced_quote(regel: str) -> bool:
+    """Of er een dubbele quote openstaat aan het eind van de regel."""
+    open_quote = False
+    index = 0
+    while index < len(regel):
+        if regel[index] == CommandLineConverter.QUOTE:
+            if regel[index + 1 : index + 2] == CommandLineConverter.QUOTE:
+                index += 2
+                continue
+            open_quote = not open_quote
+        index += 1
+    return open_quote

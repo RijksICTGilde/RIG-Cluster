@@ -149,6 +149,9 @@ COMPONENTS_SECTION = FormSection(
                     children=[
                         "name",
                         "image",
+                        # Het startcommando hoort bij het image: het vervangt de entrypoint
+                        # daarvan, dus je beoordeelt de twee samen.
+                        "command",
                     ],
                 ),
                 Fieldset(
@@ -180,16 +183,6 @@ COMPONENTS_SECTION = FormSection(
                     ),
                     children=[
                         Sequence(field_name="path"),
-                    ],
-                ),
-                Fieldset(
-                    legend="Startcommando",
-                    description=(
-                        "Alleen invullen als je zeker weet dat het moet. Laat je dit leeg, dan start het "
-                        "component zoals het image dat zelf doet, en dat is bijna altijd de bedoeling."
-                    ),
-                    children=[
-                        Sequence(field_name="command"),
                     ],
                 ),
                 # Component-level services hook their fieldsets/sequences in here,

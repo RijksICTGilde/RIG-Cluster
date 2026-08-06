@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from opi.forms.editables.converters import (
+    CommandLineConverter,
     ContainerImageConverter,
     IntegerConverter,
     ServiceListConverter,
@@ -10,7 +11,7 @@ from opi.forms.editables.converters import (
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.validators import (
     AllowedValuesValidator,
-    CommandArgumentValidator,
+    CommandLineValidator,
     ComponentNameValidator,
     ContainerImageValidator,
     MemoryRangeValidator,
@@ -105,16 +106,14 @@ COMPONENT_SERVICES_EDITABLE = Editable(
 #: points nowhere ("exec: \"sh\": executable file not found in $PATH" is a real one from
 #: our own test images). Optional, and it stays out of the file when left empty: the
 #: schema demands minItems 1, so an empty list would not even validate.
-COMPONENT_COMMAND_ITEM_EDITABLE = Editable(
-    yaml_path="components[*]/command[*]",
-    validator=CommandArgumentValidator(),
-)
-
+#:
+#: One line of text for the user, a list of arguments in the file. Nobody types a list and
+#: Kubernetes wants one, so ``CommandLineConverter`` splits the line and keeps whatever
+#: sits between double quotes together.
 COMPONENT_COMMAND_EDITABLE = Editable(
     yaml_path="components[*]/command",
-    min_items=0,
-    max_items=10,
-    children=[COMPONENT_COMMAND_ITEM_EDITABLE],
+    converter=CommandLineConverter(),
+    validator=CommandLineValidator(),
     remove_when_none=True,
 )
 
