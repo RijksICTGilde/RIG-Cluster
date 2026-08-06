@@ -5,6 +5,7 @@
       "properties": {
         "disabled": {
           "default": false,
+          "description": "Keep the rule but do not apply it.",
           "title": "Disabled",
           "type": "boolean"
         },
@@ -17,9 +18,11 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "The peer that is allowed to reach me; may be partial."
         },
         "name": {
+          "description": "Name of this rule; a deployment-level entry with the same name patches the project rule.",
           "maxLength": 40,
           "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
           "title": "Name",
@@ -34,7 +37,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "My component and port the peer reaches; may be partial."
         }
       },
       "required": [
@@ -57,6 +61,7 @@
             }
           ],
           "default": null,
+          "description": "My component the rule is about.",
           "title": "Component"
         }
       },
@@ -77,6 +82,7 @@
             }
           ],
           "default": null,
+          "description": "My component the peer reaches.",
           "title": "Component"
         },
         "port": {
@@ -91,6 +97,7 @@
             }
           ],
           "default": null,
+          "description": "Port on my component the peer reaches it on.",
           "title": "Port"
         }
       },
@@ -102,6 +109,7 @@
       "properties": {
         "disabled": {
           "default": false,
+          "description": "Keep the rule but do not apply it.",
           "title": "Disabled",
           "type": "boolean"
         },
@@ -114,9 +122,11 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "My component that reaches out; may be partial."
         },
         "name": {
+          "description": "Name of this rule; a deployment-level entry with the same name patches the project rule.",
           "maxLength": 40,
           "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
           "title": "Name",
@@ -131,7 +141,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "The peer component and port it may reach; may be partial."
         }
       },
       "required": [
@@ -154,6 +165,7 @@
             }
           ],
           "default": null,
+          "description": "Component of the peer, as a DNS-1123 label.",
           "title": "Component"
         },
         "deployment": {
@@ -167,6 +179,7 @@
             }
           ],
           "default": null,
+          "description": "Deployment of the peer; may be left open on a project-level rule and filled in per deployment.",
           "title": "Deployment"
         },
         "project": {
@@ -180,6 +193,7 @@
             }
           ],
           "default": null,
+          "description": "Project of the peer, as a DNS-1123 label.",
           "title": "Project"
         }
       },
@@ -200,6 +214,7 @@
             }
           ],
           "default": null,
+          "description": "Component of the peer, as a DNS-1123 label.",
           "title": "Component"
         },
         "deployment": {
@@ -213,6 +228,7 @@
             }
           ],
           "default": null,
+          "description": "Deployment of the peer; may be left open on a project-level rule and filled in per deployment.",
           "title": "Deployment"
         },
         "port": {
@@ -227,6 +243,7 @@
             }
           ],
           "default": null,
+          "description": "Port on the peer component that is reached.",
           "title": "Port"
         },
         "project": {
@@ -240,6 +257,7 @@
             }
           ],
           "default": null,
+          "description": "Project of the peer, as a DNS-1123 label.",
           "title": "Project"
         }
       },
@@ -251,6 +269,7 @@
   "description": "Project- or deployment-level cross-domain-access config: two lists of named rules.\n\nThis is the STORED shape (patch models), because a root rule may leave the peer\ndeployment open and a deployment rule is a partial patch keyed on ``name``. The\ncompleteness of a rule is judged after the merge, not here.",
   "properties": {
     "inbound": {
+      "description": "Rules letting another project's component reach one of mine.",
       "items": {
         "$ref": "#/$defs/InboundRulePatch"
       },
@@ -258,6 +277,7 @@
       "type": "array"
     },
     "outbound": {
+      "description": "Rules letting one of my components reach another project's.",
       "items": {
         "$ref": "#/$defs/OutboundRulePatch"
       },

@@ -64,15 +64,49 @@ class SleepModeConfig(BaseModel):
     # tests build it with the Python field names while the file uses hyphens.
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    enabled: bool = False
-    match: list[str] = Field(default_factory=list)
-    sleep_after_deploy: str = Field(default="48h", alias="sleep-after-deploy")
-    sleep_after_wake: str = Field(default="1h", alias="sleep-after-wake")
-    waker: bool = True
-    waker_component: str | None = Field(default=None, alias="waker-component")
-    wake_mode: WakeMode = Field(default="auto", alias="wake-mode")
-    title: str | None = None
-    description: str = ""
+    enabled: bool = Field(default=False, description="Whether sleep-mode is active for this project.")
+    match: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Which deployments are in scope, by name: an exact name, 'prefix*' (starts with) or "
+            "'*suffix' (ends with). Anything else is refused."
+        ),
+    )
+    sleep_after_deploy: str = Field(
+        default="48h",
+        alias="sleep-after-deploy",
+        description=(
+            "How long a deployment stays awake after being deployed before it is put to sleep, as a "
+            "compact duration (48h, 90m, 30s, 2d)."
+        ),
+    )
+    sleep_after_wake: str = Field(
+        default="1h",
+        alias="sleep-after-wake",
+        description="How long a deployment stays awake after being woken, same duration format.",
+    )
+    waker: bool = Field(
+        default=True,
+        description=(
+            "Run a small waker pod in front of a sleeping deployment so a visitor can wake it. "
+            "Off means only an admin can wake it, via the portal or the API."
+        ),
+    )
+    waker_component: str | None = Field(
+        default=None,
+        alias="waker-component",
+        description="Which component the waker answers for; by default the deployment's root component.",
+    )
+    wake_mode: WakeMode = Field(
+        default="auto",
+        alias="wake-mode",
+        description=(
+            "What the waker does with a visitor: 'auto' wakes on the first browser GET, 'confirm' "
+            "shows a button first, 'manual' only informs."
+        ),
+    )
+    title: str | None = Field(default=None, description="Heading on the waker page; the deployment name when left out.")
+    description: str = Field(default="", description="Explanatory text shown on the waker page.")
 
     @field_validator("sleep_after_deploy", "sleep_after_wake")
     @classmethod

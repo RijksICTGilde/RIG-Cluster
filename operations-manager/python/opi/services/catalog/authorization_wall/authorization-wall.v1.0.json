@@ -11,6 +11,7 @@
         }
       ],
       "default": null,
+      "description": "Text shown on the sign-in page in front of the application.",
       "title": "Banner"
     }
   },
