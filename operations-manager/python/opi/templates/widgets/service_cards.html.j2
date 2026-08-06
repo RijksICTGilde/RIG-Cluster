@@ -12,15 +12,6 @@
                 {{ bool_attr("checked", card.checked) }}
                 {{ bool_attr("disabled", card.disabled) }}
             />
-            {# Een disabled checkbox verstuurt zijn waarde niet. Een vergrendelde dienst is
-               juist een dienst die AAN moet blijven (iets anders vereist hem), dus zonder
-               dit vangnet valt hij uit de selectie en meldt het overzicht dat hij verwijderd
-               wordt: keycloak vereist publish-on-web, dus publish-on-web werd vergrendeld en
-               daarmee weggegooid. De JS zet de checkbox weer aan zodra hij niet meer
-               vergrendeld is; dan telt die en levert de merge op naam een enkele waarde op. #}
-            {% if card.disabled and card.checked %}
-            <input type="hidden" name="{{ field.path|e }}[]" value="{{ card.value|e }}" data-locked-value />
-            {% endif %}
             <div class="service-card__content">
                 {{ service_block(card.label, card.description, card.icon, card.color, card.help_template) }}
                 {% if card.is_locked and card.dependents_labels %}
