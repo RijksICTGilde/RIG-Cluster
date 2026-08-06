@@ -51,7 +51,17 @@ class ProjectSchemaError(Exception):
     """Raised when a project file does not conform to the project schema.
 
     The message is user-facing and in Dutch (government project convention).
+
+    ``field_path`` names the offending field in schema notation
+    (``components/0/command``) when the violation could be located, so a caller
+    that has a form in front of it can point at the field the user filled in
+    instead of only echoing the message. It is None for the rejections that are
+    about the file as a whole (an unknown or missing schema version).
     """
+
+    def __init__(self, message: str, *, field_path: str | None = None) -> None:
+        super().__init__(message)
+        self.field_path = field_path
 
 
 class ProjectIntegrityError(Exception):
@@ -200,7 +210,7 @@ def validate_project_schema(project_data: dict[str, Any], *, schema_version: flo
     # several ERR alerts (validator + orchestrator + task-progress). debug keeps a
     # breadcrumb without feeding the log-watch.
     logger.debug(message)
-    raise ProjectSchemaError(message)
+    raise ProjectSchemaError(message, field_path=location if first.absolute_path else None)
 
 
 def validate_declared_project_schema(project_data: dict[str, Any]) -> None:
