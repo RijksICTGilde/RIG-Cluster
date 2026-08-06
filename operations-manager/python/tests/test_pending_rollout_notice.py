@@ -1,0 +1,80 @@
+"""The drift a deferred rollout leaves behind has to be visible (RC-46).
+
+A flag that lets the project file run ahead of the cluster is only safe if someone can
+see that it happened, since when, and can act on it from there. These tests guard the
+three things the notice promises: it appears when there is drift, it says how long, and
+it offers the one button that resolves it.
+"""
+
+from __future__ import annotations
+
+import inspect
+from pathlib import Path
+
+from opi.core.templates import get_templates
+
+_SECTION = "project-details/section-pending-rollout.html.j2"
+_TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "opi" / "templates"
+
+
+def _render(pending: dict | None, user_role: str = "admin") -> str:
+    return (
+        get_templates()
+        .get_template(_SECTION)
+        .render({"pending_rollout": pending, "user_role": user_role, "project": {"name": "wies"}})
+    )
+
+
+def test_nothing_is_shown_when_the_project_is_in_sync() -> None:
+    assert _render({"count": 0, "since": None, "task_types": []}).strip() == ""
+
+
+def test_nothing_is_shown_when_the_count_could_not_be_determined() -> None:
+    """A task service that is down must not produce a scary empty warning."""
+    assert _render(None).strip() == ""
+
+
+def test_the_notice_says_how_many_and_since_when() -> None:
+    html = _render({"count": 3, "since": "2026-08-01T09:30:00+00:00", "task_types": ["add_component"]})
+
+    assert "3 wijzigingen" in html
+    # Formatted, not a raw ISO timestamp: "sinds wanneer" is the point.
+    assert "1 augustus 2026" in html
+    assert "2026-08-01T09:30:00" not in html
+
+
+def test_one_change_reads_as_one_change() -> None:
+    html = _render({"count": 1, "since": "2026-08-01T09:30:00+00:00", "task_types": ["add_component"]})
+
+    assert "1 wijziging " in html
+    assert "1 wijzigingen" not in html
+
+
+def test_the_notice_offers_the_button_that_resolves_it() -> None:
+    html = _render({"count": 1, "since": None, "task_types": []})
+
+    assert "Nu verwerken" in html
+    assert "/projects/wies/actions/refresh-project/confirm" in html
+
+
+def test_a_reader_sees_the_drift_but_not_the_button() -> None:
+    html = _render({"count": 1, "since": None, "task_types": []}, user_role="developer")
+
+    assert "nog niet uitgerold" in html
+    assert "Nu verwerken" not in html
+
+
+def test_the_notice_is_rendered_above_the_tabs() -> None:
+    """Drift is about the whole project; it must not hide behind the right tab."""
+    page = (_TEMPLATE_DIR / "project-details.html.j2").read_text()
+
+    assert _SECTION in page
+    assert page.index(_SECTION) < page.index("<c-tabs>")
+
+
+def test_the_page_handler_measures_the_drift() -> None:
+    from opi.web import router
+
+    source = inspect.getsource(router.project_details)
+    assert "get_deferred_rollouts" in source
+    assert '"pending_rollout": pending_rollout' in source
