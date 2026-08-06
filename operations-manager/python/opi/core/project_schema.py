@@ -28,13 +28,18 @@ valid patch, for a migration that did not change the accepted shape). A missing
 one is a hard error, not a silent fallback - see ``check_schema_versions``.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from functools import cache, lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
+
+if TYPE_CHECKING:
+    from jsonschema.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +62,17 @@ class ProjectSchemaError(Exception):
     that has a form in front of it can point at the field the user filled in
     instead of only echoing the message. It is None for the rejections that are
     about the file as a whole (an unknown or missing schema version).
+
+    ``reason`` says WHY the field was rejected without repeating the rejected
+    value. The message itself does repeat it -- jsonschema embeds the instance --
+    and a caller that shows the rejection to a user or writes it to a log has to
+    be able to say what is wrong without echoing what may be a stored secret.
     """
 
-    def __init__(self, message: str, *, field_path: str | None = None) -> None:
+    def __init__(self, message: str, *, field_path: str | None = None, reason: str | None = None) -> None:
         super().__init__(message)
         self.field_path = field_path
+        self.reason = reason
 
 
 class ProjectIntegrityError(Exception):
@@ -178,6 +189,35 @@ def check_schema_versions(migration_versions: tuple[int | float, ...]) -> None:
         )
 
 
+def _describe_violation(error: ValidationError) -> str:
+    """Say why a value was rejected WITHOUT repeating the value.
+
+    jsonschema's own message quotes the instance ("'geheim' does not match ..."),
+    so it can carry a stored secret (``config/api-key``, ``user-env-vars``) or
+    attacker-chosen text into a browser or a log line. The keyword and the limit
+    it was given come from the schema, never from the file, so a description built
+    from those two is safe to show.
+    """
+    keyword = str(error.validator)
+    limit = error.validator_value
+    reasons: dict[str, str] = {
+        "required": "een verplicht veld ontbreekt",
+        "minItems": f"er is minimaal {limit} waarde nodig",
+        "maxItems": f"er zijn maximaal {limit} waarden toegestaan",
+        "minLength": f"de waarde moet minimaal {limit} tekens lang zijn",
+        "maxLength": f"de waarde mag maximaal {limit} tekens lang zijn",
+        "minimum": f"de waarde moet minimaal {limit} zijn",
+        "maximum": f"de waarde mag maximaal {limit} zijn",
+        "pattern": "de waarde heeft niet de vorm die het schema voorschrijft",
+        "format": f"de waarde is geen geldige {limit}",
+        "type": f"hier hoort een waarde van het type {limit}",
+        "enum": "de waarde staat niet in de lijst met toegestane waarden",
+        "additionalProperties": "hier staat een veld dat het schema op deze plek niet kent",
+        "uniqueItems": "de lijst bevat een dubbele waarde",
+    }
+    return reasons.get(keyword, f"de waarde is afgekeurd door schemaregel '{keyword}'")
+
+
 def validate_project_schema(project_data: dict[str, Any], *, schema_version: float | None = None) -> None:
     """Validate a parsed project dict against the project schema.
 
@@ -210,7 +250,11 @@ def validate_project_schema(project_data: dict[str, Any], *, schema_version: flo
     # several ERR alerts (validator + orchestrator + task-progress). debug keeps a
     # breadcrumb without feeding the log-watch.
     logger.debug(message)
-    raise ProjectSchemaError(message, field_path=location if first.absolute_path else None)
+    raise ProjectSchemaError(
+        message,
+        field_path=location if first.absolute_path else None,
+        reason=_describe_violation(first),
+    )
 
 
 def validate_declared_project_schema(project_data: dict[str, Any]) -> None:

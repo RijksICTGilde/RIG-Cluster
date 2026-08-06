@@ -59,6 +59,35 @@ def _get_section_from_flow(flow_id: str, section_id: str) -> FormSection:
     raise HTTPException(status_code=404, detail=f"Stap '{section_id}' niet gevonden")
 
 
+#: Jinja constructs that must not survive into rendered step HTML.
+_TEMPLATE_DELIMITERS = {"{{": "{ {", "}}": "} }", "{%": "{ %", "%}": "% }", "{#": "{ #", "#}": "# }"}
+
+
+def _defuse_template_syntax(messages: dict[str, list[str]] | None) -> dict[str, list[str]] | None:
+    """Break Jinja delimiters in per-field messages before they are rendered.
+
+    Field messages end up INSIDE the HTML string this module returns, and
+    ``wizard_step.html.j2`` pipes that string through ``process_components``,
+    which compiles it as a Jinja template -- a second render. HTML-escaping does
+    not help there: ``{{ ... }}`` needs no special characters. Several validators
+    quote the rejected value in their message ("Ongeldige waarde: <value>"), so
+    without this a value typed into a form would be executed as a template.
+
+    Spacing the delimiters keeps the message readable while making it inert.
+    """
+    if not messages:
+        return messages
+    defused: dict[str, list[str]] = {}
+    for path, texts in messages.items():
+        cleaned: list[str] = []
+        for text in texts:
+            for delimiter, replacement in _TEMPLATE_DELIMITERS.items():
+                text = text.replace(delimiter, replacement)
+            cleaned.append(text)
+        defused[path] = cleaned
+    return defused
+
+
 def _render_step_html(
     section: FormSection,
     yaml_data: dict[str, Any],
@@ -70,6 +99,9 @@ def _render_step_html(
     import copy
 
     from opi.forms.editables.service_path import smart_get_value, smart_set_value
+
+    errors = _defuse_template_syntax(errors)
+    warnings = _defuse_template_syntax(warnings)
 
     renderer = _create_renderer()
     if not section.layout:
@@ -1891,6 +1923,32 @@ def _locate_schema_error(
     return None
 
 
+def _validation_message_without_values(error: Exception) -> str:
+    """Describe a rejection to the user without repeating the rejected value.
+
+    A ``ProjectSchemaError`` message quotes the instance, because jsonschema puts it
+    there. That is fine deep in the write path but not here: the edit flow validates
+    the form data MERGED with the stored project, so the offending value can be a
+    stored secret (``config/api-key``, ``config/age-private-key``, ``user-env-vars``)
+    that this handler would then echo into the browser and into the log. Field path
+    plus reason says the same thing to a user, and is what a developer needs anyway.
+
+    A ``ProjectIntegrityError`` carries no reason and names structure (component and
+    deployment names), not values, so its own message is used as-is.
+    """
+    reason = getattr(error, "reason", None)
+    if not reason:
+        return str(error)
+    field_path = getattr(error, "field_path", None) or "(onbekend)"
+    return f"Veld '{field_path}' voldoet niet aan het projectschema: {reason}."
+
+
+#: What a field gets when the schema rejected it. A constant on purpose: this text is
+#: rendered into step_html, which is re-rendered as a Jinja template downstream, so
+#: nothing derived from user input may go here. The explanation goes in global_errors.
+SCHEMA_FIELD_MARKER = "Deze waarde is afgekeurd door het projectschema; zie de melding bovenaan deze stap."
+
+
 def _validate_finished_project(data: dict[str, Any], *, project_name: str) -> None:
     """Schema-check a FINISHED project file while the wizard can still show the error.
 
@@ -1916,12 +1974,16 @@ def _validate_finished_project(data: dict[str, Any], *, project_name: str) -> No
     try:
         validate_project_schema(data)
     except ProjectSchemaError as e:
+        # Log the reason, never the message: the message quotes the rejected value, and
+        # the edit flow validates the file MERGED with the stored project, so that value
+        # can be a secret (config/api-key, age-private-key, user-env-vars). Field path
+        # plus reason is what locates the missing validation anyway.
         logger.warning(
             "Wizard built an invalid project file for %s (field=%s): %s -- a form field wrote a "
             "value the schema rejects, so validation is missing on that field",
             project_name or "(new)",
             e.field_path or "(unknown)",
-            e,
+            e.reason or "(unknown reason)",
         )
         raise
 
@@ -2109,16 +2171,22 @@ async def _do_submit(
     except (ProjectSchemaError, ProjectIntegrityError) as e:
         # Re-render the wizard with the validation message instead of 500ing
         # (e.g. pre-existing structural drift surfaced by the full-project check).
-        logger.warning("Wizard save rejected by validation for %s: %s", state.project_name or "(new)", e)
         field_path = getattr(e, "field_path", None)
+        message = _validation_message_without_values(e)
+        logger.warning("Wizard save rejected by validation for %s: %s", state.project_name or "(new)", message)
         located = _locate_schema_error(active_sections, field_path) if field_path else None
         if located is not None:
             error_section, editable_path = located
-            field_errors = {editable_path: [str(e)]}
-            global_errors = []
+            # Mark the field, but keep the text out of it. Field errors are rendered into
+            # step_html and wizard_step.html.j2 pipes that through process_components,
+            # which renders it a SECOND time as a Jinja template -- so a message carrying
+            # user input there is code execution. The marker is a constant; the message
+            # itself goes in global_errors, which the template renders once, autoescaped.
+            field_errors = {editable_path: [SCHEMA_FIELD_MARKER]}
+            global_errors = [message]
         else:
             # Not placeable (a violation on a whole block, or a field no step owns):
-            # show it on the step the user submitted from, with the raw message. A
+            # show it on the step the user submitted from, at step level. A
             # message that cannot be attached to a field is still a message. Falls
             # back to the last step when current_step names a step that is no longer
             # active, so the message always has somewhere to land.
@@ -2127,7 +2195,7 @@ async def _do_submit(
                 active_sections[-1],
             )
             field_errors = {}
-            global_errors = [str(e)]
+            global_errors = [message]
         state.current_step = error_section.section_id
         save_wizard_state(request, state)
         step_html = _render_step_html(
