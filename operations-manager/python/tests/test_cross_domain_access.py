@@ -863,3 +863,32 @@ class TestServiceManifestPrune:
         prefixes = {f"dev-{s.value}-" for s in ServiceType}
         obsolete = _select_obsolete_service_manifests(str(tmp_path), prefixes, {current})
         assert obsolete == [stale]
+
+
+class TestDeploymentCardButton:
+    """The service owns the button that opens its per-deployment form."""
+
+    def _actions(self, project: dict, deployment_name: str = "dev") -> list:
+        from opi.services.registry import collect_deployment_actions
+
+        return collect_deployment_actions(project, deployment_name)
+
+    def _project(self, services: list) -> dict:
+        return {
+            "name": "me",
+            "services": services,
+            "deployments": [{"name": "acc", "cluster": _CLUSTER}, {"name": "dev", "cluster": _CLUSTER}],
+        }
+
+    def test_the_button_opens_this_deployments_flow(self) -> None:
+        actions = [a for a in self._actions(self._project(["cross-domain-access"])) if a.icon == "netwerk"]
+        assert len(actions) == 1
+        # Index 1: the button must address the deployment it sits on, not the first one.
+        assert actions[0].modal_endpoint == "/projects/me/modal-wizard/modal-edit-cross-domain-deployment-1"
+
+    def test_no_button_when_the_project_does_not_use_the_service(self) -> None:
+        assert [a for a in self._actions(self._project(["redis"])) if a.icon == "netwerk"] == []
+
+    def test_no_button_for_an_unknown_deployment(self) -> None:
+        actions = self._actions(self._project(["cross-domain-access"]), deployment_name="bestaat-niet")
+        assert [a for a in actions if a.icon == "netwerk"] == []

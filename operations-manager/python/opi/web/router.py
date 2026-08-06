@@ -27,7 +27,6 @@ from opi.services.project_authorization import (
 )
 from opi.services.project_store import get_project_store
 from opi.services.registry import collect_service_routers, find_deployment_action
-from opi.services.services import service_entry_name
 from opi.utils.age import decrypt_password_smart, get_global_private_key
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.totp import totp_now
@@ -1621,11 +1620,6 @@ async def project_details(request: Request, project_name: str):
                 "prometheus_available": prometheus_available,
                 "argocd_available": argocd_available,
                 "approval_notices": approval_notices,
-                # The services this project selected, by name: a deployment card only offers
-                # the per-deployment cross-domain patch when the project uses that service.
-                "project_service_names": [
-                    name for name in (service_entry_name(e) for e in project_data.get("services") or []) if name
-                ],
                 "backups_available": backups_available,
                 "current_cluster": current_cluster,
                 "cluster_base_domains": cluster_base_domains,
