@@ -78,7 +78,9 @@ class TestAServiceCannotDeclareADeploymentHealthy:
         conclusion itself, from the facts."""
         field_names = {field.name for field in dataclasses.fields(DeploymentStateFact)}
 
-        assert field_names == {"service", "summary", "expects_no_application_pods", "details"}
+        # ``badge`` (RC-35) is the word the card shows, not a verdict: it says what the
+        # situation is called, never whether it is good.
+        assert field_names == {"service", "summary", "expects_no_application_pods", "badge", "details"}
         for forbidden in ("healthy", "health", "ok", "verdict", "status"):
             assert forbidden not in field_names
 

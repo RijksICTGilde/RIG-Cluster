@@ -27,7 +27,7 @@ helemaal uit staat: in het eerste geval bedient er nog iets verkeer, in het twee
 | `DISABLED` | Alles uit |
 
 ```python
-from opi.services.disabled_state import deployment_disabled_state
+from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 
 state = deployment_disabled_state(project_data, deployment_name)
 state.is_disabled              # alles uit
@@ -72,6 +72,13 @@ Het blijft een **feit, geen oordeel** -- de RC-28-vorm:
 - Staat de deployment op een ander cluster (geen badge-rij), dan draagt de chip in de kop
   de mededeling.
 
+Sinds RC-35 komen die woorden niet meer uit een eigen module maar uit het feit zelf
+(`DeploymentStateFact.badge`), en leidt de kaart ze generiek af -- dezelfde weg waarlangs
+de slaapstand nu ook een badge krijgt. De regels hierboven zijn ongewijzigd; ze zijn alleen
+niet langer met de hand op "uitgeschakeld" geschreven. Zie
+`features/deployment-state-and-health.md` voor de badge-regels en wat er gebeurt als twee
+diensten tegelijk iets melden.
+
 ### De dashboardbanner
 
 "Alle N projecten zijn gezond" blijft ongewijzigd zolang er niets uit staat of geparkeerd
@@ -113,7 +120,7 @@ Geen. De toestand volgt uit `disabled` in het projectbestand.
 
 ## Afhankelijkheden
 
-- `opi/services/disabled_state.py` -- de drie toestanden
+- `opi/services/catalog/deployment_health/disabled.py` -- de drie toestanden, bij de dienst die ze meldt
 - `opi/services/catalog/deployment_health/` -- meldt het feit
 - `opi/services/deployment_state.py` -- de collector (RC-28)
 - `opi/templates/project-details/_argocd-deployment-card.html.j2`

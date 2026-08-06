@@ -337,6 +337,21 @@ class DeploymentStateFact:
     ``expects_no_application_pods`` is the one operational consequence a service may
     state, and it is narrow on purpose: it says the application's own pods are meant to
     be absent. It never excuses a problem observed on a pod that IS there.
+
+    ``badge`` is the second and last thing a service may say about the display (RC-35):
+    the one word that belongs on the deployment card. It is text only -- no colour, no
+    icon -- because a card full of service-chosen styling stops reading as one platform.
+    Together with ``expects_no_application_pods`` it decides where that word lands:
+
+    * badge + ``expects_no_application_pods`` -- nothing of the application is supposed
+      to run, so the green "Healthy" that zero pods produce is the untruth this word
+      takes the place of.
+    * badge without it -- part of the deployment is still serving traffic, so the health
+      verdict is still the thing to report and the word stands next to it.
+
+    Only the green Healthy is ever replaced: Degraded, Progressing and Unknown are
+    something really observed, and a state that hid them would make switching a
+    component off a way to make a failure disappear.
     """
 
     #: ``ServiceType.value`` of the service that knows this.
@@ -345,6 +360,8 @@ class DeploymentStateFact:
     summary: str
     #: True when this service has deliberately scaled the application to zero pods.
     expects_no_application_pods: bool = False
+    #: One or two words for the deployment card, or None to stay off the card.
+    badge: str | None = None
     #: Extra data for a service's own rendering of the fact (never read by generic code
     #: for a decision).
     details: dict[str, Any] = field(default_factory=dict)
