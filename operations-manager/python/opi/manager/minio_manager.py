@@ -200,12 +200,18 @@ class MinioManager:
                 clone_type = clone_from.get("type")
                 if clone_type == CloneFromType.REMOTE_SOURCE.value:
                     remote_source_name = clone_from.get("reference")
+                    if not remote_source_name:
+                        msg = f"clone-from van type remote-source zonder reference voor '{deployment_name}'"
+                        raise ValueError(msg)
                     await self._handle_remote_source_clone(
                         project_name, deployment_name, remote_source_name, project_data, force_clone
                     )
                     return
                 elif clone_type == CloneFromType.DEPLOYMENT.value:
                     source_deployment = clone_from.get("reference")
+                    if not source_deployment:
+                        msg = f"clone-from van type deployment zonder reference voor '{deployment_name}'"
+                        raise ValueError(msg)
                     logger.info(f"Deployment {deployment_name} has clone-from deployment: {source_deployment}")
                     await self.clone_minio_from_deployment(project_data, deployment, source_deployment)
                     return
@@ -1781,7 +1787,9 @@ class MinioManager:
             current_generation = self._get_deployment_bucket_generation(project_data, deployment_name)
             target_bucket = generate_bucket_name(project_name, deployment_name, current_generation)
             generation_was_incremented = False
-            new_generation = current_generation  # Will be updated if incremented
+            # 0, not None: this is only read once incremented (where it is reassigned),
+            # and the project file wants a number there.
+            new_generation = current_generation or 0  # Will be updated if incremented
 
             try:
                 minio_connector = create_minio_connector()

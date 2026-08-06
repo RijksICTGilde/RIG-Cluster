@@ -1172,7 +1172,7 @@ async def list_configurable_services_v2() -> ServiceCatalogResponse:
 def _collect_service_config(project_data: dict[str, Any], service_name: str, target_filter: str | None) -> list[dict]:
     """Gather a service's config across every layer it is set on in the project."""
 
-    def find(services: list, target: str, **ids: str) -> list[dict]:
+    def find(services: list, target: str, **ids: str | None) -> list[dict]:
         for entry in services or []:
             if service_entry_name(entry) == service_name:
                 config = service_entry_config(entry)
@@ -1231,7 +1231,7 @@ async def get_service_config_v2(
 
 
 #: OpenAPI responses shared by every config write route.
-_CONFIG_WRITE_RESPONSES = {
+_CONFIG_WRITE_RESPONSES: dict[int | str, dict[str, Any]] = {
     200: {"model": TaskResponse[ConfigureServiceResult], "description": "Task completed (when polled)"},
     202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
 }
