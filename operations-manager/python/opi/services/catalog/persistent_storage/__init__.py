@@ -10,13 +10,27 @@ from __future__ import annotations
 
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.persistent_storage.editables import PERSISTENT_STORAGE_SEQUENCE_EDITABLE
+from opi.services.catalog.persistent_storage.variables import PersistentStorageVariables
 from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.catalog.shared.storage import StorageConfig
-from opi.services.services_enums import ManagerKey, ServiceType
+from opi.services.services import ServiceDefinition
+from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType
 
 
 class PersistentStorageService(BackupsPageMixin, Service):
     service_type = ServiceType.PERSISTENT_STORAGE
+    definition = ServiceDefinition(
+        name="Permanente opslag",
+        description="Gegevens blijven bewaard tijdens de levenscyclus van de applicatie",
+        help_template="persistent_storage/help.html.j2",
+        icon="server",
+        color="grijs-600",
+        binding=ServiceBinding.COMPONENT,
+        backup_label="pvc",
+        storage_config={"name": "data", "type": "persistent", "size": "1Gi", "mount-path": "/data"},
+        variables=[var.value for var in PersistentStorageVariables],
+        cleanup_strategy=CleanupStrategy.DEFERRED,
+    )
     cleanup_manager_key = ManagerKey.PVC
     config_model = StorageConfig
     config_schema_version = "1.0"

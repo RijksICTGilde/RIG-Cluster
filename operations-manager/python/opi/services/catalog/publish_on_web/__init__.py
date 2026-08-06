@@ -26,7 +26,9 @@ from opi.services.catalog.approval import (
 )
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.publish_on_web.config_model import PublishOnWebConfig
-from opi.services.services_enums import ServiceType
+from opi.services.catalog.publish_on_web.variables import WebVariables
+from opi.services.services import ServiceDefinition
+from opi.services.services_enums import ServiceBinding, ServiceType
 
 
 def _to_status(stored: str | None) -> ApprovalStatus:
@@ -224,6 +226,15 @@ def _subdomain_record(project_data: dict[str, Any], item: ApprovalItem, history_
 
 class PublishOnWebService(Service):
     service_type = ServiceType.PUBLISH_ON_WEB
+    definition = ServiceDefinition(
+        name="Publiceren op het web",
+        description="Maak de applicatie toegankelijk via het publieke internet",
+        help_template="publish_on_web/help.html.j2",
+        icon="wereldbol",
+        color="hemelblauw",
+        binding=ServiceBinding.COMPONENT,
+        variables=[var.value for var in WebVariables],
+    )
     config_model = PublishOnWebConfig
     config_schema_version = "1.0"
     config_component_order = 30

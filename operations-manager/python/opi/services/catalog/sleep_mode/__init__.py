@@ -21,12 +21,29 @@ from opi.services.catalog.base import (
     Service,
 )
 from opi.services.catalog.sleep_mode.config_model import SleepModeConfig
-from opi.services.services import service_entry_name
-from opi.services.services_enums import ServiceType
+from opi.services.services import ServiceDefinition, service_entry_name
+from opi.services.services_enums import ServiceBinding, ServiceType
 
 
 class SleepModeService(Service):
     service_type = ServiceType.SLEEP_MODE
+    definition = ServiceDefinition(
+        name="Slaapstand",
+        description=(
+            "Zet bepaalde deployments, op basis van matching, na een deadline in slaapstand "
+            "en wek ze op verzoek weer op. De deployment doet een koude start."
+        ),
+        help_template="sleep_mode/help.html.j2",
+        icon="klok",
+        color="donkerblauw",
+        binding=ServiceBinding.DEPLOYMENT,
+        # Selectable in the wizard with its own project-level config section
+        # (SleepModeService.config_form_section). A cluster-wide default still
+        # applies, and `match` scopes which deployments it affects.
+        variables=[],
+        # actions_provider (the wake button) is bound at the bottom of this module; see
+        # the note there for why it cannot be declared here.
+    )
     config_model = SleepModeConfig
     config_schema_version = "1.0"
     config_section_id = "sleep-mode-config"
@@ -168,8 +185,9 @@ class SleepModeService(Service):
 
 
 # Bind the wake button onto the bound ServiceDefinition. Done here (not in services.py)
-# so services.py never imports the catalog package -- the definition is a mutable
-# dataclass, and the registry imports this module at startup, before any request.
+# The wake button lives in actions.py, which imports this package for its config and
+# state helpers -- so it cannot be imported before the class exists. The definition is a
+# mutable dataclass and the registry imports this module at startup, before any request.
 from opi.services.catalog.sleep_mode.actions import sleep_actions  # noqa: E402
 
 SleepModeService.definition.actions_provider = sleep_actions
