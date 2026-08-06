@@ -773,8 +773,16 @@ class EditableFormProcessor:
         # Capture the pre-edit list as the field-order reference before overwriting it.
         original_nested = smart_get_value(result, real_seq_path)
 
-        # Write to real path in result
-        smart_set_value(result, real_seq_path, copy.deepcopy(items))
+        # Write to real path in result. An empty list follows the same rule a scalar
+        # already does: with ``remove_when_none`` the key goes away instead of being
+        # written empty. Zonder dit schreef een leeg optioneel blok ``[]``, en het schema
+        # kent daar ``minItems: 1`` op -- dus het startcommando van een component maakte
+        # elk project onopslaanbaar zodra je het veld leeg liet, wat de normale keuze is.
+        if not items and ed.remove_when_none:
+            smart_delete_value(result, real_seq_path)
+            _prune_empty_ancestors(result, real_seq_path)
+        else:
+            smart_set_value(result, real_seq_path, copy.deepcopy(items))
 
         # Strip the virtual key (e.g. _services-config) from result so it
         # does not leak into step_data or the final project YAML.

@@ -1017,6 +1017,7 @@ def _cross_domain_options(
     empty_label: str,
     choose_label: str,
     stale_suffix: str,
+    labels: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """The shared option shape of every cross-domain select.
 
@@ -1027,7 +1028,7 @@ def _cross_domain_options(
     if not names and not current_value:
         return [{"value": "", "label": empty_label}]
     options = [{"value": "", "label": choose_label}]
-    options.extend({"value": name, "label": name} for name in names)
+    options.extend({"value": name, "label": (labels or {}).get(name, name)} for name in names)
     if current_value and current_value not in names:
         options.append({"value": current_value, "label": f"{current_value} {stale_suffix}"})
     return options
@@ -1229,6 +1230,21 @@ class CrossDomainLocalComponentOptionsProvider:
         )
 
 
+WALL_PORT = 4180
+
+#: Het label van de wall-poort in een keuzelijst. Waarom 4180 erbij staat hoort in de optie
+#: zelf, niet in een hulptekst onder het veld: het geldt voor een van de opties en niet voor
+#: het veld, en het is een randgeval dat je alleen hoeft te snappen als je het kiest.
+WALL_PORT_LABEL = f"{WALL_PORT} (via authorization wall)"
+
+
+def _component_has_wall(component: dict[str, Any]) -> bool:
+    """Of er een authorization-wall voor dit component staat."""
+    return any(
+        service_entry_name(entry) == ServiceType.AUTHORIZATION_WALL.value for entry in component.get("services") or []
+    )
+
+
 def _cross_domain_component_ports(component: dict[str, Any]) -> list[int]:
     """The ports a component is reachable on: its inbound ports, plus 4180 behind the wall.
 
@@ -1238,8 +1254,8 @@ def _cross_domain_component_ports(component: dict[str, Any]) -> list[int]:
     """
     ports = [port for port in (component.get("ports") or {}).get("inbound") or [] if isinstance(port, int)]
     for entry in component.get("services") or []:
-        if service_entry_name(entry) == ServiceType.AUTHORIZATION_WALL.value and 4180 not in ports:
-            ports.append(4180)
+        if service_entry_name(entry) == ServiceType.AUTHORIZATION_WALL.value and WALL_PORT not in ports:
+            ports.append(WALL_PORT)
     return ports
 
 
@@ -1322,6 +1338,23 @@ class CrossDomainPortOptionsProvider:
             empty_label=empty_label,
             choose_label="-- Kies een poort --",
             stale_suffix="(niet in de lijst)",
+            labels={str(WALL_PORT): WALL_PORT_LABEL} if self._wall_port_is_the_walls(ports) else None,
+        )
+
+    def _wall_port_is_the_walls(self, ports: list[int]) -> bool:
+        """Of 4180 in deze lijst van de authorization-wall komt.
+
+        Een component mag 4180 ook gewoon zelf als inbound-poort hebben; dan is het label
+        "via authorization wall" onjuist. Dus alleen labelen als er echt een wall voor staat.
+        """
+        if WALL_PORT not in ports:
+            return False
+        bron = self.yaml_data
+        if _cross_domain_direction(self.yaml_path) == "outbound":
+            peer = _cross_domain_peer_ref(self.row_data, self.yaml_path, self.yaml_data)
+            bron = _cross_domain_peer_project_data(self.yaml_data, peer.get("project")) or {}
+        return any(
+            _component_has_wall(component) for component in bron.get("components") or [] if isinstance(component, dict)
         )
 
 

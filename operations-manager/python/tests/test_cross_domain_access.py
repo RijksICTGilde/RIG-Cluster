@@ -913,3 +913,33 @@ class TestDeploymentCardButton:
     def test_no_button_for_an_unknown_deployment(self) -> None:
         actions = self._actions(self._project(["cross-domain-access"]), deployment_name="bestaat-niet")
         assert [a for a in actions if a.icon == "netwerk"] == []
+
+
+class TestDeWallPoortLegtZichzelfUit:
+    """4180 is een randgeval dat we wel moeten aanbieden maar zelden gebruikt wordt.
+
+    De uitleg hoort bij die ene optie en niet in een hulptekst onder het veld: hij geldt
+    voor een keuze, niet voor het veld, en wie hem niet kiest hoeft er niets van te weten.
+    """
+
+    def _opties(self, component: dict) -> dict[str, str]:
+        from opi.forms.visualizers.providers import CrossDomainPortOptionsProvider
+
+        provider = CrossDomainPortOptionsProvider(
+            yaml_data={"components": [component]},
+            row_data={"to": {"component": "web"}},
+            yaml_path="services/cross-domain-access/config/inbound[0]/to/port",
+        )
+        return {optie["value"]: optie["label"] for optie in provider.get_options()}
+
+    def test_de_wall_poort_zegt_waar_hij_vandaan_komt(self) -> None:
+        opties = self._opties(
+            {"name": "web", "ports": {"inbound": [8080]}, "services": ["authorization-wall"]},
+        )
+        assert opties["4180"] == "4180 (via authorization wall)"
+        assert opties["8080"] == "8080", "een gewone poort krijgt geen bijschrift"
+
+    def test_een_eigen_4180_wordt_niet_aan_de_wall_toegeschreven(self) -> None:
+        """Een component mag 4180 gewoon zelf als inbound-poort hebben; dan is dat label onwaar."""
+        opties = self._opties({"name": "web", "ports": {"inbound": [8080, 4180]}, "services": []})
+        assert opties["4180"] == "4180"
