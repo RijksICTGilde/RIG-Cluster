@@ -18,9 +18,11 @@ async def test_permission_denied_reports_pending_not_error() -> None:
     argo.get_application_status = AsyncMock(
         side_effect=PermissionError("Permission denied accessing application 'x-main'")
     )
+    deployment = {"name": "main", "namespace": "rig-prd-x", "cluster": "odcn-production"}
     result = await _fetch_one_live_status(
         project_name="x",
-        deployment={"name": "main", "namespace": "rig-prd-x", "cluster": "odcn-production"},
+        project_data={"name": "x", "deployments": [deployment]},
+        deployment=deployment,
         argo=argo,
         kubectl=Mock(),
     )

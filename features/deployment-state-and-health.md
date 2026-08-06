@@ -127,4 +127,6 @@ gedragshook, geen instelling.
 
 - `features/oom-kill-watcher.md` - de waarnemende kant
 - `features/sleep-mode.md` - de eerste bewoner van het haakpunt
+- `features/uitgeschakeld-is-niet-gezond.md` - de tweede: `deployment-health` meldt zelf
+  dat een deployment uit staat, en voedt daarmee de kaart, de banner en de V2 API
 - `instructions/services.md` - alle haken die een dienst kan implementeren
