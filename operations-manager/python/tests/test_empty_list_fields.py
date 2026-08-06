@@ -20,12 +20,15 @@ disappearing.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.core.project_schema import SCHEMA_PATH
 from opi.forms.editables.editable import WidgetType
+from opi.forms.visualizers.fields.components import COMPONENT_COMMAND
 from opi.forms.visualizers.flows import FLOW_REGISTRY
-from opi.forms.visualizers.visualizer import EditableVisualizer
+
+if TYPE_CHECKING:
+    from opi.forms.visualizers.visualizer import EditableVisualizer
 
 #: The widgets that write a list (or a mapping block) rather than a scalar.
 LIST_WIDGETS = {
@@ -55,6 +58,7 @@ UNREACHABLE_BY_SCHEMA_WALK = {
     "services/keycloak/config/additional-clients[*]/redirect-uris",
     "services/keycloak/config/additional_redirect_uris",
     "services/postgresql-database/config/schemas",
+    "services/sleep-mode/config/match",
 }
 
 
@@ -90,13 +94,33 @@ def _schema_node_for(path: str) -> dict[str, Any] | None:
     return node
 
 
+def _writes_a_list(visualizer: EditableVisualizer) -> bool:
+    """Whether this field writes a list into the project file.
+
+    The widget is the obvious signal, but not the only one: the start command is
+    a plain text field whose converter splits the line into a list. That is
+    exactly the case this sweep came from, so the converter is asked as well --
+    filtering on the widget alone would walk past a second ``command``.
+    """
+    if visualizer.widget in LIST_WIDGETS:
+        return True
+    converter = visualizer.editable.converter
+    if converter is None:
+        return False
+    try:
+        return isinstance(converter.write("x"), list)
+    except ValueError, TypeError, KeyError:
+        # A converter that refuses a sample string is not writing a list of it.
+        return False
+
+
 def _all_list_editables() -> dict[str, EditableVisualizer]:
     """Every list-writing editable across every flow, keyed by yaml_path."""
     found: dict[str, EditableVisualizer] = {}
 
     def walk(visualizers: list[EditableVisualizer]) -> None:
         for visualizer in visualizers:
-            if visualizer.widget in LIST_WIDGETS:
+            if _writes_a_list(visualizer):
                 found.setdefault(visualizer.editable.yaml_path, visualizer)
             if visualizer.children:
                 walk(visualizer.children)
@@ -160,8 +184,7 @@ def test_the_start_command_is_covered_by_this_sweep() -> None:
     converter rather than through a list widget -- easy to walk past.
     """
     node = _schema_node_for("components[*]/command")
-    assert node is not None and node.get("minItems") == 1
-
-    from opi.forms.visualizers.fields.components import COMPONENT_COMMAND
-
+    assert node is not None
+    assert node.get("minItems") == 1
+    assert "components[*]/command" in _all_list_editables()
     assert _writes_nothing_when_empty(COMPONENT_COMMAND)
