@@ -31,6 +31,7 @@ from opi.services.services_enums import ServiceBinding, ServiceType
 BINDING_LABELS: dict[ServiceBinding, str] = {
     ServiceBinding.COMPONENT: "Per component te kiezen",
     ServiceBinding.DEPLOYMENT: "Gedeeld per deployment",
+    ServiceBinding.PROJECT: "Voor het hele project",
 }
 
 #: The non-project layers, phrased as the place a user goes. Ordered, so a service that
