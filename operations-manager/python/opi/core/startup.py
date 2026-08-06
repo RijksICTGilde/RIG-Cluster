@@ -36,9 +36,11 @@ from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
 from opi.core.keycloak_client_startup import ensure_keycloak_credentials
+from opi.core.project_schema import check_schema_versions
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.project_service import initialize_project_service
 from opi.services.project_store import get_project_store
+from opi.services.schema_migration import SCHEMA_VERSIONS
 from opi.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
@@ -650,6 +652,12 @@ async def run_startup_tasks(app: FastAPI) -> bool:
         logger.warning("SKIP_STARTUP_CHECKS=True - skipping namespace/Keycloak/MinIO checks for fast startup")
 
     logger.info("Running startup tasks...")
+
+    # Every schema version a project file can declare must have a schema to be
+    # validated against. A migration added without one would otherwise show up as
+    # project files being rejected by the git-monitor gate, months later and
+    # without an obvious cause; this stops the boot instead.
+    check_schema_versions(SCHEMA_VERSIONS)
 
     # Initialize metrics connector (non-critical)
     logger.info("Initializing metrics connector")

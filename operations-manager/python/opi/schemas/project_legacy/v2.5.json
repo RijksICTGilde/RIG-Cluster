@@ -1,0 +1,106 @@
+{
+  "$comment": "v2.5 -> v2.6 (RC-13) moved the root `invites:` block to services/invite/config. Until v2.6 a file carried it at the root.",
+  "properties": {
+    "invites": {
+      "$ref": "#/$defs/invites"
+    }
+  },
+  "$defs": {
+    "invites": {
+      "comment": "LEGACY (pre-v2.6). Relocated to the invite service config (services/invite/config) by relocate_invites_to_service; extract_invites_config reads both locations during rollout. Kept, like the domains defs, because the root additionalProperties is false and 30/47 production files still predate v2.5, so removing it would reject unmigrated files. Removal is gated on per-version schema validation (TODO.md).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "settings": {
+          "type": "object",
+          "properties": {
+            "default_language": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "active": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/invite"
+          }
+        }
+      }
+    },
+    "invite": {
+      "comment": "LEGACY (pre-v2.6). The invite shape now lives in the invite service model (opi/services/catalog/invite/config_model.py) and its committed fragment invite.v1.0.json; this def only validates unmigrated top-level invites blocks.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "realm_roles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "client_roles": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "restrict_domain": {
+          "type": "string"
+        },
+        "auth_methods": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "contact_email": {
+          "type": "string"
+        },
+        "application_url": {
+          "type": "string"
+        },
+        "message": {
+          "$ref": "#/$defs/i18n-text"
+        },
+        "success_title": {
+          "$ref": "#/$defs/i18n-text"
+        },
+        "success_button": {
+          "$ref": "#/$defs/i18n-text"
+        }
+      }
+    },
+    "i18n-text": {
+      "comment": "LEGACY (pre-v2.6). Used only by the legacy invite def; the current shape is I18nText in the invite service model.",
+      "type": "object",
+      "properties": {
+        "nl": {
+          "type": "string"
+        },
+        "en": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
