@@ -5,7 +5,13 @@
    user sees a deployment with nothing running and no explanation why. Generic on
    purpose -- it loops over whatever facts the services report, so a second service that
    parks a deployment in a situation gets this block for free and no service name
-   appears here. #}
+   appears here.
+
+   Since RC-35 the card carries a badge from the same facts, so what goes where is fixed:
+   the BADGE names the situation in one or two words ("Slaapstand", "Uitgeschakeld"), this
+   BLOCK carries the sentence that does not fit on a badge -- why it is so, and what makes
+   it end. A fact therefore writes its ``summary`` for this block and its ``badge`` for the
+   card; neither is a shortened version of the other. #}
 {% set deployment_state_facts = deployment_state_facts | default({}) %}
 {% for deployment in project.deployments | sort(attribute='name') %}
 {% set facts = deployment_state_facts.get(deployment.name, []) %}

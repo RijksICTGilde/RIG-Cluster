@@ -41,6 +41,40 @@ class DeploymentState:
     def summaries(self) -> list[str]:
         return [fact.summary for fact in self.facts]
 
+    @property
+    def replacing_badges(self) -> list[str]:
+        """The words that take the place of the green "Healthy" (RC-35).
+
+        A fact that says the application's own pods are meant to be absent is a fact
+        about a deployment where zero replicas is the intent -- and zero replicas is
+        exactly what ArgoCD calls Healthy. So its badge replaces that one verdict; every
+        other verdict is really observed and keeps its badge.
+
+        Two services can report at once (a deployment that is asleep AND has all its
+        components switched off), and then BOTH words are shown rather than one of them
+        winning: "slaapstand" and "uitgeschakeld" ask different things of the reader, and
+        dropping either would leave a user unable to tell whether to act. Sorted by
+        service so the card never depends on the order the registry happens to have.
+        """
+        return self._badges(expects_no_application_pods=True)
+
+    @property
+    def accompanying_badges(self) -> list[str]:
+        """The words that stand NEXT to the health verdict (RC-35).
+
+        Part of the deployment is still supposed to serve traffic -- a partly switched-off
+        deployment is the case -- so its health is still the thing to report and this only
+        says what else is true about it.
+        """
+        return self._badges(expects_no_application_pods=False)
+
+    def _badges(self, *, expects_no_application_pods: bool) -> list[str]:
+        return [
+            fact.badge
+            for fact in sorted(self.facts, key=lambda fact: fact.service)
+            if fact.badge and fact.expects_no_application_pods is expects_no_application_pods
+        ]
+
 
 def collect_deployment_state(project_data: dict[str, Any], deployment_name: str) -> DeploymentState:
     """What the project's services know about ``deployment_name``.

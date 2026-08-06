@@ -61,8 +61,8 @@ from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.services.catalog.base import ConfigLayer
+from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
-from opi.services.disabled_state import deployment_disabled_state
 from opi.services.project_store import get_project_store
 from opi.services.registry import SERVICES, get_service
 from opi.services.services import ServiceAdapter, service_entry_config, service_entry_name
