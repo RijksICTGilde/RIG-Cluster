@@ -205,6 +205,7 @@ def static_url(path: str) -> str:
         digest = cached[1]
     return f"/static/{relative_path}?v={digest}"
 
+
 # Create templates instance
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 # Add service-owned catalog templates to the SAME FileSystemLoader search path, so a
