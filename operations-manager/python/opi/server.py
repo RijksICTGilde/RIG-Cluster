@@ -35,6 +35,7 @@ from opi.core.database_pools import close_database_pools
 from opi.core.early_logging import initialize_logging  # noqa: F401 (side-effect import)
 from opi.core.git_monitor import start_git_monitoring, stop_git_monitoring
 from opi.core.startup import run_startup_tasks
+from opi.core.static_files import CacheControlledStaticFiles
 from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
 from opi.middleware.authorization import AuthorizationMiddleware
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
@@ -511,7 +512,7 @@ def create_app() -> FastAPI:
     # Mount regular static files last (more general path)
     static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
     if os.path.exists(static_dir):
-        app.mount("/static", StaticFiles(directory=static_dir), name="static")
+        app.mount("/static", CacheControlledStaticFiles(directory=static_dir), name="static")
         logger.info(f"Regular static files mounted at /static from {static_dir}")
 
     # Favicon at the root path (browsers request /favicon.ico automatically)
