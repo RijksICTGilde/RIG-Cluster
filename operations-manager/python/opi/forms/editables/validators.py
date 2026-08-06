@@ -1,7 +1,43 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Annotated, Any
+
+from pydantic import TypeAdapter, ValidationError
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+
+class ModelFieldValidator:
+    """Validate a form field with the pydantic field that ALREADY defines the rule.
+
+    Where a service has a config model, that model is the contract the API writes against and
+    the stored project file is validated against. A hand-written validator next to it is a
+    second definition of the same rule, and the two drift: the cross-domain peer fields
+    restated "DNS-1123 label" as ``KubernetesNameValidator``, which also demands a leading
+    LETTER -- so the form rejected a peer whose name the schema, the API and the project store
+    all accept. Same shape as ``opi/api/validation.py``'s reuse of shared editables, one layer
+    down: point at the definition instead of copying it.
+
+    The pydantic message stays out of the UI on purpose -- it is English and speaks about
+    types -- so the caller supplies the human explanation; only the RULE is shared.
+    """
+
+    def __init__(self, model: type[BaseModel], field_name: str, message: str) -> None:
+        field = model.model_fields[field_name]
+        self._adapter: TypeAdapter[Any] = TypeAdapter(Annotated[(field.annotation, *field.metadata)])
+        self._message = message
+
+    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
+        # Emptiness is ``required``'s business, not the field rule's.
+        if value is None or value == "":
+            return []
+        try:
+            self._adapter.validate_python(value)
+        except ValidationError:
+            return [self._message]
+        return []
 
 
 class SlugValidator:
