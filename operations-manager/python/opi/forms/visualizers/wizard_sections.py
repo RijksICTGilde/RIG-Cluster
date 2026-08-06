@@ -52,7 +52,7 @@ from opi.forms.visualizers.sections import FormSection
 from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.services.catalog.base import ConfigLayer
 from opi.services.registry import deployment_component_service_visualizers, get_service
-from opi.services.services import service_entry_name
+from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceType
 
 
@@ -223,14 +223,25 @@ CONFIG_DISPLAY_SECTION = FormSection(
 # KeycloakService.config_form_section); re-exported here so flows / EDIT_SECTIONS /
 # tests keep referring to it. The nested additional-clients editables stay in the
 # forms layer; the service references them.
-KEYCLOAK_CONFIG_SECTION = get_service(ServiceType.KEYCLOAK).config_form_section(ConfigLayer.PROJECT)
+
+def _with_service_help(section: FormSection | None, service_type: ServiceType) -> FormSection | None:
+    """Stamp the service's own explanation onto its config section.
+
+    The question mark that opens it already exists on the service card and in the
+    overview; the config screen is where someone actually has to decide something, and
+    it was the one place without it. Done here, where the sections are collected, so a
+    service declares its help once on its ServiceDefinition and every surface picks it up.
+    """
+    if section is not None and section.help_template is None:
+        section.help_template = ServiceAdapter.get_service_definition(service_type).help_template
+    return section
+
+KEYCLOAK_CONFIG_SECTION = _with_service_help(get_service(ServiceType.KEYCLOAK).config_form_section(ConfigLayer.PROJECT), ServiceType.KEYCLOAK)
 
 # RC-5: the namespace-postgres service owns its config section (built by
 # NamespacePostgresqlDatabaseService.config_form_section); re-exported here under the
 # familiar name so flows / EDIT_SECTIONS / tests keep referring to it.
-POSTGRESQL_CONFIG_SECTION = get_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE).config_form_section(
-    ConfigLayer.PROJECT
-)
+POSTGRESQL_CONFIG_SECTION = _with_service_help(get_service(ServiceType.NAMESPACE_POSTGRESQL_DATABASE).config_form_section(ConfigLayer.PROJECT), ServiceType.NAMESPACE_POSTGRESQL_DATABASE)
 
 DOMAIN_SECTION = FormSection(
     section_id="domains",
@@ -297,31 +308,31 @@ def build_deployment_wizard_section(deployment_index: int) -> FormSection:
 # built by AuthorizationWallProvider.config_form_section() and merely re-exported here
 # under the familiar name, so flows.py / EDIT_SECTIONS / tests keep referring to it.
 # (keycloak / postgres sections still live hand-authored above until they follow.)
-AUTH_WALL_CONFIG_SECTION = get_service(ServiceType.AUTHORIZATION_WALL).config_form_section(ConfigLayer.PROJECT)
+AUTH_WALL_CONFIG_SECTION = _with_service_help(get_service(ServiceType.AUTHORIZATION_WALL).config_form_section(ConfigLayer.PROJECT), ServiceType.AUTHORIZATION_WALL)
 
 # sleep-mode owns its project-level config section (SleepModeService.config_form_section),
 # re-exported here so the derived SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
-SLEEP_MODE_CONFIG_SECTION = get_service(ServiceType.SLEEP_MODE).config_form_section(ConfigLayer.PROJECT)
+SLEEP_MODE_CONFIG_SECTION = _with_service_help(get_service(ServiceType.SLEEP_MODE).config_form_section(ConfigLayer.PROJECT), ServiceType.SLEEP_MODE)
 
 # postgresql-database owns its project-level schema-list section
 # (PostgresqlDatabaseService.config_form_section), re-exported so the derived
 # SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
-POSTGRESQL_SCHEMAS_SECTION = get_service(ServiceType.POSTGRESQL_DATABASE).config_form_section(ConfigLayer.PROJECT)
+POSTGRESQL_SCHEMAS_SECTION = _with_service_help(get_service(ServiceType.POSTGRESQL_DATABASE).config_form_section(ConfigLayer.PROJECT), ServiceType.POSTGRESQL_DATABASE)
 
 # invite owns its project-level config section (InviteService.config_form_section),
 # re-exported here so the derived SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
-INVITE_CONFIG_SECTION = get_service(ServiceType.INVITE).config_form_section(ConfigLayer.PROJECT)
+INVITE_CONFIG_SECTION = _with_service_help(get_service(ServiceType.INVITE).config_form_section(ConfigLayer.PROJECT), ServiceType.INVITE)
 
 # cross-domain-access owns its project-level config section
 # (CrossDomainAccessService.config_form_section), re-exported here so the derived
 # SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
-CROSS_DOMAIN_CONFIG_SECTION = get_service(ServiceType.CROSS_DOMAIN_ACCESS).config_form_section(ConfigLayer.PROJECT)
+CROSS_DOMAIN_CONFIG_SECTION = _with_service_help(get_service(ServiceType.CROSS_DOMAIN_ACCESS).config_form_section(ConfigLayer.PROJECT), ServiceType.CROSS_DOMAIN_ACCESS)
 
 # redis and minio-storage own project-level settings that had a model and an API route but
 # no form field anywhere (RC-25); their sections are built by the services and re-exported
 # here so the derived SERVICE_CONFIG_SECTIONS picks them up by config_section_id.
-REDIS_CONFIG_SECTION = get_service(ServiceType.REDIS).config_form_section(ConfigLayer.PROJECT)
-MINIO_CONFIG_SECTION = get_service(ServiceType.MINIO_STORAGE).config_form_section(ConfigLayer.PROJECT)
+REDIS_CONFIG_SECTION = _with_service_help(get_service(ServiceType.REDIS).config_form_section(ConfigLayer.PROJECT), ServiceType.REDIS)
+MINIO_CONFIG_SECTION = _with_service_help(get_service(ServiceType.MINIO_STORAGE).config_form_section(ConfigLayer.PROJECT), ServiceType.MINIO_STORAGE)
 
 # ---------------------------------------------------------------------------
 # Lookup for conditional sections keyed by service name
@@ -800,7 +811,7 @@ RESTORE_TARGET_SECTION = FormSection(
 # RC-5: the attachments service owns its "Bijlagen" upload section (built by
 # AttachmentsService.config_form_section, incl. the hidden read-only services carrier);
 # re-exported here so flows / tests keep referring to it.
-ATTACHMENTS_SECTION = get_service(ServiceType.ATTACHMENTS).config_form_section(ConfigLayer.PROJECT)
+ATTACHMENTS_SECTION = _with_service_help(get_service(ServiceType.ATTACHMENTS).config_form_section(ConfigLayer.PROJECT), ServiceType.ATTACHMENTS)
 
 
 def _new_deployment_summary(data: dict[str, Any], deployment_index: int = 0) -> str:
