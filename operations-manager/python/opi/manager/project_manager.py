@@ -7960,6 +7960,7 @@ class ProjectManager:
         new_image_url: str,
         service_actions: dict[str, dict[str, dict[str, dict[str, str]]]] | None = None,
         registry: str | None = None,
+        rollout: bool = True,
     ) -> dict[str, Any]:
         """
         Update component image and optionally perform service-specific actions.
@@ -7982,6 +7983,9 @@ class ProjectManager:
                                 }
                             }
             registry: Optional registry name to link to this component for imagePullSecret creation
+            rollout: When False, the new image is written and committed to the project file
+                     but nothing is processed or synced. The project file then runs ahead of
+                     the cluster until the project is refreshed.
 
         Returns:
             Result dict with status, updates, and actions performed
@@ -8094,6 +8098,29 @@ class ProjectManager:
             raise
         self._end_step(commit_step)
         logger.info("Saved and committed project YAML changes")
+
+        # The caller asked for the write only: stop before anything reaches the cluster.
+        if not rollout:
+            logger.info(
+                "Skipping processing and sync for %s/%s: rollout was deferred",
+                project_name,
+                deployment_name,
+            )
+            actions_deferred = ["image_update"]
+            if generation_changes:
+                actions_deferred.append("pvc_recreation")
+            deferred_result: dict[str, Any] = {
+                "status": "success",
+                "message": f"Successfully updated {component_name} in {deployment_name} (not rolled out)",
+                "updates": {
+                    "image": {"old": old_image, "new": new_image_url, "normalized": image_was_normalized},
+                    "storage_generations": generation_changes,
+                },
+                "actions_performed": actions_deferred,
+            }
+            if state_notices:
+                deferred_result["state_cleared"] = state_notices
+            return deferred_result
 
         # 7. CRITICAL: Process entire project for this deployment
         # This ensures all resources are created/updated (not just manifests)

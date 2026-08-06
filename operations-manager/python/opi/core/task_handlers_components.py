@@ -9,6 +9,8 @@ They have NO dependency on FastAPI Request objects.
 import logging
 from typing import Any
 
+from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
+
 logger = logging.getLogger(__name__)
 
 
@@ -93,40 +95,56 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
         progress.complete_task(add_task)
 
         # ------------------------------------------------------------------
-        # Step 3: Process project
+        # Step 3: Process project (unless the caller deferred the rollout)
         # ------------------------------------------------------------------
-        deploy_task = progress.add_task("Project processing")
-        progress.update_current_step("Processing project to create K8s resources")
-
-        # Scope the reprocess to the deployments the component was added to, so it
-        # doesn't regenerate (and re-commit) every other deployment's manifests.
-        processing_success = await project_manager.process_project_from_git(
-            project_file_relative_path,
-            task_progress_manager=progress,
-            deployment_names=deployment_names,
-        )
-
-        # Collect URLs from deployment results
         urls: dict[str, dict[str, Any]] = {}
-        for dep_name in result.get("deployments_updated", []):
-            deployment_results = project_manager.get_deployment_results(dep_name)
-            for name, dep_result in deployment_results.items():
-                urls[name] = {
-                    "cluster": dep_result.cluster,
-                    "urls": dep_result.urls,
-                }
 
-        if processing_success:
-            progress.complete_task(deploy_task)
+        if not rollout_requested(payload):
+            note_rollout_skipped(progress)
+            succeeded = True
+            processing: dict[str, Any] = skipped_processing()
         else:
-            processing_error = project_manager.get_processing_error() or "Project processing failed"
-            progress.fail_task(deploy_task, processing_error)
-            progress.fail_project(processing_error)
+            deploy_task = progress.add_task("Project processing")
+            progress.update_current_step("Processing project to create K8s resources")
+
+            # Scope the reprocess to the deployments the component was added to, so it
+            # doesn't regenerate (and re-commit) every other deployment's manifests.
+            processing_success = await project_manager.process_project_from_git(
+                project_file_relative_path,
+                task_progress_manager=progress,
+                deployment_names=deployment_names,
+            )
+
+            # Collect URLs from deployment results
+            for dep_name in result.get("deployments_updated", []):
+                deployment_results = project_manager.get_deployment_results(dep_name)
+                for name, dep_result in deployment_results.items():
+                    urls[name] = {
+                        "cluster": dep_result.cluster,
+                        "urls": dep_result.urls,
+                    }
+
+            if processing_success:
+                progress.complete_task(deploy_task)
+            else:
+                processing_error = project_manager.get_processing_error() or "Project processing failed"
+                progress.fail_task(deploy_task, processing_error)
+                progress.fail_project(processing_error)
+
+            succeeded = bool(processing_success)
+            processing = {
+                "status": "completed" if succeeded else "failed",
+                **(
+                    {"error": project_manager.get_processing_error()}
+                    if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
+                **({"component_failures": cf} if (cf := project_manager.get_component_failures()) else {}),
+            }
 
         # ------------------------------------------------------------------
         # Build response
         # ------------------------------------------------------------------
-        succeeded = bool(processing_success)
         response: dict[str, Any] = {
             "status": "success" if succeeded else "failed",
             "message": (
@@ -137,15 +155,7 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
             "component": result.get("component"),
             "deployments_updated": result.get("deployments_updated", []),
             "urls": urls,
-            "processing": {
-                "status": "completed" if succeeded else "failed",
-                **(
-                    {"error": project_manager.get_processing_error()}
-                    if not succeeded and project_manager.get_processing_error()
-                    else {}
-                ),
-                **({"component_failures": cf} if (cf := project_manager.get_component_failures()) else {}),
-            },
+            "processing": processing,
         }
         if result.get("warnings"):
             response["warnings"] = result["warnings"]
@@ -215,21 +225,36 @@ async def handle_update_component(payload: dict, progress: Any) -> dict:
             }
         progress.complete_task(update_task)
 
-        deploy_task = progress.add_task("Project processing")
-        progress.update_current_step("Processing project to regenerate K8s resources")
-        processing_success = await project_manager.process_project_from_git(
-            project_file_relative_path,
-            task_progress_manager=progress,
-        )
-
-        if processing_success:
-            progress.complete_task(deploy_task)
+        if not rollout_requested(payload):
+            note_rollout_skipped(progress)
+            succeeded = True
+            processing: dict[str, Any] = skipped_processing()
         else:
-            processing_error = project_manager.get_processing_error() or "Project processing failed"
-            progress.fail_task(deploy_task, processing_error)
-            progress.fail_project(processing_error)
+            deploy_task = progress.add_task("Project processing")
+            progress.update_current_step("Processing project to regenerate K8s resources")
+            processing_success = await project_manager.process_project_from_git(
+                project_file_relative_path,
+                task_progress_manager=progress,
+            )
 
-        succeeded = bool(processing_success)
+            if processing_success:
+                progress.complete_task(deploy_task)
+            else:
+                processing_error = project_manager.get_processing_error() or "Project processing failed"
+                progress.fail_task(deploy_task, processing_error)
+                progress.fail_project(processing_error)
+
+            succeeded = bool(processing_success)
+            processing = {
+                "status": "completed" if succeeded else "failed",
+                **(
+                    {"error": project_manager.get_processing_error()}
+                    if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
+                **({"component_failures": cf} if (cf := project_manager.get_component_failures()) else {}),
+            }
+
         response: dict[str, Any] = {
             "status": "success" if succeeded else "failed",
             "message": (
@@ -238,15 +263,7 @@ async def handle_update_component(payload: dict, progress: Any) -> dict:
                 else (project_manager.get_processing_error() or f"Component '{component_name}' processing failed")
             ),
             "component": result.get("component"),
-            "processing": {
-                "status": "completed" if succeeded else "failed",
-                **(
-                    {"error": project_manager.get_processing_error()}
-                    if not succeeded and project_manager.get_processing_error()
-                    else {}
-                ),
-                **({"component_failures": cf} if (cf := project_manager.get_component_failures()) else {}),
-            },
+            "processing": processing,
         }
         if result.get("warnings"):
             response["warnings"] = result["warnings"]
@@ -333,37 +350,53 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
         progress.complete_task(add_task)
 
         # ------------------------------------------------------------------
-        # Step 3: Process the affected deployment
+        # Step 3: Process the affected deployment (unless the rollout was deferred)
         # ------------------------------------------------------------------
-        deploy_task = progress.add_task("Deployment processing")
-        progress.update_current_step(f"Processing deployment '{deployment_name}'")
-
-        processing_success = await project_manager.process_project_from_git(
-            project_file_relative_path,
-            task_progress_manager=progress,
-            deployment_name=deployment_name,
-        )
-
-        # Collect URLs from deployment results
         urls: dict[str, dict[str, Any]] = {}
-        deployment_results = project_manager.get_deployment_results(deployment_name)
-        for name, dep_result in deployment_results.items():
-            urls[name] = {
-                "cluster": dep_result.cluster,
-                "urls": dep_result.urls,
-            }
 
-        if processing_success:
-            progress.complete_task(deploy_task)
+        if not rollout_requested(payload):
+            note_rollout_skipped(progress)
+            succeeded = True
+            processing: dict[str, Any] = skipped_processing()
         else:
-            processing_error = project_manager.get_processing_error() or "Deployment processing failed"
-            progress.fail_task(deploy_task, processing_error)
-            progress.fail_project(processing_error)
+            deploy_task = progress.add_task("Deployment processing")
+            progress.update_current_step(f"Processing deployment '{deployment_name}'")
+
+            processing_success = await project_manager.process_project_from_git(
+                project_file_relative_path,
+                task_progress_manager=progress,
+                deployment_name=deployment_name,
+            )
+
+            # Collect URLs from deployment results
+            deployment_results = project_manager.get_deployment_results(deployment_name)
+            for name, dep_result in deployment_results.items():
+                urls[name] = {
+                    "cluster": dep_result.cluster,
+                    "urls": dep_result.urls,
+                }
+
+            if processing_success:
+                progress.complete_task(deploy_task)
+            else:
+                processing_error = project_manager.get_processing_error() or "Deployment processing failed"
+                progress.fail_task(deploy_task, processing_error)
+                progress.fail_project(processing_error)
+
+            succeeded = bool(processing_success)
+            processing = {
+                "status": "completed" if succeeded else "failed",
+                **(
+                    {"error": project_manager.get_processing_error()}
+                    if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
+                **({"component_failures": cf} if (cf := project_manager.get_component_failures()) else {}),
+            }
 
         # ------------------------------------------------------------------
         # Build response
         # ------------------------------------------------------------------
-        succeeded = bool(processing_success)
         response: dict[str, Any] = {
             "status": "success" if succeeded else "failed",
             "message": (
@@ -377,15 +410,7 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
             "deployment": deployment_name,
             "component_reference": result.get("component_reference"),
             "urls": urls,
-            "processing": {
-                "status": "completed" if succeeded else "failed",
-                **(
-                    {"error": project_manager.get_processing_error()}
-                    if not succeeded and project_manager.get_processing_error()
-                    else {}
-                ),
-                **({"component_failures": cf} if (cf := project_manager.get_component_failures()) else {}),
-            },
+            "processing": processing,
         }
         if result.get("warnings"):
             response["warnings"] = result["warnings"]
@@ -467,8 +492,13 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
         # ------------------------------------------------------------------
         # Step 3: Process project (only if new services were added)
         # ------------------------------------------------------------------
-        processing_status = "skipped"
-        if result.get("services_added"):
+        # Nothing added means nothing to reconcile; a deferred rollout says the same for a
+        # different reason, and the reason travels with the status.
+        processing: dict[str, Any] = {"status": "skipped"}
+        if not rollout_requested(payload):
+            note_rollout_skipped(progress)
+            processing = skipped_processing()
+        elif result.get("services_added"):
             deploy_task = progress.add_task("Project processing")
             progress.update_current_step("Processing project to provision services")
 
@@ -478,10 +508,10 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
             )
 
             if processing_success:
-                processing_status = "completed"
+                processing = {"status": "completed"}
                 progress.complete_task(deploy_task)
             else:
-                processing_status = "failed"
+                processing = {"status": "failed"}
                 processing_error = project_manager.get_processing_error() or "Project processing failed"
                 progress.fail_task(deploy_task, processing_error)
                 progress.fail_project(processing_error)
@@ -489,7 +519,7 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
         # ------------------------------------------------------------------
         # Build response
         # ------------------------------------------------------------------
-        succeeded = processing_status != "failed"
+        succeeded = processing["status"] != "failed"
         response: dict[str, Any] = {
             "status": "success" if succeeded else "failed",
             "message": f"Service '{service_name}' added successfully"
@@ -499,7 +529,7 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
             "services_skipped": result.get("services_skipped", []),
             "components_updated": result.get("components_updated", []),
             "processing": {
-                "status": processing_status,
+                **processing,
                 **(
                     {"error": project_manager.get_processing_error()}
                     if not succeeded and project_manager.get_processing_error()
@@ -588,30 +618,33 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
         # Only reconcile when the project file actually changed. A clear that found
         # nothing to remove returns removed=False and skips processing entirely.
         changed = operation != "clear" or result.get("removed", False)
-        processing_status = "skipped"
-        if changed:
+        processing: dict[str, Any] = {"status": "skipped"}
+        if not rollout_requested(payload):
+            note_rollout_skipped(progress)
+            processing = skipped_processing()
+        elif changed:
             deploy_task = progress.add_task("Project processing")
             progress.update_current_step("Processing project to reconcile service config")
             processing_success = await project_manager.process_project_from_git(
                 project_file_relative_path, task_progress_manager=progress
             )
             if processing_success:
-                processing_status = "completed"
+                processing = {"status": "completed"}
                 progress.complete_task(deploy_task)
             else:
-                processing_status = "failed"
+                processing = {"status": "failed"}
                 processing_error = project_manager.get_processing_error() or "Project processing failed"
                 progress.fail_task(deploy_task, processing_error)
                 progress.fail_project(processing_error)
 
-        succeeded = processing_status != "failed"
+        succeeded = processing["status"] != "failed"
         return {
             "status": "success" if succeeded else "failed",
             "service": service_name,
             "target": target,
             "removed": result.get("removed"),
             "processing": {
-                "status": processing_status,
+                **processing,
                 **(
                     {"error": project_manager.get_processing_error()}
                     if not succeeded and project_manager.get_processing_error()
