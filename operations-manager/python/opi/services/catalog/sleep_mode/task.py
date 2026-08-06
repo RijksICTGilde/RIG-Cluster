@@ -16,7 +16,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-#: Progress steps, so the page names what is happening instead of showing a bare bar.
+#: How each direction is named on the page, as a heading and as an outcome.
 _STEPS = {
     "sleep": ("Deployment in slaapstand zetten", "Deployment slaapt"),
     "wake": ("Deployment wekken", "Deployment is gewekt"),
@@ -42,13 +42,22 @@ async def handle_sleep_transition(payload: dict[str, Any], progress: Any) -> dic
     direction = payload.get("direction", "sleep")
     running, done = _STEPS.get(direction, _STEPS["sleep"])
 
-    await progress.update(10, running)
-    result = (
-        await flow.sleep(project_name, deployment_name)
-        if direction == "sleep"
-        else await flow.wake(project_name, deployment_name)
-    )
-    await progress.update(100, done if result.changed else f"Geen wijziging nodig, deployment is al {result.state}")
+    # The flow itself names each step it takes (loading, committing) and the
+    # reprocessing it triggers names the manifest and ArgoCD work, so the wait is
+    # accounted for instead of sitting behind one bar.
+    heading = progress.add_task(f"{running}: {deployment_name}")
+    try:
+        result = (
+            await flow.sleep(project_name, deployment_name, progress=progress)
+            if direction == "sleep"
+            else await flow.wake(project_name, deployment_name, progress=progress)
+        )
+    except Exception as exc:
+        progress.fail_task(heading, str(exc))
+        progress.fail_project(str(exc))
+        raise
+    progress.complete_task(heading)
+    progress.update_current_step(done if result.changed else f"Geen wijziging nodig, deployment is al {result.state}")
 
     logger.info(
         "sleep-mode task %s for %s/%s: changed=%s state=%s",
