@@ -175,3 +175,55 @@ def _service_options() -> list[dict[str, object]]:
     from opi.forms.visualizers.providers import ServiceOptionsProvider
 
     return ServiceOptionsProvider().get_options()
+
+
+class TestEenVergrendeldeDienstOverleeftHetVersturen:
+    """Een vergrendelde dienst is een dienst die AAN moet blijven, en juist die viel weg.
+
+    Een dienst wordt vergrendeld zodra een andere hem vereist (keycloak vereist
+    publish-on-web). Vergrendeld betekent ``disabled`` op de checkbox, en een disabled
+    checkbox verstuurt zijn waarde niet. Zonder vangnet valt hij dus uit de selectie en
+    meldt het overzicht dat hij verwijderd wordt, terwijl de gebruiker hem niet heeft
+    uitgezet en hem ook niet uit KAN zetten.
+
+    Gemeten op een echte wizardsessie: de servicesstap had
+    ``["keycloak", "invite", "cross-domain-access"]`` opgeslagen, zonder publish-on-web.
+    """
+
+    def _render(self, selected: list[str]) -> str:
+        from opi.forms.field import FormField
+        from opi.forms.visualizers.providers import ServiceOptionsProvider
+        from opi.forms.widgets.roos import ROOSWidgetAdapter
+
+        field = FormField(
+            name="services",
+            path="services",
+            schema_type=list,
+            widget_type="service_cards",
+            label="Services",
+            value=selected,
+            options=ServiceOptionsProvider().get_options(),
+        )
+        return ROOSWidgetAdapter().render_service_cards(field)
+
+    def _hidden(self, html: str) -> list[str]:
+        import re
+
+        return re.findall(r'<input type="hidden" name="services\[\]" value="([^"]+)"', html)
+
+    def test_de_vereiste_dienst_wordt_alsnog_meegestuurd(self) -> None:
+        # keycloak vereist publish-on-web, dus die kaart is vergrendeld.
+        html = self._render(["keycloak", "publish-on-web"])
+        assert "publish-on-web" in self._hidden(html), (
+            "een vergrendelde dienst moet meegestuurd worden, anders verdwijnt hij bij het opslaan"
+        )
+
+    def test_een_gewone_dienst_krijgt_er_geen(self) -> None:
+        """Anders zou een dienst twee keer in de POST staan; de merge vangt dat wel op,
+        maar een dubbele waarde versturen is geen oplossing maar een tweede probleem."""
+        html = self._render(["keycloak", "publish-on-web"])
+        assert "keycloak" not in self._hidden(html)
+
+    def test_een_niet_gekozen_dienst_krijgt_er_geen(self) -> None:
+        html = self._render([])
+        assert self._hidden(html) == []

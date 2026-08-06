@@ -12,6 +12,23 @@
  * detail-page edit modal (fetch to /sequence endpoint).
  * ======================================================================== */
 
+/* Houdt de meereizende hidden input van een vergrendelde dienst in stand. Zie de aanroep
+   in updateAllVisuals voor het waarom. */
+function _syncLockedHiddenInput(card, checkbox, nodig) {
+    var bestaand = card.querySelector('input[type="hidden"][data-locked-value]');
+    if (!nodig) {
+        if (bestaand) bestaand.remove();
+        return;
+    }
+    if (bestaand) return;
+    var verborgen = document.createElement('input');
+    verborgen.type = 'hidden';
+    verborgen.name = checkbox.name;
+    verborgen.value = checkbox.value;
+    verborgen.setAttribute('data-locked-value', '');
+    checkbox.parentNode.insertBefore(verborgen, checkbox.nextSibling);
+}
+
 function sequenceAdd(path) {
     _sequenceDispatch('add', path, '');
 }
@@ -278,6 +295,13 @@ function initServiceCards(grid) {
 
             if (cb) {
                 cb.disabled = locked;
+                /* Een disabled checkbox verstuurt zijn waarde niet, en juist een
+                   vergrendelde dienst is er een die AAN moet blijven: iets anders vereist
+                   hem. Zonder deze meereizende hidden input valt hij uit de POST en meldt
+                   het overzicht dat hij verwijderd wordt. De server rendert er al een voor
+                   wat bij het laden al vergrendeld was; dit dekt het geval dat je hem hier
+                   aanvinkt, want dan vergrendelt hij pas op dit moment. */
+                _syncLockedHiddenInput(card, cb, locked && checked);
                 /* Sync ROOS label class with current checked state */
                 var label = cb.closest('label[data-roos-component="checkbox"]');
                 if (label) {
