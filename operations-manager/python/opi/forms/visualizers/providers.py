@@ -94,17 +94,17 @@ class ServiceOptionsProvider:
     def __init__(
         self,
         include_empty: bool = False,
-        filter_scope: str | None = None,
+        filter_binding: str | None = None,
     ) -> None:
         """
         Initialize the service options provider.
 
         Args:
             include_empty: Whether to include an empty "select" option
-            filter_scope: Filter services by scope ("component" or "deployment")
+            filter_binding: Filter services by binding ("component" or "deployment")
         """
         self.include_empty = include_empty
-        self.filter_scope = filter_scope
+        self.filter_binding = filter_binding
 
     def get_options(self) -> list[dict[str, Any]]:
         """Get available service options from ServiceAdapter definitions."""
@@ -120,8 +120,8 @@ class ServiceOptionsProvider:
             if definition.hidden or definition.kind is ServiceKind.SYSTEM:
                 continue
 
-            # Filter by scope if specified (filter_scope is the plain string value)
-            if self.filter_scope and definition.scope.value != self.filter_scope:
+            # Filter by binding if specified (filter_binding is the plain string value)
+            if self.filter_binding and definition.binding.value != self.filter_binding:
                 continue
 
             option: dict[str, Any] = {
@@ -130,8 +130,8 @@ class ServiceOptionsProvider:
                 "description": definition.description,
                 "icon": definition.icon,
                 "color": definition.color,
-                # .value so the view/JS gets "component", not "ServiceScope.COMPONENT".
-                "scope": definition.scope.value,
+                # .value so the view/JS gets "component", not "ServiceBinding.COMPONENT".
+                "binding": definition.binding.value,
             }
 
             if definition.requires:

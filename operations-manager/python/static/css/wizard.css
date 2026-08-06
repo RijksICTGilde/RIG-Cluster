@@ -345,6 +345,17 @@ c-fieldset c-fieldset {
     margin: 0.25rem 0 0 0;
     font-style: italic;
 }
+/* "Deze dienst stelt u per component in": only meaningful once the card is ticked,
+   and it has to appear at that moment -- the user ticks and clicks Next, so a line
+   that needs a page reload to show up is never read. The selected class is kept in
+   sync client-side by updateAllVisuals() in wizard.js. */
+.service-card__hint--config {
+    display: none;
+}
+.service-card--selected .service-card__hint--config,
+.service-card--locked-checked .service-card__hint--config {
+    display: block;
+}
 
 /* Display field header (for display_card widget) */
 .rvo-display-field__header {
