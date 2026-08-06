@@ -11,7 +11,7 @@ import logging
 from inspect import Parameter, Signature
 from typing import Any, NamedTuple
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, File, HTTPException, Query, Request, UploadFile
 from fastapi import Path as FastAPIPath
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
@@ -83,7 +83,7 @@ from opi.utils.naming import (
     sanitize_kubernetes_name,
 )
 from opi.utils.project_utils import validate_project_name
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, create_model
 
 logger = logging.getLogger(__name__)
 
@@ -1458,10 +1458,63 @@ def _action_path(service_name: str, action: ServiceAction, verbs: tuple[ActionVe
     return f"{path}/{{{action.id_param}}}" if verbs[0].targets_existing else path
 
 
+def _body_model_name(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> str:
+    """The name this route's request body carries in the spec.
+
+    Loose multipart fields make FastAPI invent one, and what it invents is the route's
+    unique id: a hundred characters of ``Body_create_attachments_component_api_v2_...``
+    that differ from the next one only in layer and verb. Four of those between
+    ``AttachmentUse`` and ``AttachmentsConfig`` read as duplicates because they look like
+    duplicates. The parts that actually distinguish them are the action, the layer and the
+    verb, so the name is those three and nothing else.
+    """
+
+    def camel(text: str) -> str:
+        return "".join(part.capitalize() for part in text.replace("_", "-").split("-"))
+
+    return f"{camel(action.action_id)}{camel(action.layer.value)}{camel(verbs[0].value)}Request"
+
+
+def _action_body_model(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> type[BaseModel]:
+    """The multipart body of one route, as a named model.
+
+    One field per declared field, carrying its own description and example, so the
+    generated schema says the same things it said as loose form fields -- under a name a
+    reader can place.
+    """
+    addressed = verbs[0].targets_existing
+    fields: dict[str, Any] = {}
+    for action_field in action.fields:
+        if addressed and action_field.name == action.id_param:
+            continue  # addressed by the path, not sent again as a field
+        # Mandatory only when every verb on this route insists on it; the verb actually
+        # used decides the rest, at validation time.
+        required = all(action_field.is_required_for(verb) for verb in verbs)
+        if action_field.kind is ActionFieldKind.FILE:
+            annotation: Any = UploadFile if required else UploadFile | None
+        else:
+            annotation = str if required else str | None
+        fields[_param_name(action_field.name)] = (
+            annotation,
+            Field(
+                ... if required else None,
+                description=action_field.description,
+                alias=action_field.name,
+                examples=[action_field.example] if action_field.example else None,
+            ),
+        )
+    return create_model(
+        _body_model_name(action, verbs),
+        __config__=ConfigDict(populate_by_name=True, arbitrary_types_allowed=True),
+        **fields,
+    )
+
+
 def _action_signature(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> Signature:
     """The signature FastAPI introspects: path params, the upsert flag when the route
-    serves both PUT verbs, and one multipart field per declared field -- each carrying
-    its own description, so the OpenAPI document says what every field means."""
+    serves both PUT verbs, and the declared fields as one named multipart body -- each
+    field carrying its own description, so the OpenAPI document says what every field
+    means."""
     addressed = verbs[0].targets_existing
     params = [
         Parameter("request", Parameter.POSITIONAL_OR_KEYWORD, annotation=Request),
@@ -1494,31 +1547,16 @@ def _action_signature(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> S
                 ),
             )
         )
-    for action_field in action.fields:
-        if addressed and action_field.name == action.id_param:
-            continue  # addressed by the path, not sent again as a field
-        # Mandatory only when every verb on this route insists on it; the verb actually
-        # used decides the rest, at validation time.
-        required = all(action_field.is_required_for(verb) for verb in verbs)
-        if action_field.kind is ActionFieldKind.FILE:
-            default = File(... if required else None, description=action_field.description)
-            annotation = UploadFile if required else UploadFile | None
-        else:
-            default = Form(
-                ... if required else None,
-                description=action_field.description,
-                alias=action_field.name,
-                examples=[action_field.example] if action_field.example else None,
-            )
-            annotation = str if required else str | None
-        params.append(
-            Parameter(
-                _param_name(action_field.name),
-                Parameter.POSITIONAL_OR_KEYWORD,
-                annotation=annotation,
-                default=default,
-            )
+    params.append(
+        Parameter(
+            "body",
+            Parameter.POSITIONAL_OR_KEYWORD,
+            annotation=_action_body_model(action, verbs),
+            # File, not Form: the body carries an upload, so the route has to keep
+            # promising multipart/form-data. Form would quietly move it to urlencoded.
+            default=File(...),
         )
+    )
     return Signature(params, return_annotation=JSONResponse)
 
 
@@ -1544,12 +1582,13 @@ def _make_action_endpoint(action: ServiceAction, verbs: tuple[ActionVerb, ...]):
 
     async def endpoint(**kwargs: Any) -> JSONResponse:
         verb = ActionVerb.UPSERT if (len(verbs) > 1 and kwargs.get("upsert")) else verbs[0]
+        body = kwargs["body"]
         values: dict[str, Any] = {}
         uploads: dict[str, UploadedFile] = {}
         for action_field in action.fields:
             if verb.targets_existing and action_field.name == action.id_param:
                 continue
-            raw = kwargs.get(_param_name(action_field.name))
+            raw = getattr(body, _param_name(action_field.name), None)
             if action_field.kind is ActionFieldKind.FILE:
                 if raw is not None:
                     uploads[action_field.name] = UploadedFile(

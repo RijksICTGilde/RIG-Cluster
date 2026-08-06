@@ -242,3 +242,74 @@ class TestTheOpenApiDocument:
         parameters = {p["name"]: p for p in spec["paths"][path]["put"]["parameters"]}
         assert parameters["upsert"]["schema"]["default"] is False
         assert parameters["upsert"]["description"]
+
+
+def _is_action_route(path: str) -> bool:
+    """Whether a path is a declared-action route rather than a config route.
+
+    An action route ends in the action's own segment (optionally addressing one item);
+    a config route ends in ``/config/...`` and takes JSON.
+    """
+    segments = path.split("/")
+    last = segments[-1]
+    tail = segments[-2] if last.startswith("{") else last
+    return "/services/" in path and tail == "attachments"
+
+
+class TestTheRequestBodyHasAName:
+    """The body of an action route is a model with a name, not one FastAPI invents (RC-45).
+
+    Loose multipart fields make FastAPI name the body after the route's unique id, which
+    gives four schemas of around a hundred characters that differ only in layer and verb.
+    They sit in the same schema list as the service's own models and read as duplicates of
+    each other. The name is the action, the layer and the verb; nothing else distinguishes
+    them anyway.
+    """
+
+    @pytest.fixture(scope="class")
+    def spec(self) -> dict:
+        from opi.server import app
+
+        return app.openapi()
+
+    @pytest.fixture(scope="class")
+    def action_bodies(self, spec) -> dict[str, dict]:
+        """Every action route's body: "METHOD path" -> its requestBody."""
+        return {
+            f"{method.upper()} {path}": operation["requestBody"]
+            for path, item in spec["paths"].items()
+            if "/services/" in path
+            for method, operation in item.items()
+            if method in ("post", "put") and "requestBody" in operation and _is_action_route(path)
+        }
+
+    def test_no_action_body_carries_a_generated_name(self, action_bodies) -> None:
+        generated = {
+            key: ref
+            for key, body in action_bodies.items()
+            for ref in [next(iter(body["content"].values()))["schema"]["$ref"].rsplit("/", 1)[-1]]
+            if ref.startswith("Body_")
+        }
+        assert not generated, f"these bodies are named after their route instead of after what they are: {generated}"
+
+    def test_the_upload_bodies_are_named_after_action_layer_and_verb(self, spec) -> None:
+        names = {
+            f"{method.upper()} {path}": next(iter(operation["requestBody"]["content"].values()))["schema"][
+                "$ref"
+            ].rsplit("/", 1)[-1]
+            for path, item in spec["paths"].items()
+            for method, operation in item.items()
+            if _is_action_route(path) and method in ("post", "put")
+        }
+        assert set(names.values()) == {
+            "AttachmentsProjectCreateRequest",
+            "AttachmentsProjectUpdateRequest",
+            "AttachmentsComponentCreateRequest",
+            "AttachmentsComponentUpdateRequest",
+        }
+
+    def test_the_upload_still_promises_multipart(self, action_bodies) -> None:
+        # The body became a model; what the route accepts must not have moved with it.
+        # A form model defaults to urlencoded, and an upload cannot travel that way.
+        for key, body in action_bodies.items():
+            assert list(body["content"]) == ["multipart/form-data"], key
