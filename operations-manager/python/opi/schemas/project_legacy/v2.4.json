@@ -1,0 +1,137 @@
+{
+  "$comment": "v2.4 -> v2.5 (RC-5) moved the root `domains:` approval block to services/[publish-on-web]/config/domains. Until v2.5 a file carried it at the root.",
+  "properties": {
+    "domains": {
+      "$ref": "#/$defs/domains"
+    }
+  },
+  "$defs": {
+    "domains": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed-subdomains": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/allowed-subdomain-entry"
+          }
+        },
+        "allowed-domains": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/allowed-domain-entry"
+          }
+        }
+      }
+    },
+    "allowed-subdomain-entry": {
+      "type": "object",
+      "required": [
+        "domain",
+        "subdomains"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "type": "string"
+        },
+        "subdomains": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/allowed-subdomain-detail"
+          }
+        }
+      }
+    },
+    "allowed-subdomain-detail": {
+      "type": "object",
+      "required": [
+        "name",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "requested",
+            "approved",
+            "denied"
+          ]
+        },
+        "history": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/domain-history-entry"
+          }
+        }
+      }
+    },
+    "allowed-domain-entry": {
+      "type": "object",
+      "required": [
+        "domain",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "requested",
+            "approved",
+            "denied"
+          ]
+        },
+        "supports-dots": {
+          "type": "boolean"
+        },
+        "issuer": {
+          "type": "string"
+        },
+        "restricted-subdomains": {
+          "type": "boolean"
+        },
+        "history": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/domain-history-entry"
+          }
+        }
+      }
+    },
+    "domain-history-entry": {
+      "type": "object",
+      "required": [
+        "date",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "requested",
+            "approved",
+            "denied"
+          ]
+        },
+        "by": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
