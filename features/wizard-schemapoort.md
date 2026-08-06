@@ -34,9 +34,30 @@ wizard springt daarheen en toont de melding bij het veld. Lukt dat niet — een 
 op een blok, of op iets dat de wizard niet bewerkt — dan staat de melding bovenaan de
 stap waar vandaan is ingediend. Niet kunnen plaatsen is geen reden om niets te tonen.
 
+**De melding herhaalt de afgekeurde waarde niet, en staat nooit in het veld zelf.**
+Twee redenen, allebei hard:
+
+- *De waarde kan een geheim zijn.* De bewerk-flow valideert het bestand samengevoegd met
+  het opgeslagen project, en jsonschema zet de afgekeurde waarde in zijn eigen melding.
+  Dat zou `config/api-key`, `config/age-private-key` of `user-env-vars` naar de browser
+  én naar de WARNING-log kunnen schrijven. `ProjectSchemaError` draagt daarom naast
+  `field_path` een `reason`: een beschrijving die alleen uit de schemaregel is opgebouwd
+  ("de waarde heeft niet de vorm die het schema voorschrijft"). Wat de gebruiker en het
+  log te zien krijgen is veldpad + reden, gebouwd door `_validation_message_without_values`.
+- *Wat in een veldmelding staat, wordt twee keer gerenderd.* Veldmeldingen komen in
+  `step_html` terecht en `wizard_step.html.j2` haalt dat door `process_components`, dat de
+  HTML nóg een keer als Jinja-template uitvoert. HTML-escapen helpt daar niet: `{{ }}`
+  heeft geen bijzondere tekens nodig. Het veld krijgt daarom alleen een constante markering
+  (`SCHEMA_FIELD_MARKER`); de tekst zelf staat in `global_errors`, dat binnen de template
+  wordt gerenderd — één render, met autoescaping. Als extra grendel breekt
+  `_defuse_template_syntax` Jinja-delimiters in álle veldmeldingen en -waarschuwingen die
+  naar `_render_step_html` gaan; dat dekt ook de gewone formuliervalidators, die de
+  ingevulde waarde wél in hun melding citeren ("Ongeldige waarde: ...").
+
 **Het wordt gelogd als bug.** Komt de wizard hier met een ongeldig bestand, dan
-ontbreekt validatie op een veld. Er gaat een WARNING uit met het veldpad, want dat pad
-is de plek waar dat gat zit. Het vangnet is niet het doel; het zichtbaar maken wel.
+ontbreekt validatie op een veld. Er gaat een WARNING uit met het veldpad en de reden
+(niet de waarde), want dat pad is de plek waar dat gat zit. Het vangnet is niet het doel;
+het zichtbaar maken wel.
 
 **De sessie gaat pas weg als het werk is overgedragen.** In `_start_project_creation`
 staat `clear_wizard_state` nu ná `create_async_task`. Mislukt de indiening, dan staat de
@@ -60,6 +81,7 @@ stilletjes buiten de dekking te vallen.
 ## Tests
 
 - `tests/test_wizard_rejects_invalid_project.py` — de controle zelf, beide opslagpaden,
-  de volgorde van het opruimen van de sessie, en het plaatsen van de melding.
+  de volgorde van het opruimen van de sessie, het plaatsen van de melding, en dat de
+  melding de waarde niet herhaalt en niet als template kan worden uitgevoerd.
 - `tests/test_empty_list_fields.py` — de sweep over lijst-schrijvende velden.
 - `tests/test_component_command_field.py` — het veld dat de aanleiding was.
