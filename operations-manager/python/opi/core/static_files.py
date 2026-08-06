@@ -1,10 +1,13 @@
 """Static file serving with cache headers that follow the content hash in the URL."""
 
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
-from starlette.responses import Response
 from starlette.staticfiles import StaticFiles
-from starlette.types import Scope
+
+if TYPE_CHECKING:
+    from starlette.responses import Response
+    from starlette.types import Scope
 
 # A year, the maximum the spec advises. Only ever handed out for a URL that identifies
 # its own contents through the ?v= hash, so a changed file is a different URL.

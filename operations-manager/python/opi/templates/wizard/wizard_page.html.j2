@@ -32,11 +32,11 @@
 {% endblock %}
 
 {% block additional_styles %}
-<link rel="stylesheet" href="/static/css/wizard.css">
+<link rel="stylesheet" href="{{ static_url('css/wizard.css') }}">
 {% endblock %}
 
 {% block additional_scripts %}
-<script src="/static/js/codemirror-bundle.js"></script>
-<script src="/static/js/codemirror-kv.js"></script>
-<script src="/static/js/wizard.js"></script>
+<script src="{{ static_url('js/codemirror-bundle.js') }}"></script>
+<script src="{{ static_url('js/codemirror-kv.js') }}"></script>
+<script src="{{ static_url('js/wizard.js') }}"></script>
 {% endblock %}
