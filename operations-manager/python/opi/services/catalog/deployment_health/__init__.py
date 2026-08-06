@@ -125,9 +125,14 @@ class DeploymentHealthService(Service):
         caused it. It also cannot flap on its own: the only thing that lifts a disable
         here is a person rolling something out.
 
-        Only a disable recorded ON the deployment-component is cleared. A ``disabled``
-        flag on the component *definition* is a project-wide decision by a person and
-        governs every deployment, so rolling out one of them is not the moment to flip it.
+        Every disable is cleared, wherever it sits. An earlier version spared a
+        ``disabled`` flag on the component *definition*, on the reading that it was a
+        deliberate project-wide decision. Measured on 6 August, that reading is wrong:
+        ``set_component_disabled`` (the definition-level setter) has NO callers, there is
+        no editable and no route for it, so a user cannot make that decision anywhere in
+        OPI. Sparing it protected a case that does not occur, while a value that did end
+        up in a file by hand would have kept the component off forever -- new image and
+        all. Rolling out new content says plainly enough that it is meant to run.
         """
         from opi.handlers.project_file_handler import ProjectFileHandler
 
@@ -137,11 +142,12 @@ class DeploymentHealthService(Service):
             reference = component.get("reference", "")
             if reference not in ctx.component_names:
                 continue
-            # ``"disabled" in component``: the deployment-component's own record, not the
-            # definition-level fallback ``extract_deployment_component_disabled`` adds.
-            if "disabled" not in component or not component.get("disabled"):
+            is_disabled, reason_text = handler.extract_deployment_component_disabled(
+                ctx.project_data, ctx.deployment_name, reference
+            )
+            if not is_disabled:
                 continue
-            reason = str(component.get("disabled-reason", ""))
+            reason = str(reason_text or "")
             handler.set_deployment_component_disabled(ctx.project_data, ctx.deployment_name, reference, False, "")
             notices.append(
                 f"Component '{reference}' stond uitgeschakeld"
