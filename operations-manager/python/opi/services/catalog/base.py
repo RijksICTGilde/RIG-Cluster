@@ -58,6 +58,36 @@ class ConfigLayer(Enum):
     DEPLOYMENT_COMPONENT = "deployment-component"
 
 
+class ConfigRole(Enum):
+    """What a service's config at a layer *is*: a definition, a use, or a binding.
+
+    "Service config" was one word for three different things, and attachments is the
+    first service where they visibly come apart:
+
+    * ``DEFINE`` -- put something into the project that is not used by itself. The
+      attachments catalog (a file with an ``id``, a ``filename`` and its encrypted
+      ``content``) is defined at project level and used nowhere until a component
+      says so. A definition lives under ``data`` on the project-level service entry,
+      not under ``config``.
+    * ``USE`` -- "this component/deployment uses this service (this thing)". For most
+      services the use is the bare service name in a ``services:`` list and there is
+      nothing to define, which is why the distinction never had to be made before.
+      For attachments the use names *which* definition: ``reference: my-cert``.
+    * ``BIND`` -- *how* the used thing reaches the workload: ``provide-as``, ``path``,
+      ``env-name``. A binding is meaningless without a use.
+
+    A service answers per layer (``config_roles``), so generic code can ask "does this
+    service define something here" without knowing which service it is talking to. The
+    roles are documentation of the contract *and* the reason a layer does or does not
+    deserve an endpoint: a DEFINE layer needs a way to put the thing in, which is not
+    the same request as configuring how it is used.
+    """
+
+    DEFINE = "define"
+    USE = "use"
+    BIND = "bind"
+
+
 #: The per-layer prefix of a service's config yaml_path. Encodes the layer shape once
 #: (project ``services/X`` vs component ``components[*]/services{X}`` etc.) so no
 #: service hardcodes it; ``{svc}`` is filled with the ServiceType value.
@@ -624,6 +654,35 @@ class Service(ABC):
         """
         return self.config_model
 
+    def data_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
+        """The model that validates this service's DEFINE-side payload at ``layer``.
+
+        A definition does not live under ``config`` but under ``data`` on the service
+        entry, because it is not configuration of a use -- it is the thing being used.
+        Only a service with a ``ConfigRole.DEFINE`` layer has one; everything else
+        returns None and is skipped by the validation walk.
+
+        Separate from ``config_model_for`` on purpose: a service can both define
+        something at project level and be configured at component level, with two
+        different shapes, and one hook cannot answer both.
+        """
+        return None
+
+    def config_roles(self, layer: ConfigLayer) -> tuple[ConfigRole, ...]:
+        """What this service's config at ``layer`` is: define, use and/or bind.
+
+        The default is ``(USE,)`` for every layer the service carries config on and
+        ``()`` for the rest: config on a component says "this component uses this
+        service, thus". That is the honest reading for nearly the whole catalog, where
+        there is nothing to define and the binding is implied by the service itself.
+
+        A service whose layers mean more than that says so -- attachments defines a
+        catalog at project level and both uses and binds at component level.
+        ``tests/test_service_config_roles.py`` holds every service to naming a role for
+        each layer it carries config on.
+        """
+        return (ConfigRole.USE,) if layer in self.config_layers() else ()
+
     def migrate_config(self, config: ServiceConfigData, from_version: str) -> ServiceConfigData:
         """Convert an older config forward to ``config_schema_version`` (hub).
 
@@ -722,12 +781,15 @@ class Service(ABC):
         """The layers at which this service carries config, measured from its own hooks.
 
         A layer counts when the service declares editables for it, accepts API fields
-        for it, or hooks layout nodes into that layer's form. Derived rather than
-        declared, so it cannot drift from the implementation -- the same trick
-        ``registry.provisioning_services()`` uses.
+        for it, hooks layout nodes into that layer's form, or carries a DEFINE-side
+        payload there. Derived rather than declared, so it cannot drift from the
+        implementation -- the same trick ``registry.provisioning_services()`` uses.
         """
         layers = []
         for layer in ConfigLayer:
+            if self.data_model_for(layer) is not None:
+                layers.append(layer)
+                continue
             has_layout = (
                 bool(self.config_component_layout())
                 if layer is ConfigLayer.COMPONENT
