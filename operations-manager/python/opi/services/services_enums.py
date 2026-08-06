@@ -57,11 +57,20 @@ class ServiceType(Enum):
     ALIASES = "aliases"
 
 
-class ServiceScope(Enum):
+class ServiceBinding(Enum):
     """Whether a service is chosen per component or shared per deployment.
 
+    This is about *selection*: does an individual component tick this service, or does
+    the whole deployment get it at once. It says nothing about where the service's
+    settings live -- that is ``ConfigLayer`` (``opi/services/catalog/base.py``), and the
+    two genuinely differ: keycloak binds per component (each component decides whether it
+    sits behind login) while its configuration is one realm for the whole project, so its
+    config lives at ``ConfigLayer.PROJECT``. Named ``binding`` rather than ``scope``
+    because "scope" read like an answer to "where do I configure this", which it never
+    was; ``instructions/services.md`` states the split.
+
     A closed set, so a typo is a pyright error, not a runtime surprise. Rendered
-    values go through ``.value`` (a bare Enum renders as ``ServiceScope.COMPONENT``).
+    values go through ``.value`` (a bare Enum renders as ``ServiceBinding.COMPONENT``).
     """
 
     COMPONENT = "component"

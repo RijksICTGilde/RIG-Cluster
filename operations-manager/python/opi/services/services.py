@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from opi.services.services_enums import CleanupStrategy, ServiceKind, ServiceScope, ServiceType
+from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceKind, ServiceType
 
 if TYPE_CHECKING:
     from opi.services.catalog.base import ConfigLayer
@@ -192,14 +192,14 @@ class ServiceDefinition:
     Definition of a service with all its properties and configuration.
 
     This class encapsulates all information about a service including
-    its metadata, scope, variables, and optional configurations.
+    its metadata, binding, variables, and optional configurations.
     """
 
     name: str
     description: str
     icon: str
     color: str
-    scope: ServiceScope
+    binding: ServiceBinding
     variables: list[VariableDefinition] = field(default_factory=list)
     secret_class: str | None = None
     # TODO: specific definitions should not be here
@@ -553,7 +553,7 @@ class ServiceAdapter:
             help_template="publish-on-web.html.j2",
             icon="wereldbol",
             color="hemelblauw",
-            scope=ServiceScope.COMPONENT,
+            binding=ServiceBinding.COMPONENT,
             variables=[var.value for var in WebVariables],
         ),
         ServiceType.KEYCLOAK: ServiceDefinition(
@@ -562,7 +562,7 @@ class ServiceAdapter:
             help_template="keycloak.html.j2",
             icon="sleutel",
             color="groen",
-            scope=ServiceScope.COMPONENT,
+            binding=ServiceBinding.COMPONENT,
             secret_class="KeycloakSecret",
             variables=[var.value for var in KeycloakVariables],
             requires=["services/publish-on-web"],
@@ -574,7 +574,7 @@ class ServiceAdapter:
             help_template="persistent-storage.html.j2",
             icon="server",
             color="grijs-600",
-            scope=ServiceScope.COMPONENT,
+            binding=ServiceBinding.COMPONENT,
             backup_label="pvc",
             storage_config={"name": "data", "type": "persistent", "size": "1Gi", "mount-path": "/data"},
             variables=[var.value for var in StorageVariables if var.value.name == "DATA_PATH"],
@@ -586,7 +586,7 @@ class ServiceAdapter:
             help_template="temp-storage.html.j2",
             icon="klok",
             color="oranje",
-            scope=ServiceScope.COMPONENT,
+            binding=ServiceBinding.COMPONENT,
             storage_config={"name": "temp", "type": "ephemeral", "size": "500Mi", "mount-path": "/tmp"},
             variables=[var.value for var in StorageVariables if var.value.name == "TEMP_PATH"],
         ),
@@ -596,7 +596,7 @@ class ServiceAdapter:
             help_template="postgresql-database.html.j2",
             icon="database",
             color="donkerblauw",
-            scope=ServiceScope.DEPLOYMENT,
+            binding=ServiceBinding.DEPLOYMENT,
             secret_class="DatabaseSecret",
             variables=[var.value for var in DatabaseVariables],
             cleanup_strategy=CleanupStrategy.DEFERRED,
@@ -608,7 +608,7 @@ class ServiceAdapter:
             help_template="namespace-postgresql-database.html.j2",
             icon="database",
             color="donkerblauw",
-            scope=ServiceScope.DEPLOYMENT,
+            binding=ServiceBinding.DEPLOYMENT,
             secret_class="DatabaseSecret",
             variables=[var.value for var in DatabaseVariables],
             hidden=True,
@@ -621,7 +621,7 @@ class ServiceAdapter:
             help_template="minio-storage.html.j2",
             icon="map",
             color="rood",
-            scope=ServiceScope.DEPLOYMENT,
+            binding=ServiceBinding.DEPLOYMENT,
             secret_class="MinIOSecret",
             variables=[var.value for var in MinIOVariables],
             cleanup_strategy=CleanupStrategy.DEFERRED,
@@ -633,7 +633,7 @@ class ServiceAdapter:
             help_template="redis.html.j2",
             icon="zandloper",
             color="rood",
-            scope=ServiceScope.DEPLOYMENT,
+            binding=ServiceBinding.DEPLOYMENT,
             secret_class="RedisSecret",
             variables=[var.value for var in RedisVariables],
             cleanup_strategy=CleanupStrategy.IMMEDIATE,
@@ -644,7 +644,7 @@ class ServiceAdapter:
             help_template="namespace-redis.html.j2",
             icon="zandloper",
             color="rood",
-            scope=ServiceScope.DEPLOYMENT,
+            binding=ServiceBinding.DEPLOYMENT,
             secret_class="RedisSecret",
             variables=[var.value for var in RedisVariables],
             hidden=True,
@@ -656,7 +656,7 @@ class ServiceAdapter:
             help_template="platform.html.j2",
             icon="info",
             color="grijs-600",
-            scope=ServiceScope.COMPONENT,
+            binding=ServiceBinding.COMPONENT,
             secret_class="PlatformSecret",
             variables=[var.value for var in PlatformVariables],
             # Always on, never chosen by a project -> a system service. kind=SYSTEM
@@ -669,7 +669,7 @@ class ServiceAdapter:
             help_template="attachments.html.j2",
             icon="map",
             color="grijs-600",
-            scope=ServiceScope.COMPONENT,
+            binding=ServiceBinding.COMPONENT,
             variables=[],
         ),
         ServiceType.AUTHORIZATION_WALL: ServiceDefinition(
@@ -677,7 +677,7 @@ class ServiceAdapter:
             description="OAuth2-proxy sidecar die Keycloak OIDC authenticatie afdwingt voor webapplicaties",
             icon="schild-met-vinkje-erop",
             color="groen",
-            scope=ServiceScope.COMPONENT,
+            binding=ServiceBinding.COMPONENT,
             help_template="authorization-wall.html.j2",
             variables=[],
             requires=[
@@ -692,7 +692,7 @@ class ServiceAdapter:
             help_template="metrics-scraper.html.j2",
             icon="grafiek",
             color="hemelblauw",
-            scope=ServiceScope.COMPONENT,
+            binding=ServiceBinding.COMPONENT,
             variables=[v.value for v in MetricsScraperVariables],
         ),
         ServiceType.SLEEP_MODE: ServiceDefinition(
@@ -704,7 +704,7 @@ class ServiceAdapter:
             help_template="sleep-mode.html.j2",
             icon="klok",
             color="donkerblauw",
-            scope=ServiceScope.DEPLOYMENT,
+            binding=ServiceBinding.DEPLOYMENT,
             # Selectable in the wizard with its own project-level config section
             # (SleepModeService.config_form_section). A cluster-wide default still
             # applies, and `match` scopes which deployments it affects.
@@ -722,9 +722,9 @@ class ServiceAdapter:
             help_template="invite.html.j2",
             icon="envelop",
             color="lichtblauw",
-            # scope is not meaningful here (an invite provisions nothing), but the field is
+            # binding is not meaningful here (an invite provisions nothing), but the field is
             # required; "component" matches keycloak/attachments.
-            scope=ServiceScope.COMPONENT,
+            binding=ServiceBinding.COMPONENT,
             variables=[],
             # Path-syntax requirement: auto-selects keycloak, locks it in the UI, and validates
             # at submit that keycloak is present. An invite assigns a realm role, so keycloak
@@ -740,7 +740,7 @@ class ServiceAdapter:
             help_template="resource-tuning.html.j2",
             icon="grafiek",
             color="grijs-600",
-            scope=ServiceScope.DEPLOYMENT,
+            binding=ServiceBinding.DEPLOYMENT,
             variables=[],
             # Always on, never in the project file -> a system service (kind=SYSTEM also
             # keeps it out of the picker, so no explicit hidden is needed).
@@ -757,7 +757,7 @@ class ServiceAdapter:
             help_template="deployment-health.html.j2",
             icon="stethoscoop",
             color="grijs-600",
-            scope=ServiceScope.DEPLOYMENT,
+            binding=ServiceBinding.DEPLOYMENT,
             variables=[],
             # Always on, never in the project file -> a system service (kind=SYSTEM also
             # keeps it out of the picker, so no explicit hidden is needed).
@@ -777,7 +777,7 @@ class ServiceAdapter:
             # The rules apply per deployment (each gets its own NetworkPolicy); the effect
             # lives entirely in generated manifests, so there is nothing server-side to clean
             # up -- the generic manifest prune removes the policy files when the service is off.
-            scope=ServiceScope.DEPLOYMENT,
+            binding=ServiceBinding.DEPLOYMENT,
             variables=[],
             cleanup_strategy=CleanupStrategy.NONE,
         ),
@@ -791,7 +791,7 @@ class ServiceAdapter:
             help_template="user-env-vars.html.j2",
             icon="instellingen",
             color="grijs-600",
-            scope=ServiceScope.COMPONENT,
+            binding=ServiceBinding.COMPONENT,
             variables=[],
             # Always present, never in the project file's services list -> a system
             # service (kind=SYSTEM also keeps it out of the picker).
@@ -808,7 +808,7 @@ class ServiceAdapter:
             help_template="aliases.html.j2",
             icon="instellingen",
             color="grijs-600",
-            scope=ServiceScope.COMPONENT,
+            binding=ServiceBinding.COMPONENT,
             variables=[],
             kind=ServiceKind.SYSTEM,
         ),
@@ -823,7 +823,7 @@ class ServiceAdapter:
             help_template="health-check.html.j2",
             icon="stethoscoop",
             color="rood",
-            scope=ServiceScope.COMPONENT,
+            binding=ServiceBinding.COMPONENT,
             variables=[],
         ),
     }
@@ -880,13 +880,13 @@ class ServiceAdapter:
     def is_component_service(cls, service: ServiceType) -> bool:
         """Check if a service is component-specific."""
         definition = cls.get_service_definition(service)
-        return definition is not None and definition.scope is ServiceScope.COMPONENT
+        return definition is not None and definition.binding is ServiceBinding.COMPONENT
 
     @classmethod
     def is_deployment_service(cls, service: ServiceType) -> bool:
         """Check if a service is deployment-shared."""
         definition = cls.get_service_definition(service)
-        return definition is not None and definition.scope is ServiceScope.DEPLOYMENT
+        return definition is not None and definition.binding is ServiceBinding.DEPLOYMENT
 
     @classmethod
     def get_component_flag(cls, service: ServiceType) -> str | None:
