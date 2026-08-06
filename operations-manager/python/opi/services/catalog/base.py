@@ -26,8 +26,9 @@ from __future__ import annotations
 from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
 
+from opi.services.catalog.events import collect_event_handlers
 from opi.services.services import ServiceDefinition
 
 if TYPE_CHECKING:
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
     from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.services.catalog.actions import ServiceAction
     from opi.services.catalog.approval import ApprovalSpec
-    from opi.services.services_enums import HookPoint, ManagerKey, ServiceType
+    from opi.services.services_enums import ActionEvent, ManagerKey, ServiceEvent, ServiceType, UIEvent
     from opi.utils.secrets import BaseSecret
 
 
@@ -292,7 +293,7 @@ class ComponentHealth:
 
 @dataclass
 class DeploymentObservationContext:
-    """Inputs an after-sync observation hook needs (task 8, ``HookPoint.AFTER_SYNC``).
+    """Inputs an after-sync observation handler needs (task 8, ``ActionEvent.AFTER_SYNC``).
 
     Mirrors ``ProvisionContext`` / ``ManifestContext``. The hook observes the running
     deployment's pod health and may mutate ``project_data`` in place, but it never
@@ -335,7 +336,7 @@ class ObservationOutcome:
 @dataclass
 class DeploymentStateContext:
     """Inputs a service needs to answer "what do you know about this deployment"
-    (RC-28, ``HookPoint.DEPLOYMENT_STATE``).
+    (RC-28, ``UIEvent.DEPLOYMENT_STATE``).
 
     The question is answered from the PROJECT FILE, not from the cluster: the project
     file is where a service records what it did (sleep-mode's ``deployments[].sleep``),
@@ -401,7 +402,7 @@ class DeploymentStateFact:
 @dataclass
 class RedeployContext:
     """Inputs a service needs when new content is rolled out onto a deployment (RC-37,
-    ``HookPoint.REDEPLOY``).
+    ``ActionEvent.REDEPLOY``).
 
     The writing counterpart of ``DeploymentStateContext``: that hook asks a service what
     state it put a deployment in, this one tells it that the state describes content that
@@ -457,10 +458,28 @@ class DetailPageSection:
 
 
 @dataclass
+class ProjectPageContext:
+    """Inputs a service needs to render its project-level detail-page block
+    (``UIEvent.PROJECT_SECTIONS``).
+
+    One payload object instead of the two loose arguments this hook used to take (RC-39):
+    a payload is a type the checker really checks, and a block that later needs a third
+    input grows a field here instead of a new argument at every call site.
+
+    ``project_data`` is the DECRYPTED project dict, so a service can surface the
+    credentials it manages; ``user_role`` lets a service gate on the viewer's role -- a
+    section that returns nothing for a role simply omits itself.
+    """
+
+    project_data: dict[str, Any]
+    user_role: str
+
+
+@dataclass
 class DeploymentPageContext:
     """Inputs a service needs to render its per-deployment detail-page block (RC-24).
 
-    ``detail_page_sections`` covers the project level; backups, metrics and the
+    ``UIEvent.PROJECT_SECTIONS`` covers the project level; backups, metrics and the
     deployment action buttons belong to ONE deployment, so they need their own hook.
     Same shape on the way out (a list of ``DetailPageSection``), one context object on
     the way in, because a deployment block needs more than the project dict.
@@ -620,13 +639,16 @@ class Service(ABC):
     #: exactly one provider contributes per manager.
     manifest_activated_by: ClassVar[tuple[ServiceType, ...]] = ()
 
-    #: Order of this service at each hook point (task 8); lower runs first, default 100.
-    #: A per-hook map so a service on two hook points does not share one order. Only
-    #: meaningful for a hook the service overrides.
-    hook_order: ClassVar[dict[HookPoint, int]] = {}
+    #: This service's event handlers, event -> ``(method name, order)`` in ``@on(...,
+    #: order=)`` order (RC-39). Derived from the decorated methods of the class (mixins
+    #: included) by ``__init_subclass__``, so participation cannot drift from
+    #: implementation and ``registry`` can index listeners without scanning for overridden
+    #: method names.
+    event_handlers: ClassVar[dict[ServiceEvent, list[tuple[str, int]]]] = {}
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
+        cls.event_handlers = collect_event_handlers(cls)
         # A concrete provider must declare which service it is AND what that service
         # is (its definition), both in its own package. Abstract intermediate
         # subclasses (no service_type) are allowed and simply skipped.
@@ -820,37 +842,6 @@ class Service(ABC):
                 layers.append(layer)
         return layers
 
-    def detail_page_sections(self, project_data: dict[str, Any], user_role: str) -> list[DetailPageSection]:
-        """Read-only project-details sections this service contributes (default none).
-
-        The read-only counterpart of ``config_form_section``: the detail view
-        (``collect_detail_page_sections``) gathers these across the services the
-        project actually uses and renders each, so the presentation of a service's own
-        data lives with the service instead of hardcoded in the general template.
-
-        ``project_data`` is the DECRYPTED project dict, so a service can surface its
-        managed credentials; ``user_role`` lets the service gate on the viewer's role
-        (a section that returns nothing for a role simply omits itself). A service with
-        nothing to show on the detail page returns ``[]``.
-        """
-        return []
-
-    def deployment_page_sections(self, ctx: DeploymentPageContext) -> list[DetailPageSection]:
-        """Read-only detail-page sections this service contributes for ONE deployment
-        (default none, RC-24).
-
-        The per-deployment counterpart of ``detail_page_sections``: same return type,
-        collected the same way (``collect_deployment_page_sections``), but asked once
-        per deployment on the Deployments tab. Blocks that describe a single deployment
-        -- its backups, its metrics -- belong here; a block about the project as a whole
-        belongs in ``detail_page_sections``.
-
-        A block several services own jointly (backups: every service with a
-        ``backup_label``) is returned by each of them and rendered once; the collector
-        drops repeats of the same template.
-        """
-        return []
-
     def web_routers(self) -> list[Any]:
         """The ``APIRouter``s carrying this service's own web endpoints (default none).
 
@@ -975,52 +966,76 @@ class Service(ABC):
                 selected.add(service_entry_name(entry))
         return self.service_type.value in selected
 
-    async def observe_deployment(self, ctx: DeploymentObservationContext) -> ObservationOutcome:
-        """Observe a just-synced deployment's running state (task 8, ``AFTER_SYNC``).
+    # --- events: the one way a service hooks in (RC-39) --------------------------
+    # A service declares what it listens to with ``@on(event)`` on the method that does
+    # the work (see ``opi.services.catalog.events``); these two dispatches -- one per
+    # family -- are how generic code asks it. There is deliberately no third: an event
+    # belongs to a family, and the family is the contract.
 
-        Default no-op, so only services that override it are scanned
-        (``registry.services_for_hook``). A hook may mutate ``ctx.project_data`` but
-        must not commit -- the generic runner does one commit for all outcomes.
+    def listens_to(self, event: ServiceEvent) -> bool:
+        """Whether this service handles ``event`` at all."""
+        return bool(self.event_handlers.get(event))
+
+    @overload
+    def handle_ui(
+        self, event: Literal[UIEvent.PROJECT_SECTIONS], payload: ProjectPageContext
+    ) -> list[DetailPageSection]: ...
+
+    @overload
+    def handle_ui(
+        self, event: Literal[UIEvent.DEPLOYMENT_SECTIONS], payload: DeploymentPageContext
+    ) -> list[DetailPageSection]: ...
+
+    @overload
+    def handle_ui(
+        self, event: Literal[UIEvent.DEPLOYMENT_STATE], payload: DeploymentStateContext
+    ) -> list[DeploymentStateFact]: ...
+
+    def handle_ui(self, event: UIEvent, payload: Any) -> list[Any]:
+        """What this service contributes at a UI event: sections, facts, nothing.
+
+        The overloads above are the typed contract: an event is paired with exactly one
+        payload type, so a ``DeploymentPageContext`` where a ``DeploymentStateContext``
+        belongs is ``No overloads for "handle_ui" match the provided arguments``. Measured
+        with ``reportCallIssue`` / ``reportArgumentType`` on; this repo has both OFF, so
+        the error is suppressed here today -- exactly as it was for the loose arguments of
+        the named methods this replaces. The difference is that the pairing is now a real
+        type, so switching those checks on starts enforcing it without another change.
+
+        Every handler this service declares for the event contributes, in ``order``, and
+        the results are concatenated: a service that is backupable AND brings its own
+        block returns both, without the two having to know about each other. A service
+        that does not listen returns ``[]``.
         """
-        return ObservationOutcome()
+        contributions: list[Any] = []
+        for name, _order in self.event_handlers.get(event, ()):
+            contributions.extend(getattr(self, name)(payload))
+        return contributions
 
-    def deployment_state(self, ctx: DeploymentStateContext) -> list[DeploymentStateFact]:
-        """What this service knows about the state of one deployment (RC-28, default none).
+    @overload
+    async def handle_action(
+        self, event: Literal[ActionEvent.AFTER_SYNC], payload: DeploymentObservationContext
+    ) -> list[ObservationOutcome]: ...
 
-        The read counterpart of ``observe_deployment``: that hook acts after a sync, this
-        one answers a question anyone may ask at any moment. A service that put a
-        deployment in a particular situation -- sleep-mode scaling it to zero -- reports it
-        here, so generic code (the health check, the deployment page) learns the situation
-        from the service that caused it instead of guessing from what the cluster shows.
+    @overload
+    async def handle_action(self, event: Literal[ActionEvent.REDEPLOY], payload: RedeployContext) -> list[str]: ...
 
-        Return FACTS, never a health verdict: see ``DeploymentStateFact``. Synchronous and
-        project-file-only; a service that needs the cluster to answer is answering a
-        different question.
+    async def handle_action(self, event: ActionEvent, payload: Any) -> list[Any]:
+        """What this service does when something happens -- and what it reports back.
+
+        Same typed pairing as ``handle_ui``, and the same concatenation of every handler's
+        contributions. The family contract applies to all of them: a handler mutates
+        ``payload.project_data`` in place and NEVER commits, because the caller commits
+        once for the whole scan (see ``ActionEvent``).
+
+        Action handlers are ``async``; this awaits each in turn rather than gathering them,
+        because they mutate one shared ``project_data`` and interleaving writers is how a
+        lost update happens inside a single scan.
         """
-        return []
-
-    def on_redeploy(self, ctx: RedeployContext) -> list[str]:
-        """Clear the state this service recorded about content that is now replaced
-        (RC-37, ``HookPoint.REDEPLOY``, default none).
-
-        Fires when a deliberate action puts new content on a deployment -- an image
-        update, a deployment upsert. Everything this service recorded about the previous
-        content stops holding at that moment: a component switched off because the old
-        image OOM'd, a deployment put to sleep because the old content sat idle. The new
-        content is the signal that the old situation no longer applies, so a service
-        clears its state unconditionally rather than reasoning about whether the new
-        content will hit the same problem. If it does, the watcher records it again --
-        against the image that actually caused it.
-
-        Return one line per thing cleared, in the user's language: clearing state without
-        saying so leaves a component silently switched back on and nobody able to see why
-        it was off. Mutate ``ctx.project_data`` in place and never commit -- the caller
-        commits once for the rollout and every cleanup together.
-
-        A service that recorded nothing about this deployment returns ``[]``; a service
-        that has nothing to do with rollouts does not answer the hook at all.
-        """
-        return []
+        contributions: list[Any] = []
+        for name, _order in self.event_handlers.get(event, ()):
+            contributions.extend(await getattr(self, name)(payload))
+        return contributions
 
     async def handle_service_removal(self, ctx: RemovalContext) -> dict[str, Any]:
         """Clean up this service's server-side resources when it is removed from a

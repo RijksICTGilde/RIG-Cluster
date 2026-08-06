@@ -41,12 +41,14 @@ faalt zodra iemand er een toevoegt.
 
 ### Een dienst laat weten wat hij deed
 
-Implementeer `Service.deployment_state(ctx)` en geef nul of meer feiten terug. Het
+Zet `@on(UIEvent.DEPLOYMENT_STATE)` op de methode die het antwoord geeft (RC-39, zie
+`features/service-event-hooks.md`) en geef nul of meer feiten terug. Het
 antwoord komt uit het **projectbestand** (waar een dienst zijn eigen toestand bijhoudt),
-niet uit het cluster, dus de hook is synchroon en gebruikt geen connectors.
+niet uit het cluster, dus de handler is synchroon en gebruikt geen connectors.
 
 ```python
-def deployment_state(self, ctx: DeploymentStateContext) -> list[DeploymentStateFact]:
+@on(UIEvent.DEPLOYMENT_STATE)
+def report_sleep_state(self, ctx: DeploymentStateContext) -> list[DeploymentStateFact]:
     sleep = read(ctx.project_data, ctx.deployment_name)
     if sleep.state == STATE_SLEEPING:
         return [
@@ -107,10 +109,10 @@ state.facts                        # wat de diensten melden
 state.expects_no_application_pods  # zegt een dienst dat nul pods de bedoeling is?
 ```
 
-De collector scant `HookPoint.DEPLOYMENT_STATE` en noemt geen enkele dienst bij naam. Hij
-filtert bewust **niet** op `applies_to`: sleep-mode kan clusterbreed aanstaan zonder dat
-een project hem kiest, dus een selectiefilter zou de toestand wegfilteren van precies de
-deployments die slapen. Een dienst die niets deed meldt niets.
+De collector vraagt `registry.listeners(UIEvent.DEPLOYMENT_STATE)` en noemt geen enkele
+dienst bij naam. Hij filtert bewust **niet** op `applies_to`: sleep-mode kan clusterbreed
+aanstaan zonder dat een project hem kiest, dus een selectiefilter zou de toestand
+wegfilteren van precies de deployments die slapen. Een dienst die niets deed meldt niets.
 
 ## De gezondheidscheck als systeemdienst
 
@@ -149,12 +151,13 @@ naam; hij krijgt `deployment_states` (naam → `DeploymentState`) mee en leidt d
 
 ## Configuratie
 
-Geen. `deployment-health` neemt geen configuratie aan en `deployment_state` is een
-gedragshook, geen instelling.
+Geen. `deployment-health` neemt geen configuratie aan en `UIEvent.DEPLOYMENT_STATE` is een
+gedragshaak, geen instelling.
 
 ## Afhankelijkheden
 
-- `HookPoint.DEPLOYMENT_STATE` in `opi/services/services_enums.py`
+- `UIEvent.DEPLOYMENT_STATE` in `opi/services/services_enums.py`, `@on` in
+  `opi/services/catalog/events.py`
 - `DeploymentStateContext` / `DeploymentStateFact` in `opi/services/catalog/base.py`
 - `opi/services/deployment_state.py` (collector)
 - `opi/services/catalog/deployment_health/` (het oordeel)
