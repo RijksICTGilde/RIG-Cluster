@@ -8,11 +8,27 @@ the after-sync observation hook to raise memory for a component that OOM'd.
 from __future__ import annotations
 
 from opi.services.catalog.base import DeploymentObservationContext, ObservationOutcome, Service
-from opi.services.services_enums import ServiceType
+from opi.services.services import ServiceDefinition
+from opi.services.services_enums import ServiceBinding, ServiceKind, ServiceType
 
 
 class ResourceTuningService(Service):
     service_type = ServiceType.RESOURCE_TUNING
+    definition = ServiceDefinition(
+        name="Resource tuning",
+        description=(
+            "Systeemdienst: houdt draaiende deployments in de gaten na een sync en hoogt "
+            "het geheugen op van een component dat OOM'd. Draait altijd, is niet kiesbaar."
+        ),
+        help_template="resource_tuning/help.html.j2",
+        icon="grafiek",
+        color="grijs-600",
+        binding=ServiceBinding.DEPLOYMENT,
+        variables=[],
+        # Always on, never in the project file -> a system service (kind=SYSTEM also
+        # keeps it out of the picker, so no explicit hidden is needed).
+        kind=ServiceKind.SYSTEM,
+    )
 
     async def observe_deployment(self, ctx: DeploymentObservationContext) -> ObservationOutcome:
         """After a sync, tune the memory of any component that OOM'd (tasks 2, 7, 10).

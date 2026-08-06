@@ -7,7 +7,9 @@ from typing import Any
 
 from opi.services.catalog.base import ConfigLayer, ManifestContext, ProvisionContext, SecretFileSpec, Service
 from opi.services.catalog.redis.config_model import RedisConfig
-from opi.services.services_enums import ManagerKey, ServiceType
+from opi.services.catalog.redis.variables import RedisVariables
+from opi.services.services import ServiceDefinition
+from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType
 from opi.utils.secrets import RedisSecret
 
 logger = logging.getLogger(__name__)
@@ -15,6 +17,17 @@ logger = logging.getLogger(__name__)
 
 class RedisService(Service):
     service_type = ServiceType.REDIS
+    definition = ServiceDefinition(
+        name="Redis Cache",
+        description="Shared Redis cache en message broker voor caching en Celery task queues",
+        help_template="redis/help.html.j2",
+        icon="zandloper",
+        color="rood",
+        binding=ServiceBinding.DEPLOYMENT,
+        secret_class="RedisSecret",
+        variables=[var.value for var in RedisVariables],
+        cleanup_strategy=CleanupStrategy.IMMEDIATE,
+    )
     config_model = RedisConfig
     config_schema_version = "1.0"
     cleanup_manager_key = ManagerKey.REDIS

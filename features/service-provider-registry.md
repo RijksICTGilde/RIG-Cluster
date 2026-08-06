@@ -38,9 +38,10 @@ registry line, and a coverage test fails CI if you forget the registry line.
 
 ## How a provider is defined
 
-A concrete provider sets `service_type`; its `ServiceDefinition` metadata is bound
-automatically from `ServiceAdapter.SERVICE_DEFINITIONS` (via `__init_subclass__`), so
-the definition can never drift from the provider. Everything else is an optional hook
+A concrete provider sets `service_type` and its own `definition` (RC-36), both in its
+own package; `__init_subclass__` refuses a provider that declares one without the other.
+`ServiceAdapter.SERVICE_DEFINITIONS` is assembled from what the providers declare, so it
+cannot drift from them. Everything else is an optional hook
 with a no-op default, so a trivial service is a one-liner while keycloak overrides a
 handful:
 
@@ -101,10 +102,9 @@ Managers validate config through `provider.validate_config(...)` instead of raw
 
 ## Adding a new service
 
-1. Add the member to `ServiceType` (`opi/services/services_enums.py`) and its
-   `ServiceDefinition` to `ServiceAdapter.SERVICE_DEFINITIONS`.
-2. Add a `Service` subclass + one line in `SERVICES`. The coverage
-   guard (`tests/test_service_providers.py`) fails CI until you do.
+1. Add the member to `ServiceType` (`opi/services/services_enums.py`).
+2. Add a `Service` subclass carrying its own `ServiceDefinition` + one line in `SERVICES`.
+   The coverage guard (`tests/test_service_providers.py`) fails CI until you do.
 3. If it takes config: add a Pydantic model under `opi/services/config_models/`, set
    `config_model` + `config_schema_version`, and run
    `python -m opi.services.config_schema` to emit the committed schema fragment.
@@ -141,7 +141,7 @@ because nothing stored depends on the enum.
 
 - `tests/test_service_providers.py` — **coverage guard** (the key one): fails if a
   `ServiceType` has no provider, if the registry has extras, or if a provider's
-  `definition` is not the exact shared `SERVICE_DEFINITIONS[t]` object. Also freezes
+  `definition` is not the exact object `SERVICE_DEFINITIONS[t]` was assembled from. Also freezes
   the provisioning order, cleanup-key map, and manifest-contribution contract.
 - `tests/test_golden_manifests.py` — byte-diff of rendered manifests against committed
   goldens, per contribution + combinations. Regenerate intentional changes with
