@@ -24,6 +24,11 @@ class FormSection:
     title: str
     icon: str | None = None
     description: str | None = None
+    #: Template with the service's own explanation, shown behind a question mark next
+    #: to the heading. A service already declares this on its ServiceDefinition; the
+    #: section is stamped with it where the sections are collected, so no service has
+    #: to remember it and the config screen explains itself like the service card does.
+    help_template: str | None = None
     editables: list[EditableVisualizer] = field(default_factory=list)
     layout: LayoutElement | list[LayoutElement | str] | None = None
     visible: bool | Callable[[dict[str, Any]], bool] = True
