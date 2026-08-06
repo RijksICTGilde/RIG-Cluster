@@ -10,12 +10,14 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any
 
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE
 from opi.forms.editables.merge import deep_merge_into
 from opi.forms.wizard.services_merge import merge_service_lists, service_name
 from opi.services.services import service_entry_body
 
 #: The keys whose value is a services list: the selection and the virtual config key.
-_SERVICE_LIST_KEYS = ("services", "_services-config")
+#: The same pair the service packages declare and ``service_path`` resolves.
+_SERVICE_LIST_KEYS = SERVICE_VIRTUALIZE
 
 CLEARED_FIELD = "__wizard-field-cleared__"
 """Tombstone marker for fields the user cleared in a wizard step.
