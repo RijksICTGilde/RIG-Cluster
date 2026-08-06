@@ -1951,6 +1951,17 @@ async def _do_submit(
     # Remove empty nested dicts left after field removal (e.g. restrict-access: {})
     _prune_empty_dicts(final_data)
 
+    # Form context is not project data. The wizard's template layer carries keys that only
+    # exist to feed the form (``_cross_domain_projects``: the peer projects this user may
+    # pick), and the final submission is built from the whole merged view, so without this
+    # they would be written to the project file -- where the schema forbids them outright
+    # (``additionalProperties: false`` at the root). The modal-edit path never hit this
+    # because it writes only the paths its editables declare. One rule, no list to maintain:
+    # a leading underscore at the top level means "for the form", exactly as it does for
+    # transients and for the virtual services root.
+    for key in [key for key in final_data if key.startswith("_")]:
+        del final_data[key]
+
     try:
         # PRE_SAVE hooks: run while transients are still available.
         # Includes SubdomainRequestHook (creates domains entry from transient checkbox)
