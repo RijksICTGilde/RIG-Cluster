@@ -83,3 +83,43 @@ class TestOrdering:
     def test_every_deployment_survives_the_reordering(self):
         deployments = [_dep("pr-1", "main"), _dep("main"), _dep("solo"), _dep("pr-2", "main")]
         assert sorted(_names(order_deployments_by_clone_dependency(deployments))) == sorted(_names(deployments))
+
+
+class TestTheOrderingIsActuallyWiredIn:
+    """The module existed with tests and was imported by nothing.
+
+    That is the worst shape a fix can have: `order_deployments_by_clone_dependency` and
+    its 85 lines of tests were added on 3 August, the commit never touched
+    `project_manager.py`, and clones kept being processed in file order. Everything
+    looked handled. These tests fail if the wiring disappears again.
+    """
+
+    def test_get_deployments_returns_a_clone_after_its_source(self) -> None:
+        """Ordered in ``get_deployments`` and not at a call site: that is the one door
+        every caller comes through, so a new caller is right without knowing about it."""
+        import inspect
+
+        from opi.manager.project_manager import ProjectManager
+
+        source = inspect.getsource(ProjectManager.get_deployments)
+
+        assert "order_deployments_by_clone_dependency" in source
+        assert "return order_deployments_by_clone_dependency(deployments)" in source
+
+    def test_the_module_is_imported_where_the_work_happens(self) -> None:
+        import opi.manager.project_manager as pm
+
+        assert hasattr(pm, "order_deployments_by_clone_dependency")
+
+    def test_ordering_runs_after_the_filters(self) -> None:
+        """Ordering the deployments you are going to use is the point. A source filtered
+        away (another cluster, a single-deployment request) cannot be waited for anyway,
+        so ordering before the filters would only reorder things that get dropped."""
+        import inspect
+
+        from opi.manager.project_manager import ProjectManager
+
+        source = inspect.getsource(ProjectManager.get_deployments)
+
+        assert source.index("cluster_filter") < source.index("order_deployments_by_clone_dependency")
+        assert source.index("_resolve_deployment_filter") < source.index("order_deployments_by_clone_dependency")

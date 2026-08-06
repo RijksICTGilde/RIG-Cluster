@@ -43,7 +43,7 @@
                 <div class="approval-history-entries">
                     {% for entry in item.history | reverse %}
                     <div class="approval-history-entry">
-                        <span class="approval-history-date">{{ entry.date[:10] }}</span>
+                        <span class="approval-history-date">{{ entry.date | dutch_date(include_time=False) }}</span>
                         <span class="approval-status-badge approval-status-{{ entry.status }}">
                             {% if entry.status == 'requested' %}Aangevraagd{% elif entry.status == 'approved' %}Goedgekeurd{% elif entry.status == 'denied' %}Afgewezen{% endif %}
                         </span>
