@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from opi.forms.editables.converters import EmptyToNoneConverter
-from opi.forms.editables.editable import Editable
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.services_enums import ServiceType
 
@@ -14,5 +14,5 @@ AUTH_WALL_BANNER_EDITABLE = Editable(
     # so remove_when_none is safe here.
     converter=EmptyToNoneConverter(),
     remove_when_none=True,
-    virtualize=("services", "_services-config"),
+    virtualize=SERVICE_VIRTUALIZE,
 )

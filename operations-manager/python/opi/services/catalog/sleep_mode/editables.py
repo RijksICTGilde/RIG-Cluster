@@ -8,11 +8,9 @@ text, because it holds glob patterns for future deployment names (e.g. ``PR-*``)
 from __future__ import annotations
 
 from opi.forms.editables.converters import BooleanConverter, CommaSeparatedListConverter, EmptyToNoneConverter
-from opi.forms.editables.editable import Editable
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.services_enums import ServiceType
-
-_VIRTUALIZE = ("services", "_services-config")
 
 # Optional fields carry ``remove_when_none`` so an empty form field drops the key instead of
 # writing ``null`` / ``''`` / ``[]`` into the project file. Writing the model default out
@@ -31,35 +29,35 @@ SLEEP_ENABLED_EDITABLE = Editable(
     values_provider="YesNoOptionsProvider",
     converter=BooleanConverter(),
     default="true",
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 SLEEP_WAKE_MODE_EDITABLE = Editable(
     yaml_path=_path("wake-mode"),
     values_provider="WakeModeOptionsProvider",
     default="auto",
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 SLEEP_MATCH_EDITABLE = Editable(
     yaml_path=_path("match"),
     converter=CommaSeparatedListConverter(),
     remove_when_none=True,
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 SLEEP_AFTER_DEPLOY_EDITABLE = Editable(
     yaml_path=_path("sleep-after-deploy"),
     values_provider="SleepAfterDeployOptionsProvider",
     default="48h",
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 SLEEP_AFTER_WAKE_EDITABLE = Editable(
     yaml_path=_path("sleep-after-wake"),
     values_provider="SleepAfterWakeOptionsProvider",
     default="1h",
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 SLEEP_WAKER_EDITABLE = Editable(
@@ -67,7 +65,7 @@ SLEEP_WAKER_EDITABLE = Editable(
     values_provider="YesNoOptionsProvider",
     converter=BooleanConverter(),
     default="true",
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 SLEEP_WAKER_COMPONENT_EDITABLE = Editable(
@@ -75,21 +73,21 @@ SLEEP_WAKER_COMPONENT_EDITABLE = Editable(
     values_provider="WakerComponentOptionsProvider",
     converter=EmptyToNoneConverter(),
     remove_when_none=True,
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 SLEEP_TITLE_EDITABLE = Editable(
     yaml_path=_path("title"),
     converter=EmptyToNoneConverter(),
     remove_when_none=True,
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 SLEEP_DESCRIPTION_EDITABLE = Editable(
     yaml_path=_path("description"),
     converter=EmptyToNoneConverter(),
     remove_when_none=True,
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 SLEEP_MODE_EDITABLES = [

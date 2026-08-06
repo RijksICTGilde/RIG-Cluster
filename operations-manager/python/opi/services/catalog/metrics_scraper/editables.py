@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from opi.forms.editables.converters import IntegerConverter
-from opi.forms.editables.editable import Editable
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 from opi.forms.editables.validators import PathValidator, RangeValidator
 
 METRICS_PORT_EDITABLE = Editable(
@@ -14,7 +14,7 @@ METRICS_PORT_EDITABLE = Editable(
     default=8080,
     depends_on="components[*]/services",
     show_when={"contains": "metrics-scraper"},
-    virtualize=("services", "_services-config"),
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 METRICS_PATH_EDITABLE = Editable(
@@ -24,5 +24,5 @@ METRICS_PATH_EDITABLE = Editable(
     required=True,
     depends_on="components[*]/services",
     show_when={"contains": "metrics-scraper"},
-    virtualize=("services", "_services-config"),
+    virtualize=SERVICE_VIRTUALIZE,
 )

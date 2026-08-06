@@ -9,7 +9,7 @@ anywhere, so a project could only get bucket versioning by hand-editing its file
 from __future__ import annotations
 
 from opi.forms.editables.converters import BooleanConverter
-from opi.forms.editables.editable import Editable
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.services_enums import ServiceType
 
@@ -19,5 +19,5 @@ MINIO_ENABLE_VERSIONING_EDITABLE = Editable(
     # The model default is None ("not set"), so an unticked box leaves no key rather than
     # writing enable-versioning: false into a project that never asked about it.
     remove_when_none=True,
-    virtualize=("services", "_services-config"),
+    virtualize=SERVICE_VIRTUALIZE,
 )
