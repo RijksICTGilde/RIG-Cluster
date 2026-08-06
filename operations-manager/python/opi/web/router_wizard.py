@@ -2119,8 +2119,13 @@ async def _do_submit(
         else:
             # Not placeable (a violation on a whole block, or a field no step owns):
             # show it on the step the user submitted from, with the raw message. A
-            # message that cannot be attached to a field is still a message.
-            error_section = active_sections[-1]
+            # message that cannot be attached to a field is still a message. Falls
+            # back to the last step when current_step names a step that is no longer
+            # active, so the message always has somewhere to land.
+            error_section = next(
+                (section for section in active_sections if section.section_id == state.current_step),
+                active_sections[-1],
+            )
             field_errors = {}
             global_errors = [str(e)]
         state.current_step = error_section.section_id

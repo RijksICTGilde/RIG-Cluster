@@ -49,7 +49,10 @@ blijven begrensd door de bestaande sweep in `opi/forms/wizard/session.py` (24 uu
 `command: []` was één geval van een algemeen patroon: een optioneel veld dat een lijst
 schrijft kan leeg een lege lijst neerzetten. `tests/test_empty_list_fields.py` loopt élk
 lijst-schrijvend editable in élke flow langs en eist dat leeg níets schrijft daar waar
-het schema een lege lijst verbiedt. Paden die de schemawandeling niet kan bereiken
+het schema een lege lijst verbiedt. "Lijst-schrijvend" wordt niet alleen aan de widget
+afgelezen (SEQUENCE/MULTI_SELECT/CHECKBOX_GROUP/KEY_VALUE) maar ook aan de converter:
+het startcommando is een tekstveld dat via zijn converter een lijst schrijft, en juist
+dát geval was de aanleiding. Paden die de schemawandeling niet kan bereiken
 (dienstconfig onder `services/<naam>/config/...`) staan expliciet in
 `UNREACHABLE_BY_SCHEMA_WALK`, zodat een nieuw geval als testfout opvalt in plaats van
 stilletjes buiten de dekking te vallen.
