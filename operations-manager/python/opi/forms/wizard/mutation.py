@@ -112,16 +112,23 @@ def apply_services_mutation(
     the browser having to send it. That is the whole reason the lock no longer
     needs a hidden input travelling alongside the checkbox.
 
-    Does nothing when the submission carries no services list: a step that does
-    not show the selection says nothing about it.
+    Does nothing when this section does not SHOW the selection. A processed
+    submission is a copy of the merged project data with the submitted fields
+    written into it, so ``services`` is present in every flow's result -- also in
+    a flow about environment variables. Reconciling there would let an unrelated
+    edit add a service to the project, which is the mirror image of the bug this
+    module exists for: it is still a step speaking about something it never showed.
     """
+    offered = offered_selection_values(editables, SERVICES_PATH)
+    if offered is None:
+        return
+
     submitted = submitted_yaml.get(SERVICES_PATH)
     if not isinstance(submitted, list):
         return
 
-    offered = offered_selection_values(editables, SERVICES_PATH)
     base = base_data.get(SERVICES_PATH)
-    if offered is not None and isinstance(base, list):
+    if isinstance(base, list):
         submitted = apply_selection_mutation(base, submitted, offered)
 
     submitted_yaml[SERVICES_PATH] = ServiceAdapter.resolve_service_dependencies(submitted)
