@@ -154,7 +154,7 @@ class RevisionManager:
         project_data: dict[str, Any],
         deployment_name: str,
         service_type: str,
-        generation: int,
+        generation: int | None,
         resource_name: str,
         source: str,
     ) -> dict[str, Any]:
@@ -180,7 +180,7 @@ class RevisionManager:
         project_data: dict[str, Any],
         deployment_name: str,
         service_type: str,
-        generation: int,
+        generation: int | None,
         resource_name: str,
         backup_reference: str,
     ) -> dict[str, Any]:
@@ -206,7 +206,7 @@ class RevisionManager:
         project_data: dict[str, Any],
         deployment_name: str,
         service_type: str,
-        generation: int,
+        generation: int | None,
         resource_name: str,
     ) -> dict[str, Any]:
         """Record initial resource creation.
@@ -229,7 +229,7 @@ class RevisionManager:
         self,
         config: dict[str, Any],
         log_prefix: str,
-        generation: int,
+        generation: int | None,
         resource_name: str,
         action: str,
         source: str | None,
@@ -241,7 +241,10 @@ class RevisionManager:
         Args:
             config: The config dict to write to (must be mutable)
             log_prefix: Prefix for log messages (e.g., "staging/postgresql-database")
-            generation: Generation number of the resource (0 = normal name, >0 = versioned)
+            generation: Generation number of the resource (0 = normal name, >0 = versioned).
+                None means "no generation known" and is written as 0 -- a caller cloning a
+                first-generation resource genuinely has none, and this method has always
+                normalised that below.
             resource_name: Actual resource name
             action: Action type (e.g., "clone", "restore", "initial")
             source: Source reference or None
@@ -287,7 +290,7 @@ class RevisionManager:
         project_data: dict[str, Any],
         deployment_name: str,
         service_type: str,
-        generation: int,
+        generation: int | None,
         resource_name: str,
         action: str,
         source: str | None,

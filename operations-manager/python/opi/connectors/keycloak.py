@@ -64,6 +64,9 @@ class KeycloakConnector:
         self.admin_password = admin_password
 
         if client_secret:
+            if not client_id:
+                msg = "client_id is required alongside client_secret for client-credentials auth"
+                raise ValueError(msg)
             # Client-credentials mode: OPI's own service account, independent of
             # any human-admin OTP policy.
             connection = KeycloakOpenIDConnection(

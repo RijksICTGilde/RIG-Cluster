@@ -3451,12 +3451,15 @@ def validate_attachment_couplings(project_data: dict[str, Any]) -> list[str]:
     for dep in project_data.get("deployments", []) or []:
         if not isinstance(dep, dict):
             continue
+        dep_name = dep.get("name")
+        if not dep_name:
+            continue
         for ref in dep.get("components", []) or []:
             if not isinstance(ref, dict) or not ref.get("reference"):
                 continue
-            uses = extract_deployment_component_attachment_uses(project_data, dep.get("name"), ref["reference"])
+            uses = extract_deployment_component_attachment_uses(project_data, dep_name, ref["reference"])
             try:
-                _assert_unique_attachment_targets(uses, ref["reference"], dep.get("name"))
+                _assert_unique_attachment_targets(uses, ref["reference"], dep_name)
             except ValueError as e:
                 errors.append(str(e))
     return errors

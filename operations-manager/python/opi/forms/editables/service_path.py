@@ -201,7 +201,7 @@ def _read_from_service_list(services: list[Any], yaml_path: str) -> Any:
     service_name, sub_path = parse_service_path(yaml_path)
     idx, entry = find_service_in_list(services, service_name)
 
-    if idx == -1:
+    if idx == -1 or entry is None:
         return None
 
     service_data = _service_entry_body(entry, service_name)
@@ -240,6 +240,9 @@ def smart_path_exists(data: dict[str, Any], yaml_path: str) -> bool:
     # "services/keycloak" - service just needs to be in the list
     if sub_path is None:
         return True
+
+    if entry is None:
+        return False
 
     # Deeper path - need a dict entry with config
     service_data = _service_entry_body(entry, service_name)
@@ -345,7 +348,7 @@ def smart_delete_value(data: dict[str, Any], yaml_path: str) -> None:
     if sub_path is None:
         # No sub-path: remove the entire service entry
         services.pop(idx)
-    else:
+    elif entry is not None:
         # Has sub-path: delete only the nested config key
         body = _service_entry_body(entry, service_name)
         if isinstance(body, dict):
