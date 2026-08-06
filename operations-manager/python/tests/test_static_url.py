@@ -2,12 +2,15 @@
 
 import os
 import re
-from pathlib import Path
-
-import pytest
+from typing import TYPE_CHECKING
 
 from opi.core import templates as templates_module
 from opi.core.templates import static_url, templates
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
 
 VERSIONED_URL = re.compile(r"^/static/js/wizard\.js\?v=[0-9a-f]{8}$")
 
