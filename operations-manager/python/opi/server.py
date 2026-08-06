@@ -540,7 +540,7 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     # Version info - public, so anyone (and the E2E suite) can see which build is running.
-    @app.get("/version", include_in_schema=True, response_class=JSONResponse)
+    @app.get("/version", include_in_schema=True, tags=["meta"], response_class=JSONResponse)
     async def version_info():
         """Return the running build's version metadata (version, commit, branch, ...)."""
         from opi.core.version import get_version_info
