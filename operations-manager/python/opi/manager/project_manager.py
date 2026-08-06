@@ -76,6 +76,7 @@ from opi.services.catalog.base import (
     ProvisionContext,
     SecretFileSpec,
 )
+from opi.services.deployment_order import order_deployments_by_clone_dependency
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.services.project import Project
@@ -639,7 +640,15 @@ class ProjectManager:
             target_set = set(targets)
             deployments = [d for d in deployments if d.get("name") in target_set]
 
-        return deployments
+        # A deployment that clones from another must be processed after its source, and
+        # nothing enforced that: the loop walked file order, which happened to work only
+        # because the files grew that way. Ordering here rather than at the call site
+        # because this is the one door every caller comes through.
+        #
+        # Applied after the filters on purpose: ordering the ones you are going to use is
+        # the point, and a source filtered away (another cluster, a single-deployment
+        # request) cannot be waited for anyway.
+        return order_deployments_by_clone_dependency(deployments)
 
     async def get_deployment_by_name(self, deployment_name: str) -> dict[str, Any] | None:
         """
