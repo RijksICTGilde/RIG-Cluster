@@ -27,8 +27,8 @@ anything to back up.
 
 | Hook | What it delivers | Collector |
 |---|---|---|
-| `detail_page_sections(project_data, user_role)` | a block about the project | `collect_detail_page_sections()` |
-| `deployment_page_sections(ctx)` | a block about ONE deployment | `collect_deployment_page_sections()` |
+| `@on(UIEvent.PROJECT_SECTIONS)`, payload `ProjectPageContext` | a block about the project | `collect_detail_page_sections()` |
+| `@on(UIEvent.DEPLOYMENT_SECTIONS)`, payload `DeploymentPageContext` | a block about ONE deployment | `collect_deployment_page_sections()` |
 | `definition.actions_provider(project_data, deployment_name)` | action buttons on a deployment | `collect_deployment_actions()` |
 | `web_routers()` | the endpoints those blocks need | `collect_service_routers()` |
 
@@ -36,7 +36,10 @@ Only services the project actually uses (selected at project level or referenced
 component) are asked for sections, so "does this block apply" needs no condition in the
 template. A service that has nothing to show returns `[]`.
 
-Both section hooks return `DetailPageSection(template=..., context=...)`. Templates live
+Both section events are UI events (RC-39): a service declares its handler with `@on(...)`
+on the method that builds the block, and `registry.listeners(event)` is the only index of
+who contributes -- see `features/service-event-hooks.md`. Both handlers return
+`DetailPageSection(template=..., context=...)`. Templates live
 next to the service (`opi/services/catalog/<svc>/`, addressed as `<svc>/<file>`) and read
 their data from `section.context`.
 
@@ -70,8 +73,10 @@ mixin in `catalog/shared/`, and the collectors keep one copy:
 - actions on (label, endpoint),
 - routers on object identity -- so every owner must return the **same** router object.
 
-Page mixins are cooperative (`super()`), because a service can carry several: the
-PostgreSQL services are backupable *and* bring the console/job modals.
+Page mixins no longer have to cooperate through `super()` (RC-39): a service carries every
+handler it inherits and the dispatch concatenates their contributions, so the PostgreSQL
+services are backupable *and* bring the console/job modals without either mixin knowing
+about the other. A mixin that forgot to chain used to swallow the other one's block.
 
 ## Endpoints travel with the block
 
@@ -88,8 +93,9 @@ A modal button is a `DeploymentAction` with `modal_endpoint` + `modal_title` ins
 ## Adding a block to your service
 
 1. Write the template in your service package and read `section.context`.
-2. Implement `detail_page_sections` or `deployment_page_sections`, returning `[]` when
-   the block does not apply (role, missing data, wrong cluster).
+2. Put `@on(UIEvent.PROJECT_SECTIONS)` or `@on(UIEvent.DEPLOYMENT_SECTIONS)` on a method
+   that takes the matching payload, returning `[]` when the block does not apply (role,
+   missing data, wrong cluster). The method's name is free -- name it after the block.
 3. Need an endpoint? Put the router in your package and return it from `web_routers()`.
 4. Write both guards: the section **appears** for a project that uses the service and
    **stays away** from one that does not. A missing block is invisible otherwise; that is
