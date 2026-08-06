@@ -42,8 +42,8 @@ deployment-component wint, anders beslist de componentdefinitie.
 
 ## Wie meldt het
 
-De systeemdienst `deployment-health` (RC-28), via `HookPoint.DEPLOYMENT_STATE` -- dezelfde
-haak waarop sleep-mode meldt dat een deployment slaapt.
+De systeemdienst `deployment-health` (RC-28), via `UIEvent.DEPLOYMENT_STATE` -- hetzelfde
+event waarop sleep-mode meldt dat een deployment slaapt.
 
 `disabled: true` is een veld op een component, dus geen gewone dienst bezit het. Daarom
 had een generieke bijdrage in `collect_deployment_state` gekund. Dat is bewust niet

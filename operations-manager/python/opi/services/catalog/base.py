@@ -608,11 +608,12 @@ class Service(ABC):
     #: exactly one provider contributes per manager.
     manifest_activated_by: ClassVar[tuple[ServiceType, ...]] = ()
 
-    #: This service's event handlers, event -> method names in ``@on(..., order=)`` order
-    #: (RC-39). Derived from the decorated methods of the class (mixins included) by
-    #: ``__init_subclass__``, so participation cannot drift from implementation and
-    #: ``registry`` can index listeners without scanning for overridden method names.
-    event_handlers: ClassVar[dict[ServiceEvent, list[str]]] = {}
+    #: This service's event handlers, event -> ``(method name, order)`` in ``@on(...,
+    #: order=)`` order (RC-39). Derived from the decorated methods of the class (mixins
+    #: included) by ``__init_subclass__``, so participation cannot drift from
+    #: implementation and ``registry`` can index listeners without scanning for overridden
+    #: method names.
+    event_handlers: ClassVar[dict[ServiceEvent, list[tuple[str, int]]]] = {}
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
@@ -926,7 +927,7 @@ class Service(ABC):
         that does not listen returns ``[]``.
         """
         contributions: list[Any] = []
-        for name in self.event_handlers.get(event, ()):
+        for name, _order in self.event_handlers.get(event, ()):
             contributions.extend(getattr(self, name)(payload))
         return contributions
 
@@ -951,7 +952,7 @@ class Service(ABC):
         lost update happens inside a single scan.
         """
         contributions: list[Any] = []
-        for name in self.event_handlers.get(event, ()):
+        for name, _order in self.event_handlers.get(event, ()):
             contributions.extend(await getattr(self, name)(payload))
         return contributions
 
