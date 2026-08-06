@@ -18,6 +18,7 @@
     - container_id: str (default: "task-progress-{{ task_id }}")
     - success_message: str (default: "Wijzigingen succesvol verwerkt!")
     - on_complete: str | None (JavaScript to run on Ok click, e.g. "location.reload()")
+    - on_complete_label: str (label of that button, default "Ok" / "Sluiten")
 #}
 {% set _container_id = container_id | default("task-progress-" ~ task_id) %}
 {% set _success_msg = success_message | default("Wijzigingen succesvol verwerkt!") %}
@@ -43,7 +44,7 @@
     {% elif status == "failed" %}
     {% include "partials/_component_failures.html.j2" %}
     {% else %}
-    <p class="edit-progress-step">{{ current_step }}</p>
+    <p class="edit-progress-step">{{ current_step }} <span class="edit-progress-percentage">{{ progress }}%</span></p>
     {% endif %}
 
     {% if tasks %}
@@ -61,6 +62,9 @@
             {% endif %}
             <span>{{ task.name }}</span>
         </div>
+        {% if task.error %}
+        <div class="edit-progress-task-error">{{ task.error }}</div>
+        {% endif %}
         {% if task.subtasks %}
         {% for subtask in task.subtasks %}
         <div class="edit-progress-task-item edit-progress-subtask">
@@ -75,6 +79,9 @@
             {% endif %}
             <span>{{ subtask.name }}</span>
         </div>
+        {% if subtask.error %}
+        <div class="edit-progress-task-error edit-progress-subtask">{{ subtask.error }}</div>
+        {% endif %}
         {% endfor %}
         {% endif %}
         {% endfor %}
@@ -83,11 +90,11 @@
 
     {% if status == "completed" and on_complete is defined and on_complete %}
     <div class="edit-progress-actions">
-        <c-button kind="primary" label="Ok" @click="{{ on_complete }}" />
+        <c-button kind="primary" label="{{ on_complete_label | default('Ok') }}" @click="{{ on_complete }}" />
     </div>
     {% elif status == "failed" and on_complete is defined and on_complete %}
     <div class="edit-progress-actions">
-        <c-button kind="primary" label="Sluiten" @click="{{ on_complete }}" />
+        <c-button kind="primary" label="{{ on_complete_label | default('Sluiten') }}" @click="{{ on_complete }}" />
     </div>
     {% endif %}
 </div>
