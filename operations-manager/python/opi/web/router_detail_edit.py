@@ -1441,12 +1441,10 @@ async def _handle_backup_restore_submit(
             create_new_deployment,
         )
 
+    # Rendered once on purpose -- see render_progress_fragment in opi/web/task_progress.py.
     rendered = templates.get_template("wizard/modal_wizard_progress.html.j2").render(
         {"task_id": task_id, "project_name": project_name}
     )
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
 
     clear_modal_state_by_token(wizard_token)
     return HTMLResponse(content=rendered)
@@ -1476,21 +1474,19 @@ async def modal_wizard_progress_html(request: Request, project_name: str, task_i
             "status": "failed",
             "error": "Taak niet gevonden",
         }
-        rendered = templates.get_template("wizard/modal_wizard_progress_fragment.html.j2").render(context)
-        process_components = templates.env.filters.get("process_components")
-        if process_components:
-            rendered = str(process_components(rendered))
-        return HTMLResponse(content=rendered)
+        return HTMLResponse(
+            content=templates.get_template("wizard/modal_wizard_progress_fragment.html.j2").render(context)
+        )
 
     context = _v2_task_to_template_context(task, project_name)
     context["task_id"] = task_id
 
-    rendered = templates.get_template("wizard/modal_wizard_progress_fragment.html.j2").render(context)
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
-
-    return HTMLResponse(content=rendered)
+    # Rendered once on purpose. The fragment is a template file, so the component
+    # extension already replaced its <c-...> tags at compile time; a second pass with
+    # ``process_components`` would parse the rendered HTML as a Jinja template again,
+    # and a step or deployment name carrying ``{{ ... }}`` would be executed instead of
+    # shown. Same reason as render_progress_fragment in opi/web/task_progress.py.
+    return HTMLResponse(content=templates.get_template("wizard/modal_wizard_progress_fragment.html.j2").render(context))
 
 
 async def _build_backup_restore_context_async(
