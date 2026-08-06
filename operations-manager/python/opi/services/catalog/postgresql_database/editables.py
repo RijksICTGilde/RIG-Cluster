@@ -3,8 +3,8 @@
 The one user-editable thing at the project layer is the list of extra schemas (RC-17):
 ``services/postgresql-database/config/schemas``, a sequence of ``{postfix, description,
 marked-for-deletion}`` items. Paths are built with ``config_path`` and every editable
-carries ``virtualize=SERVICE_VIRTUALIZE`` so project-level service config
-does not collide with the service-selection list in the wizard state.
+carries ``virtualize=SERVICE_VIRTUALIZE`` so project-level service config does not
+collide with the service-selection list in the wizard state.
 
 The ``scope`` field is not offered here: it is set via YAML/API for now (a shared vs
 project placement change is not a routine wizard edit).

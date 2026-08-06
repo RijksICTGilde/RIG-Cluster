@@ -2,8 +2,8 @@
 
 All fields live under ``services/invite/config``. Paths are built with ``config_path``
 so the layer/service is encoded once (enum-driven) instead of a hardcoded string. Every
-editable carries ``virtualize=SERVICE_VIRTUALIZE`` so project-level service
-config does not collide with the service-selection list in the wizard state.
+editable carries ``virtualize=SERVICE_VIRTUALIZE`` so project-level service config does
+not collide with the service-selection list in the wizard state.
 
 The ``active`` sequence holds one item per invitation; its children are the invite fields.
 The realm-roles picker is a sequence of selects fed by ``InviteRealmRoleOptionsProvider``
