@@ -43,6 +43,9 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
         variables=[var.value for var in DatabaseVariables],
         cleanup_strategy=CleanupStrategy.DEFERRED,
         backup_label="database",
+        # The console and job buttons; the collector keeps one of each when a project
+        # happens to use both PostgreSQL variants.
+        actions_provider=database_actions,
     )
     # The user-facing config is the project-layer scope decision; the deployment-layer
     # clone state is OPI-managed (see config_model_for below). config_model names the
@@ -151,8 +154,3 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
                 register_secret=secret,
             )
         ]
-
-
-# Bind the console/job buttons onto the bound ServiceDefinition, the same way sleep-mode
-# binds its wake button: services.py must never import the catalog package.
-PostgresqlDatabaseService.definition.actions_provider = database_actions
