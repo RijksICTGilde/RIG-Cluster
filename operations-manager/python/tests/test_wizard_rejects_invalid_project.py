@@ -267,3 +267,141 @@ def test_unplaceable_schema_error_returns_none() -> None:
     """No step owns this, so the caller falls back to a step-level message."""
     sections = get_flow("create-project").sections
     assert _locate_schema_error(list(sections), "config/age-private-key") is None
+
+
+# ---------------------------------------------------------------------------
+# Showing the message must not execute it, and must not repeat the value
+# ---------------------------------------------------------------------------
+
+
+def _project_with_a_payload_in_an_image(payload: str) -> dict[str, Any]:
+    """A deployment image the schema pattern rejects, carrying attacker-chosen text.
+
+    This is the real gap: the image field is a plain text field with no validator of
+    its own, while the schema puts a ``pattern`` on it -- so the wizard lets the value
+    through and the schema is the first thing to say no, with the value quoted in its
+    message.
+    """
+    data = _valid_project()
+    data["deployments"] = [
+        {
+            "name": "dep",
+            "cluster": "odcn-production",
+            "namespace": "nep-wfo",
+            "components": [{"reference": "frontend", "image": payload}],
+        }
+    ]
+    return data
+
+
+def test_the_reason_never_repeats_the_rejected_value() -> None:
+    """jsonschema quotes the instance; the reason must be built from the schema only."""
+    with pytest.raises(ProjectSchemaError) as exc:
+        _validate_finished_project(_project_with_a_payload_in_an_image("geheim abc"), project_name="nep-wfo")
+
+    assert exc.value.field_path == "deployments/0/components/0/image"
+    assert exc.value.reason is not None
+    assert "geheim abc" not in exc.value.reason
+    # The raw message still quotes it -- which is exactly why callers use the reason.
+    assert "geheim abc" in str(exc.value)
+
+
+def test_the_logged_warning_does_not_leak_the_value(caplog: pytest.LogCaptureFixture) -> None:
+    """The edit flow validates the MERGED file, so a rejected value can be a secret."""
+    with caplog.at_level("WARNING", logger="opi.web.router_wizard"), pytest.raises(ProjectSchemaError):
+        _validate_finished_project(_project_with_a_payload_in_an_image("geheim abc"), project_name="nep-wfo")
+
+    logged = " ".join(record.getMessage() for record in caplog.records)
+    assert "deployments/0/components/0/image" in logged
+    assert "geheim abc" not in logged
+
+
+def test_a_field_message_cannot_execute_in_the_second_render() -> None:
+    """Field messages are rendered TWICE, so they must not survive as a template.
+
+    ``wizard_step.html.j2`` pipes the HTML this returns through ``process_components``,
+    which compiles it as a Jinja template. Escaping does not help -- ``{{ }}`` needs no
+    special characters -- and several validators quote the rejected value in their
+    message, so a value typed into the form would otherwise be executed server-side.
+    """
+    from opi.core.templates import get_templates
+    from opi.forms.visualizers.wizard_sections import COMPONENTS_SECTION
+    from opi.web.router_wizard import _render_step_html
+
+    html = _render_step_html(
+        COMPONENTS_SECTION,
+        yaml_data={"components": [{"name": "web", "image": "nginx:1.25"}]},
+        errors={"components[0]/command": ["Ongeldige waarde: {{ 7*7 }}"]},
+    )
+    processed = get_templates().env.filters["process_components"](html)
+
+    assert "{{" not in html
+    assert "49" not in processed
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_save_marks_the_field_and_puts_the_text_where_it_is_safe() -> None:
+    """End to end over the handler: what lands in the field, and what lands on top.
+
+    The field gets a constant marker (it is rendered into step_html, which is
+    re-rendered as a template downstream); the explanation goes in global_errors,
+    which the template renders once with autoescaping. Neither carries the value.
+    """
+    from unittest.mock import MagicMock
+
+    from opi.core.templates import get_templates
+    from opi.forms.editables.processor import EditableFormProcessor
+    from opi.web.router_wizard import SCHEMA_FIELD_MARKER, _do_submit
+
+    payload = "geheim-{{ 7*7 }}"
+    rejection = ProjectSchemaError(
+        f"Veld 'deployments/0/components/0/image': '{payload}' does not match '^...'",
+        field_path="components/0/image",
+        reason="de waarde heeft niet de vorm die het schema voorschrijft",
+    )
+
+    state = MagicMock()
+    state.flow_id = "edit-project"
+    state.project_name = "nep-wfo"
+    state.current_step = "components"
+    state.step_data = {}
+    state.staged_attachments = {}
+    state.get_merged_data.return_value = {
+        "name": "nep-wfo",
+        "display-name": "Nep WFO",
+        "components": [{"name": "web", "image": "nginx:1.25"}],
+    }
+
+    captured: dict[str, Any] = {}
+
+    class _Templates:
+        def TemplateResponse(self, name: str, context: dict[str, Any]) -> Any:
+            captured.update(context)
+            return SimpleNamespace(template_name=name)
+
+    request = SimpleNamespace(state=SimpleNamespace(user={"email": OWNER_EMAIL}, csrf_token="t"))
+
+    with (
+        patch("opi.web.router_wizard.get_wizard_state", return_value=state),
+        patch("opi.web.router_wizard.save_wizard_state"),
+        patch.object(
+            EditableFormProcessor,
+            "process_json_submission",
+            new=AsyncMock(return_value=({"name": "nep-wfo", "display-name": "Nep WFO"}, {})),
+        ),
+        patch.object(EditableFormProcessor, "enforce_sections", new=AsyncMock(return_value=[])),
+        patch("opi.forms.editables.lifecycle.run_hooks", new=AsyncMock()),
+        patch("opi.web.router_wizard._save_existing_project", side_effect=rejection),
+    ):
+        await _do_submit(request, "edit-project", _Templates())
+
+    assert captured["errors"] == {"components[0]/image": [SCHEMA_FIELD_MARKER]}
+    global_errors = captured["global_errors"]
+    assert len(global_errors) == 1
+    assert "components/0/image" in global_errors[0]
+    assert "de waarde heeft niet de vorm" in global_errors[0]
+    assert payload not in global_errors[0]
+
+    step_html = captured["step_html"]
+    assert payload not in step_html
+    assert "49" not in get_templates().env.filters["process_components"](step_html)
