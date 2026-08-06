@@ -2123,8 +2123,6 @@ async def _start_project_creation(
     # Create V2 async task — the task worker handles git commit + processing
     from opi.core.task_helpers import create_async_task
 
-    clear_wizard_state(request)
-
     task = await create_async_task(
         request=request,
         task_type="create_project",
@@ -2134,6 +2132,13 @@ async def _start_project_creation(
     )
     task_id = str(task["task_id"])
     logger.info("Created V2 project creation task for %s (task=%s)", project_name, task_id)
+
+    # Only now is the work handed over, so only now may the wizard session go. Clearing
+    # it before this point threw away everything the user typed while the submission
+    # could still fail -- which is why a rejected save left them with no way back into
+    # the wizard. The edit path already waited for its save to return; both paths now
+    # clear their session after the work is accepted, not before.
+    clear_wizard_state(request)
 
     # Use HX-Redirect so HTMX does a full-page navigation instead of
     # swapping the progress page into the wizard frame.
