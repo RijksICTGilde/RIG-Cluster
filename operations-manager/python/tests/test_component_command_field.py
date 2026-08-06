@@ -122,3 +122,66 @@ def test_een_commando_kan_het_document_niet_openbreken() -> None:
     teruggelezen = load_yaml_from_string(geschreven)
     assert teruggelezen is not None
     assert teruggelezen["components"][0]["command"] == aanval, "de waarde hoort ongewijzigd terug te komen"
+
+
+def test_an_empty_command_writes_no_key_at_all() -> None:
+    """Leeg laten is de normale keuze, en die moet opslaanbaar zijn.
+
+    Het schema kent ``minItems: 1`` op ``command``, dus een lege lijst is ongeldig. Een
+    reeks schreef die toch, omdat ``remove_when_none`` alleen op losse velden werd
+    toegepast: elk project met een component werd daardoor afgekeurd zodra het veld
+    onaangeroerd bleef.
+    """
+    import asyncio
+
+    from opi.forms.editables.processor import EditableFormProcessor
+    from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
+
+    submitted = {"components": [{"name": "web", "image": "nginx:1.25", "command": []}]}
+    resultaat, _errors = asyncio.run(
+        EditableFormProcessor().process_json_submission(submitted, [COMPONENTS_SEQUENCE], {}, edit_mode=False)
+    )
+    component = resultaat["components"][0]
+    assert "command" not in component, f"een leeg commando hoort geen sleutel te schrijven, kreeg {component!r}"
+
+
+def test_a_filled_command_is_still_written() -> None:
+    """De keerzijde: het weglaten mag niet zo ver gaan dat een echt commando sneuvelt."""
+    import asyncio
+
+    from opi.forms.editables.processor import EditableFormProcessor
+    from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
+
+    submitted = {"components": [{"name": "web", "image": "nginx:1.25", "command": ["/bin/sh", "-c", "echo hoi"]}]}
+    resultaat, _errors = asyncio.run(
+        EditableFormProcessor().process_json_submission(submitted, [COMPONENTS_SEQUENCE], {}, edit_mode=False)
+    )
+    assert resultaat["components"][0]["command"] == ["/bin/sh", "-c", "echo hoi"]
+
+
+def test_the_field_is_actually_laid_out_on_the_components_step() -> None:
+    """Een editable bestaan is niet genoeg: de componentenstap somt in zijn ``layout``
+    expliciet op welke velden getoond worden. Wie er een toevoegt en die opsomming
+    vergeet, levert een veld op dat nergens te zien is en waar niets over klaagt.
+
+    Precies dat gebeurde bij het startcommando: het stond in ``COMPONENTS_SEQUENCE``,
+    kwam door elke definitie-test heen, en werd in de wizard nooit gerenderd.
+    """
+    from opi.forms.visualizers.wizard_sections import COMPONENTS_SECTION
+
+    def _field_names(items: object) -> set[str]:
+        namen: set[str] = set()
+        for item in items if isinstance(items, list) else []:
+            if isinstance(item, str):
+                namen.add(item)
+                continue
+            naam = getattr(item, "field_name", None)
+            if naam:
+                namen.add(naam)
+            for attribuut in ("children", "child_layout"):
+                namen |= _field_names(getattr(item, attribuut, None))
+        return namen
+
+    assert "command" in _field_names(COMPONENTS_SECTION.layout), (
+        "het startcommando staat niet in de layout van de componentenstap, dus het wordt niet getoond"
+    )

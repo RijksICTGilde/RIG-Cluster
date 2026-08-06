@@ -33,10 +33,10 @@ from opi.services.catalog.cross_domain_access.editables import (
     OUTBOUND_SEQUENCE_EDITABLE,
 )
 
-_PORT_HELP = (
-    "De poort van de ONTVANGENDE kant, en het is de containerpoort (niet de Service-poort). "
-    "Staat er een authorization-wall voor het component, dan is 4180 de bereikbare poort."
-)
+#: De uitzondering (4180 achter een authorization-wall) staat niet hier maar in het label van
+#: die ene optie: het geldt voor een keuze en niet voor het veld, en wie hem niet kiest hoeft
+#: er niets van te weten.
+_PORT_HELP = "De poort op het ontvangende component, zoals daar zelf ingevuld."
 _PEER_DEPLOYMENT_HELP = (
     "Welke deployment van dat project. Leeglaten kan: de regel geldt dan voor elke deployment "
     "en wordt per deployment ingevuld."
