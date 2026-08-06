@@ -261,9 +261,10 @@ class TestDeploymentPatchChangesOnlyThePeerDeployment:
         assert _peers(_policy(spec)["spec"]["ingress"], "from") == [("rig-prd-regelrecht", "prod-api", [3000])]
 
 
-class TestAnUnknownPeerDoesNotBlockGeneration:
-    """A rule may name a project this cluster does not know -- the receiver decides, and it may
-    not exist here yet. That must never stop the OTHER rules from producing their policy."""
+class TestAnUnknownPeerStillProducesAPolicy:
+    """A rule may name a project this cluster does not know -- it may be managed elsewhere, or
+    simply be created later. That must produce a policy anyway (the receiver decides what it
+    lets in), and it must never stop the OTHER rules from producing theirs."""
 
     @pytest.mark.asyncio
     async def test_the_other_rules_still_generate(self) -> None:
@@ -281,12 +282,15 @@ class TestAnUnknownPeerDoesNotBlockGeneration:
 
         [spec] = _manifests(project)
         doc = _policy(spec)
-        # The unknown peer contributes no entry (resolve.py logs and skips it), and crucially
-        # the known one is untouched -- generation is not aborted.
-        assert _peers(doc["spec"]["ingress"], "from") == [("rig-prd-regelrecht", "prod-api", [3000])]
+        # Both entries are there: the known peer from its own project file, the unknown one by
+        # the namespace convention. Sorted, so 'bestaat-niet' comes first.
+        assert _peers(doc["spec"]["ingress"], "from") == [
+            ("rig-prd-bestaat-niet", "prod-api", [3000]),
+            ("rig-prd-regelrecht", "prod-api", [3000]),
+        ]
 
     @pytest.mark.asyncio
-    async def test_a_rule_naming_only_an_unknown_peer_yields_no_file_and_no_error(self) -> None:
+    async def test_a_rule_naming_only_an_unknown_peer_still_yields_the_policy(self) -> None:
         project = _own_project()
         project["services"][0]["config"] = {
             "inbound": [
@@ -297,7 +301,8 @@ class TestAnUnknownPeerDoesNotBlockGeneration:
                 }
             ]
         }
-        assert _manifests(project) == []
+        [spec] = _manifests(project)
+        assert _peers(_policy(spec)["spec"]["ingress"], "from") == [("rig-prd-bestaat-niet", "prod-api", [3000])]
 
 
 class TestFormContextNeverReachesTheProjectFile:

@@ -260,10 +260,31 @@ class TestResolve:
             resolve_rules([_mr(peer_project="me")], cluster=_CLUSTER, self_project="me", lookup_project=_lookup) == []
         )
 
-    def test_missing_project_is_dropped(self) -> None:
-        assert (
-            resolve_rules([_mr(peer_project="nope")], cluster=_CLUSTER, self_project="me", lookup_project=_lookup) == []
+    def test_an_unknown_project_resolves_by_convention_instead_of_being_dropped(self) -> None:
+        # RC-42: cross-domain means the peer may live elsewhere or not exist yet. Dropping the
+        # rule would turn a declared rule into no policy at all; naming the peer grants it
+        # nothing, because the receiver decides with its own policy what it lets in.
+        [rule] = resolve_rules([_mr(peer_project="nope")], cluster=_CLUSTER, self_project="me", lookup_project=_lookup)
+        assert rule.peer.namespace == "rig-prd-nope"  # the convention: namespace = project name
+        assert rule.peer.pod_labels == {"app": "prod-api", "project": "nope"}
+        assert rule.port == 8080
+
+    def test_an_unknown_project_does_not_stop_the_other_rules(self) -> None:
+        resolved = resolve_rules(
+            [_mr(name="unknown", peer_project="nope"), _mr(name="known")],
+            cluster=_CLUSTER,
+            self_project="me",
+            lookup_project=_lookup,
         )
+        assert [r.peer.namespace for r in resolved] == ["rig-prd-nope", "rig-prd-regelrecht"]
+
+    def test_a_known_project_still_uses_its_own_namespace(self) -> None:
+        # The convention is the FALLBACK only: 'dev' deploys to regelrecht-dev, which no
+        # convention would have guessed.
+        [rule] = resolve_rules(
+            [_mr(peer_deployment="dev")], cluster=_CLUSTER, self_project="me", lookup_project=_lookup
+        )
+        assert rule.peer.namespace == "rig-prd-regelrecht-dev"
 
     def test_missing_deployment_is_dropped(self) -> None:
         assert (
