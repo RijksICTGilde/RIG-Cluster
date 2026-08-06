@@ -53,84 +53,10 @@
       "type": "array",
       "items": { "$ref": "#/$defs/remote-source" }
     },
-    "invites": { "$ref": "#/$defs/invites" },
-    "backup": { "$ref": "#/$defs/backup" },
-    "domains": { "$ref": "#/$defs/domains" }
+    "backup": { "$ref": "#/$defs/backup" }
   },
 
   "$defs": {
-
-    "domains": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "allowed-subdomains": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/allowed-subdomain-entry" }
-        },
-        "allowed-domains": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/allowed-domain-entry" }
-        }
-      }
-    },
-
-    "allowed-subdomain-entry": {
-      "type": "object",
-      "required": ["domain", "subdomains"],
-      "additionalProperties": false,
-      "properties": {
-        "domain": { "type": "string" },
-        "subdomains": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/allowed-subdomain-detail" }
-        }
-      }
-    },
-
-    "allowed-subdomain-detail": {
-      "type": "object",
-      "required": ["name", "status"],
-      "additionalProperties": false,
-      "properties": {
-        "name": { "type": "string" },
-        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
-        "history": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/domain-history-entry" }
-        }
-      }
-    },
-
-    "allowed-domain-entry": {
-      "type": "object",
-      "required": ["domain", "status"],
-      "additionalProperties": false,
-      "properties": {
-        "domain": { "type": "string" },
-        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
-        "supports-dots": { "type": "boolean" },
-        "issuer": { "type": "string" },
-        "restricted-subdomains": { "type": "boolean" },
-        "history": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/domain-history-entry" }
-        }
-      }
-    },
-
-    "domain-history-entry": {
-      "type": "object",
-      "required": ["date", "status"],
-      "additionalProperties": false,
-      "properties": {
-        "date": { "type": "string" },
-        "status": { "type": "string", "enum": ["requested", "approved", "denied"] },
-        "by": { "type": "string" },
-        "message": { "type": "string" }
-      }
-    },
-
 
     "age-encrypted": {
       "type": "string",
@@ -301,16 +227,6 @@
       }
     },
 
-    "storage-entry": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "type": { "type": "string" },
-        "size": { "type": "string" },
-        "mount-path": { "type": "string", "pattern": "^(?!.*\\.\\.)/[\\w./-]+\\Z" }
-      }
-    },
-
     "component": {
       "type": "object",
       "required": ["name"],
@@ -346,10 +262,6 @@
             { "type": "object" }
           ]
         },
-        "publish-on-web": {
-          "comment": "v0 shape. _fixup_v2_data deletes it, but git_monitor validates a file straight from git BEFORE any migration runs, so the schema must keep accepting it or that gate rejects legacy files outright. Not a service contract: that lives in the service's config_model.",
-          "type": "boolean"
-        },
         "sso-rijk": { "type": "boolean" },
         "disabled": { "type": "boolean" },
         "disabled-reason": { "type": "string" },
@@ -371,16 +283,6 @@
         "aliases": {
           "type": "object",
           "additionalProperties": { "type": "string" }
-        },
-        "uses-services": {
-          "description": "Legacy v1 field — should be migrated to services.",
-          "type": "array",
-          "items": { "$ref": "#/$defs/service-entry" }
-        },
-        "storage": {
-          "description": "Legacy v1 field — should be migrated to services.",
-          "type": "array",
-          "items": { "$ref": "#/$defs/storage-entry" }
         }
       }
     },
@@ -610,11 +512,6 @@
         "services": {
           "type": "array",
           "items": { "$ref": "#/$defs/service-entry" }
-        },
-        "uses-services": {
-          "description": "Legacy v1 field.",
-          "type": "array",
-          "items": { "$ref": "#/$defs/service-entry" }
         }
       }
     },
@@ -634,11 +531,6 @@
         },
         "helm-values": {},
         "services": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/service-entry" }
-        },
-        "uses-services": {
-          "description": "Legacy v1 field.",
           "type": "array",
           "items": { "$ref": "#/$defs/service-entry" }
         }
@@ -680,58 +572,6 @@
         "secret-key": { "$ref": "#/$defs/age-encrypted-or-plain" },
         "bucket": { "type": "string" },
         "secure": { "type": "boolean" }
-      },
-      "additionalProperties": false
-    },
-
-    "invites": {
-      "comment": "LEGACY (pre-v2.6). Relocated to the invite service config (services/invite/config) by relocate_invites_to_service; extract_invites_config reads both locations during rollout. Kept, like the domains defs, because the root additionalProperties is false and 30/47 production files still predate v2.5, so removing it would reject unmigrated files. Removal is gated on per-version schema validation (TODO.md).",
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "settings": {
-          "type": "object",
-          "properties": {
-            "default_language": { "type": "string" }
-          },
-          "additionalProperties": false
-        },
-        "active": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/invite" }
-        }
-      }
-    },
-
-    "invite": {
-      "comment": "LEGACY (pre-v2.6). The invite shape now lives in the invite service model (opi/services/catalog/invite/config_model.py) and its committed fragment invite.v1.0.json; this def only validates unmigrated top-level invites blocks.",
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "key": { "type": "string" },
-        "roles": { "type": "array", "items": { "type": "string" } },
-        "realm_roles": { "type": "array", "items": { "type": "string" } },
-        "client_roles": {
-          "type": "object",
-          "additionalProperties": { "type": "array", "items": { "type": "string" } }
-        },
-        "groups": { "type": "array", "items": { "type": "string" } },
-        "restrict_domain": { "type": "string" },
-        "auth_methods": { "type": "array", "items": { "type": "string" } },
-        "contact_email": { "type": "string" },
-        "application_url": { "type": "string" },
-        "message": { "$ref": "#/$defs/i18n-text" },
-        "success_title": { "$ref": "#/$defs/i18n-text" },
-        "success_button": { "$ref": "#/$defs/i18n-text" }
-      }
-    },
-
-    "i18n-text": {
-      "comment": "LEGACY (pre-v2.6). Used only by the legacy invite def; the current shape is I18nText in the invite service model.",
-      "type": "object",
-      "properties": {
-        "nl": { "type": "string" },
-        "en": { "type": "string" }
       },
       "additionalProperties": false
     },

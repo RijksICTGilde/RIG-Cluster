@@ -16,9 +16,14 @@ one config model not owned by a single service package.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+import re
+
+from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator
 
 from opi.services.catalog.shared.revisions import CloneState
+
+#: Absolute path built from word characters, dots, slashes and dashes.
+MOUNT_PATH_PATTERN = re.compile(r"^/[\w./-]+\Z")
 
 
 class StorageEntry(BaseModel):
@@ -28,6 +33,25 @@ class StorageEntry(BaseModel):
     # Kubernetes storage quantity, e.g. "500Mi".
     size: str
     mount_path: str = Field(alias="mount-path")
+
+    @field_validator("mount_path")
+    @classmethod
+    def _reject_traversal(cls, value: str) -> str:
+        """Absolute path, no ``..`` anywhere.
+
+        This guard used to live in the JSON schema, on the v1 ``storage:`` block
+        ($defs/storage-entry) -- which meant it only ever applied to v1 files, never
+        to the current service-config shape. Removing that def with the rest of the
+        v1 forms (RC-32) made the gap visible; the guard belongs here, on the model
+        that describes the shape people actually write. Container-side a ``..`` can
+        escape the intended storage root if any tool resolves the path.
+
+        Pydantic's ``pattern=`` cannot express this (its regex engine has no
+        look-ahead), hence a validator.
+        """
+        if not MOUNT_PATH_PATTERN.match(value) or ".." in value:
+            raise ValueError(f"Ongeldig mount-pad '{value}': moet absoluut zijn en mag geen '..' bevatten")
+        return value
 
 
 class StorageConfig(RootModel[list[StorageEntry]]):
