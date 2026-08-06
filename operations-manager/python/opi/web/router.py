@@ -131,12 +131,37 @@ async def redirect_projects_new_to_wizard():
 web_router.add_api_route("/subdomains/check", check_subdomain_availability_web, methods=["GET"])
 
 
+def _progress_page_context(task: dict, task_id: str) -> dict:
+    """The context the progress page and its polled fragment share.
+
+    Both render the same fragment, so both build it here: one weergave, one plek waar
+    hij wordt gevuld. The page adds the shell around it, nothing more.
+    """
+    project_name = task.get("project_name", "")
+    context = _v2_task_to_template_context(task, project_name)
+    context["task_id"] = task_id
+    context["progress_url"] = f"/projects/progress/{task_id}/fragment"
+    context["container_id"] = "project-progress"
+    if task.get("task_type") == "create_project":
+        context["success_message"] = "Project succesvol aangemaakt. Het is klaar voor gebruik."
+    else:
+        context["success_message"] = "Verwerking succesvol afgerond."
+    if project_name:
+        # Whether it finished or failed, the detail page is where the user goes next --
+        # to use the project, or to fix what went wrong.
+        context["on_complete"] = f"window.location.href='/projects/details/{project_name}'"
+        context["on_complete_label"] = "Naar projectdetails"
+    return context
+
+
 @web_router.get("/projects/progress/{task_id}", response_class=HTMLResponse)
 @requires_sso
 async def project_progress_page(request: Request, task_id: str):
     """
     Show the project creation progress page.
 
+    The page is a shell around the shared progress fragment: the first paint is
+    server-rendered here, and htmx polls the fragment route below for the rest.
     Reads task state from the V2 async task service (database-backed).
     """
     try:
@@ -158,29 +183,17 @@ async def project_progress_page(request: Request, task_id: str):
                 },
             )
 
-        project_name = task.get("project_name", "")
-        status = task.get("status", "pending")
-        if status in ("pending", "claimed", "running"):
-            template_status = "running"
-        elif status == "completed":
-            result = task.get("result")
-            template_status = "failed" if isinstance(result, dict) and result.get("status") == "failed" else "completed"
-        else:
-            template_status = "failed"
+        _require_task_access(request, task, task.get("project_name", ""))
 
-        return templates.TemplateResponse(
-            "project-progress.html.j2",
+        context = _progress_page_context(task, task_id)
+        context.update(
             {
                 "request": request,
-                "title": f"Creating Project: {project_name}",
+                "title": f"Voortgang: {context['project_name']}",
                 "menu_items": get_menu_items(user),
-                "task_id": task_id,
-                "project_name": project_name,
-                "initial_progress": task.get("progress_percent", 0),
-                "initial_step": task.get("current_step") or "Verwerking gestart...",
-                "initial_status": template_status,
-            },
+            }
         )
+        return templates.TemplateResponse("project-progress.html.j2", context)
 
     except HTTPException:
         raise
@@ -189,39 +202,27 @@ async def project_progress_page(request: Request, task_id: str):
         raise HTTPException(status_code=500, detail=f"Error loading progress page: {e!s}")
 
 
-@web_router.get("/ui/tasks/{task_id}/status")
+@web_router.get("/projects/progress/{task_id}/fragment", response_class=HTMLResponse)
 @requires_sso
-async def get_task_status(request: Request, task_id: str):
-    """
-    Get current task status and progress.
+async def project_progress_page_fragment(request: Request, task_id: str) -> HTMLResponse:
+    """The progress fragment as the full page polls it.
 
-    Browser-only JSON endpoint polled from the progress page JavaScript.
-    Lives under /ui/ (not /api/) because it relies on the session cookie,
-    not on an X-API-Key header. Reads task state from the V2 async task
-    service (database-backed).
+    Same fragment as the modals use, only with the page's own poll URL and finish
+    button. The page has no project name in its path, so the task supplies it and the
+    same access rule applies as on the project-scoped fragment route.
     """
-
     from opi.core.task_helpers import get_task_service
 
     task_service = get_task_service(request)
     task = await task_service.get_task(task_id)
-
     if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+        return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
 
-    context = _v2_task_to_template_context(task, task.get("project_name", ""))
-    response_data: dict[str, Any] = {
-        "task_id": task_id,
-        "status": context["status"],
-        "current_step": context["current_step"],
-        "project_name": context["project_name"],
-        "progress": context["progress"],
-        "tasks": context["tasks"],
-    }
-    if context["error"]:
-        response_data["error"] = context["error"]
+    _require_task_access(request, task, task.get("project_name", ""))
 
-    return JSONResponse(content=response_data)
+    # Rendered once on purpose -- see render_progress_fragment for why a second pass
+    # over the rendered HTML would execute task text as Jinja.
+    return HTMLResponse(content=render_progress_fragment(_progress_page_context(task, task_id)))
 
 
 @web_router.get("/projects/roos", response_class=HTMLResponse)
@@ -3048,27 +3049,34 @@ def _build_task_hierarchy(subtasks: list[dict]) -> list[dict]:
     return main_tasks
 
 
+def _require_task_access(request: Request, task: dict, project_name: str) -> None:
+    """Raise 403 unless this user may follow this task.
+
+    Either the user is authorized for the project, or they are the one who started the
+    task -- which is what keeps a delete followable (the project is gone from the store
+    before the task ends) and a creation too (it is not in the store yet).
+    """
+    user_email = (get_current_user(request) or {}).get("email", "").lower()
+    if (task.get("created_by") or "").lower() != user_email and not is_user_authorized_for_project(
+        project_name, user_email
+    ):
+        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+
+
 async def _require_task_of_project(request: Request, task_service: Any, project_name: str, task_id: str) -> dict | None:
     """The task with this id, but only if it is this project's and this user's to see.
 
     The task id alone used to be enough to read any task's steps, from any account with
     a session. Both fragment routes sit under ``/projects/{project_name}/``, so scope
-    them to it: the task must be that project's own, and the user must be authorized for
-    the project -- or be the one who started the task, which is what keeps a delete
-    followable (the project is gone from the store before the task ends) and a creation
-    too (it is not in the store yet). Returns None when there is no such task, so the
-    caller answers 404.
+    them to it: the task must be that project's own, and the user must pass
+    ``_require_task_access``. Returns None when there is no such task, so the caller
+    answers 404.
     """
-    user_email = (get_current_user(request) or {}).get("email", "").lower()
-
     task = await task_service.get_task(task_id)
     if task is None or task.get("project_name") != project_name:
         return None
 
-    if (task.get("created_by") or "").lower() != user_email and not is_user_authorized_for_project(
-        project_name, user_email
-    ):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
+    _require_task_access(request, task, project_name)
     return task
 
 
