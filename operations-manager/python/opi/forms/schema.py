@@ -94,12 +94,13 @@ def get_form_meta(field_info: Any) -> FormMeta | None:
     return None
 
 
-def infer_widget_type(python_type: type, form_meta: FormMeta | None) -> str:
+def infer_widget_type(python_type: type | None, form_meta: FormMeta | None) -> str:
     """
     Infer the widget type from Python type and FormMeta.
 
     Args:
-        python_type: The Python type of the field
+        python_type: The Python type of the field, or None when the model does not
+            declare one (pydantic's ``FieldInfo.annotation`` is optional)
         form_meta: Optional FormMeta with explicit widget setting
 
     Returns:

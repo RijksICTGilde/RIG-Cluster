@@ -38,7 +38,7 @@ class MinioStorageService(BackupsPageMixin, Service):
     manifest_secret_class = MinIOSecret
     manifest_order = 20
 
-    config_section_id = "minio-config"
+    config_section_id: ClassVar[str] = "minio-config"
     modal_flow_id = "modal-edit-minio-config"
     form_exempt_layers: ClassVar[dict[ConfigLayer, str]] = {
         ConfigLayer.DEPLOYMENT: ("clone state (generation/revisions) written by revision_manager, not by a user")

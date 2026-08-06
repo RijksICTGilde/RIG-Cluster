@@ -92,7 +92,7 @@ class FormRenderer:
     def render(
         self,
         schema: type[BaseModel],
-        layout: LayoutElement | list[LayoutElement] | None = None,
+        layout: LayoutElement | list[LayoutElement | str] | None = None,
         data: dict[str, Any] | None = None,
         errors: dict[str, list[str]] | None = None,
         form_id: str = "form",
@@ -160,7 +160,7 @@ class FormRenderer:
     def render_fields(
         self,
         schema: type[BaseModel],
-        layout: LayoutElement | list[LayoutElement] | None = None,
+        layout: LayoutElement | list[LayoutElement | str] | None = None,
         data: dict[str, Any] | None = None,
         errors: dict[str, list[str]] | None = None,
         edit_mode: bool = False,
@@ -255,7 +255,7 @@ class FormRenderer:
         self,
         editables: list[EditableVisualizer],
         yaml_data: dict[str, Any],
-        layout: LayoutElement | list,
+        layout: LayoutElement | list[LayoutElement | str],
         errors: dict[str, list[str]] | None = None,
         edit_mode: bool = False,
         form_id: str = "form",
@@ -282,14 +282,21 @@ class FormRenderer:
         self,
         editables: list[EditableVisualizer],
         yaml_data: dict[str, Any],
-        layout: LayoutElement | list,
+        layout: LayoutElement | list[LayoutElement | str] | None = None,
         errors: dict[str, list[str]] | None = None,
         edit_mode: bool = False,
         warnings: dict[str, list[str]] | None = None,
     ) -> str:
-        """Render form fields without form wrapper (for HTMX partial updates)."""
+        """Render form fields without form wrapper (for HTMX partial updates).
+
+        ``layout`` may be None -- a FormSection is allowed not to declare one -- and
+        then every field is rendered in order, the same default the schema-driven
+        renderers above build.
+        """
         self._edit_mode = edit_mode
         fields_by_name = self._build_fields_from_editables(editables, yaml_data, errors, edit_mode, warnings=warnings)
+        if layout is None:
+            layout = list(fields_by_name)
 
         if isinstance(layout, list):
             content_parts = [self._render_layout_element(elem, fields_by_name, yaml_data) for elem in layout]

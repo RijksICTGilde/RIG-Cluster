@@ -330,6 +330,8 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
         if not isinstance(comp, dict):
             continue
         cname = comp.get("name")
+        if not isinstance(cname, str):
+            raise ProjectIntegrityError(f"Project '{project_name}': een component zonder naam")
         if cname in seen_components:
             raise ProjectIntegrityError(f"Project '{project_name}': component '{cname}' is meervoudig gedefinieerd")
         seen_components.add(cname)
@@ -374,6 +376,8 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
         if not isinstance(dep, dict):
             continue
         dep_name = dep.get("name")
+        if not isinstance(dep_name, str):
+            raise ProjectIntegrityError(f"Project '{project_name}': een deployment zonder naam")
         if dep_name in seen_deployments:
             raise ProjectIntegrityError(f"Project '{project_name}': deployment '{dep_name}' is meervoudig gedefinieerd")
         seen_deployments.add(dep_name)
@@ -401,7 +405,7 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
         # Root component constraints
         root_ref = dep.get("root-component")
         if root_ref:
-            ref_names = [r.get("reference") for r in refs if isinstance(r, dict) and r.get("reference")]
+            ref_names = [name for r in refs if isinstance(r, dict) and (name := r.get("reference"))]
             try:
                 validate_root_component(root_ref, ref_names, domain_mode, dep.get("domain-format"))
             except ComponentValidationError as e:

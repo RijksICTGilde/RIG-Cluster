@@ -28,7 +28,7 @@ from opi.services.project_store import get_project_store
 from opi.utils.naming import generate_pvc_name, generate_storage_name, generate_unique_name
 
 if TYPE_CHECKING:
-    from opi.core.task_manager import TaskProgressManager
+    from opi.core.persistent_task_progress import AnyTaskProgressManager
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ async def restore_items_with_progress(
     project_data: dict[str, Any],
     app_namespace: str,
     current_cluster: str,
-    progress: TaskProgressManager,
+    progress: AnyTaskProgressManager,
     restore_task_id: str,
 ) -> bool:
     """Restore a list of backup items with per-item progress tracking.
@@ -204,7 +204,7 @@ async def _pre_restore_pvcs(
     source_deployment: str,
     target_deployment: str,
     pvc_items: list[dict[str, Any]],
-    task_progress: TaskProgressManager,
+    task_progress: AnyTaskProgressManager,
     pvc_task_id: str,
 ) -> None:
     """Pre-create PVCs with backup data before infrastructure provisioning.
@@ -336,7 +336,7 @@ async def _pre_restore_pvcs(
 async def _provision_deployment_infrastructure(
     project_name: str,
     target_deployment: str,
-    task_progress: TaskProgressManager,
+    task_progress: AnyTaskProgressManager,
 ) -> None:
     """Provision infrastructure for a newly created deployment.
 
@@ -385,7 +385,7 @@ async def _resolve_deployment_info(
     raw_namespace = project_file_handler.extract_deployment_namespace(project_data, deployment_name)
     deployment_cluster = project_file_handler.extract_deployment_cluster(project_data, deployment_name)
 
-    if not raw_namespace:
+    if not raw_namespace or not deployment_cluster:
         msg = f"Deployment '{deployment_name}' niet gevonden in project '{project_name}'"
         raise ValueError(msg)
 

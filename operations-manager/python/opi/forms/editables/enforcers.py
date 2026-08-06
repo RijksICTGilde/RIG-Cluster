@@ -320,7 +320,9 @@ class DomainConfigEnforcer:
                     pass  # Already requested — allow through
                 elif status == "denied":
                     if self.denied_blocks:
-                        raise FieldError(subdomain_field, error_msg)
+                        raise FieldError(
+                            subdomain_field, error_msg or "Dit subdomein is niet toegestaan voor dit project"
+                        )
                 else:
                     raise FieldWarning(
                         subdomain_field,
@@ -482,7 +484,7 @@ class UniqueSchemaEnforcer:
 
         project_name = context.get("project_name") or value.get("name") or ""
         deployment_names = [
-            d.get("name") for d in (value.get("deployments") or []) if isinstance(d, dict) and d.get("name")
+            name for d in (value.get("deployments") or []) if isinstance(d, dict) and (name := d.get("name"))
         ]
         reserved = reserved_database_variable_names()
 

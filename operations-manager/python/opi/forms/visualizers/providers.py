@@ -967,9 +967,9 @@ class CrossDomainLocalComponentOptionsProvider:
 
     def get_options(self) -> list[dict[str, Any]]:
         names = [
-            component.get("name")
+            name
             for component in (self.yaml_data.get("components") or [])
-            if isinstance(component, dict) and component.get("name")
+            if isinstance(component, dict) and (name := component.get("name"))
         ]
         if not names and not self.current_value:
             return [{"value": "", "label": "Nog geen componenten: voeg eerst een component toe"}]
