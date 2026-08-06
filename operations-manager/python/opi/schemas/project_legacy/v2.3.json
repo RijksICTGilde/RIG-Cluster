@@ -1,0 +1,3 @@
+{
+  "$comment": "v2.3 -> v2.4 (RC-5 A) normalized service entries to the uniform record form ({name|reference, config}). No patch is needed: $defs/service-entry still accepts the legacy single-key dict, because normalize_service_entries deliberately leaves `attachments` in that form. An empty patch is the honest record of a migration that did not narrow the accepted shape."
+}
