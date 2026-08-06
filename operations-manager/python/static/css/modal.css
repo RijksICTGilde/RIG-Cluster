@@ -149,6 +149,26 @@
     color: var(--rvo-color-grijs-700);
 }
 
+/* A subtask is one level in from the step it belongs to. */
+.edit-progress-subtask {
+    padding-left: var(--rvo-space-lg);
+}
+
+.edit-progress-task-error {
+    font-size: 0.8125rem;
+    color: var(--rvo-color-rood-700);
+    padding-left: var(--rvo-space-lg);
+}
+
+.edit-progress-task-error.edit-progress-subtask {
+    padding-left: var(--rvo-space-xl);
+}
+
+/* The percentage next to the current step: readable, but not louder than the step. */
+.edit-progress-percentage {
+    color: var(--rvo-color-grijs-600);
+}
+
 .edit-progress-actions {
     display: flex;
     gap: var(--rvo-space-md);

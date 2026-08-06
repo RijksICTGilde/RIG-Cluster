@@ -74,6 +74,37 @@ def test_the_single_render_still_resolves_every_component() -> None:
         assert "<c-" not in rendered, f"unresolved component tag with status={status}"
 
 
+def _wizard_progress_context(**overrides) -> dict:
+    context = {
+        "task_id": "t-1",
+        "project_name": "demo",
+        "progress": 0,
+        "current_step": PAYLOAD,
+        "tasks": [{"name": PAYLOAD, "status": "running", "subtasks": [{"name": PAYLOAD, "status": "running"}]}],
+        "status": "running",
+        "error": None,
+    }
+    context.update(overrides)
+    return context
+
+
+def test_the_wizard_progress_modal_shows_text_instead_of_executing_it() -> None:
+    """The wizard modal renders the same kind of fragment and had the same second pass.
+
+    A step name carries user text -- a deployment or component name from the project
+    file ends up in it -- so running the rendered HTML through ``process_components``
+    again executed that text as Jinja.
+    """
+    from opi.core.templates import get_templates
+
+    rendered = (
+        get_templates().get_template("wizard/modal_wizard_progress_fragment.html.j2").render(_wizard_progress_context())
+    )
+
+    assert "49" not in rendered
+    assert "<c-" not in rendered, "single render must resolve every component tag"
+
+
 # ---------------------------------------------------------------------------
 # 2. only about things the project has
 # ---------------------------------------------------------------------------
