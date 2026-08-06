@@ -472,6 +472,165 @@ class TestOptionsProviders:
         assert [o["value"] for o in provider.get_options()] == ["", "8080", "4180"]
 
 
+# --- the per-row cascade (RC-42) --------------------------------------------------------
+
+_PEER_WITH_PORTS = {
+    **_PEER_PROJECT,
+    "components": [
+        {"name": "api", "ports": {"inbound": [8080, 9090]}},
+        {"name": "events", "ports": {"inbound": [5000]}, "services": ["authorization-wall"]},
+    ],
+}
+
+_OWN = {
+    "_cross_domain_projects": ["regelrecht"],
+    "_cross_domain_ports": [8080, 3000],
+    "components": [
+        {"name": "web", "ports": {"inbound": [3000]}},
+        {"name": "worker", "ports": {"inbound": [8080]}, "services": [{"name": "authorization-wall"}]},
+    ],
+}
+
+
+def _peer_row(**peer) -> dict:
+    """An inbound row: the peer sits on ``from``."""
+    return {"name": "r", "from": peer, "to": {"component": "web"}}
+
+
+def _out_row(**peer) -> dict:
+    """An outbound row: the peer sits on ``to``."""
+    return {"name": "r", "from": {"component": "web"}, "to": peer}
+
+
+@pytest.fixture
+def _peer_store(monkeypatch):
+    """Point the ProjectStore lookup at the peer fixture and pin the managed cluster."""
+    import opi.services.project_store as store_mod
+    from opi.core.config import settings
+
+    class _Summary:
+        data = _PEER_WITH_PORTS
+
+    class _Store:
+        def get(self, name: str):
+            return _Summary() if name == "regelrecht" else None
+
+    monkeypatch.setattr(store_mod, "get_project_store", lambda: _Store())
+    monkeypatch.setattr(settings, "CLUSTER_MANAGER", _CLUSTER)
+
+
+@pytest.mark.usefixtures("_peer_store")
+class TestPeerCascade:
+    """project -> deployment -> component, each list a function of the SAME row."""
+
+    def _deployments(self, row: dict, path: str = "inbound[0]/from/deployment", current=None) -> list[str]:
+        from opi.forms.visualizers.providers import CrossDomainPeerDeploymentOptionsProvider
+
+        provider = CrossDomainPeerDeploymentOptionsProvider(
+            yaml_data=_OWN, row_data=row, yaml_path=path, current_value=current
+        )
+        return [o["value"] for o in provider.get_options()]
+
+    def _components(self, row: dict, path: str = "inbound[0]/from/component", current=None) -> list[str]:
+        from opi.forms.visualizers.providers import CrossDomainPeerComponentOptionsProvider
+
+        provider = CrossDomainPeerComponentOptionsProvider(
+            yaml_data=_OWN, row_data=row, yaml_path=path, current_value=current
+        )
+        return [o["value"] for o in provider.get_options()]
+
+    def test_deployments_follow_the_project_chosen_in_this_row(self) -> None:
+        assert self._deployments(_peer_row(project="regelrecht")) == ["", "prod", "dev"]
+
+    def test_deployment_on_another_cluster_is_not_offered(self) -> None:
+        # 'elders' runs on another cluster; resolve.py would skip such a rule, so offering it
+        # would be offering a rule that silently never applies.
+        assert "elders" not in self._deployments(_peer_row(project="regelrecht"))
+
+    def test_no_project_yet_explains_instead_of_showing_a_blank_select(self) -> None:
+        from opi.forms.visualizers.providers import CrossDomainPeerDeploymentOptionsProvider
+
+        options = CrossDomainPeerDeploymentOptionsProvider(
+            yaml_data=_OWN, row_data=_peer_row(), yaml_path="inbound[0]/from/deployment"
+        ).get_options()
+        assert options == [{"value": "", "label": "Kies eerst een project"}]
+
+    def test_unknown_project_reads_nothing(self) -> None:
+        # Not on the authorized list: not looked up at all, so no peer data leaks into the form.
+        assert self._deployments(_peer_row(project="geheim")) == [""]
+
+    def test_stored_deployment_that_no_longer_exists_stays_selectable(self) -> None:
+        values = self._deployments(_peer_row(project="regelrecht"), current="weg")
+        assert "weg" in values
+
+    def test_components_follow_the_chosen_deployment(self) -> None:
+        row = _peer_row(project="regelrecht", deployment="dev")
+        assert self._components(row) == ["", "api"]
+
+    def test_components_without_a_deployment_are_the_union_over_this_cluster(self) -> None:
+        # A project-level rule may leave the peer deployment open; the component must still be
+        # fillable, and a component name is project-level, so the union is exactly right.
+        row = _peer_row(project="regelrecht")
+        assert self._components(row) == ["", "api", "events"]
+
+    def test_outbound_reads_the_peer_from_the_to_side(self) -> None:
+        row = _out_row(project="regelrecht", deployment="prod")
+        assert self._components(row, path="outbound[0]/to/component") == ["", "api", "events"]
+
+    def test_each_row_is_independent(self) -> None:
+        assert self._deployments(_peer_row(project="regelrecht")) == ["", "prod", "dev"]
+        assert self._deployments(_peer_row(project="geheim")) == [""]
+
+
+@pytest.mark.usefixtures("_peer_store")
+class TestPortIsTheReceivingSide:
+    """The port belongs to the pod that is REACHED: mine inbound, the peer's outbound."""
+
+    def _ports(self, row: dict, path: str, current=None) -> list[str]:
+        from opi.forms.visualizers.providers import CrossDomainPortOptionsProvider
+
+        provider = CrossDomainPortOptionsProvider(yaml_data=_OWN, row_data=row, yaml_path=path, current_value=current)
+        return [o["value"] for o in provider.get_options()]
+
+    def test_inbound_offers_my_own_components_ports(self) -> None:
+        row = {"name": "r", "from": {"project": "regelrecht"}, "to": {"component": "web"}}
+        assert self._ports(row, "inbound[0]/to/port") == ["", "3000"]
+
+    def test_inbound_adds_4180_when_an_authorization_wall_fronts_my_component(self) -> None:
+        row = {"name": "r", "from": {"project": "regelrecht"}, "to": {"component": "worker"}}
+        assert self._ports(row, "inbound[0]/to/port") == ["", "8080", "4180"]
+
+    def test_inbound_without_a_component_falls_back_to_the_project_union(self) -> None:
+        row = {"name": "r", "from": {"project": "regelrecht"}, "to": {}}
+        assert self._ports(row, "inbound[0]/to/port") == ["", "8080", "3000"]
+
+    def test_outbound_offers_the_peer_components_ports(self) -> None:
+        row = _out_row(project="regelrecht", deployment="prod", component="api")
+        assert self._ports(row, "outbound[0]/to/port") == ["", "8080", "9090"]
+
+    def test_outbound_adds_4180_for_a_peer_behind_an_authorization_wall(self) -> None:
+        row = _out_row(project="regelrecht", deployment="prod", component="events")
+        assert self._ports(row, "outbound[0]/to/port") == ["", "5000", "4180"]
+
+    def test_outbound_never_offers_my_own_ports(self) -> None:
+        # The old behaviour: both directions got the same precomputed union of MY ports.
+        row = _out_row(project="regelrecht", deployment="prod", component="api")
+        assert "3000" not in self._ports(row, "outbound[0]/to/port")
+
+    def test_outbound_without_a_peer_component_says_so(self) -> None:
+        from opi.forms.visualizers.providers import CrossDomainPortOptionsProvider
+
+        row = _out_row(project="regelrecht", deployment="prod")
+        options = CrossDomainPortOptionsProvider(
+            yaml_data=_OWN, row_data=row, yaml_path="outbound[0]/to/port"
+        ).get_options()
+        assert options == [{"value": "", "label": "Kies eerst een component"}]
+
+    def test_a_stored_port_outside_the_list_stays_selectable(self) -> None:
+        row = _out_row(project="regelrecht", deployment="prod", component="api")
+        assert "1234" in self._ports(row, "outbound[0]/to/port", current="1234")
+
+
 class TestServiceManifestPrune:
     def test_removes_only_stale_service_files(self, tmp_path) -> None:
         from opi.manager.project_manager import _select_obsolete_service_manifests
