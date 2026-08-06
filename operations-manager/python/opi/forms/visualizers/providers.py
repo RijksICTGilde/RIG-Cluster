@@ -1095,7 +1095,7 @@ class CrossDomainPeerDeploymentOptionsProvider:
         peer = _cross_domain_peer_ref(self.row_data, self.yaml_path, self.yaml_data)
         project_data = _cross_domain_peer_project_data(self.yaml_data, peer.get("project"))
         names = [
-            deployment.get("name")
+            str(deployment["name"])
             for deployment in (project_data or {}).get("deployments") or []
             if isinstance(deployment, dict)
             and deployment.get("name")
