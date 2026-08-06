@@ -95,6 +95,10 @@ class ActionField:
     #: What this field is, in one sentence. Ends up in the OpenAPI document, so it is
     #: written for someone holding a generated client, not for someone reading this file.
     description: str
+    #: Whether a route that addresses one existing item carries this field in its path
+    #: instead of its body. True for the id, and for anything that says the same thing
+    #: the id says (a reference to the very item the path already names).
+    addressed_by_path: bool = False
     #: The shared Editable that defines what a valid value looks like. The API runs this
     #: same rule the wizard runs, so there is one definition of the rule per field.
     editable: Editable | None = None
@@ -137,6 +141,37 @@ class FieldCombination:
     requires: tuple[str, ...]
     #: Dotted path to the code that enforces it.
     enforced_by: str
+
+
+@dataclass(frozen=True)
+class FieldDisjunction:
+    """A rule that exactly one of these fields is given, and where it is enforced.
+
+    ``FieldCombination`` is an implication -- *if* this, *then* that -- and an either/or
+    can only be written as two of those, with nothing holding the two together: neither
+    side says that giving both is wrong, or that giving neither is. "Send A or B" is a
+    rule of its own, so it is declared as one.
+
+    Same discipline as the implication, for the same reason: this is documentation with a
+    pointer. ``enforced_by`` names the code that actually refuses the request, a test
+    resolves it, and the declaration itself validates nothing -- a disjunction that
+    started checking would put the rule in two places, which is exactly what pointing at
+    the enforcer avoids.
+
+    It reaches the OpenAPI document as ``oneOf`` over the alternatives, so a client reads
+    the rule off the spec instead of discovering it at the 422.
+    """
+
+    #: The fields the caller chooses between; exactly one of them is given.
+    one_of: tuple[str, ...]
+    #: What the choice is, in one sentence, in the caller's terms.
+    describes: str
+    #: Dotted path to the code that enforces it.
+    enforced_by: str
+
+    def __post_init__(self) -> None:
+        if len(self.one_of) < 2:
+            raise ValueError(f"A disjunction needs at least two alternatives, got {self.one_of}")
 
 
 @dataclass(frozen=True)
@@ -195,6 +230,8 @@ class ServiceAction:
     #: How the item is addressed: the path parameter name for UPDATE/UPSERT.
     id_param: str = "item_id"
     combinations: tuple[FieldCombination, ...] = ()
+    #: The either/or rules over this action's fields (see ``FieldDisjunction``).
+    disjunctions: tuple[FieldDisjunction, ...] = ()
     #: A worked example of calling this action (a curl line), shown in the OpenAPI
     #: description. Concrete on purpose: the fields alone never show what a real call
     #: looks like, and this is the first thing anyone integrating reads.
@@ -212,6 +249,10 @@ class ServiceAction:
             unknown = set(combination.requires) - set(names)
             if unknown:
                 raise ValueError(f"Action '{self.action_id}' requires unknown fields {unknown} in a combination")
+        for disjunction in self.disjunctions:
+            unknown = set(disjunction.one_of) - set(names)
+            if unknown:
+                raise ValueError(f"Action '{self.action_id}' offers unknown fields {unknown} in a disjunction")
 
     def editables_for(self, verb: ActionVerb) -> dict[str, Editable]:
         """The validation profile for one verb: field name -> shared Editable.
