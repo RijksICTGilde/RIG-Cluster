@@ -32,6 +32,9 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
         hidden=True,
         cleanup_strategy=CleanupStrategy.DEFERRED,
         backup_label="database",
+        # The console and job buttons; the collector keeps one of each when a project
+        # happens to use both PostgreSQL variants.
+        actions_provider=database_actions,
     )
     cleanup_manager_key = ManagerKey.DATABASE
     config_model = NamespacePostgresConfig
@@ -83,8 +86,3 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
             )
             self._config_section_cache = cached
         return cached
-
-
-# Same two buttons as the shared PostgreSQL service; the collector keeps one of each
-# when a project happens to use both.
-NamespacePostgresqlDatabaseService.definition.actions_provider = database_actions

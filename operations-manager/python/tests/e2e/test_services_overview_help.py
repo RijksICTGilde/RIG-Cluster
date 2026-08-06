@@ -39,3 +39,29 @@ def test_the_help_button_opens_the_explanation(app_server: str, auth_page: Page)
     content = auth_page.locator("#service-help-content")
     content.locator("h3").first.wait_for(state="visible", timeout=5000)
     assert "kon niet geladen worden" not in content.inner_text()
+
+
+def test_the_explanation_of_every_service_loads(app_server: str, auth_page: Page) -> None:
+    """Each service's explanation now lives in its own package and is addressed as
+    ``<package>/help.html.j2`` (RC-36), so the fetched URL carries a path segment. That
+    only works if the route, the loader and the JS encoding agree -- and a mismatch is
+    silent: the button opens a modal that says the text could not be loaded.
+    """
+    auth_page.goto(f"{app_server}/services")
+
+    buttons = auth_page.locator(".service-card__help-btn")
+    count = buttons.count()
+    assert count > 0, "no help buttons on the overview"
+
+    content = auth_page.locator("#service-help-content")
+    for index in range(count):
+        buttons.nth(index).click()
+        auth_page.locator("#service-help-modal").wait_for(state="visible", timeout=5000)
+        content.locator("h3").first.wait_for(state="visible", timeout=5000)
+        assert "kon niet geladen worden" not in content.inner_text(), (
+            f"the explanation of service card {index} does not load"
+        )
+        # The backdrop sits under the dialog, so a click on it is intercepted; close the
+        # way the close button does.
+        auth_page.evaluate("closeServiceHelp()")
+        auth_page.locator("#service-help-modal").wait_for(state="hidden", timeout=5000)
