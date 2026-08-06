@@ -38,6 +38,26 @@ class EditableValidator(Protocol):
 
 
 @runtime_checkable
+class ContextAwareEditableValidator(Protocol):
+    """Sync field-level validator that also wants the surrounding context.
+
+    Most validators judge a value on its own and implement ``EditableValidator``.
+    A few need the rest of the form or project data (e.g. to check a value against
+    a sibling field) and declare a second ``context`` parameter. Both shapes are
+    stored in ``Editable.validator``; ``FormProcessor`` picks the call form that
+    matches the validator it holds.
+
+    Note that ``runtime_checkable`` cannot tell the two protocols apart -- it only
+    checks that a ``validate`` attribute exists, not its signature -- so this type
+    is for static checking and ``cast``, not for ``isinstance``.
+    """
+
+    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
+        """Return error messages (empty list = valid)."""
+        ...
+
+
+@runtime_checkable
 class EditableEnforcer(Protocol):
     """Sync business rule enforcer."""
 
