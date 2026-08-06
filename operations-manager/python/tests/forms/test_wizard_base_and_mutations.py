@@ -133,6 +133,18 @@ def test_a_section_without_the_selection_offers_nothing_at_all() -> None:
     assert offered_selection_values([COMPONENTS_SEQUENCE], "services") is None
 
 
+def test_a_step_that_does_not_show_the_selection_leaves_it_alone() -> None:
+    """A processed submission is a copy of the merged project data, so ``services``
+    is in the result of EVERY flow -- also one about environment variables. A step
+    that never showed the selection must not add a service to it either."""
+    base = {"services": ["keycloak"]}  # inconsistent on purpose: keycloak requires publish-on-web
+    submitted_yaml = {"services": ["keycloak"], "components": [{"name": "web"}]}
+
+    apply_services_mutation([COMPONENTS_SEQUENCE], base, submitted_yaml)
+
+    assert submitted_yaml["services"] == ["keycloak"]
+
+
 def test_apply_selection_mutation_keeps_base_entries_whole() -> None:
     base = [{"keycloak": {"config": {"template": "sso-only"}}}]
     result = apply_selection_mutation(base, submitted=[], offered=set())
