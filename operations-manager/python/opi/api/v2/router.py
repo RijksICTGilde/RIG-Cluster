@@ -63,6 +63,7 @@ from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.services.catalog.actions import (
     ActionContext,
+    ActionField,
     ActionFieldKind,
     ActionVerb,
     ServiceAction,
@@ -1503,6 +1504,15 @@ def _action_path(service_name: str, action: ServiceAction, verbs: tuple[ActionVe
     return f"{path}/{{{action.id_param}}}" if verbs[0].targets_existing else path
 
 
+def _addressed_by_path(action: ServiceAction, action_field: ActionField) -> bool:
+    """Whether a route that addresses one item carries this field in its path.
+
+    The id, and anything that says what the id says -- a reference to the very item the
+    path already names is not a second thing to send.
+    """
+    return action_field.name == action.id_param or action_field.addressed_by_path
+
+
 def _body_model_name(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> str:
     """The name this route's request body carries in the spec.
 
@@ -1530,7 +1540,7 @@ def _action_body_model(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> 
     addressed = verbs[0].targets_existing
     fields: dict[str, Any] = {}
     for action_field in action.fields:
-        if addressed and action_field.name == action.id_param:
+        if addressed and _addressed_by_path(action, action_field):
             continue  # addressed by the path, not sent again as a field
         # Mandatory only when every verb on this route insists on it; the verb actually
         # used decides the rest, at validation time.
@@ -1550,9 +1560,33 @@ def _action_body_model(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> 
         )
     return create_model(
         _body_model_name(action, verbs),
-        __config__=ConfigDict(populate_by_name=True, arbitrary_types_allowed=True),
+        __config__=ConfigDict(
+            populate_by_name=True,
+            arbitrary_types_allowed=True,
+            json_schema_extra=_disjunction_schema(action, fields),
+        ),
         **fields,
     )
+
+
+def _disjunction_schema(action: ServiceAction, fields: dict[str, Any]) -> dict[str, Any]:
+    """The declared either/or rules as ``oneOf``, for the fields this route actually has.
+
+    A rule whose alternatives are not both in this body is left out rather than written as
+    a one-sided ``oneOf``: on a route that addresses one item, the reference is the path,
+    so there is no choice left to document.
+    """
+    present = {name.replace("_", "-") for name in fields} | set(fields)
+    alternatives = [
+        {"oneOf": [{"required": [name]} for name in disjunction.one_of], "description": disjunction.describes}
+        for disjunction in action.disjunctions
+        if set(disjunction.one_of) <= present
+    ]
+    if not alternatives:
+        return {}
+    if len(alternatives) == 1:
+        return alternatives[0]
+    return {"allOf": alternatives}
 
 
 def _action_signature(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> Signature:
@@ -1617,6 +1651,9 @@ def _action_description(action: ServiceAction, verbs: tuple[ActionVerb, ...]) ->
     if action.combinations:
         lines += ["", "Field combinations:"]
         lines += [f"- when `{c.when}`: `{'`, `'.join(c.requires)}` required" for c in action.combinations]
+    if action.disjunctions and not verbs[0].targets_existing:
+        lines += ["", "Exactly one of:"]
+        lines += [f"- `{'` or `'.join(d.one_of)}` -- {d.describes}" for d in action.disjunctions]
     lines += ["", "Example:", "```", action.example, "```"]
     return "\n".join(lines)
 
@@ -1631,7 +1668,7 @@ def _make_action_endpoint(action: ServiceAction, verbs: tuple[ActionVerb, ...]):
         values: dict[str, Any] = {}
         uploads: dict[str, UploadedFile] = {}
         for action_field in action.fields:
-            if verb.targets_existing and action_field.name == action.id_param:
+            if verb.targets_existing and _addressed_by_path(action, action_field):
                 continue
             raw = getattr(body, _param_name(action_field.name), None)
             if action_field.kind is ActionFieldKind.FILE:
