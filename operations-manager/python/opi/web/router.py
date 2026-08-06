@@ -3103,28 +3103,3 @@ async def task_progress_fragment(request: Request, project_name: str, task_id: s
     # Rendered once on purpose -- see render_progress_fragment for why a second pass
     # over the rendered HTML would execute task text as Jinja.
     return HTMLResponse(content=render_progress_fragment(context))
-
-
-@web_router.get("/projects/{project_name}/task-errors/{task_id}", response_class=HTMLResponse)
-@requires_sso
-async def task_errors_fragment(request: Request, project_name: str, task_id: str) -> HTMLResponse:
-    """Render just the component failure alerts for a task.
-
-    Used by the full progress page to load error details via HTMX
-    without duplicating the failure rendering logic in JavaScript.
-    """
-    from opi.core.task_helpers import get_task_service
-
-    templates = get_templates()
-    task_service = get_task_service(request)
-    task = await _require_task_of_project(request, task_service, project_name, task_id)
-    if task is None:
-        return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
-
-    context = _v2_task_to_template_context(task, project_name)
-
-    # Rendered once, like the progress fragment: the failure messages in this context
-    # come from the task, and a second pass would parse them as Jinja.
-    rendered = templates.get_template("partials/_component_failures.html.j2").render(context)
-
-    return HTMLResponse(content=rendered)
