@@ -57,10 +57,11 @@ Vervangen gebeurt **op id, zonder waarschuwing**. Of dat de bedoeling was, is aa
 
 1. **Benoem de drie soorten in het servicecontract**, per laag: definieert deze dienst hier iets, gebruikt hij iets, of bindt hij iets.
 2. **Editables blijven het uitgangspunt**, want dat werkt voor de meeste diensten. Maar een dienst mag, en soms moet, **extra acties expliciet declareren**. Die declaratie hoort bij de dienst, desnoods in een eigen `api.py` in zijn map, in lijn met RC-36: alles van een dienst op één plek.
-3. **Declareer slim, schrijf niet uit.** Een actie zegt: welke velden, wat betekent elk veld (**ook in de OpenAPI-spec**), een voorbeeld van gebruik, en welke veldcombinaties geldig zijn per werkwoord. Daaruit volgen route, model en documentatie, in plaats van drie keer hetzelfde met de hand.
-4. **De attachment-catalogus modelleren**, zodat de definieer-kant dezelfde behandeling krijgt als de rest en niet langer door niets gevalideerd wordt.
-5. **Upload-endpoint met multipart**, projectniveau en componentniveau, met een grens van **64 KB**. Bijlagen zijn bedoeld voor kleine bestanden zoals certificaten. Die grens bestaat vandaag niet en moet dus gebouwd worden.
-6. **Veldomschrijvingen verplicht** op de configmodellen, met een test die faalt als een veld er geen heeft.
+3. **Een API-veld hergebruikt zijn editable.** De validatieregels staan daar, en die horen nergens een tweede keer te bestaan. Dat patroon is er al sinds RC-26: `opi/api/validation.py` bouwt nul eigen `Editable`s meer en verwijst naar de gedeelde (`COMPONENT_IMAGE_EDITABLE`, `WIZARD_DEPLOYMENT_NAME_EDITABLE`) met alleen een `_required` of `_optional` eromheen. Volg dat. Een veld dat geen editable kent is een bewuste uitzondering die je opschrijft, geen tweede validator.
+4. **Declareer slim, schrijf niet uit.** Een actie zegt: welke velden, wat betekent elk veld (**ook in de OpenAPI-spec**), een voorbeeld van gebruik, en welke veldcombinaties geldig zijn per werkwoord. Daaruit volgen route, model en documentatie, in plaats van drie keer hetzelfde met de hand.
+5. **De attachment-catalogus modelleren**, zodat de definieer-kant dezelfde behandeling krijgt als de rest en niet langer door niets gevalideerd wordt.
+6. **Upload-endpoint met multipart**, projectniveau en componentniveau, met een grens van **64 KB**. Bijlagen zijn bedoeld voor kleine bestanden zoals certificaten. Die grens bestaat vandaag niet en moet dus gebouwd worden.
+7. **Veldomschrijvingen verplicht** op de configmodellen, met een test die faalt als een veld er geen heeft.
 
 ## Volgorde
 
