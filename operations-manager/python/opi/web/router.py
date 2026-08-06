@@ -1575,9 +1575,16 @@ async def project_details(request: Request, project_name: str):
         # deployment with nothing running and no explanation why.
         from opi.services.deployment_state import collect_deployment_state
 
-        deployment_state_facts = {
-            dep.get("name"): collect_deployment_state(project_data_decrypted, dep.get("name", "")).facts
+        _deployment_states = {
+            dep.get("name"): collect_deployment_state(project_data_decrypted, dep.get("name", ""))
             for dep in project_data_decrypted.get("deployments", [])
+        }
+        deployment_state_facts = {name: state.facts for name, state in _deployment_states.items()}
+        # Whether the application's own pods are meant to be absent. The card uses it to
+        # leave out what only makes sense while something runs: there are no logs to view
+        # in a deployment that is asleep, and offering the button suggests otherwise.
+        deployment_expects_no_pods = {
+            name: state.expects_no_application_pods for name, state in _deployment_states.items()
         }
 
         # Per-deployment read-only blocks the services deliver (RC-24): metrics and
@@ -1627,6 +1634,7 @@ async def project_details(request: Request, project_name: str):
                 "service_config_sections": SERVICE_CONFIG_MODAL_FLOWS,
                 "deployment_service_actions": deployment_service_actions,
                 "deployment_state_facts": deployment_state_facts,
+                "deployment_expects_no_pods": deployment_expects_no_pods,
                 # Per-deployment service-owned blocks (RC-24), keyed by deployment name.
                 "deployment_service_sections": deployment_service_sections,
                 # Detail-page sections the project's services own (WP2). Replaces the
