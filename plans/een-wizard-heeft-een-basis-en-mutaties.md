@@ -67,3 +67,97 @@ De toestand kent al gereedschap voor dit probleem: `template_data` als momentopn
 **Verifieer op een echte sessie.** Twee van de vier bugs zijn gevonden door het sessiebestand van de pod te lezen (`/data/wizard-sessions/*.json`), niet door redeneren. Een gereconstrueerde toestand toonde het probleem niet.
 
 **Uniformiteit is geen doel op zich.** Sommige verschillen tussen create en edit zijn echt: bij create bestaat het project nog niet, dus een naam mag nog veranderen en een component moet er zijn. Het doel is dat een verschil bedoeld en zichtbaar is, niet dat alles gelijk wordt.
+
+---
+
+## De inventarisatie (stap 1, uitgevoerd 6 augustus 2026)
+
+Gemeten op commit `d82ecc7b`, vanuit `operations-manager/python/`. Elke regel hieronder is
+te reproduceren met het genoemde commando. De uitkomst: het merendeel van de plekken is
+*een* mechanisme dat door de code gedragen wordt, niet 39 losse beslissingen. Dat maakt dit
+een middelgrote klus, geen grote.
+
+### A. Eén echt verschil, breed doorgegeven: `edit_mode`
+
+```
+grep -rn "edit_mode" --include=*.py opi/ | wc -l      -> 68
+grep -rn "readonly_on_edit=True" --include=*.py opi/  -> 7 declaraties
+```
+
+`edit_mode` betekent precies één ding: *het project bestaat al*. Het enige gedrag dat eraan
+hangt is `readonly_on_edit` — de projectnaam, de componentnaam, de deploymentnaam en de
+repository-naam/URL mogen na aanmaken niet meer veranderen. Dat is het verschil dat het plan
+"echt" noemt, en het hoort te blijven.
+
+De 68 regels zijn geen 68 beslissingen. Het zijn:
+- **7 declaraties** (`readonly_on_edit=True`) — de bron van het gedrag;
+- **2 plekken die het toepassen** (`renderer.py::_apply_edit_mode`, `processor.py` slaat zulke
+  velden over bij het verwerken) — daar zit de hele werking;
+- **~26 plekken die de waarde bepálen** en de rest is doorgeefverkeer (parameters).
+
+### B. De plekken die de waarde bepalen: 26
+
+```
+grep -rn "state.project_name is not None\|state.project_name is None" --include=*.py opi/  -> 10
+grep -rn "edit_mode=True" --include=*.py opi/                                              -> 15
+grep -rn "edit_mode=False" --include=*.py opi/                                             -> 1
+```
+
+- **10x `state.project_name is not None`** in `router_wizard.py` (regels 400, 621, 686, 798,
+  1014, 1147, 1893, 1902, 1924, 2048). Tien keer dezelfde afleiding, met de hand herhaald.
+  Dat is de duplicatie, niet het verschil zelf: er is één vraag ("is er een basis?") en die
+  hoort één antwoord te hebben. **Actie: één eigenschap op de toestand.**
+- **15x `edit_mode=True` hardgecodeerd** — 5 in `router_detail_edit.py`, 1 in
+  `router_approvals.py`, 2 in de modal-deploymentsecties, 1 in `router_wizard.py:483`
+  (de bewerk-pagina), 3 in `router_user_admin.py` (een gebruikersformulier, niet een project:
+  buiten dit plan), en de rest doorgeefverkeer. De modal-flows bewerken per definitie een
+  bestaand project, dus `True` is daar correct — maar het is dezelfde vraag, opnieuw
+  beantwoord. **Actie: dezelfde eigenschap, uit dezelfde toestand.**
+
+### C. Verschillen die over de basis gaan (bedoeld, blijven bestaan): 4
+
+| Plek | Verschil |
+|---|---|
+| `flows.py` `CREATE_FLOW` / `EDIT_FLOW` | andere stappenreeks (create heeft deployment + domein, edit heeft `CONFIG_DISPLAY_SECTION`) |
+| `router_wizard.wizard_page` / `wizard_edit_page` | lege basis + seeds vs. het projectbestand |
+| `_start_project_creation` / `_save_existing_project` | aanmaken vs. schrijven met `base_version` |
+| `SERVICES_SECTION` / `SERVICES_EDIT_SECTION` | de bewerk-variant vergrendelt bestaande diensten |
+
+### D. Toeval: gedrag opgehangen aan een sectienaam — 3, waarvan 1 nog kapot
+
+```
+grep -rn 'section_id ==\|in s\.section_id' --include=*.py opi/
+```
+
+- `router_detail_edit.py:835` — `if section_id == "services-edit"` bepaalt of
+  dienst-afhankelijkheden worden aangevuld. **Dit is exact de bug van 94478afb, één laag
+  verderop en nog niet gerepareerd.** Elke andere flow met een dienstenlijst (component-
+  diensten, een toekomstige sectie) krijgt geen aanvulling. **Actie: vervangen door de vraag
+  die er werkelijk toe doet — draagt deze inzending een dienstenlijst?**
+- `router_detail_edit.py:1105` — `any("services" in s.section_id ...)` bepaalt of de
+  "deze diensten worden verwijderd"-waarschuwing verschijnt. Zelfde vorm, zelfde broosheid.
+- `router_wizard.py:958` — `target_section_id == "review"`; dit is een echte gereserveerde
+  naam, geen toeval. Blijft.
+
+### E. Twee kopieën van dezelfde regel
+
+`ServiceAdapter.resolve_service_dependencies` wordt op twee plekken aangeroepen
+(`router_wizard.py:862`, `router_detail_edit.py:838`), met verschillende voorwaarden ervoor.
+Dat is hoe de ene helft van de bug van 94478afb kon worden gerepareerd en de andere niet.
+
+### Conclusie
+
+Wat blijft: `edit_mode` als begrip, de 7 `readonly_on_edit`-declaraties, en de vier
+basisverschillen uit C. Wat weg kan: 26 losse afleidingen worden één eigenschap, twee
+naam-gebaseerde tests worden één vraag over de inhoud, en twee kopieën van de
+afhankelijkheidsregel worden er één. Dat is de klus.
+
+## Hoe dit getest wordt (aanvulling na terugkoppeling, 6 augustus)
+
+Deze verbouwing wordt gedekt volgens de bestaande vijfdelige indeling die tot nu toe alleen
+in een docstring stond (`tests/test_service_health_check.py`). Die indeling is verplaatst naar
+`instructions/wizard-tests.md` en daar uitgebreid van "een dienstconfig" naar "een wizardflow",
+met een sjabloon per niveau. Niveau 2 (een POST door `EditableFormProcessor`, zonder browser)
+en niveau 5 (Playwright) vullen elkaar aan; geen van beide vervangt de ander.
+
+De vier bugs van 6 augustus krijgen elk een regressietest op het niveau waarop ze zichtbaar zijn.
