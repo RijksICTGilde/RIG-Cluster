@@ -14,6 +14,7 @@
             }
           ],
           "default": null,
+          "description": "Environment variable to put the content in. Required when provide-as is 'env-var'.",
           "title": "Env-Name"
         },
         "path": {
@@ -26,9 +27,11 @@
             }
           ],
           "default": null,
+          "description": "Absolute path to mount the attachment at. Required when provide-as is 'file'.",
           "title": "Path"
         },
         "provide-as": {
+          "description": "How the component receives it: 'file' mounts it at 'path', 'env-var' puts its content in the variable named by 'env-name'.",
           "enum": [
             "file",
             "env-var"
@@ -37,6 +40,7 @@
           "type": "string"
         },
         "reference": {
+          "description": "Id of the attachment in the project's catalog that this component uses.",
           "maxLength": 40,
           "title": "Reference",
           "type": "string"

@@ -24,7 +24,7 @@ carry: everything except ``superseded_at``, which only appears once a revision i
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RevisionAction(BaseModel):
@@ -32,9 +32,9 @@ class RevisionAction(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    type: str
-    source: str
-    timestamp: str
+    type: str = Field(description="What happened: created, cloned, restored, ...")
+    source: str = Field(description="Where it came from: the deployment, project or external source cloned from.")
+    timestamp: str = Field(description="When it happened, ISO 8601.")
 
 
 class Revision(BaseModel):
@@ -42,15 +42,14 @@ class Revision(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    generation: int
-    #: The provisioned resource this generation points at (database name, bucket name).
-    resource: str
-    #: ``active`` for the generation in use, ``superseded`` once a newer one took over.
-    status: str
-    created_at: str
-    #: Set only when the revision is retired, so it stays absent on an active one.
-    superseded_at: str | None = None
-    actions: list[RevisionAction] = []
+    generation: int = Field(description="The generation number this revision records.")
+    resource: str = Field(
+        description="The provisioned resource this generation points at (database name, bucket name)."
+    )
+    status: str = Field(description="'active' for the generation in use, 'superseded' once a newer one took over.")
+    created_at: str = Field(description="When this generation was provisioned, ISO 8601.")
+    superseded_at: str | None = Field(default=None, description="When it was retired; absent on the active generation.")
+    actions: list[RevisionAction] = Field(default=[], description="Audit trail of what was done to this generation.")
 
 
 class CloneState(BaseModel):
@@ -62,6 +61,9 @@ class CloneState(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    #: Current generation, incremented on each clone.
-    generation: int | None = None
-    revisions: list[Revision] = []
+    generation: int | None = Field(
+        default=None, description="Current generation, incremented on each clone. Written by the platform."
+    )
+    revisions: list[Revision] = Field(
+        default=[], description="Every generation this resource has had, newest last. Written by the platform."
+    )

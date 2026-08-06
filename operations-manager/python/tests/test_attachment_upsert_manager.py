@@ -65,7 +65,7 @@ def _wire(project_data: dict):
 
 
 @pytest.fixture(autouse=True)
-def _encrypt():
+def encrypt_call():
     """AGE encryption stubbed: it shells out, and what matters here is that it is called."""
     with patch(
         "opi.manager.project_manager.encrypt_file_to_age_block_sync",
@@ -75,7 +75,7 @@ def _encrypt():
 
 
 class TestDefining:
-    async def test_it_stores_an_encrypted_entry(self, _encrypt) -> None:
+    async def test_it_stores_an_encrypted_entry(self, encrypt_call) -> None:
         project = _project(catalog=[])
         manager, save = _wire(project)
 
@@ -83,11 +83,12 @@ class TestDefining:
             "server-cert", "server.pem", b"raw-bytes", on_existing="reject", on_absent="create"
         )
 
-        assert result["success"] and result["replaced"] is False
+        assert result["success"]
+        assert result["replaced"] is False
         entry = extract_attachment_catalog(project)["server-cert"]
         assert entry["filename"] == "server.pem"
         assert "BEGIN AGE ENCRYPTED FILE" in entry["content"]
-        _encrypt.assert_called_once_with(b"raw-bytes", PUBLIC_KEY)
+        encrypt_call.assert_called_once_with(b"raw-bytes", PUBLIC_KEY)
         save.assert_awaited_once()
 
     async def test_it_creates_the_catalog_when_the_service_was_never_used(self) -> None:

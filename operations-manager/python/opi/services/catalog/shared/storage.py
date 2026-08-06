@@ -29,10 +29,12 @@ MOUNT_PATH_PATTERN = re.compile(r"^/[\w./-]+\Z")
 class StorageEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    name: str
-    # Kubernetes storage quantity, e.g. "500Mi".
-    size: str
-    mount_path: str = Field(alias="mount-path")
+    name: str = Field(description="Name of this mount within the component; also names the volume.")
+    size: str = Field(description="Size of the volume as a Kubernetes quantity, e.g. 500Mi.")
+    mount_path: str = Field(
+        alias="mount-path",
+        description="Absolute path in the container to mount it at. No '..' anywhere in the path.",
+    )
 
     @field_validator("mount_path")
     @classmethod
@@ -57,7 +59,9 @@ class StorageEntry(BaseModel):
 class StorageConfig(RootModel[list[StorageEntry]]):
     """The component-level storage config: a list of mount specs."""
 
-    root: list[StorageEntry]
+    root: list[StorageEntry] = Field(
+        default_factory=list, description="The volumes this component mounts, one entry per mount."
+    )
 
 
 class StorageCloneState(CloneState):
