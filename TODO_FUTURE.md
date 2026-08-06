@@ -9,3 +9,6 @@ Gemeten op 6 augustus, en dat maakt de keuze makkelijker: de vertaallaag is voll
 geinstalleerd (`install_gettext_translations` in `opi/core/templates.py`) en wordt door
 NUL van de 160 sjablonen gebruikt. Het is dus geen half werk maar dood gewicht met een
 beslissing eromheen.
+
+- [ ] Het startcommando van een component instelbaar maken (`features/futures/component-command-instelbaar.md`, 6 augustus). `command` bestaat al volledig: in het schema op componentniveau EN deployment-componentniveau, en het manifest rendert het. Er is alleen geen weg naar binnen: geen editable, geen formulierveld, geen API-veld, dus met de hand in het projectbestand is de enige manier. Bewust nog geen plan, want eerst de vraag of we dit willen aanbieden: command vervangt de ENTRYPOINT van het image, en een fout commando geeft een pod die niet start met een melding die niets zegt (bij de testimages: exec: "sh": executable file not found in $PATH). Bij leeg hoort het veld niet geschreven te worden in plaats van een lege lijst; het schema eist minItems 1, dus remove_when_none is de juiste vorm.
+
