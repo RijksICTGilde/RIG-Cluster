@@ -22,7 +22,6 @@ import json
 import logging
 
 import pytest
-from opi.core import git_monitor
 from opi.core.git_monitor import file_change_handler
 from opi.core.project_schema import (
     LEGACY_PATCH_DIR,
@@ -206,7 +205,7 @@ class TestGitMonitorGate:
         assert any("NIET verwerkt" in record.message for record in caplog.records)
 
     @pytest.mark.asyncio
-    async def test_legacy_file_is_no_longer_rejected_by_the_gate(self, monkeypatch) -> None:
+    async def test_legacy_file_is_no_longer_rejected_by_the_gate(self, caplog) -> None:
         # A v2.2 file with the pre-v2.3 config.keycloak block: rejected by the old
         # gate (it validated against the newest schema), accepted now.
         data = _project(
@@ -217,14 +216,9 @@ class TestGitMonitorGate:
         )
         validate_declared_project_schema(data)
 
-        seen: list[dict] = []
+        with caplog.at_level(logging.ERROR, logger="opi.core.git_monitor"):
+            await file_change_handler("voorbeeld.yaml", data)
 
-        async def _fake_process(self, project_data):
-            seen.append(project_data)
-            return True
-
-        monkeypatch.setattr(git_monitor.ProjectManager, "process_project_data", _fake_process, raising=False)
-        await file_change_handler("voorbeeld.yaml", data)
         # No deployments block, so nothing downstream runs; the point is that the
         # gate did not reject it.
-        assert seen == []
+        assert not any("NIET verwerkt" in record.message for record in caplog.records)

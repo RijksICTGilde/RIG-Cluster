@@ -15,7 +15,7 @@ from opi.connectors.kubectl import KubectlExecutionError, create_kubectl_connect
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.project_schema import ProjectSchemaError, validate_declared_project_schema
-from opi.manager.project_manager import ProjectManager, enforce_namespace_pin
+from opi.manager.project_manager import enforce_namespace_pin
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -156,32 +156,33 @@ async def file_change_handler(file_path: str, content: dict) -> None:
         deployments_count = len(content["deployments"])
         logger.info(f"Project '{project_name}' has {deployments_count} deployment(s)")
 
-        # First validate cluster configuration
-        project_manager = ProjectManager()
+        # First validate cluster configuration. This used to call
+        # ProjectManager.has_deployments_for_current_cluster(content), which takes no
+        # arguments and is a coroutine function: every project file with deployments
+        # raised TypeError right here, so nothing below ever ran. The check is answered
+        # from the content we already hold - a bare ProjectManager has no contents to
+        # answer it with anyway.
+        if not [d for d in content["deployments"] if d.get("cluster") == settings.CLUSTER_MANAGER]:
+            logger.info(
+                f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster"
+            )
+            return
+
+        # Task 1: Check and create namespaces for deployments
+        logger.info("Task 1: Checking and creating namespaces for deployments...")
         try:
-            if not project_manager.has_deployments_for_current_cluster(content):
-                logger.info(
-                    f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster"
-                )
-                return
+            namespace_success = await check_and_create_namespaces(content)
+        except ValueError as exc:
+            # Project declared a namespace that doesn't match its name
+            # (the pin rejected it). Skip this project but keep the
+            # polling loop alive so other projects still get processed.
+            logger.error(f"Rejected project '{project_name}' from git monitor: {exc}")
+            return
 
-            # Task 1: Check and create namespaces for deployments
-            logger.info("Task 1: Checking and creating namespaces for deployments...")
-            try:
-                namespace_success = await check_and_create_namespaces(content)
-            except ValueError as exc:
-                # Project declared a namespace that doesn't match its name
-                # (the pin rejected it). Skip this project but keep the
-                # polling loop alive so other projects still get processed.
-                logger.error(f"Rejected project '{project_name}' from git monitor: {exc}")
-                return
-
-            if namespace_success:
-                logger.info("Namespace check/creation completed successfully")
-            else:
-                logger.error("Namespace check/creation failed")
-        finally:
-            await project_manager.close()
+        if namespace_success:
+            logger.info("Namespace check/creation completed successfully")
+        else:
+            logger.error("Namespace check/creation failed")
 
     # Process other content types if needed
     if "services" in content:

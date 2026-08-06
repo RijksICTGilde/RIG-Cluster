@@ -2093,6 +2093,7 @@ async def get_deployment_domain_settings(request: Request, project_name: str, de
         # Extract domain settings from deployment
         cluster = deployment.get("cluster", "")
         domain_mode = deployment.get("domain-mode")
+        domain_format = deployment.get("domain-format")
         subdomain = deployment.get("subdomain")
         base_domain = deployment.get("base-domain")
 
@@ -2112,6 +2113,7 @@ async def get_deployment_domain_settings(request: Request, project_name: str, de
             deployment_name=deployment_name,
             cluster=cluster,
             domain_mode=domain_mode,
+            domain_format=domain_format,
             subdomain=subdomain,
             base_domain=base_domain,
             root_component=root_component,
