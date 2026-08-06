@@ -678,8 +678,11 @@ def normalize_service_entries(project_data: dict[str, Any]) -> bool:
     """Normalize service entries to the uniform record form (RC-5 A):
     project-level definitions -> ``{name, config}``, component-level references ->
     ``{reference, config}``. Bare strings stay bare; already-normalized entries and
-    attachments (deferred) are untouched. Deployment-level services are OPI-managed
-    and already in ``{reference, config}`` form.
+    attachments (deferred) are untouched. Deployment-level entries normalize to
+    ``{reference, config}`` too: they used to be written only by OPI itself (clone state,
+    already in that shape), but the cross-domain per-deployment patch form writes them
+    through the editables, which produce the legacy name-as-key shape -- and the schema's
+    ``deployment-service`` envelope rejects that shape outright.
 
     Idempotent and version-independent. This is both the v2.3 -> v2.4 migration step
     AND the canonical shape used on the create/wizard save path, so newly created
@@ -697,16 +700,16 @@ def normalize_service_entries(project_data: dict[str, Any]) -> bool:
                 services[i] = normalized
                 changed = True
 
-    for component in project_data.get("components", []) or []:
-        if not isinstance(component, dict):
+    entities: list[dict[str, Any]] = [c for c in project_data.get("components", []) or [] if isinstance(c, dict)]
+    entities.extend(d for d in project_data.get("deployments", []) or [] if isinstance(d, dict))
+    for entity in entities:
+        entity_services = entity.get("services")
+        if not isinstance(entity_services, list):
             continue
-        comp_services = component.get("services")
-        if not isinstance(comp_services, list):
-            continue
-        for i, entry in enumerate(comp_services):
+        for i, entry in enumerate(entity_services):
             normalized = _normalize_service_entry(entry, "reference")
             if normalized is not entry:
-                comp_services[i] = normalized
+                entity_services[i] = normalized
                 changed = True
 
     return changed

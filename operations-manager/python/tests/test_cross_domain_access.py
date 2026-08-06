@@ -260,10 +260,31 @@ class TestResolve:
             resolve_rules([_mr(peer_project="me")], cluster=_CLUSTER, self_project="me", lookup_project=_lookup) == []
         )
 
-    def test_missing_project_is_dropped(self) -> None:
-        assert (
-            resolve_rules([_mr(peer_project="nope")], cluster=_CLUSTER, self_project="me", lookup_project=_lookup) == []
+    def test_an_unknown_project_resolves_by_convention_instead_of_being_dropped(self) -> None:
+        # RC-42: cross-domain means the peer may live elsewhere or not exist yet. Dropping the
+        # rule would turn a declared rule into no policy at all; naming the peer grants it
+        # nothing, because the receiver decides with its own policy what it lets in.
+        [rule] = resolve_rules([_mr(peer_project="nope")], cluster=_CLUSTER, self_project="me", lookup_project=_lookup)
+        assert rule.peer.namespace == "rig-prd-nope"  # the convention: namespace = project name
+        assert rule.peer.pod_labels == {"app": "prod-api", "project": "nope"}
+        assert rule.port == 8080
+
+    def test_an_unknown_project_does_not_stop_the_other_rules(self) -> None:
+        resolved = resolve_rules(
+            [_mr(name="unknown", peer_project="nope"), _mr(name="known")],
+            cluster=_CLUSTER,
+            self_project="me",
+            lookup_project=_lookup,
         )
+        assert [r.peer.namespace for r in resolved] == ["rig-prd-nope", "rig-prd-regelrecht"]
+
+    def test_a_known_project_still_uses_its_own_namespace(self) -> None:
+        # The convention is the FALLBACK only: 'dev' deploys to regelrecht-dev, which no
+        # convention would have guessed.
+        [rule] = resolve_rules(
+            [_mr(peer_deployment="dev")], cluster=_CLUSTER, self_project="me", lookup_project=_lookup
+        )
+        assert rule.peer.namespace == "rig-prd-regelrecht-dev"
 
     def test_missing_deployment_is_dropped(self) -> None:
         assert (
@@ -472,6 +493,383 @@ class TestOptionsProviders:
         assert [o["value"] for o in provider.get_options()] == ["", "8080", "4180"]
 
 
+class TestDeploymentLayerForm:
+    """A patch editor, not a second rule editor: the name (the merge key) and the peer
+    deployment (the field a project rule may leave open), and nothing else."""
+
+    def _service(self):
+        from opi.services.registry import get_service
+
+        return get_service(ServiceType.CROSS_DOMAIN_ACCESS)
+
+    def test_the_layer_has_a_form_and_needs_no_exemption(self) -> None:
+        from opi.services.catalog.base import ConfigLayer
+
+        service = self._service()
+        assert service.config_form_section(ConfigLayer.DEPLOYMENT) is not None
+        assert ConfigLayer.DEPLOYMENT not in service.form_exempt_layers
+
+    def test_only_the_name_and_the_peer_deployment_are_editable(self) -> None:
+        from opi.services.catalog.cross_domain_access.editables import CROSS_DOMAIN_DEPLOYMENT_EDITABLES
+
+        leaves = [
+            child.yaml_path.rsplit("/", 1)[-1] for seq in CROSS_DOMAIN_DEPLOYMENT_EDITABLES for child in seq.children
+        ]
+        assert sorted(set(leaves)) == ["deployment", "name"]
+
+    def test_paths_are_materialized_to_one_deployment(self) -> None:
+        section = self._service().deployment_form_section(3)
+        paths = [v.editable.yaml_path for v in section.editables]
+        assert paths == [
+            "deployments[3]/services{cross-domain-access}/config/inbound",
+            "deployments[3]/services{cross-domain-access}/config/outbound",
+        ]
+
+    def test_the_peer_deployment_is_not_required_at_either_layer(self) -> None:
+        from opi.services.catalog.cross_domain_access.editables import (
+            DEPLOYMENT_INBOUND_PEER_DEPLOYMENT_EDITABLE,
+            INBOUND_PEER_DEPLOYMENT_EDITABLE,
+        )
+
+        # Open on a project rule is a valid, intended state; a patch may also only disable.
+        assert not INBOUND_PEER_DEPLOYMENT_EDITABLE.required
+        assert not DEPLOYMENT_INBOUND_PEER_DEPLOYMENT_EDITABLE.required
+
+    def test_the_modal_flow_exists_for_a_deployment_index(self) -> None:
+        from opi.forms.visualizers.flows import get_flow
+
+        flow = get_flow("modal-edit-cross-domain-deployment-1")
+        assert flow.target is not None
+        assert (flow.target.list_key, flow.target.index) == ("deployments", 1)
+
+    def test_the_rule_name_select_offers_the_project_rules(self) -> None:
+        from opi.forms.visualizers.providers import CrossDomainRuleNameOptionsProvider
+
+        yaml_data = {
+            "services": [
+                {
+                    "name": "cross-domain-access",
+                    "config": {"inbound": [{"name": "van-regelrecht"}], "outbound": [{"name": "naar-api"}]},
+                }
+            ]
+        }
+        path = "deployments[0]/services{cross-domain-access}/config/inbound[0]/name"
+        options = CrossDomainRuleNameOptionsProvider(yaml_data=yaml_data, yaml_path=path).get_options()
+        assert [o["value"] for o in options] == ["", "van-regelrecht"]
+
+    def test_a_patch_row_borrows_the_peer_project_from_the_rule_it_patches(self, monkeypatch) -> None:
+        # The patch row carries only a name; the peer project lives on the project rule, and
+        # without borrowing it the peer-deployment select -- the whole point of this form --
+        # would be empty.
+        import opi.services.project_store as store_mod
+        from opi.core.config import settings
+        from opi.forms.visualizers.providers import CrossDomainPeerDeploymentOptionsProvider
+
+        class _Summary:
+            data = _PEER_WITH_PORTS
+
+        monkeypatch.setattr(
+            store_mod, "get_project_store", lambda: type("S", (), {"get": lambda self, n: _Summary()})()
+        )
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", _CLUSTER)
+        yaml_data = {
+            "_cross_domain_projects": ["regelrecht"],
+            "services": [
+                {
+                    "name": "cross-domain-access",
+                    "config": {
+                        "inbound": [{"name": "van-regelrecht", "from": {"project": "regelrecht", "component": "api"}}]
+                    },
+                }
+            ],
+        }
+        path = "deployments[0]/services{cross-domain-access}/config/inbound[0]/from/deployment"
+        options = CrossDomainPeerDeploymentOptionsProvider(
+            yaml_data=yaml_data, row_data={"name": "van-regelrecht"}, yaml_path=path
+        ).get_options()
+        assert [o["value"] for o in options] == ["", "prod", "dev"]
+
+
+class TestFieldRulesComeFromTheConfigModel:
+    """The form points at the model's rule instead of restating it (RC-38's move, one layer
+    down). Restating it is how the form came to reject names the schema, the API and the
+    project store all accept."""
+
+    def _errors(self, editable, value) -> list[str]:
+        return editable.validator.validate(value)
+
+    def test_a_peer_project_starting_with_a_digit_is_accepted(self) -> None:
+        from opi.services.catalog.cross_domain_access.editables import INBOUND_PEER_PROJECT_EDITABLE
+
+        # DNS-1123 allows a leading digit and the schema does too; the old
+        # KubernetesNameValidator demanded a leading letter.
+        assert self._errors(INBOUND_PEER_PROJECT_EDITABLE, "7-eleven") == []
+
+    def test_capitals_are_still_rejected(self) -> None:
+        from opi.services.catalog.cross_domain_access.editables import INBOUND_PEER_PROJECT_EDITABLE
+
+        assert self._errors(INBOUND_PEER_PROJECT_EDITABLE, "MijnProject")
+
+    def test_the_rule_name_length_limit_is_the_models(self) -> None:
+        from opi.services.catalog.cross_domain_access.editables import INBOUND_NAME_EDITABLE
+
+        assert self._errors(INBOUND_NAME_EDITABLE, "a" * 41)
+        assert self._errors(INBOUND_NAME_EDITABLE, "a" * 40) == []
+
+    def test_the_port_range_is_the_models(self) -> None:
+        from opi.services.catalog.cross_domain_access.editables import INBOUND_PORT_EDITABLE
+
+        assert self._errors(INBOUND_PORT_EDITABLE, 0)
+        assert self._errors(INBOUND_PORT_EDITABLE, 65536)
+        assert self._errors(INBOUND_PORT_EDITABLE, 8080) == []
+
+    def test_empty_is_left_to_required(self) -> None:
+        from opi.services.catalog.cross_domain_access.editables import INBOUND_PEER_DEPLOYMENT_EDITABLE
+
+        assert self._errors(INBOUND_PEER_DEPLOYMENT_EDITABLE, "") == []
+        assert self._errors(INBOUND_PEER_DEPLOYMENT_EDITABLE, None) == []
+
+
+class TestConfigApiSurface:
+    """Both config layers are addressable over the API, typed on the service's own model."""
+
+    def _routes(self) -> dict[str, set[str]]:
+        from opi.api.v2.router import v2_router
+
+        found: dict[str, set[str]] = {}
+        for route in v2_router.routes:
+            path = getattr(route, "path", "")
+            if "cross-domain-access/config" in path:
+                found.setdefault(path, set()).update(route.methods)
+        return found
+
+    def test_project_and_deployment_layer_both_have_write_endpoints(self) -> None:
+        routes = self._routes()
+        project = "/api/v2/projects/{project_name}/services/cross-domain-access/config/project"
+        deployment = "/api/v2/projects/{project_name}/services/cross-domain-access/config/deployment/{deployment_name}"
+        assert routes.get(project) == {"PUT", "DELETE"}
+        assert routes.get(deployment) == {"PUT", "DELETE"}
+
+    def test_the_service_declares_both_layers(self) -> None:
+        from opi.services.catalog.base import ConfigLayer
+        from opi.services.registry import get_service
+
+        service = get_service(ServiceType.CROSS_DOMAIN_ACCESS)
+        assert ConfigLayer.PROJECT in service.config_layers()
+        assert ConfigLayer.DEPLOYMENT in service.config_layers()
+        assert service.config_model_for(ConfigLayer.DEPLOYMENT) is CrossDomainAccessConfig
+
+
+class TestSharedFormContext:
+    """One builder for both flows, so "works when editing, empty in the create wizard" -- the
+    state that made this step unusable -- cannot come back."""
+
+    def _build(self, monkeypatch, project_name: str) -> dict:
+        import opi.services.catalog.cross_domain_access.context as context_mod
+
+        class _Summary:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+        monkeypatch.setattr(
+            context_mod,
+            "get_project_store",
+            lambda: type(
+                "S", (), {"get_all": lambda self: [_Summary("regelrecht"), _Summary("me"), _Summary("verboden")]}
+            )(),
+        )
+        monkeypatch.setattr(context_mod, "is_user_authorized_for_project", lambda name, email: name != "verboden")
+        return context_mod.build_cross_domain_context(project_name, "u@example.com")
+
+    def test_lists_authorized_peers_without_the_own_project(self, monkeypatch) -> None:
+        assert self._build(monkeypatch, "me")["_cross_domain_projects"] == ["regelrecht"]
+
+    def test_unauthorized_projects_are_not_named(self, monkeypatch) -> None:
+        assert "verboden" not in self._build(monkeypatch, "me")["_cross_domain_projects"]
+
+    def test_create_wizard_has_no_own_project_to_exclude(self, monkeypatch) -> None:
+        # The create wizard passes an empty name: the project does not exist yet.
+        assert self._build(monkeypatch, "")["_cross_domain_projects"] == ["me", "regelrecht"]
+
+    def test_both_flows_call_the_same_builder(self) -> None:
+        import inspect
+
+        from opi.web import router_detail_edit, router_wizard
+
+        for module in (router_detail_edit, router_wizard):
+            assert "build_cross_domain_context(" in inspect.getsource(module)
+
+
+# --- the per-row cascade (RC-42) --------------------------------------------------------
+
+_PEER_WITH_PORTS = {
+    **_PEER_PROJECT,
+    "components": [
+        {"name": "api", "ports": {"inbound": [8080, 9090]}},
+        {"name": "events", "ports": {"inbound": [5000]}, "services": ["authorization-wall"]},
+    ],
+}
+
+_OWN = {
+    "_cross_domain_projects": ["regelrecht"],
+    "_cross_domain_ports": [8080, 3000],
+    "components": [
+        {"name": "web", "ports": {"inbound": [3000]}},
+        {"name": "worker", "ports": {"inbound": [8080]}, "services": [{"name": "authorization-wall"}]},
+    ],
+}
+
+
+def _peer_row(**peer) -> dict:
+    """An inbound row: the peer sits on ``from``."""
+    return {"name": "r", "from": peer, "to": {"component": "web"}}
+
+
+def _out_row(**peer) -> dict:
+    """An outbound row: the peer sits on ``to``."""
+    return {"name": "r", "from": {"component": "web"}, "to": peer}
+
+
+@pytest.fixture
+def _peer_store(monkeypatch):
+    """Point the ProjectStore lookup at the peer fixture and pin the managed cluster."""
+    import opi.services.project_store as store_mod
+    from opi.core.config import settings
+
+    class _Summary:
+        data = _PEER_WITH_PORTS
+
+    class _Store:
+        def get(self, name: str):
+            return _Summary() if name == "regelrecht" else None
+
+    monkeypatch.setattr(store_mod, "get_project_store", lambda: _Store())
+    monkeypatch.setattr(settings, "CLUSTER_MANAGER", _CLUSTER)
+
+
+@pytest.mark.usefixtures("_peer_store")
+class TestPeerCascade:
+    """project -> deployment -> component, each list a function of the SAME row."""
+
+    def _deployments(self, row: dict, path: str = "inbound[0]/from/deployment", current=None) -> list[str]:
+        from opi.forms.visualizers.providers import CrossDomainPeerDeploymentOptionsProvider
+
+        provider = CrossDomainPeerDeploymentOptionsProvider(
+            yaml_data=_OWN, row_data=row, yaml_path=path, current_value=current
+        )
+        return [o["value"] for o in provider.get_options()]
+
+    def _components(self, row: dict, path: str = "inbound[0]/from/component", current=None) -> list[str]:
+        from opi.forms.visualizers.providers import CrossDomainPeerComponentOptionsProvider
+
+        provider = CrossDomainPeerComponentOptionsProvider(
+            yaml_data=_OWN, row_data=row, yaml_path=path, current_value=current
+        )
+        return [o["value"] for o in provider.get_options()]
+
+    def test_deployments_follow_the_project_chosen_in_this_row(self) -> None:
+        assert self._deployments(_peer_row(project="regelrecht")) == ["", "prod", "dev"]
+
+    def test_deployment_on_another_cluster_is_not_offered(self) -> None:
+        # 'elders' runs on another cluster; resolve.py would skip such a rule, so offering it
+        # would be offering a rule that silently never applies.
+        assert "elders" not in self._deployments(_peer_row(project="regelrecht"))
+
+    def test_no_project_yet_explains_instead_of_showing_a_blank_select(self) -> None:
+        from opi.forms.visualizers.providers import CrossDomainPeerDeploymentOptionsProvider
+
+        options = CrossDomainPeerDeploymentOptionsProvider(
+            yaml_data=_OWN, row_data=_peer_row(), yaml_path="inbound[0]/from/deployment"
+        ).get_options()
+        assert options == [{"value": "", "label": "Kies eerst een project"}]
+
+    def test_unknown_project_reads_nothing(self) -> None:
+        # Not on the authorized list: not looked up at all, so no peer data leaks into the form.
+        assert self._deployments(_peer_row(project="geheim")) == [""]
+
+    def test_stored_deployment_that_no_longer_exists_stays_selectable(self) -> None:
+        values = self._deployments(_peer_row(project="regelrecht"), current="weg")
+        assert "weg" in values
+
+    def test_components_follow_the_chosen_deployment(self) -> None:
+        row = _peer_row(project="regelrecht", deployment="dev")
+        assert self._components(row) == ["", "api"]
+
+    def test_components_without_a_deployment_are_the_union_over_this_cluster(self) -> None:
+        # A project-level rule may leave the peer deployment open; the component must still be
+        # fillable, and a component name is project-level, so the union is exactly right.
+        row = _peer_row(project="regelrecht")
+        assert self._components(row) == ["", "api", "events"]
+
+    def test_outbound_reads_the_peer_from_the_to_side(self) -> None:
+        row = _out_row(project="regelrecht", deployment="prod")
+        assert self._components(row, path="outbound[0]/to/component") == ["", "api", "events"]
+
+    def test_each_row_is_independent(self) -> None:
+        assert self._deployments(_peer_row(project="regelrecht")) == ["", "prod", "dev"]
+        assert self._deployments(_peer_row(project="geheim")) == [""]
+
+
+@pytest.mark.usefixtures("_peer_store")
+class TestPortIsTheReceivingSide:
+    """The port belongs to the pod that is REACHED: mine inbound, the peer's outbound."""
+
+    def _ports(self, row: dict, path: str, current=None) -> list[str]:
+        from opi.forms.visualizers.providers import CrossDomainPortOptionsProvider
+
+        provider = CrossDomainPortOptionsProvider(yaml_data=_OWN, row_data=row, yaml_path=path, current_value=current)
+        return [o["value"] for o in provider.get_options()]
+
+    def test_inbound_offers_my_own_components_ports(self) -> None:
+        row = {"name": "r", "from": {"project": "regelrecht"}, "to": {"component": "web"}}
+        assert self._ports(row, "inbound[0]/to/port") == ["", "3000"]
+
+    def test_inbound_adds_4180_when_an_authorization_wall_fronts_my_component(self) -> None:
+        row = {"name": "r", "from": {"project": "regelrecht"}, "to": {"component": "worker"}}
+        assert self._ports(row, "inbound[0]/to/port") == ["", "8080", "4180"]
+
+    def test_inbound_without_a_component_falls_back_to_the_project_union(self) -> None:
+        # Union over my own components (3000 from web, 8080 + 4180 from the walled worker),
+        # derived from the form's own data so the create wizard has it too.
+        row = {"name": "r", "from": {"project": "regelrecht"}, "to": {}}
+        assert self._ports(row, "inbound[0]/to/port") == ["", "8080", "3000", "4180"]
+
+    def test_inbound_union_needs_no_precomputed_context(self) -> None:
+        yaml_data = {k: v for k, v in _OWN.items() if k != "_cross_domain_ports"}
+        from opi.forms.visualizers.providers import CrossDomainPortOptionsProvider
+
+        options = CrossDomainPortOptionsProvider(
+            yaml_data=yaml_data, row_data={"name": "r", "to": {}}, yaml_path="inbound[0]/to/port"
+        ).get_options()
+        assert [o["value"] for o in options] == ["", "3000", "8080", "4180"]
+
+    def test_outbound_offers_the_peer_components_ports(self) -> None:
+        row = _out_row(project="regelrecht", deployment="prod", component="api")
+        assert self._ports(row, "outbound[0]/to/port") == ["", "8080", "9090"]
+
+    def test_outbound_adds_4180_for_a_peer_behind_an_authorization_wall(self) -> None:
+        row = _out_row(project="regelrecht", deployment="prod", component="events")
+        assert self._ports(row, "outbound[0]/to/port") == ["", "5000", "4180"]
+
+    def test_outbound_never_offers_my_own_ports(self) -> None:
+        # The old behaviour: both directions got the same precomputed union of MY ports.
+        row = _out_row(project="regelrecht", deployment="prod", component="api")
+        assert "3000" not in self._ports(row, "outbound[0]/to/port")
+
+    def test_outbound_without_a_peer_component_says_so(self) -> None:
+        from opi.forms.visualizers.providers import CrossDomainPortOptionsProvider
+
+        row = _out_row(project="regelrecht", deployment="prod")
+        options = CrossDomainPortOptionsProvider(
+            yaml_data=_OWN, row_data=row, yaml_path="outbound[0]/to/port"
+        ).get_options()
+        assert options == [{"value": "", "label": "Kies eerst een component"}]
+
+    def test_a_stored_port_outside_the_list_stays_selectable(self) -> None:
+        row = _out_row(project="regelrecht", deployment="prod", component="api")
+        assert "1234" in self._ports(row, "outbound[0]/to/port", current="1234")
+
+
 class TestServiceManifestPrune:
     def test_removes_only_stale_service_files(self, tmp_path) -> None:
         from opi.manager.project_manager import _select_obsolete_service_manifests
@@ -486,3 +884,32 @@ class TestServiceManifestPrune:
         prefixes = {f"dev-{s.value}-" for s in ServiceType}
         obsolete = _select_obsolete_service_manifests(str(tmp_path), prefixes, {current})
         assert obsolete == [stale]
+
+
+class TestDeploymentCardButton:
+    """The service owns the button that opens its per-deployment form."""
+
+    def _actions(self, project: dict, deployment_name: str = "dev") -> list:
+        from opi.services.registry import collect_deployment_actions
+
+        return collect_deployment_actions(project, deployment_name)
+
+    def _project(self, services: list) -> dict:
+        return {
+            "name": "me",
+            "services": services,
+            "deployments": [{"name": "acc", "cluster": _CLUSTER}, {"name": "dev", "cluster": _CLUSTER}],
+        }
+
+    def test_the_button_opens_this_deployments_flow(self) -> None:
+        actions = [a for a in self._actions(self._project(["cross-domain-access"])) if a.icon == "netwerk"]
+        assert len(actions) == 1
+        # Index 1: the button must address the deployment it sits on, not the first one.
+        assert actions[0].modal_endpoint == "/projects/me/modal-wizard/modal-edit-cross-domain-deployment-1"
+
+    def test_no_button_when_the_project_does_not_use_the_service(self) -> None:
+        assert [a for a in self._actions(self._project(["redis"])) if a.icon == "netwerk"] == []
+
+    def test_no_button_for_an_unknown_deployment(self) -> None:
+        actions = self._actions(self._project(["cross-domain-access"]), deployment_name="bestaat-niet")
+        assert [a for a in actions if a.icon == "netwerk"] == []
