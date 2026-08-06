@@ -141,17 +141,26 @@ class TestTheCardsShowIt:
         )
         return ROOSWidgetAdapter().render_service_cards(field)
 
-    def test_a_ticked_component_only_service_says_where_it_is_configured(self) -> None:
+    def test_a_component_only_service_says_where_it_is_configured(self) -> None:
         html = self._render(["health-check"])
         assert project_step_config_hint(ServiceType.HEALTH_CHECK) in html
 
-    def test_an_unticked_service_says_nothing(self) -> None:
-        html = self._render([])
-        assert project_step_config_hint(ServiceType.HEALTH_CHECK) not in html
+    def test_the_line_is_carried_by_every_card_and_revealed_when_ticked(self) -> None:
+        # The user ticks a card and clicks Next, so a line the server only renders on the
+        # *next* request never reaches them. It is in the DOM of every card that has one
+        # and shown by CSS while the card is selected -- and wizard.js keeps that class in
+        # sync client-side, so it appears at the moment of ticking.
+        unticked = self._render([])
+        assert project_step_config_hint(ServiceType.HEALTH_CHECK) in unticked
+        assert "service-card__hint--config" in unticked
+        assert 'data-service="health-check"' in unticked
 
-    def test_a_ticked_project_configurable_service_says_nothing(self) -> None:
+    def test_a_project_configurable_service_carries_no_line(self) -> None:
         html = self._render(["sleep-mode"])
-        assert "Geen projectbrede instellingen" not in html
+        assert "Geen projectbrede instellingen" in html  # from the other cards
+        # ... but not on sleep-mode's own card, which does get a config step.
+        sleep_card = html.split('data-service="sleep-mode"', 1)[1].split("</div>", 3)[0]
+        assert "Geen projectbrede instellingen" not in sleep_card
 
     def test_system_services_have_no_card_to_carry_a_hint(self) -> None:
         # user-env-vars and aliases are in the measured set but are never offered as a

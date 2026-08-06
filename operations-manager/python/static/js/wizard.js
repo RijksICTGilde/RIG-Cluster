@@ -286,13 +286,16 @@ function initServiceCards(grid) {
                 }
             }
 
-            var hint = card.querySelector('.service-card__hint');
+            /* Only the dependency hint: a card can carry other hint lines (e.g. where a
+               service without project-wide settings IS configured), and matching on the
+               shared class alone removed those on the first update. */
+            var hint = card.querySelector('.service-card__hint--depends');
             if (locked) {
                 var labels = requirers.map(function(r) { return getLabel(r); });
                 var text = 'Vereist door: ' + labels.join(', ');
                 if (!hint) {
                     hint = document.createElement('p');
-                    hint.className = 'service-card__hint';
+                    hint.className = 'service-card__hint service-card__hint--depends';
                     var content = card.querySelector('.service-card__content');
                     if (content) content.appendChild(hint);
                 }
@@ -344,7 +347,7 @@ function initServiceCards(grid) {
             if (processing) return;
 
             if (card.classList.contains('service-card--locked-checked')) {
-                var hint = card.querySelector('.service-card__hint');
+                var hint = card.querySelector('.service-card__hint--depends');
                 if (hint) alert(hint.textContent);
                 return;
             }
