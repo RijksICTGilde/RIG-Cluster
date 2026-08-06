@@ -5,10 +5,19 @@ replicas healthy -- nothing is failing -- and that verdict used to travel unfilt
 the dashboard banner, the deployment card and the V2 API. The result was a page that said
 "uitgeschakeld" and "Healthy" on the same line.
 
-This module answers the one question those three places need: how much of a deployment is
-switched off. It reads the PROJECT FILE only, never the cluster, for the same reason
-RC-28's deployment-state hook does: zero replicas in the cluster can also mean something
-went wrong, so the intent has to come from where the intent is recorded.
+This reading lives inside the deployment-health package because that service is the one
+that reports it (RC-35): "switched off" is a fact about a deployment like any other, and
+it reaches every display through ``HookPoint.DEPLOYMENT_STATE`` -- there is no second
+mechanism beside the hook any more, and no display reads this module to decide what to
+show. Two callers outside the hook remain, and both need something the generic facts
+deliberately do not express: the V2 API needs ``DeploymentStatus.Disabled`` as its own
+value, and the dashboard has to tell "switched off" (stays off until someone acts) apart
+from "parked by a service" (comes back by itself). A shared "not running" would answer
+neither.
+
+It reads the PROJECT FILE only, never the cluster, for the same reason RC-28's
+deployment-state hook does: zero replicas in the cluster can also mean something went
+wrong, so the intent has to come from where the intent is recorded.
 
 Three states, not two: a deployment with one of four components off is a different
 situation than one that is off entirely, and collapsing them loses the difference that
