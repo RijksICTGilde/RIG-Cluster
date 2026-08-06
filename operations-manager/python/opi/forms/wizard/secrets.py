@@ -1,6 +1,6 @@
 """Keep encrypted values out of the disk-backed wizard session, without a field list.
 
-The modal wizard puts a copy of the project file in its state (``template_data`` plus
+The modal wizard puts a copy of the project file in its state (``base_data`` plus
 the per-section ``step_data``) and serializes that to JSON under ``TEMP_DIR``. Every
 encrypted value in the project therefore landed on disk, for every edit, no matter how
 small: editing only the authorization-wall banner wrote the keycloak realm admin

@@ -211,7 +211,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         project_name=project_name,
     )
     state.step_data = {first_section.section_id: seed_data}
-    state.template_data = {"_admin_email": user.get("email", "")}
+    state.base_data = {"_admin_email": user.get("email", "")}
     # The version this approval decision is being taken on; it travels with the save so
     # a change made elsewhere in the meantime is merged instead of overwritten.
     state.base_version = await get_project_store().version_of(f"projects/{project_name}.yaml")

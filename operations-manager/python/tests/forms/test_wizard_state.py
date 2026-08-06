@@ -164,7 +164,7 @@ class TestWizardState:
             flow_id="test",
             current_step="a",
             active_sections=["a"],
-            template_data={
+            base_data={
                 "components": [{"name": "web", "aliases": {"DATABASE_URL": "old"}, "image": "x:1"}],
             },
             step_data={
