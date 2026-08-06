@@ -63,7 +63,6 @@ from opi.handlers.project_file_handler import (
     attachment_is_referenced,
     extract_service_names_from_component,
     find_attachment_data_list,
-    is_image_pull_disable_reason,
 )
 from opi.handlers.sops import SopsHandler
 from opi.manager.project_validation import validate_component_references, validate_project_structure
@@ -81,6 +80,7 @@ from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.services.project import Project
 from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
+from opi.services.redeploy import run_redeploy_hooks
 from opi.services.registry import deployment_manifest_services, manifest_services, provisioning_services
 from opi.utils.age import (
     decrypt_age_content,
@@ -1293,28 +1293,6 @@ class ProjectManager:
 
         logger.info(f"Successfully resolved {len(resolved)} aliases")
         return resolved
-
-    def _reset_sleep_deadline_on_activity(
-        self, project_data: dict[str, Any], deployment_name: str, cluster: str
-    ) -> None:
-        """Reset a matching deployment's sleep deadline (and wake it) on fresh activity.
-
-        Called on image update: sets the deployment awake with ``expires-at = now +
-        sleep-after-deploy`` so active development keeps pushing the deadline out. No-op
-        when sleep-mode is off or the deployment does not match.
-        """
-        from datetime import UTC, datetime
-
-        from opi.services.catalog.sleep_mode import config as sleep_config
-        from opi.services.catalog.sleep_mode import service as sleep_service
-
-        config = sleep_config.load(project_data, cluster)
-        if config is None or not config.matches(deployment_name):
-            return
-        sleep_service.set_sleep_deadline(
-            project_data, deployment_name, datetime.now(UTC), config.sleep_after_deploy_delta
-        )
-        logger.info("sleep-mode: reset deadline for %s on image update", deployment_name)
 
     async def _emit_waker_manifests(
         self,
@@ -6893,6 +6871,23 @@ class ProjectManager:
                             "error_type": "domain_validation",
                         }
 
+                # An upsert rolls new content onto this deployment exactly as an image
+                # update does, so the services clear what they recorded about the old
+                # content through the same hook (RC-37). Only the components this call
+                # actually names, and only in this UPDATE branch: a deployment being
+                # created has no earlier state to clear.
+                upsert_deployment_dict = next(
+                    (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name), None
+                )
+                state_notices: list[str] = []
+                if upsert_deployment_dict is not None:
+                    state_notices = run_redeploy_hooks(
+                        project_name,
+                        project_data,
+                        upsert_deployment_dict,
+                        [component.reference for component in components],
+                    )
+
                 # Ensure unapproved domains/subdomains get request entries
                 ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
 
@@ -6917,6 +6912,8 @@ class ProjectManager:
                 result: dict[str, Any] = {"success": True, "created": False, "error": None, "error_type": None}
                 if normalized_warnings:
                     result["warnings"] = normalized_warnings
+                if state_notices:
+                    result["state_cleared"] = state_notices
                 return result
 
             else:
@@ -7914,15 +7911,12 @@ class ProjectManager:
 
         logger.info(f"Updated image: {old_image} -> {new_image_url}")
 
-        # Re-enable component if it was disabled due to an image pull error
-        is_disabled, disabled_reason = self._project_file_handler.extract_deployment_component_disabled(
-            project_data, deployment_name, component_name
-        )
-        if is_disabled and is_image_pull_disable_reason(disabled_reason):
-            self._project_file_handler.set_deployment_component_disabled(
-                project_data, deployment_name, component_name, False, ""
-            )
-            logger.info(f"Re-enabled component '{component_name}' (was disabled: {disabled_reason})")
+        # A new image replaces what ran here, so every state a service recorded about the
+        # old content is cleared -- by the services themselves, through the hook. This
+        # used to be one hardcoded ``if`` for image-pull disables plus a call into
+        # sleep-mode, which left an OOM-disabled component switched off after its image
+        # was fixed (RC-37).
+        state_notices = run_redeploy_hooks(project_name, project_data, deployment, [component_name])
 
         # 4. Process service actions (e.g., increment PVC generations for persistent-storage)
         generation_changes = {}
@@ -7950,11 +7944,6 @@ class ProjectManager:
                     logger.info(
                         f"Incremented generation for {component_name}/{storage_name}: {current_gen} -> {new_gen}"
                     )
-
-        # Sleep-mode: an image update is fresh activity, so reset the sleep deadline
-        # (and wake a sleeping deployment) for a matching deployment. This is what pushes
-        # the deadline out while a preview is actively developed.
-        self._reset_sleep_deadline_on_activity(project_data, deployment_name, deployment.get("cluster", ""))
 
         # 5 + 6. Validate (schema + structural), save and commit through the single path
         commit_msg = f"Update {component_name} image to {new_image_url}"
@@ -8038,6 +8027,10 @@ class ProjectManager:
             },
             "actions_performed": actions_performed,
         }
+        # What the services cleared, so a re-enabled component is visible to whoever
+        # pushed the image instead of only in the log.
+        if state_notices:
+            result["state_cleared"] = state_notices
 
         logger.info(f"Image update completed successfully: {result}")
         return result

@@ -45,9 +45,7 @@ async def test_image_update_lands_in_the_saved_project_data() -> None:
     pm.get_name = AsyncMock(return_value="proj")
     # Fresh copy per call, like production -- this is what exposed the bug.
     pm.get_contents = AsyncMock(side_effect=lambda *a, **k: copy.deepcopy(_project()))
-    pm._reset_sleep_deadline_on_activity = MagicMock()
     pm._project_file_handler = MagicMock()
-    pm._project_file_handler.extract_deployment_component_disabled.return_value = (False, "")
 
     saved: dict = {}
 
