@@ -1,0 +1,25 @@
+{
+  "$comment": "v2.2 -> v2.3 (RC-5 B) moved the per-cluster Keycloak admin connections from config.keycloak to services/keycloak/config/realms. Until v2.3 a file carried them under config. 21 of the 47 production files still do; this is the form that made them fail the raw gate.",
+  "$defs": {
+    "config": {
+      "properties": {
+        "keycloak": {
+          "description": "Legacy pre-v2.3 location of the per-cluster Keycloak admin connections.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "host": { "type": "string" },
+              "realm": { "type": "string" },
+              "username": { "type": "string" },
+              "password": { "$ref": "#/$defs/age-encrypted" },
+              "client-id": { "type": "string" },
+              "client-secret": { "$ref": "#/$defs/age-encrypted" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
