@@ -25,6 +25,7 @@ from opi.forms.editables.lifecycle import run_hooks
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.resolvers import build_resolver_map
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.forms.wizard.secrets import restore_redacted_secrets
 from opi.forms.wizard.state import _strip_cleared_fields
 from opi.forms.wizard.write_set import apply_write_paths, flow_write_paths
 from opi.web.project_edit_security import IMMUTABLE_PROJECT_FIELDS
@@ -161,6 +162,13 @@ async def apply_modal_edit(
     saving.
     """
     from opi.web.router_wizard import _apply_literal_scalars
+
+    # Put back the encrypted values the session was not allowed to carry, from the project
+    # as just read from git. The write-path merge below already leaves them alone (nothing
+    # names them, so nothing writes them), but the new-list-item branch right after this
+    # appends an item *whole*, outside that discipline. Restoring here means a redaction
+    # placeholder cannot reach the project file by any route.
+    merged_data = restore_redacted_secrets(merged_data, existing_data)
 
     # A new list item has no stored version to protect, so it is appended
     # whole: the empty slot the wizard was seeded with carries fields no form

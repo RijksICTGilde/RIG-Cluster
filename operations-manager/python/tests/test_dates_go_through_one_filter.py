@@ -14,6 +14,7 @@ correct and consistent with the rest of the interface.
 from __future__ import annotations
 
 import pathlib
+import re
 
 import opi
 from opi.core.templates import format_dutch_date
@@ -26,14 +27,22 @@ def test_the_filter_converts_to_our_own_timezone() -> None:
     assert format_dutch_date("2026-08-05T23:30:00+00:00", include_time=False) == "6 augustus 2026"
 
 
-def test_no_template_slices_a_date_string() -> None:
-    """``[:10]`` on a timestamp is the shape this replaced; it must not come back."""
+def test_no_template_slices_a_timestamp() -> None:
+    """Any slice of a timestamp, not just ``[:10]``.
+
+    The first version of this guard looked for ``date[:10]`` literally and missed
+    ``status.last_sync[:19]|replace('T', ' ')`` on the deployment card, which rendered
+    the sync time in UTC with "UTC" written after it. Same defect, two characters
+    different. Matching the slice itself catches the shape rather than one spelling.
+    """
+    pattern = re.compile(r"\w+\[:\d+\]")
     offenders = [
-        path.relative_to(_TEMPLATES)
+        (path.relative_to(_TEMPLATES), match)
         for path in _TEMPLATES.rglob("*.j2")
-        if "date[:10]" in path.read_text(encoding="utf-8")
+        for match in pattern.findall(path.read_text(encoding="utf-8"))
+        if any(word in match for word in ("date", "time", "sync", "_at"))
     ]
-    assert offenders == [], f"these render a date by slicing instead of via dutch_date: {offenders}"
+    assert offenders == [], f"these render a timestamp by slicing instead of via dutch_date: {offenders}"
 
 
 def test_the_three_converted_templates_use_the_filter() -> None:
