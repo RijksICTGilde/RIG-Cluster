@@ -33,9 +33,9 @@ Wat ontbreekt is een moment "de image van dit component is vervangen", waarop ee
 
 ## Voorstel
 
-1. **Een haakpunt voor "de image is vervangen"**, met het component en de nieuwe image erbij. Zelfde vorm als de bestaande twee, zodat er niets nieuws te leren valt.
-2. **Deployment-gezondheid ruimt zijn uitschakeling op.** Nu alleen bij een image-pull-reden; de vraag die beantwoord moet worden is of een nieuwe image ook een OOM-uitschakeling mag opheffen. Argument voor: een nieuwe image kan het geheugenlek juist repareren, en het component blijft anders voorgoed uit. Argument tegen: een OOM keert waarschijnlijk terug en dan flapt hij. Kies expliciet en schrijf de reden erbij; dit is de kern van het plan.
-3. **Sleep-mode verzet zijn deadline.** Er is net iets uitgerold, dus de klok naar nul.
+1. **Een haakpunt voor een expliciete gebruikersactie op een deployment**, breder dan alleen de image: een upsert op een deployment telt net zo goed. Noem het daarnaar, want een haak die "de image is vervangen" heet krijgt de volgende actie er als uitzondering bij. Zelfde vorm als de bestaande twee haakpunten, zodat er niets nieuws te leren valt.
+2. **Deployment-gezondheid heft de uitschakeling op, ongeacht de reden.** Beslist door de opdrachtgever op 6 augustus: een expliciete actie heft ALTIJD de vorige toestand op, dus ook een OOM- of crashloop-uitschakeling en niet alleen image-pull. De redenering: de nieuwe image of de upsert is het signaal dat de oude situatie niet meer geldt. Bouw hier dus geen uitzonderingen en geen reden-specifieke `if`. Keert het probleem terug, dan zet de watcher hem gewoon opnieuw uit; dat is zichtbaar en herstelbaar, terwijl een component dat voorgoed uit blijft dat niet is.
+3. **Sleep-mode gaat naar wakker.** Niet alleen de deadline verzetten: slapend wordt awake. Er is net iets uitgerold, dus de deployment hoort te draaien.
 4. **De hardgecodeerde `if` uit `project_manager.py`.** Verifiëren: dat bestand noemt `is_image_pull_disable_reason` niet meer.
 
 ## Volgorde
@@ -53,4 +53,4 @@ Wat ontbreekt is een moment "de image van dit component is vervangen", waarop ee
 
 **Niet elke dienst wil dit.** Een haakpunt waar niemand op luistert is prima; een haakpunt dat diensten dwingt iets te doen is dat niet. Een dienst die niets met een nieuwe image te maken heeft, hoort de haak gewoon niet te beantwoorden.
 
-**De slaapdeadline verzetten is een keuze, geen automatisme.** Iemand die een image bijwerkt op een slapende deployment wil die misschien juist laten slapen. Bepaal of de deadline verschuift of dat de deployment ook wakker wordt, en schrijf op waarom.
+**De regel is zonder uitzonderingen, en dat is het punt.** De verleiding is om per geval te bedenken of opheffen wel verstandig is, en dan staat er over een half jaar weer een lijst met redenen in `project_manager.py`. Keert een probleem terug, dan zet de watcher het component opnieuw uit; dat is zichtbaar en herstelbaar. Een component dat voorgoed uit blijft omdat niemand de juiste reden noemde, is dat niet.
