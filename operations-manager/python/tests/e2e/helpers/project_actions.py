@@ -1,8 +1,8 @@
 """
 UI-driven project actions for sandbox E2E tests.
 
-Deletion is done the way a real admin does it: through the danger-zone modal on
-the project-details page, not by POSTing the endpoint directly. The page's own
+Deletion is done the way a real admin does it: through the shared confirmation modal
+on the project-details page, not by POSTing the endpoint directly. The page's own
 JavaScript handles the CSRF token (read from the csrf_token cookie).
 """
 
@@ -14,29 +14,42 @@ if TYPE_CHECKING:
     from playwright.sync_api import Page
 
 
-def delete_project_via_ui(page: Page, base_url: str, project_name: str, *, start_timeout: float = 30000) -> None:
-    """Trigger a project delete by driving the danger-zone confirmation modal.
+def delete_project_via_ui(
+    page: Page,
+    base_url: str,
+    project_name: str,
+    *,
+    start_timeout: float = 30000,
+    finish_timeout: float = 300000,
+) -> None:
+    """Delete a project by driving the shared confirmation modal, and watch it finish.
 
     Navigates to the details page, clicks "Project verwijderen" to open the modal,
-    and confirms via the modal's delete button. Returns once the delete has started
-    (the modal's progress indicator is shown) - it does NOT wait for completion.
+    confirms there, and then waits for the task to report back the way a user does: the
+    question is replaced by the progress view, and the finish button appears when the
+    task ends.
 
-    The server-side delete is synchronous and tears down git/argo/namespace/db; for a
-    freshly-created (still-deploying) project that can take minutes, and the modal only
-    redirects on full success. Callers should verify completion via the Forgejo project
-    file disappearing (the authoritative signal), not the redirect.
+    Waiting matters since deleting became a task: the project file disappearing from
+    Forgejo happens partway through, so a caller that only polls Forgejo can catch the
+    portal mid-teardown. Callers should still assert on the Forgejo file (the
+    authoritative signal); this only makes sure the teardown is actually over.
+
+    Tearing down git/argo/namespace/db for a freshly created (still deploying) project
+    can take minutes, hence the generous finish_timeout.
     """
     base = base_url.rstrip("/")
     page.goto(f"{base}/projects/details/{project_name}")
     page.wait_for_load_state("networkidle")
 
-    # Open the danger-zone confirmation modal.
+    # Open the confirmation in the shared modal.
     page.locator("button:has-text('Project verwijderen')").first.click()
+    page.locator("#edit-section-modal.is-open").wait_for(state="visible", timeout=start_timeout)
 
-    # Confirm deletion. The modal's confirm button has a stable id.
-    confirm = page.locator("#danger-confirm-btn-delete")
+    confirm = page.locator("#edit-section-inner [data-confirm-action] button.confirm-action-submit").first
     confirm.wait_for(state="visible", timeout=start_timeout)
     confirm.click()
 
-    # Confirm the delete actually started (progress replaces the action buttons).
-    page.get_by_text("Bezig met verwijderen").wait_for(state="visible", timeout=start_timeout)
+    # The question is replaced by the running task...
+    page.locator(".edit-progress-view").wait_for(state="visible", timeout=start_timeout)
+    # ...and the finish button (Ok / Sluiten) appears when the task ends, whichever way.
+    page.locator(".edit-progress-actions").wait_for(state="visible", timeout=finish_timeout)

@@ -222,9 +222,7 @@ class TestBothStoredFormsCount:
         """Default-deny, not blanket-deny: a field the flow can edit must keep its value,
         otherwise the form would show a placeholder where the password belongs."""
         flow = [_Visualizer("repositories[*]/password")]
-        redacted, _ = redact_unreachable_secrets(
-            self._project_with_prefixed_secrets(), reachable_leaf_keys(flow)
-        )
+        redacted, _ = redact_unreachable_secrets(self._project_with_prefixed_secrets(), reachable_leaf_keys(flow))
 
         assert redacted["repositories"][0]["password"] == BASE64_AGE
 

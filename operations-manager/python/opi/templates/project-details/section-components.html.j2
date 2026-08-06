@@ -29,7 +29,7 @@
                             <c-button kind="secondary" size="sm" label="Bewerken" showIcon="before" icon="bewerken"
                                 @click="openEditModal('modal-edit-component-{{ original_index }}', 'Component bewerken - {{ component.name }}')" />
                             <c-button kind="warning" size="sm" label="Verwijderen" showIcon="before" icon="verwijderen"
-                                @click="showDangerConfirmation('component', '{{ component.name }}', 'Weet u zeker dat u component &quot;{{ component.name }}&quot; wilt verwijderen?')" />
+                                @click="openServiceModal('/projects/{{ project.name }}/actions/delete-component/confirm?target={{ component.name | urlencode }}', 'Component verwijderen')" />
                         </c-layout-flow>
                         {% endif %}
                     </div>

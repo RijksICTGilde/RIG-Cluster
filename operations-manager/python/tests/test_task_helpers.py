@@ -111,6 +111,7 @@ class TestCreateAsyncTask:
         request = MagicMock()
         request.app.state.task_service = mock_service
         request.app.state.federation_service = None
+        request.state.user = {"email": "dev@example.com"}
 
         with patch("opi.core.task_helpers.settings") as mock_settings:
             mock_settings.CLUSTER_MANAGER = "local"
@@ -129,6 +130,9 @@ class TestCreateAsyncTask:
             deployment_name="main",
             cluster="local",
             payload={"key": "value"},
+            # Who pressed the button; the progress fragment is scoped on it, so a task
+            # stays followable when its project is gone (delete) or not there yet.
+            created_by="dev@example.com",
             max_attempts=None,
         )
 
@@ -142,6 +146,7 @@ class TestCreateAsyncTask:
         request = MagicMock()
         request.app.state.task_service = mock_service
         request.app.state.federation_service = mock_federation
+        request.state.user = {"email": "dev@example.com"}
 
         result = await create_async_task(
             request=request,
@@ -159,6 +164,7 @@ class TestCreateAsyncTask:
             deployment_name="staging",
             target_cluster="cluster-b",
             payload={"foo": "bar"},
+            created_by="dev@example.com",
         )
         # Local task service should NOT be called
         mock_service.create_task.assert_not_awaited()
