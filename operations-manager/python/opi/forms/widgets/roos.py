@@ -154,6 +154,11 @@ class ROOSWidgetAdapter(WidgetAdapter):
         2. Build reverse_deps: dep -> [active services that need it]
         3. locked = checked AND has active reverse deps
         """
+        # Imported here, not at module scope: the service registry imports the catalog,
+        # which imports the forms package, which imports this module. A top-level import
+        # closes that cycle and breaks every import of opi.services.registry.
+        from opi.services.config_location import config_hint_for_value
+
         options: list[dict[str, object]] = list(field.options) if field.options else []
         raw_value: object = field.value
         selected_values: list[object]
@@ -213,6 +218,15 @@ class ROOSWidgetAdapter(WidgetAdapter):
 
             svc_deps = requires_map.get(value, [])
             help_template = option.get("help_template")
+            # A ticked service whose config lives on another layer shows no config screen
+            # after this step. Say where it IS configured instead of leaving the user with
+            # nothing happening (RC-33). Derived from the registry, so the template never
+            # names a service.
+            #
+            # Rendered for every service that has one, ticked or not, and revealed by CSS
+            # on the selected card: the user ticks a box and moves on with Next, so a
+            # server-rendered line only reaches them on a page they would never revisit.
+            config_hint = config_hint_for_value(value)
             cards.append(
                 {
                     "value": value,
@@ -227,6 +241,7 @@ class ROOSWidgetAdapter(WidgetAdapter):
                     "data_requires": json.dumps(svc_deps) if svc_deps else None,
                     "dependents_labels": dependents_labels,
                     "help_template": str(help_template) if help_template else None,
+                    "config_hint": config_hint,
                 }
             )
 

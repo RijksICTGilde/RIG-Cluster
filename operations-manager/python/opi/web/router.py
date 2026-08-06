@@ -17,6 +17,7 @@ from datetime import UTC
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates import get_templates
+from opi.services.config_location import binding_label, project_step_config_hint
 from opi.services.deployment_state import collect_deployment_state
 from opi.services.disabled_state import deployment_disabled_state
 from opi.services.project import Project
@@ -1611,6 +1612,10 @@ async def project_details(request: Request, project_name: str):
                 "user": user,
                 "user_role": user_role,
                 "ServiceAdapter": ServiceAdapter,
+                # How a service is chosen, and -- when it has no project-wide settings --
+                # where it IS configured. Both derived from the registry (RC-33).
+                "service_binding_label": binding_label,
+                "service_config_hint": project_step_config_hint,
                 "prometheus_available": prometheus_available,
                 "argocd_available": argocd_available,
                 "approval_notices": approval_notices,
