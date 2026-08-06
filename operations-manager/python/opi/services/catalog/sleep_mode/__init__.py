@@ -13,7 +13,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.services.catalog.base import ConfigLayer, DeploymentStateContext, DeploymentStateFact, Service
+from opi.services.catalog.base import (
+    ConfigLayer,
+    DeploymentStateContext,
+    DeploymentStateFact,
+    RedeployContext,
+    Service,
+)
 from opi.services.catalog.sleep_mode.config_model import SleepModeConfig
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ServiceType
@@ -96,6 +102,46 @@ class SleepModeService(Service):
                 )
             ]
         return []
+
+    def on_redeploy(self, ctx: RedeployContext) -> list[str]:
+        """Wake the deployment and start the sleep clock again (RC-37).
+
+        Somebody rolling something out is the strongest activity signal there is, so the
+        deadline goes back to ``now + sleep-after-deploy``: a preview under active
+        development keeps pushing its bedtime out instead of falling asleep between two
+        pushes.
+
+        A SLEEPING deployment does not just get a later deadline, it wakes up. New content
+        that stays scaled to zero is not rolled out at all -- the pods never start, so
+        nothing picks it up, and the person who pushed it sees a task that succeeded and a
+        deployment that still runs the old thing. That was the report this work started
+        from. Waking costs a cold start on a deployment somebody just touched, which is
+        the moment they are least likely to mind.
+
+        No-op when sleep-mode is off for this cluster/project, or when the deployment does
+        not match the configured selection. Until RC-37 this lived as
+        ``project_manager._reset_sleep_deadline_on_activity`` -- generic code reaching into
+        one named service, which is what the hook removes.
+        """
+        from datetime import UTC, datetime
+
+        from opi.services.catalog.sleep_mode import config as sleep_config
+        from opi.services.catalog.sleep_mode import service as sleep_service
+        from opi.services.catalog.sleep_mode.state import STATE_AWAKE, read
+
+        config = sleep_config.load(ctx.project_data, ctx.cluster)
+        if config is None or not config.matches(ctx.deployment_name):
+            return []
+
+        was = read(ctx.project_data, ctx.deployment_name).state
+        sleep_service.set_sleep_deadline(
+            ctx.project_data, ctx.deployment_name, datetime.now(UTC), config.sleep_after_deploy_delta
+        )
+        if was == STATE_AWAKE:
+            # A deadline that moves on a deployment that is already awake is not something
+            # a user needs told; only a state change is.
+            return []
+        return ["Deze deployment sliep en is gewekt, want er is nieuwe inhoud uitgerold."]
 
     def config_form_section(self, layer: ConfigLayer):
         if layer is not ConfigLayer.PROJECT:
