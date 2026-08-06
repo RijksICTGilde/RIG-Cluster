@@ -61,7 +61,9 @@ def sleep_actions(project_data: dict[str, Any], deployment_name: str) -> list[De
         DeploymentAction(
             label="Applicatie wekken",
             icon="uitvoering",
-            kind="primary",
+            # Same weight as the other deployment actions (images bewerken, herverwerken):
+            # waking is not more important than they are, it just happens less often.
+            kind="secondary",
             endpoint=f"{base}/wake",
             confirm_message=f"Deployment {deployment_name} wekken uit de slaapstand?",
             visible=True,

@@ -94,7 +94,9 @@ class TestSleepActions:
         assert len(actions) == 1
         assert actions[0].label == "Applicatie wekken"
         assert actions[0].endpoint == "/projects/proj/deployments/PR-1/wake"
-        assert actions[0].kind == "primary"
+        # Same weight as the other deployment actions; waking is not the thing to do,
+        # it just happens less often than editing images or reprocessing.
+        assert actions[0].kind == "secondary"
 
     def test_sleep_button_when_awake(self) -> None:
         actions = sleep_actions(self._project(None), "PR-1")

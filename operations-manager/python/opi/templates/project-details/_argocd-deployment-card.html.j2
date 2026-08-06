@@ -162,12 +162,16 @@
         {% if status.get('last_sync') %}
         <c-layout-row gap="xs" verticalSpacing="center">
             <c-icon icon="klok" size="sm" color="grijs-600" />
-            <span class="rvo-text--sm rvo-text--subtle">Laatste sync: {{ status.last_sync[:19]|replace('T', ' ') }} UTC</span>
+            <span class="rvo-text--sm rvo-text--subtle">Laatste sync: {{ status.last_sync | dutch_date }}</span>
         </c-layout-row>
         {% endif %}
 
-        {# View Logs Button #}
-        {% if deployment.components %}
+        {# Logs, but only while something runs. A sleeping or switched-off deployment has
+           no pods and therefore no logs; offering the button suggests it has. The flag
+           comes from the same service facts the state block renders, so a second service
+           that parks a deployment gets this for free. #}
+        {% set expects_no_pods = (deployment_expects_no_pods | default({})).get(deployment.name, false) %}
+        {% if deployment.components and not expects_no_pods %}
         <div style="margin-top: var(--rvo-space-sm);">
             <button type="button" class="log-viewer-btn"
                     onclick='openLogViewer({{ project.name | tojson }}, {{ deployment.name | tojson }}, {{ deployment.components[0].reference | tojson }}, {{ deployment.components | tojson }})'
