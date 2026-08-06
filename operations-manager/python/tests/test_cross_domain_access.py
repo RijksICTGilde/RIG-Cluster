@@ -472,6 +472,76 @@ class TestOptionsProviders:
         assert [o["value"] for o in provider.get_options()] == ["", "8080", "4180"]
 
 
+class TestFieldRulesComeFromTheConfigModel:
+    """The form points at the model's rule instead of restating it (RC-38's move, one layer
+    down). Restating it is how the form came to reject names the schema, the API and the
+    project store all accept."""
+
+    def _errors(self, editable, value) -> list[str]:
+        return editable.validator.validate(value)
+
+    def test_a_peer_project_starting_with_a_digit_is_accepted(self) -> None:
+        from opi.services.catalog.cross_domain_access.editables import INBOUND_PEER_PROJECT_EDITABLE
+
+        # DNS-1123 allows a leading digit and the schema does too; the old
+        # KubernetesNameValidator demanded a leading letter.
+        assert self._errors(INBOUND_PEER_PROJECT_EDITABLE, "7-eleven") == []
+
+    def test_capitals_are_still_rejected(self) -> None:
+        from opi.services.catalog.cross_domain_access.editables import INBOUND_PEER_PROJECT_EDITABLE
+
+        assert self._errors(INBOUND_PEER_PROJECT_EDITABLE, "MijnProject")
+
+    def test_the_rule_name_length_limit_is_the_models(self) -> None:
+        from opi.services.catalog.cross_domain_access.editables import INBOUND_NAME_EDITABLE
+
+        assert self._errors(INBOUND_NAME_EDITABLE, "a" * 41)
+        assert self._errors(INBOUND_NAME_EDITABLE, "a" * 40) == []
+
+    def test_the_port_range_is_the_models(self) -> None:
+        from opi.services.catalog.cross_domain_access.editables import INBOUND_PORT_EDITABLE
+
+        assert self._errors(INBOUND_PORT_EDITABLE, 0)
+        assert self._errors(INBOUND_PORT_EDITABLE, 65536)
+        assert self._errors(INBOUND_PORT_EDITABLE, 8080) == []
+
+    def test_empty_is_left_to_required(self) -> None:
+        from opi.services.catalog.cross_domain_access.editables import INBOUND_PEER_DEPLOYMENT_EDITABLE
+
+        assert self._errors(INBOUND_PEER_DEPLOYMENT_EDITABLE, "") == []
+        assert self._errors(INBOUND_PEER_DEPLOYMENT_EDITABLE, None) == []
+
+
+class TestConfigApiSurface:
+    """Both config layers are addressable over the API, typed on the service's own model."""
+
+    def _routes(self) -> dict[str, set[str]]:
+        from opi.api.v2.router import v2_router
+
+        found: dict[str, set[str]] = {}
+        for route in v2_router.routes:
+            path = getattr(route, "path", "")
+            if "cross-domain-access/config" in path:
+                found.setdefault(path, set()).update(route.methods)
+        return found
+
+    def test_project_and_deployment_layer_both_have_write_endpoints(self) -> None:
+        routes = self._routes()
+        project = "/api/v2/projects/{project_name}/services/cross-domain-access/config/project"
+        deployment = "/api/v2/projects/{project_name}/services/cross-domain-access/config/deployment/{deployment_name}"
+        assert routes.get(project) == {"PUT", "DELETE"}
+        assert routes.get(deployment) == {"PUT", "DELETE"}
+
+    def test_the_service_declares_both_layers(self) -> None:
+        from opi.services.catalog.base import ConfigLayer
+        from opi.services.registry import get_service
+
+        service = get_service(ServiceType.CROSS_DOMAIN_ACCESS)
+        assert ConfigLayer.PROJECT in service.config_layers()
+        assert ConfigLayer.DEPLOYMENT in service.config_layers()
+        assert service.config_model_for(ConfigLayer.DEPLOYMENT) is CrossDomainAccessConfig
+
+
 class TestSharedFormContext:
     """One builder for both flows, so "works when editing, empty in the create wizard" -- the
     state that made this step unusable -- cannot come back."""
