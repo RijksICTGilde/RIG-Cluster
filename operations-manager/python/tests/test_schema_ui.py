@@ -73,9 +73,9 @@ async def test_enforcer_rejects_variable_name_collision(monkeypatch):
     # The reserved-name guard: if a postfix's variable collides with a reserved database
     # variable, saving fails. (With today's base variables the DATABASE_SCHEMA_ prefix
     # cannot collide, so the guard is exercised by extending the reserved set.)
-    from opi.services import services as services_module
+    from opi.services.catalog.postgresql_database import variables as postgres_variables
 
-    monkeypatch.setattr(services_module, "reserved_database_variable_names", lambda: {"DATABASE_SCHEMA_RAPPORTAGE"})
+    monkeypatch.setattr(postgres_variables, "reserved_database_variable_names", lambda: {"DATABASE_SCHEMA_RAPPORTAGE"})
     project = _project([{"postfix": "rapportage"}])
     with pytest.raises(FieldError, match="botst"):
         await _enforce(project)

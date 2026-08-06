@@ -16,8 +16,9 @@ from opi.services.catalog.base import (
 )
 from opi.services.catalog.metrics_scraper.config_model import MetricsScraperConfig
 from opi.services.catalog.metrics_scraper.editables import METRICS_PATH_EDITABLE, METRICS_PORT_EDITABLE
-from opi.services.services import service_entry_config, service_entry_name
-from opi.services.services_enums import ServiceType
+from opi.services.catalog.metrics_scraper.variables import MetricsScraperVariables
+from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
+from opi.services.services_enums import ServiceBinding, ServiceType
 from opi.utils.secrets import MetricsAuthSecret
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,15 @@ logger = logging.getLogger(__name__)
 
 class MetricsScraperService(Service):
     service_type = ServiceType.METRICS_SCRAPER
+    definition = ServiceDefinition(
+        name="Prometheus Metrics Scraper",
+        description="Zorgt dat prometheus scraping op het component wordt ingeschakeld",
+        help_template="metrics_scraper/help.html.j2",
+        icon="grafiek",
+        color="hemelblauw",
+        binding=ServiceBinding.COMPONENT,
+        variables=[v.value for v in MetricsScraperVariables],
+    )
     config_model = MetricsScraperConfig
     config_schema_version = "1.0"
     manifest_secret_class = MetricsAuthSecret

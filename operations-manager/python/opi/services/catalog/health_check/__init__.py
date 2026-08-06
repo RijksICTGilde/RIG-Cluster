@@ -16,12 +16,26 @@ from typing import Any
 
 from opi.services.catalog.base import ConfigLayer, ManifestContext, ManifestContribution, Service
 from opi.services.catalog.health_check.config_model import HealthCheckConfig
-from opi.services.services import service_entry_config, service_entry_name
-from opi.services.services_enums import ServiceType
+from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
+from opi.services.services_enums import ServiceBinding, ServiceType
 
 
 class HealthCheckService(Service):
     service_type = ServiceType.HEALTH_CHECK
+    definition = ServiceDefinition(
+        name="Health check",
+        description=(
+            "Bepaalt hoe Kubernetes de gezondheid van het component controleert (scheme, poort en "
+            "paden). Zonder deze service wordt het component ook gecontroleerd, maar alleen op "
+            "TCP-niveau op de eerste inbound-poort. Kies deze service om een HTTP(S)-probe op een "
+            "aparte poort en paden te richten, of om probes uit te zetten met scheme: none."
+        ),
+        help_template="health_check/help.html.j2",
+        icon="stethoscoop",
+        color="rood",
+        binding=ServiceBinding.COMPONENT,
+        variables=[],
+    )
     config_model = HealthCheckConfig
     config_schema_version = "1.0"
     # Runs after the secret services (10-50). This provider only overrides probe_*
