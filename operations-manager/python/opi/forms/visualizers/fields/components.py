@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from opi.forms.editables.editable import WidgetType
 from opi.forms.editables.fields.components import (
+    COMPONENT_COMMAND_EDITABLE,
+    COMPONENT_COMMAND_ITEM_EDITABLE,
     COMPONENT_IMAGE_EDITABLE,
     COMPONENT_NAME_EDITABLE,
     COMPONENT_PATH_EDITABLE,
@@ -149,6 +151,25 @@ COMPONENT_PATH = EditableVisualizer(
     children=[COMPONENT_PATH_MATCH, COMPONENT_PATH_REWRITE],
 )
 
+COMPONENT_COMMAND_ITEM = EditableVisualizer(
+    editable=COMPONENT_COMMAND_ITEM_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Argument",
+)
+
+COMPONENT_COMMAND = EditableVisualizer(
+    editable=COMPONENT_COMMAND_EDITABLE,
+    widget=WidgetType.SEQUENCE,
+    label="Startcommando",
+    help_text=(
+        "Laat dit leeg tenzij je zeker weet dat het moet, en zeker weet wat erin hoort. "
+        "Een waarde hier VERVANGT het startcommando dat in het image zit, dus de eigen "
+        "opstartlogica van het image vervalt. Klopt het commando niet, dan start het "
+        "component helemaal niet. Elk argument is een eigen regel, zoals in een Dockerfile."
+    ),
+    children=[COMPONENT_COMMAND_ITEM],
+)
+
 COMPONENTS_SEQUENCE = EditableVisualizer(
     editable=COMPONENTS_SEQUENCE_EDITABLE,
     widget=WidgetType.SEQUENCE,
@@ -156,6 +177,7 @@ COMPONENTS_SEQUENCE = EditableVisualizer(
     children=[
         COMPONENT_NAME,
         COMPONENT_IMAGE,
+        COMPONENT_COMMAND,
         COMPONENT_RESOURCES_CPU_REQUEST,
         COMPONENT_RESOURCES_CPU_LIMIT,
         COMPONENT_RESOURCES_MEMORY_REQUEST,
