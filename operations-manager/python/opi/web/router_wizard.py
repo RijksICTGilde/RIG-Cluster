@@ -27,6 +27,7 @@ from opi.forms.wizard.session import (
     save_wizard_state,
 )
 from opi.forms.wizard.state import CLEARED_FIELD
+from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.schema_migration import normalize_service_entries
 from opi.utils.csrf import reject_misfired_form_get
 from opi.web.menu import get_menu_items
@@ -342,6 +343,11 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
 
         # Seed the team step with the current user as administrator
         user_email = (user or {}).get("email", "")
+
+        # The same peer-project list the edit flow gets. Without it the cross-domain step had
+        # three required fields whose select was empty, so the step could not be saved at all.
+        # The project does not exist yet, hence the empty name: nothing to exclude.
+        state.template_data.update(build_cross_domain_context("", user_email))
         if user_email:
             state.store_step_data("team", {"users": [{"email": user_email, "role": "admin"}]})
 
@@ -1944,6 +1950,17 @@ async def _do_submit(
 
     # Remove empty nested dicts left after field removal (e.g. restrict-access: {})
     _prune_empty_dicts(final_data)
+
+    # Form context is not project data. The wizard's template layer carries keys that only
+    # exist to feed the form (``_cross_domain_projects``: the peer projects this user may
+    # pick), and the final submission is built from the whole merged view, so without this
+    # they would be written to the project file -- where the schema forbids them outright
+    # (``additionalProperties: false`` at the root). The modal-edit path never hit this
+    # because it writes only the paths its editables declare. One rule, no list to maintain:
+    # a leading underscore at the top level means "for the form", exactly as it does for
+    # transients and for the virtual services root.
+    for key in [key for key in final_data if key.startswith("_")]:
+        del final_data[key]
 
     try:
         # PRE_SAVE hooks: run while transients are still available.
