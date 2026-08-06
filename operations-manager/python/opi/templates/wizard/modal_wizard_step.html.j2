@@ -28,6 +28,14 @@
         <c-heading type="h2">
             {% if section.icon %}<c-icon icon="{{ section.icon }}" size="xl" />{% endif %}
             {{ section.title }}
+            {# The service's own explanation, same question mark as on its card. This is
+               where someone has to decide something, so it is the place that needed it
+               most and was the only surface without it. #}
+            {% if section.help_template %}
+            <c-icon icon="vraagteken" size="xl" color="hemelblauw"
+                    class="service-card__help-btn"
+                    @click="openServiceHelp('{{ section.help_template|e }}')" />
+            {% endif %}
         </c-heading>
         {% if section.description %}
         <p class="wizard-step__description">{{ section.description }}</p>

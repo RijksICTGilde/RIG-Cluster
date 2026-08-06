@@ -387,18 +387,30 @@ class StorageSizeOptionsProvider:
 
 
 class KeycloakTemplateOptionsProvider:
-    """Provides Keycloak realm template options."""
+    """The two realm blueprints, named after what a user gets rather than after the file.
+
+    The difference is who can log in, and the blueprints say it plainly:
+    ``sso-only`` sets ``registrationAllowed`` and ``loginWithEmailAllowed`` to false, so
+    SSO Rijk is the only way in; ``sso-support`` sets both to true and adds
+    ``resetPasswordAllowed``, so local Keycloak accounts exist alongside it.
+
+    The old labels did not say that. "SSO met ondersteuning voor applicatie-specifieke
+    configuratie" describes something else entirely, and someone picking it had no way
+    to know they were also turning on local accounts.
+    """
 
     def get_options(self) -> list[dict[str, Any]]:
         """Get available Keycloak template options."""
         return [
             {
                 "value": "sso-only",
-                "label": "Alleen authenticatie via SSO, geen gebruikersbeheer",
+                "label": "Alleen SSO Rijk",
+                "description": "Inloggen kan uitsluitend via SSO Rijk. Geen lokale accounts, geen gebruikersbeheer.",
             },
             {
                 "value": "sso-support",
-                "label": "SSO met ondersteuning voor applicatie-specifieke configuratie (standaard)",
+                "label": "SSO Rijk en lokale Keycloak-accounts",
+                "description": "Naast SSO Rijk kunnen er accounts in het Keycloak-realm van dit project bestaan.",
             },
         ]
 
