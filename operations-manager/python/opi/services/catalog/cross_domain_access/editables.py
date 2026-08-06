@@ -19,11 +19,29 @@ from __future__ import annotations
 
 from opi.forms.editables.converters import IntegerConverter
 from opi.forms.editables.editable import Editable
-from opi.forms.editables.validators import KubernetesNameValidator, RangeValidator
+from opi.forms.editables.validators import ModelFieldValidator
 from opi.services.catalog.base import ConfigLayer, config_path
+from opi.services.catalog.cross_domain_access.config_model import (
+    InboundRulePatch,
+    LocalTargetPatch,
+    PeerRefPatch,
+)
 from opi.services.services_enums import ServiceType
 
 _VIRTUALIZE = ("services", "_services-config")
+
+# The rules themselves live on the config model -- the same model the API endpoints for both
+# layers take as their body and the stored project file is validated against -- so the form
+# points at them instead of restating them. It used to restate them as KubernetesNameValidator,
+# which additionally demands a leading LETTER: a peer project whose name starts with a digit
+# was offered in the select, accepted by the schema and the API, and refused by the form.
+_LABEL_MESSAGE = (
+    "mag alleen kleine letters, cijfers en streepjes bevatten, moet beginnen en eindigen met een letter of cijfer"
+)
+
+
+def _label(model: type, field: str, what: str) -> ModelFieldValidator:
+    return ModelFieldValidator(model, field, f"{what} {_LABEL_MESSAGE}")
 
 
 def _cp(*segments: str) -> str:
@@ -33,7 +51,7 @@ def _cp(*segments: str) -> str:
 def _name(direction: str) -> Editable:
     return Editable(
         yaml_path=_cp(f"{direction}[*]", "name"),
-        validator=KubernetesNameValidator("Regelnaam"),
+        validator=_label(InboundRulePatch, "name", "Regelnaam"),
         required=True,
         virtualize=_VIRTUALIZE,
     )
@@ -43,6 +61,7 @@ def _peer_project(direction: str, side: str) -> Editable:
     return Editable(
         yaml_path=_cp(f"{direction}[*]", side, "project"),
         values_provider="CrossDomainProjectOptionsProvider",
+        validator=_label(PeerRefPatch, "project", "Project"),
         required=True,
         virtualize=_VIRTUALIZE,
     )
@@ -54,7 +73,7 @@ def _peer_deployment(direction: str, side: str) -> Editable:
     return Editable(
         yaml_path=_cp(f"{direction}[*]", side, "deployment"),
         values_provider="CrossDomainPeerDeploymentOptionsProvider",
-        validator=KubernetesNameValidator("Deployment"),
+        validator=_label(PeerRefPatch, "deployment", "Deployment"),
         remove_when_none=True,
         virtualize=_VIRTUALIZE,
     )
@@ -64,7 +83,7 @@ def _peer_component(direction: str, side: str) -> Editable:
     return Editable(
         yaml_path=_cp(f"{direction}[*]", side, "component"),
         values_provider="CrossDomainPeerComponentOptionsProvider",
-        validator=KubernetesNameValidator("Component"),
+        validator=_label(PeerRefPatch, "component", "Component"),
         required=True,
         virtualize=_VIRTUALIZE,
     )
@@ -74,6 +93,7 @@ def _local_component(direction: str, side: str) -> Editable:
     return Editable(
         yaml_path=_cp(f"{direction}[*]", side, "component"),
         values_provider="CrossDomainLocalComponentOptionsProvider",
+        validator=_label(LocalTargetPatch, "component", "Component"),
         required=True,
         virtualize=_VIRTUALIZE,
     )
@@ -85,7 +105,7 @@ def _port(direction: str) -> Editable:
         yaml_path=_cp(f"{direction}[*]", "to", "port"),
         values_provider="CrossDomainPortOptionsProvider",
         converter=IntegerConverter(),
-        validator=RangeValidator(1, 65535),
+        validator=ModelFieldValidator(LocalTargetPatch, "port", "Poort moet tussen 1 en 65535 liggen"),
         required=True,
         virtualize=_VIRTUALIZE,
     )
