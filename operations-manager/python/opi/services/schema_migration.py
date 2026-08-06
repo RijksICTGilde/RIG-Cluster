@@ -8,15 +8,26 @@ number directly.
 """
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 from opi.utils.naming import generate_storage_name
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 logger = logging.getLogger(__name__)
 
-LATEST_SCHEMA_VERSION = 2.6
+#: Every schema version a project file can be stamped with, oldest first. This is
+#: the chain, and it is also the contract with ``opi.core.project_schema``: each of
+#: these versions must be validatable, so each one except the newest needs a legacy
+#: patch in ``opi/schemas/project_legacy/``. ``check_schema_versions`` enforces that
+#: at startup, so adding a migration without a schema fails loudly instead of
+#: quietly rejecting files that declare the new version.
+SCHEMA_VERSIONS: tuple[int | float, ...] = (1, 2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6)
+
+LATEST_SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
 
 # NOTE: Domain restriction changes (task-1) introduced:
 # - domains.allowed-subdomains entries changed from list[str] to list[{name, status, history}]
@@ -98,23 +109,9 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
         if _cleanup_stale_v1_keys(project_data):
             migrated = True
 
-    if version < 2.1 and _migrate_v2_to_v2_1(project_data):
-        migrated = True
-
-    if version < 2.2 and _migrate_v2_1_to_v2_2(project_data):
-        migrated = True
-
-    if version < 2.3 and _migrate_v2_2_to_v2_3(project_data):
-        migrated = True
-
-    if version < 2.4 and normalize_service_entries(project_data):
-        migrated = True
-
-    if version < 2.5 and normalize_domains_location(project_data):
-        migrated = True
-
-    if version < 2.6 and relocate_invites_to_service(project_data):
-        migrated = True
+    for step_version, step in MIGRATION_STEPS:
+        if version < step_version and step(project_data):
+            migrated = True
 
     if migrated:
         project_data["schema-version"] = LATEST_SCHEMA_VERSION
@@ -887,3 +884,25 @@ def _normalize_path_to_list(entity: dict[str, Any]) -> bool:
         return True
 
     return changed
+
+
+#: The migration chain as data: (version this step produces, step). ``migrate_to_latest``
+#: runs every step whose version is newer than the file's. Declaring it here rather than
+#: as a run of ``if version < X`` lines is what lets the schema check compare the chain
+#: against the schemas on disk, so a migration without a schema cannot slip through.
+MIGRATION_STEPS: tuple[tuple[int | float, Callable[[dict[str, Any]], bool]], ...] = (
+    (2.1, _migrate_v2_to_v2_1),
+    (2.2, _migrate_v2_1_to_v2_2),
+    (2.3, _migrate_v2_2_to_v2_3),
+    (2.4, normalize_service_entries),
+    (2.5, normalize_domains_location),
+    (2.6, relocate_invites_to_service),
+)
+
+# The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and
+# runs separately in migrate_to_latest, so the table covers 2.1 and up.
+if tuple(version for version, _ in MIGRATION_STEPS) != SCHEMA_VERSIONS[2:]:
+    raise RuntimeError(
+        f"SCHEMA_VERSIONS {SCHEMA_VERSIONS} and MIGRATION_STEPS "
+        f"{tuple(v for v, _ in MIGRATION_STEPS)} disagree: every migration needs a version and vice versa."
+    )

@@ -204,7 +204,14 @@ def _valid_project_for_save() -> dict:
                 "name": "frontend",
                 "type": "deployment",
                 "ports": {"inbound": [8080], "outbound": [443]},
-                "storage": [{"type": "persistent", "size": "10Gi", "mount-path": "/data"}],
+                # No v1 `storage:` block: that form only lives in the v1 schema now
+                # (RC-32), and this fixture is meant to be valid at the latest version.
+                "services": [
+                    {
+                        "reference": "persistent-storage",
+                        "config": [{"name": "data", "mount-path": "/data", "size": "10Gi"}],
+                    }
+                ],
             }
         ],
         "deployments": [

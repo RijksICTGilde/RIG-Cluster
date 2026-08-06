@@ -1,0 +1,81 @@
+{
+  "$comment": "v2.1 -> v2.2 normalized component paths to a list of {match, rewrite} objects. Until v2.2 a file carried `path` as a plain string with a separate `rewrite-path`, and some carried the plural `paths`. One production file (regis-jnv, schema-version 2) still does. The nulls drop the array-only constraint of the newer schema before widening it - an RFC 7386 patch merges objects, it does not replace them.",
+  "$defs": {
+    "component": {
+      "properties": {
+        "path": {
+          "type": null,
+          "items": null,
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/component-path"
+              }
+            }
+          ]
+        },
+        "paths": {
+          "description": "Legacy pre-v2.2 plural spelling of path.",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/component-path"
+              }
+            }
+          ]
+        },
+        "rewrite-path": {
+          "description": "Legacy pre-v2.2 sibling of the string path form.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9/_.\\-]*\\Z"
+        }
+      }
+    },
+    "deployment-component": {
+      "properties": {
+        "path": {
+          "type": null,
+          "items": null,
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/component-path"
+              }
+            }
+          ]
+        },
+        "paths": {
+          "description": "Legacy pre-v2.2 plural spelling of path.",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/component-path"
+              }
+            }
+          ]
+        },
+        "rewrite-path": {
+          "description": "Legacy pre-v2.2 sibling of the string path form.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9/_.\\-]*\\Z"
+        }
+      }
+    }
+  }
+}
