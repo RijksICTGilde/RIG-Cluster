@@ -94,6 +94,7 @@ def provisioning_services() -> list[Service]:
 _HOOK_DEFAULTS: dict[HookPoint, Any] = {
     HookPoint.AFTER_SYNC: Service.observe_deployment,
     HookPoint.DEPLOYMENT_STATE: Service.deployment_state,
+    HookPoint.REDEPLOY: Service.on_redeploy,
 }
 
 

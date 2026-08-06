@@ -58,7 +58,7 @@ services:
     config:
       enabled: true
       match: ["PR-*"]           # glob op deploymentnaam; alleen deze slapen
-      sleep-after-deploy: 48h   # deadline bij aanmaak en bij elke image-update
+      sleep-after-deploy: 48h   # deadline bij aanmaak en bij elke rollout
       sleep-after-wake: 1h      # nieuwe deadline na een wek-call
       waker: true               # een wekkerpod genereren
       waker-component: frontend # optioneel; verplicht bij meerdere web-componenten
@@ -111,6 +111,11 @@ POST /projects/{project}/deployments/{deployment}/sleep # sessie + CSRF, voor de
   net als de sweeper — een wektoken als er een wekker komt, zodat de deployment daarna weer
   gewekt kan worden. Wakken zet de volgende deadline op `sleep-after-wake`, dus na een
   handmatige wake valt de deployment vanzelf weer in slaapstand.
+- Een **rollout wekt de deployment**: een image-update of een upsert zet de staat op
+  `awake` met een verse `sleep-after-deploy`-deadline. Nieuwe inhoud op nul replicas is
+  niet uitgerold -- er start geen pod, dus niets pakt hem op. Sleep-mode doet dat zelf via
+  `on_redeploy` (zie `features/redeploy-clears-recorded-state.md`); tot RC-37 riep
+  `project_manager` deze dienst daarvoor bij naam aan.
 - De API-endpoints (wekkerpod) gebruiken een **wektoken per deployment** (`X-Wake-Token`),
   bewust niet de project-API-key: een gelekt wektoken kan één deployment wekken en verder
   niets. Het endpoint accepteert alleen `sleeping -> waking`; al het andere is een no-op.
