@@ -28,7 +28,7 @@
                     </div>
                     {% if ctx.can_edit %}
                     <c-button kind="secondary" size="sm" label="Verwijderen"
-                              @click="showAttachmentDeleteModal('{{ att.id }}', '{{ att.used_by | join(', ') }}')" />
+                              @click="openServiceModal('/projects/{{ ctx.project_name }}/actions/delete-attachment/confirm?target={{ att.id | urlencode }}', 'Bijlage verwijderen')" />
                     {% endif %}
                 </div>
             </c-card>
