@@ -39,6 +39,12 @@ class SleepModeService(Service):
 De methodenaam is vrij: hij beschrijft wat de dienst op dat moment doet. `order=`
 (standaard 100) bepaalt de plek tussen de andere luisteraars van dát event.
 
+Een handler op naam overschrijven vervangt hem, precies zoals overschrijven overal
+betekent -- de afgeleide methode hoeft de decorator niet te herhalen. De index onthoudt
+daarom `(naam, order)`: de order teruglezen van de gebonden methode zou op zo'n override
+een kale functie zonder markering vinden, en dat brak de opbouw van de index bij het
+importeren van `registry`.
+
 ## De twee families
 
 |  | `ActionEvent` | `UIEvent` |
