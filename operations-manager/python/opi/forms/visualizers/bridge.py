@@ -359,14 +359,21 @@ def _filter_provider_kwargs(
 
 
 def _extract_names_from_list(items: list) -> list[str]:  # type: ignore[type-arg]
-    """Extract names from a mixed str/dict list (services format)."""
-    names: list[str] = []
-    for item in items:
-        if isinstance(item, str):
-            names.append(item)
-        elif isinstance(item, dict):
-            names.extend(item.keys())
-    return names
+    """Extract service names from a services list, in every shape it may hold.
+
+    Delegates to the shared reader instead of guessing. The local version took
+    ``item.keys()``, which is the legacy single-key form: for the modern record
+    ``{"name": "cross-domain-access", "config": {...}}`` it yielded ``["name", "config"]``
+    and the service's own name never appeared.
+
+    That is not cosmetic. A ``show_when={"contains": <service>}`` block disappears the
+    moment the list holds records rather than names, and adding a row to a service-config
+    sequence rewrites the list into exactly that shape. So the first click on "Item
+    toevoegen" hid the whole section it was supposed to extend.
+    """
+    from opi.services.services import service_entry_name
+
+    return [name for name in (service_entry_name(item) for item in items) if name]
 
 
 def _is_service_active(service_name: str, yaml_data: dict[str, Any]) -> bool:
