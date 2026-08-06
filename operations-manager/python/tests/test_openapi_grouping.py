@@ -74,3 +74,49 @@ class TestOneGroupPerOperation:
         assert upload["tags"] == ["attachments"]
         config_write = by_key["PUT /api/v2/projects/{project_name}/services/redis/config/project"]
         assert config_write["tags"] == ["redis"]
+
+
+class TestEveryServiceOperationExplainsItself:
+    """A service endpoint says what it does, not only what it is called (RC-45).
+
+    Measured before this test existed: 34 of the 39 service operations had a summary and
+    nothing else. "Upsert redis config (project)" names the service and the layer, which
+    the path already did. What a caller cannot guess is where the value lands, whether
+    writing it starts a rollout, and what happens when there is nothing to clear.
+
+    The same rule RC-38 set for config *fields*, now for the operations themselves.
+    """
+
+    @pytest.fixture(scope="class")
+    def service_operations(self, operations) -> dict[str, dict]:
+        return {f"{method.upper()} {path}": operation for path, method, operation in operations if "/services" in path}
+
+    def test_every_service_operation_carries_a_description(self, service_operations) -> None:
+        undocumented = sorted(key for key, operation in service_operations.items() if not operation.get("description"))
+        assert not undocumented, f"these service operations say only what they are called: {undocumented}"
+
+    def test_a_description_is_not_the_summary_again(self, service_operations) -> None:
+        # The trap the plan names: "Upload an attachment" is already the summary. A
+        # description that repeats it documents nothing and passes a presence check.
+        for key, operation in service_operations.items():
+            description = operation["description"].strip()
+            assert description != operation.get("summary", "").strip(), key
+            assert len(description) > len(operation.get("summary", "")), key
+
+    def test_a_config_write_says_where_it_lands_and_whether_it_rolls_out(self, service_operations) -> None:
+        write = service_operations["PUT /api/v2/projects/{project_name}/services/redis/config/project"]["description"]
+        assert "zad-projects" in write
+        assert "rolled out" in write
+        assert "/api/tasks/" in write
+
+    def test_clearing_says_what_an_empty_clear_does(self, service_operations) -> None:
+        clear = service_operations["DELETE /api/v2/projects/{project_name}/services/redis/config/project"][
+            "description"
+        ]
+        assert "not there changes nothing" in clear
+
+    def test_a_component_write_says_it_selects_the_service(self, service_operations) -> None:
+        # The side effect a caller would otherwise discover by reading the project file:
+        # configuring at component level selects the service at project level.
+        key = "PUT /api/v2/projects/{project_name}/services/health-check/config/component/{component_name}"
+        assert "selects it at project level" in service_operations[key]["description"]
