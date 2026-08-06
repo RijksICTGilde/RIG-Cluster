@@ -1554,11 +1554,12 @@ class DeleteProjectManager:
                     f"ArgoCD application not confirmed deleted. Marking for deferred cleanup."
                 )
                 try:
-                    from opi.core.database_pools import get_database_pool
                     from opi.services.marked_for_deletion_service import MarkedForDeletionService as MFDService
 
-                    pool = get_database_pool("main")
-                    deferred_service = MFDService(pool)
+                    # MFDService is ORM-backed and takes no constructor arguments.
+                    # Passing a pool raised TypeError, which the except below swallowed,
+                    # so manifests were never actually marked for deferred cleanup.
+                    deferred_service = MFDService()
                     resource_name = f"{cluster}/{project_name}/{deployment_name}"
                     await deferred_service.mark_resource(
                         resource_type="deployment_manifests",
@@ -2189,11 +2190,12 @@ class DeleteProjectManager:
                 deployment_name,
             )
             try:
-                from opi.core.database_pools import get_database_pool
                 from opi.services.marked_for_deletion_service import MarkedForDeletionService as MFDService
 
-                pool = get_database_pool("main")
-                deferred_service = MFDService(pool)
+                # MFDService is ORM-backed and takes no constructor arguments.
+                # Passing a pool raised TypeError, which the except below swallowed,
+                # so manifests were never actually marked for deferred cleanup.
+                deferred_service = MFDService()
                 resource_name = f"{cluster}/{project_name}/{deployment_name}"
                 app_name_for_mark = generate_argocd_application_name(project_name, deployment_name)
                 await deferred_service.mark_resource(

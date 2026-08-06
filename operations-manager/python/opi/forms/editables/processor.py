@@ -7,11 +7,13 @@ Handles the reverse flow: form submission -> validation -> YAML update.
 from __future__ import annotations
 
 import copy
+import inspect
 import logging
-from typing import TYPE_CHECKING, Any
+from functools import cache
+from typing import TYPE_CHECKING, Any, cast
 
 from opi.forms.editables.converters import keep_existing_ciphertext_if_unchanged
-from opi.forms.editables.editable import WidgetType, apply_virtualize
+from opi.forms.editables.editable import ContextAwareEditableValidator, WidgetType, apply_virtualize
 from opi.forms.editables.merge import deep_merge_into
 from opi.forms.editables.path import get_value, resolve_path
 from opi.forms.editables.service_path import (
@@ -23,6 +25,16 @@ from opi.forms.editables.service_path import (
 from opi.forms.visualizers.bridge import should_render_editable
 
 logger = logging.getLogger(__name__)
+
+
+@cache
+def _validator_accepts_context(validator_type: type) -> bool:
+    """Whether this validator's ``validate`` declares a ``context`` parameter.
+
+    Cached on the validator class: the answer is fixed per class, and validation
+    runs per field on every form submission.
+    """
+    return "context" in inspect.signature(validator_type.validate).parameters
 
 
 def _coerce_to_list(value: Any) -> list[Any]:
@@ -207,9 +219,12 @@ class EditableFormProcessor:
             errors.setdefault(path, []).append("Dit veld is verplicht")
             return
         if ed.validator:
-            try:
-                field_errors = ed.validator.validate(value, context=context or {})
-            except TypeError:
+            # Which call form applies is a property of the validator, not something to
+            # discover by catching TypeError: that also caught a TypeError raised inside
+            # a context-aware validator and then silently re-ran it without its context.
+            if _validator_accepts_context(type(ed.validator)):
+                field_errors = cast("ContextAwareEditableValidator", ed.validator).validate(value, context or {})
+            else:
                 field_errors = ed.validator.validate(value)
             if field_errors:
                 errors.setdefault(path, []).extend(field_errors)

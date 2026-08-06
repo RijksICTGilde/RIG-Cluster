@@ -132,16 +132,28 @@ class BootstrapManager:
         Returns:
             Context dictionary with variables
         """
-        from opi.core.cluster_config import get_ingress_postfix, get_keycloak_discovery_url
-        from opi.utils.naming import generate_project_realm_name, generate_public_url
+        from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled, get_keycloak_discovery_url
+        from opi.utils.naming import generate_external_hostname, generate_project_realm_name, generate_public_url
 
         project_name = await self.project_manager.get_name()
         deployment_name = deployment["name"]
         subdomain = deployment.get("subdomain")
+        base_domain = deployment.get("base-domain")
 
-        # Build context similar to deployment environment variables
+        # Build context similar to deployment environment variables.
+        # This used to call generate_public_url(deployment_name, project_name,
+        # ingress_postfix, subdomain), a signature that function has not had in a long
+        # time: it takes (hostname, use_https, path), so every bootstrap action raised
+        # TypeError before it could run. Derive the hostname the same way the deployment
+        # env vars do, then turn it into a URL.
         ingress_postfix = get_ingress_postfix(cluster)
-        public_host = generate_public_url(deployment_name, project_name, ingress_postfix, subdomain)
+        if base_domain and subdomain:
+            hostname = generate_external_hostname(subdomain, base_domain)
+        elif subdomain:
+            hostname = f"{subdomain}.{ingress_postfix}"
+        else:
+            hostname = f"{deployment_name}.{ingress_postfix}"
+        public_host = generate_public_url(hostname, get_ingress_tls_enabled(cluster))
 
         # Get Keycloak info if available
         oidc_url = None
