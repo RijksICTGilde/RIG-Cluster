@@ -21,7 +21,7 @@ from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.service_path import smart_get_value, smart_set_value
 from opi.forms.visualizers.flows import (
-    flow_context_from_template,
+    flow_context_from_base,
     get_flow,
     parse_indexed_flow_id,
 )
@@ -29,6 +29,7 @@ from opi.forms.visualizers.wizard_sections import (
     EDIT_SECTIONS,
     _extract_services,
 )
+from opi.forms.wizard.mutation import apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
     resolve_active_section_ids,
@@ -157,6 +158,8 @@ def _render_section_html(
         yaml_data=yaml_data,
         layout=section.layout,
         errors=errors,
+        # Constant here, not a re-derivation of ``state.is_edit``: every route in this
+        # module takes ``project_name`` from the path, so the base always exists.
         edit_mode=True,
     )
     templates = get_templates()
@@ -205,15 +208,15 @@ def _flow_context_from_state(state: WizardState | None, flow_id: str) -> dict[st
     """
     if not state:
         return {}
-    return flow_context_from_template(flow_id, state.template_data)
+    return flow_context_from_base(flow_id, state.base_data)
 
 
 def _fully_owned_list_keys(flow: Any) -> set[str]:
     """Top-level list keys that an editable fully owns (bare yaml_path, no index).
 
-    Such keys must not be duplicated into ``state.template_data`` because
+    Such keys must not be duplicated into ``state.base_data`` because
     ``step_data`` already carries the authoritative list; a shadow copy in
-    template_data causes ``get_merged_data`` to silently retain items that
+    base_data causes ``get_merged_data`` to silently retain items that
     the user removed (merge-by-index never shrinks).
 
     Indexed paths like ``deployments[0]/name`` are *not* fully owned — those
@@ -515,7 +518,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     project_data = project.data or {}
 
     # What the flow builder needs, declared by the flow family itself.
-    flow_context: dict[str, Any] = dict(flow_context_from_template(flow_id, project_data))
+    flow_context: dict[str, Any] = dict(flow_context_from_base(flow_id, project_data))
 
     indexed = parse_indexed_flow_id(flow_id)
     if indexed is not None:
@@ -618,22 +621,22 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # Editables whose yaml_path points *directly* at a top-level list (e.g.
     # USERS_SEQUENCE at "users", COMPONENTS_SEQUENCE at "components") fully
     # own that list — step_data already carries the complete value. Keeping
-    # a copy in template_data would cause get_merged_data's merge-by-index
+    # a copy in base_data would cause get_merged_data's merge-by-index
     # to silently retain items the user removed in the UI.
     owned = _fully_owned_list_keys(flow)
-    # ``session_data``, not ``project_data``: template_data is persisted to disk like
+    # ``session_data``, not ``project_data``: base_data is persisted to disk like
     # step_data is, so it needs the same attachment strip and secret redaction. It read
     # from the raw project before, which left the encrypted blocks in the session even
     # though step_data had been stripped of them.
-    state.template_data = {k: v for k, v in session_data.items() if k not in owned}
-    state.template_data["_wizard_token"] = wizard_token
+    state.base_data = {k: v for k, v in session_data.items() if k not in owned}
+    state.base_data["_wizard_token"] = wizard_token
 
     # Remember that this was an add: the flow is rebuilt from its id on later
     # requests, and only the session knows the item did not exist yet.
     if flow_context.get("is_new"):
-        state.template_data["is_new"] = True
+        state.base_data["is_new"] = True
         existing_components = (project.data or {}).get("components", [])
-        state.template_data["existing_component_names"] = [
+        state.base_data["existing_component_names"] = [
             c.get("name") for c in existing_components if isinstance(c, dict) and c.get("name")
         ]
 
@@ -641,8 +644,8 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     if (indexed is not None and indexed[0].appends_new_item) or flow_id == "modal-restore":
         existing_deployments = (project.data or {}).get("deployments", [])
         existing_names = [d.get("name") for d in existing_deployments if isinstance(d, dict) and d.get("name")]
-        state.template_data["existing_deployment_names"] = existing_names
-        state.template_data["_original_deployment_names"] = existing_names
+        state.base_data["existing_deployment_names"] = existing_names
+        state.base_data["_original_deployment_names"] = existing_names
 
     # Inject backup/restore context (cluster deployments) for manual backup/restore flows
     if _is_backup_restore_flow(flow_id):
@@ -653,14 +656,14 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
             cluster_deps = backup_context.get("_cluster_deployments", [])
             if any(d.get("name") == requested_dep for d in cluster_deps):
                 backup_context["_selected_deployment"] = requested_dep
-        state.template_data.update(backup_context)
+        state.base_data.update(backup_context)
 
     # Cross-domain-access needs the list of authorized peer projects; the same builder the
     # create wizard uses, so the two flows cannot drift apart again. Populated only for flows
     # that carry its section. Template-only: no editable names it, so it falls outside the
     # write set and never reaches the saved project.
     if flow_id in ("modal-edit-cross-domain-config", "modal-edit-services"):
-        state.template_data.update(build_cross_domain_context(project_name, _user_email))
+        state.base_data.update(build_cross_domain_context(project_name, _user_email))
 
     # Mark all sections with data as completed (for step indicator)
     for section_id in active_section_ids:
@@ -810,12 +813,12 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         processor = EditableFormProcessor()
         yaml_data = state.get_merged_data()
 
-        # Build enforcer context from template_data (e.g. existing names for uniqueness)
+        # Build enforcer context from base_data (e.g. existing names for uniqueness)
         enforcer_ctx: dict[str, Any] = {"project_name": project_name}
-        if state.template_data and "existing_deployment_names" in state.template_data:
-            enforcer_ctx["existing_deployment_names"] = state.template_data["existing_deployment_names"]
-        if state.template_data and "existing_component_names" in state.template_data:
-            enforcer_ctx["existing_component_names"] = state.template_data["existing_component_names"]
+        if state.base_data and "existing_deployment_names" in state.base_data:
+            enforcer_ctx["existing_deployment_names"] = state.base_data["existing_deployment_names"]
+        if state.base_data and "existing_component_names" in state.base_data:
+            enforcer_ctx["existing_component_names"] = state.base_data["existing_component_names"]
 
         submitted_yaml, errors = await processor.process_json_submission(
             submitted_data,
@@ -831,11 +834,10 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         # call in the create wizard.
         processor.clear_hidden_depends_on(section.editables, submitted_yaml)
 
-        # Auto-add service dependencies
-        if section_id == "services-edit" and isinstance(submitted_yaml.get("services"), list):
-            from opi.services.services import ServiceAdapter
-
-            submitted_yaml["services"] = ServiceAdapter.resolve_service_dependencies(submitted_yaml["services"])
+        # Verzoen de dienstselectie met de basis (zie apply_services_mutation). Dit hing aan
+        # de sectienaam "services-edit": elke andere flow met een dienstenlijst kreeg geen
+        # aanvulling, en dat is dezelfde fout als 94478afb, een laag verderop.
+        apply_services_mutation(section.editables, yaml_data, submitted_yaml)
 
         # Run section-level enforcer (cross-field validation). Capture warnings
         # too: without a field_warnings dict a FieldWarning (e.g. a subdomain that
@@ -992,8 +994,8 @@ async def backup_select_deployment(request: Request, project_name: str) -> HTMLR
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
     selected = request.query_params.get("deployment_name", "")
-    if state.template_data:
-        state.template_data["_selected_deployment"] = selected
+    if state.base_data:
+        state.base_data["_selected_deployment"] = selected
         save_modal_state_by_token(wizard_token, state)
 
     flow = get_flow("modal-backup")
@@ -1020,8 +1022,8 @@ async def restore_select_mode(request: Request, project_name: str) -> HTMLRespon
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
     restore_mode = request.query_params.get("restore_mode", "existing")
-    if state.template_data:
-        state.template_data["_restore_mode"] = restore_mode
+    if state.base_data:
+        state.base_data["_restore_mode"] = restore_mode
 
     _enrich_restore_target_context(state)
     save_modal_state_by_token(wizard_token, state)
@@ -1373,8 +1375,8 @@ async def _handle_backup_restore_submit(
             target_deployment = merged_data.get("target_deployment", "")
 
         backup_items = []
-        if state.template_data:
-            for run in state.template_data.get("_backup_runs", []):
+        if state.base_data:
+            for run in state.base_data.get("_backup_runs", []):
                 if run.get("backup_run_id") == backup_run_id:
                     backup_items = run.get("items", [])
                     source_deployment = run.get("deployment_name", "")
@@ -1590,7 +1592,7 @@ def _enrich_restore_target_context(state) -> None:
     Called before rendering the restore-target step so the template knows
     which deployment the backup originated from.
     """
-    if not state.template_data:
+    if not state.base_data:
         return
 
     # Get backup_run_id from step 1 (restore-select)
@@ -1600,9 +1602,9 @@ def _enrich_restore_target_context(state) -> None:
         return
 
     # Find matching run in _backup_runs
-    for run in state.template_data.get("_backup_runs", []):
+    for run in state.base_data.get("_backup_runs", []):
         if run.get("backup_run_id") == backup_run_id:
-            state.template_data["_source_deployment"] = run.get("deployment_name", "")
+            state.base_data["_source_deployment"] = run.get("deployment_name", "")
             break
 
 

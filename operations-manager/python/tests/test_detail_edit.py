@@ -125,8 +125,8 @@ class TestNewDeploymentSystemFields:
 class _FakeState:
     """Minimal state mock for _seed_components_for_new_deployment tests."""
 
-    def __init__(self, template_data: dict, step_data: dict | None = None) -> None:
-        self.template_data = template_data
+    def __init__(self, base_data: dict, step_data: dict | None = None) -> None:
+        self.base_data = base_data
         self.step_data: dict = step_data or {}
         self.active_sections: list[str] = list(self.step_data.keys())
 
@@ -134,8 +134,8 @@ class _FakeState:
         import copy
 
         merged: dict = {}
-        if self.template_data:
-            merged.update(copy.deepcopy(self.template_data))
+        if self.base_data:
+            merged.update(copy.deepcopy(self.base_data))
         for section_id in self.active_sections:
             if section_id not in self.step_data:
                 continue
@@ -165,7 +165,7 @@ class TestSeedComponentsForNewDeployment:
 
     def test_clone_from_string_fills_images_from_source(self) -> None:
         state = _FakeState(
-            template_data={
+            base_data={
                 "components": [
                     {"name": "frontend"},
                     {"name": "api"},
@@ -197,7 +197,7 @@ class TestSeedComponentsForNewDeployment:
     def test_clone_from_dict_fills_images_from_source(self) -> None:
         """After the converter, clone-from is a dict with 'reference' key."""
         state = _FakeState(
-            template_data={
+            base_data={
                 "components": [
                     {"name": "frontend"},
                     {"name": "api"},
@@ -234,7 +234,7 @@ class TestSeedComponentsForNewDeployment:
 
     def test_no_clone_from_seeds_all_project_components_with_empty_images(self) -> None:
         state = _FakeState(
-            template_data={
+            base_data={
                 "components": [
                     {"name": "frontend", "image": "nginx:latest"},
                     {"name": "api", "image": "python:3.13"},
@@ -260,7 +260,7 @@ class TestSeedComponentsForNewDeployment:
     def test_clone_from_nonexistent_seeds_empty_images(self) -> None:
         """Unknown source still seeds all components, just with empty images."""
         state = _FakeState(
-            template_data={
+            base_data={
                 "components": [{"name": "app"}],
                 "deployments": [
                     {"name": "staging", "components": [{"reference": "app", "image": "img:1"}]},
@@ -280,6 +280,6 @@ class TestSeedComponentsForNewDeployment:
         assert components[0] == {"reference": "app", "image": ""}
 
     def test_out_of_range_index_does_nothing(self) -> None:
-        state = _FakeState(template_data={"deployments": []})
+        state = _FakeState(base_data={"deployments": []})
         _seed_components_for_new_deployment(state, 5)
         assert len(state.step_data) == 0

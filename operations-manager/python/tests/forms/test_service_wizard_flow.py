@@ -630,9 +630,9 @@ class TestStandaloneKeycloakEditFlow:
     def test_merged_data_with_template_services_produces_list(self, keycloak_flow, project_data):
         """get_merged_data must produce services as a list, not a dict.
 
-        When template_data includes the services list, devirtualize should
+        When base_data includes the services list, devirtualize should
         merge virtual config back into the list. Without the list in
-        template_data, devirtualize falls back to a dict which breaks
+        base_data, devirtualize falls back to a dict which breaks
         smart_get_value.
         """
         step_data = _split_data_across_sections(keycloak_flow, project_data)
@@ -642,8 +642,8 @@ class TestStandaloneKeycloakEditFlow:
             active_sections=["keycloak-config"],
             virt_mappings={"_services-config": "services"},
         )
-        # Simulate what router_detail_edit does: seed services in template_data
-        state.template_data = {"services": copy.deepcopy(project_data["services"])}
+        # Simulate what router_detail_edit does: seed services in base_data
+        state.base_data = {"services": copy.deepcopy(project_data["services"])}
 
         merged = state.get_merged_data()
 
@@ -653,7 +653,7 @@ class TestStandaloneKeycloakEditFlow:
         )
 
     def test_merged_data_without_template_services_produces_dict(self, keycloak_flow, project_data):
-        """Without services in template_data, devirtualize produces a dict.
+        """Without services in base_data, devirtualize produces a dict.
 
         This documents the bug that existed before the fix: smart_get_value
         expects a list and returns None for all fields.
@@ -665,14 +665,14 @@ class TestStandaloneKeycloakEditFlow:
             active_sections=["keycloak-config"],
             virt_mappings={"_services-config": "services"},
         )
-        # No template_data with services — the old buggy path
+        # No base_data with services — the old buggy path
 
         merged = state.get_merged_data()
 
         # Documents the problematic fallback behavior
         if "services" in merged:
             assert isinstance(merged["services"], dict), (
-                "Without template_data services, devirtualize should produce a dict (the bug)"
+                "Without base_data services, devirtualize should produce a dict (the bug)"
             )
 
     def test_smart_get_value_works_with_list(self, keycloak_flow, project_data):
@@ -686,7 +686,7 @@ class TestStandaloneKeycloakEditFlow:
             active_sections=["keycloak-config"],
             virt_mappings={"_services-config": "services"},
         )
-        state.template_data = {"services": copy.deepcopy(project_data["services"])}
+        state.base_data = {"services": copy.deepcopy(project_data["services"])}
 
         merged = state.get_merged_data()
 
@@ -734,7 +734,7 @@ class TestStandaloneKeycloakEditFlow:
             active_sections=["keycloak-config"],
             virt_mappings={"_services-config": "services"},
         )
-        state.template_data = {"services": ["publish-on-web", copy.deepcopy(existing_entry)]}
+        state.base_data = {"services": ["publish-on-web", copy.deepcopy(existing_entry)]}
 
         merged = state.get_merged_data()
 
@@ -750,7 +750,7 @@ class TestStandaloneKeycloakEditFlow:
             active_sections=["keycloak-config"],
             virt_mappings={"_services-config": "services"},
         )
-        state.template_data = {"services": copy.deepcopy(project_data["services"])}
+        state.base_data = {"services": copy.deepcopy(project_data["services"])}
 
         merged = state.get_merged_data()
 
@@ -765,7 +765,7 @@ class TestStandaloneKeycloakEditFlow:
             active_sections=["keycloak-config"],
             virt_mappings={"_services-config": "services"},
         )
-        state.template_data = {"services": ["publish-on-web"]}
+        state.base_data = {"services": ["publish-on-web"]}
 
         merged = state.get_merged_data()
 

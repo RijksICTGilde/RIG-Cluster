@@ -18,7 +18,7 @@ RECEIVING side of the rule -- mine for inbound, the peer's for outbound.
 from __future__ import annotations
 
 from opi.forms.editables.converters import IntegerConverter
-from opi.forms.editables.editable import Editable
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 from opi.forms.editables.validators import ModelFieldValidator
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.catalog.cross_domain_access.config_model import (
@@ -27,8 +27,6 @@ from opi.services.catalog.cross_domain_access.config_model import (
     PeerRefPatch,
 )
 from opi.services.services_enums import ServiceType
-
-_VIRTUALIZE = ("services", "_services-config")
 
 # The rules themselves live on the config model -- the same model the API endpoints for both
 # layers take as their body and the stored project file is validated against -- so the form
@@ -53,7 +51,7 @@ def _name(direction: str) -> Editable:
         yaml_path=_cp(f"{direction}[*]", "name"),
         validator=_label(InboundRulePatch, "name", "Regelnaam"),
         required=True,
-        virtualize=_VIRTUALIZE,
+        virtualize=SERVICE_VIRTUALIZE,
     )
 
 
@@ -63,7 +61,7 @@ def _peer_project(direction: str, side: str) -> Editable:
         values_provider="CrossDomainProjectOptionsProvider",
         validator=_label(PeerRefPatch, "project", "Project"),
         required=True,
-        virtualize=_VIRTUALIZE,
+        virtualize=SERVICE_VIRTUALIZE,
     )
 
 
@@ -75,7 +73,7 @@ def _peer_deployment(direction: str, side: str) -> Editable:
         values_provider="CrossDomainPeerDeploymentOptionsProvider",
         validator=_label(PeerRefPatch, "deployment", "Deployment"),
         remove_when_none=True,
-        virtualize=_VIRTUALIZE,
+        virtualize=SERVICE_VIRTUALIZE,
     )
 
 
@@ -85,7 +83,7 @@ def _peer_component(direction: str, side: str) -> Editable:
         values_provider="CrossDomainPeerComponentOptionsProvider",
         validator=_label(PeerRefPatch, "component", "Component"),
         required=True,
-        virtualize=_VIRTUALIZE,
+        virtualize=SERVICE_VIRTUALIZE,
     )
 
 
@@ -95,7 +93,7 @@ def _local_component(direction: str, side: str) -> Editable:
         values_provider="CrossDomainLocalComponentOptionsProvider",
         validator=_label(LocalTargetPatch, "component", "Component"),
         required=True,
-        virtualize=_VIRTUALIZE,
+        virtualize=SERVICE_VIRTUALIZE,
     )
 
 
@@ -107,7 +105,7 @@ def _port(direction: str) -> Editable:
         converter=IntegerConverter(),
         validator=ModelFieldValidator(LocalTargetPatch, "port", "Poort moet tussen 1 en 65535 liggen"),
         required=True,
-        virtualize=_VIRTUALIZE,
+        virtualize=SERVICE_VIRTUALIZE,
     )
 
 
@@ -123,7 +121,7 @@ INBOUND_SEQUENCE_EDITABLE = Editable(
     yaml_path=_cp("inbound"),
     depends_on="services",
     show_when={"contains": ServiceType.CROSS_DOMAIN_ACCESS.value},
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
     children=[
         INBOUND_NAME_EDITABLE,
         INBOUND_PEER_PROJECT_EDITABLE,
@@ -146,7 +144,7 @@ OUTBOUND_SEQUENCE_EDITABLE = Editable(
     yaml_path=_cp("outbound"),
     depends_on="services",
     show_when={"contains": ServiceType.CROSS_DOMAIN_ACCESS.value},
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
     children=[
         OUTBOUND_NAME_EDITABLE,
         OUTBOUND_LOCAL_COMPONENT_EDITABLE,

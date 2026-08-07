@@ -11,6 +11,7 @@ point at real files and symbols, and delete a claim rather than let it rot.
 | Document | Covers |
 |---|---|
 | [services.md](services.md) | The service system: what a service owns, how config, forms, provisioning, manifests and approvals hook in, and how to add one |
+| [wizard-tests.md](wizard-tests.md) | De vijf testniveaus voor een dienstconfig of een wizardflow, met een sjabloon per niveau |
 
 ## Which folder for what
 
