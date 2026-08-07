@@ -12,9 +12,10 @@
 }
 
 /* Deze pagina bouwt zijn eigen c-page en laadt base.css dus niet; .is-hidden staat
-   daarom hier. Verborgen tot het script de klasse weghaalt. */
+   daarom hier. Verborgen tot het script de klasse weghaalt. Zelfde regel als in
+   base.css, inclusief het !important en de reden erachter. */
 .is-hidden {
-    display: none;
+    display: none !important;
 }
 
 .tool-error-message {
