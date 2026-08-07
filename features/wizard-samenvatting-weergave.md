@@ -116,3 +116,11 @@ kan die fout niet maken.
 verborgen blijft (ook in een sequence, ook een niveau dieper, ook bij
 `service_cards`, en dat een item waarvan alles verborgen is niet alsnog rauw wordt
 gedumpt) en dat getoonde waarden geëscaped zijn.
+
+Twee daarvan zijn broncontroles op de `| safe`-sinks, want die kant kan niet met
+één voorbeeld worden afgedekt:
+
+- elke f-string mét een tag in de bouwers van `router_wizard.py` moet zijn gaten
+  door `_summary_text` halen (of in de allowlist staan, voor fragmenten die de
+  module zelf al bouwde en escapete);
+- geen enkele `*_summary`-functie in `wizard_sections.py` bevat nog een tag.
