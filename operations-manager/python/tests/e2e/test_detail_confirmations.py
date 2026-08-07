@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.e2e
 
-PROJECT = "test-project-detail"
-DETAIL_URL = f"/projects/details/{PROJECT}"
+#: Which fixture project the own_project fixture copies for this file.
+PROJECT_TEMPLATE = "test-project-detail"
 
 # A stand-in for the shared task-progress fragment: the class is what makes the page
 # treat the modal as busy, so this is exactly the part that matters here.
@@ -57,9 +57,9 @@ def _wait_for_request(recorded: list[tuple[str, str]], timeout: float = 10.0) ->
     raise AssertionError("no request was fired by the confirmation")
 
 
-def _open_confirmation(page: Page, app_server: str, trigger: str, *, tab: str | None = None) -> None:
+def _open_confirmation(page: Page, app_server: str, project: str, trigger: str, *, tab: str | None = None) -> None:
     """Click a dangerous action and wait for the shared modal to hold its confirmation."""
-    page.goto(f"{app_server}{DETAIL_URL}")
+    page.goto(f"{app_server}/projects/details/{project}")
     page.wait_for_load_state("networkidle")
     if tab:
         page.evaluate(f"switchTab('{tab}')")
@@ -77,16 +77,16 @@ def _confirm(page: Page) -> None:
 @pytest.mark.parametrize(
     ("trigger", "tab", "expected_path"),
     [
-        ("Project herverwerken", None, f"/projects/{PROJECT}/refresh"),
-        ("Project verwijderen", None, f"/projects/delete/{PROJECT}"),
-        ("Deployment herverwerken", "deployments", f"/projects/{PROJECT}/refresh/default"),
+        ("Project herverwerken", None, "/projects/{project}/refresh"),
+        ("Project verwijderen", None, "/projects/delete/{project}"),
+        ("Deployment herverwerken", "deployments", "/projects/{project}/refresh/default"),
     ],
 )
 def test_confirmation_posts_the_right_endpoint(
-    app_server: str, auth_page: Page, trigger: str, tab: str | None, expected_path: str
+    app_server: str, auth_page: Page, own_project: str, trigger: str, tab: str | None, expected_path: str
 ) -> None:
     """Each confirmation posts to exactly the endpoint of the action that was clicked."""
-    _open_confirmation(auth_page, app_server, trigger, tab=tab)
+    _open_confirmation(auth_page, app_server, own_project, trigger, tab=tab)
 
     recorded: list[tuple[str, str]] = []
     _intercept_posts(auth_page, recorded)
@@ -94,12 +94,12 @@ def test_confirmation_posts_the_right_endpoint(
 
     method, url = _wait_for_request(recorded)
     assert method == "POST"
-    assert url == f"{app_server}{expected_path}"
+    assert url == f"{app_server}{expected_path.format(project=own_project)}"
 
 
-def test_component_delete_posts_the_right_component(app_server: str, auth_page: Page) -> None:
+def test_component_delete_posts_the_right_component(app_server: str, auth_page: Page, own_project: str) -> None:
     """The component card's own delete confirmation carries that component's name."""
-    auth_page.goto(f"{app_server}{DETAIL_URL}")
+    auth_page.goto(f"{app_server}/projects/details/{own_project}")
     auth_page.wait_for_load_state("networkidle")
 
     card = auth_page.locator(".component-card", has_text="web-app").first
@@ -113,12 +113,12 @@ def test_component_delete_posts_the_right_component(app_server: str, auth_page: 
 
     method, url = _wait_for_request(recorded)
     assert method == "POST"
-    assert url == f"{app_server}/projects/{PROJECT}/delete-component/web-app"
+    assert url == f"{app_server}/projects/{own_project}/delete-component/web-app"
 
 
-def test_deployment_delete_posts_the_right_deployment(app_server: str, auth_page: Page) -> None:
+def test_deployment_delete_posts_the_right_deployment(app_server: str, auth_page: Page, own_project: str) -> None:
     """The deployment list's delete confirmation carries that deployment's name."""
-    auth_page.goto(f"{app_server}{DETAIL_URL}")
+    auth_page.goto(f"{app_server}/projects/details/{own_project}")
     auth_page.wait_for_load_state("networkidle")
     auth_page.evaluate("switchTab('deployments')")
     auth_page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
@@ -134,26 +134,26 @@ def test_deployment_delete_posts_the_right_deployment(app_server: str, auth_page
 
     method, url = _wait_for_request(recorded)
     assert method == "POST"
-    assert url == f"{app_server}/projects/{PROJECT}/delete-deployment/default"
+    assert url == f"{app_server}/projects/{own_project}/delete-deployment/default"
 
 
-def test_confirmation_states_what_will_happen(app_server: str, auth_page: Page) -> None:
+def test_confirmation_states_what_will_happen(app_server: str, auth_page: Page, own_project: str) -> None:
     """The dialog names the project it is about, so the user can see what they confirm."""
-    _open_confirmation(auth_page, app_server, "Project verwijderen")
+    _open_confirmation(auth_page, app_server, own_project, "Project verwijderen")
 
     body = auth_page.text_content("#edit-section-inner") or ""
     assert "Detail Test Project" in body
     assert "verwijderen" in body.lower()
 
 
-def test_running_action_cannot_be_dismissed(app_server: str, auth_page: Page) -> None:
+def test_running_action_cannot_be_dismissed(app_server: str, auth_page: Page, own_project: str) -> None:
     """The reported bug: while the action runs, Escape and backdrop clicks do nothing.
 
     The confirmation is replaced by the shared progress view, and that view is what
     marks the modal busy -- so this holds for every action that uses it, without any
     per-action code.
     """
-    _open_confirmation(auth_page, app_server, "Project verwijderen")
+    _open_confirmation(auth_page, app_server, own_project, "Project verwijderen")
 
     recorded: list[tuple[str, str]] = []
     _intercept_posts(auth_page, recorded, body=PROGRESS_HTML)
@@ -171,9 +171,9 @@ def test_running_action_cannot_be_dismissed(app_server: str, auth_page: Page) ->
     assert auth_page.locator("#edit-section-modal.is-open").count() == 1, "backdrop click dismissed a running action"
 
 
-def test_old_danger_dialog_is_gone(app_server: str, auth_page: Page) -> None:
+def test_old_danger_dialog_is_gone(app_server: str, auth_page: Page, own_project: str) -> None:
     """One dialog, not two: the page-specific danger dialog no longer exists."""
-    auth_page.goto(f"{app_server}{DETAIL_URL}")
+    auth_page.goto(f"{app_server}/projects/details/{own_project}")
     auth_page.wait_for_load_state("networkidle")
 
     assert auth_page.evaluate("typeof showDangerConfirmation") == "undefined"
