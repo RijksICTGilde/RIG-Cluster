@@ -1575,6 +1575,12 @@ def _summary_text(text: Any) -> str:
     return html.escape(str(text))
 
 
+def _summary_pairs_html(items: list[tuple[str, str]]) -> str:
+    """Render a section's own (label, value) pairs as escaped summary HTML."""
+    parts = [f"<dl><dt>{_summary_text(label)}</dt><dd>{_summary_text(value)}</dd></dl>" for label, value in items]
+    return "\n".join(parts) if parts else "<p><em>Geen gegevens ingevuld</em></p>"
+
+
 def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> str:
     """Build an HTML summary for a section's data.
 
@@ -1582,7 +1588,10 @@ def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> s
     provider label resolution), checkbox groups, and key-value editors.
     """
     if section.summary_fn:
-        return section.summary_fn(yaml_data)
+        # A summary_fn returns (label, value) pairs, not HTML: the markup and the
+        # escaping are built here, so a section that summarizes itself lands in the
+        # same gate as every other field.
+        return _summary_pairs_html(section.summary_fn(yaml_data))
 
     from opi.forms.editables.service_path import smart_get_value
 
@@ -1615,7 +1624,8 @@ def _build_section_fields(
       - label: display label
       - value: str or list[str]
       - is_list: True when value should be rendered as a bullet list
-      - html: pre-rendered HTML (for sequences / custom summary_fn)
+      - html: pre-rendered HTML (sequences only -- a section's own summary_fn
+        returns (label, value) pairs, which land in the escaped path above)
     """
     from opi.forms.editables.service_path import smart_get_value
 
@@ -1639,7 +1649,10 @@ def _build_section_fields(
                     fields.append({"label": editable.label, "value": display, "is_list": False})
 
     if section.summary_fn:
-        fields.append({"html": section.summary_fn(yaml_data)})
+        # (label, value) pairs, like any other field -- the template escapes them.
+        fields.extend(
+            {"label": label, "value": value, "is_list": False} for label, value in section.summary_fn(yaml_data)
+        )
     else:
         _collect(section.editables)
 

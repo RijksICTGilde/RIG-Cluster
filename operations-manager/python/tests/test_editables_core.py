@@ -198,8 +198,8 @@ class TestFormSection:
     def test_with_summary_fn(self):
         """Section with a summary function."""
 
-        def my_summary(data: dict) -> str:
-            return f"Project: {data.get('name', 'onbekend')}"
+        def my_summary(data: dict) -> list[tuple[str, str]]:
+            return [("Project", str(data.get("name", "onbekend")))]
 
         section = FormSection(
             section_id="identity",
@@ -207,7 +207,7 @@ class TestFormSection:
             summary_fn=my_summary,
         )
         assert section.summary_fn is not None
-        assert section.summary_fn({"name": "test"}) == "Project: test"
+        assert section.summary_fn({"name": "test"}) == [("Project", "test")]
 
     def test_readonly_section(self):
         """Read-only section (e.g., config display)."""

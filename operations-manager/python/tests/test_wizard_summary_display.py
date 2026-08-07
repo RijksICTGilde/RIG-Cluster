@@ -1,16 +1,22 @@
 """What a summary screen may show.
 
-Two things are pinned here. A field can declare that its value does not belong in
-a summary (``summarizer``), and that declaration has to hold everywhere a summary
-is built -- including one and two levels into a sequence, which is exactly where
-it used to fall through. And whatever does get shown is escaped, because the
-review page renders this HTML with ``| safe``.
+Three things are pinned here. A field can declare that its value does not belong
+in a summary (``summarizer``), and that declaration has to hold everywhere a
+summary is built -- including one and two levels into a sequence, which is
+exactly where it used to fall through. Whatever does get shown is escaped,
+because the review page renders this HTML with ``| safe``. And a section that
+summarizes itself returns data, not markup, so the escaping is a property of the
+path and not a rule the author of a summary has to remember.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
 from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.editables.summarizers import HiddenSummary, MaskedSummary
+from opi.forms.visualizers import wizard_sections
 from opi.forms.visualizers.sections import FormSection
 from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.web.router_wizard import _build_section_fields, _build_section_summary
@@ -215,3 +221,59 @@ class TestSummaryEscapesWhatItShows:
 
         assert XSS not in html
         assert "&lt;img" in html
+
+
+def _real_summary_fns() -> list[tuple[str, Any]]:
+    """Every ``summary_fn`` a real section declares, by section id."""
+    sections = [
+        wizard_sections.BACKUP_SELECT_SECTION,
+        wizard_sections.RESTORE_SELECT_SECTION,
+        wizard_sections.RESTORE_TARGET_SECTION,
+        wizard_sections.build_deployment_add_info_section(0),
+    ]
+    found = [(s.section_id, s.summary_fn) for s in sections if s.summary_fn]
+    assert len(found) == len(sections), "a section lost its summary_fn -- check this list"
+    return found
+
+
+HOSTILE_DATA: dict[str, Any] = {
+    "deployment_name": XSS,
+    "resource_types": [XSS],
+    "backup_run_id": XSS,
+    "restore_mode": "existing",
+    "target_deployment": XSS,
+    "deployments": [{"name": XSS}],
+}
+
+
+class TestASummaryFnCannotBuildMarkup:
+    """``summary_fn`` returns (label, value) pairs; both builders put the tags
+    around them and escape. A summary that ships HTML has nothing to escape it."""
+
+    @pytest.mark.parametrize(("section_id", "summary_fn"), _real_summary_fns())
+    def test_it_returns_plain_text_pairs(self, section_id: str, summary_fn):
+        items = summary_fn(HOSTILE_DATA)
+
+        assert isinstance(items, list)
+        for label, value in items:
+            assert isinstance(label, str)
+            assert isinstance(value, str)
+            assert "<" not in label, f"{section_id} builds markup in a label"
+
+    @pytest.mark.parametrize(("section_id", "summary_fn"), _real_summary_fns())
+    def test_the_wizard_review_escapes_it(self, section_id: str, summary_fn):
+        section = FormSection(section_id=section_id, title="Test", summary_fn=summary_fn)
+        html = _build_section_summary(section, HOSTILE_DATA)
+
+        assert XSS not in html
+        assert "&lt;img" in html  # shown, escaped -- not silently dropped
+
+    @pytest.mark.parametrize(("section_id", "summary_fn"), _real_summary_fns())
+    def test_the_modal_review_gets_data_not_html(self, section_id: str, summary_fn):
+        section = FormSection(section_id=section_id, title="Test", summary_fn=summary_fn)
+        fields = _build_section_fields(section, HOSTILE_DATA)
+
+        # "html" bypasses the template's escaping; a section's own summary never
+        # takes that route.
+        assert all("html" not in field for field in fields)
+        assert all(field["is_list"] is False for field in fields)
