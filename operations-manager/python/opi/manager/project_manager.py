@@ -7470,8 +7470,8 @@ class ProjectManager:
     async def upsert_attachment(
         self,
         attachment_id: str,
-        filename: str,
-        content: bytes,
+        filename: str | None,
+        content: bytes | None,
         *,
         on_existing: str,
         on_absent: str,
@@ -7493,6 +7493,12 @@ class ProjectManager:
         asked for an upsert -- and that is exactly why only the upsert verb passes
         ``replace`` with an absent-id ``create``.
 
+        Without ``content`` the caller referenced an attachment that is already in the
+        catalog: nothing is encrypted and the catalog entry is left untouched, only the
+        component's use of it is written. The verb's promise then applies to *that
+        coupling*, because that is what the request creates or changes -- the catalog
+        entry has to exist either way, or the reference points at nothing.
+
         Uses the single ProjectManager path: fresh contents from Git, mutate, save and
         commit, so the catalog model and the coupling checks run before anything lands.
         """
@@ -7502,13 +7508,22 @@ class ProjectManager:
 
             catalog = extract_attachment_catalog(project_data)
             exists = attachment_id in catalog
-            if exists and on_existing == "reject":
+            if content is None:
+                # Reference only: the entry has to be there, and the verb's promise is
+                # about the coupling this request writes, not about the catalog.
+                if not exists:
+                    return {
+                        "success": False,
+                        "error": f"Bijlage '{attachment_id}' bestaat niet in project '{project_name}'",
+                        "error_type": "not_found",
+                    }
+            elif exists and on_existing == "reject":
                 return {
                     "success": False,
                     "error": f"Bijlage '{attachment_id}' bestaat al in project '{project_name}'",
                     "error_type": "conflict",
                 }
-            if not exists and on_absent == "reject":
+            elif not exists and on_absent == "reject":
                 return {
                     "success": False,
                     "error": f"Bijlage '{attachment_id}' bestaat niet in project '{project_name}'",
@@ -7516,7 +7531,7 @@ class ProjectManager:
                 }
 
             public_key = (project_data.get("config") or {}).get("age-public-key")
-            if not public_key:
+            if content is not None and not public_key:
                 # Fail closed rather than store the bytes unencrypted: the catalog is
                 # committed to the projects repository, and attachments are certificates.
                 return {
@@ -7541,19 +7556,21 @@ class ProjectManager:
                 project_data, [ServiceType.ATTACHMENTS.value], [component_name] if component_name else None
             )
 
-            data_list = ensure_attachment_data_list(project_data.setdefault("services", []))
-            entry = {
-                "id": attachment_id,
-                "filename": filename,
-                "content": LiteralScalarString(encrypt_file_to_age_block_sync(content, public_key)),
-            }
-            for index, existing in enumerate(data_list):
-                if isinstance(existing, dict) and existing.get("id") == attachment_id:
-                    data_list[index] = entry
-                    break
-            else:
-                data_list.append(entry)
+            if content is not None:
+                data_list = ensure_attachment_data_list(project_data.setdefault("services", []))
+                entry = {
+                    "id": attachment_id,
+                    "filename": filename,
+                    "content": LiteralScalarString(encrypt_file_to_age_block_sync(content, public_key)),
+                }
+                for index, existing in enumerate(data_list):
+                    if isinstance(existing, dict) and existing.get("id") == attachment_id:
+                        data_list[index] = entry
+                        break
+                else:
+                    data_list.append(entry)
 
+            coupled = False
             if component_name and binding:
                 component = next(
                     c for c in project_data["components"] if isinstance(c, dict) and c.get("name") == component_name
@@ -7561,6 +7578,27 @@ class ProjectManager:
                 uses = [
                     use for use in extract_component_attachment_uses(component) if use.get("reference") != attachment_id
                 ]
+                coupled = len(uses) != len(extract_component_attachment_uses(component))
+                if content is None:
+                    # Nothing is written yet, so refusing here leaves the project as it was.
+                    if coupled and on_existing == "reject":
+                        return {
+                            "success": False,
+                            "error": (
+                                f"Component '{component_name}' gebruikt bijlage '{attachment_id}' al in "
+                                f"project '{project_name}'"
+                            ),
+                            "error_type": "conflict",
+                        }
+                    if not coupled and on_absent == "reject":
+                        return {
+                            "success": False,
+                            "error": (
+                                f"Component '{component_name}' gebruikt bijlage '{attachment_id}' niet in "
+                                f"project '{project_name}'"
+                            ),
+                            "error_type": "not_found",
+                        }
                 uses.append({"reference": attachment_id, **binding})
                 ServiceAdapter.set_service_config(
                     project_data,
@@ -7571,15 +7609,21 @@ class ProjectManager:
                 )
 
             where = f" and coupled to component '{component_name}'" if component_name and binding else ""
+            what = "Couple attachment" if content is None else "Upsert attachment"
             try:
                 await self.save_and_commit_project(
-                    project_data, f"Upsert attachment '{attachment_id}' in project '{project_name}'{where}"
+                    project_data, f"{what} '{attachment_id}' in project '{project_name}'{where}"
                 )
             except (ProjectSchemaError, ProjectIntegrityError) as e:
                 return {"success": False, "error": str(e), "error_type": "validation_error"}
 
-            logger.info(f"Upserted attachment '{attachment_id}' in project '{project_name}'{where}")
-            return {"success": True, "attachment": attachment_id, "replaced": exists, "component": component_name}
+            logger.info(f"{what} '{attachment_id}' in project '{project_name}'{where}")
+            return {
+                "success": True,
+                "attachment": attachment_id,
+                "replaced": coupled if content is None else exists,
+                "component": component_name,
+            }
 
         except Exception as e:
             error_msg = f"Error upserting attachment '{attachment_id}': {e}"
