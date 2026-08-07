@@ -25,7 +25,13 @@ import pytest
 import uvicorn
 from itsdangerous import TimestampSigner
 from tests.e2e.helpers.forgejo import ForgejoClient
-from tests.e2e.testserver import SECRET_KEY, create_test_app
+from tests.e2e.testserver import (
+    SECRET_KEY,
+    create_test_app,
+    register_project_copy,
+    reset_seeded_projects,
+    unregister_project,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -141,6 +147,52 @@ def app_server() -> Generator[str]:
 
         server.should_exit = True
         thread.join(timeout=5)
+
+
+def _project_name_for(module_name: str) -> str:
+    """Project name derived from the test module, so two files never share one.
+
+    ``tests.e2e.test_edit_wizard`` becomes ``e2e-edit-wizard``. Derived rather
+    than hand-picked, because a hand-picked name can silently be copied into a
+    second file - which is how a shared project happens in the first place.
+    """
+    stem = module_name.rsplit(".", 1)[-1].removeprefix("test_").replace("_", "-")
+    return f"e2e-{stem}"
+
+
+@pytest.fixture
+def own_project(request: pytest.FixtureRequest, app_server: str) -> Generator[str]:
+    """A private copy of a fixture project, registered for this test only.
+
+    Yields the project name. Which fixture file it copies comes from the test
+    module's ``PROJECT_TEMPLATE`` (default: ``test-project-detail``).
+
+    This is the "put it down, clean it up" half of the isolation: a file that
+    edits project data gets its own project instead of the shared seeded one, so
+    it cannot be disturbed by - or disturb - another file, whether that file ran
+    before it or runs beside it.
+    """
+    template = getattr(request.module, "PROJECT_TEMPLATE", "test-project-detail")
+    name = _project_name_for(request.module.__name__)
+    register_project_copy(template, name)
+    yield name
+    unregister_project(name)
+
+
+@pytest.fixture(autouse=True)
+def _reset_projects_after_test(request: pytest.FixtureRequest) -> Generator[None]:
+    """Put the project registry back after every local E2E test.
+
+    Structural rather than per-test: the app, the browser context and the
+    registry are all session-scoped, so anything a test writes outlives it. A
+    test cannot forget this, because it is not something a test opts into.
+
+    Only for local runs - sandbox tests talk to a real cluster and own their own
+    cleanup (see the module fixtures in the sandbox suites).
+    """
+    yield
+    if "app_server" in request.fixturenames:
+        reset_seeded_projects()
 
 
 @pytest.fixture
