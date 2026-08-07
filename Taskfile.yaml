@@ -1999,7 +1999,10 @@ tasks:
       # inside them.
       # SEED=<n> reproduces a specific shuffle; without it every run picks a new one,
       # which is the point: repeated runs sample different orders.
-      - uv run pytest tests/e2e/ -m "e2e and not sandbox" -p randomly {{if .SEED}}--randomly-seed={{.SEED}}{{end}} -q --timeout=300
+      # No -q: the addopts are already at verbosity 0 (-v -q), so an extra -q lands on
+      # -1 and pytest drops the report header -- the line where pytest-randomly prints
+      # `Using --randomly-seed=<n>`. Without it the shuffle cannot be replayed.
+      - uv run pytest tests/e2e/ -m "e2e and not sandbox" -p randomly {{if .SEED}}--randomly-seed={{.SEED}}{{end}} --timeout=300
     silent: false
 
   test-e2e-parallel:
