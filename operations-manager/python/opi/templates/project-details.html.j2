@@ -779,46 +779,15 @@
         errorEl.classList.remove('is-hidden');
     });
 
-    /* closeEditModal / closeEditModalAndReload / handleEditBackdropClick and
-       the global ``isEditSubmitting`` flag live in /static/js/edit_modal.js so
-       they are in scope on every page that mounts the wizard. */
-
-    /* -- HTMX integration: detect progress view and track submit state --
-
-       A running task is what makes the modal undismissable, so this is the single place
-       that decides it: any swap that brings in a progress view marks the modal busy, and
-       the finish buttons (Ok / Sluiten) release it. The swapped element itself counts,
-       not just its descendants: the progress fragment replaces itself on every poll, so
-       from the second poll onwards it IS the target. */
-
-    function containsClass(el, className) {
-        if (!el) return false;
-        if (el.classList && el.classList.contains(className)) return true;
-        return !!(el.querySelector && el.querySelector('.' + className));
-    }
-
-    document.addEventListener('htmx:afterSwap', function(evt) {
-        if (containsClass(evt.detail.target, 'edit-progress-view')) {
-            window.isEditSubmitting = true;
-        }
-        if (containsClass(evt.detail.target, 'edit-progress-actions')) {
-            window.isEditSubmitting = false;
-        }
-    });
+    /* closeEditModal / closeEditModalAndReload / handleEditBackdropClick, the global
+       ``isEditSubmitting`` flag, the htmx hook that raises it while a progress view is
+       in the modal, and the Escape handler that respects it all live in
+       /static/js/edit_modal.js. They belong to the shared modal, not to this page:
+       every page that opens it gets the same rule, without wiring it up again. */
 
     // Initialize KV editors after settle (DOM fully ready, attributes processed)
     document.addEventListener('htmx:afterSettle', function(evt) {
         if (typeof initKvEditors === 'function') initKvEditors(evt.detail.target);
-    });
-
-    // Escape closes the modal, unless an action is running inside it.
-    document.addEventListener('keydown', function(event) {
-        if (event.key === 'Escape' && !window.isEditSubmitting) {
-            var modal = document.getElementById('edit-section-modal');
-            if (modal.classList.contains('is-open')) {
-                closeEditModal();
-            }
-        }
     });
 
     /**
