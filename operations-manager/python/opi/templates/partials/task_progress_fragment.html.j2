@@ -20,6 +20,7 @@
     - on_complete: str | None (JavaScript to run on Ok click, e.g. "location.reload()")
     - on_complete_label: str (label of that button, default "Ok" / "Sluiten")
 #}
+{% from "widgets/_macros.html.j2" import progress_bar, progress_task_list %}
 {% set _container_id = container_id | default("task-progress-" ~ task_id) %}
 {% set _success_msg = success_message | default("Wijzigingen succesvol verwerkt!") %}
 {# ``edit-progress-view`` while the task runs is what makes a modal hosting this
@@ -35,58 +36,17 @@
      hx-swap="outerHTML"
      {% endif %}>
 
-    <div class="edit-progress-bar-wrapper">
-        <div class="edit-progress-bar" style="width: {{ progress }}%"></div>
-    </div>
+    {{ progress_bar(progress) }}
 
     {% if status == "completed" %}
-    <p class="edit-progress-step rvo-text--groen-700">{{ _success_msg }}</p>
+    <p class="edit-progress-step">{{ _success_msg }}</p>
     {% elif status == "failed" %}
     {% include "partials/_component_failures.html.j2" %}
     {% else %}
     <p class="edit-progress-step">{{ current_step }} <span class="edit-progress-percentage">{{ progress }}%</span></p>
     {% endif %}
 
-    {% if tasks %}
-    <div class="edit-progress-tasks">
-        {% for task in tasks %}
-        <div class="edit-progress-task-item">
-            {% if task.status == "completed" %}
-            <c-icon icon="vinkje" size="sm" color="groen" />
-            {% elif task.status == "failed" %}
-            <c-icon icon="kruis" size="sm" color="rood" />
-            {% elif task.status == "running" %}
-            <c-icon icon="pijl-naar-rechts" size="sm" color="hemelblauw" />
-            {% else %}
-            <c-icon icon="klok" size="sm" color="grijs-600" />
-            {% endif %}
-            <span>{{ task.name }}</span>
-        </div>
-        {% if task.error %}
-        <div class="edit-progress-task-error">{{ task.error }}</div>
-        {% endif %}
-        {% if task.subtasks %}
-        {% for subtask in task.subtasks %}
-        <div class="edit-progress-task-item edit-progress-subtask">
-            {% if subtask.status == "completed" %}
-            <c-icon icon="vinkje" size="sm" color="groen" />
-            {% elif subtask.status == "failed" %}
-            <c-icon icon="kruis" size="sm" color="rood" />
-            {% elif subtask.status == "running" %}
-            <c-icon icon="pijl-naar-rechts" size="sm" color="hemelblauw" />
-            {% else %}
-            <c-icon icon="klok" size="sm" color="grijs-600" />
-            {% endif %}
-            <span>{{ subtask.name }}</span>
-        </div>
-        {% if subtask.error %}
-        <div class="edit-progress-task-error edit-progress-subtask">{{ subtask.error }}</div>
-        {% endif %}
-        {% endfor %}
-        {% endif %}
-        {% endfor %}
-    </div>
-    {% endif %}
+    {{ progress_task_list(tasks) }}
 
     {% if status == "completed" and on_complete is defined and on_complete %}
     <div class="edit-progress-actions">

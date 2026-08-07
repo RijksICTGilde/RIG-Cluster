@@ -92,7 +92,11 @@ INLINE_STYLE_BUDGET: dict[str, tuple[int, str]] = {
     "dashboard.html.j2": (2, WERKLIJST),
     "metrics-explorer.html.j2": (7, WERKLIJST),
     "partials/deployment_metrics.html.j2": (4, WERKLIJST),
-    "partials/task_progress_fragment.html.j2": (1, WERKLIJST),
+    "widgets/_macros.html.j2": (
+        1,
+        "De breedte van de voortgangsbalk is de waarde zelf en kan niet in een CSS-bestand. "
+        "Staat in de macro progress_bar, zodat die uitzondering op een plek blijft.",
+    ),
     "project-details/_argocd-deployment-card.html.j2": (28, WERKLIJST),
     "project-details/_argocd-status-skeleton.html.j2": (7, WERKLIJST),
     "project-details/_resource-usage.html.j2": (4, WERKLIJST),
@@ -124,7 +128,6 @@ INLINE_STYLE_BUDGET: dict[str, tuple[int, str]] = {
     "widgets/button_group.html.j2": (1, WERKLIJST),
     "widgets/text.html.j2": (1, WERKLIJST),
     "wizard/modal_wizard_progress.html.j2": (1, WERKLIJST),
-    "wizard/modal_wizard_progress_fragment.html.j2": (3, WERKLIJST),
     "wizard/modal_wizard_success.html.j2": (1, WERKLIJST),
     "wizard/partials/attachments_list.html.j2": (3, WERKLIJST),
     "wizard/partials/attachments_upload.html.j2": (2, WERKLIJST),
