@@ -5,7 +5,7 @@ description: RIG Platform Operations Manager
 services:
   - keycloak:
       config:
-        template: sso-support
+        template: operations-manager-realm
         users:
           - username: admin
             email: admin@sandbox.rijksapp.dev
