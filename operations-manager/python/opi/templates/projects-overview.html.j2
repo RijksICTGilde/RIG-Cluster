@@ -21,8 +21,8 @@
     </div>
 
     {# Action Bar #}
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div style="display: flex; gap: var(--rvo-space-md); align-items: center;">
+    <div class="page-header-row">
+        <div class="page-header-actions">
             <c-button
                 label="Nieuw Project"
                 kind="primary"
@@ -39,7 +39,7 @@
                 @click="window.location.href='/projects?refresh=true'" />
         </div>
 
-        <div style="display: flex; gap: var(--rvo-space-sm); align-items: center;">
+        <div class="filter-row">
             <span class="rvo-text--sm rvo-text--subtle">Totaal: <strong>{{ projects|length }} project{% if projects|length != 1 %}en{% endif %}</strong></span>
         </div>
     </div>
@@ -116,9 +116,9 @@
                         {% endfor %}
                     {% else %}
                         <tr class="project-row">
-                            <td colspan="5" style="text-align: center; padding: var(--rvo-space-xl);">
-                                <div style="color: var(--rvo-color-grijs-600);">
-                                    <c-icon icon="info" size="lg" style="margin-bottom: var(--rvo-space-sm);" />
+                            <td colspan="5" class="table-empty-cell">
+                                <div class="empty-state-text">
+                                    <c-icon icon="info" size="lg" />
                                     <div>Geen projecten gevonden waar u toegang toe heeft.</div>
                                 </div>
                             </td>

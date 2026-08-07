@@ -86,28 +86,5 @@
 {% endblock %}
 
 {% block additional_styles %}
-    <style>
-        .rvo-breadcrumb {
-            display: flex;
-            list-style: none;
-            padding: 0;
-            margin: 0;
-            gap: 0.5rem;
-        }
-
-        .rvo-breadcrumb li:not(:last-child)::after {
-            content: "/";
-            margin-left: 0.5rem;
-            color: #666;
-        }
-
-        .rvo-breadcrumb a {
-            color: #007BC7;
-            text-decoration: none;
-        }
-
-        .rvo-breadcrumb a:hover {
-            text-decoration: underline;
-        }
-    </style>
+    <link rel="stylesheet" href="{{ static_url('css/wizard-start.css') }}">
 {% endblock %}

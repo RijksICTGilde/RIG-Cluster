@@ -43,6 +43,11 @@ h6 .utrecht-icon {
     display: none;
 }
 
+/* De kop boven een sectie staat strak op de inhoud eronder. */
+.section-heading {
+    margin-bottom: 0;
+}
+
 /* Kop van een pagina: titel links, acties rechts. */
 .page-header-row {
     display: flex;

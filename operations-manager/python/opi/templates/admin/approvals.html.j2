@@ -16,7 +16,7 @@
     {# Flash messages #}
     {% if success_message %}
     <c-card padding="md" backgroundColor="wit" outline="true">
-        <div style="color: var(--rvo-color-groen); display: flex; align-items: center; gap: var(--rvo-space-sm);">
+        <div class="flash-success">
             <c-icon icon="vinkje" size="md" />
             <span>{{ success_message }}</span>
         </div>
@@ -91,8 +91,8 @@
         {% endfor %}
     {% else %}
         <c-card padding="xl" backgroundColor="wit" outline="true">
-            <div style="text-align: center; color: var(--rvo-color-grijs-600);">
-                <c-icon icon="info" size="lg" style="margin-bottom: var(--rvo-space-sm);" />
+            <div class="text-center empty-state-text">
+                <c-icon icon="info" size="lg" />
                 <div>Geen domein- of subdomeinaanvragen gevonden.</div>
             </div>
         </c-card>
@@ -112,7 +112,7 @@
                   className="edit-modal-close-btn"
                   @click="closeApprovalModal()" />
     </div>
-    <div id="approval-error" class="edit-section-error" style="display: none;"></div>
+    <div id="approval-error" class="edit-section-error is-hidden"></div>
     <div id="edit-section-inner">
         <div class="edit-section-content">
             <div class="edit-section-loading"><p>Laden...</p></div>
@@ -133,7 +133,7 @@
         document.getElementById('approval-title-text').textContent = 'Domeingoedkeuring - ' + projectName;
 
         var errorEl = document.getElementById('approval-error');
-        errorEl.style.display = 'none';
+        errorEl.classList.add('is-hidden');
 
         var innerEl = document.getElementById('edit-section-inner');
         innerEl.innerHTML =
@@ -158,7 +158,7 @@
         })
         .catch(function(err) {
             errorEl.textContent = err.message;
-            errorEl.style.display = 'block';
+            errorEl.classList.remove('is-hidden');
         });
     }
 

@@ -35,3 +35,8 @@
     display: flex;
     gap: var(--rvo-space-xs);
 }
+
+/* Het verwijderformulier staat in dezelfde regel als de andere acties. */
+.inline-form {
+    display: inline;
+}

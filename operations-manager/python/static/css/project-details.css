@@ -1339,11 +1339,6 @@
    waarden zijn onveranderd overgenomen.
    =================================================================== */
 
-/* De h2 boven elke sectie staat strak op de inhoud eronder. */
-.section-heading {
-    margin-bottom: 0;
-}
-
 .section-heading--danger {
     color: var(--rvo-color-rood-600);
 }

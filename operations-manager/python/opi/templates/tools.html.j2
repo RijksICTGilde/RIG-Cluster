@@ -1,11 +1,13 @@
 <c-page title="ZAD Tools" lang="nl" additionalCss="{{ static_url('css/tools.css') }}">
     {# additionalCss verwacht een URL en maakt er een link-element van in de head, na de
        ROOS-stylesheets: dezelfde plek in de cascade als het style-blok dat halverwege deze
-       pagina stond.
+       pagina stond. Deze pagina bouwt zijn eigen c-page en erft base.html.j2 dus niet.
 
-       Let op: boven de c-page-regel mag niets staan, ook geen Jinja-commentaar. Staat daar
-       wel iets, dan slaat de componentverwerking deze template over en komt c-page
-       onverwerkt in de uitvoer. Vandaar dat deze uitleg hier staat. #}
+       Let op bij het aanpassen van dit commentaar: schrijf hier nooit een letterlijke
+       style- of script-openingstag. De componentverwerking leest de bron als HTML voordat
+       Jinja het commentaar weghaalt, en zo'n tag begint een blok ruwe tekst dat pas bij de
+       sluittag eindigt. Staat die sluittag er niet, dan is de rest van het bestand tekst,
+       wordt c-page niet meer herkend en komt de pagina onverwerkt in de uitvoer. #}
     <c-header
         text="AGE Encryption Tools"
         subtitle="Encrypt and decrypt text using AGE public and private keys"
@@ -59,13 +61,13 @@
             </form>
         </c-card>
 
-        <c-card padding="md" id="output-card" style="display: none;">
+        <c-card padding="md" id="output-card" class="is-hidden">
             <c-heading type="h2">Output</c-heading>
-            <div id="error-message" class="rvo-alert rvo-alert--error" style="display: none; margin-bottom: 1rem;">
+            <div id="error-message" class="rvo-alert rvo-alert--error tool-error-message is-hidden">
                 <span id="error-text"></span>
             </div>
-            <div id="success-message" style="display: block;">
-                <p class="rvo-text--sm" style="margin-bottom: 0.5rem;">Result (click to copy):</p>
+            <div id="success-message">
+                <p class="rvo-text--sm tool-result-label">Result (click to copy):</p>
                 <pre id="output-text" class="output-code-block"></pre>
             </div>
         </c-card>
@@ -172,16 +174,16 @@
             });
 
             function showSuccess(result) {
-                outputCard.style.display = 'block';
-                errorMessage.style.display = 'none';
-                successMessage.style.display = 'block';
+                outputCard.classList.remove('is-hidden');
+                errorMessage.classList.add('is-hidden');
+                successMessage.classList.remove('is-hidden');
                 outputText.textContent = result;
             }
 
             function showError(message) {
-                outputCard.style.display = 'block';
-                successMessage.style.display = 'none';
-                errorMessage.style.display = 'block';
+                outputCard.classList.remove('is-hidden');
+                successMessage.classList.add('is-hidden');
+                errorMessage.classList.remove('is-hidden');
                 errorText.textContent = message;
             }
         });

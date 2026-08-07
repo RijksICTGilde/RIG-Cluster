@@ -40,33 +40,33 @@
                 </div>
 
                 {# Metric filter #}
-                <div class="metrics-controls__filter" id="filter-container" style="display: none;">
+                <div class="metrics-controls__filter is-hidden" id="filter-container">
                     <label for="metric-filter" class="rvo-text--sm"><strong>Filter metrics:</strong></label>
                     <input type="text" id="metric-filter" class="rvo-input" placeholder="Type om te filteren..." oninput="filterMetrics()" />
                 </div>
             </div>
 
             {# Loading indicator #}
-            <div id="loading" style="display: none;">
+            <div id="loading" class="is-hidden">
                 <p class="rvo-text--subtle">Metrics ophalen...</p>
             </div>
 
             {# Error display #}
-            <div id="error-msg" style="display: none;">
+            <div id="error-msg" class="is-hidden">
                 <c-card outline="true" padding="md">
-                    <p id="error-text" style="color: var(--rvo-color-error, #d33);">Fout bij het ophalen van metrics.</p>
+                    <p id="error-text" class="metrics-error-text">Fout bij het ophalen van metrics.</p>
                 </c-card>
             </div>
 
             {# Prometheus iframe #}
-            <div id="prometheus-frame-container" style="display: none;">
+            <div id="prometheus-frame-container" class="is-hidden">
                 <c-heading type="h2" textContent="Prometheus Graph" />
                 <iframe id="prometheus-frame"
-                        style="width: 100%; height: 600px; border: 1px solid var(--rvo-color-grijs-300, #ccc); border-radius: 4px;"
+                        class="prometheus-frame"
                         sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
                         title="Prometheus Graph UI">
                 </iframe>
-                <p class="rvo-text--sm rvo-text--subtle" style="margin-top: 0.5rem;">
+                <p class="rvo-text--sm rvo-text--subtle prometheus-frame-hint">
                     <a id="prometheus-direct-link" href="#" target="_blank" rel="noopener">Open in nieuw tabblad</a>
                 </p>
             </div>
@@ -110,7 +110,7 @@
         metricSelect.innerHTML = '<option value="">-- Laden... --</option>';
         metricSelect.disabled = true;
         showBtn.disabled = true;
-        filterContainer.style.display = "none";
+        filterContainer.classList.add("is-hidden");
         metricFilter.value = "";
         metricCount.textContent = "";
         allMetrics = [];
@@ -123,8 +123,8 @@
             return;
         }
 
-        loading.style.display = "block";
-        errorMsg.style.display = "none";
+        loading.classList.remove("is-hidden");
+        errorMsg.classList.add("is-hidden");
 
         try {
             const response = await fetch(`/ui/metrics-explorer/metrics/${serviceId}`);
@@ -138,16 +138,16 @@
             populateMetricDropdown(allMetrics);
 
             if (allMetrics.length > 10) {
-                filterContainer.style.display = "flex";
+                filterContainer.classList.remove("is-hidden");
             }
             metricCount.textContent = `${allMetrics.length} metrics beschikbaar`;
 
         } catch (err) {
             errorText.textContent = `Fout: ${err.message}`;
-            errorMsg.style.display = "block";
+            errorMsg.classList.remove("is-hidden");
             metricSelect.innerHTML = '<option value="">-- Fout bij ophalen --</option>';
         } finally {
-            loading.style.display = "none";
+            loading.classList.add("is-hidden");
         }
     });
 
@@ -197,7 +197,7 @@
 
         frame.src = graphUrl;
         directLink.href = graphUrl;
-        frameContainer.style.display = "block";
+        frameContainer.classList.remove("is-hidden");
 
         // Scroll to the iframe
         frameContainer.scrollIntoView({ behavior: "smooth" });

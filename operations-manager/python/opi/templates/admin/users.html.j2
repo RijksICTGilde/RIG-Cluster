@@ -14,7 +14,7 @@
     </div>
 
     {# Action Bar #}
-    <div style="display: flex; justify-content: space-between; align-items: center;">
+    <div class="page-header-row">
         <div>
             <c-button
                 label="Gebruiker toevoegen"
@@ -63,7 +63,7 @@
                                         showIcon="before"
                                         icon="bewerken"
                                         @click="window.location.href='/admin/users/{{ user.id }}/edit'" />
-                                    <form method="post" action="/admin/users/{{ user.id }}/delete" style="display:inline;"
+                                    <form method="post" action="/admin/users/{{ user.id }}/delete" class="inline-form"
                                           onsubmit="return confirm('Weet u zeker dat u {{ user.full_name }} wilt verwijderen?');">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
                                         <c-button
@@ -80,9 +80,9 @@
                         {% endfor %}
                     {% else %}
                         <tr>
-                            <td colspan="4" style="text-align: center; padding: var(--rvo-space-xl);">
-                                <div style="color: var(--rvo-color-grijs-600);">
-                                    <c-icon icon="info" size="lg" style="margin-bottom: var(--rvo-space-sm);" />
+                            <td colspan="4" class="table-empty-cell">
+                                <div class="empty-state-text">
+                                    <c-icon icon="info" size="lg" />
                                     <div>Geen gebruikers gevonden. Voeg een gebruiker toe om te beginnen.</div>
                                 </div>
                             </td>
@@ -96,7 +96,7 @@
     {# Flash messages #}
     {% if success_message %}
     <c-card padding="md" backgroundColor="wit" outline="true">
-        <div style="color: var(--rvo-color-groen); display: flex; align-items: center; gap: var(--rvo-space-sm);">
+        <div class="flash-success">
             <c-icon icon="vinkje" size="md" />
             <span>{{ success_message }}</span>
         </div>
