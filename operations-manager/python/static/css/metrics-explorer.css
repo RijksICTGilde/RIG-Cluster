@@ -34,3 +34,20 @@
     font-size: 0.95rem;
     width: 100%;
 }
+
+/* De foutmelding en het ingesloten Prometheus-venster. Stonden als style= in de markup;
+   het aan- en uitzetten gaat via .is-hidden uit base.css. */
+.metrics-error-text {
+    color: var(--rvo-color-error, #d33);
+}
+
+.prometheus-frame {
+    width: 100%;
+    height: 600px;
+    border: 1px solid var(--rvo-color-grijs-300, #ccc);
+    border-radius: 4px;
+}
+
+.prometheus-frame-hint {
+    margin-top: 0.5rem;
+}

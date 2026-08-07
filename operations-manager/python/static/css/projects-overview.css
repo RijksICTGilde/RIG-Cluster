@@ -203,3 +203,10 @@
         flex-direction: column;
     }
 }
+
+/* Rijtje met een filter en de knop ernaast. */
+.filter-row {
+    display: flex;
+    gap: var(--rvo-space-sm);
+    align-items: center;
+}

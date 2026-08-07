@@ -46,7 +46,7 @@
 
     {# Debug: Show project data #}
     <c-fieldset legend="Debug: Project Data (JSON)" :collapsible="true" :defaultCollapsed="true">
-        <pre style="background: #f5f5f5; padding: 1rem; overflow-x: auto; font-size: 0.875rem;">{{ project_data | tojson(indent=2) }}</pre>
+        <pre class="debug-json">{{ project_data | tojson(indent=2) }}</pre>
     </c-fieldset>
 </c-layout-flow>
 
