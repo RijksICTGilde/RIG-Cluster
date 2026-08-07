@@ -663,6 +663,127 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
             await project_manager.close()
 
 
+async def handle_configure_service_values(payload: dict, progress: Any) -> dict:
+    """Add, patch, delete or clear the values a service owns on one component (RC-55).
+
+    The sibling of ``handle_configure_service`` for ``user-env-vars`` and ``aliases``,
+    which own a plain component property rather than a block in a ``services:`` list.
+    Write first, then reconcile -- and skip the reconcile when the write changed
+    nothing, exactly as a clear that removed nothing does.
+
+    Expected payload keys:
+        project_name, service, target, operation, component, deployment, values, keys,
+        rollout
+    """
+    from opi.manager.project_manager import ProjectManager
+    from opi.utils.project_utils import validate_project_name
+
+    project_name: str = payload["project_name"]
+    service_name: str = payload["service"]
+    target: str = payload["target"]
+    operation: str = payload["operation"]
+    component_name: str = payload["component"]
+    deployment_name: str | None = payload.get("deployment")
+    values: dict[str, str] | None = payload.get("values")
+    keys: list[str] | None = payload.get("keys")
+    project_manager: ProjectManager | None = None
+
+    def failure(message: str, error_type: str = "unknown") -> dict:
+        return {
+            "status": "failed",
+            "service": service_name,
+            "target": target,
+            "component": component_name,
+            "deployment": deployment_name,
+            "operation": operation,
+            "error": message,
+            "error_type": error_type,
+        }
+
+    try:
+        validate_task = progress.add_task("Waarden-validatie")
+        progress.update_current_step("Validating project name")
+        if not validate_project_name(project_name):
+            error_msg = (
+                "Invalid project name format. Must start with lowercase letter, "
+                "then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters"
+            )
+            progress.fail_task(validate_task, error_msg)
+            progress.fail_project(error_msg)
+            return failure(error_msg, "invalid_project_name")
+        progress.complete_task(validate_task)
+
+        write_task = progress.add_task("Waarden schrijven")
+        progress.update_current_step(f"Applying {operation} of '{service_name}' values at {target}")
+        project_file_relative_path = f"projects/{project_name}.yaml"
+        project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
+
+        result = await project_manager.set_component_values(
+            service_name,
+            target,
+            operation,
+            component_name=component_name,
+            deployment_name=deployment_name,
+            values=values,
+            keys=keys,
+        )
+        if not result["success"]:
+            error_msg = result.get("error", "Unknown error writing service values")
+            progress.fail_task(write_task, error_msg)
+            progress.fail_project(error_msg)
+            return failure(error_msg, result.get("error_type", "unknown"))
+        progress.complete_task(write_task)
+
+        changed = bool(result.get("changed"))
+        processing: dict[str, Any] = {"status": "skipped"}
+        if not rollout_requested(payload):
+            note_rollout_skipped(progress)
+            processing = skipped_processing()
+        elif changed:
+            deploy_task = progress.add_task("Project processing")
+            progress.update_current_step("Processing project to reconcile the new values")
+            processing_success = await project_manager.process_project_from_git(
+                project_file_relative_path, task_progress_manager=progress
+            )
+            if processing_success:
+                processing = {"status": "completed"}
+                progress.complete_task(deploy_task)
+            else:
+                processing = {"status": "failed"}
+                processing_error = project_manager.get_processing_error() or "Project processing failed"
+                progress.fail_task(deploy_task, processing_error)
+                progress.fail_project(processing_error)
+
+        succeeded = processing["status"] != "failed"
+        return {
+            "status": "success" if succeeded else "failed",
+            "service": service_name,
+            "target": target,
+            "component": component_name,
+            "deployment": deployment_name,
+            "operation": operation,
+            "changed": changed,
+            "processing": {
+                **processing,
+                **(
+                    {"error": project_manager.get_processing_error()}
+                    if not succeeded and project_manager.get_processing_error()
+                    else {}
+                ),
+            },
+        }
+
+    except Exception:
+        # Never the exception's own text: a failure in this path can carry a decrypted
+        # value, and this message reaches the caller and the log.
+        logger.exception("Error applying %s of '%s' values in project '%s'", operation, service_name, project_name)
+        progress.fail_project("An internal error occurred")
+        return failure("An internal error occurred", "internal_error")
+    finally:
+        if project_manager:
+            await project_manager.close()
+
+
 async def handle_delete_component(payload: dict, progress: Any) -> dict:
     """Handle async component deletion task.
 

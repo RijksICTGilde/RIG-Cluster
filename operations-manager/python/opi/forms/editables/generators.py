@@ -178,41 +178,57 @@ class AttachmentStagingResolveGenerator:
 
 
 class UserEnvVarsEncryptGenerator:
-    """Encrypt user-env-vars on each component with the project's AGE public key.
+    """Encrypt user-env-vars with the project's AGE public key, on BOTH layers.
 
-    Iterates over all components and encrypts any non-empty ``user-env-vars``
-    string value. Skips values that are already AGE-encrypted.
+    Encrypts any non-empty ``user-env-vars`` string value that is not already an AGE
+    block. Skips values that are already encrypted.
+
+    Both layers, not just ``components[*]``: the same service owns
+    ``deployments[*]/components[*]/user-env-vars`` (RC-25), and a deployment override
+    holds exactly the same kind of secret as the component value it overrides. This
+    generator is the backstop for when the converter did not encrypt (no context data,
+    a hand-edited file), and a backstop that covers half the layers leaves the other
+    half in plaintext in git -- which is what it did until RC-55.
 
     Must run after ``AGEKeyPairGenerator`` so the project public key exists.
     Uses a ``_generated`` path - the return value is discarded during cleanup.
     """
 
     def generate(self, yaml_data: dict[str, Any]) -> Any:
-        from ruamel.yaml.scalarstring import LiteralScalarString
-
-        from opi.utils.age import encrypt_age_content_sync
-
         public_key = yaml_data.get("config", {}).get("age-public-key")
         if not public_key:
             logger.debug("No project public key available, skipping user-env-vars encryption")
             return True
 
         for component in yaml_data.get("components", []):
-            if not isinstance(component, dict):
+            self._encrypt(component, public_key, component.get("name") if isinstance(component, dict) else None)
+        for deployment in yaml_data.get("deployments", []):
+            if not isinstance(deployment, dict):
                 continue
-            user_env_vars = component.get("user-env-vars")
-            if not user_env_vars or not isinstance(user_env_vars, str):
-                continue
-            if "BEGIN AGE ENCRYPTED FILE" in user_env_vars:
-                continue
-            encrypted = encrypt_age_content_sync(user_env_vars, public_key)
-            component["user-env-vars"] = LiteralScalarString(encrypted)
-            logger.debug(
-                "Encrypted user-env-vars for component %s",
-                component.get("name", "unknown"),
-            )
+            for component in deployment.get("components", []):
+                self._encrypt(
+                    component,
+                    public_key,
+                    component.get("reference") if isinstance(component, dict) else None,
+                )
 
         return True
+
+    @staticmethod
+    def _encrypt(component: Any, public_key: str, label: str | None) -> None:
+        from ruamel.yaml.scalarstring import LiteralScalarString
+
+        from opi.utils.age import encrypt_age_content_sync
+
+        if not isinstance(component, dict):
+            return
+        user_env_vars = component.get("user-env-vars")
+        if not user_env_vars or not isinstance(user_env_vars, str):
+            return
+        if "BEGIN AGE ENCRYPTED FILE" in user_env_vars:
+            return
+        component["user-env-vars"] = LiteralScalarString(encrypt_age_content_sync(user_env_vars, public_key))
+        logger.debug("Encrypted user-env-vars for component %s", label or "unknown")
 
 
 class ComponentAliasesEncryptGenerator:
