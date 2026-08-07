@@ -11,6 +11,8 @@ path and not a rule the author of a summary has to remember.
 
 from __future__ import annotations
 
+import ast
+import inspect
 from typing import Any
 
 import pytest
@@ -19,6 +21,7 @@ from opi.forms.editables.summarizers import HiddenSummary, MaskedSummary
 from opi.forms.visualizers import wizard_sections
 from opi.forms.visualizers.sections import FormSection
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.web import router_wizard
 from opi.web.router_wizard import _build_section_fields, _build_section_summary
 
 XSS = "<img src=x onerror=alert(1)>"
@@ -311,3 +314,93 @@ class TestASummaryFnCannotBuildMarkup:
         # takes that route.
         assert all("html" not in field for field in fields)
         assert all(field["is_list"] is False for field in fields)
+
+
+#: Interpolations that are HTML the module already built (and already escaped the
+#: values inside), so escaping them again would print tags.
+ALLOWED_RAW = {
+    "''.join(parts)",
+    "''.join(item_parts)",
+    "len(items)",
+}
+
+#: The functions in router_wizard.py that build summary HTML themselves.
+SUMMARY_BUILDERS = (
+    "_summary_pairs_html",
+    "_build_section_summary",
+    "_build_sequence_summary",
+)
+
+
+class TestTheSummaryBuildersEscapeEveryInterpolation:
+    """A source guard on the builders that do produce HTML.
+
+    They are f-strings by nature, so a new one is one keystroke away from
+    printing a raw value. Every hole in those f-strings must either go through
+    ``_summary_text`` or be a fragment this module built itself.
+    """
+
+    def test_no_unescaped_hole_in_a_markup_f_string(self):
+        tree = ast.parse(inspect.getsource(router_wizard))
+        offenders: list[str] = []
+
+        for func in ast.walk(tree):
+            if not isinstance(func, ast.FunctionDef) or func.name not in SUMMARY_BUILDERS:
+                continue
+            for node in ast.walk(func):
+                if not isinstance(node, ast.JoinedStr):
+                    continue
+                literal = "".join(p.value for p in node.values if isinstance(p, ast.Constant))
+                if "<" not in literal:
+                    continue
+                for part in node.values:
+                    if not isinstance(part, ast.FormattedValue):
+                        continue
+                    expr = ast.unparse(part.value)
+                    escaped = isinstance(part.value, ast.Call) and getattr(part.value.func, "id", "") == "_summary_text"
+                    if not escaped and expr not in ALLOWED_RAW:
+                        offenders.append(f"{func.name}: {{{expr}}}")
+
+        assert not offenders, (
+            "put these through _summary_text (or allowlist them if they are built HTML): " + ", ".join(offenders)
+        )
+
+    def test_the_guard_would_catch_a_raw_hole(self):
+        """The guard above is only worth having if it fails on the real mistake."""
+        tree = ast.parse('def _build_section_summary(x):\n    return f"<p>{x}</p>"\n')
+        func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        holes = [
+            ast.unparse(p.value)
+            for node in ast.walk(func)
+            if isinstance(node, ast.JoinedStr)
+            for p in node.values
+            if isinstance(p, ast.FormattedValue)
+        ]
+        assert holes == ["x"]
+        assert "x" not in ALLOWED_RAW
+
+
+class TestSummaryFnImplementationsHoldNoMarkup:
+    """A source guard on wizard_sections.py, where the summary_fn's live.
+
+    Nothing there builds HTML any more; a new f-string with a tag in it is the
+    mistake this catches.
+    """
+
+    def test_no_summary_fn_contains_a_tag(self):
+        tree = ast.parse(inspect.getsource(wizard_sections))
+        offenders: list[str] = []
+
+        for func in ast.walk(tree):
+            if not isinstance(func, ast.FunctionDef) or not func.name.endswith("_summary"):
+                continue
+            for node in ast.walk(func):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str) and "<" in node.value:
+                    offenders.append(f"{func.name}: {node.value!r}")
+                if isinstance(node, ast.JoinedStr):
+                    literal = "".join(p.value for p in node.values if isinstance(p, ast.Constant))
+                    if "<" in literal:
+                        offenders.append(f"{func.name}: {literal!r}")
+
+        assert not offenders, "a summary_fn returns data, not markup: " + ", ".join(offenders)
