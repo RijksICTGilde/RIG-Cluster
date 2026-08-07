@@ -1,0 +1,79 @@
+/* Vormgeving die op elke pagina geldt. Stond als drie <style>-blokken in
+   opi/templates/base.html.j2, plus de klassen die de paginakoppen en lege tabellen
+   deelden en die daarvoor per pagina inline stonden.
+
+   Wordt via additionalCss in de <head> gezet, na de ROOS-stylesheets en voor de
+   stylesheet van de pagina zelf: dezelfde volgorde als de <style>-blokken hadden. */
+
+
+.rvo-footer__column-title {
+    color: white !important;
+}
+
+/* Icon alignment for headings */
+h1 .utrecht-icon,
+h2 .utrecht-icon,
+h3 .utrecht-icon,
+h4 .utrecht-icon,
+h5 .utrecht-icon,
+h6 .utrecht-icon {
+    vertical-align: sub;
+    margin-right: 0.1em;
+}
+
+/* ===================================================================
+   TODO: DELETE ME  -- TODO: DELETE ME  -- TODO: DELETE ME
+   HACK: our ROOS c-alert renders without the flex container styling,
+   so the icon and text stack/misalign. This restores the intended
+   layout globally. Remove this block once the jinja-roos-components
+   c-alert is fixed upstream.
+   TODO: DELETE ME  -- TODO: DELETE ME  -- TODO: DELETE ME
+   =================================================================== */
+.rvo-alert__container {
+    align-items: flex-start;
+    display: flex;
+    gap: var(--rvo-alert-gap);
+}
+
+/* --- Gedeelde paginaonderdelen --- */
+
+/* Verborgen tot JavaScript de klasse weghaalt. Staat hier en niet als
+   style="display: none" in de markup, zodat een template geen vormgeving draagt. */
+.is-hidden {
+    display: none;
+}
+
+/* Kop van een pagina: titel links, acties rechts. */
+.page-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.page-header-actions {
+    display: flex;
+    gap: var(--rvo-space-md);
+    align-items: center;
+}
+
+/* De cel die de plaats van een lege tabel inneemt. */
+.table-empty-cell {
+    text-align: center;
+    padding: var(--rvo-space-xl);
+}
+
+.empty-state-text {
+    color: var(--rvo-color-grijs-600);
+}
+
+.text-center {
+    text-align: center;
+}
+
+/* Melding dat een handeling gelukt is, boven aan een beheerpagina. */
+.flash-success {
+    color: var(--rvo-color-groen);
+    display: flex;
+    align-items: center;
+    gap: var(--rvo-space-sm);
+}
