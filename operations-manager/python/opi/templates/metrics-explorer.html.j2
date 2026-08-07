@@ -9,108 +9,21 @@
             <c-heading type="h1" textContent="Metrics Explorer" />
             <p>Selecteer een service om de beschikbare Prometheus metrics te verkennen.</p>
 
-            {# Controls row #}
-            <div class="metrics-controls">
-                <div class="metrics-controls__row">
-                    {# Service selector #}
-                    <div class="metrics-controls__field">
-                        <label for="service-select"><strong>Service</strong></label>
-                        <select id="service-select" class="rvo-select">
-                            <option value="">-- Selecteer een service --</option>
-                            {% for service in services %}
-                                <option value="{{ service.id }}">{{ service.name }}</option>
-                            {% endfor %}
-                        </select>
-                        <span id="service-description" class="rvo-text--sm rvo-text--subtle"></span>
-                    </div>
+    {% include "metrics-explorer/_bediening.html.j2" %}
 
-                    {# Metric selector #}
-                    <div class="metrics-controls__field">
-                        <label for="metric-select"><strong>Metric</strong></label>
-                        <select id="metric-select" class="rvo-select" disabled>
-                            <option value="">-- Selecteer eerst een service --</option>
-                        </select>
-                        <span id="metric-count" class="rvo-text--sm rvo-text--subtle"></span>
-                    </div>
+    {% include "metrics-explorer/_laden.html.j2" %}
 
-                    {# Show button #}
-                    <div class="metrics-controls__field metrics-controls__field--button">
-                        <c-button kind="primary" label="Tonen in Prometheus" id="show-btn" disabled @click="showMetric()" />
-                    </div>
-                </div>
+    {% include "metrics-explorer/_fout.html.j2" %}
 
-                {# Metric filter #}
-                <div class="metrics-controls__filter" id="filter-container" style="display: none;">
-                    <label for="metric-filter" class="rvo-text--sm"><strong>Filter metrics:</strong></label>
-                    <input type="text" id="metric-filter" class="rvo-input" placeholder="Type om te filteren..." oninput="filterMetrics()" />
-                </div>
+    {% include "metrics-explorer/_grafiek.html.j2" %}
+
             </div>
-
-            {# Loading indicator #}
-            <div id="loading" style="display: none;">
-                <p class="rvo-text--subtle">Metrics ophalen...</p>
-            </div>
-
-            {# Error display #}
-            <div id="error-msg" style="display: none;">
-                <c-card outline="true" padding="md">
-                    <p id="error-text" style="color: var(--rvo-color-error, #d33);">Fout bij het ophalen van metrics.</p>
-                </c-card>
-            </div>
-
-            {# Prometheus iframe #}
-            <div id="prometheus-frame-container" style="display: none;">
-                <c-heading type="h2" textContent="Prometheus Graph" />
-                <iframe id="prometheus-frame"
-                        style="width: 100%; height: 600px; border: 1px solid var(--rvo-color-grijs-300, #ccc); border-radius: 4px;"
-                        sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
-                        title="Prometheus Graph UI">
-                </iframe>
-                <p class="rvo-text--sm rvo-text--subtle" style="margin-top: 0.5rem;">
-                    <a id="prometheus-direct-link" href="#" target="_blank" rel="noopener">Open in nieuw tabblad</a>
-                </p>
-            </div>
-
         </c-layout-flow>
     </div>
 {% endblock %}
 
 {% block additional_styles %}
-<style>
-    .metrics-controls__row {
-        display: flex;
-        gap: 1.5rem;
-        align-items: flex-end;
-        flex-wrap: wrap;
-    }
-    .metrics-controls__field {
-        display: flex;
-        flex-direction: column;
-        gap: 0.25rem;
-        min-width: 200px;
-        flex: 1;
-    }
-    .metrics-controls__field--button {
-        flex: 0;
-        min-width: auto;
-    }
-    .metrics-controls__filter {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        margin-top: 0.75rem;
-    }
-    .metrics-controls__filter input {
-        max-width: 300px;
-    }
-    .rvo-select, .rvo-input {
-        padding: 0.5rem;
-        border: 1px solid var(--rvo-color-grijs-400, #999);
-        border-radius: 4px;
-        font-size: 0.95rem;
-        width: 100%;
-    }
-</style>
+    <link rel="stylesheet" href="{{ static_url('css/metrics-explorer.css') }}">
 {% endblock %}
 
 {% block additional_scripts %}
@@ -144,7 +57,7 @@
         metricSelect.innerHTML = '<option value="">-- Laden... --</option>';
         metricSelect.disabled = true;
         showBtn.disabled = true;
-        filterContainer.style.display = "none";
+        filterContainer.classList.add("is-hidden");
         metricFilter.value = "";
         metricCount.textContent = "";
         allMetrics = [];
@@ -157,8 +70,8 @@
             return;
         }
 
-        loading.style.display = "block";
-        errorMsg.style.display = "none";
+        loading.classList.remove("is-hidden");
+        errorMsg.classList.add("is-hidden");
 
         try {
             const response = await fetch(`/ui/metrics-explorer/metrics/${serviceId}`);
@@ -172,16 +85,16 @@
             populateMetricDropdown(allMetrics);
 
             if (allMetrics.length > 10) {
-                filterContainer.style.display = "flex";
+                filterContainer.classList.remove("is-hidden");
             }
             metricCount.textContent = `${allMetrics.length} metrics beschikbaar`;
 
         } catch (err) {
             errorText.textContent = `Fout: ${err.message}`;
-            errorMsg.style.display = "block";
+            errorMsg.classList.remove("is-hidden");
             metricSelect.innerHTML = '<option value="">-- Fout bij ophalen --</option>';
         } finally {
-            loading.style.display = "none";
+            loading.classList.add("is-hidden");
         }
     });
 
@@ -231,7 +144,7 @@
 
         frame.src = graphUrl;
         directLink.href = graphUrl;
-        frameContainer.style.display = "block";
+        frameContainer.classList.remove("is-hidden");
 
         // Scroll to the iframe
         frameContainer.scrollIntoView({ behavior: "smooth" });

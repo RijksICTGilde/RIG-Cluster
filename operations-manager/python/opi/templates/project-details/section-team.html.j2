@@ -14,12 +14,12 @@
             {% for user in project.users | sort(attribute='email') %}
             <c-card padding="md" outline="true" backgroundColor="grijs-050">
                 <c-layout-row gap="md" verticalSpacing="center">
-                    <div style="display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: var(--rvo-color-hemelblauw); color: white; font-weight: 600; font-size: 1.125rem;">
+                    <div class="team-avatar">
                         {{ user.email[:2]|upper }}
                     </div>
                     <c-layout-flow gap="xs">
-                        <div style="font-weight: 500; color: var(--rvo-color-grijs-900);">{{ user.email }}</div>
-                        <div style="font-size: 0.875rem; color: var(--rvo-color-grijs-700); text-transform: capitalize;">{{ user.role|title }}</div>
+                        <div class="team-email">{{ user.email }}</div>
+                        <div class="team-role">{{ user.role|title }}</div>
                     </c-layout-flow>
                 </c-layout-row>
             </c-card>

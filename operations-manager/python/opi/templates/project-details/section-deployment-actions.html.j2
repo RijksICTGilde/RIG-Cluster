@@ -3,11 +3,10 @@
 {% if user_role in ["admin", "owner"] and project.deployments %}
     {% for deployment in project.deployments | sort(attribute='name') %}
     {% set original_index = project.deployments.index(deployment) %}
-    <div class="deployment-section" id="deployment-actions-{{ deployment.name }}"
-         {% if not loop.first and project.deployments|length > 1 %}style="display: none;"{% endif %}>
+    <div class="deployment-section{% if not loop.first %} is-hidden{% endif %}" id="deployment-actions-{{ deployment.name }}">
     <c-card outline="true" padding="lg" backgroundColor="wit">
         <c-layout-flow gap="md">
-            <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="instellingen" size="xl" color="hemelblauw" />Acties</c-heading>
+            <c-heading type="h2" class="section-heading"><c-icon icon="instellingen" size="xl" color="hemelblauw" />Acties</c-heading>
             <c-layout-row gap="sm">
                 <c-button
                     label="Images bewerken"
