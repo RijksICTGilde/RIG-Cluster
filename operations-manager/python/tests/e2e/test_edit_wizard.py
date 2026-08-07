@@ -59,13 +59,26 @@ class TestEditIdentity:
         """Change description, submit, verify success screen and updated detail page."""
         modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
 
+        # The project is shared with every other test in this file and with the other
+        # files that read this project, and the app is session-scoped: a saved
+        # description stays saved. So remember what was there and put it back, instead
+        # of leaving a project whose description depends on whether this test ran.
+        original_description = modal.page.locator("[name='description']").input_value()
+
         new_description = "Updated description via E2E test"
         modal.fill_field("description", new_description)
         modal.submit_step()
 
-        modal.wait_for_success()
-        body = modal.get_body_text()
-        assert "Wijzigingen opgeslagen" in body
+        try:
+            modal.wait_for_success()
+            body = modal.get_body_text()
+            assert "Wijzigingen opgeslagen" in body
+        finally:
+            modal.open_detail_page()
+            modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
+            modal.fill_field("description", original_description)
+            modal.submit_step()
+            modal.wait_for_success()
 
     def test_screenshot(self, modal: EditModalHelper, screenshot_dir: Path) -> None:
         """Screenshot the identity edit modal."""
