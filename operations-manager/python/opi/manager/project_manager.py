@@ -7857,6 +7857,7 @@ class ProjectManager:
             decode,
             encode,
             locate,
+            validate_value_for_storage,
         )
         from opi.services.registry import get_service
         from opi.services.services_enums import ServiceType
@@ -7872,6 +7873,14 @@ class ProjectManager:
             }
         config_layer = ConfigLayer(layer)
         values_operation = ValuesOperation(operation)
+        try:
+            for key, value in (values or {}).items():
+                # The API refuses these too, with a 422. Repeated here because this is the
+                # write path: a value the storage form normalises would differ from what is
+                # stored on every read, so the no-op check below could never be true again.
+                validate_value_for_storage(key, value, storage)
+        except ComponentValuesError as e:
+            return {"success": False, "error": str(e), "error_type": "invalid_values"}
 
         def mutator(project_data: dict[str, Any]) -> dict[str, Any] | None:
             node = locate(project_data, config_layer, component_name, deployment_name)

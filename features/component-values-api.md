@@ -116,6 +116,40 @@ veranderde. De vergelijking gebeurt daarom **na ontsleutelen**, op de platte waa
 dat hetzelfde op, dan geeft de wijzigingsfunctie `None` terug: geen commit, geen uitrol, en
 `changed: false` in het taakresultaat.
 
+### Wat er daarom geweigerd wordt aan de randen van een waarde
+
+De no-op-detectie hierboven werkt alleen als een waarde er hetzelfde uit komt als hij erin
+ging. Twee normalisaties op het leespad doen dat niet:
+
+| normalisatie | waar | raakt |
+|---|---|---|
+| `decrypt_age_content_sync` doet `.strip()` op de plaintext (dat moet: de armored vorm eindigt op een newline) | beide vormen | witruimte aan begin/eind |
+| `validate_and_parse_env_vars` leest `KEY=value` zoals een shell dat doet en haalt één paar omringende aanhalingstekens weg | alleen `BLOCK` (`user-env-vars`) | `"q"` -> `q`, `'q'` -> `q` |
+
+Een waarde die daardoor verandert zou twee beloftes tegelijk breken: hij komt anders terug
+dan hij geschreven is, en de opgeslagen set zou nooit gelijk zijn aan de gevraagde - dus
+elke aanroep zou opnieuw committen in `zad-projects`, precies de churn die hierboven
+uitgesloten is.
+
+De API weigert zulke waarden daarom met een **422**, voordat er iets in de wachtrij komt:
+
+- randwitruimte (`" x "`, `"x "`, `" x"`, een waarde die alleen uit spaties bestaat) op
+  **beide** velden;
+- een paar omringende aanhalingstekens (`"q"`, `'q'`, `""`) alleen op `user-env-vars`;
+  bij aliassen blijven die gewoon staan.
+
+Aanhalingstekens *binnen* een waarde (`say "hi" now`), een `=` in de waarde en een lege
+waarde zijn gewoon toegestaan. De melding noemt de naam en nooit de waarde.
+
+Bewust niet gekozen: de waarde stil normaliseren (dan krijgt de workload iets anders dan
+gevraagd), of hem quoten/escapen op het schrijfpad (zelfde probleem, plus een tweede
+opslagvorm om te lezen). De controle staat in `validate_value_for_storage`
+(`opi/services/component_values.py`) en wordt zowel door de route als door
+`ProjectManager.set_component_values` aangeroepen, zodat er geen schrijfpad omheen loopt.
+Toetsen: `TestStorageFidelity` in `tests/test_component_values.py`, plus de 422-toetsen in
+`tests/test_component_values_api.py` en de weigering op het schrijfpad in
+`tests/test_component_values_manager.py`.
+
 ## Twee lagen blijven apart
 
 `user-env-vars` bestaat op twee niveaus die bij het uitrollen samengevoegd worden
@@ -144,6 +178,8 @@ rechtstreeks YAML.
   voor env-vars: een alias wórdt een omgevingsvariabele.
 - **Waarden** mogen geen newline, carriage return of null-byte bevatten, want env-vars gaan
   als `KEY=value`-regels over de lijn.
+- **Waarden die de opslagvorm niet byte-voor-byte overleven worden geweigerd** (zie
+  hieronder).
 - Beide leveren een **422** op voordat er iets in de wachtrij komt. Een naam die in het
   *pad* staat (de enkelvoudige delete) wordt op dezelfde manier afgekeurd.
 - Een onbekend project, component of deployment is een **404** op het verzoek zelf, niet een

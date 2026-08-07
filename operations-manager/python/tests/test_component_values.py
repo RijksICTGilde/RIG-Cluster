@@ -27,8 +27,10 @@ from opi.services.component_values import (
     encode,
     validate_key,
     validate_value,
+    validate_value_for_storage,
 )
 from opi.utils.age import encrypt_age_content_sync, is_age_encrypted
+from opi.utils.env_vars import validate_and_parse_env_vars
 
 pytestmark = pytest.mark.skipif(
     shutil.which("age") is None or shutil.which("age-keygen") is None,
@@ -244,3 +246,47 @@ class TestNameAndValueRules:
             validate_value("TOKEN", "rc55-secret\nsmuggled")
         assert "rc55-secret" not in str(caught.value)
         assert "TOKEN" in str(caught.value)
+
+
+class TestStorageFidelity:
+    """A value must read back byte for byte, or it is refused (RC-55 review).
+
+    Two normalisations sit between the write and the next read. Decryption strips the
+    plaintext, which hits BOTH shapes; and the BLOCK shape additionally reads its
+    ``KEY=value`` lines with ``validate_and_parse_env_vars``, which removes one pair of
+    surrounding quotes. A value that does not survive would come back different from what
+    was written AND would never equal what is stored, so every write of it would commit
+    again in ``zad-projects`` -- the exact churn the design forbids.
+    """
+
+    @pytest.mark.parametrize("storage", [ValueStorage.BLOCK, ValueStorage.PER_VALUE])
+    @pytest.mark.parametrize("value", ["", "plain", "with inner spaces", "a=b=c", "it's"])
+    def test_a_value_that_survives_passes_on_both_shapes(self, value: str, storage: ValueStorage) -> None:
+        validate_value_for_storage("K", value, storage)
+
+    @pytest.mark.parametrize("storage", [ValueStorage.BLOCK, ValueStorage.PER_VALUE])
+    @pytest.mark.parametrize("value", [" x ", "x ", " x", "\t", " ", "x\t"])
+    def test_edge_whitespace_is_refused_on_both_shapes(self, value: str, storage: ValueStorage) -> None:
+        # age decryption strips its plaintext, so this is lost whichever way it is stored.
+        with pytest.raises(ComponentValuesError):
+            validate_value_for_storage("K", value, storage)
+
+    @pytest.mark.parametrize("value", ['"q"', "'q'", '""'])
+    def test_surrounding_quotes_are_refused_on_the_block_shape_only(self, value: str) -> None:
+        with pytest.raises(ComponentValuesError):
+            validate_value_for_storage("K", value, ValueStorage.BLOCK)
+        validate_value_for_storage("K", value, ValueStorage.PER_VALUE)
+
+    def test_the_refusal_names_the_key_and_not_the_value(self) -> None:
+        with pytest.raises(ComponentValuesError) as caught:
+            validate_value_for_storage("TOKEN", " rc55-secret ", ValueStorage.BLOCK)
+        assert "rc55-secret" not in str(caught.value)
+        assert "TOKEN" in str(caught.value)
+
+    def test_every_accepted_value_round_trips_through_the_real_block(self) -> None:
+        """The guard is measured against the storage form, not against its description."""
+        accepted = {"A": "plain", "B": "", "C": "a=b=c", "D": 'say "hi" now', "E": "with inner spaces"}
+        for key, value in accepted.items():
+            validate_value_for_storage(key, value, ValueStorage.BLOCK)
+        block = "\n".join(f"{key}={value}" for key, value in accepted.items())
+        assert validate_and_parse_env_vars(block) == accepted
