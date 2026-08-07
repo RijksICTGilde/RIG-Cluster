@@ -1,0 +1,36 @@
+{# De keuzes voor dienst, metriek en filter, met de knop. #}
+<div class="metrics-controls">
+    <div class="metrics-controls__row">
+        {# Service selector #}
+        <div class="metrics-controls__field">
+            <label for="service-select"><strong>Service</strong></label>
+            <select id="service-select" class="rvo-select">
+                <option value="">-- Selecteer een service --</option>
+                {% for service in services %}
+                    <option value="{{ service.id }}">{{ service.name }}</option>
+                {% endfor %}
+            </select>
+            <span id="service-description" class="rvo-text--sm rvo-text--subtle"></span>
+        </div>
+
+        {# Metric selector #}
+        <div class="metrics-controls__field">
+            <label for="metric-select"><strong>Metric</strong></label>
+            <select id="metric-select" class="rvo-select" disabled>
+                <option value="">-- Selecteer eerst een service --</option>
+            </select>
+            <span id="metric-count" class="rvo-text--sm rvo-text--subtle"></span>
+        </div>
+
+        {# Show button #}
+        <div class="metrics-controls__field metrics-controls__field--button">
+            <c-button kind="primary" label="Tonen in Prometheus" id="show-btn" disabled @click="showMetric()" />
+        </div>
+    </div>
+
+    {# Metric filter #}
+    <div class="metrics-controls__filter is-hidden" id="filter-container">
+        <label for="metric-filter" class="rvo-text--sm"><strong>Filter metrics:</strong></label>
+        <input type="text" id="metric-filter" class="rvo-input" placeholder="Type om te filteren..." oninput="filterMetrics()" />
+    </div>
+</div>
