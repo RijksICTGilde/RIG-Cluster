@@ -192,6 +192,27 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     # ------------------------------------------------------------------
     # Step 4: Project deployment
     # ------------------------------------------------------------------
+    # The project file is written and committed at this point. A caller that asked
+    # not to roll out stops here: nothing is generated and nothing reaches the
+    # cluster until the project is processed. That is what a project without
+    # deployments needs -- process_project reports "no deployments for this
+    # cluster" as a failure, which would mark a perfectly created project failed.
+    if not rollout_requested(payload):
+        await project_manager.close()
+        note_rollout_skipped(progress)
+        progress.update_current_step(f"Project {project_name} aangemaakt")
+        progress.complete_project()
+        elapsed_time = time.time() - start_time
+        return {
+            "project_name": project_name,
+            "project_description": payload.get("project_description", "No description"),
+            "components_count": len(payload.get("components", [])),
+            "elapsed_time": f"{elapsed_time:.2f}",
+            "file_path": project_file_path,
+            "status": "success",
+            "processing": skipped_processing(),
+        }
+
     deploy_task = progress.add_task("Project deployment")
     progress.update_current_step("Deploying project")
 
