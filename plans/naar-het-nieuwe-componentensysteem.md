@@ -165,7 +165,19 @@ En de README is inmiddels rechtgezet.
 
 De enige echte blokkade is punt 1, en die is geen technisch probleem maar een prioriteitsvraag bij het LOTC-project. Fase 1 en 2 kunnen zonder. Fase 3b (de navigatieproef) kan ook zonder, want navigatie raakt de formulierlaag niet. Fase 4 loopt vast op de wizard zolang de veld-omhulsels er niet zijn.
 
-**Er ligt dus een beslissing:** vragen we het LOTC-project om de veld-omhulsels vooraan te zetten? Zo ja, dan is de weg vrij. Zo nee, dan houdt de omzetting op bij de niet-formulierpagina's, en dat is nog steeds een groot deel.
+### Het besluit, 7 augustus: een gedeelde set `lotc-forms`
+
+Er is een tweede ronde vragen geweest, omdat de eerste conclusie te snel was. De vraag daar was of een veld-omhulsel wel in het componentensysteem thuishoort, of dat het iets is dat een afnemer zelf samenstelt uit de primitieven, bijvoorbeeld als Jinja-macro. Wij hebben immers al `helper_text`, `description_text` en `render_errors` als macro's staan.
+
+Het LOTC-project heeft dat nagebouwd in plaats van beredeneerd: een afnemer-eigen `<c-labelled-field>`, zonder een regel in core, rendert onder RVO als `<input class="utrecht-textbox">` en onder NLDD als `<nldd-text-field>`. Een afnemer kan dus eigen samengestelde componenten maken.
+
+**Maar voor dit geval is dat de verkeerde vorm, en de reden is doorslaggevend.** Bij een macro wisselt het *invoervak* wel mee met het thema, maar de *omlijsting* niet: label, hulptekst en foutmelding houden onze eigen markup. Onze macro's dragen negen keer een `rvo-form-field__*`-klasse. Onder NLDD zou onze applicatie er dus uitzien als NLDD, behalve de omlijsting van elk formulierveld. Dat ondermijnt precies waarom je een componentensysteem gebruikt: je kiest een thema en dan hoort alles er zo uit te zien.
+
+Hun criterium voor wat in het systeem hoort is bruikbaar en niet ad hoc: iets hoort er als het **(a) universeel** is en **(b) elk thema er een eigen mening over heeft**. Het veld-omhulsel scoort op allebei ja: elke formulierapplicatie heeft gelabelde velden, en NLDD heeft er eersteklas componenten voor (`nldd-form-field`, `-help-text`, `-error-text`) waar RVO zijn eigen BEM heeft.
+
+**Besloten: een gedeelde opt-in set `lotc-forms`**, gebouwd zoals `lotc-charts`, met per-thema implementaties en de mogelijkheid om later naar core te promoveren. Dat vergt geen core-besluit en levert meteen de thema-correcte omlijsting. Gevraagd op 7 augustus, met onze velden in volgorde van gewicht en met twee aandachtspunten: de aria-bedrading (dat is de reden dat het omhulsel bestaat) en `file-input-field`, waar NLDD geen tegenhanger voor heeft en wij liever een werkend RVO-veld met een zichtbare placeholder onder NLDD krijgen dan niets.
+
+**Voor de fasering betekent dit:** fase 3 is geen eigen bouwopdracht en ook geen open vraag meer, maar een verzoek dat loopt. Fase 1, 2 en de navigatieproef kunnen intussen door.
 
 ## Wat er aan de LOTC-kant uitgezocht moet worden (beantwoord, hierboven)
 
