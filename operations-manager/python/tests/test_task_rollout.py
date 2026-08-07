@@ -57,12 +57,13 @@ class TestRolloutFlag:
         assert processing["reason"] == SKIPPED_REASON
 
     def test_every_task_type_is_classified_exactly_once(self):
-        """Each of the twelve v2 task types either may defer or says why it may not.
+        """Each of the thirteen v2 task types either may defer or says why it may not.
 
         A new task type that is neither is a task type whose ``rollout=false`` would be
         silently ignored, which is the thing this feature must not do.
         """
         task_types = {
+            "create_project",
             "upsert_deployment",
             "refresh_project",
             "delete_deployment",

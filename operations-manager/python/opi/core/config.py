@@ -203,6 +203,12 @@ class Settings(BaseSettings):
     OIDC_CLIENT_SECRET: str | None = None
     OIDC_DISCOVERY_URL: str | None = None
 
+    # CLI settings - the public OIDC client the zad-cli uses for the
+    # authorization-code + PKCE loopback flow (RFC 8252), and the audience its
+    # access tokens must carry for this API to accept them.
+    CLI_CLIENT_ID: str = "zad-cli"
+    CLI_TOKEN_AUDIENCE: str = "zad-api"
+
     # Invite system settings
     INVITE_CLIENT_ID: str = "operations-manager-invites"
 

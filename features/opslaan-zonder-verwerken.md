@@ -23,6 +23,7 @@ dit is een uitzondering die je aanvraagt, geen instelling die je vergeet.
 | Endpoint / taaktype | `rollout=false` |
 |---|---|
 | `upsert_deployment`, `add_component`, `update_component`, `add_component_to_deployment`, `add_service`, `configure_service` (alle per-dienst config-routes), `update_image` | ja |
+| `create_project` | ja — een project zonder deployments heeft niets uit te rollen; `POST /api/v2/projects` zet de vlag zelf en biedt hem niet aan |
 | `refresh_project`, `refresh_deployment` | nee — verwerken is de hele handeling |
 | `delete_deployment` | nee — verwijderen haalt clusterbronnen weg; een refresh verwerkt wat het projectbestand declareert en zou de verwijdering nooit alsnog uitvoeren |
 | `clone_database`, `clone_bucket` | nee — die werken rechtstreeks op het cluster en schrijven niets in het projectbestand |
