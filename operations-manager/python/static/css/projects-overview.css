@@ -1,0 +1,205 @@
+/* Vormgeving van het projectoverzicht.
+   Stond als <style>-blok in opi/templates/projects-overview.html.j2. */
+
+/* Table Styles */
+.table-container {
+    overflow-x: auto;
+}
+
+.projects-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.projects-table thead th {
+    background: var(--rvo-color-grijs-50);
+    padding: var(--rvo-space-md);
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 2px solid var(--rvo-color-grijs-200);
+    color: var(--rvo-color-grijs-800);
+}
+
+.projects-table tbody td {
+    padding: var(--rvo-space-md);
+    border-bottom: 1px solid var(--rvo-color-grijs-200);
+    vertical-align: top;
+}
+
+.project-row:hover {
+    background: var(--rvo-color-grijs-25);
+}
+
+/* Column Widths */
+.col-project { width: 35{{ '%' }}; }
+.col-environment { width: 12{{ '%' }}; }
+.col-team { width: 15{{ '%' }}; }
+.col-services { width: 25{{ '%' }}; }
+.col-actions { width: 13{{ '%' }}; }
+
+/* Project Info */
+.project-info .project-name {
+    font-weight: 600;
+    margin-bottom: var(--rvo-space-xs);
+}
+
+.project-name-link {
+    color: var(--rvo-color-grijs-900);
+    text-decoration: none;
+}
+
+.project-name-link:hover {
+    color: var(--rvo-color-hemelblauw);
+    text-decoration: underline;
+}
+
+/* Details: real anchor styled like a tertiary button so middle-click /
+   ctrl-click can open the detail page in a new tab. */
+.details-link {
+    display: inline-flex;
+    align-items: center;
+    padding: var(--rvo-space-xs) var(--rvo-space-sm);
+    color: var(--rvo-color-hemelblauw);
+    font-weight: 600;
+    font-size: 0.875rem;
+    text-decoration: none;
+    border-radius: 4px;
+}
+
+.details-link:hover {
+    text-decoration: underline;
+    background: var(--rvo-color-grijs-50);
+}
+
+.project-info .project-id {
+    font-size: 0.75rem;
+    color: var(--rvo-color-grijs-500);
+    font-family: monospace;
+    margin-bottom: var(--rvo-space-xs);
+}
+
+.project-info .project-description {
+    color: var(--rvo-color-grijs-600);
+    font-size: 0.8125rem;
+    line-height: 1.4;
+}
+
+/* Environment Badges */
+.environment-badge {
+    padding: var(--rvo-space-xs) var(--rvo-space-sm);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.env-production {
+    background: var(--rvo-color-rood-50);
+    color: var(--rvo-color-rood);
+}
+
+.env-staging {
+    background: var(--rvo-color-oranje-50);
+    color: var(--rvo-color-oranje);
+}
+
+.env-development {
+    background: var(--rvo-color-hemelblauw-50);
+    color: var(--rvo-color-hemelblauw);
+}
+
+/* Team Info */
+.team-info .team-count {
+    font-size: 0.75rem;
+    color: var(--rvo-color-grijs-600);
+    margin-bottom: var(--rvo-space-xs);
+}
+
+.team-avatars {
+    display: flex;
+    gap: var(--rvo-space-xs);
+}
+
+.avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50{{ '%' }};
+    background: var(--rvo-color-hemelblauw);
+    color: wit;
+    font-size: 0.625rem;
+    font-weight: 600;
+}
+
+/* Services */
+.services-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--rvo-space-xs);
+}
+
+.service-tag {
+    padding: var(--rvo-space-xs) var(--rvo-space-sm);
+    background: var(--rvo-color-grijs-100);
+    color: var(--rvo-color-grijs-700);
+    border-radius: 4px;
+    font-size: 0.75rem;
+}
+
+/* Actions */
+.actions {
+    display: flex;
+    gap: var(--rvo-space-xs);
+}
+
+/* Summary Cards */
+.summary-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--rvo-space-lg);
+    margin-top: var(--rvo-space-xl);
+}
+
+.summary-card {
+    text-align: center;
+}
+
+.summary-number {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--rvo-color-hemelblauw);
+}
+
+.summary-label {
+    font-weight: 500;
+    color: var(--rvo-color-grijs-700);
+}
+
+.summary-change {
+    font-size: 0.875rem;
+}
+
+.summary-change.positive {
+    color: var(--rvo-color-groen);
+}
+
+.summary-change.negative {
+    color: var(--rvo-color-rood);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .summary-cards {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .actions {
+        flex-direction: column;
+    }
+
+    .services-list {
+        flex-direction: column;
+    }
+}

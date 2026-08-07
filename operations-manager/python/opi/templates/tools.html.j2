@@ -1,4 +1,11 @@
-<c-page title="ZAD Tools" lang="nl">
+<c-page title="ZAD Tools" lang="nl" additionalCss="{{ static_url('css/tools.css') }}">
+    {# additionalCss verwacht een URL en maakt er een link-element van in de head, na de
+       ROOS-stylesheets: dezelfde plek in de cascade als het style-blok dat halverwege deze
+       pagina stond.
+
+       Let op: boven de c-page-regel mag niets staan, ook geen Jinja-commentaar. Staat daar
+       wel iets, dan slaat de componentverwerking deze template over en komt c-page
+       onverwerkt in de uitvoer. Vandaar dat deze uitleg hier staat. #}
     <c-header
         text="AGE Encryption Tools"
         subtitle="Encrypt and decrypt text using AGE public and private keys"
@@ -63,18 +70,6 @@
             </div>
         </c-card>
     </c-layout-flow>
-
-    <style>
-        .output-code-block {
-            background-color: #f5f5f5;
-            padding: 1rem;
-            border-radius: 4px;
-            cursor: pointer;
-            overflow-x: auto;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-    </style>
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
