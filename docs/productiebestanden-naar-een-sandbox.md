@@ -41,18 +41,34 @@ ls $SRC/*.yaml | xargs -n1 basename | sed 's/.yaml$//' | tr '\n' ' ' > /tmp/proj
 
 ### 3. Converteren
 
+Gebruik de taak, ook hiervoor. Sinds 7 augustus kent hij `SANDBOX_PUBLIC_KEY`:
+
+```bash
+SANDBOX_PUBLIC_KEY=age1... task sandbox:import-project -- $(cat /tmp/proj.txt)
+```
+
+Dat converteert **en** pusht. Wil je alleen converteren, dan is dit het commando dat de taak eronder draait:
+
 ```bash
 cd operations-manager/python
 uv run python -m scripts.migrate_project_to_sandbox \
   --source-dir $SRC \
   --output-dir /tmp/sandbox-projects \
   --sandbox-public-key age1... \
+  --probe-image ghcr.io/minbzk/base-images/e2e-allservices:latest \
+  --probe-port 8080 \
   $(cat /tmp/proj.txt)
 ```
 
-De namen moeten als losse argumenten binnenkomen. Een variabele die je met `$(...)` vult en daarna aanhaalt, komt als **één** argument aan en dan zoekt het script naar een bestand met alle namen aan elkaar. Gebruik `$(cat ...)` zoals hierboven.
-
 Verwachte uitkomst: `Done: 47/47 projects migrated`.
+
+**Twee valkuilen die je een run kosten, allebei in de praktijk gebeurd.**
+
+*`--probe-image` moet je een expliciete waarde geven.* De vlag heeft een optionele waarde (`nargs="?"`), dus `--probe-image` gevolgd door de projectnamen slikt de eerste naam op als waarde. Het gevolg is stil en ernstig: elk component krijgt dan `image: <die-projectnaam>`, en dat project verdwijnt uit de uitvoer. Je merkt het alleen als je de images natelt.
+
+*Laat de vlag niet weg.* Zonder `--probe-image` blijven de **productie-images én de productie-resources** staan (961Mi, 512Mi en zo). Het script past het probe-resourceprofiel alleen toe als er een probe-image is. Dat past niet op een kind-cluster.
+
+*De namen moeten als losse argumenten binnenkomen.* Een variabele die je met `$(...)` vult en daarna aanhaalt, komt als **één** argument aan. Gebruik `$(cat ...)` zoals hierboven.
 
 ## Wat de conversie doet
 
@@ -69,12 +85,18 @@ Dat laatste is niet cosmetisch: productiewaarden passen niet op een kind-cluster
 
 ## Controleren of het gelukt is
 
+Tel dit na; alleen "het script zei Done" is niet genoeg gebleken.
+
 ```bash
 cd /tmp/sandbox-projects
-echo "sandboxed-local : $(grep -rl 'sandboxed-local' . | wc -l)"   # hoort gelijk te zijn aan het aantal bestanden
-echo "odcn-production : $(grep -rl 'odcn-production' . | wc -l)"
-echo "rijksapps.nl    : $(grep -rl 'rijksapps.nl' . | wc -l)"
+echo "bestanden        : $(ls *.yaml | wc -l)"
+echo "sandboxed-local  : $(grep -rl 'sandboxed-local' . | wc -l)"    # == aantal bestanden
+echo "met resources    : $(grep -rl 'resources:' . | wc -l)"
+echo "met probe-profiel: $(grep -rl '32Mi' . | wc -l)"               # == met resources
+grep -rhE "^ *image:" . | sed 's/^ *image: *//' | sort | uniq -c | sort -rn | head -3
 ```
+
+De laatste regel is de belangrijkste: vrijwel alle images horen de probe-image te zijn. Zie je daar een projectnaam staan, dan is de `--probe-image`-valkuil hierboven toegeslagen.
 
 **Een paar treffers op de oude waarden zijn normaal**, en het is de moeite waard te weten welke, want anders ga je zoeken naar een fout die er niet is. Gemeten op 7 augustus:
 
