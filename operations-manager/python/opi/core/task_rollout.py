@@ -23,6 +23,7 @@ PAYLOAD_KEY = "rollout"
 # later refresh reconciles the result faithfully.
 DEFERRABLE_TASK_TYPES = frozenset(
     {
+        "create_project",
         "add_component",
         "update_component",
         "add_component_to_deployment",
