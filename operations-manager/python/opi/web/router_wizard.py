@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import html
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -10,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from opi.core.auth_decorators import get_current_user, requires_sso
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
+from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
@@ -60,6 +61,34 @@ def _get_section_from_flow(flow_id: str, section_id: str) -> FormSection:
     raise HTTPException(status_code=404, detail=f"Stap '{section_id}' niet gevonden")
 
 
+#: Every Jinja delimiter starts with "{" and ends with "}", so spacing EVERY brace
+#: covers all of them at once. Replacing whole delimiter PAIRS instead is unsafe:
+#: those passes feed each other, and "{{{{" comes back out as "{{" ("{ {" + "{ {"),
+#: which Jinja then reads as an expression again. Single-character replacement in one
+#: translate pass cannot re-form a delimiter, no matter how many braces are nested.
+_BRACE_SPACING = str.maketrans({"{": "{ ", "}": " }"})
+
+
+def _defuse_template_syntax(messages: dict[str, list[str]] | None) -> dict[str, list[str]] | None:
+    """Space out every brace in per-field messages before they are rendered.
+
+    Field messages end up INSIDE the HTML string this module returns, and
+    ``wizard_step.html.j2`` pipes that string through ``process_components``,
+    which compiles it as a Jinja template -- a second render. HTML-escaping does
+    not help there: ``{{ ... }}`` needs no special characters. Several validators
+    quote the rejected value in their message ("Ongeldige waarde: <value>"), so
+    without this a value typed into a form would be executed as a template.
+
+    Spacing the braces keeps the message readable while making it inert.
+    """
+    if not messages:
+        return messages
+    defused: dict[str, list[str]] = {}
+    for path, texts in messages.items():
+        defused[path] = [text.translate(_BRACE_SPACING) for text in texts]
+    return defused
+
+
 def _render_step_html(
     section: FormSection,
     yaml_data: dict[str, Any],
@@ -71,6 +100,9 @@ def _render_step_html(
     import copy
 
     from opi.forms.editables.service_path import smart_get_value, smart_set_value
+
+    errors = _defuse_template_syntax(errors)
+    warnings = _defuse_template_syntax(warnings)
 
     renderer = _create_renderer()
     if not section.layout:
@@ -1528,6 +1560,21 @@ def _extract_section_data(
     return result
 
 
+def _summary_text(text: Any) -> str:
+    """Escape a piece of text that goes into summary HTML.
+
+    The functions below build an HTML string that ``wizard_review.html.j2`` renders
+    with ``| safe``, so nothing here is escaped for us. Every label and value that
+    ends up between the tags goes through this first -- values because they are
+    whatever someone typed into the form, labels because escaping a constant costs
+    nothing and a label that stops being a constant is then already covered.
+
+    Not for the nested fragments (a sequence summary, a joined list of <dt>/<dd>
+    pairs): those are HTML this module built and escaping them would print tags.
+    """
+    return html.escape(str(text))
+
+
 def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> str:
     """Build an HTML summary for a section's data.
 
@@ -1551,7 +1598,7 @@ def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> s
                 value = smart_get_value(yaml_data, editable.editable.yaml_path)
                 display = _format_value(editable, value, yaml_data)
                 if display is not None:
-                    parts.append(f"<dl><dt>{editable.label}</dt><dd>{display}</dd></dl>")
+                    parts.append(f"<dl><dt>{_summary_text(editable.label)}</dt><dd>{_summary_text(display)}</dd></dl>")
 
     _collect_summary(section.editables)
 
@@ -1631,14 +1678,14 @@ def _build_sequence_summary(
     items = smart_get_value(yaml_data, base_path)
 
     if not items or not isinstance(items, list):
-        return f"<p><em>Geen {editable.label.lower()}</em></p>"
+        return f"<p><em>Geen {_summary_text(editable.label.lower())}</em></p>"
 
     children = editable.children or []
     parts: list[str] = []
 
     for i, item in enumerate(items):
         if not isinstance(item, dict):
-            parts.append(f"<div class='wizard-review__seq-item'><strong>{item}</strong></div>")
+            parts.append(f"<div class='wizard-review__seq-item'><strong>{_summary_text(item)}</strong></div>")
             continue
 
         # Find a display name for the item (first required field or "name" field)
@@ -1661,13 +1708,23 @@ def _build_sequence_summary(
                             for cc in child.children:
                                 cc_key = cc.editable.yaml_path.split("/")[-1].split("[")[0]
                                 cc_val = ci.get(cc_key)
-                                if cc_val is not None:
-                                    parts_ci.append(str(cc_val))
-                            summaries.append(" - ".join(parts_ci) if parts_ci else str(ci))
+                                # Through _format_value like every other leaf, so a
+                                # summarizer holds one level deeper too. Skipping it here
+                                # is what made a hidden field reappear inside a nested
+                                # sequence while it was hidden everywhere else.
+                                cc_display = _format_value(cc, cc_val, yaml_data)
+                                if cc_display is not None:
+                                    parts_ci.append(cc_display)
+                            # Nothing left to show for this item: leave it out. The old
+                            # fallback printed the raw dict here, which would dump exactly
+                            # the fields a summarizer just hid.
+                            if parts_ci:
+                                summaries.append(" - ".join(parts_ci))
                         else:
                             summaries.append(str(ci))
                     formatted = ", ".join(summaries)
-                    item_parts.append(f"<dt>{child.label}</dt><dd>{formatted}</dd>")
+                    if formatted:
+                        item_parts.append(f"<dt>{_summary_text(child.label)}</dt><dd>{_summary_text(formatted)}</dd>")
                 continue
 
             # Extract the child key from yaml_path (last segment without [*])
@@ -1683,22 +1740,22 @@ def _build_sequence_summary(
                 value = _nested_get(item, child_key)
             display = _format_value(child, value, yaml_data)
             if display is not None:
-                item_parts.append(f"<dt>{child.label}</dt><dd>{display}</dd>")
+                item_parts.append(f"<dt>{_summary_text(child.label)}</dt><dd>{_summary_text(display)}</dd>")
 
         if item_parts:
             parts.append(
                 f"<div class='wizard-review__seq-item'>"
-                f"<strong>{item_label}</strong>"
+                f"<strong>{_summary_text(item_label)}</strong>"
                 f"<dl>{''.join(item_parts)}</dl>"
                 f"</div>"
             )
         else:
-            parts.append(f"<div class='wizard-review__seq-item'><strong>{item_label}</strong></div>")
+            parts.append(f"<div class='wizard-review__seq-item'><strong>{_summary_text(item_label)}</strong></div>")
 
     return (
         f"<div class='wizard-review__sequence'>"
         f"<p class='wizard-review__seq-heading'>"
-        f"<strong>{editable.label}</strong> ({len(items)})"
+        f"<strong>{_summary_text(editable.label)}</strong> ({len(items)})"
         f"</p>"
         f"{''.join(parts)}"
         f"</div>"
@@ -1751,11 +1808,21 @@ def _format_value(editable: Any, value: Any, yaml_data: dict[str, Any] | None = 
 
     Returns None if the value is empty/unset and should be omitted.
     """
+    # A summarizer decides everything about this field's summary, including what
+    # happens when it is empty -- hence before the empty check rather than after.
+    # It is the only hook that can say "do not show this at all"; a converter's
+    # view() cannot, because returning None from it lands in str() further down
+    # and prints the word "None".
+    if editable.editable.summarizer:
+        return editable.editable.summarizer.summarize(value, context_data=yaml_data) or None
+
     if value is None or value == "" or value == []:
         return None
 
     # Key-value editors (aliases, eigen omgevingsvariabelen) can contain
-    # secrets; never dump their values in the summary.
+    # secrets; never dump their values in the summary. Kept as a widget-level
+    # backstop next to the per-field summarizer above: a key_value field added
+    # later is covered without having to remember to declare anything.
     if str(editable.widget) == "key_value":
         return None
 
@@ -1848,6 +1915,105 @@ def _section_has_errors(
         if normalised in normalised_section:
             return True
     return False
+
+
+def _schema_path_to_editable_path(field_path: str) -> str:
+    """Rewrite a schema field path as an editable yaml_path.
+
+    The schema names a list item with a path segment of its own
+    (``components/0/command``); editables index the field they hang under
+    (``components[0]/command``). Same location, two notations.
+    """
+    parts: list[str] = []
+    for part in field_path.split("/"):
+        if part.isdigit() and parts:
+            parts[-1] = f"{parts[-1]}[{part}]"
+        else:
+            parts.append(part)
+    return "/".join(parts)
+
+
+def _locate_schema_error(
+    sections: list[FormSection],
+    field_path: str,
+) -> tuple[FormSection, str] | None:
+    """Find the step and editable path a schema violation belongs to.
+
+    Returns None when no step owns the field -- the violation sits on a block
+    rather than on a field, or on something the wizard does not edit. The caller
+    shows the message at step level then; not being able to place it is no reason
+    to drop it.
+    """
+    editable_path = _schema_path_to_editable_path(field_path)
+    for section in sections:
+        if _section_has_errors(_collect_all_editable_paths(section.editables), {editable_path: []}):
+            return section, editable_path
+    return None
+
+
+def _validation_message_without_values(error: Exception) -> str:
+    """Describe a rejection to the user without repeating the rejected value.
+
+    A ``ProjectSchemaError`` message quotes the instance, because jsonschema puts it
+    there. That is fine deep in the write path but not here: the edit flow validates
+    the form data MERGED with the stored project, so the offending value can be a
+    stored secret (``config/api-key``, ``config/age-private-key``, ``user-env-vars``)
+    that this handler would then echo into the browser and into the log. Field path
+    plus reason says the same thing to a user, and is what a developer needs anyway.
+
+    A ``ProjectIntegrityError`` carries no reason and names structure (component and
+    deployment names), not values, so its own message is used as-is.
+    """
+    reason = getattr(error, "reason", None)
+    if not reason:
+        return str(error)
+    field_path = getattr(error, "field_path", None) or "(onbekend)"
+    return f"Veld '{field_path}' voldoet niet aan het projectschema: {reason}."
+
+
+#: What a field gets when the schema rejected it. A constant on purpose: this text is
+#: rendered into step_html, which is re-rendered as a Jinja template downstream, so
+#: nothing derived from user input may go here. The explanation goes in global_errors.
+SCHEMA_FIELD_MARKER = "Deze waarde is afgekeurd door het projectschema; zie de melding bovenaan deze stap."
+
+
+def _validate_finished_project(data: dict[str, Any], *, project_name: str) -> None:
+    """Schema-check a FINISHED project file while the wizard can still show the error.
+
+    Call this at the single point where *data* is the complete file that is about to
+    be handed to the storage layer -- not earlier. Before that point the create flow
+    still adds to it (staged attachments, generated keys, the assembled deployment),
+    so an earlier check would reject a file that was merely not finished yet; after
+    it the wizard is gone and the same rejection surfaces from the git step, where
+    there is nothing left to go back to.
+
+    Validates exactly what the storage layer validates: ``validate_project_schema``
+    on the data as it will be persisted. No migration is applied first, because the
+    write path does not apply one either -- validating a migrated copy would let the
+    wizard approve a file that the store then rejects.
+
+    Reaching this with an invalid file is a bug in the form, not user error: it means
+    a field wrote something the schema forbids without a validator saying so. Hence
+    the WARNING with the field path -- that path is where the missing validation is.
+
+    Raises:
+        ProjectSchemaError: with ``field_path`` set when the violation was locatable.
+    """
+    try:
+        validate_project_schema(data)
+    except ProjectSchemaError as e:
+        # Log the reason, never the message: the message quotes the rejected value, and
+        # the edit flow validates the file MERGED with the stored project, so that value
+        # can be a secret (config/api-key, age-private-key, user-env-vars). Field path
+        # plus reason is what locates the missing validation anyway.
+        logger.warning(
+            "Wizard built an invalid project file for %s (field=%s): %s -- a form field wrote a "
+            "value the schema rejects, so validation is missing on that field",
+            project_name or "(new)",
+            e.field_path or "(unknown)",
+            e.reason or "(unknown reason)",
+        )
+        raise
 
 
 async def _do_submit(
@@ -2033,12 +2199,40 @@ async def _do_submit(
     except (ProjectSchemaError, ProjectIntegrityError) as e:
         # Re-render the wizard with the validation message instead of 500ing
         # (e.g. pre-existing structural drift surfaced by the full-project check).
-        logger.warning("Wizard save rejected by validation for %s: %s", state.project_name or "(new)", e)
-        error_section = active_sections[0]
+        field_path = getattr(e, "field_path", None)
+        message = _validation_message_without_values(e)
+        logger.warning("Wizard save rejected by validation for %s: %s", state.project_name or "(new)", message)
+        located = _locate_schema_error(active_sections, field_path) if field_path else None
+        if located is not None:
+            error_section, editable_path = located
+            # Mark the field, but keep the text out of it. Field errors are rendered into
+            # step_html and wizard_step.html.j2 pipes that through process_components,
+            # which renders it a SECOND time as a Jinja template -- so a message carrying
+            # user input there is code execution. The marker is a constant; the message
+            # itself goes in global_errors, which the template renders once, autoescaped.
+            field_errors = {editable_path: [SCHEMA_FIELD_MARKER]}
+            global_errors = [message]
+        else:
+            # Not placeable (a violation on a whole block, or a field no step owns):
+            # show it on the step the user submitted from, at step level. A
+            # message that cannot be attached to a field is still a message. Falls
+            # back to the last step when current_step names a step that is no longer
+            # active, so the message always has somewhere to land.
+            error_section = next(
+                (section for section in active_sections if section.section_id == state.current_step),
+                active_sections[-1],
+            )
+            field_errors = {}
+            global_errors = [message]
         state.current_step = error_section.section_id
         save_wizard_state(request, state)
-        step_html = _render_step_html(error_section, yaml_data=yaml_data, errors={}, edit_mode=state.is_edit)
-        context = _build_step_context(request, flow_id, error_section, step_html, errors={}, global_errors=[str(e)])
+        # Beide kanten: RC-47 brengt de foutafhandeling (het veld krijgt een markering,
+        # de boodschap zelf gaat autoescaped naar global_errors), RC-43 brengt state.is_edit
+        # als naam voor "het project bestaat al".
+        step_html = _render_step_html(error_section, yaml_data=yaml_data, errors=field_errors, edit_mode=state.is_edit)
+        context = _build_step_context(
+            request, flow_id, error_section, step_html, errors=field_errors, global_errors=global_errors
+        )
         return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
     except Exception:
         logger.exception("Wizard submit failed")
@@ -2064,6 +2258,11 @@ async def _save_existing_project(
     try:
         existing_data = await project_manager.get_contents()
         existing_data = apply_form_data_to_project(existing_data, data)
+
+        # The complete file only exists after the merge with the stored project -- the
+        # form itself writes a subset. Same check the store makes, one step earlier, so
+        # a rejection lands in the wizard with the field named instead of in the save.
+        _validate_finished_project(existing_data, project_name=project_name)
 
         # Persist through the single validated path: schema + structural integrity
         # validation, canonical dumper, commit + push, and cache refresh in one shot.
@@ -2108,13 +2307,16 @@ async def _start_project_creation(
     # Ensure multiline AGE-encrypted values use literal block scalars
     _apply_literal_scalars(data)
 
+    # The file is complete here: generators ran, the deployment is assembled, staged
+    # attachments are merged and the service entries are normalized. This is the last
+    # moment the wizard still exists, so it is where the schema is checked.
+    _validate_finished_project(data, project_name=project_name)
+
     # Serialize to YAML string via the single canonical writer
     yaml_content = dump_yaml_to_string(data)
 
     # Create V2 async task — the task worker handles git commit + processing
     from opi.core.task_helpers import create_async_task
-
-    clear_wizard_state(request)
 
     task = await create_async_task(
         request=request,
@@ -2125,6 +2327,13 @@ async def _start_project_creation(
     )
     task_id = str(task["task_id"])
     logger.info("Created V2 project creation task for %s (task=%s)", project_name, task_id)
+
+    # Only now is the work handed over, so only now may the wizard session go. Clearing
+    # it before this point threw away everything the user typed while the submission
+    # could still fail -- which is why a rejected save left them with no way back into
+    # the wizard. The edit path already waited for its save to return; both paths now
+    # clear their session after the work is accepted, not before.
+    clear_wizard_state(request)
 
     # Use HX-Redirect so HTMX does a full-page navigation instead of
     # swapping the progress page into the wizard frame.
