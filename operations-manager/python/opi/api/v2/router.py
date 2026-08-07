@@ -1711,6 +1711,9 @@ def _action_routes(action: ServiceAction) -> list[tuple[str, tuple[ActionVerb, .
     put_verbs = tuple(v for v in (ActionVerb.UPDATE, ActionVerb.UPSERT) if v in action.verbs)
     if put_verbs:
         routes.append(("PUT", put_verbs))
+    if ActionVerb.DELETE in action.verbs:
+        # Same path as the PUT: one item, addressed the same way, a different verb.
+        routes.append(("DELETE", (ActionVerb.DELETE,)))
     return routes
 
 
@@ -1849,16 +1852,27 @@ def _action_signature(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> S
                 ),
             )
         )
-    params.append(
+    # The flags this action declared for these verbs, each off by default (ActionFlag).
+    params += [
         Parameter(
-            "body",
+            _param_name(flag.name),
             Parameter.POSITIONAL_OR_KEYWORD,
-            annotation=_action_body_model(action, verbs),
-            # File, not Form: the body carries an upload, so the route has to keep
-            # promising multipart/form-data. Form would quietly move it to urlencoded.
-            default=File(...),
+            annotation=bool,
+            default=Query(False, alias=flag.name, description=flag.description),
         )
-    )
+        for flag in action.flags_for(verbs)
+    ]
+    if verbs[0].takes_fields:
+        params.append(
+            Parameter(
+                "body",
+                Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=_action_body_model(action, verbs),
+                # File, not Form: the body carries an upload, so the route has to keep
+                # promising multipart/form-data. Form would quietly move it to urlencoded.
+                default=File(...),
+            )
+        )
     return Signature(params, return_annotation=JSONResponse)
 
 
@@ -1877,7 +1891,11 @@ def _action_description(action: ServiceAction, verbs: tuple[ActionVerb, ...]) ->
     if action.disjunctions and not verbs[0].targets_existing:
         lines += ["", "Exactly one of:"]
         lines += [f"- `{'` or `'.join(d.one_of)}` -- {d.describes}" for d in action.disjunctions]
-    lines += ["", "Example:", "```", action.example, "```"]
+    flags = action.flags_for(verbs)
+    if flags:
+        lines += ["", "Flags:"]
+        lines += [f"- `{flag.name}` (default false): {flag.description}" for flag in flags]
+    lines += ["", "Example:", "```", action.example_for(verbs), "```"]
     return "\n".join(lines)
 
 
@@ -1887,21 +1905,24 @@ def _make_action_endpoint(action: ServiceAction, verbs: tuple[ActionVerb, ...]):
 
     async def endpoint(**kwargs: Any) -> JSONResponse:
         verb = ActionVerb.UPSERT if (len(verbs) > 1 and kwargs.get("upsert")) else verbs[0]
-        body = kwargs["body"]
         values: dict[str, Any] = {}
         uploads: dict[str, UploadedFile] = {}
-        for action_field in action.fields:
-            if verb.targets_existing and _addressed_by_path(action, action_field):
-                continue
-            raw = getattr(body, _param_name(action_field.name), None)
-            if action_field.kind is ActionFieldKind.FILE:
+        # A verb that takes no fields has no body at all (ActionVerb.takes_fields), so
+        # there is nothing to read out of one and nothing to validate.
+        if verb.takes_fields:
+            body = kwargs["body"]
+            for action_field in action.fields:
+                if verb.targets_existing and _addressed_by_path(action, action_field):
+                    continue
+                raw = getattr(body, _param_name(action_field.name), None)
+                if action_field.kind is ActionFieldKind.FILE:
+                    if raw is not None:
+                        uploads[action_field.name] = UploadedFile(
+                            filename=raw.filename or action_field.name, content=await raw.read()
+                        )
+                    continue
                 if raw is not None:
-                    uploads[action_field.name] = UploadedFile(
-                        filename=raw.filename or action_field.name, content=await raw.read()
-                    )
-                continue
-            if raw is not None:
-                values[action_field.name] = raw
+                    values[action_field.name] = raw
         # The same rules the wizard runs: the profile is the service's own shared
         # editables, and only "may this be left out" is decided by the endpoint.
         await validate_api_payload(values, action.editables_for(verb))
@@ -1914,6 +1935,7 @@ def _make_action_endpoint(action: ServiceAction, verbs: tuple[ActionVerb, ...]):
                 values=values,
                 item_id=kwargs.get(action.id_param),
                 component_name=kwargs.get("component_name"),
+                flags={flag.name: bool(kwargs.get(_param_name(flag.name))) for flag in action.flags_for(verbs)},
             )
         )
         return JSONResponse(result.body, status_code=result.status_code)

@@ -21,6 +21,7 @@ import pytest
 from opi.services.catalog.actions import (
     ActionField,
     ActionFieldKind,
+    ActionFlag,
     ActionVerb,
     FieldCombination,
     FieldDisjunction,
@@ -127,6 +128,70 @@ class TestTheDeclarationRefusesToBeSloppy:
             )
 
 
+class TestTheFlagRefusesToBeSloppy:
+    """A flag is a query parameter a caller has to find and understand, so it explains
+    itself and it reaches at least one route that exists."""
+
+    def test_a_flag_without_a_description_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="no description"):
+            ActionFlag(name="force", description="", verbs=(ActionVerb.DELETE,))
+
+    def test_a_flag_on_no_verb_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="applies to no verb"):
+            ActionFlag(name="force", description="Do it anyway.", verbs=())
+
+    def test_a_flag_on_a_verb_the_action_does_not_serve_is_rejected(self) -> None:
+        # It would be a parameter nobody can reach: no route serves that verb.
+        with pytest.raises(ValueError, match="verbs it does not declare"):
+            ServiceAction(
+                action_id="thing",
+                layer=ConfigLayer.PROJECT,
+                roles=(ConfigRole.DEFINE,),
+                summary="s",
+                description="d",
+                fields=(),
+                verbs=(ActionVerb.CREATE,),
+                flags=(ActionFlag(name="confirm", description="Yes really.", verbs=(ActionVerb.DELETE,)),),
+                handler=lambda ctx: None,
+                example="curl ...",
+            )
+
+    def test_a_flag_declared_twice_is_rejected(self) -> None:
+        flag = ActionFlag(name="confirm", description="Yes really.", verbs=(ActionVerb.CREATE,))
+        with pytest.raises(ValueError, match="declares a flag twice"):
+            ServiceAction(
+                action_id="thing",
+                layer=ConfigLayer.PROJECT,
+                roles=(ConfigRole.DEFINE,),
+                summary="s",
+                description="d",
+                fields=(),
+                verbs=(ActionVerb.CREATE,),
+                flags=(flag, flag),
+                handler=lambda ctx: None,
+                example="curl ...",
+            )
+
+    def test_a_flag_only_reaches_the_routes_that_declared_it(self) -> None:
+        assert PROJECT_ATTACHMENT_ACTION.flags_for((ActionVerb.DELETE,))
+        assert PROJECT_ATTACHMENT_ACTION.flags_for((ActionVerb.CREATE,)) == ()
+        assert PROJECT_ATTACHMENT_ACTION.flags_for((ActionVerb.UPDATE, ActionVerb.UPSERT)) == ()
+
+
+class TestTheExamplePerVerb:
+    def test_a_verb_with_its_own_example_gets_it(self) -> None:
+        # An upload example on a DELETE route is worse than none: it is an example of a
+        # different request.
+        assert "curl -X DELETE" in PROJECT_ATTACHMENT_ACTION.example_for((ActionVerb.DELETE,))
+
+    def test_the_other_verbs_keep_the_general_one(self) -> None:
+        assert PROJECT_ATTACHMENT_ACTION.example_for((ActionVerb.CREATE,)) == PROJECT_ATTACHMENT_ACTION.example
+        assert (
+            PROJECT_ATTACHMENT_ACTION.example_for((ActionVerb.UPDATE, ActionVerb.UPSERT))
+            == PROJECT_ATTACHMENT_ACTION.example
+        )
+
+
 class TestTheDisjunctionRefusesToBeSloppy:
     def test_a_disjunction_over_an_unknown_field_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="unknown fields"):
@@ -169,6 +234,23 @@ class TestTheVerbTable:
         assert not ActionVerb.CREATE.targets_existing
         assert ActionVerb.UPDATE.targets_existing
         assert ActionVerb.UPSERT.targets_existing
+
+    def test_delete_addresses_one_item_and_insists_it_is_there(self) -> None:
+        assert ActionVerb.DELETE.method == "DELETE"
+        assert ActionVerb.DELETE.targets_existing
+        assert ActionVerb.DELETE.on_existing == "remove"
+        assert ActionVerb.DELETE.on_absent == "reject"
+
+    def test_only_delete_carries_no_fields(self) -> None:
+        # A delete says which item and nothing more; anything else it needs is a flag.
+        # Its route therefore has no body at all, rather than a body of optional fields
+        # a caller could fill in and have silently ignored.
+        assert not ActionVerb.DELETE.takes_fields
+        assert all(verb.takes_fields for verb in ActionVerb if verb is not ActionVerb.DELETE)
+
+    def test_a_fieldless_verb_validates_nothing(self) -> None:
+        assert PROJECT_ATTACHMENT_ACTION.editables_for(ActionVerb.DELETE) == {}
+        assert PROJECT_ATTACHMENT_ACTION.editables_for(ActionVerb.CREATE)
 
 
 class TestTheAttachmentActions:
@@ -243,9 +325,14 @@ class TestTheGeneratedRoutes:
     def test_update_and_upsert_share_one_put_route(self, routes) -> None:
         # They address the same thing and differ only in what they promise, which the
         # caller states with ?upsert=true. Two PUT routes on one path would mean one of
-        # them never runs.
+        # them never runs -- so the count is what is measured, not just the set of methods
+        # (DELETE now sits on this same path, which says nothing about the PUTs).
+        from opi.server import app
+
         path = "/api/v2/projects/{project_name}/services/attachments/attachments/{attachment_id}"
-        assert routes[path] == {"PUT"}
+        puts = [r for r in app.routes if getattr(r, "path", "") == path and "PUT" in getattr(r, "methods", set())]
+        assert len(puts) == 1
+        assert routes[path] == {"PUT", "DELETE"}
 
 
 class TestTheOpenApiDocument:
