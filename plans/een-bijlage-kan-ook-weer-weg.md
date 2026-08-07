@@ -57,3 +57,83 @@ Dat is de vorm die de gebruiker vroeg: normaal is verwijderen goedkoop, en allee
 **Dit raakt de CLI.** `zad-cli` heeft de attachment-endpoints nog niet, dus daar hoort dit meteen goed in te landen in plaats van later te worden bijgeplakt.
 
 **Niet uitbreiden naar meer dan bijlagen.** De verleiding is om hier een algemeen "wordt dit ergens gebruikt"-mechanisme van te maken voor alle diensten. Dat kan later; nu is er een concreet gat met een concreet gedrag, en dat is genoeg.
+
+---
+
+## Gebouwd, 7 augustus 2026 (RC-52, PR #53)
+
+### De naamkeuze: `confirm_in_use`
+
+De vlag heet **`confirm_in_use`**, en dat is de vastgelegde beslissing uit punt 4.
+
+De reden staat in de naam zelf. `delete_when_in_use` beschrijft wat er gebeurt maar niet
+dat de aanroeper iets bevestigt; `force` zegt alleen dát er iets overruled is, niet wát er
+bekend was. De aanroeper bevestigt hier een *feit dat hij in de 409 te horen heeft
+gekregen* — dezelfde redenering als bij `rollout=false`. De vlag staat standaard uit: een
+vlag die standaard aan staat is gewoon gedrag met een extra naam.
+
+De naam leeft één keer, als `CONFIRM_IN_USE` in
+`opi/services/catalog/attachments/api.py`, en de route, de OpenAPI-parameter en het
+voorbeeld komen daar allemaal uit.
+
+### Wat er is gebouwd
+
+```
+DELETE  /services/attachments/attachments/{attachment_id}[?confirm_in_use=true]
+```
+
+- **Niet in gebruik** → weg, zonder bevestiging. 200.
+- **In gebruik, geen bevestiging** → 409, met `used_by`: per plek de componentnaam, de
+  deployment (als de koppeling daar zit), de soort (`coupling` of `certificate`) en het
+  label dat het portaal ook toont.
+- **In gebruik, mét bevestiging** → de catalogusregel én elke koppeling gaan weg, in één
+  opslag. Blijft er een leeg `attachments`-blok over bij een component, dan gaat dat blok
+  weg en blijft alleen de selectie staan. De response meldt in `uncoupled_from` wat er is
+  losgekoppeld.
+- **Id bestaat niet** → 404.
+
+### Eén afwijking van het plan, bewust
+
+Het plan noemt bij de bevestigde opruiming "componenten en, waar die bestaan,
+deployment-componenten". Er is een derde soort verwijzing die het plan niet noemt: een
+bijlage die als **publish-on-web-certificaat** dient (`tls: provided`, `attachment: <id>`).
+
+Die wordt **ook mét bevestiging geweigerd.** De reden is precies het uitgangspunt van het
+plan — liever weigeren dan half doen. Een koppeling kun je weghalen en dan krijgt het
+component simpelweg geen bestand meer. Een certificaatverwijzing kun je dat niet: het
+model verwerpt `tls: provided` zonder `attachment`, dus je moet ook beslissen hóe de site
+dan wél geserveerd wordt. Een site stilletjes op het platformcertificaat zetten is een
+beslissing over publicatie, niet over een bestand dat niemand meer nodig heeft. De 409
+zegt daarom wat er eerst moet gebeuren: wijzig de TLS-modus daar.
+
+### De vraag als losse functie
+
+`attachment_usage_sites()` in `opi/handlers/project_file_handler.py` is de ene wandeling
+die alle plekken vindt, met een gestructureerde uitkomst (`AttachmentUsageSite`:
+component, deployment, soort). `extract_attachment_usage()` is nu de labelprojectie
+daarvan. Daardoor kijken de wizard-guard, de bevestigingsmodal, de referentiecontrole en
+de API naar dezelfde verzameling plekken — precies wat punt 5 van het plan vroeg.
+
+### Het schema als controle achteraf: geen tweede bevinding
+
+Het plan hield er rekening mee dat de catalogusvalidatie een regel zou missen. Dat is niet
+zo: `validate_attachment_references` bestond al, dekt alle verwijzingsplekken en draait bij
+elke opslag. Een gemiste opruiming zou daar sneuvelen, en dat is getoetst — inclusief een
+toets die bewijst dat de controle tanden heeft (laat één koppeling staan en hij faalt).
+
+### Wat het actiekader ervoor kreeg
+
+- `ActionVerb.DELETE`, met `takes_fields = False`: een delete adresseert één ding via het
+  pad en draagt géén body. Een optioneel bestand op een DELETE zou een body zijn die een
+  aanroeper kan invullen en die stil genegeerd wordt.
+- `ActionFlag`: gedeclareerde booleaanse query-parameters, standaard uit, met een
+  omschrijving die in de OpenAPI-parameter landt.
+- `verb_examples`: een voorbeeld per werkwoord, want een `curl -X POST -F file=@...` op een
+  DELETE-route is erger dan geen voorbeeld — het is een voorbeeld van een ander verzoek.
+
+### De CLI
+
+`zad-cli` leeft in een andere repo (`~/IdeaProjects/zad-cli`) en houdt een kopie van de
+spec in `api/upstream-openapi.json`. Hier is dus geleverd wat daar nodig is: de route, de
+vlag en de weigering staan volledig in `openapi.json`, inclusief het `used_by`-verhaal en
+een `curl -X DELETE`-voorbeeld. Het bijwerken van de CLI zelf hoort in die repo.
