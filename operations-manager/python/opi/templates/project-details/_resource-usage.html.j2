@@ -26,8 +26,8 @@
             </span>
         </c-layout-flow>
         {% if usage.cpu_limit > 0 %}
-        <div style="height: 6px; background: var(--rvo-color-grijs-200); border-radius: 3px; overflow: hidden;">
-            <div style="height: 100%; width: {{ usage.cpu_pct }}%; background: var(--rvo-color-hemelblauw);"></div>
+        <div class="usage-bar">
+            <div class="usage-bar__fill usage-bar__fill--cpu" style="width: {{ usage.cpu_pct }}%"></div>
         </div>
         {% endif %}
     </div>
@@ -41,8 +41,8 @@
             </span>
         </c-layout-flow>
         {% if usage.mem_limit > 0 %}
-        <div style="height: 6px; background: var(--rvo-color-grijs-200); border-radius: 3px; overflow: hidden;">
-            <div style="height: 100%; width: {{ usage.mem_pct }}%; background: var(--rvo-color-groen);"></div>
+        <div class="usage-bar">
+            <div class="usage-bar__fill usage-bar__fill--memory" style="width: {{ usage.mem_pct }}%"></div>
         </div>
         {% endif %}
     </div>

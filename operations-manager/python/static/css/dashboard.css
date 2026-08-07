@@ -1,0 +1,298 @@
+/* Vormgeving van de dashboardpagina.
+   Stond als <style>-blok in opi/templates/dashboard.html.j2. */
+
+/* Stats Grid */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--rvo-space-lg);
+    margin-bottom: var(--rvo-space-xl);
+}
+
+.stat-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.stat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.stat-number {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--rvo-color-hemelblauw);
+}
+
+/* Metrics Grid */
+.metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: var(--rvo-space-lg);
+}
+
+.metric-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+/* Gauge Styles */
+.gauge-container {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 150px;
+}
+
+.gauge {
+    max-width: 150px;
+    max-height: 150px;
+}
+
+.gauge-value {
+    position: absolute;
+    text-align: center;
+    top: 60%;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.gauge-percentage {
+    display: block;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--rvo-color-hemelblauw);
+}
+
+.gauge-label {
+    font-size: 0.75rem;
+    color: var(--rvo-color-grijs-700);
+}
+
+/* Chart Styles */
+.chart-container {
+    height: 120px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.chart {
+    max-width: 100%;
+    max-height: 120px;
+}
+
+/* Resource Comparison Bar */
+.resource-bar {
+    display: flex;
+    height: 12px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--rvo-color-grijs-200, #e0e0e0);
+}
+
+.resource-segment {
+    /* Begint op nul en groeit; het script zet daarna de echte breedte als inline
+       style, en die wint van deze regel. Stond als style="width: 0%" in de markup. */
+    width: 0%;
+    min-width: 4px;
+    transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.resource-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--rvo-space-md);
+}
+
+.resource-legend-item {
+    display: flex;
+    align-items: center;
+    gap: var(--rvo-space-xs);
+    text-decoration: none;
+    color: inherit;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: background 0.15s ease;
+}
+
+.resource-legend-item:hover {
+    background: var(--rvo-color-grijs-100, #f0f0f0);
+}
+
+.resource-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.resource-color-0, .resource-color-0.resource-segment { background-color: #007bc7; }
+.resource-color-1, .resource-color-1.resource-segment { background-color: #39870c; }
+.resource-color-2, .resource-color-2.resource-segment { background-color: #e17000; }
+.resource-color-3, .resource-color-3.resource-segment { background-color: #d52b1e; }
+.resource-color-4, .resource-color-4.resource-segment { background-color: #6b4c9a; }
+.resource-color-5, .resource-color-5.resource-segment { background-color: #007b8a; }
+
+/* Projects Grid */
+.projects-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: var(--rvo-space-lg);
+}
+
+.project-card-link {
+    text-decoration: none;
+    color: inherit;
+    display: block;
+}
+
+.project-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    border-top: 3px solid transparent;
+    cursor: pointer;
+}
+
+.project-card-healthy { border-top-color: var(--rvo-color-groen, #39870c); }
+.project-card-progressing { border-top-color: var(--rvo-color-oranje, #e17000); }
+.project-card-degraded { border-top-color: var(--rvo-color-rood, #d52b1e); }
+.project-card-disabled { border-top-color: var(--rvo-color-grijs-600, #696969); }
+.project-card-inactive { border-top-color: var(--rvo-color-hemelblauw, #007bc7); }
+.project-card-unknown { border-top-color: var(--rvo-color-grijs-400, #bbb); }
+
+.project-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+}
+
+.project-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.project-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: var(--rvo-space-xs) var(--rvo-space-sm);
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.status-dot-healthy { background: var(--rvo-color-groen, #39870c); }
+.status-dot-progressing {
+    background: var(--rvo-color-oranje, #e17000);
+    animation: statusPulse 1.5s ease-in-out infinite;
+}
+.status-dot-degraded {
+    background: var(--rvo-color-rood, #d52b1e);
+    animation: statusPulse 1s ease-in-out infinite;
+}
+.status-dot-disabled { background: var(--rvo-color-grijs-600, #696969); }
+.status-dot-inactive { background: var(--rvo-color-hemelblauw, #007bc7); }
+.status-dot-unknown { background: var(--rvo-color-grijs-500, #999); }
+
+@keyframes statusPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+.status-healthy {
+    background: var(--rvo-color-groen-50);
+    color: var(--rvo-color-groen);
+}
+
+.status-progressing {
+    background: var(--rvo-color-oranje-50);
+    color: var(--rvo-color-oranje);
+}
+
+.status-degraded {
+    background: var(--rvo-color-rood-50);
+    color: var(--rvo-color-rood);
+}
+
+.status-disabled {
+    background: var(--rvo-color-grijs-100);
+    color: var(--rvo-color-grijs-700);
+}
+
+.status-inactive {
+    background: var(--rvo-color-hemelblauw-150);
+    color: var(--rvo-color-hemelblauw-750);
+}
+
+.status-unknown {
+    background: var(--rvo-color-grijs-200);
+    color: var(--rvo-color-grijs-700);
+}
+
+.project-metrics {
+    display: flex;
+    gap: var(--rvo-space-md);
+    flex-wrap: wrap;
+}
+
+.metric {
+    display: flex;
+    align-items: center;
+    gap: var(--rvo-space-xs);
+    font-size: 0.875rem;
+    color: var(--rvo-color-grijs-700);
+}
+
+.project-deploy-time {
+    display: flex;
+    align-items: center;
+    gap: var(--rvo-space-xs);
+    color: var(--rvo-color-grijs-600, #777);
+    font-size: 0.8rem;
+    padding-top: var(--rvo-space-xs);
+    border-top: 1px solid var(--rvo-color-grijs-200, #e0e0e0);
+}
+
+.project-actions {
+    display: flex;
+    gap: var(--rvo-space-sm);
+    flex-wrap: wrap;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .stats-grid,
+    .metrics-grid,
+    .projects-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .health-banner {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .health-banner-aside {
+        align-self: flex-start;
+    }
+}

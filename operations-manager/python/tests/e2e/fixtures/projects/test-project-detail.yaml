@@ -73,3 +73,15 @@ deployments:
         image: "nginx:latest"
       - reference: worker
         image: "python:3.14-slim"
+
+  # Een tweede deployment, want alles wat het tabblad Deployments per deployment toont,
+  # verbergt de tweede en verder bij het laden ({% if not loop.first %}). Met een enkele
+  # deployment wordt die tak nooit waar en ziet geen enkele test of het verbergen werkt.
+  # Sorteert achter 'default', zodat 'default' de zichtbare blijft.
+  - name: tweede
+    cluster: local
+    # De namespace moet gelijk zijn aan de projectnaam; dat wordt afgedwongen.
+    namespace: test-project-detail
+    components:
+      - reference: web-app
+        image: "nginx:latest"

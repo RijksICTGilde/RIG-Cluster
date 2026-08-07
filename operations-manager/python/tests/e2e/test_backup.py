@@ -39,8 +39,12 @@ def _wait_for_schedule_text(page: Page, expected: str, timeout: int = 10000) -> 
 
     Uses inner_text() which returns visible text (not raw DOM whitespace from
     unrendered ROOS web components).
+
+    ``.first`` omdat de fixture twee deployments heeft en het tabblad de blokken van
+    beide in de DOM zet; de eerste ('default') is de zichtbare en is degene waar deze
+    tests het schema van zetten.
     """
-    page.locator(f"#tab-deployments :text('{expected}')").wait_for(state="visible", timeout=timeout)
+    page.locator(f"#tab-deployments :text('{expected}')").first.wait_for(state="visible", timeout=timeout)
 
 
 class TestBackupSection:

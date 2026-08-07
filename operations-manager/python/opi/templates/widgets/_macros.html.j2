@@ -79,6 +79,66 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 <p class="service-card__description">{{ description|e }}</p>
 {% endmacro %}
 
+{# --- Task progress --- #}
+
+{#
+  De voortgang van een taak, gedeeld door de twee fragmenten die hem tonen:
+  partials/task_progress_fragment.html.j2 (inline en in de bewerkmodal) en
+  wizard/modal_wizard_progress_fragment.html.j2 (de wizardmodal). Die twee hadden
+  zeventien identieke blokken van zes regels of meer; wat hieronder staat is precies
+  dat gedeelte.
+
+  progress_bar is de enige plek in de templates waar nog een style= staat: de breedte
+  is de waarde zelf en kan niet in een CSS-bestand. De vormgeving eromheen zit in
+  static/css/modal.css (.edit-progress-*).
+#}
+{% macro progress_bar(progress) %}
+<div class="edit-progress-bar-wrapper">
+    <div class="edit-progress-bar" style="width: {{ progress }}%"></div>
+</div>
+{% endmacro %}
+
+{% macro task_status_icon(status) %}
+{%- if status == "completed" -%}
+<c-icon icon="vinkje" size="sm" color="groen" />
+{%- elif status == "failed" -%}
+<c-icon icon="kruis" size="sm" color="rood" />
+{%- elif status == "running" -%}
+<c-icon icon="pijl-naar-rechts" size="sm" color="hemelblauw" />
+{%- else -%}
+<c-icon icon="klok" size="sm" color="grijs-600" />
+{%- endif -%}
+{% endmacro %}
+
+{#
+  De takenlijst met per taak een icoon en per taak zijn subtaken. ``show_errors`` staat
+  uit voor de wizardmodal, die de foutregels van een taak bewust niet toont.
+#}
+{% macro progress_task_list(tasks, show_errors=True) %}
+{% if tasks %}
+<div class="edit-progress-tasks">
+    {% for task in tasks %}
+    <div class="edit-progress-task-item">
+        {{ task_status_icon(task.status) }}
+        <span>{{ task.name }}</span>
+    </div>
+    {% if show_errors and task.error %}
+    <div class="edit-progress-task-error">{{ task.error }}</div>
+    {% endif %}
+    {% for subtask in task.subtasks or [] %}
+    <div class="edit-progress-task-item edit-progress-subtask">
+        {{ task_status_icon(subtask.status) }}
+        <span>{{ subtask.name }}</span>
+    </div>
+    {% if show_errors and subtask.error %}
+    <div class="edit-progress-task-error edit-progress-subtask">{{ subtask.error }}</div>
+    {% endif %}
+    {% endfor %}
+    {% endfor %}
+</div>
+{% endif %}
+{% endmacro %}
+
 {# --- Error helpers --- #}
 
 {% macro render_errors(errors) %}

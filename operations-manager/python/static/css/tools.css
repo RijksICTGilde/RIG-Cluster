@@ -1,0 +1,27 @@
+/* Vormgeving van de toolspagina.
+   Stond als <style>-blok in opi/templates/tools.html.j2. */
+
+.output-code-block {
+    background-color: #f5f5f5;
+    padding: 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+/* Deze pagina bouwt zijn eigen c-page en laadt base.css dus niet; .is-hidden staat
+   daarom hier. Verborgen tot het script de klasse weghaalt. Zelfde regel als in
+   base.css, inclusief het !important en de reden erachter. */
+.is-hidden {
+    display: none !important;
+}
+
+.tool-error-message {
+    margin-bottom: 1rem;
+}
+
+.tool-result-label {
+    margin-bottom: 0.5rem;
+}

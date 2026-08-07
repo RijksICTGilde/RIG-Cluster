@@ -46,15 +46,6 @@
     </div>
     {% endif %}
 
-    <style>
-        #wizard-step-form .wizard-step__saving { display: none; }
-        #wizard-step-form.htmx-request .wizard-step__saving {
-            display: inline-flex;
-            align-items: center;
-            gap: var(--rvo-space-xs);
-            color: var(--rvo-color-grijs-700);
-        }
-    </style>
     <form id="wizard-step-form"
           autocomplete="off"
           hx-ext="json-enc"

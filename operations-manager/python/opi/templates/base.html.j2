@@ -11,25 +11,9 @@
    the URLs first and reference them by name. #}
 {% set json_enc_js = static_url("js/json-enc.js") %}
 {% set edit_modal_js = static_url("js/edit_modal.js") %}
-<c-page title="{{ page_title_value }}" lang="nl" bodyClass="rvo-theme rvo-responsive" additionalJs='<script src="{{ json_enc_js }}"></script><script src="{{ edit_modal_js }}"></script>'>
+<c-page title="{{ page_title_value }}" lang="nl" bodyClass="rvo-theme rvo-responsive" additionalCss="{{ static_url('css/base.css') }}" additionalJs='<script src="{{ json_enc_js }}"></script><script src="{{ edit_modal_js }}"></script>'>
 
     <div class="rvo-demo-page">
-        {# ===================================================================
-           TODO: DELETE ME  -- TODO: DELETE ME  -- TODO: DELETE ME
-           HACK: our ROOS c-alert renders without the flex container styling,
-           so the icon and text stack/misalign. This restores the intended
-           layout globally. Remove this <style> block once the jinja-roos-components
-           c-alert is fixed upstream.
-           TODO: DELETE ME  -- TODO: DELETE ME  -- TODO: DELETE ME
-           =================================================================== #}
-        <style>
-            .rvo-alert__container {
-                align-items: flex-start;
-                display: flex;
-                gap: var(--rvo-alert-gap);
-            }
-        </style>
-
         {# Header #}
         <c-header
             text="Zelfservice voor Applicatie Deployment"
@@ -83,30 +67,9 @@
                 :secondaryMenu="version_menu" />
         </c-layout-flow>
 
-        <style>
-            .rvo-footer__column-title {
-                color: white !important;
-            }
-
-            /* Icon alignment for headings */
-            h1 .utrecht-icon,
-            h2 .utrecht-icon,
-            h3 .utrecht-icon,
-            h4 .utrecht-icon,
-            h5 .utrecht-icon,
-            h6 .utrecht-icon {
-                vertical-align: sub;
-                margin-right: 0.1em;
-            }
-        </style>
 
         {% block additional_styles %}
         {# Additional CSS can be added here by child templates #}
-        <style>
-        .rvo-footer__column-title {
-            color: white !important;
-        }
-        </style>
         {% endblock %}
 
         {% block additional_scripts %}

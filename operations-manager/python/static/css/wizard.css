@@ -439,3 +439,295 @@ c-fieldset c-fieldset {
 .cm-kv-wrapper .cm-editor.cm-focused { outline: 2px solid #007BC7; }
 .kv-editor--error .cm-kv-wrapper { border-color: #d52b1e; }
 
+/* Uit opi/templates/wizard/wizard_step.html.j2 */
+#wizard-step-form .wizard-step__saving { display: none; }
+#wizard-step-form.htmx-request .wizard-step__saving {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--rvo-space-xs);
+    color: var(--rvo-color-grijs-700);
+}
+
+/* Uit opi/templates/wizard/wizard_review.html.j2 */
+/* htmx toggles .htmx-request on the hx-indicator target for the request's duration. */
+.wizard-review__submitting { display: none; }
+.wizard-review__submitting.htmx-request {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--rvo-space-xs);
+    color: var(--rvo-color-grijs-700);
+}
+
+/* Uit opi/templates/wizard/modal_wizard_step.html.j2 */
+#modal-wizard-form .wizard-step__saving { display: none; }
+#modal-wizard-form.htmx-request .wizard-step__saving {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--rvo-space-xs);
+    color: var(--rvo-color-grijs-700);
+}
+
+/* Uit opi/templates/wizard/modal_wizard_review.html.j2 */
+#modal-wizard-confirm-saving { display: none; }
+#modal-wizard-confirm-saving.htmx-request {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--rvo-space-xs);
+    color: var(--rvo-color-grijs-700);
+}
+
+/* Uit opi/templates/wizard/partials/approval_items.html.j2 */
+.approval-item-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.approval-item-info {
+    display: flex;
+    align-items: center;
+    gap: var(--rvo-space-sm);
+}
+.approval-type-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.approval-type-subdomain { background: var(--rvo-color-hemelblauw-150); color: var(--rvo-color-hemelblauw-750); }
+.approval-type-domain { background: var(--rvo-color-groen-150); color: var(--rvo-color-groen-750); }
+
+.approval-status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.approval-status-requested { background: var(--rvo-color-geel-300); color: var(--rvo-color-geel-750); }
+.approval-status-approved { background: var(--rvo-color-groen-150); color: var(--rvo-color-groen-750); }
+.approval-status-denied { background: var(--rvo-color-rood-150); color: var(--rvo-color-rood-750); }
+
+.approval-history {
+    padding: var(--rvo-space-xs) 0;
+}
+.approval-history summary {
+    cursor: pointer;
+}
+.approval-history-entries {
+    margin-top: var(--rvo-space-xs);
+    padding-left: var(--rvo-space-md);
+}
+.approval-history-entry {
+    display: flex;
+    align-items: center;
+    gap: var(--rvo-space-sm);
+    padding: var(--rvo-space-xs) 0;
+}
+.approval-history-date {
+    font-size: 0.8rem;
+    color: var(--rvo-color-grijs-600);
+    min-width: 80px;
+}
+
+.approval-action-fields {
+    display: flex;
+    gap: var(--rvo-space-md);
+    align-items: flex-end;
+}
+.approval-action-field { flex: 0 0 200px; }
+.approval-message-field { flex: 1; }
+.approval-select, .approval-message-field input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--rvo-color-grijs-300);
+    border-radius: 6px;
+    font-size: 0.9rem;
+}
+
+/* Uit opi/templates/wizard/partials/attachments_upload.html.j2 */
+.att-upload-ok { display:inline-flex; align-items:center; gap:0.35rem; color:#39870c; font-weight:600; animation: attUploadOk 2.6s ease forwards; }
+@keyframes attUploadOk { 0% {opacity:0; transform:translateY(-2px) scale(0.9);} 12% {opacity:1; transform:none;} 75% {opacity:1;} 100% {opacity:0;} }
+
+/* ===================================================================
+   De backup- en herstelstappen (wizard/partials/backup_select_deployment,
+   restore_select_backup, restore_select_target). Stonden als style=-attributen
+   in die templates; de waarden zijn onveranderd overgenomen.
+   =================================================================== */
+
+.backup-step__intro {
+    margin-bottom: 8px;
+}
+
+/* Een keuze als kaartje: radioknop links, gegevens rechts. */
+.backup-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid var(--rvo-color-grijs-300);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    cursor: pointer;
+}
+
+.backup-option__radio {
+    margin-top: 4px;
+}
+
+.backup-option__body {
+    flex: 1;
+}
+
+.backup-option__title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.backup-option__id {
+    font-size: 0.8rem;
+    background: var(--rvo-color-hemelblauw-200);
+    color: var(--rvo-color-donkerblauw);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.backup-option__timestamp {
+    color: var(--rvo-color-grijs-600);
+    font-size: 0.85rem;
+}
+
+.backup-option__meta-row {
+    margin-top: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.backup-option__deployment {
+    font-size: 0.85rem;
+}
+
+.backup-option__count {
+    color: var(--rvo-color-grijs-500);
+    font-size: 0.8rem;
+}
+
+.backup-option__types {
+    margin-top: 4px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+/* Soort resource in een backup: de kleur zegt welke. */
+.backup-type {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 500;
+}
+
+.backup-type--pvc {
+    background: var(--rvo-color-hemelblauw-200);
+    color: var(--rvo-color-donkerblauw);
+}
+
+.backup-type--database {
+    background: var(--rvo-color-grasgroen-200);
+    color: var(--rvo-color-grasgroen-800);
+}
+
+.backup-type--bucket {
+    background: var(--rvo-color-oranje-200);
+    color: var(--rvo-color-oranje-800);
+}
+
+.backup-select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--rvo-color-grijs-300);
+    border-radius: 6px;
+    font-size: 0.95rem;
+}
+
+.backup-checkbox-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+}
+
+.backup-checkbox-option__input {
+    margin: 0;
+}
+
+/* Herstelstap: kiezen tussen een bestaande en een nieuwe bestemming. */
+.restore-mode-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 8px;
+}
+
+.restore-mode-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border: 1px solid var(--rvo-color-grijs-300);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.restore-mode-option--selected {
+    background: var(--rvo-color-hemelblauw-100);
+    border-color: var(--rvo-color-hemelblauw);
+}
+
+.restore-target-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--rvo-color-grijs-300);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    cursor: pointer;
+}
+
+.restore-target-option__namespace {
+    background: var(--rvo-color-grijs-200);
+    color: var(--rvo-color-grijs-700);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    margin-left: 4px;
+}
+
+/* Bijlagen in de wizard. */
+.attachment-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.attachment-upload__label {
+    margin-top: 0.5rem;
+}
+
+.attachment-upload__row {
+    margin-top: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.wizard-modal-success__actions {
+    margin-top: 1rem;
+}

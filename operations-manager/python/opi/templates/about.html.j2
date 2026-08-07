@@ -5,56 +5,13 @@
 {% block content %}
 <c-layout-flow gap="xl">
 
-    <div>
-        <c-heading type="h1" textContent="Over ZAD" />
-        <p class="rvo-text--lg">
-            Zelfservice Applicatie Deployment binnen ODC-Noord.
-        </p>
-    </div>
+    {% include "about/_kop.html.j2" %}
 
-    <c-card outline="true" padding="xl" backgroundColor="wit">
-        <c-layout-flow gap="md">
-            <c-heading type="h2" textContent="Waarom dit platform?" />
-            <p>
-                Als je een applicatie ontwikkelt weet je aan het begin vaak nog niet precies wat je
-                nodig hebt. Een database? Opslag? Authenticatie? Dat groeit gaandeweg. Tegelijkertijd
-                wil je wel ergens draaien waar je je werk kunt laten zien, zonder eerst een heel
-                ops-traject te doorlopen.
-            </p>
-            <p>
-                Binnen de overheid is het niet altijd eenvoudig om een plek te vinden waar je een
-                applicatie kunt hosten. Dit platform biedt die plek, voor ontwikkeling en voor productie.
-            </p>
-        </c-layout-flow>
-    </c-card>
+    {% include "about/_waarom.html.j2" %}
 
-    <c-card outline="true" padding="xl" backgroundColor="wit">
-        <c-layout-flow gap="md">
-            <c-heading type="h2" textContent="Hoe werkt het?" />
-            <p>
-                ZAD neemt het ops-gedeelte van applicatieontwikkeling uit handen. Via een
-                overzichtelijke UI configureer je je project: welke componenten je hebt, welke
-                services je wilt gebruiken, en hoe je deployments eruitzien. Het platform regelt
-                de rest, infrastructuur, secrets, netwerk, deployment.
-            </p>
-            <p>
-                Alles wat je via de UI kunt doen is ook beschikbaar via de API, zodat je het kunt
-                integreren in je CI/CD pipeline. Image updaten, deployment refreshen, component
-                toevoegen, één API-call.
-            </p>
-        </c-layout-flow>
-    </c-card>
+    {% include "about/_hoe.html.j2" %}
 
-    <c-card outline="true" padding="xl" backgroundColor="wit">
-        <c-layout-flow gap="md">
-            <c-heading type="h2" textContent="Veilig ingericht" />
-            <p>
-                Het platform is gebouwd op bewezen technologie en voldoet aan de beveiligingseisen
-                van de overheid. Je hoeft je daar niet mee bezig te houden, dat is al geregeld.
-                Jij focust op je applicatie, wij op de rest.
-            </p>
-        </c-layout-flow>
-    </c-card>
+    {% include "about/_veilig.html.j2" %}
 
 </c-layout-flow>
 {% endblock %}
