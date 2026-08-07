@@ -15,8 +15,29 @@ Bij het aanmaken bestaat het project nog niet. Er is dus geen sleutel en geen pr
 - Het taaktype `create_project` bestaat en wordt door de wizard gebruikt (`create_async_task`), dus de aanmaakweg zelf is er.
 - Er staat een uitgecommentarieerd `POST /projects` in `api/router.py` uit de zelfbedieningstijd; het idee is eerder bedacht en uitgezet.
 - SSO bestaat, maar aan de webkant: dertig routes dragen `@requires_sso`, sessie-gebaseerd.
-- **Een project met alleen een naam en een omschrijving is schemageldig.** Gemeten. De API hoeft dus geen componenten of deployments te verzinnen om iets geldigs te schrijven.
+- **De taak kan het projectbestand zelf opbouwen.** `handle_create_project` kent twee paden: een kant-en-klare YAML (die de wizard levert), of losse projectgegevens waaruit hij het bestand genereert met `generate_self_service_project_yaml`. Dat tweede pad is precies wat de CLI nodig heeft.
 - De projectsleutel bestaat al als `config.api-key` in het projectbestand.
+
+## De basis moet erin, en die bestaat al
+
+Een projectbestand met alleen een naam is schemageldig (`required: ["name"]`, gemeten), maar daar kan het systeem niets mee. Wat de UI-weg schrijft en wat er dus ook uit de CLI-weg moet komen:
+
+```yaml
+name, display-name, description
+clusters:     [cluster]
+services:     [...]
+config:       {...}          # met de api-key
+repositories:
+  - name: main-repo
+    url / username / password / branch   # uit de settings
+    path: "."
+```
+
+Zonder dat `repositories`-blok heeft ArgoCD geen bron. Het wordt opgebouwd uit `PROJECT_REPO_URL`, `PROJECT_REPO_USERNAME` en `PROJECT_REPO_BRANCH` plus een wachtwoord, in `generate_self_service_project_yaml`.
+
+**Dat is dus geen nieuw werk maar hergebruik**, en dat is belangrijker dan het lijkt: `main-repo` staat vandaag op **vijf** plekken hardgecodeerd (`project_file.py`, `router_wizard.py`, en drie keer in `project_utils.py`). Een CLI-weg die zijn eigen basis opbouwt wordt de zesde, en dan lopen ze uiteen zodra er een verandert. Dat is precies de klasse fout die vandaag vier keer boven kwam.
+
+**Wat er expliciet NIET in hoeft:** een deployment. Het gaat om de basis waarmee het project bestaat en zijn repo kent; wat erin draait richt je daarna via de CLI in.
 
 ## Er liggen twee ontwerpen, en dat moet eerst beslist worden
 
@@ -28,13 +49,15 @@ Bij het aanmaken bestaat het project nog niet. Er is dus geen sleutel en geen pr
 
 **Het verschil dat telt:** bij A vult een mens een formulier in, bij B niet. Voor agentisch werken is A geen oplossing, want er zit een handmatige stap in het midden. B is duurder en is het enige dat het gestelde doel haalt.
 
-**Advies: B, en A niet weggooien.** De loopback-opzet, de nonce en de opslagregels uit de CLI-TODO gelden voor allebei; alleen wat er in de browser gebeurt verschilt. Bouw B, en leen de beveiligingskeuzes die daar al staan.
+**Besloten op 7 augustus: B, met de SSO-popup voorlopig erbij.** Inloggen blijft via het scherm dat de CLI opent; wat daarna gebeurt loopt via de API in plaats van via een formulier.
+
+**En A niet weggooien.** De loopback-opzet, de nonce en de opslagregels uit de CLI-TODO gelden voor allebei; alleen wat er in de browser gebeurt verschilt. Bouw B, en leen de beveiligingskeuzes die daar al staan.
 
 ## Hoeveel werk is het
 
 Vier stukken, en het middelste is het echte werk.
 
-1. **Het endpoint zelf: klein.** Naam en omschrijving in, een `create_project`-taak eruit. De aanmaakweg bestaat, en het minimale projectbestand is geldig.
+1. **Het endpoint zelf: klein.** Naam en omschrijving in, een `create_project`-taak eruit met het genereer-pad, zodat de basis (repositories, config, api-key) uit de bestaande opbouw komt en niet uit een zesde kopie.
 2. **Het authenticatiepad: het grootste stuk.** De API moet een gebruikerstoken accepteren en daaruit een identiteit afleiden, naast de bestaande sleutel per project. De OIDC-machinerie staat er (authlib, Keycloak), maar sessie-gebaseerd; een bearer-token-pad is nieuw. Hier hoort ook de vraag bij wie überhaupt een project mag aanmaken.
 3. **Het antwoord: klein maar bepalend.** Projectnaam plus API-sleutel terug, zodat de CLI zijn context kan zetten. Dat is het hele punt van de exercitie.
 4. **De CLI-kant: al ontworpen, niet gebouwd.** Loopback, nonce, opslag met 0600. Staat in `zad-cli/TODO.md` en hoeft niet opnieuw bedacht te worden.
