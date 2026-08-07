@@ -1,0 +1,36 @@
+/* Vormgeving van de metrics explorer.
+   Stond als <style>-blok in opi/templates/metrics-explorer.html.j2. */
+
+.metrics-controls__row {
+    display: flex;
+    gap: 1.5rem;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+.metrics-controls__field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 200px;
+    flex: 1;
+}
+.metrics-controls__field--button {
+    flex: 0;
+    min-width: auto;
+}
+.metrics-controls__filter {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+}
+.metrics-controls__filter input {
+    max-width: 300px;
+}
+.rvo-select, .rvo-input {
+    padding: 0.5rem;
+    border: 1px solid var(--rvo-color-grijs-400, #999);
+    border-radius: 4px;
+    font-size: 0.95rem;
+    width: 100%;
+}

@@ -1,6 +1,6 @@
 {# Page Header - project name, description, badge #}
 <div>
-    <c-layout-flow row="true" justifyContent="space-between" alignItems="center" style="margin-bottom: var(--rvo-space-md);">
+    <c-layout-flow row="true" justifyContent="space-between" alignItems="center" class="section-header-row">
         <div>
             <c-layout-flow row="true" alignItems="center" gap="sm">
                 <c-heading type="h1" textContent="{{ project.display_name }}" />
@@ -10,7 +10,7 @@
                 {% endif %}
             </c-layout-flow>
             {% if project.description %}
-            <p class="rvo-text--lg" style="margin: 0;">{{ project.description }}</p>
+            <p class="rvo-text--lg text-flush">{{ project.description }}</p>
             {% endif %}
         </div>
     </c-layout-flow>

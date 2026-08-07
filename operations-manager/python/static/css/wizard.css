@@ -439,3 +439,11 @@ c-fieldset c-fieldset {
 .cm-kv-wrapper .cm-editor.cm-focused { outline: 2px solid #007BC7; }
 .kv-editor--error .cm-kv-wrapper { border-color: #d52b1e; }
 
+
+/* Verborgen tot JavaScript de klasse weghaalt. Staat hier en niet als
+   style="display: none" in de markup, zodat een template geen vormgeving draagt.
+   Gebruikt door de tabbladen en deploymentsecties op de projectdetailpagina en
+   door de foutmelding in de bewerkmodal (wizard.js). */
+.is-hidden {
+    display: none;
+}

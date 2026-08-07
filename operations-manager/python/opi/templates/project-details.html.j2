@@ -50,7 +50,7 @@
     </c-layout-flow>
 
     {# ==================== DEPLOYMENTS TAB ==================== #}
-    <c-layout-flow id="tab-deployments" gap="lg" style="display: none;">
+    <c-layout-flow id="tab-deployments" gap="lg" class="is-hidden">
         {# Deployment Selector #}
         {% if project.deployments|length > 1 %}
         <div class="deployment-global-selector">
@@ -72,7 +72,7 @@
            `data-deployment` is what switchDeployment() shows/hides. #}
         {% for deployment in project.deployments | sort(attribute='name') %}
         <div class="deployment-section" data-deployment="{{ deployment.name }}"
-             {% if not loop.first %}style="display: none;"{% endif %}>
+             {% if not loop.first %}class="is-hidden"{% endif %}>
             <c-layout-flow gap="lg">
                 {% for section in deployment_service_sections.get(deployment.name, []) %}
                 {% include section.template %}
@@ -84,7 +84,7 @@
         {% include "project-details/section-env-vars.html.j2" %}
     </c-layout-flow>
 
-    <c-layout-flow id="tab-taken" gap="lg" style="display: none;">
+    <c-layout-flow id="tab-taken" gap="lg" class="is-hidden">
         {# Loaded + polled only while the Taken tab is open (startTasksPoll/stopTasksPoll),
            so we don't poll every 5s from page load on tabs the user is not viewing. #}
         <div id="tasks-content" data-tasks-url="/projects/{{ project.name }}/tasks">
@@ -113,12 +113,12 @@
         if (event) event.preventDefault();
 
         // Hide all tab content
-        document.getElementById('tab-project').style.display = 'none';
-        document.getElementById('tab-deployments').style.display = 'none';
-        document.getElementById('tab-taken').style.display = 'none';
+        document.getElementById('tab-project').classList.add('is-hidden');
+        document.getElementById('tab-deployments').classList.add('is-hidden');
+        document.getElementById('tab-taken').classList.add('is-hidden');
 
         // Show selected tab
-        document.getElementById('tab-' + tabName).style.display = '';
+        document.getElementById('tab-' + tabName).classList.remove('is-hidden');
 
         // Load the Taken list (it then polls itself via htmx) only while its tab is open;
         // clearing it on any other tab removes the poller so htmx stops polling.
@@ -182,17 +182,17 @@
         }
         // Hide all deployment sections
         document.querySelectorAll('.deployment-section').forEach(section => {
-            section.style.display = 'none';
+            section.classList.add('is-hidden');
         });
         // Show sections matching this deployment
         ['deployment-actions-', 'deployment-', 'argocd-'].forEach(prefix => {
             const el = document.getElementById(prefix + deploymentName);
-            if (el) el.style.display = '';
+            if (el) el.classList.remove('is-hidden');
         });
         // Service-owned blocks (RC-24) say which deployment they belong to instead of
         // encoding it in an id prefix this list has to know about.
         document.querySelectorAll('.deployment-section[data-deployment="' + deploymentName + '"]')
-            .forEach(el => { el.style.display = ''; });
+            .forEach(el => { el.classList.remove('is-hidden'); });
 
         // Sync global selector and URL hash
         const gs = document.getElementById('global-deployment-selector');
@@ -750,7 +750,7 @@
 
         // Hide error
         var errorEl = document.getElementById('edit-section-error');
-        errorEl.style.display = 'none';
+        errorEl.classList.add('is-hidden');
 
         // Show loading state
         var innerEl = document.getElementById('edit-section-inner');
@@ -797,7 +797,7 @@
     function openServiceModal(endpoint, title) {
         document.getElementById('edit-section-title-text').textContent = title;
         var errorEl = document.getElementById('edit-section-error');
-        if (errorEl) errorEl.style.display = 'none';
+        if (errorEl) errorEl.classList.add('is-hidden');
         var innerEl = document.getElementById('edit-section-inner');
         innerEl.innerHTML =
             '<div class="edit-section-content">' +
@@ -834,7 +834,7 @@
         var errorEl = document.getElementById('confirm-action-error');
         if (!errorEl) return;
         errorEl.textContent = status ? 'Actie mislukt (' + status + ')' : 'Actie mislukt';
-        errorEl.style.display = '';
+        errorEl.classList.remove('is-hidden');
     });
 
     /* closeEditModal / closeEditModalAndReload / handleEditBackdropClick and

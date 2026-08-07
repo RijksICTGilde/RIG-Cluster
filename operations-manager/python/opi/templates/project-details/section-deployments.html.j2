@@ -4,7 +4,7 @@
     {% for deployment in project.deployments | sort(attribute='name') %}
     {% set original_index = project.deployments.index(deployment) %}
     <div class="deployment-section" id="deployment-{{ deployment.name }}"
-         {% if not loop.first and project.deployments|length > 1 %}style="display: none;"{% endif %}>
+         {% if not loop.first and project.deployments|length > 1 %}class="is-hidden"{% endif %}>
     <c-card class="deployment-card" padding="lg" background="color" backgroundColor="grijs-050" outline="true">
         <c-layout-flow gap="md">
             <div class="deployment-header">
@@ -56,7 +56,7 @@
 
             {# Helm Charts in this deployment #}
             {% if deployment.get('helm-charts') %}
-            <div class="deployment-helm-charts" style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
+            <div class="deployment-helm-charts section-divider">
                 <c-heading type="h4"><c-icon icon="applicatie" size="md" color="groen" />Helm Charts</c-heading>
                 <c-layout-flow gap="md">
                     {% for helm_chart in deployment.get('helm-charts', []) %}
@@ -68,9 +68,9 @@
                             </c-layout-flow>
                             {% if helm_chart.get('helm-values') and helm_chart['helm-values'] is mapping %}
                             <div class="helm-values-section">
-                                <c-layout-flow row="true" alignItems="center" gap="sm" style="margin-bottom: var(--rvo-space-sm);">
+                                <c-layout-flow row="true" alignItems="center" gap="sm" class="section-subheader">
                                     <c-icon icon="sleutel" size="sm" color="hemelblauw" />
-                                    <span class="rvo-text--sm" style="font-weight: 600;">Helm Values</span>
+                                    <span class="rvo-text--sm text-strong">Helm Values</span>
                                     <span class="env-vars-count-badge">{{ helm_chart['helm-values']|length }} waarde{% if helm_chart['helm-values']|length != 1 %}n{% endif %}</span>
                                 </c-layout-flow>
                                 <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) }}" />
@@ -85,7 +85,7 @@
 
             {# Helmfile in this deployment #}
             {% if deployment.get('helmfile') %}
-            <div class="deployment-helmfile" style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
+            <div class="deployment-helmfile section-divider">
                 <c-heading type="h4"><c-icon icon="applicatie" size="md" color="oranje" />Helmfile</c-heading>
                 <c-layout-flow gap="md">
                     {% for helmfile in deployment.get('helmfile', []) %}
@@ -97,9 +97,9 @@
                             </c-layout-flow>
                             {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping %}
                             <div class="helm-values-section">
-                                <c-layout-flow row="true" alignItems="center" gap="sm" style="margin-bottom: var(--rvo-space-sm);">
+                                <c-layout-flow row="true" alignItems="center" gap="sm" class="section-subheader">
                                     <c-icon icon="sleutel" size="sm" color="hemelblauw" />
-                                    <span class="rvo-text--sm" style="font-weight: 600;">Helm Values</span>
+                                    <span class="rvo-text--sm text-strong">Helm Values</span>
                                     <span class="env-vars-count-badge">{{ helmfile['helm-values']|length }} waarde{% if helmfile['helm-values']|length != 1 %}n{% endif %}</span>
                                 </c-layout-flow>
                                 <c-secret-field
@@ -149,7 +149,7 @@
             {% endfor %}
 
             {% if has_user_vars %}
-            <div style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
+            <div class="section-divider">
                 <c-heading type="h4"><c-icon icon="user" size="md" color="donkerblauw" />Gebruikers configuratie</c-heading>
                 <p class="rvo-text--subtle">Gebruiker-specifieke omgevingsvariabelen voor deze deployment</p>
 
@@ -170,9 +170,9 @@
                                     <c-layout-flow gap="xs">
                                         <c-layout-flow row="true" alignItems="center" gap="sm">
                                             <c-icon icon="sleutel" size="sm" color="grijs-600" />
-                                            <span class="rvo-text--sm" style="font-weight: 600;">{{ key }}</span>
+                                            <span class="rvo-text--sm text-strong">{{ key }}</span>
                                         </c-layout-flow>
-                                        <div style="margin-left: var(--rvo-space-lg);">
+                                        <div class="indent-lg">
                                             <c-secret-field value="{{ value }}" />
                                         </div>
                                     </c-layout-flow>

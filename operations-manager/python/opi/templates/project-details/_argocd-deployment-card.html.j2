@@ -37,7 +37,7 @@
    real failure. #}
 {% set state_replaces_health = state_badges and health == 'Healthy' %}
 
-<c-card padding="lg" outline="true" backgroundColor="grijs-050" class="argo-card">
+<c-card padding="lg" outline="true" backgroundColor="grijs-050">
     <c-layout-flow gap="md">
         {# Deployment Header #}
         <c-layout-row gap="sm" verticalSpacing="center">
@@ -212,7 +212,7 @@
                     class="argo-errors__toggle">
                 <c-icon icon="waarschuwing" size="sm" color="rood" />
                 <span>{{ real_errors|length }} {% if real_errors|length == 1 %}probleem{% else %}problemen{% endif %} gevonden</span>
-                <c-icon icon="delta-omlaag" size="sm" class="argo-errors__caret" />
+                <c-icon icon="delta-omlaag" size="sm" />
             </button>
             <div id="argocd-errors-{{ _id_prefix }}" class="argo-errors__panel">
                 {% for error in real_errors %}

@@ -2,7 +2,7 @@
 {% if project.helmfile %}
 <c-card outline="true" padding="xl" backgroundColor="wit">
     <c-layout-flow gap="lg">
-        <c-heading type="h2" style="margin-bottom: 0;"><c-icon icon="applicatie" size="xl" color="oranje" />Helmfile</c-heading>
+        <c-heading type="h2" class="section-heading"><c-icon icon="applicatie" size="xl" color="oranje" />Helmfile</c-heading>
         <p class="rvo-text--subtle">Helmfile definities op project niveau</p>
 
         <div class="helmfile-section">
@@ -29,10 +29,10 @@
                     </div>
 
                     {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping and helmfile['helm-values']|length > 0 %}
-                    <div class="helm-values-section" style="margin-top: var(--rvo-space-md); padding-top: var(--rvo-space-md); border-top: 1px solid var(--rvo-color-grijs-200);">
-                        <div style="display: flex; align-items: center; gap: var(--rvo-space-sm); margin-bottom: var(--rvo-space-sm);">
+                    <div class="helm-values-section section-divider">
+                        <div class="helm-values-header">
                             <c-icon icon="sleutel" size="sm" color="hemelblauw" />
-                            <span class="rvo-text--sm" style="font-weight: 600;">Helm Values (Base)</span>
+                            <span class="rvo-text--sm text-strong">Helm Values (Base)</span>
                             <span class="env-vars-count-badge">{{ helmfile['helm-values']|length }} waarde{% if helmfile['helm-values']|length != 1 %}n{% endif %}</span>
                         </div>
                         <c-secret-field

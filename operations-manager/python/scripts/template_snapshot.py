@@ -58,6 +58,8 @@ PAGES: list[tuple[str, str]] = [
 # Waarden die per run verschillen en dus niets zeggen over een verbouwing.
 NOISE: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r'\?v=[0-9a-f]+"'), '?v=HASH"'),
+    (re.compile(r"(csrf_token\"? ?[=:] ?.?\"?)[A-Za-z0-9_-]{20,}"), r"\1CSRF"),
+    (re.compile(r"(X-CSRF-Token[^A-Za-z0-9]{2,10})[A-Za-z0-9_-]{20,}"), r"\1CSRF"),
     (re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"), "UUID"),
     (re.compile(r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?"), "TIJDSTIP"),
     (re.compile(r"\b\d{2}-\d{2}-\d{4}\b"), "DATUM"),

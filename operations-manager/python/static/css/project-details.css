@@ -1108,10 +1108,6 @@
    template per status uitrekende.
    =================================================================== */
 
-.argo-card {
-    border-left: 4px solid var(--rvo-color-hemelblauw);
-}
-
 .argo-card__cluster {
     background: var(--rvo-color-grijs-200);
     color: var(--rvo-color-grijs-700);
@@ -1272,10 +1268,6 @@
 
 /* Dichtgeklapt tot toggleArgoErrors() de --open-klasse zet. Dat gaat bewust via een
    klasse en niet via element.style: dan hoeft de begintoestand niet inline te staan. */
-.argo-errors__caret {
-    margin-left: auto;
-}
-
 .argo-errors__panel {
     display: none;
     margin-top: 8px;
@@ -1339,4 +1331,201 @@
 .argo-orphans__item {
     margin: 6px 0 0 24px;
     word-break: break-word;
+}
+
+/* ===================================================================
+   Secties van de projectdetailpagina (project-details/*.html.j2) en het
+   metriekenfragment. Stonden als style=-attributen in die templates; de
+   waarden zijn onveranderd overgenomen.
+   =================================================================== */
+
+/* De h2 boven elke sectie staat strak op de inhoud eronder. */
+.section-heading {
+    margin-bottom: 0;
+}
+
+.section-heading--danger {
+    color: var(--rvo-color-rood-600);
+}
+
+.section-header-row {
+    margin-bottom: var(--rvo-space-md);
+}
+
+/* Een alinea zonder eigen marge, omdat de omliggende layout de ruimte al bepaalt. */
+.text-flush {
+    margin: 0;
+}
+
+.text-strong {
+    font-weight: 600;
+}
+
+.flex-1 {
+    flex: 1;
+}
+
+.indent-lg {
+    margin-left: var(--rvo-space-lg);
+}
+
+/* Scheidingslijn boven een blok dat onder een kaart hangt (helm values, secrets). */
+.section-divider {
+    margin-top: var(--rvo-space-md);
+    padding-top: var(--rvo-space-md);
+    border-top: 1px solid var(--rvo-color-grijs-200);
+}
+
+.section-subheader {
+    margin-bottom: var(--rvo-space-sm);
+}
+
+.helm-values-header {
+    display: flex;
+    align-items: center;
+    gap: var(--rvo-space-sm);
+    margin-bottom: var(--rvo-space-sm);
+}
+
+/* Skeletonvormen tijdens het laden: elk botje heeft zijn eigen maat, en die maat
+   hoort bij de vorm die het nabootst. */
+.argocd-skeleton__bone--avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+}
+
+.argocd-skeleton__bone--title {
+    width: 38%;
+    height: 18px;
+}
+
+.argocd-skeleton__bone--chip {
+    width: 64px;
+    height: 20px;
+}
+
+.argocd-skeleton__bone--badge {
+    width: 100px;
+    height: 26px;
+    border-radius: 16px;
+}
+
+.argocd-skeleton__bone--badge-short {
+    width: 88px;
+    height: 26px;
+    border-radius: 16px;
+}
+
+.argocd-skeleton__bone--meta {
+    width: 55%;
+    height: 14px;
+}
+
+.argocd-skeleton__bone--button {
+    width: 112px;
+    height: 30px;
+}
+
+.argocd-skeleton__bone--label {
+    width: 40%;
+    height: 14px;
+}
+
+.argocd-skeleton__bone--line {
+    width: 100%;
+    height: 12px;
+}
+
+/* Danger zone */
+.danger-action-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--rvo-space-md);
+}
+
+.danger-action-title {
+    color: var(--rvo-color-rood-600);
+}
+
+/* Verbruiksbalkje per deployment. De breedte van de vulling is de waarde zelf en
+   blijft daarom inline staan; de rest hoort hier. */
+.usage-bar {
+    height: 6px;
+    background: var(--rvo-color-grijs-200);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.usage-bar__fill {
+    height: 100%;
+}
+
+.usage-bar__fill--cpu {
+    background: var(--rvo-color-hemelblauw);
+}
+
+.usage-bar__fill--memory {
+    background: var(--rvo-color-groen);
+}
+
+/* Takenlijst */
+.tasks-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.task-step {
+    color: var(--rvo-color-grijs-700);
+}
+
+/* Teamleden */
+.team-avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--rvo-color-hemelblauw);
+    color: white;
+    font-weight: 600;
+    font-size: 1.125rem;
+}
+
+.team-email {
+    font-weight: 500;
+    color: var(--rvo-color-grijs-900);
+}
+
+.team-role {
+    font-size: 0.875rem;
+    color: var(--rvo-color-grijs-700);
+    text-transform: capitalize;
+}
+
+/* Metriekenfragment (partials/deployment_metrics.html.j2) */
+.metrics-toolbar {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.pod-count-chip {
+    background: var(--rvo-color-grijs-200);
+    color: var(--rvo-color-grijs-700);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    margin-left: 8px;
+}
+
+.pvc-storage-section {
+    margin-top: 24px;
+}
+
+.pvc-storage-header {
+    margin-bottom: 16px;
 }
