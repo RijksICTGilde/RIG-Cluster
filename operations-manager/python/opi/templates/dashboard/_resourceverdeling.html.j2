@@ -1,0 +1,32 @@
+{# De balk die het resourcegebruik over de projecten verdeelt. #}
+{% if prometheus_available and total_cpu_usage is defined and total_cpu_usage > 0 %}
+<c-layout-flow gap="lg">
+    <c-heading type="h2" textContent="Resource Verdeling" />
+    <c-card outline="true" padding="lg" backgroundColor="wit">
+        <c-layout-flow gap="md">
+            <p class="rvo-text--sm rvo-text--subtle">CPU gebruik per project</p>
+            <div class="resource-bar">
+                {% for project in projects %}
+                    {% if project.cpu_cores is defined and project.cpu_cores > 0 %}
+                    <div class="resource-segment resource-color-{{ loop.index0 % 6 }}"
+                         data-width="{{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}"
+                         title="{{ project.display_name }}: {{ '%.3f' | format(project.cpu_cores) }} cores">
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
+            <div class="resource-legend">
+                {% for project in projects %}
+                    {% if project.cpu_cores is defined and project.cpu_cores > 0 %}
+                    <a href="/projects/details/{{ project.name }}" class="resource-legend-item">
+                        <span class="resource-dot resource-color-{{ loop.index0 % 6 }}"></span>
+                        <span class="rvo-text--sm">{{ project.display_name }}</span>
+                        <span class="rvo-text--sm rvo-text--subtle">{{ '%.3f' | format(project.cpu_cores) }} cores ({{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}%)</span>
+                    </a>
+                    {% endif %}
+                {% endfor %}
+            </div>
+        </c-layout-flow>
+    </c-card>
+</c-layout-flow>
+{% endif %}

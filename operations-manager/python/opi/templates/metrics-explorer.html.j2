@@ -9,68 +9,15 @@
             <c-heading type="h1" textContent="Metrics Explorer" />
             <p>Selecteer een service om de beschikbare Prometheus metrics te verkennen.</p>
 
-            {# Controls row #}
-            <div class="metrics-controls">
-                <div class="metrics-controls__row">
-                    {# Service selector #}
-                    <div class="metrics-controls__field">
-                        <label for="service-select"><strong>Service</strong></label>
-                        <select id="service-select" class="rvo-select">
-                            <option value="">-- Selecteer een service --</option>
-                            {% for service in services %}
-                                <option value="{{ service.id }}">{{ service.name }}</option>
-                            {% endfor %}
-                        </select>
-                        <span id="service-description" class="rvo-text--sm rvo-text--subtle"></span>
-                    </div>
+    {% include "metrics-explorer/_bediening.html.j2" %}
 
-                    {# Metric selector #}
-                    <div class="metrics-controls__field">
-                        <label for="metric-select"><strong>Metric</strong></label>
-                        <select id="metric-select" class="rvo-select" disabled>
-                            <option value="">-- Selecteer eerst een service --</option>
-                        </select>
-                        <span id="metric-count" class="rvo-text--sm rvo-text--subtle"></span>
-                    </div>
+    {% include "metrics-explorer/_laden.html.j2" %}
 
-                    {# Show button #}
-                    <div class="metrics-controls__field metrics-controls__field--button">
-                        <c-button kind="primary" label="Tonen in Prometheus" id="show-btn" disabled @click="showMetric()" />
-                    </div>
-                </div>
+    {% include "metrics-explorer/_fout.html.j2" %}
 
-                {# Metric filter #}
-                <div class="metrics-controls__filter is-hidden" id="filter-container">
-                    <label for="metric-filter" class="rvo-text--sm"><strong>Filter metrics:</strong></label>
-                    <input type="text" id="metric-filter" class="rvo-input" placeholder="Type om te filteren..." oninput="filterMetrics()" />
-                </div>
+    {% include "metrics-explorer/_grafiek.html.j2" %}
+
             </div>
-
-            {# Loading indicator #}
-            <div id="loading" class="is-hidden">
-                <p class="rvo-text--subtle">Metrics ophalen...</p>
-            </div>
-
-            {# Error display #}
-            <div id="error-msg" class="is-hidden">
-                <c-card outline="true" padding="md">
-                    <p id="error-text" class="metrics-error-text">Fout bij het ophalen van metrics.</p>
-                </c-card>
-            </div>
-
-            {# Prometheus iframe #}
-            <div id="prometheus-frame-container" class="is-hidden">
-                <c-heading type="h2" textContent="Prometheus Graph" />
-                <iframe id="prometheus-frame"
-                        class="prometheus-frame"
-                        sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
-                        title="Prometheus Graph UI">
-                </iframe>
-                <p class="rvo-text--sm rvo-text--subtle prometheus-frame-hint">
-                    <a id="prometheus-direct-link" href="#" target="_blank" rel="noopener">Open in nieuw tabblad</a>
-                </p>
-            </div>
-
         </c-layout-flow>
     </div>
 {% endblock %}

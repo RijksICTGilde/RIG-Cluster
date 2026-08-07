@@ -1,0 +1,11 @@
+{# Het ingesloten Prometheus-venster met de grafiek. #}
+<div id="prometheus-frame-container" class="is-hidden">
+    <c-heading type="h2" textContent="Prometheus Graph" />
+    <iframe id="prometheus-frame"
+            class="prometheus-frame"
+            sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+            title="Prometheus Graph UI">
+    </iframe>
+    <p class="rvo-text--sm rvo-text--subtle prometheus-frame-hint">
+        <a id="prometheus-direct-link" href="#" target="_blank" rel="noopener">Open in nieuw tabblad</a>
+    </p>
