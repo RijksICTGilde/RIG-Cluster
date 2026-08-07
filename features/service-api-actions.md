@@ -63,6 +63,7 @@ One declaration carries everything the endpoint needs:
 | `fields` | each field's name, meaning (into the OpenAPI document), the shared `Editable` that validates it, whether it is a text field or an upload, and which verbs require it |
 | `verbs` | which of create / update / upsert it supports |
 | `combinations` | which fields go together, plus a dotted path to where that rule is *already* enforced |
+| `disjunctions` | which fields are an either/or ("send A or B"), plus that same dotted path |
 | `example` | a curl line that works |
 | `handler` | the async function that does the work |
 
@@ -79,6 +80,26 @@ left out" is the endpoint's business, and `editables_for(verb)` sets exactly tha
 A field with genuinely no editable states why (`no_editable_reason`). There is one today:
 the uploaded file. Its bytes are not a form field; the only rule that applies is its size,
 and that lives once in `catalog/attachments/catalog_model.MAX_ATTACHMENT_BYTES`.
+
+### Combinations and disjunctions
+
+Two shapes of rule, both **documentation with a pointer** and neither of them a second
+implementation:
+
+| Declaration | Says | Example |
+|---|---|---|
+| `FieldCombination` | *if* this, *then* that is required | when `provide-as=file`, `path` is required |
+| `FieldDisjunction` | exactly one of these is given | `file` **or** `reference` |
+
+An implication cannot express an either/or: written from both sides it is two rules, and
+neither of them says that giving both is wrong or that giving neither is. So the
+disjunction is its own declaration -- and it reaches the OpenAPI document as `oneOf`, so a
+client reads the rule off the spec instead of discovering it at the 422.
+
+`enforced_by` is a dotted path to the code that actually refuses the request, and
+`tests/test_service_actions.py` resolves every one of them. The declaration itself
+validates nothing: a rule that lived in both places would drift, which is the whole reason
+it points instead of repeats.
 
 ### The verbs
 
@@ -131,6 +152,20 @@ curl -X POST -H "X-API-Key: $KEY" \
   https://zad.rijksapps.nl/api/v2/projects/my-project/services/attachments/component/backend/attachments
 ```
 
+Couple an attachment that is **already** in the catalog, without uploading anything (this
+is the `reference` side of the disjunction -- `file` or `reference`, never both and never
+neither):
+
+```bash
+curl -X POST -H "X-API-Key: $KEY" \
+  -F reference=server-cert \
+  -F provide-as=file -F path=/etc/ssl/certs/server.pem \
+  https://zad.rijksapps.nl/api/v2/projects/my-project/services/attachments/component/backend/attachments
+```
+
+On a `PUT` the path already names the attachment, so there is no choice to make: a `file`
+replaces its content, and leaving it out rewrites only the coupling.
+
 Replace an existing attachment, keeping its couplings:
 
 ```bash
@@ -144,7 +179,9 @@ combination the rules refuse.
 
 The coupling fields follow the component config exactly: `provide-as: file` needs `path`,
 `provide-as: env-var` needs `env-name`. That rule lives in `AttachmentUse` and is run here
-so the caller hears it at once.
+so the caller hears it at once. The "content or reference" rule lives once too, in
+`check_attachment_source` in the service's `api.py`, and both the disjunction and the
+`file` -> `attachment_id` combination point at it.
 
 ## The 64 KB limit
 
@@ -170,8 +207,8 @@ form). A limit only one road honours just moves the problem to the other one.
 5. Return the declarations from `api_actions()`.
 
 `tests/test_service_actions.py` holds every declaration to being honest: a field reuses an
-editable or writes down why it cannot, a combination points at code that resolves, and
-every action carries an example.
+editable or writes down why it cannot, a combination and a disjunction point at code that
+resolves, and every action carries an example.
 
 ## Related
 

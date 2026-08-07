@@ -264,3 +264,111 @@ class TestTheWriteGoesThroughTheValidatedPath:
 
         assert result["error_type"] == "validation_error"
         assert "catalogus ongeldig" in result["error"]
+
+
+class TestCouplingByReference:
+    """A request that gives a reference instead of a file (RC-45).
+
+    The catalog entry is already there and stays exactly as it is; only the component's
+    use of it is written. The verb's promise then has to be about that coupling, because
+    the catalog side of it is settled before the request arrives.
+    """
+
+    async def test_it_writes_the_coupling_and_leaves_the_catalog_alone(self, encrypt_call) -> None:
+        entry = {"id": "server-cert", "filename": "server.pem", "content": "-----BEGIN AGE-----\nx\n"}
+        project = _project(catalog=[entry])
+        manager, save = _wire(project)
+
+        result = await manager.upsert_attachment(
+            "server-cert",
+            None,
+            None,
+            on_existing="reject",
+            on_absent="create",
+            component_name="backend",
+            binding={"provide-as": "file", "path": "/etc/ssl/certs/server.pem"},
+        )
+
+        assert result["success"] is True
+        encrypt_call.assert_not_called()
+        assert extract_attachment_catalog(project)["server-cert"] == entry
+        uses = extract_component_attachment_uses(project["components"][0])
+        assert uses == [{"reference": "server-cert", "provide-as": "file", "path": "/etc/ssl/certs/server.pem"}]
+        save.assert_awaited_once()
+
+    async def test_a_reference_to_nothing_is_refused(self) -> None:
+        project = _project(catalog=[])
+        manager, save = _wire(project)
+
+        result = await manager.upsert_attachment(
+            "server-cert",
+            None,
+            None,
+            on_existing="reject",
+            on_absent="create",
+            component_name="backend",
+            binding={"provide-as": "env-var", "env-name": "CERT"},
+        )
+
+        assert result["error_type"] == "not_found"
+        save.assert_not_awaited()
+
+    async def test_a_coupling_that_is_already_there_is_refused_when_the_verb_says_so(self) -> None:
+        entry = {"id": "server-cert", "filename": "server.pem", "content": "x"}
+        project = _project(catalog=[entry])
+        project["components"][0]["services"] = [
+            {
+                "reference": "attachments",
+                "config": [{"reference": "server-cert", "provide-as": "env-var", "env-name": "C"}],
+            }
+        ]
+        manager, save = _wire(project)
+
+        result = await manager.upsert_attachment(
+            "server-cert",
+            None,
+            None,
+            on_existing="reject",  # CREATE
+            on_absent="create",
+            component_name="backend",
+            binding={"provide-as": "file", "path": "/etc/cert.pem"},
+        )
+
+        assert result["error_type"] == "conflict"
+        save.assert_not_awaited()
+
+    async def test_a_missing_coupling_is_refused_when_the_verb_expects_one(self) -> None:
+        project = _project(catalog=[{"id": "server-cert", "filename": "server.pem", "content": "x"}])
+        manager, save = _wire(project)
+
+        result = await manager.upsert_attachment(
+            "server-cert",
+            None,
+            None,
+            on_existing="replace",  # UPDATE
+            on_absent="reject",
+            component_name="backend",
+            binding={"provide-as": "file", "path": "/etc/cert.pem"},
+        )
+
+        assert result["error_type"] == "not_found"
+        save.assert_not_awaited()
+
+    async def test_a_project_without_an_age_key_can_still_couple(self) -> None:
+        # Nothing is encrypted, so the key that guards the write is not needed here.
+        project = _project(catalog=[{"id": "server-cert", "filename": "server.pem", "content": "x"}])
+        project["config"] = {}
+        manager, save = _wire(project)
+
+        result = await manager.upsert_attachment(
+            "server-cert",
+            None,
+            None,
+            on_existing="reject",
+            on_absent="create",
+            component_name="backend",
+            binding={"provide-as": "file", "path": "/etc/cert.pem"},
+        )
+
+        assert result["success"] is True
+        save.assert_awaited_once()
