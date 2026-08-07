@@ -43,6 +43,28 @@ def _wait_for_schedule_text(page: Page, expected: str, timeout: int = 10000) -> 
     page.locator(f"#tab-deployments :text('{expected}')").wait_for(state="visible", timeout=timeout)
 
 
+def _set_schedule(modal: EditModalHelper, frequency: str, time: str = "02:00") -> None:
+    """Set this project's backup schedule to a known state via the UI.
+
+    Every test in this file works on the same seeded project, and the app is
+    session-scoped, so a saved schedule outlives the test that saved it. A test
+    that needs a particular schedule therefore sets it first instead of assuming
+    the seeded value is still there - otherwise it passes only while it happens
+    to run before the tests that change the schedule.
+    """
+    modal.open_edit_modal("modal-edit-backup-schedule-0", "Backup schema instellen")
+    freq_select = modal.page.locator("select[name='deployments[0]/backup/schedule']")
+    freq_select.wait_for(state="visible", timeout=5000)
+    modal.select_with_rerender(freq_select, frequency)
+    if frequency:
+        time_select = modal.page.locator("select[name='deployments[0]/backup/schedule:time']")
+        time_select.wait_for(state="visible", timeout=5000)
+        time_select.select_option(time)
+    modal.submit_step()
+    modal.wait_for_success()
+    modal.close_modal()
+
+
 class TestBackupSection:
     """Verify the backup section renders on the detail page."""
 
@@ -67,6 +89,8 @@ class TestBackupSection:
 
     def test_schedule_display_shows_daily_rrule(self, modal: EditModalHelper) -> None:
         """The RRULE schedule should render as 'Dagelijks rond 02:00' via the rrule_schedule filter."""
+        _set_schedule(modal, "DAILY", "02:00")
+        modal.open_detail_page()
         _switch_to_deployments_tab(modal.page)
         tab = modal.page.locator("#tab-deployments")
         section_text = tab.text_content() or ""
@@ -104,6 +128,7 @@ class TestBackupScheduleModal:
 
     def test_current_schedule_preselected(self, modal: EditModalHelper) -> None:
         """The current schedule (DAILY) should be pre-selected from RRULE."""
+        _set_schedule(modal, "DAILY", "02:00")
         modal.open_edit_modal("modal-edit-backup-schedule-0", "Backup schema instellen")
         select = modal.page.locator("select[name='deployments[0]/backup/schedule']")
         select.wait_for(state="visible", timeout=5000)
@@ -111,6 +136,7 @@ class TestBackupScheduleModal:
 
     def test_time_select_visible(self, modal: EditModalHelper) -> None:
         """Time indication select should be visible when a frequency is set."""
+        _set_schedule(modal, "DAILY", "02:00")
         modal.open_edit_modal("modal-edit-backup-schedule-0", "Backup schema instellen")
         time_select = modal.page.locator("select[name='deployments[0]/backup/schedule:time']")
         time_select.wait_for(state="visible", timeout=5000)
@@ -201,25 +227,10 @@ class TestBackupScheduleRoundTrip:
     Each test sets up its own starting state to be independent of test order.
     """
 
-    @staticmethod
-    def _set_schedule(modal: EditModalHelper, frequency: str, time: str = "02:00") -> None:
-        """Set the schedule to a known state via the UI."""
-        modal.open_edit_modal("modal-edit-backup-schedule-0", "Backup schema instellen")
-        freq_select = modal.page.locator("select[name='deployments[0]/backup/schedule']")
-        freq_select.wait_for(state="visible", timeout=5000)
-        modal.select_with_rerender(freq_select, frequency)
-        if frequency:
-            time_select = modal.page.locator("select[name='deployments[0]/backup/schedule:time']")
-            time_select.wait_for(state="visible", timeout=5000)
-            time_select.select_option(time)
-        modal.submit_step()
-        modal.wait_for_success()
-        modal.close_modal()
-
     def test_edit_daily_time_and_verify(self, modal: EditModalHelper, screenshot_dir: Path) -> None:
         """Change the time to 14:30, save, reload page, verify display shows new time."""
         # Set up: ensure schedule is DAILY 02:00
-        self._set_schedule(modal, "DAILY", "02:00")
+        _set_schedule(modal, "DAILY", "02:00")
         modal.open_detail_page()
         _switch_to_deployments_tab(modal.page)
         _wait_for_schedule_text(modal.page, "Dagelijks rond 02:00")
@@ -256,7 +267,7 @@ class TestBackupScheduleRoundTrip:
     def test_change_to_weekly_and_verify(self, modal: EditModalHelper, screenshot_dir: Path) -> None:
         """Change schedule to weekly, save, reload, verify display."""
         # Set up: ensure schedule is DAILY first
-        self._set_schedule(modal, "DAILY", "02:00")
+        _set_schedule(modal, "DAILY", "02:00")
         modal.open_detail_page()
         _switch_to_deployments_tab(modal.page)
 
@@ -283,7 +294,7 @@ class TestBackupScheduleRoundTrip:
     def test_change_to_none_and_verify(self, modal: EditModalHelper, screenshot_dir: Path) -> None:
         """Disable schedule, save, reload, verify 'Geen backup schema' is shown."""
         # Set up: ensure schedule is DAILY first
-        self._set_schedule(modal, "DAILY", "02:00")
+        _set_schedule(modal, "DAILY", "02:00")
         modal.open_detail_page()
         _switch_to_deployments_tab(modal.page)
 
@@ -308,7 +319,7 @@ class TestBackupScheduleRoundTrip:
     def test_re_enable_schedule_and_verify(self, modal: EditModalHelper, screenshot_dir: Path) -> None:
         """From disabled, re-enable with MONTHLY, save, reload, verify display."""
         # Set up: disable schedule first
-        self._set_schedule(modal, "")
+        _set_schedule(modal, "")
         modal.open_detail_page()
         _switch_to_deployments_tab(modal.page)
 
