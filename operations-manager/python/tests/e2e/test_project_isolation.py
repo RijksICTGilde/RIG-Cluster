@@ -7,9 +7,19 @@ tests pin down the two things that make that harmless:
 1. every test file works on its own project, derived from the file name;
 2. whatever a test writes is put back before the next test runs.
 
-They are deliberately a pair: the first one dirties the project on purpose, the
-second one asserts it came back clean. Delete the reset fixture and the second
-one fails.
+Every test here is self-contained on purpose: it first asserts that it started
+from a clean state and only then makes a mess. That is what a guard against
+leaking state has to look like, because it must hold in *any* order. An earlier
+version used ``_a_``/``_b_`` pairs -- one test dirtied, the next asserted it was
+gone -- which only works if the runner keeps them in file order. Shuffle the
+suite (``task test-e2e-random``) and those pairs fail on their own ordering
+rather than on the thing they guard, which is worse than no guard at all: the
+suite that is supposed to prove order-independence becomes the reason it is
+lost.
+
+The repeated variants are not padding. With the reset in place they all pass in
+any order; take the reset away and every variant except whichever one ran first
+fails, in any order.
 """
 
 from typing import TYPE_CHECKING
@@ -28,7 +38,7 @@ pytestmark = pytest.mark.e2e
 PROJECT_TEMPLATE = "test-project-detail"
 
 PRISTINE_DESCRIPTION = "Uitgebreid testproject voor de detailpagina E2E tests"
-DIRTY_DESCRIPTION = "Aangepast door test_a_a_change_lands_on_this_files_own_project"
+DIRTY_DESCRIPTION = "Aangepast door test_project_isolation"
 STRAY_PROJECT = "e2e-stray-left-behind"
 
 
@@ -38,8 +48,37 @@ def test_own_project_is_this_files_own(own_project: str) -> None:
     assert own_project != PROJECT_TEMPLATE
 
 
-def test_a_a_change_lands_on_this_files_own_project(app_server: str, auth_page: Page, own_project: str) -> None:
-    """Change the description and verify it is really saved (so the pair has teeth)."""
+@pytest.mark.parametrize("run", [1, 2, 3])
+def test_a_stray_project_never_reaches_the_next_test(app_server: str, run: int) -> None:
+    """A project a test leaves behind is gone before the next test starts.
+
+    Stand-in for what the wizard suites do: save a project into the session-wide
+    registry and move on. Nothing here removes it -- the reset fixture does, and
+    this test asserts that on the way in, before adding one of its own. So it
+    guards the same thing whichever of the three runs first.
+    """
+    service = get_project_service()
+    assert service.get_project(STRAY_PROJECT) is None, "a project left behind by an earlier test survived into this one"
+
+    service.register(STRAY_PROJECT, "stray-key", f"{STRAY_PROJECT}.yaml", [], {"name": STRAY_PROJECT})
+    assert service.get_project(STRAY_PROJECT) is not None
+
+
+@pytest.mark.parametrize("run", [1, 2])
+def test_this_files_project_starts_from_the_fixture_state(
+    app_server: str, auth_page: Page, own_project: str, run: int
+) -> None:
+    """An edit to this file's own project does not reach the next test.
+
+    Same shape: assert clean, then dirty it. The edit is really saved (asserted
+    below), so if anything carried it over, the other run would see it.
+    """
+    auth_page.goto(f"{app_server}/projects/details/{own_project}")
+    auth_page.wait_for_load_state("networkidle")
+    body = auth_page.text_content("body") or ""
+    assert DIRTY_DESCRIPTION not in body, "an earlier test's edit survived into this one"
+    assert PRISTINE_DESCRIPTION in body
+
     modal = EditModalHelper(auth_page, app_server, own_project)
     modal.open_detail_page()
     modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
@@ -48,35 +87,7 @@ def test_a_a_change_lands_on_this_files_own_project(app_server: str, auth_page: 
     modal.wait_for_success()
 
     modal.open_detail_page()
-    assert DIRTY_DESCRIPTION in (auth_page.text_content("body") or "")
-
-
-def test_b_the_next_test_gets_the_project_back_clean(app_server: str, auth_page: Page, own_project: str) -> None:
-    """The previous test's edit is gone: every test starts from the fixture state."""
-    auth_page.goto(f"{app_server}/projects/details/{own_project}")
-    auth_page.wait_for_load_state("networkidle")
-
-    body = auth_page.text_content("body") or ""
-    assert DIRTY_DESCRIPTION not in body, "the previous test's edit survived into this one"
-    assert PRISTINE_DESCRIPTION in body
-
-
-def test_a_a_stray_project_is_left_behind_on_purpose(app_server: str) -> None:
-    """Stand-in for a test that creates a project and does not clean it up.
-
-    The wizard suites do exactly this: they save a project into the session-wide
-    registry and move on. Nothing here removes it - the next test asserts that
-    the reset fixture did.
-    """
-    get_project_service().register(STRAY_PROJECT, "stray-key", f"{STRAY_PROJECT}.yaml", [], {"name": STRAY_PROJECT})
-    assert get_project_service().get_project(STRAY_PROJECT) is not None
-
-
-def test_b_the_stray_project_is_gone(app_server: str) -> None:
-    """Whatever a test adds to the registry is not there for the next one."""
-    assert get_project_service().get_project(STRAY_PROJECT) is None, (
-        "a project left behind by the previous test survived into this one"
-    )
+    assert DIRTY_DESCRIPTION in (auth_page.text_content("body") or ""), "the edit was not saved, so this proves nothing"
 
 
 def test_the_shared_template_project_is_never_touched(app_server: str, auth_page: Page) -> None:

@@ -88,6 +88,10 @@ gebruik de naam die hij teruggeeft, in plaats van een gedeelde naam als
 `test-project-detail` hard in te typen. Wat je test schrijft wordt na afloop hoe dan ook
 teruggezet. Zie `features/e2e-test-isolation.md`.
 
+Schrijf een niveau-5-test die niet leunt op wat ervoor draaide: `task test-e2e-random`
+schudt de bestanden en de tests daarbinnen door elkaar, en CI draait die vorm. Een test die
+zijn beginstaat van een vorige test krijgt, valt daar om -- terecht.
+
 ## Dekking vandaag
 
 Gemeten 6 augustus 2026 over de dienstpakketten: 2x niveau 1, 4x niveau 2, 3x niveau 3,
