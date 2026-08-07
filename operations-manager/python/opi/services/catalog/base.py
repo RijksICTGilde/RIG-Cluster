@@ -60,6 +60,28 @@ class ConfigLayer(Enum):
     DEPLOYMENT_COMPONENT = "deployment-component"
 
 
+class ValueStorage(Enum):
+    """How a service's owned key/value property is stored in the project file (RC-55).
+
+    Both properties that exist today are a map of environment-variable name -> value
+    and both hold secrets, but they are encrypted differently, and a writer has to know
+    which before it can change one entry:
+
+    * ``BLOCK`` -- the whole set is one AGE block whose plaintext is ``KEY=value``
+      lines (``user-env-vars``). Changing one entry rewrites the whole ciphertext.
+    * ``PER_VALUE`` -- a mapping with readable names and each value encrypted on its
+      own (``aliases``). Changing one entry rewrites one ciphertext.
+
+    Declared here rather than derived from the config model's root type: which shape a
+    service stores is a decision, not a side effect of a type annotation, and the API
+    that reads and writes it has to be able to name it. ``opi/services/component_values.py``
+    is the one implementation of both shapes.
+    """
+
+    BLOCK = "block"
+    PER_VALUE = "per-value"
+
+
 class ConfigRole(Enum):
     """What a service's config at a layer *is*: a definition, a use, or a binding.
 
@@ -612,6 +634,14 @@ class Service(ABC):
     #: validates that key against ``config_model``; None means "config lives in the
     #: services list", which is the normal case.
     owned_property: ClassVar[str | None] = None
+
+    #: How that owned property stores its values, when it is a key/value map that the
+    #: API can manage entry by entry (RC-55). Set together with ``owned_property``; None
+    #: means "not a values map", and then no ``/values/...`` endpoints are generated.
+    #: The layers those endpoints cover are the ones the service already declares
+    #: (``config_layers()``), so the API can never address a layer the project schema
+    #: has no place for -- which is why ``aliases`` gets component-level endpoints only.
+    owned_values_storage: ClassVar[ValueStorage | None] = None
 
     #: Order in the generic provisioning loop (RC-5 Phase 4); lower runs first. Only
     #: meaningful for providers that override ``provision``. The defaults on the four
