@@ -16,12 +16,13 @@ hoger getal dan de werkelijkheid, dan faalt de test met het verzoek het te verla
 
 import re
 
-from opi.core.templates import TEMPLATES_DIR
+from opi.core.templates import STATIC_DIR, TEMPLATES_DIR
 
 INLINE_STYLE = re.compile(r'\bstyle="')
 STYLE_BLOCK = re.compile(r"<style[\s>]")
 BLOCK_START = re.compile(r"{%-?\s*block\s+(\w+)")
 BLOCK_END = re.compile(r"{%-?\s*endblock")
+JINJA_SYNTAX = re.compile(r"{{|{%")
 
 # Reden voor een uitzondering die er niet hoort te zijn maar er nog wel is. Elke regel met
 # deze reden is werk dat nog moet gebeuren; de test houdt alleen tegen dat er iets bij komt.
@@ -54,11 +55,6 @@ CONTENT_BLOCK_EXCEPTIONS: dict[str, str] = {
 
 # Templates die een eigen <style>-blok mogen houden, met de reden.
 STYLE_BLOCK_EXCEPTIONS: dict[str, str] = {
-    "base.html.j2": (
-        "Globale reparatie van de ROOS c-alert-layout, met een TODO erboven om hem te "
-        "verwijderen zodra jinja-roos-components is gerepareerd. Hoort bij de hack, niet "
-        "bij een pagina."
-    ),
     "architecture-overview.html.j2": "Zie CONTENT_BLOCK_EXCEPTIONS: deze pagina wordt in zijn geheel apart beoordeeld.",
     "wizard/modal_wizard_review.html.j2": WERKLIJST,
     "wizard/modal_wizard_step.html.j2": WERKLIJST,
@@ -196,3 +192,20 @@ def test_content_block_exceptions_are_not_stale() -> None:
     ]
 
     assert not stale, "Deze uitzonderingen zijn niet meer nodig, haal ze weg:\n" + "\n".join(stale)
+
+
+def test_stylesheets_contain_no_jinja() -> None:
+    """CSS die uit een template komt, mag geen Jinja meer bevatten.
+
+    In een <style>-blok werd ``width: 30%`` soms als ``width: 30{{ '%' }}`` geschreven.
+    Dat rendert daar naar het goede, maar een bestand onder static/ komt nooit langs
+    Jinja: daar blijft de accolade letterlijk staan en valt de regel stil weg. Precies
+    het soort verlies dat je bij het verplaatsen niet ziet.
+    """
+    offenders: list[str] = []
+    for stylesheet in sorted((STATIC_DIR / "css").glob("*.css")):
+        for number, line in enumerate(stylesheet.read_text().splitlines(), start=1):
+            if JINJA_SYNTAX.search(line):
+                offenders.append(f"{stylesheet.name}:{number}: {line.strip()}")
+
+    assert not offenders, "Een CSS-bestand wordt niet door Jinja gerenderd:\n" + "\n".join(offenders)

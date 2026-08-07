@@ -26,10 +26,10 @@
 
 .user-row:hover { background: var(--rvo-color-grijs-25); }
 
-.col-name { width: 30{{ '%' }}; }
-.col-email { width: 30{{ '%' }}; }
-.col-created { width: 20{{ '%' }}; }
-.col-actions { width: 20{{ '%' }}; }
+.col-name { width: 30%; }
+.col-email { width: 30%; }
+.col-created { width: 20%; }
+.col-actions { width: 20%; }
 
 .actions {
     display: flex;

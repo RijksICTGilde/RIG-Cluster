@@ -32,11 +32,11 @@
 }
 
 /* Column Widths */
-.col-project { width: 35{{ '%' }}; }
-.col-environment { width: 12{{ '%' }}; }
-.col-team { width: 15{{ '%' }}; }
-.col-services { width: 25{{ '%' }}; }
-.col-actions { width: 13{{ '%' }}; }
+.col-project { width: 35%; }
+.col-environment { width: 12%; }
+.col-team { width: 15%; }
+.col-services { width: 25%; }
+.col-actions { width: 13%; }
 
 /* Project Info */
 .project-info .project-name {
@@ -126,7 +126,7 @@
     justify-content: center;
     width: 24px;
     height: 24px;
-    border-radius: 50{{ '%' }};
+    border-radius: 50%;
     background: var(--rvo-color-hemelblauw);
     color: wit;
     font-size: 0.625rem;
