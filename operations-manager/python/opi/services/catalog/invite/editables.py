@@ -2,8 +2,8 @@
 
 All fields live under ``services/invite/config``. Paths are built with ``config_path``
 so the layer/service is encoded once (enum-driven) instead of a hardcoded string. Every
-editable carries ``virtualize=("services", "_services-config")`` so project-level service
-config does not collide with the service-selection list in the wizard state.
+editable carries ``virtualize=SERVICE_VIRTUALIZE`` so project-level service config does
+not collide with the service-selection list in the wizard state.
 
 The ``active`` sequence holds one item per invitation; its children are the invite fields.
 The realm-roles picker is a sequence of selects fed by ``InviteRealmRoleOptionsProvider``
@@ -14,7 +14,7 @@ are deliberately NOT offered here (advanced pass-through, see the config model).
 from __future__ import annotations
 
 from opi.forms.editables.converters import EmptyToNoneConverter
-from opi.forms.editables.editable import Editable
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 from opi.forms.editables.validators import (
     AllowedValuesValidator,
     EmailValidator,
@@ -34,8 +34,6 @@ from opi.services.catalog.invite.defaults import (
 )
 from opi.services.services_enums import ServiceType
 
-_VIRTUALIZE = ("services", "_services-config")
-
 
 def _cp(*segments: str) -> str:
     return config_path(ConfigLayer.PROJECT, ServiceType.INVITE, "config", *segments)
@@ -48,7 +46,7 @@ INVITE_DEFAULT_LANGUAGE_EDITABLE = Editable(
     values_provider="InviteLanguageOptionsProvider",
     validator=AllowedValuesValidator(["nl", "en"]),
     default="nl",
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 # --- per-invite item fields --------------------------------------------------
@@ -60,14 +58,14 @@ INVITE_KEY_EDITABLE = Editable(
     validator=InviteKeyValidator(),
     converter=EmptyToNoneConverter(),
     remove_when_none=True,
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 INVITE_REALM_ROLE_ITEM_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "realm-roles[*]"),
     values_provider="InviteRealmRoleOptionsProvider",
     validator=RealmRoleValidator(),
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 INVITE_REALM_ROLES_EDITABLE = Editable(
@@ -75,7 +73,7 @@ INVITE_REALM_ROLES_EDITABLE = Editable(
     min_items=0,
     max_items=10,
     children=[INVITE_REALM_ROLE_ITEM_EDITABLE],
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 # Kept, but no longer offered in the form (see visualizers): it restricts by email DOMAIN
@@ -86,7 +84,7 @@ INVITE_RESTRICT_DOMAIN_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "restrict-domain"),
     converter=EmptyToNoneConverter(),
     remove_when_none=True,
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 INVITE_CONTACT_EMAIL_EDITABLE = Editable(
@@ -96,7 +94,7 @@ INVITE_CONTACT_EMAIL_EDITABLE = Editable(
     required=True,
     default=default_contact_email,
     remove_when_none=True,
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 # Picked from the project's own public addresses rather than typed. Someone setting up an
@@ -112,7 +110,7 @@ INVITE_APPLICATION_URL_EDITABLE = Editable(
     validator=UrlValidator(),
     converter=EmptyToNoneConverter(),
     remove_when_none=True,
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 # Closed set (sso/local); the model types it as list[Literal[...]] so it is guardrailed
@@ -129,7 +127,7 @@ INVITE_AUTH_METHODS_EDITABLE = Editable(
     values_provider="InviteAuthMethodOptionsProvider",
     depends_on="services/keycloak/config/template",
     show_when={"value": ["sso-support"]},
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 # --- i18n texts (two editables per text: nl + en) ----------------------------
@@ -144,7 +142,7 @@ INVITE_MESSAGE_NL_EDITABLE = Editable(
     required=True,
     default=default_message_nl,
     remove_when_none=True,
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 INVITE_MESSAGE_EN_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "message", "en"),
@@ -152,7 +150,7 @@ INVITE_MESSAGE_EN_EDITABLE = Editable(
     required=True,
     default=default_message_en,
     remove_when_none=True,
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 INVITE_SUCCESS_TITLE_NL_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "success-title", "nl"),
@@ -160,7 +158,7 @@ INVITE_SUCCESS_TITLE_NL_EDITABLE = Editable(
     required=True,
     default=default_success_title_nl,
     remove_when_none=True,
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 INVITE_SUCCESS_TITLE_EN_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "success-title", "en"),
@@ -168,7 +166,7 @@ INVITE_SUCCESS_TITLE_EN_EDITABLE = Editable(
     required=True,
     default=default_success_title_en,
     remove_when_none=True,
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 INVITE_SUCCESS_BUTTON_NL_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "success-button", "nl"),
@@ -176,7 +174,7 @@ INVITE_SUCCESS_BUTTON_NL_EDITABLE = Editable(
     required=True,
     default=default_success_button_nl,
     remove_when_none=True,
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 INVITE_SUCCESS_BUTTON_EN_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "success-button", "en"),
@@ -184,7 +182,7 @@ INVITE_SUCCESS_BUTTON_EN_EDITABLE = Editable(
     required=True,
     default=default_success_button_en,
     remove_when_none=True,
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 # The children of one ``active`` item, in display order.
@@ -217,7 +215,7 @@ INVITE_ACTIVE_EDITABLE = Editable(
     max_items=1,
     add_remove=False,
     children=INVITE_ITEM_CHILD_EDITABLES,
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 # Flat list of every editable this service contributes at the project layer.

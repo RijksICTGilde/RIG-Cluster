@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from opi.forms.editables.editable import Editable
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 from opi.forms.editables.validators import KubernetesNameValidator, PathValidator
 
 TEMP_STORAGE_NAME_EDITABLE = Editable(
@@ -29,7 +29,7 @@ TEMP_STORAGE_SEQUENCE_EDITABLE = Editable(
     yaml_path="components[*]/services{temp-storage}/config",
     depends_on="components[*]/services",
     show_when={"contains": "temp-storage"},
-    virtualize=("services", "_services-config"),
+    virtualize=SERVICE_VIRTUALIZE,
     min_items=1,
     children=[
         TEMP_STORAGE_NAME_EDITABLE,

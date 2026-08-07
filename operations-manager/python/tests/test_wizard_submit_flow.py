@@ -229,7 +229,7 @@ class TestClearedFieldRoundtrip:
             flow_id="modal-component-edit",
             current_step="components-edit",
             active_sections=["components-edit"],
-            template_data={"components": [{"name": "web", "aliases": {"DB": "old"}, "image": "nginx:1"}]},
+            base_data={"components": [{"name": "web", "aliases": {"DB": "old"}, "image": "nginx:1"}]},
         )
         state.store_step_data("components-edit", fragment)
 
@@ -250,7 +250,7 @@ class TestClearedFieldRoundtrip:
             flow_id="modal-component-edit",
             current_step="components-edit",
             active_sections=["components-edit"],
-            template_data={"components": [{"name": "web", "aliases": {"DB": "old"}}]},
+            base_data={"components": [{"name": "web", "aliases": {"DB": "old"}}]},
         )
         state.store_step_data("components-edit", fragment)
 
