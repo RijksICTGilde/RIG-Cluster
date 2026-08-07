@@ -75,6 +75,7 @@ test = [
     "vcrpy>=7.0.0",
     "pytest-minio-mock>=0.4.17",
     "pytest-timeout>=2.3.1",
+    "pytest-xdist>=3.6.1",
     "testcontainers[postgres]>=4.0.0",
 ]
 dev = [
