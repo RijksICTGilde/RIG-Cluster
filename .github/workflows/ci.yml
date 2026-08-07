@@ -70,8 +70,12 @@ jobs:
       # order forever is how that stays hidden. Every run picks a new seed, so the job
       # samples a different order each time; the seed is printed in the header, so a
       # failure is reproducible with `task test-e2e-random SEED=<n>`.
+      # No `-q` here: the addopts already sit at verbosity 0 (`-v -q`), so one more
+      # `-q` drops it to -1 and pytest then omits the report header - which is exactly
+      # where pytest-randomly prints `Using --randomly-seed=<n>`. Without that line the
+      # seed is unknowable and a red run cannot be replayed.
       - name: Run local E2E suite (shuffled order)
-        run: uv run pytest tests/e2e/ -m "e2e and not sandbox" -p randomly -q --timeout=300
+        run: uv run pytest tests/e2e/ -m "e2e and not sandbox" -p randomly --timeout=300
 
   license-check:
     runs-on: ubuntu-latest

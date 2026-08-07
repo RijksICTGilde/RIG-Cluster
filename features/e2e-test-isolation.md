@@ -76,7 +76,14 @@ task test-e2e-parallel WORKERS=4               # more workers on a bigger machin
 A reversed *file* order is not a substitute: it still keeps each file's tests together and
 in sequence, which is exactly the assumption a leaking test makes. `pytest-randomly` breaks
 both. The CI `e2e` job runs the shuffled form with a fresh seed each time, so a new coupling
-shows up as a failure with a seed you can replay.
+shows up as a failure with a seed you can replay: `pytest-randomly` prints
+`Using --randomly-seed=<n>` in the report header, and `task test-e2e-random SEED=<n>` runs
+that exact order again.
+
+Neither the task nor the CI step passes `-q`. The `addopts` in `pyproject.toml` already
+contain `-v -q` (verbosity 0); one more `-q` lands on -1, and at -1 pytest omits the report
+header - taking the seed line with it. Keep any shuffled run at verbosity 0 or higher, and
+check with `... -p randomly | grep randomly-seed`.
 
 `tests/e2e/test_project_isolation.py` guards both mechanisms directly. Each of its tests
 asserts it started clean and *then* makes a mess, repeated a few times - so the guard holds

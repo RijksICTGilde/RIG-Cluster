@@ -17,9 +17,14 @@ rather than on the thing they guard, which is worse than no guard at all: the
 suite that is supposed to prove order-independence becomes the reason it is
 lost.
 
-The repeated variants are not padding. With the reset in place they all pass in
-any order; take the reset away and every variant except whichever one ran first
-fails, in any order.
+The repeated variants are not padding, and the two mechanisms are guarded by
+different ones. Measured with the reset fixture disabled (seeds 1 and 2): only
+``test_a_stray_project_never_reaches_the_next_test`` runs 2 and 3 fail -- those
+are the ones that hold the reset to account. The
+``test_this_files_project_starts_from_the_fixture_state`` variants keep passing
+without it, because ``own_project`` registers a fresh copy for every test and
+that overwrites the dirtied one anyway; what they guard is that per-file
+project, not the reset.
 """
 
 from typing import TYPE_CHECKING
