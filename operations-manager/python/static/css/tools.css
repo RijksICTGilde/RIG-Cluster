@@ -1,0 +1,12 @@
+/* Vormgeving van de toolspagina.
+   Stond als <style>-blok in opi/templates/tools.html.j2. */
+
+.output-code-block {
+    background-color: #f5f5f5;
+    padding: 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
