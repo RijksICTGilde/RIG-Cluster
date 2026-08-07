@@ -1987,6 +1987,21 @@ tasks:
       - uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
     silent: false
 
+  test-e2e-parallel:
+    desc: "Run the local E2E suite in parallel (isolation check + faster feedback)"
+    dir: operations-manager/python
+    cmds:
+      - uv run playwright install chromium --with-deps
+      # --dist loadfile keeps a file's tests on one worker: each file owns its own
+      # project, so a file is the natural unit of work. Green here and green in
+      # test-e2e together are what prove the suite does not depend on order.
+      # Two workers by default, not "auto": every worker runs its own browser AND its
+      # own app server, so one worker per core leaves nothing for either, and the fixed
+      # 10s waits in the helpers start expiring on render time alone. Raise it on a
+      # bigger machine with WORKERS=4.
+      - uv run pytest tests/e2e/ -m "e2e and not sandbox" -n {{.WORKERS | default "2"}} --dist loadfile -q --timeout=300
+    silent: false
+
   test-e2e-sandbox:
     desc: "Run E2E browser tests against running sandbox cluster"
     dir: operations-manager/python

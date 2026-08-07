@@ -83,6 +83,11 @@ uv run pytest tests/e2e/ -m "e2e and not sandbox" -q                    # niveau
 Niveau 5 vraagt eenmalig `uv run playwright install chromium`. In een container ook
 `uv run playwright install-deps chromium`.
 
+Op niveau 5 werkt een testbestand op zijn eigen project: neem de `own_project`-fixture en
+gebruik de naam die hij teruggeeft, in plaats van een gedeelde naam als
+`test-project-detail` hard in te typen. Wat je test schrijft wordt na afloop hoe dan ook
+teruggezet. Zie `features/e2e-test-isolation.md`.
+
 ## Dekking vandaag
 
 Gemeten 6 augustus 2026 over de dienstpakketten: 2x niveau 1, 4x niveau 2, 3x niveau 3,
