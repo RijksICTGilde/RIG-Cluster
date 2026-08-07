@@ -236,7 +236,13 @@ class ROOSWidgetAdapter(WidgetAdapter):
                     "color": str(option.get("color", "hemelblauw")),
                     "checked": checked,
                     "is_locked": is_locked,
-                    "disabled": field.readonly or is_locked,
+                    # Vergrendeld is NIET disabled. ``disabled`` in HTML betekent twee
+                    # dingen tegelijk -- niet aanpasbaar en niet versturen -- en wij
+                    # bedoelen alleen het eerste. Een vergrendelde dienst moet juist
+                    # meekomen in de POST; het slot is een UI-eigenschap, bewaakt door de
+                    # JS (de verandering wordt teruggedraaid) en door de server
+                    # (``apply_services_mutation`` vult een vereiste dienst aan).
+                    "disabled": field.readonly,
                     "server_locked": value in locked_values,
                     "data_requires": json.dumps(svc_deps) if svc_deps else None,
                     "dependents_labels": dependents_labels,

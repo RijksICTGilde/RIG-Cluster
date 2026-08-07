@@ -3,8 +3,8 @@
 The one user-editable thing at the project layer is the list of extra schemas (RC-17):
 ``services/postgresql-database/config/schemas``, a sequence of ``{postfix, description,
 marked-for-deletion}`` items. Paths are built with ``config_path`` and every editable
-carries ``virtualize=("services", "_services-config")`` so project-level service config
-does not collide with the service-selection list in the wizard state.
+carries ``virtualize=SERVICE_VIRTUALIZE`` so project-level service config does not
+collide with the service-selection list in the wizard state.
 
 The ``scope`` field is not offered here: it is set via YAML/API for now (a shared vs
 project placement change is not a routine wizard edit).
@@ -13,12 +13,10 @@ project placement change is not a routine wizard edit).
 from __future__ import annotations
 
 from opi.forms.editables.converters import BooleanConverter
-from opi.forms.editables.editable import Editable
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 from opi.forms.editables.validators import SchemaPostfixValidator
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.services_enums import ServiceType
-
-_VIRTUALIZE = ("services", "_services-config")
 
 
 def _cp(*segments: str) -> str:
@@ -30,12 +28,12 @@ def _cp(*segments: str) -> str:
 SCHEMA_POSTFIX_EDITABLE = Editable(
     yaml_path=_cp("schemas[*]", "postfix"),
     validator=SchemaPostfixValidator(),
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 SCHEMA_DESCRIPTION_EDITABLE = Editable(
     yaml_path=_cp("schemas[*]", "description"),
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 # A safety gate, not a delete: marking keeps the schema (and its data) in the database
@@ -43,7 +41,7 @@ SCHEMA_DESCRIPTION_EDITABLE = Editable(
 SCHEMA_MARKED_EDITABLE = Editable(
     yaml_path=_cp("schemas[*]", "marked-for-deletion"),
     converter=BooleanConverter(),
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 SCHEMA_ITEM_CHILD_EDITABLES = [
@@ -57,7 +55,7 @@ SCHEMAS_EDITABLE = Editable(
     min_items=0,
     max_items=20,
     children=SCHEMA_ITEM_CHILD_EDITABLES,
-    virtualize=_VIRTUALIZE,
+    virtualize=SERVICE_VIRTUALIZE,
 )
 
 # Flat list of every editable this service contributes at the project layer.

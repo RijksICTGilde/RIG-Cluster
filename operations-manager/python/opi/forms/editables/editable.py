@@ -5,6 +5,20 @@ from dataclasses import dataclass, field
 from enum import Enum, StrEnum, auto
 from typing import Any, Protocol, runtime_checkable
 
+#: The two keys a service's configuration can live under, real first.
+#:
+#: ``services`` is where a saved project file keeps it; ``_services-config`` is the
+#: virtual key the wizard posts it under so a config section does not collide with the
+#: selection list it configures. The same configuration, two places, depending only on
+#: whether you are mid-wizard or looking at a project file.
+#:
+#: Declared here -- the leaf of the forms import graph -- so that there is ONE pair.
+#: Thirteen service packages each wrote it out by hand, which is thirteen chances for a
+#: typo that silently turns virtualization off, and one more place to miss when the pair
+#: changes. Service editables use it as their ``virtualize`` value; readers resolve
+#: across it via ``opi.forms.editables.service_path``.
+SERVICE_VIRTUALIZE: tuple[str, str] = ("services", "_services-config")
+
 
 @runtime_checkable
 class EditableConverter(Protocol):
