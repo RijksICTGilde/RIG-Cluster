@@ -95,7 +95,9 @@ function _sequenceEditModal(modal, action, path, index) {
         var errorEl = document.getElementById('edit-section-error');
         if (errorEl) {
             errorEl.textContent = err.message;
-            errorEl.style.display = '';
+            // De verborgen begintoestand staat als .is-hidden in wizard.css, zodat de
+            // markup van de foutmelding geen vormgeving hoeft te dragen.
+            errorEl.classList.remove('is-hidden');
         }
     });
 }

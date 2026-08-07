@@ -5,190 +5,21 @@
 {% block content %}
 <c-layout-flow gap="xl">
 
-    {# Page Header #}
-    <div>
-        <c-heading type="h1" textContent="Domeinbeheer" />
-        <p class="rvo-text--lg">
-            Beheer domein- en subdomeinaanvragen voor alle projecten.
-        </p>
-    </div>
+    {% include "admin/approvals/_kop.html.j2" %}
 
-    {# Flash messages #}
-    {% if success_message %}
-    <c-card padding="md" backgroundColor="wit" outline="true">
-        <div style="color: var(--rvo-color-groen); display: flex; align-items: center; gap: var(--rvo-space-sm);">
-            <c-icon icon="vinkje" size="md" />
-            <span>{{ success_message }}</span>
-        </div>
-    </c-card>
-    {% endif %}
+    {% include "admin/approvals/_melding.html.j2" %}
 
-    {% if projects_data %}
-        {% for project in projects_data %}
-        <c-card outline="true" padding="none" backgroundColor="wit">
-            <div class="project-group-header">
-                <c-heading type="h3">
-                    <c-icon icon="applicatie" size="md" />
-                    {{ project.project_name }}
-                </c-heading>
-                <c-button
-                    label="Beheren"
-                    kind="primary"
-                    size="sm"
-                    showIcon="before"
-                    icon="bewerken"
-                    @click="openApprovalModal('{{ project.project_name }}')" />
-            </div>
-            <div class="table-container">
-                <table class="domains-table">
-                    <thead>
-                        <tr>
-                            <th class="col-type">Type</th>
-                            <th class="col-domain">Domein</th>
-                            <th class="col-name">Naam</th>
-                            <th class="col-status">Status</th>
-                            <th class="col-date">Laatste wijziging</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for item in project.approval_items %}
-                        <tr class="domain-row {% if item.current_status == 'requested' %}status-requested{% elif item.current_status == 'denied' %}status-denied{% endif %}">
-                            <td class="col-type">
-                                {% if item.type == 'subdomain' %}
-                                    <span class="type-badge type-subdomain">Subdomein</span>
-                                {% else %}
-                                    <span class="type-badge type-domain">Domein</span>
-                                {% endif %}
-                            </td>
-                            <td class="col-domain">{{ item.domain }}</td>
-                            <td class="col-name"><strong>{{ item.name }}</strong></td>
-                            <td class="col-status">
-                                {% if item.current_status == 'requested' %}
-                                    <span class="status-badge status-requested-badge">Aangevraagd</span>
-                                {% elif item.current_status == 'approved' %}
-                                    <span class="status-badge status-approved-badge">Goedgekeurd</span>
-                                {% elif item.current_status == 'denied' %}
-                                    <span class="status-badge status-denied-badge">Afgewezen</span>
-                                {% else %}
-                                    <span class="status-badge">{{ item.current_status }}</span>
-                                {% endif %}
-                            </td>
-                            <td class="col-date">
-                                {% if item.history %}
-                                    {% set last = item.history[-1] %}
-                                    {{ last.date | dutch_date(include_time=False) }}
-                                    {% if last.by %}<br><span class="rvo-text--sm rvo-text--subtle">door {{ last.by }}</span>{% endif %}
-                                {% else %}
-                                    -
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </c-card>
-        {% endfor %}
-    {% else %}
-        <c-card padding="xl" backgroundColor="wit" outline="true">
-            <div style="text-align: center; color: var(--rvo-color-grijs-600);">
-                <c-icon icon="info" size="lg" style="margin-bottom: var(--rvo-space-sm);" />
-                <div>Geen domein- of subdomeinaanvragen gevonden.</div>
-            </div>
-        </c-card>
-    {% endif %}
+    {% include "admin/approvals/_aanvragen.html.j2" %}
 
 </c-layout-flow>
 
-{# Modal for editing approvals #}
-<div id="approval-backdrop" class="edit-section-backdrop" onclick="closeApprovalModal()"></div>
-<div id="approval-modal" class="edit-section-modal" role="dialog" aria-modal="true">
-    <div class="edit-section-header">
-        <c-heading type="h2" id="approval-title">
-            <c-icon icon="vinkje" size="lg" color="donkerblauw" />
-            <span id="approval-title-text">Domeingoedkeuring</span>
-        </c-heading>
-        <c-button kind="tertiary" size="sm" label="Sluiten" showIcon="before" icon="kruis"
-                  className="edit-modal-close-btn"
-                  @click="closeApprovalModal()" />
-    </div>
-    <div id="approval-error" class="edit-section-error" style="display: none;"></div>
-    <div id="edit-section-inner">
-        <div class="edit-section-content">
-            <div class="edit-section-loading"><p>Laden...</p></div>
-        </div>
-    </div>
-</div>
+{% include "admin/approvals/_modal.html.j2" %}
 {% endblock %}
 
 {% block additional_styles %}
 <link rel="stylesheet" href="{{ static_url('css/modal.css') }}">
 <link rel="stylesheet" href="{{ static_url('css/wizard.css') }}">
-<style>
-    .project-group-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: var(--rvo-space-md) var(--rvo-space-lg);
-        border-bottom: 1px solid var(--rvo-color-grijs-200);
-        background: var(--rvo-color-grijs-25);
-    }
-
-    .table-container { overflow-x: auto; }
-
-    .domains-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.875rem;
-    }
-
-    .domains-table thead th {
-        background: var(--rvo-color-grijs-50);
-        padding: var(--rvo-space-sm) var(--rvo-space-md);
-        text-align: left;
-        font-weight: 600;
-        border-bottom: 2px solid var(--rvo-color-grijs-200);
-        color: var(--rvo-color-grijs-800);
-    }
-
-    .domains-table tbody td {
-        padding: var(--rvo-space-sm) var(--rvo-space-md);
-        border-bottom: 1px solid var(--rvo-color-grijs-200);
-        vertical-align: middle;
-    }
-
-    .domain-row:hover { background: var(--rvo-color-grijs-25); }
-    .domain-row.status-requested { background: var(--rvo-color-geel-150); }
-    .domain-row.status-requested:hover { background: var(--rvo-color-geel-300); }
-
-    .col-type { width: 12%; }
-    .col-domain { width: 25%; }
-    .col-name { width: 20%; }
-    .col-status { width: 18%; }
-    .col-date { width: 25%; }
-
-    .type-badge {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 0.75rem;
-        font-weight: 600;
-    }
-    .type-subdomain { background: var(--rvo-color-hemelblauw-150); color: var(--rvo-color-hemelblauw-750); }
-    .type-domain { background: var(--rvo-color-groen-150); color: var(--rvo-color-groen-750); }
-
-    .status-badge {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 0.75rem;
-        font-weight: 600;
-    }
-    .status-requested-badge { background: var(--rvo-color-geel-300); color: var(--rvo-color-geel-750); }
-    .status-approved-badge { background: var(--rvo-color-groen-150); color: var(--rvo-color-groen-750); }
-    .status-denied-badge { background: var(--rvo-color-rood-150); color: var(--rvo-color-rood-750); }
-
-</style>
+    <link rel="stylesheet" href="{{ static_url('css/admin-approvals.css') }}">
 {% endblock %}
 
 {% block additional_scripts %}
@@ -197,7 +28,7 @@
         document.getElementById('approval-title-text').textContent = 'Domeingoedkeuring - ' + projectName;
 
         var errorEl = document.getElementById('approval-error');
-        errorEl.style.display = 'none';
+        errorEl.classList.add('is-hidden');
 
         var innerEl = document.getElementById('edit-section-inner');
         innerEl.innerHTML =
@@ -222,7 +53,7 @@
         })
         .catch(function(err) {
             errorEl.textContent = err.message;
-            errorEl.style.display = 'block';
+            errorEl.classList.remove('is-hidden');
         });
     }
 

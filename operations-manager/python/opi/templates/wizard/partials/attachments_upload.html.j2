@@ -1,10 +1,6 @@
 {# Attachments: one unified list (catalog + staged) at the top, the upload form below.
    Used in the create wizard AND the modal-edit flow. CSRF inherits from the surrounding
    wizard step form's hx-headers. _wizard_token routes staging to the modal session. #}
-<style>
-.att-upload-ok { display:inline-flex; align-items:center; gap:0.35rem; color:#39870c; font-weight:600; animation: attUploadOk 2.6s ease forwards; }
-@keyframes attUploadOk { 0% {opacity:0; transform:translateY(-2px) scale(0.9);} 12% {opacity:1; transform:none;} 75% {opacity:1;} 100% {opacity:0;} }
-</style>
 <c-layout-flow gap="lg">
     <c-card outline="true" padding="md" backgroundColor="grijs-050">
         <c-layout-flow gap="sm">
@@ -39,9 +35,9 @@
                  hx-swap="innerHTML">
                 {% include "wizard/partials/attachments_id_field.html.j2" %}
             </div>
-            <label class="utrecht-form-label" for="wiz-att-file" style="margin-top:0.5rem;">Bestand</label>
+            <label class="utrecht-form-label attachment-upload__label" for="wiz-att-file">Bestand</label>
             <input type="file" id="wiz-att-file" name="file" class="rvo-file-input">
-            <div style="margin-top:0.75rem; display:flex; align-items:center; gap:0.75rem;">
+            <div class="attachment-upload__row">
                 <c-button type="button" kind="secondary" size="sm" label="Uploaden"
                           hx-post="/forms/wizard/create-project/attachments/stage"
                           hx-ext="ignore:json-enc"

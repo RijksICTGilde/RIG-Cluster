@@ -1,6 +1,9 @@
 {# Unified attachments list: existing catalog entries (removable, applied on save) plus
    files staged this session (removable via unstage). Swapped into #wiz-att-list. #}
 {% if error %}
+{# style= blijft hier staan: c-alert zet een meegegeven style= op twee elementen en een
+   meegegeven class= op maar een. Dit overzetten naar een klasse zou de marge dus
+   verplaatsen in plaats van verhuizen. #}
 <c-alert kind="error" content="{{ error }}" style="margin-bottom:0.75rem;" />
 {% endif %}
 {% set ns = namespace(items=[]) %}
@@ -13,7 +16,7 @@
 <c-layout-flow gap="sm">
     {% for att in ns.items %}
     <c-card padding="sm" backgroundColor="grijs-050" outline="true">
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">
+        <div class="attachment-row">
             <div><strong>{{ att.filename | default(att.id) }}</strong> <span class="rvo-text--sm rvo-text--subtle">(id: {{ att.id }})</span></div>
             <c-button type="button" kind="secondary" size="xs" label="Verwijderen"
                       hx-post="/forms/wizard/create-project/attachments/remove-existing/{{ att.id }}"
@@ -27,7 +30,7 @@
     {% endfor %}
     {% for att in staged | default([]) %}
     <c-card padding="sm" backgroundColor="grijs-050" outline="true">
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">
+        <div class="attachment-row">
             <div><strong>{{ att.filename }}</strong> <span class="rvo-text--sm rvo-text--subtle">(id: {{ att.id }}, nog niet opgeslagen)</span></div>
             <c-button type="button" kind="secondary" size="xs" label="Verwijderen"
                       hx-post="/forms/wizard/create-project/attachments/unstage/{{ att.id }}"
