@@ -34,6 +34,7 @@ from opi.services.catalog.actions import (
     ActionContext,
     ActionField,
     ActionFieldKind,
+    ActionFlag,
     ActionResult,
     ActionVerb,
     FieldCombination,
@@ -54,6 +55,25 @@ logger = logging.getLogger(__name__)
 
 #: The verbs both actions support, and what each one promises about an id that is taken.
 _VERBS = (ActionVerb.CREATE, ActionVerb.UPDATE, ActionVerb.UPSERT)
+
+#: The name of the acknowledgement that lets a delete proceed on an attachment that is
+#: still in use. Named for what the caller *states* rather than for what it overrides:
+#: "delete when in use" would describe the effect while saying nothing about the caller
+#: having seen the consequences, and "force" says only that something was overruled. The
+#: caller is confirming a fact they were told in the 409 -- same reasoning as ``rollout``.
+CONFIRM_IN_USE = "confirm_in_use"
+
+_CONFIRM_IN_USE_FLAG = ActionFlag(
+    name=CONFIRM_IN_USE,
+    description=(
+        "Delete the attachment even though components still use it, and remove those couplings "
+        "in the same change. Off by default: an attachment that is in use is refused with 409 and "
+        "the list of places using it, so this is set by a caller who has seen that list. An "
+        "attachment serving as a publish-on-web certificate is refused even with this set -- "
+        "change the TLS mode there first."
+    ),
+    verbs=(ActionVerb.DELETE,),
+)
 
 _ID_FIELD = ActionField(
     name="attachment_id",
@@ -147,6 +167,18 @@ exists and refuses one that does not (404). PUT with `upsert=true` writes either
 replaces what is there, on id, without asking -- which is why it has to be asked for.
 """.strip()
 
+_DELETE_CONTRACT = f"""
+DELETE removes the attachment and refuses an id that is not there (404). An attachment
+nothing uses goes without further ado. One that is in use is refused with 409 and a
+`used_by` list naming every component (and deployment, where the use sits on a
+deployment component) that references it, so the caller can show what would break.
+`{CONFIRM_IN_USE}=true` says that list was seen and the attachment should go anyway: the
+couplings are then removed together with the catalog entry, in one change, and the
+response reports them as `uncoupled_from`. An attachment used as a publish-on-web
+certificate stays refused even then -- removing that reference means deciding how the
+site is served instead, which is a separate change.
+""".strip()
+
 
 def check_attachment_source(values: dict[str, Any], *, addressed: bool) -> str | None:
     """Refuse a component request that does not say where the attachment comes from.
@@ -235,8 +267,54 @@ async def _store(ctx: ActionContext, binding: dict[str, Any] | None) -> ActionRe
     return ActionResult(status, {"detail": result["error"]})
 
 
+async def _remove_attachment(ctx: ActionContext) -> ActionResult:
+    """Take one attachment out of the project's catalog.
+
+    The counterpart the catalog never had: files could be added and replaced but not
+    removed, so they accumulated with no way back. Two answers, and which one you get is
+    decided by the project rather than by the request:
+
+    * nothing uses it -- it goes, and that needs no confirmation;
+    * something uses it -- 409 with ``used_by``, naming every place, so the caller learns
+      what the deletion would break instead of only that it was refused. That is a state
+      conflict, not a malformed request, which is why it is a 409 and not a 422.
+
+    With ``confirm_in_use`` the caller states they have seen that list, and the couplings
+    are removed together with the catalog entry in a single save -- half a deletion would
+    leave a reference pointing at an id that no longer exists.
+    """
+    from opi.manager.project_manager import ProjectManager
+
+    attachment_id = ctx.item_id
+    if not attachment_id:  # pragma: no cover - the route always addresses one item
+        return ActionResult(422, {"detail": "attachment_id is verplicht"})
+
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{ctx.project_name}.yaml")
+    try:
+        result = await project_manager.remove_attachment(
+            attachment_id, confirm_in_use=ctx.flags.get(CONFIRM_IN_USE, False)
+        )
+    finally:
+        await project_manager.close()
+
+    if result["success"]:
+        if not result["changed"]:
+            # The catalog is idempotent about this, but the route addresses one named
+            # attachment: reporting success for an id this project never had would tell
+            # the caller their id was right.
+            return ActionResult(404, {"detail": f"Bijlage '{attachment_id}' bestaat niet in dit project"})
+        return ActionResult(200, {"attachment": attachment_id, "uncoupled_from": result.get("uncoupled_from", [])})
+
+    if result.get("error_type") == "in_use":
+        return ActionResult(409, {"detail": result["error"], "used_by": result.get("used_by", [])})
+    status = {"not_found": 404, "validation_error": 422}.get(result.get("error_type", ""), 500)
+    return ActionResult(status, {"detail": result["error"]})
+
+
 async def _define_attachment(ctx: ActionContext) -> ActionResult:
-    """Project-level upload: put the file in the catalog and nothing else."""
+    """Project-level: put the file in the catalog, or take one out of it."""
+    if ctx.verb is ActionVerb.DELETE:
+        return await _remove_attachment(ctx)
     return await _store(ctx, binding=None)
 
 
@@ -267,22 +345,33 @@ PROJECT_ATTACHMENT_ACTION = ServiceAction(
     layer=ConfigLayer.PROJECT,
     roles=(ConfigRole.DEFINE,),
     id_param="attachment_id",
-    summary="Upload an attachment to the project catalog",
+    summary="Manage attachments in the project catalog",
     description=(
-        "Put a file in the project's attachments catalog. This is the define side of the service: "
-        "the attachment exists in the project and is used by nothing until a component references "
-        "it (see the component-level upload, or the component config endpoint).\n\n"
+        "Put a file in the project's attachments catalog, or take one out of it. This is the "
+        "define side of the service: the attachment exists in the project and is used by nothing "
+        "until a component references it (see the component-level upload, or the component config "
+        "endpoint).\n\n"
         f"{_VERB_CONTRACT}\n\n"
-        f"The file is at most {MAX_ATTACHMENT_KB} KB and is AGE-encrypted with the project's own "
-        "key before it is stored."
+        f"{_DELETE_CONTRACT}\n\n"
+        f"An uploaded file is at most {MAX_ATTACHMENT_KB} KB and is AGE-encrypted with the "
+        "project's own key before it is stored."
     ),
     fields=(_ID_FIELD, _FILE_FIELD),
-    verbs=_VERBS,
+    verbs=(*_VERBS, ActionVerb.DELETE),
+    flags=(_CONFIRM_IN_USE_FLAG,),
     handler=_define_attachment,
     example=(
         "curl -X POST -H 'X-API-Key: <key>' "
         "-F attachment_id=server-cert -F file=@server.pem "
         "https://<host>/api/v2/projects/my-project/services/attachments/attachments"
+    ),
+    verb_examples=(
+        (
+            ActionVerb.DELETE,
+            "curl -X DELETE -H 'X-API-Key: <key>' "
+            "'https://<host>/api/v2/projects/my-project/services/attachments/attachments/server-cert"
+            f"?{CONFIRM_IN_USE}=true'",
+        ),
     ),
 )
 
