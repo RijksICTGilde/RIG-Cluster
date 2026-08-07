@@ -109,6 +109,21 @@ geef de klasse van het element zelf dan de goede `display` (zoals
 `.metrics-controls__filter { display: flex; }`), want na het weghalen van `.is-hidden` valt
 het element terug op wat de CSS zegt.
 
+**Waarom `.is-hidden` `!important` is.** Precies die twee regels staan in verschillende
+bestanden, en de cascade zet ze niet in de volgorde die je verwacht: `base.css` komt via
+`additionalCss` in de `<head>`, de stylesheet van de pagina wordt gelinkt in
+`{% block additional_styles %}` en dat blok staat in de **body**, dus later. Bij gelijke
+specificiteit (beide een enkele klasse) wint de laatste, en dat is de pagina. Zonder
+`!important` sloeg `.metrics-controls__filter { display: flex }` dus `.is-hidden` dood: het
+filterveld stond er meteen en `classList.add('is-hidden')` kon het niet meer verbergen. Als
+`style="display: none"` deed dat probleem zich niet voor, omdat een inline style elke
+stylesheet verslaat. `!important` zet die verhouding terug. Deze klasse doet een ding en
+moet dat winnen; zet er dus geen `display` naast in een pagina-stylesheet met de gedachte
+"die is specifieker".
+
+**Meten doe je op de gerenderde pagina, niet in de CSS.** Dit soort regressie is in de
+markup én in de CSS onzichtbaar - beide klopten los gelezen. Zie hieronder.
+
 ## Een verplaatsing bewijzen
 
 `scripts/template_snapshot.py` draait de E2E-testapp, loopt elke pagina langs en legt per
@@ -128,6 +143,19 @@ ruwe uitvoer van Jinja, want die laat dubbele attributen zien die de browser weg
 2. de verzameling CSS-regels die de pagina laadt (blokken plus gelinkte bestanden);
 3. per element de verzameling vormgevingsdeclaraties, waarbij je elke nieuwe klasse
    terugrekent naar wat er in de CSS staat.
+
+**En dan nog een vierde, want de eerste drie missen de cascade.** Ze lezen de markup en de
+CSS los van elkaar; wat een browser er samen van maakt staat er niet in. Lees dus per
+element `getComputedStyle(el).display` uit op de draaiende pagina en vergelijk die
+verzameling met de basiscommit. Loop de DOM af vanaf `document.body`, en vergelijk op
+`tag#id => display` in plaats van op positie: een `<style>`-blok dat een `<link>` werd
+verschuift alle posities eronder en maakt een positionele diff onbruikbaar. Zo vind je een
+`.is-hidden` die niets meer verbergt, en niets anders vindt die.
+
+`tests/e2e/test_hidden_at_load.py` houdt de gevallen die dit al opleverde vast: de blokken
+van de metrics explorer, en de tweede deployment op de detailpagina. De fixture
+`test-project-detail.yaml` heeft daarvoor **twee** deployments - met een enkele wordt
+`{% if not loop.first %}` nooit waar en bewijst geen enkele test iets over het verbergen.
 
 ## Wat hier bewust buiten valt
 
