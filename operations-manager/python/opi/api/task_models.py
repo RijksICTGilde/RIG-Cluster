@@ -224,6 +224,28 @@ class ConfigureServiceResult(BaseModel):
     error_type: str | None = None
 
 
+class ConfigureServiceValuesResult(BaseModel):
+    """Result of a configure_service_values task (RC-55).
+
+    ``changed`` is False when the values asked for were already stored: the request
+    succeeded, nothing was committed and nothing was rolled out. Reported rather than
+    hidden, because "no commit appeared" is otherwise indistinguishable from a
+    silently dropped write.
+    """
+
+    status: str
+    service: str | None = None
+    target: str | None = None
+    component: str | None = None
+    deployment: str | None = None
+    operation: str | None = None
+    changed: bool | None = None
+    processing: ProcessingStatus | None = None
+    # Failure fields
+    error: str | None = None
+    error_type: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Registry: TaskType -> result model class
 # ---------------------------------------------------------------------------
@@ -242,6 +264,7 @@ TASK_RESULT_MODELS: dict[TaskType, type[BaseModel]] = {
     TaskType.ADD_COMPONENT_TO_DEPLOYMENT: AddComponentToDeploymentResult,
     TaskType.ADD_SERVICE: AddServiceResult,
     TaskType.CONFIGURE_SERVICE: ConfigureServiceResult,
+    TaskType.CONFIGURE_SERVICE_VALUES: ConfigureServiceValuesResult,
 }
 
 

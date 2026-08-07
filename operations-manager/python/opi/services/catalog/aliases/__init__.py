@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from opi.services.catalog.aliases.config_model import AliasesConfig
-from opi.services.catalog.base import ConfigLayer, Service
+from opi.services.catalog.base import ConfigLayer, Service, ValueStorage
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import ServiceBinding, ServiceKind, ServiceType
 
@@ -46,6 +46,9 @@ class AliasesService(Service):
     config_model = AliasesConfig
     config_schema_version = "1.0"
     owned_property = "aliases"
+    # A mapping with readable names and each value encrypted on its own: an alias value
+    # may hold a secret, but the names are what makes the map readable in the file.
+    owned_values_storage = ValueStorage.PER_VALUE
     # Directly above user-env-vars, matching the order of the hand-authored "Variabelen"
     # fieldset this replaces.
     config_component_order = 5
