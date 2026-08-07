@@ -73,7 +73,11 @@ Er zijn twee samenvattingbouwers en ze gaan allebei door `_format_value` in
 Ook binnen een sequence (componenten, gebruikers) en één niveau dieper (een
 sequence in een sequence) geldt de declaratie. Dat laatste is een aandachtspunt bij
 wijzigingen: die tak formatteerde zijn waarden vroeger zelf en sloeg `_format_value`
-over, waardoor een verborgen veld daar alsnog verscheen.
+over, waardoor een verborgen veld daar alsnog verscheen. Hetzelfde gold voor de
+`service_cards`-tak in `_build_section_fields`: die had een eigen pad langs
+`_resolve_service_labels`. Staat er een `summarizer` op zo'n veld, dan beslist die
+nu ook daar; zonder `summarizer` blijven de kaarten een opsomming, zoals ze eruit
+zien.
 
 ## Een stap die zijn eigen samenvatting maakt
 
@@ -109,5 +113,6 @@ kan die fout niet maken.
 ## Tests
 
 `tests/test_wizard_summary_display.py` pint alle kanten: dat een verborgen veld
-verborgen blijft (ook in een sequence, ook een niveau dieper, en dat een item waarvan alles verborgen is niet alsnog rauw wordt
+verborgen blijft (ook in een sequence, ook een niveau dieper, ook bij
+`service_cards`, en dat een item waarvan alles verborgen is niet alsnog rauw wordt
 gedumpt) en dat getoonde waarden geëscaped zijn.
