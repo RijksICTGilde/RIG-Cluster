@@ -18,7 +18,8 @@ pytestmark = pytest.mark.e2e
 
 RAW_ROOS_PATTERN = re.compile(r"<c-[a-z][a-z-]+")
 
-DETAIL_URL = "/projects/details/test-project-detail"
+#: Which fixture project the own_project fixture copies for this file.
+PROJECT_TEMPLATE = "test-project-detail"
 TOOLS_URL = "/tools"
 WIZARD_URL = "/forms/wizard/create-project"
 DASHBOARD_URL = "/dashboard"
@@ -40,11 +41,12 @@ def _assert_no_raw_roos_tags(page: Page, url_label: str) -> None:
         )
 
 
-def test_detail_page_no_raw_roos(app_server: str, auth_page: Page) -> None:
+def test_detail_page_no_raw_roos(app_server: str, auth_page: Page, own_project: str) -> None:
     """Detail page: all ROOS components are converted to HTML."""
-    auth_page.goto(f"{app_server}{DETAIL_URL}")
+    detail_url = f"/projects/details/{own_project}"
+    auth_page.goto(f"{app_server}{detail_url}")
     auth_page.wait_for_load_state("networkidle")
-    _assert_no_raw_roos_tags(auth_page, DETAIL_URL)
+    _assert_no_raw_roos_tags(auth_page, detail_url)
 
 
 def test_tools_page_no_raw_roos(app_server: str, auth_page: Page) -> None:
