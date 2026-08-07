@@ -65,8 +65,13 @@ jobs:
         run: uv sync --all-groups
       - name: Install Playwright browser
         run: uv run playwright install --with-deps chromium
-      - name: Run local E2E suite
-        run: uv run pytest tests/e2e/ -m "e2e and not sandbox" -q --timeout=300
+      # Shuffled, not in file order. A suite that only passes in the order its files
+      # happen to be named is not isolated, it is lucky - and running it in one fixed
+      # order forever is how that stays hidden. Every run picks a new seed, so the job
+      # samples a different order each time; the seed is printed in the header, so a
+      # failure is reproducible with `task test-e2e-random SEED=<n>`.
+      - name: Run local E2E suite (shuffled order)
+        run: uv run pytest tests/e2e/ -m "e2e and not sandbox" -p randomly -q --timeout=300
 
   license-check:
     runs-on: ubuntu-latest

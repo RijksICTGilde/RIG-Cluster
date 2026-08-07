@@ -62,23 +62,32 @@ repository's `project_name`), so a copy does not keep pointing at the original.
 
 ## Verifying It
 
-The suite must be green in more than one order - that is the only way to know the coupling
+The suite must be green in a **shuffled** order - that is the only way to know the coupling
 is gone rather than moved:
 
 ```bash
+task test-e2e-random                           # shuffled files AND shuffled tests (the real check)
+task test-e2e-random SEED=12345                # reproduce one specific shuffle
 task test-e2e                                  # normal order
 task test-e2e-parallel                         # 2 workers, per-file distribution
 task test-e2e-parallel WORKERS=4               # more workers on a bigger machine
-
-# reverse file order
-uv run pytest $(ls -1 tests/e2e/test_*.py | grep -v sandbox | sort -r) \
-  -m "e2e and not sandbox" -q --timeout=300
 ```
 
-`tests/e2e/test_project_isolation.py` guards both mechanisms directly: one test dirties the
-state on purpose, the next asserts it came back clean.
+A reversed *file* order is not a substitute: it still keeps each file's tests together and
+in sequence, which is exactly the assumption a leaking test makes. `pytest-randomly` breaks
+both. The CI `e2e` job runs the shuffled form with a fresh seed each time, so a new coupling
+shows up as a failure with a seed you can replay.
+
+`tests/e2e/test_project_isolation.py` guards both mechanisms directly. Each of its tests
+asserts it started clean and *then* makes a mess, repeated a few times - so the guard holds
+in any order. Do not write these as an "A dirties, B checks" pair: such a pair passes only
+while the runner keeps them in file order, and it is the first thing to fail once the suite
+is shuffled.
 
 ## Dependencies
 
 - `pytest-xdist` (test group) for the parallel form.
+- `pytest-randomly` (test group) for the shuffled form. It is switched **off** by default
+  (`-p no:randomly` in `addopts`) so the unit suite keeps its fixed order; `task
+  test-e2e-random` and the CI job switch it on with `-p randomly`.
 - No changes to application code: all of this lives in the test harness.
