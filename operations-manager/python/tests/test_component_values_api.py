@@ -287,6 +287,34 @@ class TestInvalidPayloads:
         assert client.post(ENV_COMPONENT, headers=HEADERS).status_code == 422
         created_task.assert_not_called()
 
+    @pytest.mark.parametrize("path", [ENV_COMPONENT, ALIAS_COMPONENT])
+    @pytest.mark.parametrize("value", [" padded ", "trailing ", " leading"])
+    def test_a_value_with_edge_whitespace_is_a_422_on_both_shapes(self, client, created_task, path, value) -> None:
+        # Decryption strips its plaintext, so this is lost whichever way it is stored:
+        # the value would read back different AND would commit again on every call.
+        response = client.post(path, headers=HEADERS, json={"values": {"TOKEN": value}})
+
+        assert response.status_code == 422
+        assert "TOKEN" in response.json()["detail"]
+        created_task.assert_not_called()
+
+    @pytest.mark.parametrize("value", ['"quoted"', "'quoted'"])
+    def test_surrounding_quotes_are_a_422_for_env_vars_but_fine_for_aliases(self, client, created_task, value) -> None:
+        # Only the KEY=value block form removes them.
+        assert client.post(ENV_COMPONENT, headers=HEADERS, json={"values": {"TOKEN": value}}).status_code == 422
+        assert client.post(ALIAS_COMPONENT, headers=HEADERS, json={"values": {"TOKEN": value}}).status_code == 202
+        created_task.assert_called_once()
+
+    def test_the_restriction_is_documented_on_the_routes(self, client) -> None:
+        spec = client.app.openapi()
+        env_description = spec["paths"][ENV_COMPONENT_TEMPLATE]["post"]["description"]
+        alias_description = spec["paths"][ALIAS_COMPONENT_TEMPLATE]["post"]["description"]
+
+        assert "422" in env_description
+        assert "surrounding quotes" in env_description
+        assert "422" in alias_description
+        assert "surrounding quotes" not in alias_description
+
     def test_a_bad_name_in_the_path_of_a_single_delete_is_refused(self, client, created_task) -> None:
         response = client.delete(f"{ENV_COMPONENT}/with-dash", headers=HEADERS)
 

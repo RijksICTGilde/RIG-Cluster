@@ -95,6 +95,54 @@ def validate_value(key: str, value: str) -> None:
         )
 
 
+def _block_roundtrip(value: str) -> str | None:
+    """What ``KEY=value`` gives back when the block is read again, or None if unreadable.
+
+    Measured with the real reader rather than a copy of its rules, so it cannot drift
+    away from it.
+    """
+    try:
+        return validate_and_parse_env_vars(f"ZAD_ROUNDTRIP={value}").get("ZAD_ROUNDTRIP")
+    except ValueError:
+        return None
+
+
+def validate_value_for_storage(key: str, value: str, storage: ValueStorage) -> None:
+    """Raise unless *value* comes back out of *storage* exactly as it went in.
+
+    Two normalisations sit between a write and the next read, and neither is this
+    module's to change:
+
+    * ``decrypt_age_content_sync`` strips the plaintext it gets back from ``age`` (it has
+      to: the armored form ends in a newline). That hits **both** storage shapes, so a
+      value with leading or trailing whitespace never returns as written, aliases
+      included.
+    * ``ValueStorage.BLOCK`` additionally reads its plaintext with
+      :func:`validate_and_parse_env_vars`, which reads ``KEY=value`` the way a shell
+      would and removes one layer of surrounding quotes -- so ``'"q"'`` returns as ``q``.
+
+    Storing such a value anyway would break two promises at once. The API would hand back
+    something other than what was written, and -- worse -- the stored set would never
+    equal the requested one, so the no-op check in
+    :meth:`ProjectManager.set_component_values` would find a difference on every call and
+    commit to ``zad-projects`` every time, which is exactly the churn the design forbids.
+    Refusing up front is the only answer that keeps both promises; quoting or escaping on
+    the way in would change what the workload receives.
+    """
+    if value.strip() != value:
+        raise ComponentValuesError(
+            f"De waarde van '{key}' begint of eindigt met witruimte, en die overleeft de "
+            "versleutelde opslag niet. Lever de waarde aan zonder die spaties, tabs of "
+            "regeleindes aan de randen."
+        )
+    if storage is ValueStorage.BLOCK and _block_roundtrip(value) != value:
+        raise ComponentValuesError(
+            f"De waarde van '{key}' overleeft de opslagvorm niet. Deze waarden worden als "
+            "KEY=value-regels bewaard, en daarbij vervalt een paar omringende aanhalingstekens. "
+            "Lever de waarde aan zonder die aanhalingstekens."
+        )
+
+
 #: The layers an owned values property can live on. A component carries it under its own
 #: name; a deployment's component carries it under ``reference``, because inside a
 #: deployment a component is a reference to one, not a second definition of it.
