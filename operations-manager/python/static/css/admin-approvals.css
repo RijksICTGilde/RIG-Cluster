@@ -1,0 +1,65 @@
+/* Vormgeving van het domeinbeheer.
+   Stond als <style>-blok in opi/templates/admin/approvals.html.j2. */
+
+.project-group-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--rvo-space-md) var(--rvo-space-lg);
+    border-bottom: 1px solid var(--rvo-color-grijs-200);
+    background: var(--rvo-color-grijs-25);
+}
+
+.table-container { overflow-x: auto; }
+
+.domains-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.domains-table thead th {
+    background: var(--rvo-color-grijs-50);
+    padding: var(--rvo-space-sm) var(--rvo-space-md);
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 2px solid var(--rvo-color-grijs-200);
+    color: var(--rvo-color-grijs-800);
+}
+
+.domains-table tbody td {
+    padding: var(--rvo-space-sm) var(--rvo-space-md);
+    border-bottom: 1px solid var(--rvo-color-grijs-200);
+    vertical-align: middle;
+}
+
+.domain-row:hover { background: var(--rvo-color-grijs-25); }
+.domain-row.status-requested { background: var(--rvo-color-geel-150); }
+.domain-row.status-requested:hover { background: var(--rvo-color-geel-300); }
+
+.col-type { width: 12%; }
+.col-domain { width: 25%; }
+.col-name { width: 20%; }
+.col-status { width: 18%; }
+.col-date { width: 25%; }
+
+.type-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.type-subdomain { background: var(--rvo-color-hemelblauw-150); color: var(--rvo-color-hemelblauw-750); }
+.type-domain { background: var(--rvo-color-groen-150); color: var(--rvo-color-groen-750); }
+
+.status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.status-requested-badge { background: var(--rvo-color-geel-300); color: var(--rvo-color-geel-750); }
+.status-approved-badge { background: var(--rvo-color-groen-150); color: var(--rvo-color-groen-750); }
+.status-denied-badge { background: var(--rvo-color-rood-150); color: var(--rvo-color-rood-750); }

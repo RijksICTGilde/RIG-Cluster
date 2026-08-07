@@ -6,13 +6,13 @@
 <div hx-get="/projects/{{ project_name }}/tasks" hx-trigger="every 5s" hx-swap="outerHTML">
 <c-card outline="true" padding="lg" backgroundColor="wit">
     <c-layout-flow gap="md">
-        <c-heading type="h2" style="margin-bottom: 0;">
+        <c-heading type="h2" class="section-heading">
             <c-icon icon="klok" size="xl" color="hemelblauw" />Taken
         </c-heading>
         {% if not items %}
         <c-p>Er zijn nog geen taken uitgevoerd voor dit project.</c-p>
         {% else %}
-        <table class="backup-table" style="width: 100%; border-collapse: collapse;">
+        <table class="backup-table tasks-table">
             <thead>
                 <tr>
                     <th>Soort</th>
@@ -31,7 +31,7 @@
                     <td>
                         {{ item.status }}
                         {% if item.active and item.step %}
-                        <br><small style="color: var(--rvo-color-grijs-700);">{{ item.step }}{% if item.progress %} ({{ item.progress }}%){% endif %}</small>
+                        <br><small class="task-step">{{ item.step }}{% if item.progress %} ({{ item.progress }}%){% endif %}</small>
                         {% endif %}
                     </td>
                     <td>{{ item.door or "-" }}</td>

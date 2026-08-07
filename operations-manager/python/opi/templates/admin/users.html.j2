@@ -107,40 +107,5 @@
 {% endblock %}
 
 {% block additional_styles %}
-<style>
-    .table-container { overflow-x: auto; }
-
-    .users-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.875rem;
-    }
-
-    .users-table thead th {
-        background: var(--rvo-color-grijs-50);
-        padding: var(--rvo-space-md);
-        text-align: left;
-        font-weight: 600;
-        border-bottom: 2px solid var(--rvo-color-grijs-200);
-        color: var(--rvo-color-grijs-800);
-    }
-
-    .users-table tbody td {
-        padding: var(--rvo-space-md);
-        border-bottom: 1px solid var(--rvo-color-grijs-200);
-        vertical-align: middle;
-    }
-
-    .user-row:hover { background: var(--rvo-color-grijs-25); }
-
-    .col-name { width: 30{{ '%' }}; }
-    .col-email { width: 30{{ '%' }}; }
-    .col-created { width: 20{{ '%' }}; }
-    .col-actions { width: 20{{ '%' }}; }
-
-    .actions {
-        display: flex;
-        gap: var(--rvo-space-xs);
-    }
-</style>
+    <link rel="stylesheet" href="{{ static_url('css/admin-users.css') }}">
 {% endblock %}
