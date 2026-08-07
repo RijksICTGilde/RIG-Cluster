@@ -1,18 +1,27 @@
 """What a summary screen may show.
 
-Two things are pinned here. A field can declare that its value does not belong in
-a summary (``summarizer``), and that declaration has to hold everywhere a summary
-is built -- including one and two levels into a sequence, which is exactly where
-it used to fall through. And whatever does get shown is escaped, because the
-review page renders this HTML with ``| safe``.
+Three things are pinned here. A field can declare that its value does not belong
+in a summary (``summarizer``), and that declaration has to hold everywhere a
+summary is built -- including one and two levels into a sequence, which is
+exactly where it used to fall through. Whatever does get shown is escaped,
+because the review page renders this HTML with ``| safe``. And a section that
+summarizes itself returns data, not markup, so the escaping is a property of the
+path and not a rule the author of a summary has to remember.
 """
 
 from __future__ import annotations
 
+import ast
+import inspect
+from typing import Any
+
+import pytest
 from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.editables.summarizers import HiddenSummary, MaskedSummary
+from opi.forms.visualizers import wizard_sections
 from opi.forms.visualizers.sections import FormSection
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.web import router_wizard
 from opi.web.router_wizard import _build_section_fields, _build_section_summary
 
 XSS = "<img src=x onerror=alert(1)>"
@@ -215,3 +224,183 @@ class TestSummaryEscapesWhatItShows:
 
         assert XSS not in html
         assert "&lt;img" in html
+
+
+class TestServiceCardsGoThroughTheSameGate:
+    """The service-cards branch of the modal builder had its own path around
+    ``_format_value``; a summarizer therefore did not hold there."""
+
+    @staticmethod
+    def _cards(**editable_kwargs) -> FormSection:
+        return FormSection(
+            section_id="test",
+            title="Test",
+            editables=[
+                EditableVisualizer(
+                    editable=Editable(yaml_path="services", **editable_kwargs),
+                    widget=WidgetType.SERVICE_CARDS,
+                    label="Services",
+                )
+            ],
+        )
+
+    def test_without_a_summarizer_the_cards_are_still_listed(self):
+        fields = _build_section_fields(self._cards(), {"services": ["keycloak", "minio"]})
+
+        assert fields == [{"label": "Services", "value": ["keycloak", "minio"], "is_list": True}]
+
+    def test_a_hidden_summarizer_holds_here_too(self):
+        fields = _build_section_fields(self._cards(summarizer=HiddenSummary()), {"services": ["keycloak"]})
+
+        assert fields == []
+
+    def test_a_masked_summarizer_replaces_the_list(self):
+        fields = _build_section_fields(self._cards(summarizer=MaskedSummary()), {"services": ["keycloak"]})
+
+        assert fields == [{"label": "Services", "value": "Ingesteld", "is_list": False}]
+
+
+def _real_summary_fns() -> list[tuple[str, Any]]:
+    """Every ``summary_fn`` a real section declares, by section id."""
+    sections = [
+        wizard_sections.BACKUP_SELECT_SECTION,
+        wizard_sections.RESTORE_SELECT_SECTION,
+        wizard_sections.RESTORE_TARGET_SECTION,
+        wizard_sections.build_deployment_add_info_section(0),
+    ]
+    found = [(s.section_id, s.summary_fn) for s in sections if s.summary_fn]
+    assert len(found) == len(sections), "a section lost its summary_fn -- check this list"
+    return found
+
+
+HOSTILE_DATA: dict[str, Any] = {
+    "deployment_name": XSS,
+    "resource_types": [XSS],
+    "backup_run_id": XSS,
+    "restore_mode": "existing",
+    "target_deployment": XSS,
+    "deployments": [{"name": XSS}],
+}
+
+
+class TestASummaryFnCannotBuildMarkup:
+    """``summary_fn`` returns (label, value) pairs; both builders put the tags
+    around them and escape. A summary that ships HTML has nothing to escape it."""
+
+    @pytest.mark.parametrize(("section_id", "summary_fn"), _real_summary_fns())
+    def test_it_returns_plain_text_pairs(self, section_id: str, summary_fn):
+        items = summary_fn(HOSTILE_DATA)
+
+        assert isinstance(items, list)
+        for label, value in items:
+            assert isinstance(label, str)
+            assert isinstance(value, str)
+            assert "<" not in label, f"{section_id} builds markup in a label"
+
+    @pytest.mark.parametrize(("section_id", "summary_fn"), _real_summary_fns())
+    def test_the_wizard_review_escapes_it(self, section_id: str, summary_fn):
+        section = FormSection(section_id=section_id, title="Test", summary_fn=summary_fn)
+        html = _build_section_summary(section, HOSTILE_DATA)
+
+        assert XSS not in html
+        assert "&lt;img" in html  # shown, escaped -- not silently dropped
+
+    @pytest.mark.parametrize(("section_id", "summary_fn"), _real_summary_fns())
+    def test_the_modal_review_gets_data_not_html(self, section_id: str, summary_fn):
+        section = FormSection(section_id=section_id, title="Test", summary_fn=summary_fn)
+        fields = _build_section_fields(section, HOSTILE_DATA)
+
+        # "html" bypasses the template's escaping; a section's own summary never
+        # takes that route.
+        assert all("html" not in field for field in fields)
+        assert all(field["is_list"] is False for field in fields)
+
+
+#: Interpolations that are HTML the module already built (and already escaped the
+#: values inside), so escaping them again would print tags.
+ALLOWED_RAW = {
+    "''.join(parts)",
+    "''.join(item_parts)",
+    "len(items)",
+}
+
+#: The functions in router_wizard.py that build summary HTML themselves.
+SUMMARY_BUILDERS = (
+    "_summary_pairs_html",
+    "_build_section_summary",
+    "_build_sequence_summary",
+)
+
+
+class TestTheSummaryBuildersEscapeEveryInterpolation:
+    """A source guard on the builders that do produce HTML.
+
+    They are f-strings by nature, so a new one is one keystroke away from
+    printing a raw value. Every hole in those f-strings must either go through
+    ``_summary_text`` or be a fragment this module built itself.
+    """
+
+    def test_no_unescaped_hole_in_a_markup_f_string(self):
+        tree = ast.parse(inspect.getsource(router_wizard))
+        offenders: list[str] = []
+
+        for func in ast.walk(tree):
+            if not isinstance(func, ast.FunctionDef) or func.name not in SUMMARY_BUILDERS:
+                continue
+            for node in ast.walk(func):
+                if not isinstance(node, ast.JoinedStr):
+                    continue
+                literal = "".join(p.value for p in node.values if isinstance(p, ast.Constant))
+                if "<" not in literal:
+                    continue
+                for part in node.values:
+                    if not isinstance(part, ast.FormattedValue):
+                        continue
+                    expr = ast.unparse(part.value)
+                    escaped = isinstance(part.value, ast.Call) and getattr(part.value.func, "id", "") == "_summary_text"
+                    if not escaped and expr not in ALLOWED_RAW:
+                        offenders.append(f"{func.name}: {{{expr}}}")
+
+        assert not offenders, (
+            "put these through _summary_text (or allowlist them if they are built HTML): " + ", ".join(offenders)
+        )
+
+    def test_the_guard_would_catch_a_raw_hole(self):
+        """The guard above is only worth having if it fails on the real mistake."""
+        tree = ast.parse('def _build_section_summary(x):\n    return f"<p>{x}</p>"\n')
+        func = tree.body[0]
+        assert isinstance(func, ast.FunctionDef)
+        holes = [
+            ast.unparse(p.value)
+            for node in ast.walk(func)
+            if isinstance(node, ast.JoinedStr)
+            for p in node.values
+            if isinstance(p, ast.FormattedValue)
+        ]
+        assert holes == ["x"]
+        assert "x" not in ALLOWED_RAW
+
+
+class TestSummaryFnImplementationsHoldNoMarkup:
+    """A source guard on wizard_sections.py, where the summary_fn's live.
+
+    Nothing there builds HTML any more; a new f-string with a tag in it is the
+    mistake this catches.
+    """
+
+    def test_no_summary_fn_contains_a_tag(self):
+        tree = ast.parse(inspect.getsource(wizard_sections))
+        offenders: list[str] = []
+
+        for func in ast.walk(tree):
+            if not isinstance(func, ast.FunctionDef) or not func.name.endswith("_summary"):
+                continue
+            for node in ast.walk(func):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str) and "<" in node.value:
+                    offenders.append(f"{func.name}: {node.value!r}")
+                if isinstance(node, ast.JoinedStr):
+                    literal = "".join(p.value for p in node.values if isinstance(p, ast.Constant))
+                    if "<" in literal:
+                        offenders.append(f"{func.name}: {literal!r}")
+
+        assert not offenders, "a summary_fn returns data, not markup: " + ", ".join(offenders)

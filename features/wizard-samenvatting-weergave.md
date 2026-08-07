@@ -73,11 +73,30 @@ Er zijn twee samenvattingbouwers en ze gaan allebei door `_format_value` in
 Ook binnen een sequence (componenten, gebruikers) en één niveau dieper (een
 sequence in een sequence) geldt de declaratie. Dat laatste is een aandachtspunt bij
 wijzigingen: die tak formatteerde zijn waarden vroeger zelf en sloeg `_format_value`
-over, waardoor een verborgen veld daar alsnog verscheen.
+over, waardoor een verborgen veld daar alsnog verscheen. Hetzelfde gold voor de
+`service_cards`-tak in `_build_section_fields`: die had een eigen pad langs
+`_resolve_service_labels`. Staat er een `summarizer` op zo'n veld, dan beslist die
+nu ook daar; zonder `summarizer` blijven de kaarten een opsomming, zoals ze eruit
+zien.
 
-Een `summary_fn` op een `FormSection` bouwt de hele samenvatting van die stap zelf
-en gaat dus buiten dit mechanisme om. Zet je die, dan ben je zelf verantwoordelijk
-voor wat er in staat én voor het escapen ervan.
+## Een stap die zijn eigen samenvatting maakt
+
+Een `FormSection` kan met `summary_fn` zelf bepalen wat er in de samenvatting van
+die stap staat -- de backup- en restore-stappen doen dat, want die hebben geen
+editables maar een eigen sjabloon. Zo'n functie geeft **gegevens** terug, geen HTML:
+
+```python
+def _backup_summary(data: dict[str, Any]) -> list[SummaryItem]:
+    return [("Deployment", str(data.get("deployment_name", "-"))), ("Resource types", types_str)]
+```
+
+`SummaryItem` is een `(label, waarde)`-paar van platte tekst. De bouwers zetten de
+tags eromheen en escapen beide, precies zoals bij elk ander veld.
+
+Dat is met opzet: zolang een `summary_fn` HTML mócht teruggeven, was escapen een
+regel die de schrijver moest onthouden, en de vier die er stonden bouwden hun HTML
+inderdaad met een f-string zonder te escapen. Een functie die gegevens teruggeeft
+kan die fout niet maken.
 
 ## Twee vangnetten die blijven staan
 
@@ -93,7 +112,15 @@ voor wat er in staat én voor het escapen ervan.
 
 ## Tests
 
-`tests/test_wizard_summary_display.py` pint beide kanten: dat een verborgen veld
-verborgen blijft (ook in een sequence, ook een niveau dieper, en dat een item waarvan
-alles verborgen is niet alsnog rauw wordt gedumpt) en dat getoonde waarden geëscaped
-zijn.
+`tests/test_wizard_summary_display.py` pint alle kanten: dat een verborgen veld
+verborgen blijft (ook in een sequence, ook een niveau dieper, ook bij
+`service_cards`, en dat een item waarvan alles verborgen is niet alsnog rauw wordt
+gedumpt) en dat getoonde waarden geëscaped zijn.
+
+Twee daarvan zijn broncontroles op de `| safe`-sinks, want die kant kan niet met
+één voorbeeld worden afgedekt:
+
+- elke f-string mét een tag in de bouwers van `router_wizard.py` moet zijn gaten
+  door `_summary_text` halen (of in de allowlist staan, voor fragmenten die de
+  module zelf al bouwde en escapete);
+- geen enkele `*_summary`-functie in `wizard_sections.py` bevat nog een tag.
