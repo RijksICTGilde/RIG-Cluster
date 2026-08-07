@@ -162,5 +162,27 @@ precies die ene commit.
 projecten, want `editables.py:16` heeft `default="sso-support"` en `config_model.py:103`
 `default="sso-only"`. De sandbox-e2e liep er zelf op vast bij het aanmaken van `alls3-sm5`.
 
-**Niet gerepareerd**, conform het plan. De fix is vermoedelijk klein (de twee variabelen ook in
-de projectrealm-context zetten) maar hoort een eigen taak met een eigen toets te zijn.
+**Wel gerepareerd** (`cc1f4ed9`). Het plan zei "repareer niet onderweg", maar de opdrachtgever
+vroeg tijdens de run om gevonden problemen ook op te lossen. De bevinding hierboven blijft staan
+zoals hij gemeten is, zodat zichtbaar blijft wat er kapot was.
+
+De eerste reflex — de twee variabelen aan de projectrealm-context toevoegen — is niet de goede.
+Dan krijgt elk van de 47 projectrealms een publieke `zad-cli`-client die daar niets te zoeken
+heeft: de CLI authenticeert een gebruiker die een project *aanmaakt*, en dat gebeurt tegen het
+realm van de operations manager voordat er een projectrealm bestaat. Dat is een uitbreiding van
+het aanvalsoppervlak, geen reparatie.
+
+De client hoort dus niet in een blueprint die projectrealms delen. Hij staat nu in
+`opi/configs/keycloak/operations-manager-realm.yaml`, het eigen blueprint van dat realm, en
+`opi/configs/projects/operations-manager*.yaml` wijzen daarnaar.
+
+Om dat te kunnen zonder een template van 266 regels te dupliceren kent een blueprint nu
+`extends:`. `sso-support.yaml` blijft de basis; het eigen blueprint voegt alleen de client toe.
+Bij het samenvoegen mergen dicts, en lijstitems overschrijven op identiteit (`clientId`, `realm`,
+`alias`, `username`, `name`) of vullen aan als die identiteit nog niet bestaat — zodat een child
+een realm kan aanpassen in plaats van er een tweede met dezelfde naam naast te zetten.
+
+`tests/test_keycloak_template_variables.py` houdt de twee kanten voortaan tegen elkaar: elke
+variabele die een projecttemplate noemt moet door `build_project_realm_context()` geleverd
+worden. Die toets is afgeleid van de bestanden op schijf, dus een nieuwe template of een nieuwe
+`{{ ... }}` valt er vanzelf onder. Dit is de toets die RC-51 zou hebben tegengehouden.
