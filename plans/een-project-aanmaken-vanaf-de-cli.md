@@ -76,6 +76,28 @@ Dat is de standaardrolverdeling en die moet ook op de standaardmanier gebouwd wo
 
 **Wat daarmee vervalt** ten opzichte van een eerdere lezing van dit plan: er hoeft geen tweede aanmeldweg gebouwd te worden. De bestaande sessie-gebaseerde SSO voor de webkant blijft ongemoeid; hier komt alleen een tweede manier bij om een aanroeper te *herkennen*, naast de sleutel per project.
 
+## Hoe de CLI aan een token komt
+
+De vraag "waar komt dat token vandaan" is niet de zorg van de API, maar wel die van dit plan, want zonder antwoord kan de CLI niets. Het antwoord ligt dicht bij hoe de UI het al doet.
+
+**Wat de UI doet.** Authorization Code-flow via authlib, met een **vertrouwelijke** client (`client_id` plus `client_secret`). Na de uitwisseling belandt `session["user"]` en `session["id_token"]` in de sessie, en verder loopt alles op die sessiecookie.
+
+**Waarom de CLI dat niet kan overnemen.** Een CLI die je uitdeelt kan geen `client_secret` bewaren; alles wat erin zit is te lezen. Dat is precies waarom er voor dit geval een standaardantwoord bestaat.
+
+**Wat de CLI dus doet: Authorization Code met PKCE en een loopback-redirect (RFC 8252).**
+
+1. De CLI luistert op `http://127.0.0.1:<vrije poort>` en verzint een `state`-nonce plus een PKCE-verifier.
+2. Hij opent de browser naar de authorisatie-url van de realm, met die loopback als `redirect_uri`.
+3. De gebruiker logt in met SSO, in zijn eigen browser, met de bestaande beveiliging eromheen.
+4. Keycloak stuurt de code terug naar de loopback; de CLI wisselt die met de PKCE-verifier om voor een token en bewaart het.
+
+Dat is hoe `gcloud auth login`, `aws sso login` en `gh auth login --web` het doen, en het staat al zo beschreven in `zad-cli/TODO.md`.
+
+**Wat wij daarvoor moeten leveren:**
+
+- **Een eigen publieke client in de realm**, met `publicClient: true`, PKCE verplicht, en loopback-redirect-uri's toegestaan. Wij maken clients al programmatisch aan (`connectors/keycloak.py`, vandaag met `publicClient: False`), dus dit is een uitbreiding en geen handwerk in de Keycloak-UI. De client van de UI blijft ongemoeid: die is vertrouwelijk en moet dat blijven.
+- **De juiste doelgroep op het token.** De UI bewaart het `id_token`; onze API moet het **access token** verifiëren, en de `audience` daarvan moet onze API bevatten. Klopt dat niet, dan faalt de verificatie of, erger, accepteer je een token dat voor iets anders bedoeld was. Dit is een instelling die stilletjes verkeerd kan staan, dus hij hoort in de test.
+
 ## Voorstel
 
 1. **Beslis eerst tussen A en B**, en leg de reden vast. Zonder die keuze bouwt de een een callback in het portaal en de ander een tokenpad in de API.
