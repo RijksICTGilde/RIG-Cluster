@@ -243,9 +243,14 @@ class TestTheGeneratedRoutes:
     def test_update_and_upsert_share_one_put_route(self, routes) -> None:
         # They address the same thing and differ only in what they promise, which the
         # caller states with ?upsert=true. Two PUT routes on one path would mean one of
-        # them never runs.
+        # them never runs -- so the count is what is measured, not just the set of methods
+        # (DELETE now sits on this same path, which says nothing about the PUTs).
+        from opi.server import app
+
         path = "/api/v2/projects/{project_name}/services/attachments/attachments/{attachment_id}"
-        assert routes[path] == {"PUT"}
+        puts = [r for r in app.routes if getattr(r, "path", "") == path and "PUT" in getattr(r, "methods", set())]
+        assert len(puts) == 1
+        assert routes[path] == {"PUT", "DELETE"}
 
 
 class TestTheOpenApiDocument:
