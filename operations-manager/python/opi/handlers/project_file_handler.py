@@ -3498,24 +3498,75 @@ def _publish_on_web_provided_ref(config: Any) -> str | None:
     return None
 
 
-def extract_attachment_usage(project_data: dict[str, Any]) -> dict[str, list[str]]:
-    """Map each attachment id to the places that reference it (component names / labels).
+#: The label the root publish-on-web certificate is reported under; it belongs to no
+#: single component, so it names the project-wide publication instead.
+_PROJECT_WIDE_PUBLICATION = "publicatie (project-breed)"
+
+#: A coupling is a component's ``attachments`` use: which attachment, and how it reaches
+#: the pod. Removing one only breaks that one delivery.
+USAGE_COUPLING = "coupling"
+
+#: A certificate is a publish-on-web ``tls: provided`` reference. Removing it is not a
+#: coupling change but a change of how the site is served, which is why the confirmed
+#: delete cleans couplings and refuses certificates (see ProjectManager.remove_attachment).
+USAGE_CERTIFICATE = "certificate"
+
+
+@dataclass(frozen=True)
+class AttachmentUsageSite:
+    """One place that references an attachment: where it is, and what kind of use it is.
+
+    The question "where is this attachment used" is asked from three sides -- the wizard's
+    remove button, the delete-confirmation modal and the API delete -- and each used to
+    want a different shape of answer. It is one walk producing one record type, so the
+    three can never disagree about whether an attachment is free.
+    """
+
+    #: The component that uses it; empty for the project-wide publication certificate.
+    component: str
+    #: The deployment the use sits in, for a deployment-component override; None on a
+    #: base component and on the project-wide certificate.
+    deployment: str | None
+    #: ``USAGE_COUPLING`` or ``USAGE_CERTIFICATE``.
+    kind: str
+
+    @property
+    def label(self) -> str:
+        """This site in one phrase, as the portal and the validation errors name it."""
+        if not self.component:
+            return _PROJECT_WIDE_PUBLICATION
+        return f"{self.component} ({self.deployment})" if self.deployment else self.component
+
+    def as_dict(self) -> dict[str, Any]:
+        """This site as an API client reads it."""
+        return {
+            "component": self.component,
+            "deployment": self.deployment,
+            "kind": self.kind,
+            "label": self.label,
+        }
+
+
+def attachment_usage_sites(project_data: dict[str, Any]) -> dict[str, list[AttachmentUsageSite]]:
+    """Map each attachment id to the sites that reference it.
 
     Covers component attachment ``use`` couplings, deployment-component ``use`` overrides,
     and publish-on-web ``provided`` certificates at root, component and deployment-component
-    level. Used both as the delete-guard (``attachment_is_referenced``) and by the
-    delete-confirmation modal, so the two never disagree.
+    level. The single walk behind the delete-guard (``attachment_is_referenced``), the
+    delete-confirmation modal (``extract_attachment_usage``), the reference integrity check
+    (``validate_attachment_references``) and the API delete, so none of them can be looking
+    at a different set of places than the others.
     """
     from opi.services.services import service_entry_config, service_entry_name
 
-    usage: dict[str, list[str]] = {}
+    usage: dict[str, list[AttachmentUsageSite]] = {}
 
-    def add(ref: Any, label: str) -> None:
+    def add(ref: Any, site: AttachmentUsageSite) -> None:
         if not isinstance(ref, str) or not ref:
             return
-        names = usage.setdefault(ref, [])
-        if label and label not in names:
-            names.append(label)
+        sites = usage.setdefault(ref, [])
+        if site not in sites:
+            sites.append(site)
 
     # Component level: attachment couplings + publish-on-web provided certificate.
     # Format-agnostic: the legacy-only read missed a {reference: publish-on-web, config}
@@ -3525,10 +3576,13 @@ def extract_attachment_usage(project_data: dict[str, Any]) -> dict[str, list[str
             continue
         name = component.get("name", "")
         for use in extract_component_attachment_uses(component):
-            add(use.get("reference"), name)
+            add(use.get("reference"), AttachmentUsageSite(name, None, USAGE_COUPLING))
         for entry in component.get("services", []):
             if service_entry_name(entry) == ServiceType.PUBLISH_ON_WEB.value:
-                add(_publish_on_web_provided_ref(service_entry_config(entry)), name)
+                add(
+                    _publish_on_web_provided_ref(service_entry_config(entry)),
+                    AttachmentUsageSite(name, None, USAGE_CERTIFICATE),
+                )
 
     # Deployment-component overrides: attachment couplings + publish-on-web provided cert.
     for dep in project_data.get("deployments", []):
@@ -3539,23 +3593,139 @@ def extract_attachment_usage(project_data: dict[str, Any]) -> dict[str, list[str
             if not isinstance(comp, dict):
                 continue
             cref = comp.get("reference", "")
-            label = f"{cref} ({dep_name})" if dep_name else cref
+            where = dep_name or None
             for use in extract_deployment_component_attachment_uses(project_data, dep_name, cref):
-                add(use.get("reference"), label)
+                add(use.get("reference"), AttachmentUsageSite(cref, where, USAGE_COUPLING))
             cfg = ((comp.get("services") or {}).get("publish-on-web") or {}).get("config")
-            add(_publish_on_web_provided_ref(cfg), label)
+            add(_publish_on_web_provided_ref(cfg), AttachmentUsageSite(cref, where, USAGE_CERTIFICATE))
 
     # Root publish-on-web default certificate.
     for entry in project_data.get("services", []):
         if service_entry_name(entry) == ServiceType.PUBLISH_ON_WEB.value:
-            add(_publish_on_web_provided_ref(service_entry_config(entry)), "publicatie (project-breed)")
+            add(
+                _publish_on_web_provided_ref(service_entry_config(entry)),
+                AttachmentUsageSite("", None, USAGE_CERTIFICATE),
+            )
 
     return usage
 
 
+def extract_attachment_usage(project_data: dict[str, Any]) -> dict[str, list[str]]:
+    """Map each attachment id to the places that reference it, as labels for a reader.
+
+    The label projection of :func:`attachment_usage_sites`, for the portal (the
+    delete-confirmation modal, the attachments section) and for the reference-integrity
+    error text. Callers that have to *act* on a use -- which component, which deployment,
+    coupling or certificate -- ask for the sites instead.
+    """
+    # dict.fromkeys: one component that both couples an attachment and serves it as its
+    # certificate is two sites but one place, and the reader should be told once.
+    return {
+        ref: list(dict.fromkeys(site.label for site in sites))
+        for ref, sites in attachment_usage_sites(project_data).items()
+    }
+
+
 def attachment_is_referenced(project_data: dict[str, Any], attachment_id: str) -> bool:
     """True if any component or publish-on-web certificate uses the attachment (delete-guard)."""
-    return attachment_id in extract_attachment_usage(project_data)
+    return attachment_id in attachment_usage_sites(project_data)
+
+
+def _attachment_coupling_slot(entry: Any) -> tuple[dict[str, Any], str] | None:
+    """The dict and key holding one component service entry's attachment couplings.
+
+    Four shapes carry the same list and a writer has to hit whichever one is there: the
+    record form (``{reference: attachments, config: [...]}``), the legacy name-as-key form
+    (``{attachments: {config: [...]}}``), its pre-rename ``use`` variant, and the bare
+    ``"attachments"`` string, which carries no couplings at all. The readers are already
+    format-agnostic (``extract_component_attachment_uses``); this is that same tolerance
+    for the write side, in one place rather than per caller.
+    """
+    from opi.services.services import service_entry_name
+
+    if not isinstance(entry, dict) or service_entry_name(entry) != ServiceType.ATTACHMENTS.value:
+        return None
+    body = entry.get(ServiceType.ATTACHMENTS.value)
+    if isinstance(body, dict):
+        for key in ("config", "use"):
+            if isinstance(body.get(key), list):
+                return body, key
+        return None
+    if isinstance(entry.get("config"), list):
+        return entry, "config"
+    return None
+
+
+def remove_attachment_references(project_data: dict[str, Any], attachment_id: str) -> list[AttachmentUsageSite]:
+    """Drop every component and deployment-component coupling of one attachment.
+
+    The cleanup half of a confirmed delete: the catalog entry is about to go, so every
+    ``reference`` to it has to go with it -- a reference left pointing at nothing is worse
+    than an attachment left lying around, because it makes the project file invalid
+    (``validate_attachment_references`` rejects it at save, which is the check that catches
+    a cleanup this function missed).
+
+    A component whose last coupling goes loses the whole ``attachments`` block and keeps
+    only its bare selection, which is what clearing a service config does everywhere else.
+    Certificates (``tls: provided``) are deliberately NOT touched: dropping one changes how
+    the site is served, so it is refused rather than cleaned up (see
+    ``ProjectManager.remove_attachment``).
+
+    Returns the sites it actually changed, so the caller can report what it did.
+    """
+    removed: list[AttachmentUsageSite] = []
+
+    def drop_from(couplings: list[Any]) -> list[Any]:
+        return [c for c in couplings if not (isinstance(c, dict) and c.get("reference") == attachment_id)]
+
+    for component in project_data.get("components", []) or []:
+        if not isinstance(component, dict):
+            continue
+        services = component.get("services")
+        if not isinstance(services, list):
+            continue
+        for index, entry in enumerate(services):
+            slot = _attachment_coupling_slot(entry)
+            if slot is None:
+                continue
+            holder, key = slot
+            remaining = drop_from(holder[key])
+            if len(remaining) == len(holder[key]):
+                continue
+            if remaining:
+                holder[key] = remaining
+            else:
+                # Nothing left to couple: the block goes, the selection stays.
+                services[index] = ServiceType.ATTACHMENTS.value
+            removed.append(AttachmentUsageSite(component.get("name", ""), None, USAGE_COUPLING))
+
+    for deployment in project_data.get("deployments", []) or []:
+        if not isinstance(deployment, dict):
+            continue
+        dep_name = deployment.get("name") or None
+        for comp in deployment.get("components", []) or []:
+            if not isinstance(comp, dict):
+                continue
+            services = comp.get("services")
+            # A deployment component's services is a MAP keyed by service name, not the
+            # list a base component carries; the two shapes are why this loop is separate.
+            if not isinstance(services, dict):
+                continue
+            block = services.get(ServiceType.ATTACHMENTS.value)
+            if not isinstance(block, dict) or not isinstance(block.get("config"), list):
+                continue
+            remaining = drop_from(block["config"])
+            if len(remaining) == len(block["config"]):
+                continue
+            if remaining:
+                block["config"] = remaining
+            else:
+                del services[ServiceType.ATTACHMENTS.value]
+                if not services:
+                    del comp["services"]
+            removed.append(AttachmentUsageSite(comp.get("reference", ""), dep_name, USAGE_COUPLING))
+
+    return removed
 
 
 def extract_service_names_from_component(component: dict[str, Any]) -> list[str]:

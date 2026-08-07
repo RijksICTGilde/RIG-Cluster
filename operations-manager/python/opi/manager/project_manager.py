@@ -59,13 +59,15 @@ from opi.generation.manifests import (
     ManifestGenerator,
 )
 from opi.handlers.project_file_handler import (
+    USAGE_CERTIFICATE,
     ProjectFileHandler,
-    attachment_is_referenced,
+    attachment_usage_sites,
     ensure_attachment_data_list,
     extract_attachment_catalog,
     extract_component_attachment_uses,
     extract_service_names_from_component,
     find_attachment_data_list,
+    remove_attachment_references,
 )
 from opi.handlers.sops import SopsHandler
 from opi.manager.project_validation import validate_component_references, validate_project_structure
@@ -7431,12 +7433,29 @@ class ProjectManager:
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
-    async def remove_attachment(self, attachment_id: str) -> dict[str, Any]:
+    async def remove_attachment(self, attachment_id: str, *, confirm_in_use: bool = False) -> dict[str, Any]:
         """Remove an attachment from the project's catalog.
 
-        Idempotent (already-absent is a no-op success) and refuses removal while the attachment
-        is still referenced. Uses the single ProjectManager path: fresh contents from Git, save,
-        commit and push, with no cache in the mutate-commit path.
+        Idempotent (already-absent is a no-op success) and, by default, refuses removal
+        while the attachment is still referenced -- with ``used_by`` naming every place
+        that references it, so the caller can show what it would be breaking instead of
+        only hearing "no".
+
+        ``confirm_in_use`` is the caller saying "I know it is in use and I want it gone
+        anyway". It then becomes one cleanup: every component and deployment-component
+        coupling is dropped along with the catalog entry, in a single save, because a
+        reference left pointing at a deleted id makes the project file invalid. The flag is
+        named for the *acknowledgement* rather than for the effect (a ``force`` says only
+        that something was overridden, not what was known) -- the same reasoning behind
+        ``rollout=false``.
+
+        One case is refused even with the confirmation: an attachment serving as a
+        publish-on-web certificate (``tls: provided``). There is no reference to remove
+        there without also deciding how the site should be served instead, and quietly
+        moving a site off its own certificate is not a decision this call gets to make.
+
+        Uses the single ProjectManager path: fresh contents from Git, save, commit and
+        push, with no cache in the mutate-commit path.
         """
         try:
             project_data = await self.get_contents()
@@ -7446,22 +7465,43 @@ class ProjectManager:
             if data is None or not any(isinstance(e, dict) and e.get("id") == attachment_id for e in data):
                 return {"success": True, "changed": False}
 
-            if attachment_is_referenced(project_data, attachment_id):
+            sites = attachment_usage_sites(project_data).get(attachment_id, [])
+            certificates = [site for site in sites if site.kind == USAGE_CERTIFICATE]
+            if sites and (not confirm_in_use or certificates):
+                if certificates:
+                    reason = (
+                        f"Bijlage '{attachment_id}' wordt als certificaat gebruikt door: "
+                        f"{', '.join(site.label for site in certificates)}. Wijzig eerst de TLS-modus daar; "
+                        "een certificaat kan niet zomaar worden losgekoppeld."
+                    )
+                else:
+                    reason = (
+                        f"Bijlage '{attachment_id}' is in gebruik door: "
+                        f"{', '.join(site.label for site in sites)} en kan niet worden verwijderd"
+                    )
                 return {
                     "success": False,
-                    "error": f"Bijlage '{attachment_id}' is in gebruik en kan niet worden verwijderd",
+                    "error": reason,
                     "error_type": "in_use",
+                    "used_by": [site.as_dict() for site in sites],
                 }
 
+            uncoupled = remove_attachment_references(project_data, attachment_id) if sites else []
             data[:] = [e for e in data if not (isinstance(e, dict) and e.get("id") == attachment_id)]
 
+            where = f" and uncoupled from {', '.join(site.label for site in uncoupled)}" if uncoupled else ""
             await self.save_and_commit_project(
-                project_data, f"Remove attachment '{attachment_id}' from project '{project_name}'"
+                project_data, f"Remove attachment '{attachment_id}' from project '{project_name}'{where}"
             )
 
-            logger.info(f"Removed attachment '{attachment_id}' from project '{project_name}'")
-            return {"success": True, "changed": True}
+            logger.info(f"Removed attachment '{attachment_id}' from project '{project_name}'{where}")
+            return {"success": True, "changed": True, "uncoupled_from": [site.as_dict() for site in uncoupled]}
 
+        except (ProjectSchemaError, ProjectIntegrityError) as e:
+            # The save is the check that a cleanup left no reference behind: a dangling
+            # reference is exactly what validate_attachment_references rejects here.
+            logger.warning("Attachment '%s' removal rejected by project validation: %s", attachment_id, e)
+            return {"success": False, "error": str(e), "error_type": "validation_error"}
         except Exception as e:
             error_msg = f"Error removing attachment '{attachment_id}': {e}"
             logger.exception(error_msg)
