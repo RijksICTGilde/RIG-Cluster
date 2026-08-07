@@ -49,10 +49,17 @@ Twee redenen, allebei hard:
   HTML nóg een keer als Jinja-template uitvoert. HTML-escapen helpt daar niet: `{{ }}`
   heeft geen bijzondere tekens nodig. Het veld krijgt daarom alleen een constante markering
   (`SCHEMA_FIELD_MARKER`); de tekst zelf staat in `global_errors`, dat binnen de template
-  wordt gerenderd — één render, met autoescaping. Als extra grendel breekt
-  `_defuse_template_syntax` Jinja-delimiters in álle veldmeldingen en -waarschuwingen die
-  naar `_render_step_html` gaan; dat dekt ook de gewone formuliervalidators, die de
-  ingevulde waarde wél in hun melding citeren ("Ongeldige waarde: ...").
+  wordt gerenderd — één render, met autoescaping. Als extra grendel zet
+  `_defuse_template_syntax` in álle veldmeldingen en -waarschuwingen die naar
+  `_render_step_html` gaan een spatie achter élke `{` en vóór élke `}`; dat dekt ook de
+  gewone formuliervalidators, die de ingevulde waarde wél in hun melding citeren
+  ("Ongeldige waarde: ..."). Per teken, in één `str.translate`-pas — en dat is de hele
+  reden dat het werkt. Hele delimiterparen vervangen (`{{` -> `{ {`) lijkt hetzelfde maar
+  is te omzeilen: die passes voeden elkaar, dus `{{{{` komt er als `{{` weer uit en Jinja
+  leest dan `{{ { <expr>: 1 } }}` — een dict-literal waarvan de sleutel wél wordt
+  uitgevoerd. Eén pas per teken kan geen delimiter terugvormen, hoe diep je ook nest;
+  `test_a_field_message_cannot_execute_in_the_second_render` pint dat met twee, vier en
+  acht accolades.
 
 **Het wordt gelogd als bug.** Komt de wizard hier met een ongeldig bestand, dan
 ontbreekt validatie op een veld. Er gaat een WARNING uit met het veldpad en de reden
