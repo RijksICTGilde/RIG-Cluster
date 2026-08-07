@@ -40,8 +40,11 @@ from opi.api.task_models import (
     UpdateImageResult,
     UpsertDeploymentResult,
 )
+from opi.api.user_token_auth import validate_user_token
 from opi.api.v2.models import (
     AsyncTaskAcceptedResponse,
+    CreateProjectAcceptedResponse,
+    CreateProjectRequest,
     DeploymentComponentDetail,
     DeploymentDetail,
     DeploymentListResponse,
@@ -57,6 +60,7 @@ from opi.api.validation import (
 )
 from opi.connectors.argo import ArgoConnector, create_argo_connector
 from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
+from opi.core.auth_decorators import get_current_user
 from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
@@ -84,7 +88,8 @@ from opi.utils.naming import (
     get_component_ingress_map,
     sanitize_kubernetes_name,
 )
-from opi.utils.project_utils import validate_project_name
+from opi.utils.project_utils import ProjectApiKeyError, generate_base_project_file, validate_project_name
+from opi.utils.yaml_util import dump_yaml_to_string
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 logger = logging.getLogger(__name__)
@@ -663,9 +668,106 @@ async def upsert_deployment_v2(
     return _accepted_response(task, "upsert_deployment")
 
 
-# NOTE: create_project_v2 removed - there is no project (and therefore no API
-# token) to authenticate against before the project exists.  Project creation
-# is handled exclusively through the web UI wizard.
+@v2_router.post(
+    "/projects",
+    tags=["projects"],
+    summary="Create a project",
+    responses={
+        202: {"model": CreateProjectAcceptedResponse, "description": "Project accepted for creation"},
+        401: {"description": "No valid bearer token"},
+        409: {"description": "A project with this name already exists"},
+    },
+)
+@validate_user_token
+async def create_project_v2(
+    request: Request,
+    project_data: CreateProjectRequest = Body(...),
+) -> JSONResponse:
+    """Create a project outside the browser.
+
+    Every other endpoint here authenticates with the project's own API key. That
+    cannot work before the project exists, so this one -- and only this one --
+    accepts an SSO access token instead: ``Authorization: Bearer <token>``. The
+    token establishes who the caller is; the platform allowlist decides whether
+    they may create anything.
+
+    What is created is the base of a project: its identity, its cluster, its
+    repository and its own keys. It declares no components and no deployments, so
+    nothing is provisioned on the cluster yet. Add a deployment when there is
+    something to deploy.
+
+    The response carries the new project's API key. It is shown once, here, and
+    is what every later call for this project must present as ``X-API-Key``.
+
+    Headers:
+        Authorization: Bearer <SSO access token> (required)
+    """
+    user = get_current_user(request) or {}
+    owner_email = str(user.get("email", ""))
+    project_name = project_data.name
+
+    logger.info("V2 create project '%s' requested by %s", project_name, owner_email)
+
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, "
+                "numbers 0-9, dash -, maximum 20 characters"
+            ),
+        )
+
+    # Fail fast on a name that is taken. The task handler refuses it too -- that
+    # is the real gate, because another creation can land between this check and
+    # the commit -- but a caller deserves a 409 instead of a failed task.
+    project_file_path = f"projects/{project_name}.yaml"
+    store = get_project_store()
+    await store.reconcile()
+    if await store.read_path(project_file_path) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Project '{project_name}' bestaat al. Kies een andere projectnaam.",
+        )
+
+    try:
+        project_dict, api_key = await generate_base_project_file(
+            project_name=project_name,
+            display_name=project_data.display_name or project_name,
+            description=project_data.description,
+            cluster=settings.CLUSTER_MANAGER,
+            owner_email=owner_email,
+        )
+    except ProjectApiKeyError as exc:
+        logger.error("Could not build the project file for '%s': %s", project_name, exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    task = await create_async_task(
+        request=request,
+        task_type="create_project",
+        project_name=project_name,
+        payload={
+            "project_name": project_name,
+            "yaml_content": dump_yaml_to_string(project_dict),
+            "is_new_project": True,
+            # There is nothing to roll out: the project declares no deployments.
+            # The file is written and committed; the cluster gets involved once a
+            # deployment is added.
+            "rollout": False,
+        },
+        max_attempts=1,
+    )
+
+    task_id = str(task["task_id"])
+    return JSONResponse(
+        content=CreateProjectAcceptedResponse(
+            task_id=task_id,
+            poll_url=f"/api/tasks/{task_id}",
+            project_name=project_name,
+            api_key=api_key,
+        ).model_dump(),
+        status_code=202,
+        headers={"Location": f"/api/tasks/{task_id}"},
+    )
 
 
 @v2_router.post(
