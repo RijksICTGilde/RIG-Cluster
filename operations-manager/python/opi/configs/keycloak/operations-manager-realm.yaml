@@ -1,0 +1,33 @@
+# Realm of the operations manager itself: everything a project realm gets, plus the
+# zad-cli client, which authenticates a user who is CREATING a project and therefore has
+# no place in a project realm.
+extends: sso-support
+
+clients:
+  # Public client: a distributed CLI cannot keep a secret, so authorization code + PKCE
+  # with a loopback redirect (RFC 8252). Keycloak ignores the port when matching loopback.
+  # The audience mapper puts this API in the token's aud; without it the API refuses it.
+  - clientId: "{{ cli_client_id }}"
+    name: "ZAD CLI"
+    enabled: true
+    publicClient: true
+    protocol: "openid-connect"
+    redirectUris:
+      - "http://127.0.0.1/*"
+      - "http://localhost/*"
+    postLogoutRedirectUris:
+      - "+"
+    webOrigins: []
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    pkceCodeChallengeMethod: "S256"
+    protocolMappers:
+      - name: "zad-api-audience"
+        protocol: "openid-connect"
+        protocolMapper: "oidc-audience-mapper"
+        config:
+          included.custom.audience: "{{ cli_token_audience }}"
+          id.token.claim: "false"
+          access.token.claim: "true"

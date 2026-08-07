@@ -48,6 +48,42 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def build_project_realm_context(
+    *,
+    project_name: str,
+    cluster: str,
+    keycloak_url: str,
+    realm_name: str,
+    platform_client_id: str,
+    operations_manager_domain: str,
+    account_link: str | None,
+) -> dict[str, Any]:
+    """Base variables every project-realm template is rendered with.
+
+    A project-realm template may only reference names this returns, plus the user's own
+    ``variables:`` block. ``tests/test_keycloak_template_variables.py`` holds the two sides
+    together.
+    """
+    return {
+        # Infrastructure variables
+        "project_name": project_name,
+        "cluster": cluster,
+        "keycloak_url": keycloak_url,
+        "platform_realm_name": settings.KEYCLOAK_DEFAULT_REALM,
+        "project_realm_name": realm_name,
+        "project_display_name": f"{project_name} ({cluster})",
+        "platform_client_id": platform_client_id,
+        # Unified variable names (works with all templates)
+        "realm_name": realm_name,
+        "realm_display_name": f"{project_name} ({cluster})",
+        # Operations manager domain and client ID for invite flow
+        "operations_manager_domain": operations_manager_domain,
+        "invite_client_id": settings.INVITE_CLIENT_ID,
+        # Per-realm SSO account-linking mode (automatic | confirm | verify; None/verify -> stock)
+        "account_link": account_link,
+    }
+
+
 class KeycloakManager:
     """Manager for Keycloak SSO operations and resources."""
 
@@ -1726,24 +1762,15 @@ class KeycloakManager:
         operations_manager_domain = extract_domain_from_url(settings.OWN_DOMAIN)
 
         # Build base context for YAML template
-        context = {
-            # Infrastructure variables
-            "project_name": project_name,
-            "cluster": cluster,
-            "keycloak_url": keycloak_url,
-            "platform_realm_name": settings.KEYCLOAK_DEFAULT_REALM,
-            "project_realm_name": realm_name,
-            "project_display_name": f"{project_name} ({cluster})",
-            "platform_client_id": platform_client_id,
-            # Unified variable names (works with all templates)
-            "realm_name": realm_name,
-            "realm_display_name": f"{project_name} ({cluster})",
-            # Operations manager domain and client ID for invite flow
-            "operations_manager_domain": operations_manager_domain,
-            "invite_client_id": settings.INVITE_CLIENT_ID,
-            # Per-realm SSO account-linking mode (automatic | confirm | verify; None/verify -> stock)
-            "account_link": config.get("account_link"),
-        }
+        context = build_project_realm_context(
+            project_name=project_name,
+            cluster=cluster,
+            keycloak_url=keycloak_url,
+            realm_name=realm_name,
+            platform_client_id=platform_client_id,
+            operations_manager_domain=operations_manager_domain,
+            account_link=config.get("account_link"),
+        )
 
         # Add redirect URIs from component ingress hosts if provided
         if ingress_hosts:
