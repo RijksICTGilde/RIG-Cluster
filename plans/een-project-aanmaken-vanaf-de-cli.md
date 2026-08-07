@@ -1,0 +1,58 @@
+# Een project aanmaken vanaf de CLI
+
+Status: plan, 7 augustus 2026. Niet gebouwd. Aanleiding: een project aanmaken kan alleen via de UI, omdat het SSO vereist. Daardoor kan een agent of script geen project opzetten, en dat is precies wat `zad-cli` mogelijk zou moeten maken.
+
+## Wat er nu is, gemeten
+
+**De API-authenticatie is structureel per project.** `validate_api_token` in `opi/api/endpoint_util.py` zegt het zelf:
+
+> *"This decorator requires project-specific API key via X-API-Key header. ALWAYS validates that the API key matches the project_name from the route. Returns 401 if project_name is missing."*
+
+Bij het aanmaken bestaat het project nog niet. Er is dus geen sleutel en geen projectnaam om tegen te valideren. **Dit is geen ontbrekend endpoint maar een ontbrekend authenticatiepad.** Dat is het echte werk in dit plan.
+
+**Wat er wel al is, en dat scheelt veel:**
+
+- Het taaktype `create_project` bestaat en wordt door de wizard gebruikt (`create_async_task`), dus de aanmaakweg zelf is er.
+- Er staat een uitgecommentarieerd `POST /projects` in `api/router.py` uit de zelfbedieningstijd; het idee is eerder bedacht en uitgezet.
+- SSO bestaat, maar aan de webkant: dertig routes dragen `@requires_sso`, sessie-gebaseerd.
+- **Een project met alleen een naam en een omschrijving is schemageldig.** Gemeten. De API hoeft dus geen componenten of deployments te verzinnen om iets geldigs te schrijven.
+- De projectsleutel bestaat al als `config.api-key` in het projectbestand.
+
+## Er liggen twee ontwerpen, en dat moet eerst beslist worden
+
+`zad-cli/TODO.md` bevat al een volledig uitgewerkt ontwerp voor dit doel, inclusief de valkuilen. Maar het is een **ander** ontwerp dan hierboven beschreven, en het verschil bepaalt de omvang.
+
+**Ontwerp A, uit de CLI-TODO: het formulier in de browser.** De CLI opent `/projects/new?cli=<nonce>`, de gebruiker logt in en vult het bestaande formulier in, en het portaal post na afloop projectnaam en API-sleutel terug naar een loopback-listener van de CLI. Wat RIG-Cluster dan moet leveren is klein: het portaal accepteert `cli_callback` plus `state`, en er komt een endpoint dat de sleutel uitgeeft aan de ingelogde eigenaar. Geen nieuw authenticatiepad, want het portaal is al SSO-beveiligd.
+
+**Ontwerp B, de vraag van vandaag: aanmaken vanaf de CLI zelf.** `zad project add --name "Test" --description "Nog een test"` maakt het project echt aan; de browser komt alleen langs om in te loggen, en het token dat daaruit komt gaat naar een API-endpoint. Dat vraagt wel een tweede authenticatiepad in de API: een token van een gebruiker, naast de bestaande sleutel per project.
+
+**Het verschil dat telt:** bij A vult een mens een formulier in, bij B niet. Voor agentisch werken is A geen oplossing, want er zit een handmatige stap in het midden. B is duurder en is het enige dat het gestelde doel haalt.
+
+**Advies: B, en A niet weggooien.** De loopback-opzet, de nonce en de opslagregels uit de CLI-TODO gelden voor allebei; alleen wat er in de browser gebeurt verschilt. Bouw B, en leen de beveiligingskeuzes die daar al staan.
+
+## Hoeveel werk is het
+
+Vier stukken, en het middelste is het echte werk.
+
+1. **Het endpoint zelf: klein.** Naam en omschrijving in, een `create_project`-taak eruit. De aanmaakweg bestaat, en het minimale projectbestand is geldig.
+2. **Het authenticatiepad: het grootste stuk.** De API moet een gebruikerstoken accepteren en daaruit een identiteit afleiden, naast de bestaande sleutel per project. De OIDC-machinerie staat er (authlib, Keycloak), maar sessie-gebaseerd; een bearer-token-pad is nieuw. Hier hoort ook de vraag bij wie überhaupt een project mag aanmaken.
+3. **Het antwoord: klein maar bepalend.** Projectnaam plus API-sleutel terug, zodat de CLI zijn context kan zetten. Dat is het hele punt van de exercitie.
+4. **De CLI-kant: al ontworpen, niet gebouwd.** Loopback, nonce, opslag met 0600. Staat in `zad-cli/TODO.md` en hoeft niet opnieuw bedacht te worden.
+
+## Voorstel
+
+1. **Beslis eerst tussen A en B**, en leg de reden vast. Zonder die keuze bouwt de een een callback in het portaal en de ander een tokenpad in de API.
+2. **Het authenticatiepad als eerste**, want daar hangt de rest aan. Eén manier om een gebruiker te herkennen, en de bestaande sleutel per project blijft ongemoeid voor alles wat een project al heeft.
+3. **Daarna het endpoint**, met naam en omschrijving als enige verplichte velden en de rest op de standaarden die de wizard ook gebruikt.
+4. **Het antwoord vastleggen als contract**: projectnaam en sleutel, en niets meer dan dat.
+5. **Verwijderen expliciet buiten scope.** Aanmaken via een token is een ding; verwijderen met hetzelfde token is een tweede besluit, en het hoort niet meegenomen te worden omdat het toevallig in dezelfde route past.
+
+## Waar op te letten
+
+**De sleutel nooit in een URL.** Uit de CLI-TODO, en het is de belangrijkste regel: een sleutel in de query string belandt in browsergeschiedenis, proxy-logs en referrers. Alleen in een antwoordbody.
+
+**Een tweede authenticatiepad is een vergroting van het aanvalsoppervlak.** De API kent nu precies één manier binnen te komen, en die is per project begrensd. Een gebruikerstoken is dat niet: die spreekt namens een persoon over alle projecten. Wat dat token mag, hoort net zo scherp begrensd te zijn als de sleutel dat is, en het hoort een securityreview te krijgen voordat het live gaat.
+
+**Een leeg project is geldig maar misschien niet verwerkbaar.** Het schema keurt een project met alleen een naam goed; of `process_project` daar ook mee omgaat is niet gemeten. Doe dat vroeg, want als er een minimale inhoud nodig is, verandert dat het contract van het endpoint.
+
+**Dit staat op twee TODO-lijsten.** Punt 6 van onze eigen lijst verwijst al naar `zad-cli/TODO.md` en noemt drie dingen die bij ons liggen, waaronder dit endpoint. Werk vanuit die lijst en laat de twee niet uiteenlopen.
