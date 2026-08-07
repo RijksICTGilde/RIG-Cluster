@@ -58,14 +58,28 @@ Zonder dat `repositories`-blok heeft ArgoCD geen bron. Het wordt opgebouwd uit `
 Vier stukken, en het middelste is het echte werk.
 
 1. **Het endpoint zelf: klein.** Naam en omschrijving in, een `create_project`-taak eruit met het genereer-pad, zodat de basis (repositories, config, api-key) uit de bestaande opbouw komt en niet uit een zesde kopie.
-2. **Het authenticatiepad: het grootste stuk.** De API moet een gebruikerstoken accepteren en daaruit een identiteit afleiden, naast de bestaande sleutel per project. De OIDC-machinerie staat er (authlib, Keycloak), maar sessie-gebaseerd; een bearer-token-pad is nieuw. Hier hoort ook de vraag bij wie überhaupt een project mag aanmaken.
+2. **Het tokenpad: het grootste stuk, maar begrensd.** Zie de afbakening hieronder; het gaat om een token verifiëren, niet om een inlogflow bouwen.
 3. **Het antwoord: klein maar bepalend.** Projectnaam plus API-sleutel terug, zodat de CLI zijn context kan zetten. Dat is het hele punt van de exercitie.
 4. **De CLI-kant: al ontworpen, niet gebouwd.** Loopback, nonce, opslag met 0600. Staat in `zad-cli/TODO.md` en hoeft niet opnieuw bedacht te worden.
+
+## De afbakening: de API is een resource server, geen identity provider
+
+Vastgelegd op 7 augustus. De API **voorziet niets van SSO**: geen inlogflow, geen callback, geen sessiebeheer, geen redirects. Het endpoint moet bereikbaar zijn met een **geldig SSO-token**, en waar dat token vandaan komt is niet de zorg van de API.
+
+Dat is de standaardrolverdeling en die moet ook op de standaardmanier gebouwd worden, zoals elk ander systeem het bij een vergelijkbare oplossing doet:
+
+- **`Authorization: Bearer <token>`**, zoals RFC 6750 voorschrijft. Niet in een query string, niet in een eigen header.
+- **Verifiëren tegen de JWKS van de realm**: handtekening, uitgever, doelgroep en geldigheidsduur. Niet zelf ontleden, niet vertrouwen op wat er in het token staat zonder de handtekening te controleren.
+- **Identiteit uit de claims**, autorisatie bij ons: dat het token geldig is zegt wie iemand is, niet dat hij een project mag aanmaken. Dat tweede is onze beslissing en hoort expliciet.
+
+**Het gereedschap staat er al**, gemeten: `authlib.jose` voor JWKS-verificatie, en `python-keycloak` met `decode_token` en `public_key`. De JWKS-url wordt elders in de code al samengesteld (`connectors/keycloak.py`). Dit is dus aansluiten op wat er is, geen nieuwe machinerie.
+
+**Wat daarmee vervalt** ten opzichte van een eerdere lezing van dit plan: er hoeft geen tweede aanmeldweg gebouwd te worden. De bestaande sessie-gebaseerde SSO voor de webkant blijft ongemoeid; hier komt alleen een tweede manier bij om een aanroeper te *herkennen*, naast de sleutel per project.
 
 ## Voorstel
 
 1. **Beslis eerst tussen A en B**, en leg de reden vast. Zonder die keuze bouwt de een een callback in het portaal en de ander een tokenpad in de API.
-2. **Het authenticatiepad als eerste**, want daar hangt de rest aan. Eén manier om een gebruiker te herkennen, en de bestaande sleutel per project blijft ongemoeid voor alles wat een project al heeft.
+2. **De tokenverificatie als eerste**, want daar hangt de rest aan. Eén manier om een gebruiker te herkennen, langs de standaardweg, en de bestaande sleutel per project blijft ongemoeid voor alles wat een project al heeft.
 3. **Daarna het endpoint**, met naam en omschrijving als enige verplichte velden en de rest op de standaarden die de wizard ook gebruikt.
 4. **Het antwoord vastleggen als contract**: projectnaam en sleutel, en niets meer dan dat.
 5. **Verwijderen expliciet buiten scope.** Aanmaken via een token is een ding; verwijderen met hetzelfde token is een tweede besluit, en het hoort niet meegenomen te worden omdat het toevallig in dezelfde route past.
