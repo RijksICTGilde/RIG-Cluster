@@ -62,6 +62,20 @@ Wat dat concreet vraagt:
 3. **Herverwerken is al een taak** (`_create_task_and_render_progress`), dus die twee kunnen meteen het gedeelde voortgangsfragment gebruiken. Verwijderen moet je nakijken: als dat synchroon is, geldt daar hetzelfde verhaal als bij slapen, en dan is dit meteen de plek om er een taak van te maken.
 4. **Een resultaat tonen in plaats van de gebruiker laten raden.** Dat stond al in de oorspronkelijke melding en is met het gedeelde fragment vanzelf zo.
 
+## Wat er nog te doen is (7 augustus)
+
+De vier punten hierboven zijn grotendeels gebouwd door RC-29. Wat resteert is smal en scherp:
+
+1. **De trigger verhuist naar het gedeelde pad.** De luisteraar die `window.isEditSubmitting` aanzet bij het inswappen van het voortgangsfragment staat inline in `project-details.html.j2` (rond regel 800). Hij hoort in `static/js/edit_modal.js`, naast de blokkade die er al staat. Dan geldt de regel voor elke pagina die de modal opent, en niet alleen voor die ene.
+
+2. **De inline luisteraar daar weghalen**, zodat er niet twee zijn die elkaar overschrijven.
+
+3. **Nakijken of alle openers gedekt zijn.** Vijf templates openen de gedeelde modal (`project-details`, `admin/approvals` en zijn `_modal`, `section-deployment-actions`, `section-actions`, `section-components`) en drie gebruiken het voortgangsfragment. Na stap 1 hoort dat automatisch te kloppen; controleer dat en niet aannemen.
+
+4. **Een test die het vasthoudt.** Een browsertest die een actie start vanaf een andere pagina dan de projectdetailpagina en aantoont dat Escape en klikken-buiten daar ook genegeerd worden. Zonder die test verschuift dit terug zodra iemand een pagina toevoegt.
+
+**Wat er NIET meer hoeft:** `showDangerConfirmation`, de titelmap en het eigen voortgangsblok zijn weg (gemeten: nul vermeldingen). Verwijderen en herverwerken lopen al langs de generieke bevestiging. Punt 1 tot en met 4 van het voorstel hierboven zijn daarmee gedekt; lees ze als achtergrond, niet als opdracht.
+
 ## Volgorde
 
 1. Eerst het gedrag vastleggen dat er nu is: welke zes acties er zijn, wat ze aanroepen, en wat er gebeurt bij succes en bij fout. Zonder dat vangnet is dit een verbouwing aan het verwijderpad op gevoel.
