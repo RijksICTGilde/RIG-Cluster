@@ -5,120 +5,15 @@
 {% block content %}
 <c-layout-flow gap="xl">
 
-    {# Page Header #}
-    <div>
-        <c-heading type="h1" textContent="Domeinbeheer" />
-        <p class="rvo-text--lg">
-            Beheer domein- en subdomeinaanvragen voor alle projecten.
-        </p>
-    </div>
+    {% include "admin/approvals/_kop.html.j2" %}
 
-    {# Flash messages #}
-    {% if success_message %}
-    <c-card padding="md" backgroundColor="wit" outline="true">
-        <div class="flash-success">
-            <c-icon icon="vinkje" size="md" />
-            <span>{{ success_message }}</span>
-        </div>
-    </c-card>
-    {% endif %}
+    {% include "admin/approvals/_melding.html.j2" %}
 
-    {% if projects_data %}
-        {% for project in projects_data %}
-        <c-card outline="true" padding="none" backgroundColor="wit">
-            <div class="project-group-header">
-                <c-heading type="h3">
-                    <c-icon icon="applicatie" size="md" />
-                    {{ project.project_name }}
-                </c-heading>
-                <c-button
-                    label="Beheren"
-                    kind="primary"
-                    size="sm"
-                    showIcon="before"
-                    icon="bewerken"
-                    @click="openApprovalModal('{{ project.project_name }}')" />
-            </div>
-            <div class="table-container">
-                <table class="domains-table">
-                    <thead>
-                        <tr>
-                            <th class="col-type">Type</th>
-                            <th class="col-domain">Domein</th>
-                            <th class="col-name">Naam</th>
-                            <th class="col-status">Status</th>
-                            <th class="col-date">Laatste wijziging</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for item in project.approval_items %}
-                        <tr class="domain-row {% if item.current_status == 'requested' %}status-requested{% elif item.current_status == 'denied' %}status-denied{% endif %}">
-                            <td class="col-type">
-                                {% if item.type == 'subdomain' %}
-                                    <span class="type-badge type-subdomain">Subdomein</span>
-                                {% else %}
-                                    <span class="type-badge type-domain">Domein</span>
-                                {% endif %}
-                            </td>
-                            <td class="col-domain">{{ item.domain }}</td>
-                            <td class="col-name"><strong>{{ item.name }}</strong></td>
-                            <td class="col-status">
-                                {% if item.current_status == 'requested' %}
-                                    <span class="status-badge status-requested-badge">Aangevraagd</span>
-                                {% elif item.current_status == 'approved' %}
-                                    <span class="status-badge status-approved-badge">Goedgekeurd</span>
-                                {% elif item.current_status == 'denied' %}
-                                    <span class="status-badge status-denied-badge">Afgewezen</span>
-                                {% else %}
-                                    <span class="status-badge">{{ item.current_status }}</span>
-                                {% endif %}
-                            </td>
-                            <td class="col-date">
-                                {% if item.history %}
-                                    {% set last = item.history[-1] %}
-                                    {{ last.date | dutch_date(include_time=False) }}
-                                    {% if last.by %}<br><span class="rvo-text--sm rvo-text--subtle">door {{ last.by }}</span>{% endif %}
-                                {% else %}
-                                    -
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </c-card>
-        {% endfor %}
-    {% else %}
-        <c-card padding="xl" backgroundColor="wit" outline="true">
-            <div class="text-center empty-state-text">
-                <c-icon icon="info" size="lg" />
-                <div>Geen domein- of subdomeinaanvragen gevonden.</div>
-            </div>
-        </c-card>
-    {% endif %}
+    {% include "admin/approvals/_aanvragen.html.j2" %}
 
 </c-layout-flow>
 
-{# Modal for editing approvals #}
-<div id="approval-backdrop" class="edit-section-backdrop" onclick="closeApprovalModal()"></div>
-<div id="approval-modal" class="edit-section-modal" role="dialog" aria-modal="true">
-    <div class="edit-section-header">
-        <c-heading type="h2" id="approval-title">
-            <c-icon icon="vinkje" size="lg" color="donkerblauw" />
-            <span id="approval-title-text">Domeingoedkeuring</span>
-        </c-heading>
-        <c-button kind="tertiary" size="sm" label="Sluiten" showIcon="before" icon="kruis"
-                  className="edit-modal-close-btn"
-                  @click="closeApprovalModal()" />
-    </div>
-    <div id="approval-error" class="edit-section-error is-hidden"></div>
-    <div id="edit-section-inner">
-        <div class="edit-section-content">
-            <div class="edit-section-loading"><p>Laden...</p></div>
-        </div>
-    </div>
-</div>
+{% include "admin/approvals/_modal.html.j2" %}
 {% endblock %}
 
 {% block additional_styles %}

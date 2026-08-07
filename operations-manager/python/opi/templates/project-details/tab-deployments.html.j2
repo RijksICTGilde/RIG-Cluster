@@ -1,0 +1,34 @@
+{# Het tabblad Deployments: de keuze van een deployment en alles wat erbij hoort. #}
+<c-layout-flow id="tab-deployments" gap="lg" class="is-hidden">
+    {# Deployment Selector #}
+    {% if project.deployments|length > 1 %}
+    <div class="deployment-global-selector">
+        <label for="global-deployment-selector"><strong>Deployment:</strong></label>
+        <select id="global-deployment-selector" class="deployment-select" onchange="switchDeployment(this.value)">
+            {% for deployment in project.deployments | sort(attribute='name') %}
+            <option value="{{ deployment.name }}">{{ deployment.name }} ({{ deployment.cluster }})</option>
+            {% endfor %}
+        </select>
+    </div>
+    {% endif %}
+
+    {% include "project-details/section-deployment-state.html.j2" %}
+    {% include "project-details/section-deployment-actions.html.j2" %}
+    {% include "project-details/section-deployment-argocd.html.j2" %}
+    {# Per-deployment blocks the project's services own (RC-24): metrics, backups.
+       Each service decides whether its block applies to this deployment, so the
+       general template holds no service name and no availability condition.
+       `data-deployment` is what switchDeployment() shows/hides. #}
+    {% for deployment in project.deployments | sort(attribute='name') %}
+    <div class="deployment-section{% if not loop.first %} is-hidden{% endif %}"
+         data-deployment="{{ deployment.name }}">
+        <c-layout-flow gap="lg">
+            {% for section in deployment_service_sections.get(deployment.name, []) %}
+            {% include section.template %}
+            {% endfor %}
+        </c-layout-flow>
+    </div>
+    {% endfor %}
+    {% include "project-details/section-deployments.html.j2" %}
+    {% include "project-details/section-env-vars.html.j2" %}
+</c-layout-flow>

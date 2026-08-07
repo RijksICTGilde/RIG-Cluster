@@ -1,0 +1,90 @@
+{# De lijst met projecten van de gebruiker. #}
+<c-layout-flow gap="lg">
+    <div class="page-header-row">
+        <c-heading type="h2" textContent="Mijn Projecten" />
+        <c-button
+            label="Nieuw Project"
+            kind="primary"
+            size="md"
+            showIcon="before"
+            icon="plus"
+            @click="window.location.href='/projects/new'" />
+    </div>
+
+    {% if projects %}
+    <div class="projects-grid">
+        {% for project in projects %}
+        <a href="/projects/details/{{ project.name }}" class="project-card-link">
+            <c-card class="project-card project-card-{{ project.health | default('Unknown') | lower }}" outline="true" padding="lg" backgroundColor="wit">
+                <c-layout-flow gap="md">
+                    <div class="project-header">
+                        <c-heading type="h3" textContent="{{ project.display_name }}" />
+                        {% set health = project.health | default('Unknown') %}
+                        {% if health == 'Healthy' %}
+                        <div class="project-status status-healthy">
+                            <span class="status-dot status-dot-healthy"></span>
+                            Healthy
+                        </div>
+                        {% elif health == 'Progressing' %}
+                        <div class="project-status status-progressing">
+                            <span class="status-dot status-dot-progressing"></span>
+                            Progressing
+                        </div>
+                        {% elif health == 'Degraded' %}
+                        <div class="project-status status-degraded">
+                            <span class="status-dot status-dot-degraded"></span>
+                            Degraded
+                        </div>
+                        {# Switched off and parked get their own label, not a shared grey
+                           "niet actief" (RC-31): the first stays off until someone turns
+                           it back on, the second returns by itself. Without the labels
+                           both fell through to "Unknown", which is a different untruth. #}
+                        {% elif health == 'Disabled' %}
+                        <div class="project-status status-disabled">
+                            <span class="status-dot status-dot-disabled"></span>
+                            Uitgeschakeld
+                        </div>
+                        {% elif health == 'Inactive' %}
+                        <div class="project-status status-inactive">
+                            <span class="status-dot status-dot-inactive"></span>
+                            Niet actief
+                        </div>
+                        {% else %}
+                        <div class="project-status status-unknown">
+                            <span class="status-dot status-dot-unknown"></span>
+                            Unknown
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% if project.description %}
+                    <p class="rvo-text--sm">{{ project.description }}</p>
+                    {% endif %}
+                    <div class="project-metrics">
+                        <div class="metric">
+                            <c-icon icon="server" size="sm" />
+                            <span>{{ project.deployment_count }} deployment{{ 's' if project.deployment_count != 1 }}</span>
+                        </div>
+                        <div class="metric">
+                            <c-icon icon="user" size="sm" />
+                            <span>{{ project.user_count }} gebruiker{{ 's' if project.user_count != 1 }}</span>
+                        </div>
+                    </div>
+                    {% if project.last_deployed %}
+                    <div class="project-deploy-time">
+                        <c-icon icon="kalender" size="sm" />
+                        <span class="rvo-text--sm" data-deploy-time="{{ project.last_deployed }}">
+                            {{ project.last_deployed[:16]|replace('T', ' ') }} UTC
+                        </span>
+                    </div>
+                    {% endif %}
+                </c-layout-flow>
+            </c-card>
+        </a>
+        {% endfor %}
+    </div>
+    {% else %}
+    <c-card outline="true" padding="lg" backgroundColor="wit">
+        <p class="rvo-text--md">Geen projecten gevonden.</p>
+    </c-card>
+    {% endif %}
+</c-layout-flow>
