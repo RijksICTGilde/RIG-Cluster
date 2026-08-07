@@ -1,6 +1,8 @@
 # Naar het nieuwe componentensysteem
 
-Status: inventarisatie plus plan, 7 augustus 2026. Niet gebouwd. Aanleiding: er is een nieuw componentensysteem (Lord of the Components, LOTC) en het voornemen om OPI in de vormgeving van [bg.rijks.app](https://bg.rijks.app/) te gieten, via de NLDD-implementatie.
+Status: inventarisatie plus plan, 7 augustus 2026. **GEPARKEERD op 7 augustus**, bewust en niet vergeten: het staat klaar voor straks. Bewust niet geshipt, want dan zou een agent fase 1 nog eens doen (dat is RC-48, inmiddels binnen) en daarna vastlopen op de POC die volgens de werkafspraak op de release wacht. Dit is naslagwerk met de metingen en de besluiten, geen opdracht.
+
+Niet gebouwd. Aanleiding: er is een nieuw componentensysteem (Lord of the Components, LOTC) en het voornemen om OPI in de vormgeving van [bg.rijks.app](https://bg.rijks.app/) te gieten, via de NLDD-implementatie.
 
 ## Waar dit naartoe gaat, en wat het nu is
 
