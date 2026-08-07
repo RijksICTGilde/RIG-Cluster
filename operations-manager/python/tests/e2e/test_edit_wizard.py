@@ -17,14 +17,13 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.e2e
 
-#: Which fixture project the own_project fixture copies for this file.
-PROJECT_TEMPLATE = "test-project-detail"
+PROJECT_NAME = "test-project-detail"
 
 
 @pytest.fixture
-def modal(app_server: str, auth_page: Page, own_project: str) -> EditModalHelper:
-    """EditModalHelper pre-navigated to this file's own project detail page."""
-    helper = EditModalHelper(auth_page, app_server, own_project)
+def modal(app_server: str, auth_page: Page) -> EditModalHelper:
+    """EditModalHelper pre-navigated to the detail page."""
+    helper = EditModalHelper(auth_page, app_server, PROJECT_NAME)
     helper.open_detail_page()
     return helper
 

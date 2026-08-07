@@ -58,7 +58,6 @@ tests/e2e/
   test_self_service.py       # Project creation form rendering
   test_wizard_validation.py  # Wizard form validation (local, no sandbox)
   test_wizard_create.py      # Full wizard walkthrough (sandbox required)
-  test_project_isolation.py  # Guards the per-file project + reset (see e2e-test-isolation.md)
   helpers/
     wizard.py                # WizardHelper page object
 ```
@@ -70,8 +69,6 @@ tests/e2e/
 | `app_server` | session | Starts FastAPI on a free port, yields base URL |
 | `authenticated_context` | function | Browser context with pre-signed auth cookie (local) |
 | `auth_page` | function | Page from the authenticated context (local) |
-| `own_project` | function | This file's own copy of a fixture project (see `features/e2e-test-isolation.md`) |
-| `_reset_projects_after_test` | function (autouse) | Puts the project registry back after every local test |
 | `sandbox_url` | session | Base URL from `E2E_BASE_URL` env var |
 | `sandbox_context` | session | Browser context with sandbox auth cookie |
 | `sandbox_page` | function | Page from the sandbox context |
