@@ -672,6 +672,7 @@ async def upsert_deployment_v2(
     "/projects",
     tags=["projects"],
     summary="Create a project",
+    status_code=202,
     responses={
         202: {"model": CreateProjectAcceptedResponse, "description": "Project accepted for creation"},
         401: {"description": "No valid bearer token"},
