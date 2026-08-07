@@ -5,68 +5,9 @@
     <div class="rvo-max-width-layout rvo-max-width-layout--lg">
         <c-layout-flow gap="xl">
 
-            {# Page Header #}
-            <c-heading type="h1" textContent="Beschikbare Services" />
+            {% include "services-overview/_kop.html.j2" %}
 
-            <p>Wanneer je een service selecteert voor je project, worden alle onderstaande omgevingsvariabelen automatisch beschikbaar gesteld aan het component.</p>
-
-            {# Services Grid #}
-            <c-grid columns="two" gap="lg">
-                {% for service_info in services %}
-                    <c-card outline="true" padding="lg">
-                        <c-layout-flow gap="md">
-
-                            {# Service Header #}
-                            <div>
-                                {{ service_block(
-                                    service_info.definition.name,
-                                    service_info.definition.description,
-                                    service_info.definition.icon,
-                                    service_info.definition.color,
-                                    service_info.definition.help_template,
-                                    icon_size="3xl",
-                                ) }}
-                                <p class="rvo-text--sm rvo-text--subtle">
-                                    API naam: <code>{{ service_info.service.value }}</code>
-                                </p>
-                            </div>
-
-                            {# Environment Variables Section #}
-                            {% if service_info.variables %}
-                                <div class="variables-section">
-                                    <c-heading type="h4" textContent="Omgevingsvariabelen" />
-
-                                    <c-layout-flow gap="sm">
-                                        {% for variable in service_info.variables %}
-                                            <div class="variable-item">
-                                                <c-layout-flow gap="xs">
-                                                    <div class="variable-header">
-                                                        <code>{{ variable.name }}</code>
-                                                    </div>
-
-                                                    {% if variable.aliases %}
-                                                        <div class="variable-aliases">
-                                                            <span class="rvo-text--xs rvo-text--subtle">Aliassen: </span>
-                                                            {% for alias in variable.aliases %}
-                                                                <code class="rvo-text--xs">{{ alias }}</code>{% if not loop.last %}, {% endif %}
-                                                            {% endfor %}
-                                                        </div>
-                                                    {% endif %}
-
-                                                    <p class="rvo-text--xs rvo-text--subtle">
-                                                        {{ variable.description }}
-                                                    </p>
-                                                </c-layout-flow>
-                                            </div>
-                                        {% endfor %}
-                                    </c-layout-flow>
-                                </div>
-                            {% endif %}
-
-                        </c-layout-flow>
-                    </c-card>
-                {% endfor %}
-            </c-grid>
+            {% include "services-overview/_diensten.html.j2" %}
 
         </c-layout-flow>
     </div>

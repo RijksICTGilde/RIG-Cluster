@@ -23,6 +23,8 @@ STYLE_BLOCK = re.compile(r"<style[\s>]")
 BLOCK_START = re.compile(r"{%-?\s*block\s+(\w+)")
 BLOCK_END = re.compile(r"{%-?\s*endblock")
 JINJA_SYNTAX = re.compile(r"{{|{%")
+HTML_TAG = re.compile(r"<[a-zA-Z][^>]*>", re.DOTALL)
+CLASS_ATTRIBUTE = re.compile(r'\bclass="')
 
 # Reden voor een uitzondering die er niet hoort te zijn maar er nog wel is. Elke regel met
 # deze reden is werk dat nog moet gebeuren; de test houdt alleen tegen dat er iets bij komt.
@@ -40,17 +42,6 @@ CONTENT_BLOCK_EXCEPTIONS: dict[str, str] = {
         "delen maar een om apart te beoordelen, en misschien te vervangen in plaats van te "
         "verbouwen. Bewust buiten het opdeelwerk gehouden."
     ),
-    "about.html.j2": WERKLIJST,
-    "admin/approvals.html.j2": WERKLIJST,
-    "admin/usage.html.j2": WERKLIJST,
-    "admin/users.html.j2": WERKLIJST,
-    "dashboard.html.j2": WERKLIJST,
-    "metrics-explorer.html.j2": WERKLIJST,
-    "permission-denied.html.j2": WERKLIJST,
-    "project-details.html.j2": WERKLIJST,
-    "projects-overview.html.j2": WERKLIJST,
-    "services-overview.html.j2": WERKLIJST,
-    "wizard/wizard_start.html.j2": WERKLIJST,
 }
 
 # Templates die een eigen <style>-blok mogen houden, met de reden.
@@ -201,3 +192,21 @@ def test_stylesheets_contain_no_jinja() -> None:
                 offenders.append(f"{stylesheet.name}:{number}: {line.strip()}")
 
     assert not offenders, "Een CSS-bestand wordt niet door Jinja gerenderd:\n" + "\n".join(offenders)
+
+
+def test_no_element_carries_two_class_attributes() -> None:
+    """Een element met twee class-attributen verliest het tweede zonder melding.
+
+    Bij het omzetten van style= naar class= is dit de val: een element had al een
+    class en kreeg er een voorwaardelijke bij als los attribuut. Als style= stond het
+    naast de class en werkte het; als tweede class= houdt de browser alleen de eerste
+    aan en gebeurt er niets meer.
+    """
+    offenders = [
+        f"{name}: {' '.join(tag.split())[:120]}"
+        for name, text in _templates()
+        for tag in HTML_TAG.findall(text)
+        if len(CLASS_ATTRIBUTE.findall(tag)) > 1
+    ]
+
+    assert not offenders, "Voeg de klassen samen tot een class-attribuut:\n" + "\n".join(offenders)
