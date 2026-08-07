@@ -13,6 +13,10 @@ data:
     # random key minten). Niet-internet-facing dev cluster, plaintext is OK.
     SECRET_KEY=sandbox-dev-secret-key-fixed-for-stable-sessions-32min
 
+    # Zonder deze sleutel geeft ELK admin-endpoint 501. Vaste dev-waarde, zelfde
+    # afweging als SECRET_KEY hierboven: niet-internet-facing wegwerpcluster.
+    ADMIN_API_KEY=sandbox-dev-admin-api-key-fixed-for-admin-endpoints
+
     ENABLE_GIT_MONITOR=false
     GIT_PROJECTS_SERVER_URL=http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-projects.git
     GIT_PROJECTS_SERVER_USERNAME=rig-admin
