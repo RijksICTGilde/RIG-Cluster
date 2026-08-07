@@ -29,7 +29,7 @@ definition. A field that genuinely has no editable (a file's bytes) says so in
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -51,16 +51,26 @@ class ActionVerb(Enum):
     as such. A ``POST`` that silently overwrites lies about what it did, and the caller
     finds out when the old file is gone. Whether replacing was the intention is the
     caller's business -- which is exactly why the caller has to say it in the request.
+
+    ``DELETE`` joined them on 7 August 2026: the catalog could be written and rewritten but
+    never emptied, so entries piled up with no way back. It addresses one item by path and
+    takes nothing else (see ``takes_fields``); what it needs beyond that identity is a flag
+    the caller sets, not a body.
     """
 
     CREATE = "create"
     UPDATE = "update"
     UPSERT = "upsert"
+    DELETE = "delete"
 
     @property
     def method(self) -> str:
         """The HTTP method this verb is served on."""
-        return "POST" if self is ActionVerb.CREATE else "PUT"
+        if self is ActionVerb.CREATE:
+            return "POST"
+        if self is ActionVerb.DELETE:
+            return "DELETE"
+        return "PUT"
 
     @property
     def targets_existing(self) -> bool:
@@ -68,14 +78,27 @@ class ActionVerb(Enum):
         return self is not ActionVerb.CREATE
 
     @property
+    def takes_fields(self) -> bool:
+        """Whether this verb carries the action's fields in a request body.
+
+        A delete says which item and nothing more: the path is the whole request, and the
+        fields that describe an item's *content* have no meaning when the item is going
+        away. An optional file on a DELETE would be a body a caller could fill in and have
+        silently ignored. Anything a delete still needs to be told is a flag.
+        """
+        return self is not ActionVerb.DELETE
+
+    @property
     def on_existing(self) -> str:
-        """What happens when the id is already taken: ``reject`` or ``replace``."""
-        return "reject" if self is ActionVerb.CREATE else "replace"
+        """What happens when the id is already taken: ``reject``, ``replace`` or ``remove``."""
+        if self is ActionVerb.CREATE:
+            return "reject"
+        return "remove" if self is ActionVerb.DELETE else "replace"
 
     @property
     def on_absent(self) -> str:
         """What happens when the id does not exist yet: ``create`` or ``reject``."""
-        return "reject" if self is ActionVerb.UPDATE else "create"
+        return "reject" if self in (ActionVerb.UPDATE, ActionVerb.DELETE) else "create"
 
 
 class ActionFieldKind(Enum):
@@ -175,6 +198,36 @@ class FieldDisjunction:
 
 
 @dataclass(frozen=True)
+class ActionFlag:
+    """A boolean query parameter one of an action's routes takes.
+
+    A field describes the *thing* a request is about; a flag describes what the caller
+    wants done and what they already know. ``upsert`` was the first of these and lives in
+    the verb table, because replacing is a promise about an id. ``confirm_in_use`` is the
+    second and belongs to the service: only the attachments service knows what "in use"
+    means for an attachment.
+
+    Off by default, always. A flag exists because the default answer is a refusal and the
+    caller has to overrule it in the request -- a flag that defaults to on is just
+    behaviour with an extra name.
+    """
+
+    name: str
+    #: What setting it means, in one sentence. Lands in the OpenAPI parameter description,
+    #: so it is written for someone deciding whether to set it.
+    description: str
+    #: The verbs whose routes take it. A flag on a verb the action does not declare is a
+    #: parameter nobody can reach, so the action rejects it.
+    verbs: tuple[ActionVerb, ...]
+
+    def __post_init__(self) -> None:
+        if not self.description:
+            raise ValueError(f"Action flag '{self.name}' has no description")
+        if not self.verbs:
+            raise ValueError(f"Action flag '{self.name}' applies to no verb")
+
+
+@dataclass(frozen=True)
 class UploadedFile:
     """One uploaded file as a handler sees it: its name and its bytes, already read."""
 
@@ -195,6 +248,9 @@ class ActionContext:
     item_id: str | None = None
     #: The component being acted on, for a COMPONENT-layer action.
     component_name: str | None = None
+    #: The declared flags this route took, by name. Absent flags are not in the map, so a
+    #: handler reads them with a default rather than trusting every route to fill them in.
+    flags: dict[str, bool] = field(default_factory=dict)
 
 
 @dataclass
@@ -232,10 +288,16 @@ class ServiceAction:
     combinations: tuple[FieldCombination, ...] = ()
     #: The either/or rules over this action's fields (see ``FieldDisjunction``).
     disjunctions: tuple[FieldDisjunction, ...] = ()
+    #: The boolean query parameters this action's routes take (see ``ActionFlag``).
+    flags: tuple[ActionFlag, ...] = ()
     #: A worked example of calling this action (a curl line), shown in the OpenAPI
     #: description. Concrete on purpose: the fields alone never show what a real call
     #: looks like, and this is the first thing anyone integrating reads.
     example: str = ""
+    #: Per-verb examples, for verbs the general example does not show. A DELETE route
+    #: documented with a ``curl -X POST -F file=@...`` line is worse than no example: it
+    #: is an example of a different request.
+    verb_examples: tuple[tuple[ActionVerb, str], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.verbs:
@@ -253,6 +315,16 @@ class ServiceAction:
             unknown = set(disjunction.one_of) - set(names)
             if unknown:
                 raise ValueError(f"Action '{self.action_id}' offers unknown fields {unknown} in a disjunction")
+        flag_names = [flag.name for flag in self.flags]
+        if len(flag_names) != len(set(flag_names)):
+            raise ValueError(f"Action '{self.action_id}' declares a flag twice: {flag_names}")
+        for flag in self.flags:
+            unreachable = set(flag.verbs) - set(self.verbs)
+            if unreachable:
+                raise ValueError(
+                    f"Action '{self.action_id}' offers flag '{flag.name}' on verbs it does not declare: "
+                    f"{sorted(v.value for v in unreachable)}"
+                )
 
     def editables_for(self, verb: ActionVerb) -> dict[str, Editable]:
         """The validation profile for one verb: field name -> shared Editable.
@@ -261,10 +333,26 @@ class ServiceAction:
         with ``required`` set to what *this endpoint* insists on. Whether a field may be
         left out is the endpoint's business; what a valid value looks like is the field's,
         and that half is never copied here.
+
+        A verb that takes no fields has an empty profile rather than a profile of optional
+        fields: there is nothing to send, so there is nothing to validate.
         """
+        if not verb.takes_fields:
+            return {}
         profile: dict[str, Editable] = {}
         for action_field in self.fields:
             if action_field.editable is None:
                 continue
             profile[action_field.name] = replace(action_field.editable, required=action_field.is_required_for(verb))
         return profile
+
+    def flags_for(self, verbs: tuple[ActionVerb, ...]) -> tuple[ActionFlag, ...]:
+        """The flags the route serving ``verbs`` takes."""
+        return tuple(flag for flag in self.flags if set(flag.verbs) & set(verbs))
+
+    def example_for(self, verbs: tuple[ActionVerb, ...]) -> str:
+        """The example to show on the route serving ``verbs``, most specific first."""
+        for verb, example in self.verb_examples:
+            if verb in verbs:
+                return example
+        return self.example
