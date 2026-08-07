@@ -46,9 +46,16 @@ def test_no_template_slices_a_timestamp() -> None:
 
 
 def test_the_three_converted_templates_use_the_filter() -> None:
+    """De drie plekken die een tijdstip tonen, doen dat via het filter.
+
+    Het gaat om de plek waar de markup staat, niet om het bestand: toen
+    admin/approvals.html.j2 werd opgedeeld in deeltemplates verhuisde de datum mee naar
+    admin/approvals/_aanvragen.html.j2. Daarom wijst deze test naar het bestand dat de
+    datum nu toont.
+    """
     for name in (
         "wizard/partials/approval_items.html.j2",
-        "admin/approvals.html.j2",
+        "admin/approvals/_aanvragen.html.j2",
         "project-details/section-deployments.html.j2",
     ):
         assert "dutch_date" in (_TEMPLATES / name).read_text(encoding="utf-8"), name

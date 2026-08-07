@@ -42,9 +42,11 @@ def _help_file(help_template: str) -> pathlib.Path | None:
 
 
 # Every template that renders a service block. All of them go through the macro.
+# Het gaat om het bestand waar de markup staat: toen services-overview.html.j2 een
+# samenstelling werd, verhuisde het serviceblok mee naar het deeltemplate.
 _SERVICE_BLOCK_USERS = (
     "widgets/service_cards.html.j2",
-    "services-overview.html.j2",
+    "services-overview/_diensten.html.j2",
     "project-details/section-components.html.j2",
 )
 
