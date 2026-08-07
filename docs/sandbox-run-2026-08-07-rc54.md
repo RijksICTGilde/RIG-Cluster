@@ -132,6 +132,82 @@ niets en zou een groen vinkje geven dat nergens op slaat.
 conversie zelf niet halen (dat is op zichzelf een bevinding), de uitvoer naar de
 sandbox-Forgejo `zad-projects` pushen, en de verwerking op het cluster bekijken.
 
+## 4b. De geconverteerde bestanden verwerkt, een voor een
+
+De geconverteerde set is aangeleverd (`rig-cluster-projects-sandbox` @ `368fca9`) nadat een
+eerste poging nog productie-images en -resources bevatte. Nagemeten: 313 van de 314
+image-regels zijn de probe, de ene rest is een database-image; 45 bestanden dragen
+32Mi/10m met limiet 128Mi/200m; 47/47 staan op `sandboxed-local`; geen `cluster:` op
+productie en geen repository-url naar productie.
+
+Verwerken gaat per project met `POST /api/v2/projects/<naam>/:refresh`. Dat is nodig omdat
+`ENABLE_GIT_MONITOR=false` staat op deze sandbox; een bestand in `zad-projects` zetten start
+uit zichzelf niets. Het in git zetten is daarom ook geen verwerking en is in een keer gedaan;
+de verwerking zelf is strikt een voor een.
+
+**25 projecten gemeten: 24 completed, 1 failed.** Mediaan ongeveer 60s.
+
+De ene fout is `amt-odc-prd`, reproduceerbaar over twee ronden:
+
+```
+"Alle deployments opnieuw verwerken": Remote source clone failed:
+  ['Source validation failed: Failed to connect to external source
+    localhost:41177/amt: [Errno 104] Connection reset by peer']
+```
+
+Dat is de `clone-from`-stap, die een database uit een externe bron haalt via een
+chisel-tunnel. Die bron bestaat op een sandbox niet. Negen van de 47 bestanden dragen zo'n
+`clone-from`. `amtbz-2m9` gaf in de eerste ronde dezelfde fout en was in de tweede gewoon
+groen, dus het pad is bovendien wisselvallig.
+
+### Waarom er 25 gemeten zijn en geen 47
+
+De node liep vol: 117 pods op een capaciteit van 110, met 7 in `Pending`. Alles daarna zou
+capaciteit meten in plaats van code, dus de ronde is daar gestopt. Het is niet dat 47
+projecten niet passen, het zijn er een paar die heel groot zijn:
+
+```
+29 pods  rig-asses-k2n      (losse deployments per PR: pr-431, pr-432, pr-433, pr-450, ...)
+17 pods  rig-mpfm-w3h       (hier zaten de 7 Pending)
+12 pods  rig-mpfb-8wh
+ 3 pods  de rest, typisch
+```
+
+### De migratie, op een draaiend cluster bewezen
+
+Bij verwerking migreert een bestand en schrijft OPI het terug. Dat is precies gebeurd:
+
+```
+git log zad-projects
+  1e14de2 Process project mpfm-w3h
+  00929b8 auto-migrate mpfm-w3h to schema v2.6
+  880e746 auto-migrate mpfb-8wh to schema v2.6
+  ...
+  a4f378b Persist Keycloak realm credentials for jc-77j (sandboxed-local)
+```
+
+Dezelfde meting als in 3b, maar nu op wat OPI zelf heeft teruggeschreven:
+
+| | 47 originelen | na verwerking van 25 |
+|---|---|---|
+| `config.keycloak`-restant | 21 | **0** |
+| root-`domains:` | 30 | 13 (exact de nog niet verwerkte) |
+| afgekeurd door de poort | 0 | **0** |
+| afgekeurd na migratie | 0 | **0** |
+
+De 13 die overblijven zijn de bestanden die nog niet aan de beurt waren. Geen enkel verwerkt
+bestand haalt de validatie niet.
+
+### ArgoCD-prestaties
+
+Apart nagekeken of ArgoCD nog zijn cache leegt bij een nieuwe namespace (vroeger ~5 minuten
+sync, verwachting nu maximaal 30s). Bij 23 projecten die allemaal een nieuwe namespace
+aanmaken staat er **geen enkele** `progressing, waiting 10s... (elapsed: Ns)`-lus in de log.
+De doorlooptijd per project is de hele keten (namespace, manifests, services, sync tot
+Healthy) en zit op een mediaan van ~60s, met uitschieters omlaag naar 11-15s. De twee
+uitschieters omhoog zijn niet Argo: `algor-odc` 626s (ImagePullBackOff op het database-image)
+en `mb-grist-helmfile` 356s.
+
 ## 5. Bevindingen
 
 ### Bevinding 1 (blokkerend): projectverwerking faalt op `cli_client_id`
@@ -186,3 +262,59 @@ een realm kan aanpassen in plaats van er een tweede met dezelfde naam naast te z
 variabele die een projecttemplate noemt moet door `build_project_realm_context()` geleverd
 worden. Die toets is afgeleid van de bestanden op schijf, dus een nieuwe template of een nieuwe
 `{{ ... }}` valt er vanzelf onder. Dit is de toets die RC-51 zou hebben tegengehouden.
+
+### Bevinding 2 (blokkeerde deze run): OPI wordt OOM-killed op 512Mi
+
+De eerste ronde over de 47 klapte na zes projecten om; vanaf project 7 gaf alles `HTTP 503`.
+
+```
+Last State: Terminated   Reason: Error   Exit Code: 137
+Limits: memory: 512Mi
+```
+
+Exit 137 kan ook een probe zijn, dus opgezocht op de node:
+
+```
+docker exec rig-sandbox-control-plane dmesg | grep -i oom
+  Memory cgroup out of memory: Killed process 3413004 (kubectl) ... oom_score_adj:984
+  oom_reaper: reaped process 3333162 (python)
+```
+
+Cgroup-OOM, niet de node (`MemoryPressure False`, 5GB vrij op de host). Vlak na een herstart,
+zonder werk, stond de pod al op 429 MiB van de 512 MiB. Dat laat ~60 MiB over, en de connectors
+forken `kubectl` binnen diezelfde cgroup - vandaar dat een kubectl-proces het slachtoffer werd.
+
+Alleen de overlay `sandboxed-local` knijpt de limiet naar 512Mi; `base/deployment.yaml` staat op
+1Gi, dus productie wordt hier niet door geraakt. **Gerepareerd**: de overlay staat nu ook op 1Gi.
+
+Geen lek: over 23 projecten liep het verbruik van 393 naar 427 MB en vlakte af. Daarom is de
+limiet verhoogd en niet gezocht naar een lek.
+
+### Bevinding 3: er was geen manier om de projectenrepo op commando in te lezen
+
+De store leest `zad-projects` op een poll van 300s. Een bestand dat daar door iets anders dan ZAD
+in gezet wordt bestaat tot die tik niet: `No project found: wies`, en dus `401` op elke aanroep.
+De git-monitor helpt niet - hij staat uit op de sandbox, kijkt naar een enkel pad
+(`GIT_PROJECTS_SERVER_FILE_PATH=projects/simple-example.yaml`) en zijn handler doet alleen een
+namespace-controle, geen verwerking.
+
+**Toegevoegd** (`01ef77fe`): `POST /api/v2/admin/projects/:reconcile`, achter dezelfde
+`ADMIN_API_KEY` als de andere admin-endpoints, met `head_before`/`head_after`/`changed` in het
+antwoord. Het is dezelfde operatie als de poll, dus veilig op elk moment en een no-op als er
+niets veranderd is.
+
+Bijvangst: **`ADMIN_API_KEY` stond nergens gezet**, waardoor elk bestaand admin-endpoint
+`501 This endpoint requires ADMIN_API_KEY to be configured` gaf. Voor de sandbox staat er nu een
+vaste dev-waarde in de overlay, met dezelfde afweging als `SECRET_KEY`. Voor productie is dat een
+eigen keuze (SOPS-secret) en die is hier niet gemaakt. Let op dat het bestaande
+`POST /api/v2/admin/reconciliation/trigger` iets anders doet: dat gaat over
+marked-for-deletion-resources, niet over de projectenrepo.
+
+### Geen bevinding, wel goed om te weten
+
+- **`algor-odc` hangt op een ImagePullBackOff** van
+  `ghcr.io/rijksictgilde/algoritmeregister/postgresql-with-dictionaries:2024.11.19`, de ene image
+  die de conversie bewust laat staan. Niet te trekken op dit cluster. Eén project, één image.
+- **Negen bestanden dragen een `clone-from`** die een externe database via een chisel-tunnel
+  ophaalt. Die bron bestaat op een sandbox niet.
+- **De sandbox past geen 47 productieprojecten.** Drie grote projecten zijn samen 58 pods.
