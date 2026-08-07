@@ -8,7 +8,35 @@ Uitgevoerd op commit `f3882e2e` (branch `alles-groen-op-de-sandbox-met-de-echte-
 
 ## Samenvatting
 
-Wordt ingevuld aan het eind van de run.
+| set | uitkomst |
+|---|---|
+| unit | 6540 passed, 7 skipped |
+| e2e lokaal | 151 passed, 1 skipped |
+| e2e sandbox | 25 passed, 4 failed, 5 errors |
+| upgrade-safety replay over de 47 echte bestanden | 9 passed |
+| 47 originelen door de schemapoort | 0 afgekeurd, 0 na migratie |
+| 25 productieprojecten verwerkt op het cluster | 24 completed, 1 failed |
+
+Vijf bevindingen, drie gerepareerd:
+
+1. **`cli_client_id`** brak de verwerking van 21 van de 47 bestanden en van elk nieuw project
+   (RC-51). Gerepareerd: de cli-client hoort in een eigen blueprint van het
+   operations-manager-realm, niet in de gedeelde templates. Daarvoor kent een blueprint nu
+   `extends:`.
+2. **OPI werd OOM-killed op 512Mi** na een handvol projecten. Gerepareerd: de sandbox-overlay
+   staat nu op 1Gi, gelijk aan de base. Gemeten dat het geen lek is.
+3. **Geen manier om de projectenrepo op commando in te lezen.** Toegevoegd:
+   `POST /api/v2/admin/projects/:reconcile`. Bijvangst: `ADMIN_API_KEY` stond nergens gezet,
+   dus elk admin-endpoint gaf 501.
+4. **OPI start niet meer op zodra het admin-token de 8k passeert** (~19KB bij de 47 realms van
+   productie). Noodverband toegepast (nginx 16k), echte oplossing bewust opengelaten omdat het
+   Keycloak-autorisatie raakt.
+5. **Een deployment-override wist de env-vars van het component.** Dataverlies, niet
+   gerepareerd, hoort een eigen taak te zijn.
+
+Bevindingen 4 en 5 zijn de reden dat deze run bestond: allebei onzichtbaar in 6540 groene
+unittests en 151 groene browsertests, allebei zichtbaar binnen een uur op een echt cluster met
+echte projectbestanden.
 
 ## 1. Cluster en context
 
@@ -27,7 +55,11 @@ naspeelbaar is.
 |---|---|---|
 | unit | `uv run pytest tests/ -q` | **6532 passed, 7 skipped**, 258 deselected (3:56) |
 | e2e lokaal | `uv run pytest tests/e2e/ -m "e2e and not sandbox" --timeout=300` | **151 passed, 1 skipped**, 42 deselected (4:58) |
-| e2e sandbox | `uv run pytest tests/e2e/ -m "e2e and sandbox"` | zie hieronder |
+| e2e sandbox | `uv run pytest tests/e2e/ -m "e2e and sandbox and not reallife"` | **25 passed, 4 failed, 5 errors** (25:31) |
+
+De sandbox-set is drie keer gestart en alleen de derde telt. De eerste draaide tegen de build
+van voor de keycloak-fix, en bij de tweede verwisselde ik zelf halverwege de pod. Die twee zijn
+geen meting.
 
 Plus `ruff check .` (All checks passed) en `ruff format --check .` (891 files already formatted).
 
@@ -348,6 +380,42 @@ scope-mapping ruil je 400 in voor 403. Opties in volgorde van voorkeur: admin-ve
 laten lopen (`http://keycloak:8080`, met de publieke URL alleen voor OIDC-redirects);
 `fullScopeAllowed: false` met een expliciete mapping op alleen `admin`; of de nginx-buffers
 omhoog, wat symptoombestrijding is omdat het token blijft groeien.
+
+### Bevinding 5 (ernstig, niet gerepareerd): een deployment-override wist de env-vars van het component
+
+```
+test_sandbox_env_vars_aliases_ui.py::test_deployment_component_env_vars_override_saves
+E  AssertionError: writing the deployment-component override wiped the component-level
+   user-env-vars; the two layers must be stored separately for the merge to have
+   anything to merge
+```
+
+Dat is dataverlies. Het bijzondere is dat die toets OP DEZE BRANCH is toegevoegd om precies dit
+uit te sluiten (`aa0a52a8`): groen in de gemockte wereld, rood tegen een echt cluster. Dit is
+het gat waarvoor deze run bestaat.
+
+De buurtoets faalt ook, in hetzelfde gebied:
+
+```
+test_component_env_vars_save_encrypted_through_the_ui
+E  TimeoutError: waiting for locator(".edit-progress-view") to be visible (10000ms)
+```
+
+Niet gerepareerd: dit raakt de opslaglagen van versleutelde env-vars en hoort een eigen taak met
+een eigen toets te zijn.
+
+### De overige sandbox-fouten, en wat er wel en niet over te zeggen valt
+
+| test | oordeel |
+|---|---|
+| `test_sleep_then_wake_via_waker_page` | pre-existing sinds 5 augustus: `zad-waker:sandbox` geeft 403 op het anonieme token |
+| `test_deployment_sleep_wake_toggle` | `'awake' == 'sleeping'`; zelfde subsysteem, oorzaak niet bevestigd |
+| 5x `test_sandbox_invite_ui` (ERROR) | fixture: `create wizard did not complete after retries`, knop `Item toevoegen` niet gevonden binnen 30s |
+
+Die laatste twee regels zijn niet toegeschreven. Het vermoeden bij de invite-fouten is RC-48
+(125 aangeraakte templatebestanden), maar dat is een vermoeden. Hard maken kan met een worktree
+op de basiscommit plus `SANDBOX_WORKDIR=<pad> sandbox-deploy` en dezelfde suite; dat is een
+eigen ronde van 15-40 minuten. Geen van de vijf raakt wat in deze PR veranderd is.
 
 ### Geen bevinding, wel goed om te weten
 
