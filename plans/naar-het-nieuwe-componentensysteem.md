@@ -2,6 +2,18 @@
 
 Status: inventarisatie plus plan, 7 augustus 2026. Niet gebouwd. Aanleiding: er is een nieuw componentensysteem (Lord of the Components, LOTC) en het voornemen om OPI in de vormgeving van [bg.rijks.app](https://bg.rijks.app/) te gieten, via de NLDD-implementatie.
 
+## Waar dit naartoe gaat, en wat het nu is
+
+**Het einddoel is dat LOTC jinja-roos volledig vervangt.** Niet ernaast, niet voor een deel: het hele componentensysteem. Dat is de richting waar dit plan voor bestaat.
+
+**Maar het is nu een POC, naast de release die we aan het bouwen zijn.** Dat is geen slag om de arm maar een werkafspraak, en hij bepaalt hoe je met dit plan omgaat:
+
+- **De release gaat voor.** Niets uit dit plan mag de lopende release vertragen of destabiliseren.
+- **Het omzetwerk hoort in een eigen branch**, niet tussen het releasewerk door.
+- **Fase 1 is de uitzondering**, en met opzet. Templates opdelen en inline styling weghalen is winst voor de release zelf, ongeacht of LOTC er ooit komt. Daarom is die apart geshipt (RC-48) en staat hij los van de rest.
+
+Dat maakt ook de vraag naar samenleven scherper. Of `lotc-forms` en `lotc-layout` naast `jinja-roos-components` kunnen bestaan is geen vraag over de eindtoestand, want daar is jinja-roos weg. Het is een vraag over de POC: kan die pagina voor pagina, of is het een harde omschakeling van de hele applicatie in een keer. Dat bepaalt of de proef klein kan beginnen.
+
 Alle getallen hieronder zijn gemeten op 7 augustus, op `operations-manager/python` en op de branch `plan-v7-lotc-thema-agnostische-compiler-performanc` van `lord-of-the-components` (taak PR-1, status approved).
 
 ## Deel 1: wat wij nu hebben
