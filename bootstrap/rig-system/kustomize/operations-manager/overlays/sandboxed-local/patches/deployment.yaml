@@ -118,7 +118,11 @@ spec:
             # null verwijdert de cpu-limit uit de base (die staat op "1"); hem hier
             # weglaten volstaat niet, dan wint de base-waarde gewoon weer.
             cpu: null
-            memory: 512Mi
+            # Gelijk aan de base. Op 512Mi zat de pod al vlak na een herstart op ~450Mi
+            # zonder werk te doen, en werd hij tijdens het verwerken van echte
+            # projectbestanden OOM-killed (exit 137) na een handvol projecten -- de
+            # connectors forken kubectl binnen dezelfde cgroup, dus die tellen mee.
+            memory: 1Gi
           requests:
             cpu: "25m"
             memory: 256Mi
