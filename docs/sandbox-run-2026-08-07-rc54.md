@@ -310,6 +310,45 @@ eigen keuze (SOPS-secret) en die is hier niet gemaakt. Let op dat het bestaande
 `POST /api/v2/admin/reconciliation/trigger` iets anders doet: dat gaat over
 marked-for-deletion-resources, niet over de projectenrepo.
 
+### Bevinding 4 (ernstig, niet gerepareerd): OPI start niet meer op zodra er genoeg realms zijn
+
+Een VERS opgestarte pod komt niet meer READY; hij blijft steken in de Keycloak-bootstrap met
+`400 Request Header Or Cookie Too Large` op `admin-otp`. De al draaiende pod merkt niets, dus
+het bijt pas bij een herstart.
+
+Het is niet de call maar de header. Zelfde token, zelfde verzoek:
+
+| weg | uitkomst |
+|---|---|
+| `http://keycloak:8080` (intern) | 200 |
+| `https://keycloak.sandbox.rijksapp.dev` (ingress) | 400 |
+
+`KEYCLOAK_URL` wijst naar de publieke ingress, dus elke admin-call draagt een
+`Authorization`-header van 8446 bytes langs een nginx met een standaardbuffer van 8k.
+
+Waarom dat token zo groot is, gemeten en niet geraden:
+
+```
+payload 7984 van de 8437 b64-bytes
+resource_access: 5268 bytes over 15 entries -- een per realm, elk ~337 bytes
+```
+
+Twee dingen samen: `opi-admin-service` heeft in master de realmrol `admin`, en dat is een
+composite die de client-rollen van elke `<realm>-realm` omvat; en op die client staat
+`fullScopeAllowed: True`, waardoor Keycloak die uitgeklapte rollen ook echt in elk token zet.
+Het token groeit dus ~351 bytes per project, zonder bovengrens: 8.439 bytes bij 15 realms,
+geprojecteerd ~19.223 bij de 47 van productie (`8439 + (47-15)*337`).
+
+Met een handvol realms bleef het onder de 8k, en daarom is het niet eerder opgevallen. Deze run
+maakte 25 projecten aan en liep er zo in.
+
+Bewust niet gerepareerd: dit raakt Keycloak-autorisatie. De reflex `fullScopeAllowed` uitzetten
+is een val, want de admin-REST-API autoriseert op de rollen IN het token; zonder expliciete
+scope-mapping ruil je 400 in voor 403. Opties in volgorde van voorkeur: admin-verkeer intern
+laten lopen (`http://keycloak:8080`, met de publieke URL alleen voor OIDC-redirects);
+`fullScopeAllowed: false` met een expliciete mapping op alleen `admin`; of de nginx-buffers
+omhoog, wat symptoombestrijding is omdat het token blijft groeien.
+
 ### Geen bevinding, wel goed om te weten
 
 - **`algor-odc` hangt op een ImagePullBackOff** van
