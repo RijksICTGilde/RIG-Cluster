@@ -27,7 +27,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.api.v2.router import v2_router
 
-ITEM_URL = "/api/v2/projects/demo/services/attachments/attachments/server-cert"
+ITEM_URL = "/api/v2/projects/demo/services/attachments/attachment/server-cert"
 HEADERS = {"X-API-Key": "test-key"}
 
 
@@ -182,7 +182,7 @@ class TestTheRequestCarriesNothingElse:
         from opi.server import app
 
         spec = app.openapi()
-        operation = spec["paths"]["/api/v2/projects/{project_name}/services/attachments/attachments/{attachment_id}"][
+        operation = spec["paths"]["/api/v2/projects/{project_name}/services/attachments/attachment/{attachment_id}"][
             "delete"
         ]
         assert "requestBody" not in operation
@@ -191,7 +191,7 @@ class TestTheRequestCarriesNothingElse:
         from opi.server import app
 
         spec = app.openapi()
-        operation = spec["paths"]["/api/v2/projects/{project_name}/services/attachments/attachments/{attachment_id}"][
+        operation = spec["paths"]["/api/v2/projects/{project_name}/services/attachments/attachment/{attachment_id}"][
             "delete"
         ]
         parameters = {p["name"]: p for p in operation["parameters"]}
@@ -205,7 +205,7 @@ class TestTheRequestCarriesNothingElse:
         from opi.server import app
 
         operation = app.openapi()["paths"][
-            "/api/v2/projects/{project_name}/services/attachments/attachments/{attachment_id}"
+            "/api/v2/projects/{project_name}/services/attachments/attachment/{attachment_id}"
         ]["delete"]
         description = operation["description"]
 
@@ -216,9 +216,9 @@ class TestTheRequestCarriesNothingElse:
     def test_the_upload_routes_still_show_the_upload_example(self, client, manager) -> None:
         from opi.server import app
 
-        description = app.openapi()["paths"]["/api/v2/projects/{project_name}/services/attachments/attachments"][
-            "post"
-        ]["description"]
+        description = app.openapi()["paths"]["/api/v2/projects/{project_name}/services/attachments/attachment"]["post"][
+            "description"
+        ]
         assert "curl -X POST" in description
 
 
@@ -231,7 +231,7 @@ def test_the_component_level_action_has_no_delete() -> None:
     """
     from opi.server import app
 
-    path = "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachments/{attachment_id}"
+    path = "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachment/{attachment_id}"
     methods: set[str] = set()
     for route in app.routes:
         if getattr(route, "path", "") == path:

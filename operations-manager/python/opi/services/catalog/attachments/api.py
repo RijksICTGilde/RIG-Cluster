@@ -341,7 +341,7 @@ async def _define_and_bind_attachment(ctx: ActionContext) -> ActionResult:
 
 
 PROJECT_ATTACHMENT_ACTION = ServiceAction(
-    action_id="attachments",
+    action_id="attachment",
     layer=ConfigLayer.PROJECT,
     roles=(ConfigRole.DEFINE,),
     id_param="attachment_id",
@@ -363,20 +363,20 @@ PROJECT_ATTACHMENT_ACTION = ServiceAction(
     example=(
         "curl -X POST -H 'X-API-Key: <key>' "
         "-F attachment_id=server-cert -F file=@server.pem "
-        "https://<host>/api/v2/projects/my-project/services/attachments/attachments"
+        "https://<host>/api/v2/projects/my-project/services/attachments/attachment"
     ),
     verb_examples=(
         (
             ActionVerb.DELETE,
             "curl -X DELETE -H 'X-API-Key: <key>' "
-            "'https://<host>/api/v2/projects/my-project/services/attachments/attachments/server-cert"
+            "'https://<host>/api/v2/projects/my-project/services/attachments/attachment/server-cert"
             f"?{CONFIRM_IN_USE}=true'",
         ),
     ),
 )
 
 COMPONENT_ATTACHMENT_ACTION = ServiceAction(
-    action_id="attachments",
+    action_id="attachment",
     layer=ConfigLayer.COMPONENT,
     roles=(ConfigRole.DEFINE, ConfigRole.USE, ConfigRole.BIND),
     id_param="attachment_id",
@@ -421,7 +421,7 @@ COMPONENT_ATTACHMENT_ACTION = ServiceAction(
         "curl -X POST -H 'X-API-Key: <key>' "
         "-F attachment_id=server-cert -F file=@server.pem "
         "-F provide-as=file -F path=/etc/ssl/certs/server.pem "
-        "https://<host>/api/v2/projects/my-project/services/attachments/component/backend/attachments"
+        "https://<host>/api/v2/projects/my-project/services/attachments/component/backend/attachment"
     ),
 )
 
