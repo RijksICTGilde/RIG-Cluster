@@ -128,6 +128,18 @@ def _select_when_offered(page: Page, field: str, value: str, timeout: int = 1000
     )
     page.select_option(f"[name='{field}']", value)
     page.wait_for_load_state("networkidle")
+    # Network-idle only says the XHR is done, not that the re-rendered row is in the
+    # DOM -- and the row that comes back is what carries the value. Waiting for the
+    # field to hold the value again is the signal that the swap landed; without it the
+    # next pick can go into a select that is about to be replaced, and both values are
+    # lost. Only shows up when the machine is busy (parallel runs), never when the
+    # server answers in a few milliseconds.
+    page.wait_for_function(
+        "([name, value]) => { const el = document.getElementsByName(name)[0];"
+        " return el && el.value === value && !el.closest('form')?.classList.contains('htmx-request'); }",
+        arg=[field, value],
+        timeout=timeout,
+    )
     page.wait_for_timeout(600)
 
 
