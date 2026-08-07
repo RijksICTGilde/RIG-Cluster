@@ -1,5 +1,7 @@
 {# Het venster waarin een aanvraag wordt beoordeeld. #}
-<div id="approval-backdrop" class="edit-section-backdrop" onclick="closeApprovalModal()"></div>
+{# De achtergrond gaat langs de gedeelde afhandeling, niet rechtstreeks langs sluiten:
+   die negeert de klik zolang er een taak loopt en waarschuwt bij niet-opgeslagen werk. #}
+<div id="approval-backdrop" class="edit-section-backdrop" onclick="handleEditBackdropClick()"></div>
 <div id="approval-modal" class="edit-section-modal" role="dialog" aria-modal="true">
     <div class="edit-section-header">
         <c-heading type="h2" id="approval-title">

@@ -60,11 +60,9 @@
     // closeEditModal / closeEditModalAndReload come from
     // /static/js/edit_modal.js (loaded globally by base.html.j2). The
     // approval modal participates in that system because it carries
-    // ``.edit-section-modal`` / ``.edit-section-backdrop`` classes.
+    // ``.edit-section-modal`` / ``.edit-section-backdrop`` classes -- that is
+    // also what gives it the Escape handler and the running-task blockade,
+    // so neither is repeated here.
     function closeApprovalModal() { closeEditModal(); }
-
-    document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') closeEditModal();
-    });
 </script>
 {% endblock %}

@@ -93,12 +93,33 @@ gewoon herladen.
 ## Niet weg te klikken tijdens het lopen
 
 Het voortgangsfragment (`partials/task_progress_fragment.html.j2`) draagt zolang de taak
-loopt de klasse `edit-progress-view`. De pagina zet daarop `window.isEditSubmitting`, en
-zowel Escape als `handleEditBackdropClick()` doen dan niets. De afrondknop draagt
-`edit-progress-actions` en geeft de modal weer vrij.
+loopt de klasse `edit-progress-view`. De afrondknop draagt `edit-progress-actions`.
+
+Wat die twee klassen betekenen staat op één plek: `static/js/edit_modal.js`, naast de
+blokkade zelf. Na elke htmx-swap leest dat bestand de open modal terug en zet
+`window.isEditSubmitting` op "er staat een voortgangsweergave in en er zijn nog geen
+afrondknoppen". Zolang die vlag aanstaat doen zowel Escape als
+`handleEditBackdropClick()` niets.
+
+Twee dingen zijn hierin bewust zo:
+
+- **Het is een eigenschap van de gedeelde modal, niet van een pagina.** De regel stond tot
+  RC-53 inline in `project-details.html.j2`, waar hij alleen daar gold; elke andere pagina
+  die dezelfde modal opent zag er identiek uit en was toch onbeschermd. Nu geldt hij overal
+  waar `.edit-section-modal` staat -- vandaag ook de domeingoedkeuringen in `admin/approvals`.
+- **De staat wordt uit de DOM teruggelezen, niet uit het geswapte element.** Een
+  voortgangsfragment vervangt zichzelf bij elke poll (`hx-swap="outerHTML"`), en htmx geeft
+  bij zo'n swap het oude, al losgekoppelde element mee. Kijken naar dat element ziet de
+  afronding dus juist *niet* op de poll die de modal moest vrijgeven.
+- **Beide klassen tellen mee.** Het taakfragment laat `edit-progress-view` vallen als het
+  klaar is, maar de modal-wizard houdt zijn voortgangsweergave als vaste omhulling en
+  verwisselt alleen de binnenkant. Daar zijn de afrondknoppen het enige signaal dat het
+  klaar is.
 
 Dat geldt voor elke actie die dit fragment gebruikt, ook toekomstige: er is geen vlag per
-actie meer om te vergeten.
+actie of per pagina meer om te vergeten. Vastgelegd in
+`tests/e2e/test_shared_modal_blockade.py`, dat de blokkade juist *niet* vanaf de
+projectdetailpagina aanstuurt.
 
 ## Het fragment wordt één keer gerenderd
 
