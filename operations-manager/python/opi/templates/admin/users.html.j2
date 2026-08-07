@@ -5,142 +5,17 @@
 {% block content %}
 <c-layout-flow gap="xl">
 
-    {# Page Header #}
-    <div>
-        <c-heading type="h1" textContent="Gebruikersbeheer" />
-        <p class="rvo-text--lg">
-            Beheer de platformgebruikers: e-mailadressen en namen.
-        </p>
-    </div>
+    {% include "admin/users/_kop.html.j2" %}
 
-    {# Action Bar #}
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div>
-            <c-button
-                label="Gebruiker toevoegen"
-                kind="primary"
-                size="md"
-                showIcon="before"
-                icon="plus"
-                @click="window.location.href='/admin/users/create'" />
-        </div>
-        <div>
-            <span class="rvo-text--sm rvo-text--subtle">Totaal: <strong>{{ users|length }} gebruiker{% if users|length != 1 %}s{% endif %}</strong></span>
-        </div>
-    </div>
+    {% include "admin/users/_actiebalk.html.j2" %}
 
-    {# Users Table #}
-    <c-card outline="true" padding="none" backgroundColor="wit">
-        <div class="table-container">
-            <table class="users-table">
-                <thead>
-                    <tr>
-                        <th class="col-name">Naam</th>
-                        <th class="col-email">E-mailadres</th>
-                        <th class="col-created">Aangemaakt</th>
-                        <th class="col-actions">Acties</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% if users %}
-                        {% for user in users %}
-                        <tr class="user-row">
-                            <td class="col-name">
-                                <strong>{{ user.full_name }}</strong>
-                            </td>
-                            <td class="col-email">
-                                {{ user.email }}
-                            </td>
-                            <td class="col-created">
-                                {{ user.created_at|dutch_date(include_time=False) }}
-                            </td>
-                            <td class="col-actions">
-                                <div class="actions">
-                                    <c-button
-                                        label="Bewerken"
-                                        kind="tertiary"
-                                        size="sm"
-                                        showIcon="before"
-                                        icon="bewerken"
-                                        @click="window.location.href='/admin/users/{{ user.id }}/edit'" />
-                                    <form method="post" action="/admin/users/{{ user.id }}/delete" style="display:inline;"
-                                          onsubmit="return confirm('Weet u zeker dat u {{ user.full_name }} wilt verwijderen?');">
-                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-                                        <c-button
-                                            label="Verwijderen"
-                                            kind="warning"
-                                            size="sm"
-                                            showIcon="before"
-                                            icon="verwijderen"
-                                            type="submit" />
-                                    </form>
-                                </div>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    {% else %}
-                        <tr>
-                            <td colspan="4" style="text-align: center; padding: var(--rvo-space-xl);">
-                                <div style="color: var(--rvo-color-grijs-600);">
-                                    <c-icon icon="info" size="lg" style="margin-bottom: var(--rvo-space-sm);" />
-                                    <div>Geen gebruikers gevonden. Voeg een gebruiker toe om te beginnen.</div>
-                                </div>
-                            </td>
-                        </tr>
-                    {% endif %}
-                </tbody>
-            </table>
-        </div>
-    </c-card>
+    {% include "admin/users/_tabel.html.j2" %}
 
-    {# Flash messages #}
-    {% if success_message %}
-    <c-card padding="md" backgroundColor="wit" outline="true">
-        <div style="color: var(--rvo-color-groen); display: flex; align-items: center; gap: var(--rvo-space-sm);">
-            <c-icon icon="vinkje" size="md" />
-            <span>{{ success_message }}</span>
-        </div>
-    </c-card>
-    {% endif %}
+    {% include "admin/users/_meldingen.html.j2" %}
 
 </c-layout-flow>
 {% endblock %}
 
 {% block additional_styles %}
-<style>
-    .table-container { overflow-x: auto; }
-
-    .users-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.875rem;
-    }
-
-    .users-table thead th {
-        background: var(--rvo-color-grijs-50);
-        padding: var(--rvo-space-md);
-        text-align: left;
-        font-weight: 600;
-        border-bottom: 2px solid var(--rvo-color-grijs-200);
-        color: var(--rvo-color-grijs-800);
-    }
-
-    .users-table tbody td {
-        padding: var(--rvo-space-md);
-        border-bottom: 1px solid var(--rvo-color-grijs-200);
-        vertical-align: middle;
-    }
-
-    .user-row:hover { background: var(--rvo-color-grijs-25); }
-
-    .col-name { width: 30{{ '%' }}; }
-    .col-email { width: 30{{ '%' }}; }
-    .col-created { width: 20{{ '%' }}; }
-    .col-actions { width: 20{{ '%' }}; }
-
-    .actions {
-        display: flex;
-        gap: var(--rvo-space-xs);
-    }
-</style>
+    <link rel="stylesheet" href="{{ static_url('css/admin-users.css') }}">
 {% endblock %}

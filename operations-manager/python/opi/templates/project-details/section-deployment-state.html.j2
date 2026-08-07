@@ -16,8 +16,8 @@
 {% for deployment in project.deployments | sort(attribute='name') %}
 {% set facts = deployment_state_facts.get(deployment.name, []) %}
 {% if facts %}
-<div class="deployment-section" data-deployment="{{ deployment.name }}"
-     {% if not loop.first %}style="display: none;"{% endif %}>
+<div class="deployment-section{% if not loop.first %} is-hidden{% endif %}"
+     data-deployment="{{ deployment.name }}">
     <c-layout-flow gap="md">
         {% for fact in facts %}
         <c-card outline="true" padding="lg" backgroundColor="grijs-050">

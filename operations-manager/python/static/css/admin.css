@@ -1,0 +1,13 @@
+/* Kleine vormgeving die de beheerpagina's delen. Stond als style=-attributen in
+   opi/templates/admin/*.html.j2. */
+
+.usage-filter-row {
+    display: flex;
+    align-items: flex-end;
+}
+
+.user-form-actions {
+    display: flex;
+    gap: var(--rvo-space-md);
+    justify-content: flex-start;
+}

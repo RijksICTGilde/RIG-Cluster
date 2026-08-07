@@ -24,8 +24,8 @@ def test_it_is_a_single_lazy_request() -> None:
 
 
 def test_it_sits_high_on_the_project_tab_under_the_actions() -> None:
-    page = (Path(__file__).resolve().parents[1] / "opi" / "templates" / "project-details.html.j2").read_text()
-    tab = page.split('id="tab-project"', 1)[1]
+    # Het tabblad Project is een eigen deeltemplate sinds de pagina een samenstelling werd.
+    tab = (_TEMPLATES / "tab-project.html.j2").read_text()
     resource_at = tab.index("section-resource-usage")
     # Directly under the actions, above everything else on the tab.
     assert tab.index("section-actions") < resource_at, "actions stay on top"
