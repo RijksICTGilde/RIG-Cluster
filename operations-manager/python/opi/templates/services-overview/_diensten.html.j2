@@ -1,4 +1,5 @@
 {# Het raster met een kaart per beschikbare service. #}
+{% from "widgets/_macros.html.j2" import service_block %}
         <c-grid columns="two" gap="lg">
             {% for service_info in services %}
                 <c-card outline="true" padding="lg">
