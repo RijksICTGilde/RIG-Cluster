@@ -16,18 +16,17 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.e2e
 
-#: Which fixture project the own_project fixture copies for this file.
-PROJECT_TEMPLATE = "test-project-detail"
+DETAIL_URL = "/projects/details/test-project-detail"
 
 
-def test_detail_page_renders(app_server: str, auth_page: Page, own_project: str) -> None:
+def test_detail_page_renders(app_server: str, auth_page: Page) -> None:
     """Navigate to detail page, verify it loads with project info."""
-    response = auth_page.goto(f"{app_server}/projects/details/{own_project}")
+    response = auth_page.goto(f"{app_server}{DETAIL_URL}")
     assert response is not None
     assert response.ok, f"Detail page returned {response.status}"
 
     # Should not redirect
-    assert f"details/{own_project}" in auth_page.url
+    assert "details/test-project-detail" in auth_page.url
 
     # Check project name/description appear
     body = auth_page.text_content("body") or ""
@@ -35,9 +34,9 @@ def test_detail_page_renders(app_server: str, auth_page: Page, own_project: str)
     assert "Uitgebreid testproject" in body
 
 
-def test_detail_page_shows_components(app_server: str, auth_page: Page, own_project: str) -> None:
+def test_detail_page_shows_components(app_server: str, auth_page: Page) -> None:
     """Verify component section shows component names."""
-    auth_page.goto(f"{app_server}/projects/details/{own_project}")
+    auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
 
     body = auth_page.text_content("body") or ""
@@ -45,9 +44,9 @@ def test_detail_page_shows_components(app_server: str, auth_page: Page, own_proj
     assert "worker" in body
 
 
-def test_detail_page_shows_team(app_server: str, auth_page: Page, own_project: str) -> None:
+def test_detail_page_shows_team(app_server: str, auth_page: Page) -> None:
     """Verify team section lists users and roles."""
-    auth_page.goto(f"{app_server}/projects/details/{own_project}")
+    auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
 
     body = auth_page.text_content("body") or ""
@@ -55,9 +54,9 @@ def test_detail_page_shows_team(app_server: str, auth_page: Page, own_project: s
     assert "developer@example.com" in body
 
 
-def test_detail_page_shows_services(app_server: str, auth_page: Page, own_project: str) -> None:
+def test_detail_page_shows_services(app_server: str, auth_page: Page) -> None:
     """Verify service badges appear for configured services."""
-    auth_page.goto(f"{app_server}/projects/details/{own_project}")
+    auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
 
     body = auth_page.text_content("body") or ""
@@ -65,9 +64,9 @@ def test_detail_page_shows_services(app_server: str, auth_page: Page, own_projec
     assert "keycloak" in body.lower()
 
 
-def test_detail_page_shows_deployments(app_server: str, auth_page: Page, own_project: str) -> None:
+def test_detail_page_shows_deployments(app_server: str, auth_page: Page) -> None:
     """Verify deployment section shows deployment info."""
-    auth_page.goto(f"{app_server}/projects/details/{own_project}")
+    auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
 
     body = auth_page.text_content("body") or ""
@@ -75,7 +74,7 @@ def test_detail_page_shows_deployments(app_server: str, auth_page: Page, own_pro
     assert "local" in body  # cluster name
 
 
-def test_service_contributed_blocks_render(app_server: str, auth_page: Page, own_project: str) -> None:
+def test_service_contributed_blocks_render(app_server: str, auth_page: Page) -> None:
     """RC-24: the blocks the project's services own actually reach the page.
 
     They are gathered per project/deployment rather than hardcoded, so a wiring mistake
@@ -84,7 +83,7 @@ def test_service_contributed_blocks_render(app_server: str, auth_page: Page, own
     Keycloak block and, on the Deployments tab, the database service's action buttons
     plus their modal opener.
     """
-    auth_page.goto(f"{app_server}/projects/details/{own_project}")
+    auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
     assert "Keycloak" in (auth_page.text_content("#tab-project") or "")
 
@@ -97,9 +96,9 @@ def test_service_contributed_blocks_render(app_server: str, auth_page: Page, own
     assert auth_page.evaluate("typeof openServiceModal") == "function"
 
 
-def test_detail_page_screenshot(app_server: str, auth_page: Page, own_project: str, screenshot_dir: Path) -> None:
+def test_detail_page_screenshot(app_server: str, auth_page: Page, screenshot_dir: Path) -> None:
     """Take full-page screenshot of the detail page."""
-    auth_page.goto(f"{app_server}/projects/details/{own_project}")
+    auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
 
     path = screenshot_dir / "detail-page.png"
