@@ -57,16 +57,19 @@ INVITE_REALM_ROLE_ITEM = EditableVisualizer(
     editable=INVITE_REALM_ROLE_ITEM_EDITABLE,
     widget=WidgetType.SELECT,
     label="Rol",
+    help_text=(
+        "De rol wordt automatisch toegekend aan de gebruiker. Is toegangsbeperking "
+        "ingeschakeld, dan is de rol nodig om te kunnen inloggen."
+    ),
 )
 
+#: De hulptekst staat op het veld zelf en niet hier: het is een keuze en geen lijst meer,
+#: dus twee toelichtingen boven elkaar zouden alleen ruis zijn. Dat de lege keuze "geen
+#: rol" betekent staat in de optie zelf ("Geen rol toekennen").
 INVITE_REALM_ROLES = EditableVisualizer(
     editable=INVITE_REALM_ROLES_EDITABLE,
     widget=WidgetType.SEQUENCE,
-    label="Realm-rollen",
-    help_text=(
-        "De Keycloak realm-rollen die de uitgenodigde gebruiker krijgt. Laat leeg om alleen een "
-        "account aan te maken zonder extra rechten."
-    ),
+    label="Realm-rol",
     children=[INVITE_REALM_ROLE_ITEM],
 )
 
