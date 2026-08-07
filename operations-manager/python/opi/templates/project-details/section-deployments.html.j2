@@ -3,8 +3,7 @@
 {% if project.deployments %}
     {% for deployment in project.deployments | sort(attribute='name') %}
     {% set original_index = project.deployments.index(deployment) %}
-    <div class="deployment-section" id="deployment-{{ deployment.name }}"
-         {% if not loop.first and project.deployments|length > 1 %}class="is-hidden"{% endif %}>
+    <div class="deployment-section{% if not loop.first %} is-hidden{% endif %}" id="deployment-{{ deployment.name }}">
     <c-card class="deployment-card" padding="lg" background="color" backgroundColor="grijs-050" outline="true">
         <c-layout-flow gap="md">
             <div class="deployment-header">

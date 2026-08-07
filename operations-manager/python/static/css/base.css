@@ -38,9 +38,16 @@ h6 .utrecht-icon {
 /* --- Gedeelde paginaonderdelen --- */
 
 /* Verborgen tot JavaScript de klasse weghaalt. Staat hier en niet als
-   style="display: none" in de markup, zodat een template geen vormgeving draagt. */
+   style="display: none" in de markup, zodat een template geen vormgeving draagt.
+
+   Waarom !important: dit bestand staat in de <head> en de stylesheet van de pagina
+   wordt in de body gelinkt, dus later in de cascade. Een pagina die zijn eigen
+   display zet op hetzelfde element (.metrics-controls__filter{display:flex}) wint dan
+   bij gelijke specificiteit, en de klasse verbergt niets meer. Als style="display:none"
+   was dat niet zo; !important zet die verhouding terug. Deze klasse doet een ding en
+   moet dat winnen. */
 .is-hidden {
-    display: none;
+    display: none !important;
 }
 
 /* De kop boven een sectie staat strak op de inhoud eronder. */
