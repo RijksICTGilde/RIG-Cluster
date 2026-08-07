@@ -222,6 +222,8 @@ class KeycloakSetup:
             "realm_display_name": "Operations Manager",
             "operations_manager_domain": operations_manager_domain,
             "invite_client_id": settings.INVITE_CLIENT_ID,
+            "cli_client_id": settings.CLI_CLIENT_ID,
+            "cli_token_audience": settings.CLI_TOKEN_AUDIENCE,
         }
         context.update(keycloak_config.get("variables", {}))
 
