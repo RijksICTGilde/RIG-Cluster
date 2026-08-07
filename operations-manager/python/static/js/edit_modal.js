@@ -15,10 +15,11 @@
 (function () {
     'use strict';
 
-    // Tracks whether an async edit submission is in flight; backdrop clicks
-    // are ignored while true so the user can't accidentally dismiss a running
-    // task. Page-specific htmx integration flips this when a progress view
-    // is swapped in.
+    // Tracks whether an async edit submission is in flight; backdrop clicks and
+    // Escape are ignored while true so the user can't accidentally dismiss a
+    // running task. The flag is flipped below, on the shared htmx hook, so it
+    // holds on every page that mounts the modal -- not only where someone
+    // remembered to wire it up.
     if (typeof window.isEditSubmitting === 'undefined') {
         window.isEditSubmitting = false;
     }
@@ -54,6 +55,47 @@
         var modal = tgt && tgt.closest && tgt.closest('.edit-section-modal');
         if (modal) modal.scrollTop = savedModalScroll;
         savedModalScroll = null;
+    });
+
+    // -- What makes a modal busy --
+    //
+    // A running task is what makes the modal undismissable, so this is the single
+    // place that decides it. This lives here rather than in a page template because
+    // every page that opens the shared modal needs it, and a page that forgets it
+    // looks exactly like one that has it -- until a task runs.
+    //
+    // The state is read back from the open modal after every swap rather than from
+    // the swapped element. A progress fragment replaces ITSELF on each poll
+    // (hx-swap="outerHTML"), and for such a swap htmx hands us the old, already
+    // detached element -- so inspecting the event's target sees the finished
+    // fragment on exactly the poll that was supposed to release the modal.
+    //
+    // Busy means: a progress view is in the modal and it has no finish buttons yet.
+    // Both halves are needed. The task fragment drops ``edit-progress-view`` when it
+    // ends, but the modal wizard keeps its view as a fixed wrapper and only swaps
+    // the inside, so there the finish buttons are the only signal that it is done.
+    function refreshEditSubmitting() {
+        var modal = document.querySelector('.edit-section-modal.is-open');
+        if (!modal) {
+            window.isEditSubmitting = false;
+            return;
+        }
+        window.isEditSubmitting =
+            !!modal.querySelector('.edit-progress-view') && !modal.querySelector('.edit-progress-actions');
+    }
+
+    document.addEventListener('htmx:afterSwap', refreshEditSubmitting);
+
+    // Escape closes an open modal, unless an action is running inside it. Class-based
+    // for the same reason as the close helpers: project-details, admin approvals and
+    // anything else following the convention share one rule.
+    document.addEventListener('keydown', function (event) {
+        if (event.key !== 'Escape' || window.isEditSubmitting) {
+            return;
+        }
+        if (document.querySelector('.edit-section-modal.is-open')) {
+            window.closeEditModal();
+        }
     });
 
     function closeAnyOpenModals() {
