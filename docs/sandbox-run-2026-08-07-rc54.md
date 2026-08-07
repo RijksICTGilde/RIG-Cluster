@@ -20,7 +20,34 @@ Wordt ingevuld aan het eind van de run.
 
 ## 2. Testsets
 
-Wordt ingevuld tijdens de run.
+Alle commando's vanuit `operations-manager/python`, met `-p no:randomly` zodat de run
+naspeelbaar is.
+
+| set | commando | uitkomst |
+|---|---|---|
+| unit | `uv run pytest tests/ -q` | **6532 passed, 7 skipped**, 258 deselected (3:56) |
+| e2e lokaal | `uv run pytest tests/e2e/ -m "e2e and not sandbox" --timeout=300` | **151 passed, 1 skipped**, 42 deselected (4:58) |
+| e2e sandbox | `uv run pytest tests/e2e/ -m "e2e and sandbox"` | zie hieronder |
+
+Plus `ruff check .` (All checks passed) en `ruff format --check .` (891 files already formatted).
+
+Het plan noemt 6538 unittests; er staan er nu 6532 groen plus 7 overgeslagen. Het plan noemt
+151 browsertests en dat klopt exact.
+
+### Een meetfout van deze run, voor de volledigheid
+
+De eerste lokale e2e-run gaf 2 rode in `test_wizard_cross_domain_policy` met
+`FileNotFoundError: Template file not found: manifests/service-network-policy.yaml.jinja`.
+Dat was geen regressie maar een fout in de meting: `settings.MANIFESTS_PATH` is een relatief
+pad, en pytest draaide vanuit `/workspace` in plaats van vanuit `operations-manager/python`.
+Vanuit de juiste map zijn beide groen. Wie deze suite draait, moet dat vanuit
+`operations-manager/python` doen.
+
+### Bijvangst: drie eerder rode lokale e2e's zijn nu groen
+
+Op 5 augustus faalden op basiscommit-niveau
+`test_edit_wizard::TestEditServices::test_select_service_advance_through_config_to_review` en
+de twee tests in `test_wizard_services_regressions`. Die zijn in deze run alle drie groen.
 
 ## 3. De 47 productiebestanden door de schemapoort
 
@@ -72,6 +99,39 @@ Geen enkel bestand dat op 6 augustus verwerkt werd, wordt vandaag geweigerd. De 
 van RC-44 verandert dit oordeel niet: die weigert vroeg in de *wizard*, en de 47 bestanden
 komen niet via de wizard binnen.
 
-## 4. Bevindingen
+## 4. De 47 bestanden op de sandbox zetten — niet uitgevoerd
 
-Wordt ingevuld tijdens de run.
+De 47 bestanden kunnen niet een-op-een op de sandbox. Ze moeten eerst door
+`operations-manager/python/scripts/migrate_project_to_sandbox.py`, dat het cluster omzet naar
+`sandboxed-local`, de domeinen naar `sandbox.rijksapp.dev` zet, de repository-URL's naar de
+sandbox-Forgejo wijst, een sandboxbeheerder toevoegt, en — de stap die niet over te slaan is —
+de AGE-geheimen herversleutelt van de productiesleutel naar de sandboxsleutel.
+
+**Dat kan in deze sessie niet.** Het script leest de productiesleutel onvoorwaardelijk:
+
+```
+655:  _, prod_private_key = read_age_key_file(args.prod_key)   # default ../../security/key.txt
+270:  decrypted = decrypt_age_content_sync(raw_content, prod_private_key)
+274:  re_encrypted = encrypt_age_content_sync(decrypted, sandbox_public_key)
+```
+
+`security/` bevat in deze container alleen `readme.md` en `tls/`. `security/key.txt` bestaat
+niet, is nooit gecommit en is expliciet ge-gitignored (`/security/*`). De private helft staat
+op de werkplek, niet op de dev-server. Zonder die sleutel is er niets te ontsleutelen en kan
+de herversleutelstap dus niet.
+
+De sandboxkant is er wel: `kubectl -n rig-system get secret sops-age-key` levert
+`age1t69nngvl9kfnawqcmytyaq7lrkkl28zs6fkqfvazqpauqny4my3s4tscjw`, genoeg voor
+`--sandbox-public-key`, maar dat lost de ontsleutelkant niet op.
+
+Een halve conversie — cluster, domeinen en repo's omzetten maar de geheimen laten staan — is
+bewust niet gedaan: de sandbox kan die bestanden dan niet ontsleutelen, dus zo'n run toetst
+niets en zou een groen vinkje geven dat nergens op slaat.
+
+**Nog te doen, met de sleutel erbij**: de conversie draaien, melden hoeveel van de 47 de
+conversie zelf niet halen (dat is op zichzelf een bevinding), de uitvoer naar de
+sandbox-Forgejo `zad-projects` pushen, en de verwerking op het cluster bekijken.
+
+## 5. Bevindingen
+
+Wordt ingevuld aan het eind van de run.
