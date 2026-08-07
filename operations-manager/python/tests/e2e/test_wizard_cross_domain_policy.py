@@ -132,7 +132,7 @@ def _select_when_offered(page: Page, field: str, value: str, timeout: int = 1000
     # DOM -- and the row that comes back is what carries the value. Waiting for the
     # field to hold the value again is the signal that the swap landed; without it the
     # next pick can go into a select that is about to be replaced, and both values are
-    # lost. Only shows up when the machine is busy (parallel runs), never when the
+    # lost. Only shows up when the machine is busy (a loaded CI runner), never when the
     # server answers in a few milliseconds.
     page.wait_for_function(
         "([name, value]) => { const el = document.getElementsByName(name)[0];"
