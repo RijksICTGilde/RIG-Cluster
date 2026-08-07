@@ -13,6 +13,7 @@ import string
 from enum import Enum
 from typing import Any
 
+import aiohttp
 from keycloak import KeycloakAdmin, KeycloakOpenIDConnection
 from keycloak.exceptions import KeycloakError, KeycloakGetError, KeycloakPostError
 
@@ -4140,3 +4141,46 @@ async def create_keycloak_connector(
         admin_username=admin_username or settings.KEYCLOAK_ADMIN_USERNAME,
         admin_password=admin_password or settings.KEYCLOAK_ADMIN_PASSWORD,
     )
+
+
+async def fetch_oidc_metadata(discovery_url: str) -> dict[str, Any]:
+    """Fetch an OIDC provider's discovery document.
+
+    The document is the authoritative source for the issuer and the JWKS URI, so
+    token verification never has to assemble those URLs itself.
+
+    Args:
+        discovery_url: The .well-known/openid-configuration URL of the realm
+
+    Returns:
+        The parsed discovery document
+
+    Raises:
+        aiohttp.ClientError: When the document cannot be retrieved
+    """
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(timeout=timeout) as session, session.get(discovery_url) as response:
+        response.raise_for_status()
+        metadata: dict[str, Any] = await response.json()
+    logger.debug("Fetched OIDC metadata from %s", discovery_url)
+    return metadata
+
+
+async def fetch_jwks(jwks_uri: str) -> dict[str, Any]:
+    """Fetch a realm's JSON Web Key Set.
+
+    Args:
+        jwks_uri: The jwks_uri from the realm's discovery document
+
+    Returns:
+        The parsed JWKS
+
+    Raises:
+        aiohttp.ClientError: When the key set cannot be retrieved
+    """
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(timeout=timeout) as session, session.get(jwks_uri) as response:
+        response.raise_for_status()
+        jwks: dict[str, Any] = await response.json()
+    logger.debug("Fetched JWKS from %s", jwks_uri)
+    return jwks

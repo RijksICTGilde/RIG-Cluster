@@ -7,15 +7,18 @@ Extracted to avoid circular import issues.
 
 import logging
 import re
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import HTTPException
 from opi.core.config import settings
 from opi.services import ServiceAdapter
-from opi.utils.age import encrypt_age_content
+from opi.services.project_service import get_project_service
+from opi.utils.age import encrypt_age_content, is_age_encrypted
 from opi.utils.api_keys import generate_api_key
 from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
 from opi.utils.sops import generate_sops_key_pair
+from opi.utils.yaml_util import load_yaml_from_string
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import LiteralScalarString
 
@@ -24,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 class ComponentValidationError(ValueError):
     """Raised when component configuration validation fails."""
+
+
+class ProjectApiKeyError(RuntimeError):
+    """Raised when a generated project API key cannot be read back in plaintext."""
 
 
 def validate_component_paths(component_paths: list[str], domain_mode: str) -> None:
@@ -517,3 +524,82 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
     )
 
     return yaml_content
+
+
+async def generate_base_project_file(
+    project_name: str,
+    display_name: str,
+    description: str,
+    cluster: str,
+    owner_email: str,
+) -> tuple[dict[str, Any], str]:
+    """Build the base project file for a project created outside the wizard.
+
+    "Base" means: the project exists, knows its repository and carries its own
+    keys. That is everything the platform needs to recognise a project and
+    everything a caller needs to keep working on it through the API. What runs in
+    it -- components and deployments -- is configured afterwards, so this file
+    deliberately declares neither.
+
+    The content is not assembled here. It comes out of
+    ``generate_self_service_project_yaml``, the same builder the self-service
+    portal uses, so the repositories block, the AGE keypair and the API key are
+    produced in exactly one place. Only the parts that describe what runs are
+    removed afterwards.
+
+    Args:
+        project_name: Technical project name (already validated)
+        display_name: Human-readable name
+        description: Project description
+        cluster: Cluster the project targets
+        owner_email: The creator, recorded as the project's admin
+
+    Returns:
+        A tuple of the project file as a dict, and the plaintext API key of the
+        new project.
+
+    Raises:
+        ProjectApiKeyError: When the generated API key cannot be read back in
+            plaintext, so no usable key could be handed to the caller.
+    """
+    project_data = SimpleNamespace(
+        project_name=project_name,
+        display_name=display_name,
+        project_description=description,
+        cluster=cluster,
+        deployment_name="main",
+        domain_mode="component-specific",
+        domain_format=None,
+        subdomain=None,
+        base_domain=None,
+        issuer=None,
+        contact_email=None,
+        user_email=[owner_email],
+        user_role=["admin"],
+        services=[],
+        components=None,
+    )
+
+    yaml_content = await generate_self_service_project_yaml(project_data)
+    project_dict = load_yaml_from_string(yaml_content)
+    if not project_dict:
+        raise ProjectApiKeyError(f"Kon het gegenereerde projectbestand voor '{project_name}' niet inlezen")
+
+    # Nothing runs yet: drop the placeholder component and deployment the
+    # self-service builder adds for the form flow. A project without deployments
+    # is valid and is left alone by processing; the caller adds a deployment when
+    # there is something to deploy.
+    project_dict.pop("components", None)
+    project_dict.pop("deployments", None)
+
+    # config.api-key is stored AGE-encrypted. Read it back through the same path
+    # the project store uses, so the caller gets the key the API will compare
+    # against - and refuse to hand out anything else.
+    summary = get_project_service().build_project_from_data(dict(project_dict), f"projects/{project_name}.yaml")
+    if summary is None or not summary.api_key or is_age_encrypted(str(summary.api_key)):
+        raise ProjectApiKeyError(
+            f"De API-sleutel voor '{project_name}' kon niet in leesbare vorm worden bepaald; "
+            f"het project is niet aangemaakt."
+        )
+
+    return project_dict, str(summary.api_key)
