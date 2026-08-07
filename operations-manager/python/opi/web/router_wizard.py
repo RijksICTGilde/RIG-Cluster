@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import html
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -1566,6 +1567,21 @@ def _extract_section_data(
     return result
 
 
+def _summary_text(text: Any) -> str:
+    """Escape a piece of text that goes into summary HTML.
+
+    The functions below build an HTML string that ``wizard_review.html.j2`` renders
+    with ``| safe``, so nothing here is escaped for us. Every label and value that
+    ends up between the tags goes through this first -- values because they are
+    whatever someone typed into the form, labels because escaping a constant costs
+    nothing and a label that stops being a constant is then already covered.
+
+    Not for the nested fragments (a sequence summary, a joined list of <dt>/<dd>
+    pairs): those are HTML this module built and escaping them would print tags.
+    """
+    return html.escape(str(text))
+
+
 def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> str:
     """Build an HTML summary for a section's data.
 
@@ -1589,7 +1605,7 @@ def _build_section_summary(section: FormSection, yaml_data: dict[str, Any]) -> s
                 value = smart_get_value(yaml_data, editable.editable.yaml_path)
                 display = _format_value(editable, value, yaml_data)
                 if display is not None:
-                    parts.append(f"<dl><dt>{editable.label}</dt><dd>{display}</dd></dl>")
+                    parts.append(f"<dl><dt>{_summary_text(editable.label)}</dt><dd>{_summary_text(display)}</dd></dl>")
 
     _collect_summary(section.editables)
 
@@ -1669,14 +1685,14 @@ def _build_sequence_summary(
     items = smart_get_value(yaml_data, base_path)
 
     if not items or not isinstance(items, list):
-        return f"<p><em>Geen {editable.label.lower()}</em></p>"
+        return f"<p><em>Geen {_summary_text(editable.label.lower())}</em></p>"
 
     children = editable.children or []
     parts: list[str] = []
 
     for i, item in enumerate(items):
         if not isinstance(item, dict):
-            parts.append(f"<div class='wizard-review__seq-item'><strong>{item}</strong></div>")
+            parts.append(f"<div class='wizard-review__seq-item'><strong>{_summary_text(item)}</strong></div>")
             continue
 
         # Find a display name for the item (first required field or "name" field)
@@ -1705,7 +1721,8 @@ def _build_sequence_summary(
                         else:
                             summaries.append(str(ci))
                     formatted = ", ".join(summaries)
-                    item_parts.append(f"<dt>{child.label}</dt><dd>{formatted}</dd>")
+                    if formatted:
+                        item_parts.append(f"<dt>{_summary_text(child.label)}</dt><dd>{_summary_text(formatted)}</dd>")
                 continue
 
             # Extract the child key from yaml_path (last segment without [*])
@@ -1721,22 +1738,22 @@ def _build_sequence_summary(
                 value = _nested_get(item, child_key)
             display = _format_value(child, value, yaml_data)
             if display is not None:
-                item_parts.append(f"<dt>{child.label}</dt><dd>{display}</dd>")
+                item_parts.append(f"<dt>{_summary_text(child.label)}</dt><dd>{_summary_text(display)}</dd>")
 
         if item_parts:
             parts.append(
                 f"<div class='wizard-review__seq-item'>"
-                f"<strong>{item_label}</strong>"
+                f"<strong>{_summary_text(item_label)}</strong>"
                 f"<dl>{''.join(item_parts)}</dl>"
                 f"</div>"
             )
         else:
-            parts.append(f"<div class='wizard-review__seq-item'><strong>{item_label}</strong></div>")
+            parts.append(f"<div class='wizard-review__seq-item'><strong>{_summary_text(item_label)}</strong></div>")
 
     return (
         f"<div class='wizard-review__sequence'>"
         f"<p class='wizard-review__seq-heading'>"
-        f"<strong>{editable.label}</strong> ({len(items)})"
+        f"<strong>{_summary_text(editable.label)}</strong> ({len(items)})"
         f"</p>"
         f"{''.join(parts)}"
         f"</div>"
