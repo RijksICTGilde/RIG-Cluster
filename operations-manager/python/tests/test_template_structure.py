@@ -65,7 +65,6 @@ STYLE_BLOCK_EXCEPTIONS: dict[str, str] = {
     "admin/users.html.j2": WERKLIJST,
     "dashboard.html.j2": WERKLIJST,
     "metrics-explorer.html.j2": WERKLIJST,
-    "project-details.html.j2": WERKLIJST,
     "project-form-demo.html.j2": WERKLIJST,
     "projects-overview.html.j2": WERKLIJST,
     "tools.html.j2": WERKLIJST,
@@ -97,7 +96,6 @@ INLINE_STYLE_BUDGET: dict[str, tuple[int, str]] = {
         "De breedte van de voortgangsbalk is de waarde zelf en kan niet in een CSS-bestand. "
         "Staat in de macro progress_bar, zodat die uitzondering op een plek blijft.",
     ),
-    "project-details/_argocd-deployment-card.html.j2": (28, WERKLIJST),
     "project-details/_argocd-status-skeleton.html.j2": (7, WERKLIJST),
     "project-details/_resource-usage.html.j2": (4, WERKLIJST),
     "project-details/action-confirm.html.j2": (1, WERKLIJST),
