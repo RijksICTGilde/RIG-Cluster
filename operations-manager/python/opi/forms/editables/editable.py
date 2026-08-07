@@ -121,6 +121,25 @@ class EditableGenerator(Protocol):
 
 
 @runtime_checkable
+class EditableSummarizer(Protocol):
+    """Decides what a field looks like on a summary screen.
+
+    A summary is not a small form: the review page and the edit modal show what
+    was filled in, and not every field should appear there verbatim. A secret is
+    the obvious case -- the field has a value, showing it is the problem.
+
+    ``summarize`` returns the text to display, or None to leave the field out of
+    the summary entirely. It is the summary counterpart of ``EditableConverter``'s
+    ``read``/``write``/``view``, but it lives on its own so a field can control its
+    summary without inventing a converter that also has to answer for storage.
+    """
+
+    def summarize(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:
+        """YAML value -> summary text, or None to omit the field."""
+        ...
+
+
+@runtime_checkable
 class TransientValueResolver(Protocol):
     """Resolves a transient value for a field when its value is None.
 
@@ -215,6 +234,14 @@ class Editable:
     yaml_path: str
     validator: EditableValidator | None = None
     converter: EditableConverter | None = None
+    summarizer: EditableSummarizer | None = None
+    """How this field appears on a summary screen. None means "show the value".
+
+    Set it on the field rather than on the visualizer: whether something is a
+    secret is a property of the data, so it holds in every flow that reuses this
+    editable, including one written later. ``HiddenSummary`` keeps the field out
+    of the summary, ``MaskedSummary`` states that it is set without saying what
+    it is."""
     enforcer: EditableEnforcer | None = None
     generator: EditableGenerator | None = None
     values_provider: str | None = None
