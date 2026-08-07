@@ -16,7 +16,7 @@
             <c-layout-flow gap="lg">
                 {{ form_html|safe }}
 
-                <div style="display: flex; gap: var(--rvo-space-md); justify-content: flex-start;">
+                <div class="user-form-actions">
                     <c-button
                         label="Opslaan"
                         kind="primary"
@@ -33,4 +33,8 @@
     </c-card>
 
 </c-layout-flow>
+{% endblock %}
+
+{% block additional_styles %}
+<link rel="stylesheet" href="{{ static_url('css/admin.css') }}">
 {% endblock %}

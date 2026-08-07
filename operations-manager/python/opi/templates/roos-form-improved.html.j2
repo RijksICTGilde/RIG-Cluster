@@ -7,7 +7,8 @@
 
 <c-page title="Project Aanmaken - ROOS (Verbeterd)"
         lang="nl"
-        bodyClass="rvo-theme rvo-responsive">
+        bodyClass="rvo-theme rvo-responsive"
+        additionalCss="{{ static_url('css/roos-form.css') }}">
 
     {# Header with proper RVO styling #}
     <c-header title="ROOS Operations Manager"
@@ -23,7 +24,7 @@
                     <c-layout-flow gap="md">
                         <c-heading type="h1" textContent="Nieuw Project Aanmaken" noMargins="true"
                                   class="rvo-heading--wit" />
-                        <p class="rvo-text--lg" style="color: rgba(255,255,255,0.9);">
+                        <p class="rvo-text--lg roos-form-header__intro">
                             Maak een nieuw Kubernetes project aan in de geselecteerde cluster omgeving
                         </p>
                     </c-layout-flow>

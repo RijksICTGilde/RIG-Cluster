@@ -46,16 +46,6 @@
         {% endfor %}
     </c-layout-flow>
 
-    <style>
-        /* htmx toggles .htmx-request on the hx-indicator target for the request's duration. */
-        .wizard-review__submitting { display: none; }
-        .wizard-review__submitting.htmx-request {
-            display: inline-flex;
-            align-items: center;
-            gap: var(--rvo-space-xs);
-            color: var(--rvo-color-grijs-700);
-        }
-    </style>
     <div class="wizard-step__actions">
         <c-button kind="secondary" label="Terug"
                   showIcon="before" icon="terug"

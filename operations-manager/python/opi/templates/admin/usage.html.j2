@@ -26,7 +26,7 @@
                                         value="{{ price_per_gib }}" />
                     <c-text-input-field id="year" name="year" label="Jaar" type="number"
                                         value="{{ year }}" />
-                    <div style="display: flex; align-items: flex-end;">
+                    <div class="usage-filter-row">
                         <c-button label="Toepassen" kind="primary" size="md" type="submit" />
                     </div>
                 </c-grid>
@@ -60,4 +60,8 @@
     </c-table>
 
 </c-layout-flow>
+{% endblock %}
+
+{% block additional_styles %}
+<link rel="stylesheet" href="{{ static_url('css/admin.css') }}">
 {% endblock %}

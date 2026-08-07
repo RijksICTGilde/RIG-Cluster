@@ -105,15 +105,6 @@
                       {% if wizard_token %}hx-vals="{&quot;_wizard_token&quot;: &quot;{{ wizard_token }}&quot;}"{% endif %}
                       hx-target="#edit-section-inner" hx-swap="innerHTML" />
             {% if wizard_token %}<input type="hidden" id="modal-wizard-confirm-token" name="_wizard_token" value="{{ wizard_token }}" />{% endif %}
-            <style>
-                #modal-wizard-confirm-saving { display: none; }
-                #modal-wizard-confirm-saving.htmx-request {
-                    display: inline-flex;
-                    align-items: center;
-                    gap: var(--rvo-space-xs);
-                    color: var(--rvo-color-grijs-700);
-                }
-            </style>
             <span id="modal-wizard-confirm-saving" aria-hidden="true">
                 <c-icon icon="refresh" size="sm" />Bezig&hellip;
             </span>

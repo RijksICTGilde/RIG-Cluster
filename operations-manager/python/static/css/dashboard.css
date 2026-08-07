@@ -103,6 +103,9 @@
 }
 
 .resource-segment {
+    /* Begint op nul en groeit; het script zet daarna de echte breedte als inline
+       style, en die wint van deze regel. Stond als style="width: 0%" in de markup. */
+    width: 0%;
     min-width: 4px;
     transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
 }

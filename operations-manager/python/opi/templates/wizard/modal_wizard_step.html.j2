@@ -64,15 +64,6 @@
 
     {% set _step_url_prefix = step_base_url if step_base_url else "/projects/" ~ project_name ~ "/modal-wizard/" ~ flow_id ~ "/step/" %}
     {% set _token_qs = "?_wizard_token=" ~ wizard_token if wizard_token else "" %}
-    <style>
-        #modal-wizard-form .wizard-step__saving { display: none; }
-        #modal-wizard-form.htmx-request .wizard-step__saving {
-            display: inline-flex;
-            align-items: center;
-            gap: var(--rvo-space-xs);
-            color: var(--rvo-color-grijs-700);
-        }
-    </style>
     <form id="modal-wizard-form"
           autocomplete="off"
           hx-ext="json-enc"
