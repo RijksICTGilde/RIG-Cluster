@@ -81,6 +81,7 @@ from opi.services.component_values import VALUES_LAYERS, ComponentValuesError, V
 from opi.services.component_values import locate as locate_values_node
 from opi.services.component_values import validate_key as validate_values_key
 from opi.services.component_values import validate_value as validate_values_value
+from opi.services.component_values import validate_value_for_storage as validate_values_value_for_storage
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
 from opi.services.project_store import get_project_store
 from opi.services.registry import SERVICES, get_service
@@ -2141,12 +2142,28 @@ async def _enqueue_values_write(
     return _accepted_response(task, "configure_service_values")
 
 
-def _make_values_endpoint(service_name: str, layer: ConfigLayer, operation: ValuesOperation, *, keyed: bool = False):
+def _make_values_endpoint(
+    service_name: str,
+    storage: ValueStorage,
+    layer: ConfigLayer,
+    operation: ValuesOperation,
+    *,
+    keyed: bool = False,
+):
     """Build one values endpoint: the operation is fixed, the payload shape follows it."""
 
     async def endpoint(**kwargs: Any) -> JSONResponse:
         body = kwargs.get("body")
         keys: list[str] | None = None
+        if operation in (ValuesOperation.ADD, ValuesOperation.PATCH):
+            # Storage-dependent, so it cannot live in the shared payload model: a BLOCK
+            # service loses edge whitespace and surrounding quotes on read-back, which
+            # would make every write of such a value a fresh commit.
+            try:
+                for key, value in body.values.items():
+                    validate_values_value_for_storage(key, value, storage)
+            except ComponentValuesError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
         if operation is ValuesOperation.DELETE:
             keys = [kwargs["value_key"]] if keyed else list(body.keys)
             if keyed:
@@ -2209,6 +2226,17 @@ def _values_description(
         if storage is ValueStorage.BLOCK
         else "The names stay readable and EVERY value is AGE-encrypted on its own"
     )
+    fidelity = [
+        "A value that would not read back byte for byte is refused with a 422 rather than "
+        "stored: decryption strips leading and trailing whitespace"
+        + (
+            ", and reading the `KEY=value` line back also removes a single pair of surrounding quotes"
+            if storage is ValueStorage.BLOCK
+            else ""
+        )
+        + ". Send the value as the workload should receive it, without those edge characters.",
+        "",
+    ]
     return "\n".join(
         [
             f"Change the `{service_name}` values on {_VALUES_PLACE[layer]}, in the project's YAML "
@@ -2220,6 +2248,7 @@ def _values_description(
             "Values are never returned: reading one back would hand out the secret this endpoint "
             "exists to keep encrypted.",
             "",
+            *fidelity,
             "A request that leaves the stored values exactly as they were commits nothing and rolls "
             "nothing out (`changed: false` in the task result). Otherwise the change is rolled out: "
             "the project is processed again, manifests are regenerated and ArgoCD applies them.",
@@ -2274,7 +2303,7 @@ def _register_service_values_routes(router: APIRouter) -> None:
             for route_path, method, operation, keyed, summary in routes:
                 router.add_api_route(
                     route_path,
-                    validate_api_token(_make_values_endpoint(service_name, layer, operation, keyed=keyed)),
+                    validate_api_token(_make_values_endpoint(service_name, storage, layer, operation, keyed=keyed)),
                     methods=[method],
                     tags=[service_name],
                     responses=_VALUES_RESPONSES,

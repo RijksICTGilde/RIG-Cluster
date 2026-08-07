@@ -277,6 +277,58 @@ class TestNoChurn:
         assert len(commit.commits) == 1
 
     @pytest.mark.asyncio
+    async def test_a_block_value_that_would_not_read_back_is_refused_here_too(self, manager) -> None:
+        """The write path holds the same line-format rule the API does.
+
+        ``KEY= x `` reads back as ``x``, so the stored set would never equal the requested
+        one and the no-op check above could never be true again: every call would commit.
+        Refusing it is what keeps that guarantee honest.
+        """
+        instance, commit = manager
+
+        result = await instance.set_component_values(
+            "user-env-vars", "component", "add", component_name="backend", values={"A": " x "}
+        )
+
+        assert not result["success"]
+        assert result["error_type"] == "invalid_values"
+        assert commit.commits == []
+
+    @pytest.mark.asyncio
+    async def test_edge_whitespace_is_refused_for_aliases_too(self, manager) -> None:
+        # age decryption strips its plaintext, so PER_VALUE loses this as well.
+        instance, commit = manager
+
+        result = await instance.set_component_values(
+            "aliases", "component", "add", component_name="backend", values={"A": " x "}
+        )
+
+        assert not result["success"]
+        assert result["error_type"] == "invalid_values"
+        assert commit.commits == []
+
+    @pytest.mark.asyncio
+    async def test_surrounding_quotes_are_refused_for_env_vars_but_kept_for_aliases(self, manager) -> None:
+        instance, commit = manager
+
+        refused = await instance.set_component_values(
+            "user-env-vars", "component", "add", component_name="backend", values={"A": '"q"'}
+        )
+        assert not refused["success"]
+
+        stored = await instance.set_component_values(
+            "aliases", "component", "add", component_name="backend", values={"A": '"q"'}
+        )
+        assert stored["success"]
+        assert stored["changed"]
+
+        again = await instance.set_component_values(
+            "aliases", "component", "patch", component_name="backend", values={"A": '"q"'}
+        )
+        assert again["changed"] is False, "PER_VALUE keeps the quotes, so re-writing it is a no-op"
+        assert len(commit.commits) == 1
+
+    @pytest.mark.asyncio
     async def test_clearing_what_is_already_empty_commits_nothing(self, manager) -> None:
         instance, commit = manager
 
