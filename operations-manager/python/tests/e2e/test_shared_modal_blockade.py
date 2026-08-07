@@ -31,13 +31,9 @@ APPROVALS_URL = "/admin/approvals"
 # partials/task_progress_fragment.html.j2). The classes are the whole contract: while the
 # task runs the fragment carries ``edit-progress-view``, which marks the modal busy; when
 # it ends that class is gone and the finish button's ``edit-progress-actions`` releases it.
-# The running fragment replaces itself on the next poll, exactly as the real one does.
-PROGRESS_RUNNING = (
-    '<div id="e2e-progress" class="edit-progress-view"'
-    ' hx-get="/e2e-progress-fragment" hx-trigger="poll"'
-    ' hx-target="#e2e-progress" hx-swap="outerHTML">'
-    '<p class="edit-progress-step">Bezig...</p></div>'
-)
+# The running fragment is replaced by the finished one with an ``outerHTML`` swap onto its
+# own id -- the self-replacement the real fragment does on every poll (see _poll_once).
+PROGRESS_RUNNING = '<div id="e2e-progress" class="edit-progress-view"><p class="edit-progress-step">Bezig...</p></div>'
 PROGRESS_DONE = (
     '<div id="e2e-progress"><p class="edit-progress-step">Klaar</p>'
     '<div class="edit-progress-actions"><button type="button">Ok</button></div></div>'
@@ -58,42 +54,58 @@ def _open_shared_modal(page: Page, app_server: str) -> None:
     page.locator("#approval-modal.is-open").wait_for(state="visible", timeout=10000)
 
 
-def _serve_fragment(page: Page, html: str) -> None:
-    page.unroute("**/e2e-progress-fragment")
+def _fragment_slot(page: Page) -> dict[str, str]:
+    """Serve the progress fragment from one mutable slot.
+
+    One route, registered once; the test changes what it answers by writing to the slot.
+    Re-registering the route between polls would race the request that is already on its
+    way, which is the kind of flake that only shows up under load.
+    """
+    slot = {"body": ""}
     page.route(
         "**/e2e-progress-fragment",
-        lambda route: route.fulfill(status=200, content_type="text/html; charset=utf-8", body=html),
+        lambda route: route.fulfill(status=200, content_type="text/html; charset=utf-8", body=slot["body"]),
+    )
+    return slot
+
+
+def _swap(page: Page, target: str, swap: str) -> None:
+    """Perform one htmx swap and wait for it to finish.
+
+    Driven with ``htmx.ajax`` rather than by triggering an attribute on the swapped-in
+    content: htmx attaches those listeners while settling, so firing one right after the
+    previous swap can be lost -- a flake that only shows under load. The swap STYLE is
+    what matters to these tests and it is passed here explicitly.
+    """
+    page.evaluate(
+        f"() => htmx.ajax('GET', '/e2e-progress-fragment', {{target: '{target}', swap: '{swap}'}})",
     )
 
 
 def _start_task(page: Page) -> None:
-    """Swap the running fragment into the dialog the way a confirmed action does.
+    """Put the running fragment in the dialog the way a confirmed action does.
 
-    ``hx-swap="innerHTML"`` on the wrapper is what project-details/action-confirm.html.j2
-    uses for the POST that starts the task.
+    ``innerHTML`` into the wrapper is what project-details/action-confirm.html.j2 uses
+    for the POST that starts the task.
     """
-    page.evaluate(
-        """
-        var inner = document.getElementById('edit-section-inner');
-        inner.innerHTML =
-            '<div id="e2e-action" hx-get="/e2e-progress-fragment" hx-trigger="start"' +
-            ' hx-target="this" hx-swap="innerHTML"></div>';
-        htmx.process(inner);
-        htmx.trigger('#e2e-action', 'start');
-        """
-    )
+    _swap(page, "#edit-section-inner", "innerHTML")
 
 
 def _poll_once(page: Page) -> None:
-    """Let the running fragment replace itself, as its own 2s poll does."""
-    page.evaluate("htmx.trigger('#e2e-progress', 'poll')")
+    """Let the running fragment replace itself with ``outerHTML``, as its 2s poll does.
+
+    This is the swap style that used to lose the release: htmx hands the afterSwap
+    listener the old, detached element.
+    """
+    _swap(page, "#e2e-progress", "outerHTML")
 
 
 def test_running_task_blocks_dismissal_outside_project_details(app_server: str, auth_page: Page) -> None:
     """On a page that never wired anything up, a running task still cannot be clicked away."""
     _open_shared_modal(auth_page, app_server)
 
-    _serve_fragment(auth_page, PROGRESS_RUNNING)
+    slot = _fragment_slot(auth_page)
+    slot["body"] = PROGRESS_RUNNING
     _start_task(auth_page)
     auth_page.locator(".edit-progress-view").wait_for(state="visible", timeout=10000)
 
@@ -114,12 +126,13 @@ def test_finished_task_releases_the_modal_again(app_server: str, auth_page: Page
     """
     _open_shared_modal(auth_page, app_server)
 
-    _serve_fragment(auth_page, PROGRESS_RUNNING)
+    slot = _fragment_slot(auth_page)
+    slot["body"] = PROGRESS_RUNNING
     _start_task(auth_page)
     auth_page.locator(".edit-progress-view").wait_for(state="visible", timeout=10000)
     assert auth_page.evaluate("window.isEditSubmitting") is True
 
-    _serve_fragment(auth_page, PROGRESS_DONE)
+    slot["body"] = PROGRESS_DONE
     _poll_once(auth_page)
     auth_page.locator(".edit-progress-actions").wait_for(state="visible", timeout=10000)
     assert auth_page.evaluate("window.isEditSubmitting") is False
@@ -138,28 +151,20 @@ def test_a_wrapper_that_stays_is_released_by_its_finish_buttons(app_server: str,
     """
     _open_shared_modal(auth_page, app_server)
 
-    running = (
-        '<div id="e2e-progress" hx-get="/e2e-progress-fragment" hx-trigger="poll"'
-        ' hx-target="#e2e-progress" hx-swap="outerHTML">'
-        '<p class="edit-progress-step">Bezig...</p></div>'
-    )
-    _serve_fragment(auth_page, running)
+    slot = _fragment_slot(auth_page)
+    slot["body"] = '<div id="e2e-progress"><p class="edit-progress-step">Bezig...</p></div>'
     auth_page.evaluate(
         """
         document.getElementById('edit-section-inner').innerHTML =
-            '<div class="edit-progress-view">' +
-            '<div id="e2e-progress" hx-get="/e2e-progress-fragment" hx-trigger="poll"' +
-            ' hx-target="#e2e-progress" hx-swap="outerHTML"></div></div>';
-        htmx.process(document.getElementById('edit-section-inner'));
+            '<div class="edit-progress-view"><div id="e2e-progress"></div></div>';
         """
     )
     _poll_once(auth_page)
-    auth_page.locator(".edit-progress-step").wait_for(state="visible", timeout=10000)
+    auth_page.locator(".edit-progress-step", has_text="Bezig...").wait_for(state="visible", timeout=10000)
     assert auth_page.evaluate("window.isEditSubmitting") is True
 
-    _serve_fragment(
-        auth_page,
-        '<div id="e2e-progress"><div class="edit-progress-actions"><button type="button">Ok</button></div></div>',
+    slot["body"] = (
+        '<div id="e2e-progress"><div class="edit-progress-actions"><button type="button">Ok</button></div></div>'
     )
     _poll_once(auth_page)
     auth_page.locator(".edit-progress-actions").wait_for(state="visible", timeout=10000)
