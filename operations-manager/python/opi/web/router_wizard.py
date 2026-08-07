@@ -1639,6 +1639,14 @@ def _build_section_fields(
                 fields.append({"html": _build_sequence_summary(editable, yaml_data)})
             elif str(editable.widget) == "service_cards":
                 value = smart_get_value(yaml_data, editable.editable.yaml_path)
+                if editable.editable.summarizer:
+                    # Same gate as every other leaf: a summarizer decides this field's
+                    # summary, including leaving it out. Only the plain case keeps the
+                    # bullet-list rendering below, which is what the cards look like.
+                    display = _format_value(editable, value, yaml_data)
+                    if display is not None:
+                        fields.append({"label": editable.label, "value": display, "is_list": False})
+                    continue
                 labels = _resolve_service_labels(editable, value, yaml_data)
                 if labels:
                     fields.append({"label": "Services", "value": labels, "is_list": True})

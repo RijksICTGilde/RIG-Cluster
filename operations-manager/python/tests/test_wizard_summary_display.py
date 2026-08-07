@@ -223,6 +223,40 @@ class TestSummaryEscapesWhatItShows:
         assert "&lt;img" in html
 
 
+class TestServiceCardsGoThroughTheSameGate:
+    """The service-cards branch of the modal builder had its own path around
+    ``_format_value``; a summarizer therefore did not hold there."""
+
+    @staticmethod
+    def _cards(**editable_kwargs) -> FormSection:
+        return FormSection(
+            section_id="test",
+            title="Test",
+            editables=[
+                EditableVisualizer(
+                    editable=Editable(yaml_path="services", **editable_kwargs),
+                    widget=WidgetType.SERVICE_CARDS,
+                    label="Services",
+                )
+            ],
+        )
+
+    def test_without_a_summarizer_the_cards_are_still_listed(self):
+        fields = _build_section_fields(self._cards(), {"services": ["keycloak", "minio"]})
+
+        assert fields == [{"label": "Services", "value": ["keycloak", "minio"], "is_list": True}]
+
+    def test_a_hidden_summarizer_holds_here_too(self):
+        fields = _build_section_fields(self._cards(summarizer=HiddenSummary()), {"services": ["keycloak"]})
+
+        assert fields == []
+
+    def test_a_masked_summarizer_replaces_the_list(self):
+        fields = _build_section_fields(self._cards(summarizer=MaskedSummary()), {"services": ["keycloak"]})
+
+        assert fields == [{"label": "Services", "value": "Ingesteld", "is_list": False}]
+
+
 def _real_summary_fns() -> list[tuple[str, Any]]:
     """Every ``summary_fn`` a real section declares, by section id."""
     sections = [
