@@ -179,7 +179,6 @@
                         {% if project.cpu_cores is defined and project.cpu_cores > 0 %}
                         <div class="resource-segment resource-color-{{ loop.index0 % 6 }}"
                              data-width="{{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}"
-                             style="width: 0%"
                              title="{{ project.display_name }}: {{ '%.3f' | format(project.cpu_cores) }} cores">
                         </div>
                         {% endif %}
@@ -203,7 +202,7 @@
 
     {# Projects Overview #}
     <c-layout-flow gap="lg">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div class="page-header-row">
             <c-heading type="h2" textContent="Mijn Projecten" />
             <c-button
                 label="Nieuw Project"

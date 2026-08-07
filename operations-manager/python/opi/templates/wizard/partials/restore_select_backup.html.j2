@@ -11,35 +11,31 @@
 <c-layout-flow gap="lg">
     <fieldset>
         <legend class="rvo-form-field__label"><strong>Backup run selecteren</strong></legend>
-        <p class="rvo-text--sm rvo-text--subtle" style="margin-bottom: 8px;">
+        <p class="rvo-text--sm rvo-text--subtle backup-step__intro">
             Selecteer de backup run die u wilt herstellen. Elke run bevat alle resources die tegelijk zijn geback-upt.
         </p>
         {% for run in backup_runs %}
-        <label class="rvo-radio-option" style="display: flex; align-items: flex-start; gap: 8px; padding: 12px; border: 1px solid var(--rvo-color-grijs-300); border-radius: 6px; margin-bottom: 8px; cursor: pointer;">
+        <label class="rvo-radio-option backup-option">
             <input type="radio" name="backup_run_id" value="{{ run.backup_run_id }}"
                    {% if loop.first %}checked{% endif %}
-                   style="margin-top: 4px;" />
-            <div style="flex: 1;">
-                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                    <code style="font-size: 0.8rem; background: var(--rvo-color-hemelblauw-200); color: var(--rvo-color-donkerblauw); padding: 2px 6px; border-radius: 4px;">{{ run.backup_run_id }}</code>
-                    <span style="color: var(--rvo-color-grijs-600); font-size: 0.85rem;">{{ run.timestamp | dutch_date }}</span>
+                   class="backup-option__radio" />
+            <div class="backup-option__body">
+                <div class="backup-option__title-row">
+                    <code class="backup-option__id">{{ run.backup_run_id }}</code>
+                    <span class="backup-option__timestamp">{{ run.timestamp | dutch_date }}</span>
                 </div>
-                <div style="margin-top: 6px; display: flex; align-items: center; gap: 8px;">
-                    <span style="font-size: 0.85rem;">
+                <div class="backup-option__meta-row">
+                    <span class="backup-option__deployment">
                         <c-icon icon="applicatie" size="sm" color="donkerblauw" />
                         {{ run.deployment_name }}
                     </span>
-                    <span style="color: var(--rvo-color-grijs-500); font-size: 0.8rem;">
+                    <span class="backup-option__count">
                         {{ run.resource_count }} resource(s)
                     </span>
                 </div>
-                <div style="margin-top: 4px; display: flex; gap: 6px; flex-wrap: wrap;">
+                <div class="backup-option__types">
                     {% for rt in run.resource_types %}
-                    <span style="display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 500;
-                        {% if rt == 'pvc' %}background: var(--rvo-color-hemelblauw-200); color: var(--rvo-color-donkerblauw);
-                        {% elif rt == 'database' %}background: var(--rvo-color-grasgroen-200); color: var(--rvo-color-grasgroen-800);
-                        {% elif rt == 'bucket' %}background: var(--rvo-color-oranje-200); color: var(--rvo-color-oranje-800);
-                        {% endif %}">{{ rt | upper }}</span>
+                    <span class="backup-type{% if rt in ('pvc', 'database', 'bucket') %} backup-type--{{ rt }}{% endif %}">{{ rt | upper }}</span>
                     {% endfor %}
                 </div>
             </div>

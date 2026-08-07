@@ -10,3 +10,17 @@
     white-space: pre-wrap;
     word-wrap: break-word;
 }
+
+/* Deze pagina bouwt zijn eigen c-page en laadt base.css dus niet; .is-hidden staat
+   daarom hier. Verborgen tot het script de klasse weghaalt. */
+.is-hidden {
+    display: none;
+}
+
+.tool-error-message {
+    margin-bottom: 1rem;
+}
+
+.tool-result-label {
+    margin-bottom: 0.5rem;
+}

@@ -56,17 +56,12 @@ CONTENT_BLOCK_EXCEPTIONS: dict[str, str] = {
 # Templates die een eigen <style>-blok mogen houden, met de reden.
 STYLE_BLOCK_EXCEPTIONS: dict[str, str] = {
     "architecture-overview.html.j2": "Zie CONTENT_BLOCK_EXCEPTIONS: deze pagina wordt in zijn geheel apart beoordeeld.",
-    "wizard/modal_wizard_review.html.j2": WERKLIJST,
-    "wizard/modal_wizard_step.html.j2": WERKLIJST,
-    "wizard/partials/approval_items.html.j2": WERKLIJST,
-    "wizard/partials/attachments_upload.html.j2": WERKLIJST,
-    "wizard/wizard_review.html.j2": WERKLIJST,
-    "wizard/wizard_start.html.j2": WERKLIJST,
-    "wizard/wizard_step.html.j2": WERKLIJST,
 }
 
 # Toegestane ``style=``-attributen per template, met de reden. Alles wat hier niet staat,
-# mag er nul hebben.
+# mag er nul hebben. Wat hier staat is vormgeving die niet in een CSS-bestand kan: een
+# waarde die de template zelf uitrekent, of een component dat een klasse anders behandelt
+# dan een style.
 INLINE_STYLE_BUDGET: dict[str, tuple[int, str]] = {
     "architecture-overview.html.j2": (
         85,
@@ -74,35 +69,32 @@ INLINE_STYLE_BUDGET: dict[str, tuple[int, str]] = {
     ),
     "widgets/_macros.html.j2": (
         1,
-        "De breedte van de voortgangsbalk is de waarde zelf en kan niet in een CSS-bestand. "
-        "Staat in de macro progress_bar, zodat die uitzondering op een plek blijft.",
+        "De breedte van de voortgangsbalk is de waarde zelf. Staat in de macro progress_bar, "
+        "zodat die uitzondering op een plek blijft.",
     ),
     "project-details/_resource-usage.html.j2": (
         2,
-        "De breedte van de CPU- en geheugenbalk is de waarde zelf en kan niet in een CSS-bestand.",
+        "De breedte van de CPU- en van de geheugenbalk is de waarde zelf.",
     ),
-    "admin/approvals.html.j2": (4, WERKLIJST),
-    "admin/usage.html.j2": (1, WERKLIJST),
-    "admin/user-form.html.j2": (1, WERKLIJST),
-    "admin/users.html.j2": (6, WERKLIJST),
-    "dashboard.html.j2": (2, WERKLIJST),
-    "metrics-explorer.html.j2": (7, WERKLIJST),
-    "project-form-demo.html.j2": (1, WERKLIJST),
-    "projects-overview.html.j2": (6, WERKLIJST),
-    "roos-form-improved.html.j2": (1, WERKLIJST),
-    "roos-form.html.j2": (2, WERKLIJST),
-    "tools.html.j2": (4, WERKLIJST),
-    "widgets/button_group.html.j2": (1, WERKLIJST),
-    "widgets/text.html.j2": (1, WERKLIJST),
-    "wizard/modal_wizard_progress.html.j2": (1, WERKLIJST),
-    "wizard/modal_wizard_success.html.j2": (1, WERKLIJST),
-    "wizard/partials/attachments_list.html.j2": (3, WERKLIJST),
-    "wizard/partials/attachments_upload.html.j2": (2, WERKLIJST),
-    "wizard/partials/backup_select_deployment.html.j2": (6, WERKLIJST),
-    "wizard/partials/restore_select_backup.html.j2": (12, WERKLIJST),
-    "wizard/partials/restore_select_target.html.j2": (11, WERKLIJST),
-    "wizard/partials/url_preview.html.j2": (1, WERKLIJST),
-    "wizard/wizard_steps_indicator.html.j2": (1, WERKLIJST),
+    "wizard/wizard_steps_indicator.html.j2": (
+        1,
+        "De breedte van de voortgangsbalk is het percentage voltooide stappen.",
+    ),
+    "widgets/button_group.html.j2": (
+        1,
+        "De tussenruimte tussen de knoppen is een instelling van het veld en komt uit de "
+        "formulierdefinitie, niet uit een vaste lijst.",
+    ),
+    "wizard/partials/backup_select_deployment.html.j2": (
+        1,
+        "De kleur van het resourcetype-label komt uit de servicedefinitie; er is geen vaste "
+        "lijst kleuren om klassen voor te maken.",
+    ),
+    "wizard/partials/attachments_list.html.j2": (
+        1,
+        "c-alert zet een meegegeven style= op twee elementen en een meegegeven class= op maar "
+        "een. Een klasse zou de marge verplaatsen in plaats van verhuizen.",
+    ),
 }
 
 
