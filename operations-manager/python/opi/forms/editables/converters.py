@@ -929,3 +929,28 @@ def command_line_has_unbalanced_quote(regel: str) -> bool:
             open_quote = not open_quote
         index += 1
     return open_quote
+
+
+class NonEmptyListConverter:
+    """Laat lege keuzes niet in de lijst belanden.
+
+    Voor een reeks met een vaste maat waar de lege optie "geen" betekent. Zo'n reeks
+    rendert altijd een rij, dus zonder dit levert "geen rol toekennen" een lijst met een
+    lege string op, en dat is iets anders dan geen rol: het is een rol zonder naam.
+
+    Geeft None terug als er niets overblijft, zodat ``remove_when_none`` de sleutel
+    weghaalt in plaats van een lege lijst te schrijven.
+    """
+
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+        return value
+
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[Any] | None:
+        if value is None:
+            return None
+        items = value if isinstance(value, list) else [value]
+        overgebleven = [item for item in items if item is not None and str(item).strip() != ""]
+        return overgebleven or None
+
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+        return value

@@ -773,6 +773,15 @@ class EditableFormProcessor:
         # Capture the pre-edit list as the field-order reference before overwriting it.
         original_nested = smart_get_value(result, real_seq_path)
 
+        # Een converter op de reeks zelf geldt ook hier. Een los veld liep al langs zijn
+        # converter en een reeks niet, dus een converter op een reeks werd stilzwijgend
+        # genegeerd: de invite-rollen schreven een lijst met een lege string zodra je "geen
+        # rol" koos, want de converter die dat eruit haalt kwam nooit aan bod.
+        if ed.converter is not None:
+            items = ed.converter.write(items, result)
+            if items is None:
+                items = []
+
         # Write to real path in result. An empty list follows the same rule a scalar
         # already does: with ``remove_when_none`` the key goes away instead of being
         # written empty. Zonder dit schreef een leeg optioneel blok ``[]``, en het schema
