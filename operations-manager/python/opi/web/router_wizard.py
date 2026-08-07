@@ -1715,9 +1715,18 @@ def _build_sequence_summary(
                             for cc in child.children:
                                 cc_key = cc.editable.yaml_path.split("/")[-1].split("[")[0]
                                 cc_val = ci.get(cc_key)
-                                if cc_val is not None:
-                                    parts_ci.append(str(cc_val))
-                            summaries.append(" - ".join(parts_ci) if parts_ci else str(ci))
+                                # Through _format_value like every other leaf, so a
+                                # summarizer holds one level deeper too. Skipping it here
+                                # is what made a hidden field reappear inside a nested
+                                # sequence while it was hidden everywhere else.
+                                cc_display = _format_value(cc, cc_val, yaml_data)
+                                if cc_display is not None:
+                                    parts_ci.append(cc_display)
+                            # Nothing left to show for this item: leave it out. The old
+                            # fallback printed the raw dict here, which would dump exactly
+                            # the fields a summarizer just hid.
+                            if parts_ci:
+                                summaries.append(" - ".join(parts_ci))
                         else:
                             summaries.append(str(ci))
                     formatted = ", ".join(summaries)
@@ -1806,11 +1815,21 @@ def _format_value(editable: Any, value: Any, yaml_data: dict[str, Any] | None = 
 
     Returns None if the value is empty/unset and should be omitted.
     """
+    # A summarizer decides everything about this field's summary, including what
+    # happens when it is empty -- hence before the empty check rather than after.
+    # It is the only hook that can say "do not show this at all"; a converter's
+    # view() cannot, because returning None from it lands in str() further down
+    # and prints the word "None".
+    if editable.editable.summarizer:
+        return editable.editable.summarizer.summarize(value, context_data=yaml_data) or None
+
     if value is None or value == "" or value == []:
         return None
 
     # Key-value editors (aliases, eigen omgevingsvariabelen) can contain
-    # secrets; never dump their values in the summary.
+    # secrets; never dump their values in the summary. Kept as a widget-level
+    # backstop next to the per-field summarizer above: a key_value field added
+    # later is covered without having to remember to declare anything.
     if str(editable.widget) == "key_value":
         return None
 
