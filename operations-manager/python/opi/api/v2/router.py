@@ -558,7 +558,7 @@ class PendingRolloutResponse(BaseModel):
 
 @v2_router.get(
     "/projects/{project_name}/pending-rollout",
-    tags=["v2", "projects"],
+    tags=["projects"],
     summary="Saved changes that have not been rolled out",
     response_model=PendingRolloutResponse,
 )
