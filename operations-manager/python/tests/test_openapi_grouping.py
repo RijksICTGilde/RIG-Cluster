@@ -70,7 +70,7 @@ class TestOneGroupPerOperation:
         # The endpoints generated per service (config writes and declared actions) belong
         # to that service's group, not also to a generic "services" one.
         by_key = {f"{method.upper()} {path}": operation for path, method, operation in operations}
-        upload = by_key["POST /api/v2/projects/{project_name}/services/attachments/attachments"]
+        upload = by_key["POST /api/v2/projects/{project_name}/services/attachments/attachment"]
         assert upload["tags"] == ["attachments"]
         config_write = by_key["PUT /api/v2/projects/{project_name}/services/redis/config/project"]
         assert config_write["tags"] == ["redis"]
