@@ -3634,12 +3634,18 @@ def attachment_is_referenced(project_data: dict[str, Any], attachment_id: str) -
 def _attachment_coupling_slot(entry: Any) -> tuple[dict[str, Any], str] | None:
     """The dict and key holding one component service entry's attachment couplings.
 
-    Four shapes carry the same list and a writer has to hit whichever one is there: the
-    record form (``{reference: attachments, config: [...]}``), the legacy name-as-key form
-    (``{attachments: {config: [...]}}``), its pre-rename ``use`` variant, and the bare
-    ``"attachments"`` string, which carries no couplings at all. The readers are already
-    format-agnostic (``extract_component_attachment_uses``); this is that same tolerance
-    for the write side, in one place rather than per caller.
+    Two shapes carry the same list and a writer has to hit whichever one is there: the
+    record form (``{reference: attachments, config: [...]}``) and the legacy name-as-key
+    form (``{attachments: {config: [...]}}``). A bare ``"attachments"`` string carries no
+    couplings at all. The readers are already format-agnostic
+    (``extract_component_attachment_uses``); this is that same tolerance for the write
+    side, in one place rather than per caller.
+
+    ``use`` is the pre-rename name of the ``config`` key. The schema migration renames it
+    on load (``schema_migration``), so it does not reach the readers and no reference under
+    it is ever reported as a use -- but a writer that skipped it could still leave one
+    behind on data that somehow arrived unmigrated, and leaving a reference behind is the
+    one outcome worth being paranoid about here.
     """
     from opi.services.services import service_entry_name
 
