@@ -59,12 +59,16 @@ def _get_section_from_flow(flow_id: str, section_id: str) -> FormSection:
     raise HTTPException(status_code=404, detail=f"Stap '{section_id}' niet gevonden")
 
 
-#: Jinja constructs that must not survive into rendered step HTML.
-_TEMPLATE_DELIMITERS = {"{{": "{ {", "}}": "} }", "{%": "{ %", "%}": "% }", "{#": "{ #", "#}": "# }"}
+#: Every Jinja delimiter starts with "{" and ends with "}", so spacing EVERY brace
+#: covers all of them at once. Replacing whole delimiter PAIRS instead is unsafe:
+#: those passes feed each other, and "{{{{" comes back out as "{{" ("{ {" + "{ {"),
+#: which Jinja then reads as an expression again. Single-character replacement in one
+#: translate pass cannot re-form a delimiter, no matter how many braces are nested.
+_BRACE_SPACING = str.maketrans({"{": "{ ", "}": " }"})
 
 
 def _defuse_template_syntax(messages: dict[str, list[str]] | None) -> dict[str, list[str]] | None:
-    """Break Jinja delimiters in per-field messages before they are rendered.
+    """Space out every brace in per-field messages before they are rendered.
 
     Field messages end up INSIDE the HTML string this module returns, and
     ``wizard_step.html.j2`` pipes that string through ``process_components``,
@@ -73,18 +77,13 @@ def _defuse_template_syntax(messages: dict[str, list[str]] | None) -> dict[str, 
     quote the rejected value in their message ("Ongeldige waarde: <value>"), so
     without this a value typed into a form would be executed as a template.
 
-    Spacing the delimiters keeps the message readable while making it inert.
+    Spacing the braces keeps the message readable while making it inert.
     """
     if not messages:
         return messages
     defused: dict[str, list[str]] = {}
     for path, texts in messages.items():
-        cleaned: list[str] = []
-        for text in texts:
-            for delimiter, replacement in _TEMPLATE_DELIMITERS.items():
-                text = text.replace(delimiter, replacement)
-            cleaned.append(text)
-        defused[path] = cleaned
+        defused[path] = [text.translate(_BRACE_SPACING) for text in texts]
     return defused
 
 

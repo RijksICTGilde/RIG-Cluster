@@ -316,7 +316,20 @@ def test_the_logged_warning_does_not_leak_the_value(caplog: pytest.LogCaptureFix
     assert "geheim abc" not in logged
 
 
-def test_a_field_message_cannot_execute_in_the_second_render() -> None:
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "{{ 7*7 }}",
+        # Doubled braces: a defusing that replaces whole delimiter pairs turns "{{{{"
+        # back into "{{" ("{ {" + "{ {"), and Jinja then reads "{{ { 7*7: 1 } }}" as a
+        # dict literal whose KEY is evaluated. Same trick with more nesting below.
+        "{{{{ 7*7: 1 }}}}",
+        "{{{{{{{{ 7*7: 1 }}}}}}}}",
+        "{% if 7*7 %}{% endif %}",
+        "{{{% raw %}{{ 7*7 }}{% endraw %}}}",
+    ],
+)
+def test_a_field_message_cannot_execute_in_the_second_render(payload: str) -> None:
     """Field messages are rendered TWICE, so they must not survive as a template.
 
     ``wizard_step.html.j2`` pipes the HTML this returns through ``process_components``,
@@ -331,11 +344,12 @@ def test_a_field_message_cannot_execute_in_the_second_render() -> None:
     html = _render_step_html(
         COMPONENTS_SECTION,
         yaml_data={"components": [{"name": "web", "image": "nginx:1.25"}]},
-        errors={"components[0]/command": ["Ongeldige waarde: {{ 7*7 }}"]},
+        errors={"components[0]/command": [f"Ongeldige waarde: {payload}"]},
     )
     processed = get_templates().env.filters["process_components"](html)
 
     assert "{{" not in html
+    assert "{%" not in html
     assert "49" not in processed
 
 
