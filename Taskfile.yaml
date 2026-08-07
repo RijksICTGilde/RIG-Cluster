@@ -2938,9 +2938,17 @@ tasks:
         # Run migration script
         echo "Transforming project files..."
         cd operations-manager/python
+        # --probe-image staat er expliciet in en niet als kale vlag. Hij heeft een
+        # OPTIONELE waarde (nargs="?"), dus een kale --probe-image gevolgd door
+        # projectnamen slikt de eerste naam op als waarde: elk image wordt dan die
+        # projectnaam en dat project verdwijnt uit de uitvoer. Zonder de vlag blijven
+        # de productie-images EN de productie-resources staan, en dan past het niet
+        # op een kind-cluster.
         uv run python -m scripts.migrate_project_to_sandbox \
           --source-dir "{{.IMPORT_SOURCE_DIR}}" \
           --output-dir "$OUTPUT_DIR" \
+          --probe-image "{{.PROBE_IMAGE}}" \
+          {{if .SANDBOX_PUBLIC_KEY}}--sandbox-public-key "{{.SANDBOX_PUBLIC_KEY}}"{{end}} \
           {{.CLI_ARGS}}
 
         if [ $? -ne 0 ]; then
@@ -2994,6 +3002,15 @@ tasks:
     silent: true
     vars:
       IMPORT_SOURCE_DIR: '{{.IMPORT_SOURCE_DIR | default "/Users/robbertuittenbroek/IdeaProjects/rig-cluster-test-git-repositories/rig-cluster-projects-github/projects"}}'
+      # Elk component krijgt deze image en het probe-resourceprofiel; productiewaarden
+      # passen niet op een kind-cluster.
+      PROBE_IMAGE: '{{.PROBE_IMAGE | default "ghcr.io/minbzk/base-images/e2e-allservices:latest"}}'
+      # Leeg = hersleutel naar security/sandbox-key.txt (de sandbox op deze machine).
+      # Gevuld met de PUBLIEKE sleutel van een ander cluster = hersleutel daarheen, en
+      # de private helft blijft daar. Ophalen met:
+      #   kubectl --context <ctx> -n rig-system get secret sops-age-key \
+      #     -o jsonpath='{.data.key}' | base64 -d | grep 'public key'
+      SANDBOX_PUBLIC_KEY: '{{.SANDBOX_PUBLIC_KEY | default ""}}'
 
   sandbox:update-dns:
     desc: "Configure dnsmasq to resolve *.sandbox.rijksapp.dev to 127.0.0.1"
