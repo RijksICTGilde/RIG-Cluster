@@ -203,6 +203,9 @@ class ProjectStore(ABC):
     @abstractmethod
     async def bootstrap(self) -> None: ...
 
+    @abstractmethod
+    def cache_head(self) -> str | None: ...
+
 
 class GitProjectStore(ProjectStore):
     """ProjectStore backed by the ``zad-projects`` git repository.
@@ -950,6 +953,10 @@ class GitProjectStore(ProjectStore):
     # ------------------------------------------------------------------
     # freshness / lifecycle
     # ------------------------------------------------------------------
+
+    def cache_head(self) -> str | None:
+        """Commit the cache was last loaded at, or None before the first load."""
+        return self._cache_head
 
     async def reconcile(self) -> None:
         """Pull edits made outside ZAD into the cache, incrementally.
