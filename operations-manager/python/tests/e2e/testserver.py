@@ -14,13 +14,16 @@ Usage:
     Used automatically by tests/e2e/conftest.py
 """
 
+import copy
 import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
+from opi.services.project_service import get_project_service
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +200,72 @@ def _seed_projects(projects: list[dict]) -> None:
             user_service.add_allowed_emails(project_emails)
 
     logger.info("Seeded %d fixture projects", len(projects))
+
+
+def load_fixture_project(template: str) -> dict[str, Any]:
+    """Load one fixture project YAML by file stem (without .yaml)."""
+    path = FIXTURE_DIR / f"{template}.yaml"
+    if not path.exists():
+        raise FileNotFoundError(f"No fixture project template: {path}")
+    with open(path) as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict) or "name" not in data:
+        raise ValueError(f"Fixture project {path} has no 'name'")
+    return data
+
+
+def rename_project(data: dict[str, Any], new_name: str) -> dict[str, Any]:
+    """Return a deep copy of a project under a different technical name.
+
+    The name is the project's identity: it is the URL segment, the namespace and
+    the back-reference from repositories. Renaming only the top-level key would
+    leave a copy that still points at the original's namespace, so every place
+    that repeats the old name moves along.
+    """
+    clone = copy.deepcopy(data)
+    old_name = clone.get("name")
+    clone["name"] = new_name
+
+    for deployment in clone.get("deployments") or []:
+        if isinstance(deployment, dict) and deployment.get("namespace") == old_name:
+            deployment["namespace"] = new_name
+
+    for repository in clone.get("repositories") or []:
+        if isinstance(repository, dict) and repository.get("project_name") == old_name:
+            repository["project_name"] = new_name
+
+    return clone
+
+
+def register_project_copy(template: str, name: str) -> dict[str, Any]:
+    """Register a private copy of a fixture project under ``name``.
+
+    Gives a test file data that no other file can change underneath it.
+    Returns the registered project data.
+    """
+    data = rename_project(load_fixture_project(template), name)
+    _seed_projects([data])
+    return data
+
+
+def unregister_project(name: str) -> None:
+    """Remove a project from the in-memory registry."""
+    get_project_service().remove_project(name)
+
+
+def reset_seeded_projects() -> None:
+    """Restore the project registry to the freshly-loaded fixture state.
+
+    Every project-file write in this test server ends up in the same in-memory
+    registry (the store's write-through cache is that registry), and the app is
+    session-scoped. So without this, whatever a test saves - an edited
+    description, a flipped backup schedule, a project created through the wizard
+    - is still there for the next test. Reloading the fixture files from disk
+    both undoes edits and drops anything a test added.
+    """
+    service = get_project_service()
+    service.clear_all_projects()
+    _seed_projects(_load_fixture_projects())
 
 
 def create_test_app():
