@@ -308,17 +308,17 @@ class TestTheGeneratedRoutes:
         found: dict[str, set[str]] = {}
         for route in app.routes:
             path = getattr(route, "path", "")
-            if ("/services/attachments/" in path and path.endswith("attachments")) or path.endswith("{attachment_id}"):
+            if ("/services/attachments/" in path and path.endswith("attachment")) or path.endswith("{attachment_id}"):
                 found.setdefault(path, set()).update(getattr(route, "methods", set()))
         return found
 
     def test_the_project_level_upload_exists(self, routes) -> None:
-        base = "/api/v2/projects/{project_name}/services/attachments/attachments"
+        base = "/api/v2/projects/{project_name}/services/attachments/attachment"
         assert "POST" in routes[base]
         assert "PUT" in routes[base + "/{attachment_id}"]
 
     def test_the_component_level_upload_exists(self, routes) -> None:
-        base = "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachments"
+        base = "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachment"
         assert "POST" in routes[base]
         assert "PUT" in routes[base + "/{attachment_id}"]
 
@@ -329,7 +329,7 @@ class TestTheGeneratedRoutes:
         # (DELETE now sits on this same path, which says nothing about the PUTs).
         from opi.server import app
 
-        path = "/api/v2/projects/{project_name}/services/attachments/attachments/{attachment_id}"
+        path = "/api/v2/projects/{project_name}/services/attachments/attachment/{attachment_id}"
         puts = [r for r in app.routes if getattr(r, "path", "") == path and "PUT" in getattr(r, "methods", set())]
         assert len(puts) == 1
         assert routes[path] == {"PUT", "DELETE"}
@@ -345,7 +345,7 @@ class TestTheOpenApiDocument:
         return app.openapi()
 
     def test_every_field_of_the_upload_carries_its_meaning(self, spec) -> None:
-        path = "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachments"
+        path = "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachment"
         operation = spec["paths"][path]["post"]
         ref = next(iter(operation["requestBody"]["content"].values()))["schema"]["$ref"]
         schema = spec["components"]["schemas"][ref.rsplit("/", 1)[-1]]
@@ -354,13 +354,13 @@ class TestTheOpenApiDocument:
             assert prop.get("description"), f"field '{name}' reaches the spec without a description"
 
     def test_the_description_states_the_verb_contract_and_an_example(self, spec) -> None:
-        path = "/api/v2/projects/{project_name}/services/attachments/attachments/{attachment_id}"
+        path = "/api/v2/projects/{project_name}/services/attachments/attachment/{attachment_id}"
         description = spec["paths"][path]["put"]["description"]
         assert "upsert" in description
         assert "curl" in description
 
     def test_the_field_combinations_reach_the_spec(self, spec) -> None:
-        path = "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachments"
+        path = "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachment"
         description = spec["paths"][path]["post"]["description"]
         assert "provide-as=file" in description
         assert "path" in description
@@ -368,7 +368,7 @@ class TestTheOpenApiDocument:
     def test_the_disjunction_reaches_the_spec_as_one_of(self, spec) -> None:
         # The point of declaring it: a client reads "file or reference" off the schema
         # instead of finding out at the 422.
-        path = "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachments"
+        path = "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachment"
         ref = next(iter(spec["paths"][path]["post"]["requestBody"]["content"].values()))["schema"]["$ref"]
         schema = spec["components"]["schemas"][ref.rsplit("/", 1)[-1]]
         assert schema["oneOf"] == [{"required": ["file"]}, {"required": ["reference"]}]
@@ -378,8 +378,7 @@ class TestTheOpenApiDocument:
         # On the PUT the path names the attachment, so "reference" is not a field of that
         # body at all -- and a one-sided oneOf would document a choice nobody has.
         path = (
-            "/api/v2/projects/{project_name}/services/attachments/component/{component_name}"
-            "/attachments/{attachment_id}"
+            "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachment/{attachment_id}"
         )
         ref = next(iter(spec["paths"][path]["put"]["requestBody"]["content"].values()))["schema"]["$ref"]
         schema = spec["components"]["schemas"][ref.rsplit("/", 1)[-1]]
@@ -387,13 +386,13 @@ class TestTheOpenApiDocument:
         assert "reference" not in schema["properties"]
 
     def test_the_disjunction_is_spelled_out_in_the_description(self, spec) -> None:
-        path = "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachments"
+        path = "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachment"
         description = spec["paths"][path]["post"]["description"]
         assert "Exactly one of:" in description
         assert "`file` or `reference`" in description
 
     def test_the_upsert_flag_is_documented_on_the_put(self, spec) -> None:
-        path = "/api/v2/projects/{project_name}/services/attachments/attachments/{attachment_id}"
+        path = "/api/v2/projects/{project_name}/services/attachments/attachment/{attachment_id}"
         parameters = {p["name"]: p for p in spec["paths"][path]["put"]["parameters"]}
         assert parameters["upsert"]["schema"]["default"] is False
         assert parameters["upsert"]["description"]
@@ -408,7 +407,7 @@ def _is_action_route(path: str) -> bool:
     segments = path.split("/")
     last = segments[-1]
     tail = segments[-2] if last.startswith("{") else last
-    return "/services/" in path and tail == "attachments"
+    return "/services/" in path and tail == "attachment"
 
 
 class TestTheRequestBodyHasAName:
@@ -457,10 +456,10 @@ class TestTheRequestBodyHasAName:
             if _is_action_route(path) and method in ("post", "put")
         }
         assert set(names.values()) == {
-            "AttachmentsProjectCreateRequest",
-            "AttachmentsProjectUpdateRequest",
-            "AttachmentsComponentCreateRequest",
-            "AttachmentsComponentUpdateRequest",
+            "AttachmentProjectCreateRequest",
+            "AttachmentProjectUpdateRequest",
+            "AttachmentComponentCreateRequest",
+            "AttachmentComponentUpdateRequest",
         }
 
     def test_the_upload_still_promises_multipart(self, action_bodies) -> None:

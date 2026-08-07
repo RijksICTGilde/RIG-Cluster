@@ -117,8 +117,8 @@ business -- which is why the caller states it.
 ## The attachment endpoints
 
 ```
-POST /api/v2/projects/{project}/services/attachments/attachments
-PUT  /api/v2/projects/{project}/services/attachments/attachments/{attachment_id}[?upsert=true]
+POST /api/v2/projects/{project}/services/attachments/attachment
+PUT  /api/v2/projects/{project}/services/attachments/attachment/{attachment_id}[?upsert=true]
 
 POST /api/v2/projects/{project}/services/attachments/component/{component}/attachments
 PUT  /api/v2/projects/{project}/services/attachments/component/{component}/attachments/{attachment_id}[?upsert=true]
@@ -131,7 +131,7 @@ Define only:
 ```bash
 curl -X POST -H "X-API-Key: $KEY" \
   -F attachment_id=server-cert -F file=@server.pem \
-  https://zad.rijksapps.nl/api/v2/projects/my-project/services/attachments/attachments
+  https://zad.rijksapps.nl/api/v2/projects/my-project/services/attachments/attachment
 ```
 
 Define, use and bind in one request:
@@ -140,7 +140,7 @@ Define, use and bind in one request:
 curl -X POST -H "X-API-Key: $KEY" \
   -F attachment_id=server-cert -F file=@server.pem \
   -F provide-as=file -F path=/etc/ssl/certs/server.pem \
-  https://zad.rijksapps.nl/api/v2/projects/my-project/services/attachments/component/backend/attachments
+  https://zad.rijksapps.nl/api/v2/projects/my-project/services/attachments/component/backend/attachment
 ```
 
 as an environment variable instead:
@@ -149,7 +149,7 @@ as an environment variable instead:
 curl -X POST -H "X-API-Key: $KEY" \
   -F attachment_id=api-token -F file=@token.txt \
   -F provide-as=env-var -F env-name=API_TOKEN \
-  https://zad.rijksapps.nl/api/v2/projects/my-project/services/attachments/component/backend/attachments
+  https://zad.rijksapps.nl/api/v2/projects/my-project/services/attachments/component/backend/attachment
 ```
 
 Couple an attachment that is **already** in the catalog, without uploading anything (this
@@ -160,7 +160,7 @@ neither):
 curl -X POST -H "X-API-Key: $KEY" \
   -F reference=server-cert \
   -F provide-as=file -F path=/etc/ssl/certs/server.pem \
-  https://zad.rijksapps.nl/api/v2/projects/my-project/services/attachments/component/backend/attachments
+  https://zad.rijksapps.nl/api/v2/projects/my-project/services/attachments/component/backend/attachment
 ```
 
 On a `PUT` the path already names the attachment, so there is no choice to make: a `file`
@@ -170,7 +170,7 @@ Replace an existing attachment, keeping its couplings:
 
 ```bash
 curl -X PUT -H "X-API-Key: $KEY" -F file=@server-2027.pem \
-  https://zad.rijksapps.nl/api/v2/projects/my-project/services/attachments/attachments/server-cert
+  https://zad.rijksapps.nl/api/v2/projects/my-project/services/attachments/attachment/server-cert
 ```
 
 Responses: `201` created, `200` replaced, `409` id taken (or the project has no encryption

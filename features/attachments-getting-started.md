@@ -43,7 +43,7 @@ Verwijderen kan ook rechtstreeks, op dezelfde plek waar je 'm bijwerkt:
 
 ```bash
 curl -X DELETE -H 'X-API-Key: <key>' \
-  https://<host>/api/v2/projects/<project>/services/attachments/attachments/<id>
+  https://<host>/api/v2/projects/<project>/services/attachments/attachment/<id>
 ```
 
 Wordt de bijlage nergens gebruikt, dan is 'ie meteen weg. Wordt 'ie wél gebruikt, dan krijg je een **409** met daarin `used_by`: per plek de componentnaam, de deployment (als de koppeling daar zit) en of het om een koppeling of om een certificaat gaat. Zo weet je wat je op het spel zet voordat je doorzet.
@@ -52,7 +52,7 @@ Wil je 'm toch weg hebben, dan bevestig je dat je die lijst gezien hebt:
 
 ```bash
 curl -X DELETE -H 'X-API-Key: <key>' \
-  'https://<host>/api/v2/projects/<project>/services/attachments/attachments/<id>?confirm_in_use=true'
+  'https://<host>/api/v2/projects/<project>/services/attachments/attachment/<id>?confirm_in_use=true'
 ```
 
 De bijlage én alle koppelingen ernaar gaan dan in één keer weg — bij componenten en, waar die bestaan, bij de componenten binnen een deployment. Het antwoord meldt in `uncoupled_from` wat er is losgekoppeld. Houdt een component daarna geen enkele bijlage meer over, dan verdwijnt het lege bijlagenblok en blijft alleen de dienstselectie staan.

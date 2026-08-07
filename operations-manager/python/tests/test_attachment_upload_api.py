@@ -25,8 +25,8 @@ from fastapi.testclient import TestClient
 from opi.api.v2.router import v2_router
 from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
 
-PROJECT_URL = "/api/v2/projects/demo/services/attachments/attachments"
-COMPONENT_URL = "/api/v2/projects/demo/services/attachments/component/backend/attachments"
+PROJECT_URL = "/api/v2/projects/demo/services/attachments/attachment"
+COMPONENT_URL = "/api/v2/projects/demo/services/attachments/component/backend/attachment"
 HEADERS = {"X-API-Key": "test-key"}
 
 
