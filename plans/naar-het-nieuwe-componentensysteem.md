@@ -177,7 +177,26 @@ Hun criterium voor wat in het systeem hoort is bruikbaar en niet ad hoc: iets ho
 
 **Besloten: een gedeelde opt-in set `lotc-forms`**, gebouwd zoals `lotc-charts`, met per-thema implementaties en de mogelijkheid om later naar core te promoveren. Dat vergt geen core-besluit en levert meteen de thema-correcte omlijsting. Gevraagd op 7 augustus, met onze velden in volgorde van gewicht en met twee aandachtspunten: de aria-bedrading (dat is de reden dat het omhulsel bestaat) en `file-input-field`, waar NLDD geen tegenhanger voor heeft en wij liever een werkend RVO-veld met een zichtbare placeholder onder NLDD krijgen dan niets.
 
-**Voor de fasering betekent dit:** fase 3 is geen eigen bouwopdracht en ook geen open vraag meer, maar een verzoek dat loopt. Fase 1, 2 en de navigatieproef kunnen intussen door.
+**Voor de fasering betekent dit:** fase 3 is geen eigen bouwopdracht en ook geen open vraag meer.
+
+### En het is er al, 7 augustus
+
+`lotc-forms` is dezelfde dag gebouwd: een opt-in set met alle negen velden die wij doorgaven, met `id`, `name` en `label` als gemeenschappelijke basis. Hun eigen samenvatting daarvan is onze meting, teruggegeven als ontwerpprincipe:
+
+> *"Uniform on purpose, converting existing calls is a rename, not a redesign."*
+
+Drie dingen om te onthouden.
+
+**De activeringsvolgorde ligt vast.** `lotc-forms` moet als laatste, ná het visuele thema, anders lossen de invoervelden niet op:
+
+```python
+setup_components(env, design_systems=["lotc-layout", "nldd", "lotc-forms"])
+setup_components(env, design_systems=["rvo", "lotc-forms"])
+```
+
+**`file-input-field` is opgelost als uitzondering, niet als gat.** NLDD heeft er geen eigen element voor, dus het rendert het RVO-veld met een zichtbaar plaatsvervangend label. Werkend, en zichtbaar dat het daar afwijkt.
+
+**Er zit een toegankelijkheidswinst in die we nu missen.** Uit hun ARIA-beschrijving: *"roos itself omits `aria-describedby`; this set adds it."* Ons huidige `c-text-input-field` koppelt de hulptekst en de foutmelding dus niet aan het invoerveld. Wie een schermlezer gebruikt hoort bij ons wel het label, maar niet de toelichting en niet wat er misging. Een omzetting levert daarmee meer op dan een andere vormgeving.
 
 ## Wat er aan de LOTC-kant uitgezocht moet worden (beantwoord, hierboven)
 
