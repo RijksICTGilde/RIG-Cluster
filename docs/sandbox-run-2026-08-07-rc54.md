@@ -134,4 +134,33 @@ sandbox-Forgejo `zad-projects` pushen, en de verwerking op het cluster bekijken.
 
 ## 5. Bevindingen
 
-Wordt ingevuld aan het eind van de run.
+### Bevinding 1 (blokkerend): projectverwerking faalt op `cli_client_id`
+
+Geen unittest en geen lokale e2e ziet dit, want het gebeurt pas als er een echte
+Keycloak-realm gerenderd wordt. Op de sandbox stopt de verwerking ermee:
+
+```
+opi.manager.project_manager - ERROR - Error processing project:
+"Variable path not found: 'cli_client_id'. Available variables: ['project_name', 'cluster',
+'keycloak_url', 'platform_realm_name', 'project_realm_name', 'project_display_name',
+'platform_client_id', 'realm_name', 'realm_display_name', 'operations_manager_domain',
+'invite_client_id', 'account_link', 'frontend_redirect_uris']. Ensure the variable is
+defined in the 'variables' section of the Keycloak configuration."
+```
+
+**Oorzaak.** `611e2085` (RC-51) zette `{{ cli_client_id }}` en `{{ cli_token_audience }}` in de
+projectrealm-templates `opi/configs/keycloak/sso-only.yaml` (r198, r219) en
+`opi/configs/keycloak/sso-support.yaml` (r184, r205), maar definieerde ze alleen in de
+platform-bootstrapcontext `opi/bootstrap/keycloak_setup.py` (r225-226). De projectrealm-context
+uit `opi/manager/keycloak_manager.py` kent ze niet. De twee contexten staan in de log naast
+elkaar: de platformcontext heeft `cli_client_id`, de projectcontext heeft in plaats daarvan
+`account_link` en `frontend_redirect_uris`. `git log -S cli_client_id` op beide bestanden geeft
+precies die ene commit.
+
+**Omvang.** Niet één project maar de standaardweg: 18 van de 47 bestanden gebruiken
+`template: sso-support` en 3 gebruiken `sso-only`, samen **21 van de 47**. Het raakt ook nieuwe
+projecten, want `editables.py:16` heeft `default="sso-support"` en `config_model.py:103`
+`default="sso-only"`. De sandbox-e2e liep er zelf op vast bij het aanmaken van `alls3-sm5`.
+
+**Niet gerepareerd**, conform het plan. De fix is vermoedelijk klein (de twee variabelen ook in
+de projectrealm-context zetten) maar hoort een eigen taak met een eigen toets te zijn.
