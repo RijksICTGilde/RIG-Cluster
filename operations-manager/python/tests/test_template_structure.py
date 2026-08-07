@@ -25,6 +25,10 @@ BLOCK_END = re.compile(r"{%-?\s*endblock")
 JINJA_SYNTAX = re.compile(r"{{|{%")
 HTML_TAG = re.compile(r"<[a-zA-Z][^>]*>", re.DOTALL)
 CLASS_ATTRIBUTE = re.compile(r'\bclass="')
+# Een Jinja-blok mag alles bevatten, ook een ``>`` (``{% if a|length > 1 %}``). Zolang die
+# er in staat, kapt HTML_TAG de tag daar af en ziet de guard de rest van de attributen niet
+# meer. Haal de Jinja-blokken er dus eerst uit; wat overblijft is de markup zelf.
+JINJA_BLOCK = re.compile(r"{[{%#].*?[}%#]}", re.DOTALL)
 
 # Reden voor een uitzondering die er niet hoort te zijn maar er nog wel is. Elke regel met
 # deze reden is werk dat nog moet gebeuren; de test houdt alleen tegen dat er iets bij komt.
@@ -201,11 +205,14 @@ def test_no_element_carries_two_class_attributes() -> None:
     class en kreeg er een voorwaardelijke bij als los attribuut. Als style= stond het
     naast de class en werkte het; als tweede class= houdt de browser alleen de eerste
     aan en gebeurt er niets meer.
+
+    De Jinja-blokken gaan er eerst uit: staat er een ``>`` in een voorwaarde, dan kapt
+    HTML_TAG de tag daar af en blijft er precies een class over. Zie JINJA_BLOCK.
     """
     offenders = [
         f"{name}: {' '.join(tag.split())[:120]}"
         for name, text in _templates()
-        for tag in HTML_TAG.findall(text)
+        for tag in HTML_TAG.findall(JINJA_BLOCK.sub("", text))
         if len(CLASS_ATTRIBUTE.findall(tag)) > 1
     ]
 
