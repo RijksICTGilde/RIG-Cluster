@@ -290,3 +290,38 @@ async def confirm_orphans(request: Request) -> JSONResponse:
         },
         status_code=200,
     )
+
+
+@admin_router.post("/projects/:reconcile")
+@validate_admin_api_key
+async def reconcile_projects(request: Request) -> JSONResponse:
+    """Pull the projects repo into the store now, instead of waiting for the poll.
+
+    The store re-reads ``zad-projects`` on a timer, so a file committed to that repo by
+    something other than ZAD -- an import, a hand edit, another cluster -- is invisible
+    until the next tick. Anything asking for it before then gets "project not found".
+    This endpoint does that read on demand.
+
+    It is the same operation the poll performs, so it is safe to call at any time and a
+    no-op when nothing changed (one ``ls-remote``, no object transfer).
+
+    Example:
+        curl -X POST "http://localhost:9595/api/v2/admin/projects/:reconcile" \\
+          -H "X-API-Key: your-admin-api-key"
+    """
+    store = get_project_store()
+
+    head_before = store.cache_head()
+    await store.reconcile()
+    head_after = store.cache_head()
+
+    logger.info(f"Admin reconcile of the projects repo: {head_before} -> {head_after}")
+    return JSONResponse(
+        content={
+            "message": "Projects repository reconciled",
+            "head_before": head_before,
+            "head_after": head_after,
+            "changed": head_before != head_after,
+        },
+        status_code=200,
+    )
