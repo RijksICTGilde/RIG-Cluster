@@ -48,8 +48,9 @@ from opi.forms.visualizers.fields.services import (
     SERVICES,
 )
 from opi.forms.visualizers.fields.team import USERS_SEQUENCE
-from opi.forms.visualizers.sections import FormSection
+from opi.forms.visualizers.sections import FormSection, SummaryItem
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.services import RestoreMode
 from opi.services.catalog.base import ConfigLayer
 from opi.services.registry import deployment_component_service_visualizers, get_service
 from opi.services.services import ServiceAdapter, service_entry_name
@@ -783,31 +784,29 @@ def build_domain_cert_section(deployment_index: int) -> FormSection:
 # ---------------------------------------------------------------------------
 
 
-def _backup_summary(data: dict[str, Any]) -> str:
+def _backup_summary(data: dict[str, Any]) -> list[SummaryItem]:
     """Build review summary for backup wizard."""
     dep = data.get("deployment_name", "-")
     types = data.get("resource_types", [])
     if isinstance(types, str):
         types = [types]
-    types_str = ", ".join(t.upper() for t in types) if types else "alle"
-    return f"<p><strong>Deployment:</strong> {dep}</p><p><strong>Resource types:</strong> {types_str}</p>"
+    types_str = ", ".join(str(t).upper() for t in types) if types else "alle"
+    return [("Deployment", str(dep)), ("Resource types", types_str)]
 
 
-def _restore_select_summary(data: dict[str, Any]) -> str:
+def _restore_select_summary(data: dict[str, Any]) -> list[SummaryItem]:
     """Build review summary for backup run selection."""
     run_id = data.get("backup_run_id", "-")
-    return f"<p><strong>Backup run:</strong> <code>{run_id}</code></p>"
+    return [("Backup run", str(run_id))]
 
 
-def _restore_target_summary(data: dict[str, Any]) -> str:
+def _restore_target_summary(data: dict[str, Any]) -> list[SummaryItem]:
     """Build review summary for restore target selection."""
-    from opi.services import RestoreMode
-
     restore_mode = data.get("restore_mode", RestoreMode.EXISTING.value)
     if restore_mode == RestoreMode.NEW.value:
-        return "<p><strong>Modus:</strong> Nieuwe deployment</p>"
+        return [("Modus", "Nieuwe deployment")]
     target = data.get("target_deployment", "-")
-    return f"<p><strong>Doel deployment:</strong> {target}</p>"
+    return [("Doel deployment", str(target))]
 
 
 BACKUP_SELECT_SECTION = FormSection(
@@ -850,11 +849,11 @@ ATTACHMENTS_SECTION = _with_service_help(
 )
 
 
-def _new_deployment_summary(data: dict[str, Any], deployment_index: int = 0) -> str:
+def _new_deployment_summary(data: dict[str, Any], deployment_index: int = 0) -> list[SummaryItem]:
     """Build review summary for new deployment configuration."""
     deployments = data.get("deployments", [])
     name = deployments[deployment_index].get("name", "-") if deployment_index < len(deployments) else "-"
-    return f"<p><strong>Deployment:</strong> {name}</p>"
+    return [("Deployment", str(name))]
 
 
 def _materialize_new_deployment_fields(
