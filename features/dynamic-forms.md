@@ -144,15 +144,18 @@ CREATE_FLOW = FormFlow(
 
 ### Custom summary rendering
 
-Sections can define a `summary_fn` for the review page:
+Sections can define a `summary_fn` for the review page. It returns `(label, value)`
+pairs of plain text — never HTML; the summary builders add the markup and escape it:
 
 ```python
 MY_SECTION = FormSection(
     section_id="my-section",
-    summary_fn=lambda data: f"<p>Custom summary: {data.get('name', 'n/a')}</p>",
+    summary_fn=lambda data: [("Naam", str(data.get("name", "n/a")))],
     ...
 )
 ```
+
+See `features/wizard-samenvatting-weergave.md` for why it returns data.
 
 ## Configuration
 

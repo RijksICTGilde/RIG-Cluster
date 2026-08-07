@@ -142,10 +142,11 @@ class TestBuildSectionSummary:
         section = FormSection(
             section_id="test",
             title="Test",
-            summary_fn=lambda data: f"<p>Custom: {data.get('name', 'n/a')}</p>",
+            summary_fn=lambda data: [("Custom", str(data.get("name", "n/a")))],
         )
         html = _build_section_summary(section, {"name": "proj"})
-        assert "Custom: proj" in html
+        assert "Custom" in html
+        assert "proj" in html
 
 
 class TestSectionHasErrors:
