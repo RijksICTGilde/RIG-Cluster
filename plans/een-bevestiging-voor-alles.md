@@ -1,6 +1,17 @@
 # Eén bevestiging voor alles, ook voor verwijderen
 
-Status: plan, 5 augustus 2026. Niet gebouwd. Aanleiding: Eric Wout meldde dat de bevestigingsmodal weg te klikken is terwijl de actie nog loopt. Bij het uitzoeken bleek dat symptoom van iets groters, en bleek de helft van het probleem inmiddels vanzelf opgelost.
+Status: plan, 5 augustus 2026. **Deels gebouwd, opnieuw gemeten op 7 augustus.** De helft die Eric Wout meldde is dicht, maar niet op de manier die dit plan vraagt.
+
+**Wat er sinds 5 augustus veranderd is, gemeten:**
+
+- `showDangerConfirmation` en zijn hardgecodeerde titelmap zijn **weg** (RC-29). Verwijderen en herverwerken lopen langs dezelfde bevestiging als een service-actie.
+- Het blokkeermechanisme werkt: `edit_modal.js` negeert Escape en klikken-buiten zolang `window.isEditSubmitting` aanstaat.
+
+**Wat er nog steeds niet uniform is, en dat is de kern van dit plan:** het mechanisme is half gedeeld. De **blokkade** staat in de gedeelde module (`static/js/edit_modal.js`), maar de **trigger** die de vlag aanzet staat inline in één template (`project-details.html.j2`, rond regel 800). Vijf templates openen de gedeelde modal en drie gebruiken het voortgangsfragment; alleen de projectdetailpagina zet de vlag. Elke andere pagina die de modal opent met een lopende actie is dus onbeschermd, en dat is niet zichtbaar aan iets: het werkt gewoon niet.
+
+Dat is precies wat dit plan wilde voorkomen. De regel hoort een eigenschap van het gedeelde pad te zijn, niet iets dat elke pagina zelf aanzet.
+
+Niet gebouwd. Aanleiding: Eric Wout meldde dat de bevestigingsmodal weg te klikken is terwijl de actie nog loopt. Bij het uitzoeken bleek dat symptoom van iets groters, en bleek de helft van het probleem inmiddels vanzelf opgelost.
 
 ## Wat er inmiddels wel goed gaat
 
