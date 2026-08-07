@@ -37,25 +37,25 @@
    real failure. #}
 {% set state_replaces_health = state_badges and health == 'Healthy' %}
 
-<c-card padding="lg" outline="true" backgroundColor="grijs-050" style="border-left: 4px solid var(--rvo-color-hemelblauw);">
+<c-card padding="lg" outline="true" backgroundColor="grijs-050" class="argo-card">
     <c-layout-flow gap="md">
         {# Deployment Header #}
         <c-layout-row gap="sm" verticalSpacing="center">
             <c-icon icon="applicatie" size="md" color="donkerblauw" />
             <c-heading type="h4" textContent="{{ deployment.name }}" />
-            <span style="background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">{{ deployment.cluster }}</span>
+            <span class="argo-card__cluster">{{ deployment.cluster }}</span>
             {# A badge that does not replace the health verdict belongs here: something is
                still serving traffic, so the health badge stays and this says what else is
                true. A replacing badge only needs a chip here when there is no badge row
                below to carry it, or the same word would stand twice on one card. #}
             {% for badge in accompanying_badges %}
-            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: #ffe0b2; color: #e65100;">
+            <span class="argo-card__chip argo-card__chip--accompanying">
                 <c-icon icon="uit-aanknop" size="sm" />{{ badge }}
             </span>
             {% endfor %}
             {% if not shows_argocd_status %}
             {% for badge in state_badges %}
-            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700);">
+            <span class="argo-card__chip argo-card__chip--state">
                 <c-icon icon="uit-aanknop" size="sm" />{{ badge }}
             </span>
             {% endfor %}
@@ -72,13 +72,13 @@
         <c-alert kind="error" heading="{{ comp.reference }} is uitgeschakeld{% if is_image %}: image ontbreekt{% endif %}">
             <c-layout-flow gap="sm">
                 {% if comp.image %}
-                <span class="rvo-text--sm">De container image kon niet worden opgehaald:<br /><code style="word-break: break-all;">{{ comp.image }}</code></span>
+                <span class="rvo-text--sm">De container image kon niet worden opgehaald:<br /><code class="argo-card__image-ref">{{ comp.image }}</code></span>
                 {% endif %}
                 <span class="rvo-text--sm">Push een geldige image of deploy opnieuw met een bestaande tag om automatisch te heractiveren.</span>
                 {% if reason %}
                 <details>
-                    <summary class="rvo-text--xs rvo-text--subtle" style="cursor: pointer;">Technische details</summary>
-                    <p class="rvo-text--xs rvo-text--subtle" style="margin-top: 4px; word-break: break-word;">{{ reason }}</p>
+                    <summary class="rvo-text--xs rvo-text--subtle argo-card__summary">Technische details</summary>
+                    <p class="rvo-text--xs rvo-text--subtle argo-card__reason">{{ reason }}</p>
                 </details>
                 {% endif %}
             </c-layout-flow>
@@ -99,7 +99,7 @@
         </c-card>
         {% elif deployment.cluster != current_cluster %}
         {# Deployment is on a different cluster - show info message #}
-        <div style="display: flex; align-items: center; gap: 8px; padding: 12px; background: var(--rvo-color-grijs-100); border: 1px solid var(--rvo-color-grijs-300); border-radius: 4px;">
+        <div class="argo-card__other-cluster">
             <c-icon icon="info" size="md" color="grijs-600" />
             <div>
                 <span class="rvo-text--sm">Deze deployment draait op cluster <strong>{{ deployment.cluster }}</strong>.</span>
@@ -110,7 +110,7 @@
         {% else %}
         {# Deployment is on current cluster - show ArgoCD status #}
         {# Status Badges Row #}
-        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+        <div class="argo-card__badges">
             {# State badges (RC-31, generic since RC-35). A deployment that is off or asleep
                has zero replicas and ArgoCD calls that Healthy; the green badge is the
                sentence the user reads to know whether things are going well, and it was
@@ -118,7 +118,7 @@
                report: a deployment that is off AND degraded shows both, or switching
                something off would hide a real failure. #}
             {% for badge in state_badges %}
-            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 16px; font-size: 0.8rem; font-weight: 500; background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700);">
+            <span class="argo-badge argo-badge--state">
                 <c-icon icon="uit-aanknop" size="sm" />
                 {{ badge }}
             </span>
@@ -126,9 +126,8 @@
 
             {# Health Badge #}
             {% if not state_replaces_health %}
-            {% set health_bg = '#c8e6c9' if health == 'Healthy' else ('#bbdefb' if health == 'Progressing' else ('#ffe0b2' if health == 'Degraded' else '#ffcdd2')) %}
-            {% set health_color = '#1b5e20' if health == 'Healthy' else ('#0d47a1' if health == 'Progressing' else ('#e65100' if health == 'Degraded' else '#b71c1c')) %}
-            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 16px; font-size: 0.8rem; font-weight: 500; background: {{ health_bg }}; color: {{ health_color }};">
+            {% set health_modifier = 'healthy' if health == 'Healthy' else ('progressing' if health == 'Progressing' else ('degraded' if health == 'Degraded' else 'unhealthy')) %}
+            <span class="argo-badge argo-badge--{{ health_modifier }}">
                 {% if health == 'Healthy' %}
                 <c-icon icon="vinkje" size="sm" />
                 {% elif health == 'Progressing' %}
@@ -145,9 +144,8 @@
             {# Sync Badge. Unknown means ArgoCD cannot compare desired vs live state (often a
                render/CMP error) - show it red, not neutral grey, so it does not read as
                "still working on it". #}
-            {% set sync_bg = '#c8e6c9' if sync == 'Synced' else ('#ffe0b2' if sync == 'OutOfSync' else ('#ffebee' if sync == 'Unknown' else 'var(--rvo-color-grijs-200)')) %}
-            {% set sync_color = '#1b5e20' if sync == 'Synced' else ('#e65100' if sync == 'OutOfSync' else ('#c62828' if sync == 'Unknown' else 'var(--rvo-color-grijs-700)')) %}
-            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 16px; font-size: 0.8rem; font-weight: 500; background: {{ sync_bg }}; color: {{ sync_color }};">
+            {% set sync_modifier = 'synced' if sync == 'Synced' else ('outofsync' if sync == 'OutOfSync' else ('sync-unknown' if sync == 'Unknown' else 'neutral')) %}
+            <span class="argo-badge argo-badge--{{ sync_modifier }}">
                 {% if sync == 'Synced' %}
                 <c-icon icon="vinkje" size="sm" />
                 {% elif sync == 'OutOfSync' %}
@@ -162,7 +160,7 @@
 
             {# Revision Badge (if available) #}
             {% if status.get('revision') %}
-            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 4px; font-size: 0.75rem; font-family: monospace; background: var(--rvo-color-grijs-200); color: var(--rvo-color-grijs-700);">
+            <span class="argo-badge--revision">
                 <c-icon icon="document-blanco" size="sm" />
                 {{ status.revision }}
             </span>
@@ -182,7 +180,7 @@
            comes from the same service facts the badges do, so a second service that parks
            a deployment gets this for free. #}
         {% if deployment.components and not expects_no_pods %}
-        <div style="margin-top: var(--rvo-space-sm);">
+        <div class="argo-card__logs">
             <button type="button" class="log-viewer-btn"
                     onclick='openLogViewer({{ project.name | tojson }}, {{ deployment.name | tojson }}, {{ deployment.components[0].reference | tojson }}, {{ deployment.components | tojson }})'
                     title="Bekijk live logs voor deze deployment">
@@ -194,9 +192,8 @@
 
         {# Operation Status (if running or failed) #}
         {% if status.get('operation_phase') and status.operation_phase not in ['Succeeded', None] %}
-        {% set op_bg = '#e3f2fd' if status.operation_phase == 'Running' else '#ffebee' %}
-        {% set op_color = '#1565c0' if status.operation_phase == 'Running' else '#c62828' %}
-        <div style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 4px; font-size: 0.875rem; background: {{ op_bg }}; color: {{ op_color }};">
+        {% set op_modifier = 'running' if status.operation_phase == 'Running' else 'other' %}
+        <div class="argo-operation argo-operation--{{ op_modifier }}">
             <c-icon icon="{% if status.operation_phase == 'Running' %}klok{% elif status.operation_phase == 'Failed' %}foutmelding{% else %}info{% endif %}" size="sm" />
             <span>Operatie: {{ status.operation_phase }}</span>
             {% if status.get('operation_message') %}
@@ -212,34 +209,34 @@
         {% if real_errors %}
         <div>
             <button type="button" onclick="toggleArgoErrors('{{ _id_prefix }}')" aria-expanded="false"
-                    style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 12px; background: #ffebee; border: 1px solid #ef9a9a; border-radius: 4px; cursor: pointer; font-size: 0.875rem; color: #c62828; text-align: left;">
+                    class="argo-errors__toggle">
                 <c-icon icon="waarschuwing" size="sm" color="rood" />
                 <span>{{ real_errors|length }} {% if real_errors|length == 1 %}probleem{% else %}problemen{% endif %} gevonden</span>
-                <c-icon icon="delta-omlaag" size="sm" style="margin-left: auto;" />
+                <c-icon icon="delta-omlaag" size="sm" class="argo-errors__caret" />
             </button>
-            <div id="argocd-errors-{{ _id_prefix }}" style="display: none; margin-top: 8px; padding: 8px; background: #fff5f5; border: 1px solid #ffcdd2; border-radius: 4px;">
+            <div id="argocd-errors-{{ _id_prefix }}" class="argo-errors__panel">
                 {% for error in real_errors %}
-                <div style="padding: 8px; {% if not loop.last %}border-bottom: 1px solid #ffcdd2;{% endif %}">
+                <div class="argo-errors__item{% if not loop.last %} argo-errors__item--divided{% endif %}">
                     <c-layout-row gap="xs" verticalSpacing="center">
                         {% if error.get('severity') == 'informational' %}
                         <c-icon icon="info" size="sm" color="grijs-600" />
                         {% else %}
                         <c-icon icon="foutmelding" size="sm" color="rood" />
                         {% endif %}
-                        <strong style="font-size: 0.875rem;">{{ error.resource }}{% if error.get('count') and error.count|int > 1 %} <span class="rvo-text--xs rvo-text--subtle">({{ error.count }}x)</span>{% endif %}</strong>
+                        <strong class="argo-errors__resource">{{ error.resource }}{% if error.get('count') and error.count|int > 1 %} <span class="rvo-text--xs rvo-text--subtle">({{ error.count }}x)</span>{% endif %}</strong>
                     </c-layout-row>
-                    <p style="font-size: 0.8rem; color: var(--rvo-color-grijs-700); margin: 4px 0 0 24px; word-break: break-word;">{{ error.message }}</p>
+                    <p class="argo-errors__message">{{ error.message }}</p>
                     {% if error.get('suggestion') %}
-                    <p style="font-size: 0.8rem; color: var(--rvo-color-hemelblauw-750); margin: 2px 0 0 24px; word-break: break-word;">{{ error.suggestion }}</p>
+                    <p class="argo-errors__suggestion">{{ error.suggestion }}</p>
                     {% endif %}
                     {% if error.get('original_message') %}
-                    <details style="margin: 4px 0 0 24px;">
-                        <summary class="rvo-text--xs rvo-text--subtle" style="cursor: pointer;">Origineel bericht</summary>
-                        <p class="rvo-text--xs rvo-text--subtle" style="margin-top: 2px; word-break: break-word;">{{ error.original_message }}</p>
+                    <details class="argo-errors__original">
+                        <summary class="rvo-text--xs rvo-text--subtle argo-card__summary">Origineel bericht</summary>
+                        <p class="rvo-text--xs rvo-text--subtle argo-errors__original-text">{{ error.original_message }}</p>
                     </details>
                     {% endif %}
                     {% if error.get('age') %}
-                    <p class="rvo-text--xs rvo-text--subtle" style="margin: 2px 0 0 24px;">{{ error.age }}</p>
+                    <p class="rvo-text--xs rvo-text--subtle argo-errors__age">{{ error.age }}</p>
                     {% endif %}
                 </div>
                 {% endfor %}
@@ -247,13 +244,13 @@
         </div>
         {% endif %}
         {% if orphan_errors %}
-        <div style="margin-top: 8px; padding: 8px 12px; background: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 4px;">
+        <div class="argo-orphans">
             <c-layout-row gap="xs" verticalSpacing="center">
                 <c-icon icon="info" size="sm" color="grijs-600" />
                 <span class="rvo-text--sm rvo-text--subtle">{{ orphan_errors|length }} {% if orphan_errors|length == 1 %}melding{% else %}meldingen{% endif %} van verwijderde componenten &mdash; opruiming nog niet voltooid</span>
             </c-layout-row>
             {% for error in orphan_errors %}
-            <p class="rvo-text--xs rvo-text--subtle" style="margin: 6px 0 0 24px; word-break: break-word;">
+            <p class="rvo-text--xs rvo-text--subtle argo-orphans__item">
                 <strong>{{ error.resource }}</strong>: {{ error.message }}{% if error.get('age') %} ({{ error.age }}){% endif %}
             </p>
             {% endfor %}
