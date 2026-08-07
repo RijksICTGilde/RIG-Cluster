@@ -495,16 +495,16 @@ class IndexedFlow:
     targets_new_item_when_missing: bool = False
     """True when an index past the end of the list means 'add' (component)."""
 
-    context_from_template: Callable[[dict[str, Any]], dict[str, Any]] | None = None
-    """What ``build`` needs from the wizard session's template data."""
+    context_from_base: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    """What ``build`` needs from the wizard session's base data."""
 
 
-def _component_count_context(template_data: dict[str, Any]) -> dict[str, Any]:
-    return {"component_count": len(template_data.get("components", []))}
+def _component_count_context(base_data: dict[str, Any]) -> dict[str, Any]:
+    return {"component_count": len(base_data.get("components", []))}
 
 
-def _is_new_context(template_data: dict[str, Any]) -> dict[str, Any]:
-    return {"is_new": True} if template_data.get("is_new") else {}
+def _is_new_context(base_data: dict[str, Any]) -> dict[str, Any]:
+    return {"is_new": True} if base_data.get("is_new") else {}
 
 
 INDEXED_FLOWS: tuple[IndexedFlow, ...] = (
@@ -513,20 +513,20 @@ INDEXED_FLOWS: tuple[IndexedFlow, ...] = (
         list_key="components",
         build=lambda index, ctx: build_component_edit_flow(index, is_new=bool(ctx.get("is_new"))),
         targets_new_item_when_missing=True,
-        context_from_template=_is_new_context,
+        context_from_base=_is_new_context,
     ),
     IndexedFlow(
         prefix="modal-edit-deployment-",
         list_key="deployments",
         build=lambda index, ctx: build_deployment_edit_flow(index, component_count=ctx.get("component_count")),
-        context_from_template=_component_count_context,
+        context_from_base=_component_count_context,
     ),
     IndexedFlow(
         prefix="modal-add-deployment-",
         list_key="deployments",
         build=lambda index, ctx: build_deployment_add_flow(index, component_count=ctx.get("component_count")),
         appends_new_item=True,
-        context_from_template=_component_count_context,
+        context_from_base=_component_count_context,
     ),
     IndexedFlow(
         prefix="modal-edit-domain-",
@@ -557,23 +557,23 @@ def parse_indexed_flow_id(flow_id: str) -> tuple[IndexedFlow, int] | None:
     return None
 
 
-def flow_context_from_template(flow_id: str, template_data: dict[str, Any] | None) -> dict[str, Any]:
-    """What the builder for *flow_id* needs from a wizard session's template data.
+def flow_context_from_base(flow_id: str, base_data: dict[str, Any] | None) -> dict[str, Any]:
+    """What the builder for *flow_id* needs from a wizard session's base data.
 
     Deployment flows need ``component_count`` so the sequence enforces a
     max-items limit matching the number of project components; component add
     flows need ``is_new`` so the name field stays editable; the restore flow
     needs the index of the empty deployment slot appended at init.
     """
-    if not template_data:
+    if not base_data:
         return {}
     if flow_id == "modal-restore":
         # The new deployment index = total deployments - 1 (the appended empty slot)
-        return {"deployment_index": len(template_data.get("deployments", [])) - 1}
+        return {"deployment_index": len(base_data.get("deployments", [])) - 1}
     match = parse_indexed_flow_id(flow_id)
-    if match is None or match[0].context_from_template is None:
+    if match is None or match[0].context_from_base is None:
         return {}
-    return match[0].context_from_template(template_data)
+    return match[0].context_from_base(base_data)
 
 
 def get_flow(flow_id: str, **context: Any) -> FormFlow:

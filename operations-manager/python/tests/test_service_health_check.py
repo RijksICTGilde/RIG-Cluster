@@ -13,6 +13,8 @@ WHY THIS FILE EXISTS TWICE OVER
 
 THE FOUR LEVELS (fast, deterministic, no cluster) + the UI level
 ----------------------------------------------------------------
+(The same five levels, and how to apply them to a wizard FLOW rather than to one
+service's config, are written up in ``instructions/wizard-tests.md``.)
 LEVEL 1 - config validation:   a good config passes, a bad one is REJECTED with a
                                message that names the service. (Guards the schema.)
 LEVEL 2 - wizard save/round-trip: a component-step POST (services list + the

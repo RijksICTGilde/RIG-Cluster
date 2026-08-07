@@ -7,7 +7,7 @@ are not affected by this module.
 
 from __future__ import annotations
 
-from opi.forms.editables.editable import Editable
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 from opi.forms.editables.validators import AttachmentIdValidator, EnvNameValidator, PathValidator
 
 #: The identifier of a catalog entry -- the DEFINE side of the service.
@@ -62,7 +62,7 @@ ATTACHMENT_USE_SEQUENCE_EDITABLE = Editable(
     yaml_path="components[*]/services{attachments}/config",
     depends_on="components[*]/services",
     show_when={"contains": "attachments"},
-    virtualize=("services", "_services-config"),
+    virtualize=SERVICE_VIRTUALIZE,
     min_items=0,
     remove_when_none=True,
     children=[
