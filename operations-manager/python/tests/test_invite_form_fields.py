@@ -208,3 +208,48 @@ def test_it_is_still_a_list_underneath() -> None:
     validating and keep being served."""
     assert INVITE_ACTIVE_EDITABLE.yaml_path.endswith("active")
     assert INVITE_ACTIVE_EDITABLE.children
+
+
+class TestDeRolIsEenKeuzeGeenLijst:
+    """Het schema laat meerdere realm-rollen toe en de opslag blijft een lijst, maar in de
+    praktijk is het er altijd een. De wizard toonde er een reeks voor, met knoppen om
+    rollen toe te voegen en te verwijderen; dat suggereert een mogelijkheid die niemand
+    gebruikt en die de stap onnodig ingewikkeld maakt.
+    """
+
+    def test_de_wizard_toont_precies_een_keuze(self) -> None:
+        from opi.services.catalog.invite.visualizers import INVITE_REALM_ROLES
+
+        editable = INVITE_REALM_ROLES.editable
+        assert editable.min_items == 1, "er hoort altijd een keuzelijst te staan"
+        assert editable.max_items == 1, "er hoort er nooit meer dan een te kunnen"
+        # Gelijke min en max betekent voor de sequence-template: geen toevoeg- of
+        # verwijderknoppen, alleen het veld. Zie widgets/sequence.html.j2 (fixed_size).
+        assert editable.min_items == editable.max_items
+
+    def _verwerk(self, rol: str) -> object:
+        import asyncio
+
+        from opi.forms.editables.processor import EditableFormProcessor
+        from opi.services.catalog.base import ConfigLayer
+        from opi.services.registry import SERVICES
+        from opi.services.services_enums import ServiceType
+
+        sectie = SERVICES[ServiceType.INVITE].config_form_section(ConfigLayer.PROJECT)
+        assert sectie is not None
+        submitted = {
+            "_services-config": [{"name": "invite", "config": {"active": [{"name": "u", "realm-roles": [rol]}]}}]
+        }
+        resultaat, _errors = asyncio.run(
+            EditableFormProcessor().process_json_submission(submitted, sectie.editables, {}, edit_mode=False)
+        )
+        return resultaat["services"][0]["config"]["active"][0]
+
+    def test_een_gekozen_rol_wordt_als_lijst_bewaard(self) -> None:
+        """De opslagvorm verandert niet; alleen de invoer is een enkele keuze."""
+        assert self._verwerk("beheerder")["realm-roles"] == ["beheerder"]  # type: ignore[index]
+
+    def test_geen_rol_schrijft_geen_sleutel(self) -> None:
+        """ "Geen rol toekennen" is een echte keuze en betekent geen rol, niet een rol
+        zonder naam. Zonder dit schreef de altijd-zichtbare keuzelijst [""] weg."""
+        assert "realm-roles" not in self._verwerk("")  # type: ignore[operator]

@@ -13,7 +13,7 @@ are deliberately NOT offered here (advanced pass-through, see the config model).
 
 from __future__ import annotations
 
-from opi.forms.editables.converters import EmptyToNoneConverter
+from opi.forms.editables.converters import EmptyToNoneConverter, NonEmptyListConverter
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 from opi.forms.editables.validators import (
     AllowedValuesValidator,
@@ -68,11 +68,17 @@ INVITE_REALM_ROLE_ITEM_EDITABLE = Editable(
     virtualize=SERVICE_VIRTUALIZE,
 )
 
+#: Het schema laat meerdere rollen toe en de opslag blijft een lijst, maar in de praktijk
+#: is het er altijd een. Vandaar min_items == max_items == 1: de sequence-template laat de
+#: toevoeg- en verwijderknoppen dan weg en toont precies een keuzelijst, altijd zichtbaar.
+#: Wie geen rol wil toekennen kiest de lege optie; dat schrijft geen rol weg.
 INVITE_REALM_ROLES_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "realm-roles"),
-    min_items=0,
-    max_items=10,
+    min_items=1,
+    max_items=1,
     children=[INVITE_REALM_ROLE_ITEM_EDITABLE],
+    converter=NonEmptyListConverter(),
+    remove_when_none=True,
     virtualize=SERVICE_VIRTUALIZE,
 )
 
