@@ -7824,6 +7824,88 @@ class ProjectManager:
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
+    async def set_component_values(
+        self,
+        service_name: str,
+        layer: str,
+        operation: str,
+        *,
+        component_name: str,
+        deployment_name: str | None = None,
+        values: dict[str, str] | None = None,
+        keys: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Add, patch, delete or clear the values a service owns on one component (RC-55).
+
+        The sibling of ``configure_service`` for the two services that own a plain
+        component property instead of a block in a ``services:`` list. The whole
+        decrypt -> mutate -> re-encrypt round trip happens inside the change function so
+        it runs against the freshest committed file, and re-runs against whatever landed
+        if someone else pushed first -- a block ciphertext computed before the read would
+        otherwise drop the other writer's entries.
+
+        Returns ``changed=False`` when the resulting values equal what is already stored.
+        AGE is not deterministic, so re-encrypting an unchanged set would produce a
+        different ciphertext and therefore a commit per call; comparing after decryption
+        is the only comparison that means anything here.
+        """
+        from opi.services.catalog.base import ConfigLayer
+        from opi.services.component_values import (
+            ComponentValuesError,
+            ValuesOperation,
+            apply_operation,
+            decode,
+            encode,
+            locate,
+        )
+        from opi.services.registry import get_service
+        from opi.services.services_enums import ServiceType
+
+        service = get_service(ServiceType(service_name))
+        storage = service.owned_values_storage
+        owned_property = service.owned_property
+        if storage is None or owned_property is None:  # pragma: no cover - guarded by the API
+            return {
+                "success": False,
+                "error": f"Service '{service_name}' owns no values",
+                "error_type": "invalid_target",
+            }
+        config_layer = ConfigLayer(layer)
+        values_operation = ValuesOperation(operation)
+
+        def mutator(project_data: dict[str, Any]) -> dict[str, Any] | None:
+            node = locate(project_data, config_layer, component_name, deployment_name)
+            if node is None:
+                raise ComponentValuesError(
+                    f"Component '{component_name}' bestaat niet"
+                    + (f" in deployment '{deployment_name}'" if deployment_name else "")
+                    + "."
+                )
+            current = decode(node.get(owned_property), storage, project_data)
+            updated = apply_operation(current, values_operation, values=values, keys=keys)
+            if updated == current:
+                return None
+            encoded = encode(updated, storage, project_data)
+            if encoded is None:
+                node.pop(owned_property, None)
+            else:
+                node[owned_property] = encoded
+            return project_data
+
+        where = f"component '{component_name}'" + (f" in deployment '{deployment_name}'" if deployment_name else "")
+        commit_message = f"{operation.capitalize()} {service_name} values on {where}"
+        try:
+            committed = await self.mutate_and_commit_project(mutator, commit_message)
+        except ComponentValuesError as e:
+            return {"success": False, "error": str(e), "error_type": "invalid_values"}
+        except (ProjectSchemaError, ProjectIntegrityError) as e:
+            return {"success": False, "error": str(e), "error_type": "validation_error"}
+
+        if committed:
+            # The names are not secret and are what makes this line useful; the values are.
+            logger.info("Applied %s of %s values on %s", operation, service_name, where)
+        return {"success": True, "service": service_name, "target": layer, "changed": committed}
+
     async def add_component_to_deployment(
         self,
         deployment_name: str,
