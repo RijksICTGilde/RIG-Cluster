@@ -70,6 +70,60 @@ class AsyncTaskAcceptedResponse(BaseModel):
     }
 
 
+class CreateProjectRequest(BaseModel):
+    """Everything needed to create a project from outside the browser.
+
+    Name and description are the only required fields; everything else follows
+    the same defaults the self-service portal uses.
+    """
+
+    name: str = Field(
+        ...,
+        max_length=20,
+        description=(
+            "Technical project name. Must start with a lowercase letter and may contain "
+            "lowercase letters, digits and hyphens."
+        ),
+        examples=["mijn-project"],
+    )
+    description: str = Field(..., max_length=1024, description="What this project is for", examples=["Nog een test"])
+    display_name: str | None = Field(
+        None,
+        max_length=128,
+        description="Human-readable name shown in the portal. Defaults to the technical name.",
+        examples=["Mijn Project"],
+    )
+
+
+class CreateProjectAcceptedResponse(BaseModel):
+    """202 Accepted response for project creation.
+
+    Carries the project's API key, which exists nowhere else in plaintext: every
+    later call for this project authenticates with it. It is returned in the
+    response body and never in a URL.
+    """
+
+    status: str = Field(default="accepted", description="Always 'accepted' for async operations")
+    task_id: str = Field(..., description="Unique task identifier (UUID)")
+    task_type: str = Field(default="create_project", description="Type of operation being performed")
+    poll_url: str = Field(..., description="URL to poll for task status, e.g. /api/tasks/{task_id}")
+    project_name: str = Field(..., description="The technical name of the created project")
+    api_key: str = Field(..., description="The project's API key, for the X-API-Key header on every later call")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "status": "accepted",
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "task_type": "create_project",
+                "poll_url": "/api/tasks/550e8400-e29b-41d4-a716-446655440000",
+                "project_name": "mijn-project",
+                "api_key": "Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ",
+            }
+        }
+    }
+
+
 # ---------------------------------------------------------------------------
 # Read-only deployment detail models
 # ---------------------------------------------------------------------------
