@@ -11,7 +11,7 @@ import logging
 from inspect import Parameter, Signature
 from typing import Annotated, Any, NamedTuple
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, File, HTTPException, Query, Request, UploadFile
 from fastapi import Path as FastAPIPath
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
@@ -64,6 +64,7 @@ from opi.core.task_rollout import NON_DEFERRABLE_REASONS
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.services.catalog.actions import (
     ActionContext,
+    ActionField,
     ActionFieldKind,
     ActionVerb,
     ServiceAction,
@@ -84,13 +85,12 @@ from opi.utils.naming import (
     sanitize_kubernetes_name,
 )
 from opi.utils.project_utils import validate_project_name
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, create_model
 
 logger = logging.getLogger(__name__)
 
 v2_router: APIRouter = APIRouter(
     prefix="/api/v2",
-    tags=["v2"],
     responses={404: {"description": "Not found"}},
     default_response_class=JSONResponse,
 )
@@ -419,7 +419,7 @@ def _build_deployment_detail(
 
 @v2_router.get(
     "/projects/{project_name}/deployments",
-    tags=["v2", "deployments"],
+    tags=["deployments"],
     response_model=DeploymentListResponse,
 )
 @validate_api_token
@@ -462,7 +462,7 @@ async def list_deployments_v2(
 
 @v2_router.get(
     "/projects/{project_name}/deployments/{deployment_name}",
-    tags=["v2", "deployments"],
+    tags=["deployments"],
     response_model=DeploymentDetail,
 )
 @validate_api_token
@@ -597,7 +597,7 @@ def _reject_deferred_rollout(rollout: bool, task_type: str) -> None:
 
 @v2_router.post(
     "/projects/{project_name}/:upsert-deployment",
-    tags=["v2", "deployments"],
+    tags=["deployments"],
     responses={
         200: {"model": TaskResponse[UpsertDeploymentResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -670,7 +670,7 @@ async def upsert_deployment_v2(
 
 @v2_router.post(
     "/projects/{project_name}/:refresh",
-    tags=["v2", "projects"],
+    tags=["projects"],
     responses={
         200: {"model": TaskResponse[RefreshProjectResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -715,7 +715,7 @@ async def refresh_project_v2(
 
 @v2_router.delete(
     "/projects/{project_name}/{deployment_name}",
-    tags=["v2", "deployments"],
+    tags=["deployments"],
     responses={
         200: {"model": TaskResponse[DeleteDeploymentResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -754,7 +754,7 @@ async def delete_deployment_v2(
 
 @v2_router.put(
     "/projects/{project_name}/deployments/{deployment_name}/image",
-    tags=["v2", "deployments"],
+    tags=["deployments"],
     responses={
         200: {"model": TaskResponse[UpdateImageResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -809,7 +809,7 @@ async def update_image_v2(
 
 @v2_router.post(
     "/projects/{project_name}/deployments/{deployment_name}/:clone-database",
-    tags=["v2", "operations"],
+    tags=["operations"],
     responses={
         200: {"model": TaskResponse[CloneDatabaseResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -850,7 +850,7 @@ async def clone_database_v2(
 
 @v2_router.post(
     "/projects/{project_name}/deployments/{deployment_name}/:clone-bucket",
-    tags=["v2", "operations"],
+    tags=["operations"],
     responses={
         200: {"model": TaskResponse[CloneBucketResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -891,7 +891,7 @@ async def clone_bucket_v2(
 
 @v2_router.post(
     "/projects/{project_name}/deployments/{deployment_name}/:refresh",
-    tags=["v2", "deployments"],
+    tags=["deployments"],
     responses={
         200: {"model": TaskResponse[RefreshDeploymentResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -939,7 +939,7 @@ async def refresh_deployment_v2(
 
 @v2_router.post(
     "/projects/{project_name}/components",
-    tags=["v2", "components"],
+    tags=["components"],
     responses={
         200: {"model": TaskResponse[AddComponentResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -1007,7 +1007,7 @@ async def add_component_v2(
 
 @v2_router.patch(
     "/projects/{project_name}/components/{component_name}",
-    tags=["v2", "components"],
+    tags=["components"],
     responses={
         200: {"model": TaskResponse[AddComponentResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -1060,7 +1060,7 @@ async def update_component_v2(
 
 @v2_router.post(
     "/projects/{project_name}/deployments/{deployment_name}/components",
-    tags=["v2", "components"],
+    tags=["components"],
     responses={
         200: {"model": TaskResponse[AddComponentToDeploymentResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -1125,7 +1125,7 @@ async def add_component_to_deployment_v2(
 
 @v2_router.post(
     "/projects/{project_name}/services",
-    tags=["v2", "services"],
+    tags=["services"],
     responses={
         200: {"model": TaskResponse[AddServiceResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
@@ -1264,7 +1264,7 @@ class ServiceCatalogResponse(BaseModel):
     services: list[ServiceCatalogEntry] = Field(..., description="Every platform service, sorted by name")
 
 
-@v2_router.get("/services", tags=["v2", "services"], response_model=ServiceCatalogResponse)
+@v2_router.get("/services", tags=["services"], response_model=ServiceCatalogResponse)
 async def list_configurable_services_v2() -> ServiceCatalogResponse:
     """List platform services and the config targets each accepts (registry-driven).
 
@@ -1331,7 +1331,7 @@ def _collect_service_config(project_data: dict[str, Any], service_name: str, tar
     return found
 
 
-@v2_router.get("/projects/{project_name}/services/{service_name}/config", tags=["v2", "services"])
+@v2_router.get("/projects/{project_name}/services/{service_name}/config", tags=["services"])
 @validate_api_token
 async def get_service_config_v2(
     request: Request,
@@ -1490,6 +1490,49 @@ def _make_clear_endpoint(service_name: str, target: str, name_param: str | None)
     return endpoint
 
 
+#: Where a config block lands in the project file, per layer, in the caller's terms.
+_CONFIG_WRITE_PLACE = {
+    ConfigLayer.PROJECT: "the project's own `services` list",
+    ConfigLayer.COMPONENT: "the `services` list of component `{component_name}`",
+    ConfigLayer.DEPLOYMENT: "the `services` list of deployment `{deployment_name}`",
+}
+
+
+def _config_write_description(service_name: str, layer: ConfigLayer, *, clearing: bool) -> str:
+    """What a config write does, beyond what its summary already says.
+
+    A summary says which service and which layer. What a caller cannot guess is where the
+    value ends up, whether writing it starts a rollout, and what happens when there is
+    nothing there -- so that is what this says, and nothing that only repeats the name.
+    """
+    place = _CONFIG_WRITE_PLACE[layer]
+    lines = [
+        f"{'Remove' if clearing else 'Write'} the `{service_name}` config block "
+        f"{'from' if clearing else 'in'} {place}, in the project's YAML file in `zad-projects`.",
+        "",
+    ]
+    if clearing:
+        lines += [
+            f"The service stays selected; only its config goes, so `{service_name}` falls back to its "
+            "defaults. Clearing config that is not there changes nothing: no commit, no rollout, and "
+            "still a success.",
+        ]
+    elif layer is not ConfigLayer.PROJECT:
+        lines += [
+            f"Configuring `{service_name}` here also selects it at project level when it is not "
+            "selected yet, so this one call is enough.",
+        ]
+    lines += [
+        "",
+        "A change that reaches the file is rolled out: the project is processed again, manifests are "
+        "regenerated and ArgoCD applies them. This is not a save-only endpoint.",
+        "",
+        "Asynchronous: the response is 202 with a task id. Poll `/api/tasks/{task_id}` for the result; "
+        "the write and the rollout both happen inside that task.",
+    ]
+    return "\n".join(lines)
+
+
 def _register_service_config_routes(router: APIRouter) -> None:
     """Generate the typed per-service config routes from the registry.
 
@@ -1514,17 +1557,19 @@ def _register_service_config_routes(router: APIRouter) -> None:
                 path,
                 validate_api_token(_make_upsert_endpoint(service_name, target, name_param, model)),
                 methods=["PUT"],
-                tags=["v2", "services", service_name],
+                tags=[service_name],
                 responses=_CONFIG_WRITE_RESPONSES,
                 summary=f"Upsert {service_name} config ({target})",
+                description=_config_write_description(service_name, layer, clearing=False),
             )
             router.add_api_route(
                 path,
                 validate_api_token(_make_clear_endpoint(service_name, target, name_param)),
                 methods=["DELETE"],
-                tags=["v2", "services", service_name],
+                tags=[service_name],
                 responses=_CONFIG_WRITE_RESPONSES,
                 summary=f"Clear {service_name} config ({target})",
+                description=_config_write_description(service_name, layer, clearing=True),
             )
 
 
@@ -1579,10 +1624,96 @@ def _action_path(service_name: str, action: ServiceAction, verbs: tuple[ActionVe
     return f"{path}/{{{action.id_param}}}" if verbs[0].targets_existing else path
 
 
+def _addressed_by_path(action: ServiceAction, action_field: ActionField) -> bool:
+    """Whether a route that addresses one item carries this field in its path.
+
+    The id, and anything that says what the id says -- a reference to the very item the
+    path already names is not a second thing to send.
+    """
+    return action_field.name == action.id_param or action_field.addressed_by_path
+
+
+def _body_model_name(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> str:
+    """The name this route's request body carries in the spec.
+
+    Loose multipart fields make FastAPI invent one, and what it invents is the route's
+    unique id: a hundred characters of ``Body_create_attachments_component_api_v2_...``
+    that differ from the next one only in layer and verb. Four of those between
+    ``AttachmentUse`` and ``AttachmentsConfig`` read as duplicates because they look like
+    duplicates. The parts that actually distinguish them are the action, the layer and the
+    verb, so the name is those three and nothing else.
+    """
+
+    def camel(text: str) -> str:
+        return "".join(part.capitalize() for part in text.replace("_", "-").split("-"))
+
+    return f"{camel(action.action_id)}{camel(action.layer.value)}{camel(verbs[0].value)}Request"
+
+
+def _action_body_model(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> type[BaseModel]:
+    """The multipart body of one route, as a named model.
+
+    One field per declared field, carrying its own description and example, so the
+    generated schema says the same things it said as loose form fields -- under a name a
+    reader can place.
+    """
+    addressed = verbs[0].targets_existing
+    fields: dict[str, Any] = {}
+    for action_field in action.fields:
+        if addressed and _addressed_by_path(action, action_field):
+            continue  # addressed by the path, not sent again as a field
+        # Mandatory only when every verb on this route insists on it; the verb actually
+        # used decides the rest, at validation time.
+        required = all(action_field.is_required_for(verb) for verb in verbs)
+        if action_field.kind is ActionFieldKind.FILE:
+            annotation: Any = UploadFile if required else UploadFile | None
+        else:
+            annotation = str if required else str | None
+        fields[_param_name(action_field.name)] = (
+            annotation,
+            Field(
+                ... if required else None,
+                description=action_field.description,
+                alias=action_field.name,
+                examples=[action_field.example] if action_field.example else None,
+            ),
+        )
+    return create_model(
+        _body_model_name(action, verbs),
+        __config__=ConfigDict(
+            populate_by_name=True,
+            arbitrary_types_allowed=True,
+            json_schema_extra=_disjunction_schema(action, fields),
+        ),
+        **fields,
+    )
+
+
+def _disjunction_schema(action: ServiceAction, fields: dict[str, Any]) -> dict[str, Any]:
+    """The declared either/or rules as ``oneOf``, for the fields this route actually has.
+
+    A rule whose alternatives are not both in this body is left out rather than written as
+    a one-sided ``oneOf``: on a route that addresses one item, the reference is the path,
+    so there is no choice left to document.
+    """
+    present = {name.replace("_", "-") for name in fields} | set(fields)
+    alternatives = [
+        {"oneOf": [{"required": [name]} for name in disjunction.one_of], "description": disjunction.describes}
+        for disjunction in action.disjunctions
+        if set(disjunction.one_of) <= present
+    ]
+    if not alternatives:
+        return {}
+    if len(alternatives) == 1:
+        return alternatives[0]
+    return {"allOf": alternatives}
+
+
 def _action_signature(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> Signature:
     """The signature FastAPI introspects: path params, the upsert flag when the route
-    serves both PUT verbs, and one multipart field per declared field -- each carrying
-    its own description, so the OpenAPI document says what every field means."""
+    serves both PUT verbs, and the declared fields as one named multipart body -- each
+    field carrying its own description, so the OpenAPI document says what every field
+    means."""
     addressed = verbs[0].targets_existing
     params = [
         Parameter("request", Parameter.POSITIONAL_OR_KEYWORD, annotation=Request),
@@ -1615,31 +1746,16 @@ def _action_signature(action: ServiceAction, verbs: tuple[ActionVerb, ...]) -> S
                 ),
             )
         )
-    for action_field in action.fields:
-        if addressed and action_field.name == action.id_param:
-            continue  # addressed by the path, not sent again as a field
-        # Mandatory only when every verb on this route insists on it; the verb actually
-        # used decides the rest, at validation time.
-        required = all(action_field.is_required_for(verb) for verb in verbs)
-        if action_field.kind is ActionFieldKind.FILE:
-            default = File(... if required else None, description=action_field.description)
-            annotation = UploadFile if required else UploadFile | None
-        else:
-            default = Form(
-                ... if required else None,
-                description=action_field.description,
-                alias=action_field.name,
-                examples=[action_field.example] if action_field.example else None,
-            )
-            annotation = str if required else str | None
-        params.append(
-            Parameter(
-                _param_name(action_field.name),
-                Parameter.POSITIONAL_OR_KEYWORD,
-                annotation=annotation,
-                default=default,
-            )
+    params.append(
+        Parameter(
+            "body",
+            Parameter.POSITIONAL_OR_KEYWORD,
+            annotation=_action_body_model(action, verbs),
+            # File, not Form: the body carries an upload, so the route has to keep
+            # promising multipart/form-data. Form would quietly move it to urlencoded.
+            default=File(...),
         )
+    )
     return Signature(params, return_annotation=JSONResponse)
 
 
@@ -1655,6 +1771,9 @@ def _action_description(action: ServiceAction, verbs: tuple[ActionVerb, ...]) ->
     if action.combinations:
         lines += ["", "Field combinations:"]
         lines += [f"- when `{c.when}`: `{'`, `'.join(c.requires)}` required" for c in action.combinations]
+    if action.disjunctions and not verbs[0].targets_existing:
+        lines += ["", "Exactly one of:"]
+        lines += [f"- `{'` or `'.join(d.one_of)}` -- {d.describes}" for d in action.disjunctions]
     lines += ["", "Example:", "```", action.example, "```"]
     return "\n".join(lines)
 
@@ -1665,12 +1784,13 @@ def _make_action_endpoint(action: ServiceAction, verbs: tuple[ActionVerb, ...]):
 
     async def endpoint(**kwargs: Any) -> JSONResponse:
         verb = ActionVerb.UPSERT if (len(verbs) > 1 and kwargs.get("upsert")) else verbs[0]
+        body = kwargs["body"]
         values: dict[str, Any] = {}
         uploads: dict[str, UploadedFile] = {}
         for action_field in action.fields:
-            if verb.targets_existing and action_field.name == action.id_param:
+            if verb.targets_existing and _addressed_by_path(action, action_field):
                 continue
-            raw = kwargs.get(_param_name(action_field.name))
+            raw = getattr(body, _param_name(action_field.name), None)
             if action_field.kind is ActionFieldKind.FILE:
                 if raw is not None:
                     uploads[action_field.name] = UploadedFile(
@@ -1709,7 +1829,7 @@ def _register_service_action_routes(router: APIRouter) -> None:
                     _action_path(service_type.value, action, verbs),
                     validate_api_token(_make_action_endpoint(action, verbs)),
                     methods=[method],
-                    tags=["v2", "services", service_type.value],
+                    tags=[service_type.value],
                     summary=f"{action.summary} ({'/'.join(v.value for v in verbs)})",
                     description=_action_description(action, verbs),
                 )

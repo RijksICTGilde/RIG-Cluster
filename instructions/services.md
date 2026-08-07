@@ -504,9 +504,16 @@ Where a service can do something the form has no field for, it declares an **act
 (`catalog/actions.py`, `api_actions()`), in its own package's `api.py`.
 
 The declaration says once: the layer and its `ConfigRole`s, the fields and what each one
-means (that text lands in the OpenAPI document), the verbs, the valid field combinations
-with a dotted pointer to where that rule is *already* enforced, and a worked example.
-Route, multipart signature and documentation are generated from it.
+means (that text lands in the OpenAPI document), the verbs, the field rules with a dotted
+pointer to where each is *already* enforced, and a worked example. Route, multipart
+signature and documentation are generated from it.
+
+Two kinds of field rule, both documentation with a pointer and neither a second
+implementation: a `FieldCombination` is an implication (*if* `provide-as=file`, *then*
+`path`), a `FieldDisjunction` is an either/or (`file` **or** `reference`, never both and
+never neither) and reaches the spec as `oneOf`. An either/or written as two implications
+is two rules with nothing holding them together, which is why it has a declaration of its
+own.
 
 **A field points at the shared `Editable`; it never restates a rule.** Same move as
 `opi/api/validation.py` (RC-26): reference the object the wizard renders, wrap it in

@@ -18,7 +18,14 @@ from __future__ import annotations
 import importlib
 
 import pytest
-from opi.services.catalog.actions import ActionField, ActionFieldKind, ActionVerb, FieldCombination, ServiceAction
+from opi.services.catalog.actions import (
+    ActionField,
+    ActionFieldKind,
+    ActionVerb,
+    FieldCombination,
+    FieldDisjunction,
+    ServiceAction,
+)
 from opi.services.catalog.attachments.api import COMPONENT_ATTACHMENT_ACTION, PROJECT_ATTACHMENT_ACTION
 from opi.services.catalog.attachments.editables import ATTACHMENT_ID_EDITABLE
 from opi.services.catalog.base import ConfigLayer, ConfigRole
@@ -59,6 +66,18 @@ class TestEveryDeclarationIsHonest:
         # otherwise it becomes a claim about a check that was moved or deleted.
         for combination in action.combinations:
             assert _resolve(combination.enforced_by) is not None
+
+    @pytest.mark.parametrize(("service_name", "action"), _ACTIONS, ids=_IDS)
+    def test_disjunctions_point_at_code_that_exists(self, service_name: str, action: ServiceAction) -> None:
+        # Same rule as the implication (RC-45): an either/or is documentation with a
+        # pointer, so the pointer resolves or the declaration is a claim about nothing.
+        for disjunction in action.disjunctions:
+            assert _resolve(disjunction.enforced_by) is not None
+
+    @pytest.mark.parametrize(("service_name", "action"), _ACTIONS, ids=_IDS)
+    def test_a_disjunction_says_what_the_choice_is(self, service_name: str, action: ServiceAction) -> None:
+        for disjunction in action.disjunctions:
+            assert disjunction.describes.strip(), f"{service_name}/{action.action_id}: {disjunction.one_of}"
 
     @pytest.mark.parametrize(("service_name", "action"), _ACTIONS, ids=_IDS)
     def test_the_action_carries_an_example(self, service_name: str, action: ServiceAction) -> None:
@@ -108,6 +127,27 @@ class TestTheDeclarationRefusesToBeSloppy:
             )
 
 
+class TestTheDisjunctionRefusesToBeSloppy:
+    def test_a_disjunction_over_an_unknown_field_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="unknown fields"):
+            ServiceAction(
+                action_id="thing",
+                layer=ConfigLayer.PROJECT,
+                roles=(ConfigRole.DEFINE,),
+                summary="s",
+                description="d",
+                fields=(ActionField(name="a", description="A.", no_editable_reason="n/a"),),
+                verbs=(ActionVerb.CREATE,),
+                disjunctions=(FieldDisjunction(one_of=("a", "b"), describes="a or b", enforced_by="builtins.dict"),),
+                handler=lambda ctx: None,
+                example="curl ...",
+            )
+
+    def test_a_disjunction_needs_something_to_choose_between(self) -> None:
+        with pytest.raises(ValueError, match="at least two alternatives"):
+            FieldDisjunction(one_of=("a",), describes="a", enforced_by="builtins.dict")
+
+
 class TestTheVerbTable:
     """The contract decided on 6 August 2026, in code rather than in prose."""
 
@@ -141,6 +181,7 @@ class TestTheAttachmentActions:
         assert {f.name for f in COMPONENT_ATTACHMENT_ACTION.fields} == {
             "attachment_id",
             "file",
+            "reference",
             "provide-as",
             "path",
             "env-name",
@@ -171,7 +212,7 @@ class TestTheAttachmentActions:
         assert profile["attachment_id"].validator is ATTACHMENT_ID_EDITABLE.validator
 
     def test_the_delivery_combinations_are_declared(self) -> None:
-        assert {c.when for c in COMPONENT_ATTACHMENT_ACTION.combinations} == {
+        assert {c.when for c in COMPONENT_ATTACHMENT_ACTION.combinations} >= {
             "provide-as=file",
             "provide-as=env-var",
         }
@@ -221,7 +262,7 @@ class TestTheOpenApiDocument:
         operation = spec["paths"][path]["post"]
         ref = next(iter(operation["requestBody"]["content"].values()))["schema"]["$ref"]
         schema = spec["components"]["schemas"][ref.rsplit("/", 1)[-1]]
-        assert set(schema["properties"]) == {"attachment_id", "file", "provide-as", "path", "env-name"}
+        assert set(schema["properties"]) == {"attachment_id", "file", "reference", "provide-as", "path", "env-name"}
         for name, prop in schema["properties"].items():
             assert prop.get("description"), f"field '{name}' reaches the spec without a description"
 
@@ -237,8 +278,106 @@ class TestTheOpenApiDocument:
         assert "provide-as=file" in description
         assert "path" in description
 
+    def test_the_disjunction_reaches_the_spec_as_one_of(self, spec) -> None:
+        # The point of declaring it: a client reads "file or reference" off the schema
+        # instead of finding out at the 422.
+        path = "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachments"
+        ref = next(iter(spec["paths"][path]["post"]["requestBody"]["content"].values()))["schema"]["$ref"]
+        schema = spec["components"]["schemas"][ref.rsplit("/", 1)[-1]]
+        assert schema["oneOf"] == [{"required": ["file"]}, {"required": ["reference"]}]
+        assert schema["description"]
+
+    def test_the_disjunction_is_absent_where_there_is_no_choice(self, spec) -> None:
+        # On the PUT the path names the attachment, so "reference" is not a field of that
+        # body at all -- and a one-sided oneOf would document a choice nobody has.
+        path = (
+            "/api/v2/projects/{project_name}/services/attachments/component/{component_name}"
+            "/attachments/{attachment_id}"
+        )
+        ref = next(iter(spec["paths"][path]["put"]["requestBody"]["content"].values()))["schema"]["$ref"]
+        schema = spec["components"]["schemas"][ref.rsplit("/", 1)[-1]]
+        assert "oneOf" not in schema
+        assert "reference" not in schema["properties"]
+
+    def test_the_disjunction_is_spelled_out_in_the_description(self, spec) -> None:
+        path = "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachments"
+        description = spec["paths"][path]["post"]["description"]
+        assert "Exactly one of:" in description
+        assert "`file` or `reference`" in description
+
     def test_the_upsert_flag_is_documented_on_the_put(self, spec) -> None:
         path = "/api/v2/projects/{project_name}/services/attachments/attachments/{attachment_id}"
         parameters = {p["name"]: p for p in spec["paths"][path]["put"]["parameters"]}
         assert parameters["upsert"]["schema"]["default"] is False
         assert parameters["upsert"]["description"]
+
+
+def _is_action_route(path: str) -> bool:
+    """Whether a path is a declared-action route rather than a config route.
+
+    An action route ends in the action's own segment (optionally addressing one item);
+    a config route ends in ``/config/...`` and takes JSON.
+    """
+    segments = path.split("/")
+    last = segments[-1]
+    tail = segments[-2] if last.startswith("{") else last
+    return "/services/" in path and tail == "attachments"
+
+
+class TestTheRequestBodyHasAName:
+    """The body of an action route is a model with a name, not one FastAPI invents (RC-45).
+
+    Loose multipart fields make FastAPI name the body after the route's unique id, which
+    gives four schemas of around a hundred characters that differ only in layer and verb.
+    They sit in the same schema list as the service's own models and read as duplicates of
+    each other. The name is the action, the layer and the verb; nothing else distinguishes
+    them anyway.
+    """
+
+    @pytest.fixture(scope="class")
+    def spec(self) -> dict:
+        from opi.server import app
+
+        return app.openapi()
+
+    @pytest.fixture(scope="class")
+    def action_bodies(self, spec) -> dict[str, dict]:
+        """Every action route's body: "METHOD path" -> its requestBody."""
+        return {
+            f"{method.upper()} {path}": operation["requestBody"]
+            for path, item in spec["paths"].items()
+            if "/services/" in path
+            for method, operation in item.items()
+            if method in ("post", "put") and "requestBody" in operation and _is_action_route(path)
+        }
+
+    def test_no_action_body_carries_a_generated_name(self, action_bodies) -> None:
+        generated = {
+            key: ref
+            for key, body in action_bodies.items()
+            for ref in [next(iter(body["content"].values()))["schema"]["$ref"].rsplit("/", 1)[-1]]
+            if ref.startswith("Body_")
+        }
+        assert not generated, f"these bodies are named after their route instead of after what they are: {generated}"
+
+    def test_the_upload_bodies_are_named_after_action_layer_and_verb(self, spec) -> None:
+        names = {
+            f"{method.upper()} {path}": next(iter(operation["requestBody"]["content"].values()))["schema"][
+                "$ref"
+            ].rsplit("/", 1)[-1]
+            for path, item in spec["paths"].items()
+            for method, operation in item.items()
+            if _is_action_route(path) and method in ("post", "put")
+        }
+        assert set(names.values()) == {
+            "AttachmentsProjectCreateRequest",
+            "AttachmentsProjectUpdateRequest",
+            "AttachmentsComponentCreateRequest",
+            "AttachmentsComponentUpdateRequest",
+        }
+
+    def test_the_upload_still_promises_multipart(self, action_bodies) -> None:
+        # The body became a model; what the route accepts must not have moved with it.
+        # A form model defaults to urlencoded, and an upload cannot travel that way.
+        for key, body in action_bodies.items():
+            assert list(body["content"]) == ["multipart/form-data"], key

@@ -254,3 +254,77 @@ class TestTheSharedRules:
         }
         response = client.post(PROJECT_URL, headers=HEADERS, data={"attachment_id": "server-cert"}, files=_file())
         assert response.status_code == 409
+
+
+class TestContentOrReference:
+    """The disjunction: new content, or an attachment that is already there (RC-45).
+
+    Two fields, one choice. Before this the component upload insisted on a file, so
+    coupling something that was already in the catalog meant a second endpoint -- and the
+    rule that exactly one of the two is given was nowhere a caller could read it.
+    """
+
+    def test_a_reference_couples_without_uploading_anything(self, client, manager) -> None:
+        response = client.post(
+            COMPONENT_URL,
+            headers=HEADERS,
+            data={"reference": "server-cert", "provide-as": "file", "path": "/etc/ssl/certs/server.pem"},
+        )
+        assert response.status_code == 200
+        call = manager.upsert_attachment.call_args
+        assert call.args[0] == "server-cert"
+        assert call.args[1] is None  # no filename
+        assert call.args[2] is None  # no bytes
+        assert call.kwargs["component_name"] == "backend"
+        assert call.kwargs["binding"] == {"provide-as": "file", "path": "/etc/ssl/certs/server.pem"}
+
+    def test_neither_is_refused(self, client, manager) -> None:
+        response = client.post(COMPONENT_URL, headers=HEADERS, data={"provide-as": "env-var", "env-name": "CERT"})
+        assert response.status_code == 422
+        manager.upsert_attachment.assert_not_called()
+
+    def test_both_is_refused(self, client, manager) -> None:
+        response = client.post(
+            COMPONENT_URL,
+            headers=HEADERS,
+            data={"reference": "server-cert", "provide-as": "file", "path": "/etc/cert.pem"},
+            files=_file(),
+        )
+        assert response.status_code == 422
+        manager.upsert_attachment.assert_not_called()
+
+    def test_content_still_needs_an_id_to_be_stored_under(self, client, manager) -> None:
+        response = client.post(
+            COMPONENT_URL, headers=HEADERS, data={"provide-as": "file", "path": "/etc/cert.pem"}, files=_file()
+        )
+        assert response.status_code == 422
+        manager.upsert_attachment.assert_not_called()
+
+    def test_content_and_an_id_still_define_and_bind(self, client, manager) -> None:
+        response = client.post(
+            COMPONENT_URL,
+            headers=HEADERS,
+            data={"attachment_id": "server-cert", "provide-as": "file", "path": "/etc/cert.pem"},
+            files=_file(),
+        )
+        assert response.status_code == 201
+        call = manager.upsert_attachment.call_args
+        assert call.args[2] == b"cert-bytes"
+
+    def test_on_a_put_the_path_is_the_reference_and_a_file_is_optional(self, client, manager) -> None:
+        # The route addresses one attachment, so there is no choice left to make: leaving
+        # the file out rewrites the coupling and keeps the content.
+        response = client.put(
+            f"{COMPONENT_URL}/server-cert", headers=HEADERS, data={"provide-as": "file", "path": "/etc/cert.pem"}
+        )
+        assert response.status_code == 200
+        call = manager.upsert_attachment.call_args
+        assert call.args[0] == "server-cert"
+        assert call.args[2] is None
+
+    def test_a_reference_runs_the_shared_id_rule(self, client, manager) -> None:
+        response = client.post(
+            COMPONENT_URL, headers=HEADERS, data={"reference": "Server_Cert!", "provide-as": "env-var", "env-name": "C"}
+        )
+        assert response.status_code == 422
+        manager.upsert_attachment.assert_not_called()
