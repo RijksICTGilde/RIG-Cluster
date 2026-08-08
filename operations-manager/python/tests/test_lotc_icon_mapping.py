@@ -28,6 +28,10 @@ TEMPLATES_DIR = Path(__file__).parent.parent / "opi" / "templates"
 # en hier weg. Groeit deze lijst, dan is er een icoon bijgekomen zonder dat iemand de
 # afbeelding heeft gelegd.
 KNOWN_GAPS = {
+    # Geen tegenhanger in de NLDD-woordenschat van 60 iconen. De RVO-set die
+    # jinja-roos-components meelevert heeft er 1163; of die als losse module in LOTC kan
+    # ligt daar als vraag.
+    "stethoscoop",
     "delta-naar-links",
     "delta-naar-rechts",
     "delta-omlaag",
@@ -65,6 +69,23 @@ def _icons_used_in_templates() -> set[str]:
     return icons
 
 
+def _icons_used_by_services() -> set[str]:
+    """De iconen die de servicedefinities dragen.
+
+    Die staan in Python en niet in een template, en werden daardoor eerst niet
+    meegenomen. Juist daar zat het grootste gat: van de negentien zichtbare diensten
+    hadden er zeventien geen icoon, en dat viel pas op een screenshot op.
+    """
+    pytest.importorskip("lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd")
+    from opi.services.services import ServiceAdapter
+
+    return {ServiceAdapter.SERVICE_DEFINITIONS[service_type].icon for service_type in ServiceAdapter.get_all_services()}
+
+
+def _all_icons_in_use() -> set[str]:
+    return _icons_used_in_templates() | _icons_used_by_services()
+
+
 def test_every_mapping_points_at_a_real_nldd_icon() -> None:
     """Geen enkele afbeelding wijst naar een naam die NLDD niet kent."""
     vocabulary = _nldd_vocabulary()
@@ -75,9 +96,7 @@ def test_every_mapping_points_at_a_real_nldd_icon() -> None:
 def test_icon_gap_does_not_grow() -> None:
     """De iconen zonder tegenhanger zijn precies de bekende gaten, niet meer."""
     vocabulary = _nldd_vocabulary()
-    unmapped = {
-        icon for icon in _icons_used_in_templates() if icon not in ROOS_TO_NLDD_ICONS and icon not in vocabulary
-    }
+    unmapped = {icon for icon in _all_icons_in_use() if icon not in ROOS_TO_NLDD_ICONS and icon not in vocabulary}
     assert unmapped == KNOWN_GAPS, (
         f"nieuw zonder afbeelding: {sorted(unmapped - KNOWN_GAPS)}; "
         f"niet langer een gat (haal uit KNOWN_GAPS): {sorted(KNOWN_GAPS - unmapped)}"
