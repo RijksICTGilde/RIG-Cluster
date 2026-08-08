@@ -10,12 +10,12 @@
   goed te zien zonder dat er gedrag op het spel staat.
 #}
 {% extends "base_lotc.html.j2" %}
-{% from "bg/_patronen.html.j2" import panel, page_head %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
 
 {% block page_title %}Projecten - Self Service Portal{% endblock %}
 
 {% block content %}
-    {{ page_head("Projecten", "De projecten waar u toegang toe heeft.") }}
+    {{ page_head("Projecten", "De projecten waar je toegang toe hebt.") }}
 
     <c-cluster gap="sm">
         <c-button type="primary" label="Nieuw project" icon="plus" show-icon="before" href="/forms/wizard/restart" />

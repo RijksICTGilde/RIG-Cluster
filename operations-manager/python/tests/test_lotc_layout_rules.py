@@ -15,7 +15,7 @@ zijn kinderen, niet die tussen zichzelf en de kop erboven.
 Dat is geen vergissing die je een keer maakt maar een die je op elke kaart opnieuw maakt,
 en hij is op een screenshot subtiel genoeg om door te glippen. Vandaar deze test in
 plaats van een afspraak: de hertekende pagina's bouwen hun kaarten via ``panel()`` uit
-bg/_patronen.html.j2, waar de kop binnen de stack zit.
+bg/_patterns.html.j2, waar de kop binnen de stack zit.
 """
 
 import re
@@ -35,7 +35,7 @@ def test_cards_are_built_with_the_panel_macro() -> None:
         if not path.name.startswith("_") and CARD_WITH_LOOSE_HEAD.search(path.read_text())
     ]
     assert not offenders, (
-        f"kopregel los in een c-card (gebruik panel() uit bg/_patronen.html.j2): {offenders}. "
+        f"kopregel los in een c-card (gebruik panel() uit bg/_patterns.html.j2): {offenders}. "
         "Een kaart is geen stack, dus kop en inhoud raken elkaar."
     )
 
@@ -45,7 +45,7 @@ def test_pages_use_the_shared_patterns() -> None:
     missing = [
         path.name
         for path in sorted(BG_DIR.glob("*.j2"))
-        if not path.name.startswith("_") and "bg/_patronen.html.j2" not in path.read_text()
+        if not path.name.startswith("_") and "bg/_patterns.html.j2" not in path.read_text()
     ]
     assert not missing, f"gebruikt de gedeelde patronen niet: {missing}"
 

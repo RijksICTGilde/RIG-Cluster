@@ -226,8 +226,11 @@ def page_data(slug: str) -> dict[str, Any]:
             "activity": ACTIVITY,
         }
 
-    if slug in ("projects", "services", "users"):
+    if slug in ("projects", "users"):
         return {"projects": projects}
+
+    if slug == "services":
+        return {"projects": projects, "services": services_overview(projects)}
 
     if slug == "wizard":
         # De velden komen uit dezelfde voorbeeldreeks als /lotc/formulier en worden door
@@ -240,7 +243,7 @@ def page_data(slug: str) -> dict[str, Any]:
         rendered = [adapter.render_field(field) for field in EXAMPLE_FIELDS]
         return {
             "flow_title": "Nieuw project",
-            "flow_description": "Vul de gegevens in. U kunt tussentijds terug zonder iets kwijt te raken.",
+            "flow_description": "Vul de gegevens in. Je kunt tussentijds terug zonder iets kwijt te raken.",
             "current_step": 2,
             "steps": [
                 {"label": "Project", "status": "complete"},
@@ -254,10 +257,88 @@ def page_data(slug: str) -> dict[str, Any]:
             ],
         }
 
-    # De twee navigatieprototypes tonen hetzelfde project als de detailpagina: het gaat
-    # om de navigatievorm, en dan moet de inhoud eronder juist gelijk zijn.
     if slug in ("project-details", "project-tabs", "project-context"):
-        context = build_details_context(available_projects()[-1])
-        return context or {}
+        context = build_details_context(available_projects()[-1]) or {}
+        # De tabbladen. Zes, en dat is de bovengrens van deze vorm: daarna wordt de balk
+        # te vol. Repositories staat er bewust NIET bij - die stond op de oude pagina
+        # omdat hij in het projectbestand staat, niet omdat iemand hem nodig heeft.
+        context["tabs"] = {
+            "overzicht": {"label": "Overzicht"},
+            "componenten": {"label": "Componenten"},
+            "deployments": {"label": "Deployments"},
+            "diensten": {"label": "Diensten"},
+            "team": {"label": "Team"},
+            "instellingen": {"label": "Instellingen"},
+        }
+        return context
 
     return {}
+
+
+# Wat een dienst is, in gewone taal. Zonder dit zijn het namen zonder betekenis, en dat
+# is precies waar mensen op vastlopen: "namespace-postgresql-database" zegt niets tenzij
+# je het al weet.
+#
+# De kleur is een MERKkleur en helpt herkennen. Hij staat los van de status rechtsboven op
+# de kaart, want die is semantisch: groen betekent daar "beschikbaar" en niet "database".
+SERVICE_INFO: dict[str, dict[str, str]] = {
+    "publish-on-web": {
+        "label": "Publiceren op het web",
+        "summary": "Maakt je applicatie bereikbaar vanaf internet",
+        "help": "Het platform regelt een hostnaam, een certificaat en de route ernaartoe. Je hoeft zelf geen ingress of DNS te maken.",
+        "icon": "globe",
+        "color": "hemelblauw",
+    },
+    "keycloak": {
+        "label": "Inloggen (Keycloak)",
+        "summary": "Gebruikers laten inloggen zonder zelf accounts te beheren",
+        "help": "Je krijgt een eigen realm met je eigen gebruikers en rollen. De applicatie praat er via OIDC mee.",
+        "icon": "lock-closed",
+        "color": "donkerblauw",
+    },
+    "namespace-postgresql-database": {
+        "label": "PostgreSQL-database",
+        "summary": "Een eigen database, met back-ups",
+        "help": "Het platform maakt de database, de gebruiker en het wachtwoord aan, en geeft ze als omgevingsvariabelen door aan je component.",
+        "icon": "database",
+        "color": "groen",
+    },
+    "persistent-storage": {
+        "label": "Blijvende opslag",
+        "summary": "Schijfruimte die een herstart overleeft",
+        "help": "Voor bestanden die moeten blijven bestaan als je component opnieuw start. Wat in de container zelf staat is weg na een herstart.",
+        "icon": "folder-stack",
+        "color": "oranje",
+    },
+}
+
+# Waar een dienst niet in SERVICE_INFO staat, tonen we hem alsnog: onbekend is beter dan
+# verstopt. Dat het onbekend is, is dan meteen zichtbaar.
+UNKNOWN_SERVICE = {
+    "summary": "Nog geen omschrijving",
+    "help": "Voor deze dienst is nog geen uitleg vastgelegd.",
+    "icon": "cylinder-split",
+    "color": "grijs-600",
+}
+
+
+def services_overview(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Elke dienst die de voorbeeldprojecten afnemen, met uitleg en gebruikers."""
+    used_by: dict[str, list[str]] = {}
+    for project in projects:
+        for service in project["services"]:
+            used_by.setdefault(service, []).append(project["display_name"])
+
+    overview: list[dict[str, Any]] = []
+    for name in sorted(used_by):
+        info = SERVICE_INFO.get(name, {**UNKNOWN_SERVICE, "label": name})
+        overview.append(
+            {
+                "name": name,
+                "used_by": used_by[name],
+                "status_label": "beschikbaar",
+                "status_type": "success",
+                **info,
+            }
+        )
+    return overview
