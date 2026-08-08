@@ -34,6 +34,13 @@ from opi.utils.age import decrypt_password_smart, get_global_private_key
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.totp import totp_now
 from opi.utils.yaml_util import load_yaml_from_string
+from opi.web.lotc_switch import (
+    build_lotc_dashboard,
+    build_lotc_project_details,
+    build_lotc_projects,
+    render,
+    wants_lotc,
+)
 from opi.web.menu import get_menu_items
 from opi.web.project_actions import build_project_action
 from opi.web.task_progress import create_task_and_render_progress, on_complete_for, render_progress_fragment
@@ -111,7 +118,6 @@ async def permission_denied(request: Request) -> HTMLResponse:
     user_email = user.get("email", "unknown") if user else "anonymous"
     logger.warning(f"Permission denied page accessed by: {user_email}")
 
-    from opi.web.lotc_switch import render
     from opi.web.navigation_lotc import get_navigation
 
     return render(
@@ -180,7 +186,6 @@ async def project_progress_page(request: Request, task_id: str):
         user = get_current_user(request)
         templates = get_templates()
 
-        from opi.web.lotc_switch import render
         from opi.web.navigation_lotc import get_navigation
 
         if not task:
@@ -245,7 +250,6 @@ async def project_progress_page_fragment(request: Request, task_id: str) -> HTML
     #
     # Het fragment volgt dezelfde keuze als de pagina eromheen. Zonder dat zou de pagina
     # in de nieuwe vormgeving staan en er na de eerste poll roos-markup in verschijnen.
-    from opi.web.lotc_switch import wants_lotc
 
     context = _progress_page_context(task, task_id)
     if wants_lotc(request):
@@ -672,9 +676,11 @@ async def deployment_action_confirm(
     if action is None or not action.endpoint:
         raise HTTPException(status_code=404, detail="Actie niet gevonden")
 
-    return get_templates().TemplateResponse(
-        "project-details/action-confirm.html.j2",
-        {
+    return render(
+        request,
+        roos="project-details/action-confirm.html.j2",
+        lotc="bg/_action-confirm.html.j2",
+        context={
             "request": request,
             "action": action,
             "key": action_key,
@@ -719,9 +725,11 @@ async def project_action_confirm(
     if action is None:
         raise HTTPException(status_code=404, detail="Actie niet gevonden")
 
-    return get_templates().TemplateResponse(
-        "project-details/action-confirm.html.j2",
-        {
+    return render(
+        request,
+        roos="project-details/action-confirm.html.j2",
+        lotc="bg/_action-confirm.html.j2",
+        context={
             "request": request,
             "action": action,
             "key": action.key,
@@ -1152,7 +1160,6 @@ async def dashboard(request: Request):
         # nieuwe weergave doet dat ook: die haalt dit blok apart op via
         # /dashboard/resource-usage, zodat de pagina er meteen staat en een trage of
         # afwezige Prometheus hem niet ophoudt.
-        from opi.web.lotc_switch import wants_lotc
 
         metrics: dict = {}
         prometheus_available = False
@@ -1223,8 +1230,6 @@ async def dashboard(request: Request):
         for p in user_projects:
             health_counts[p.get("health", "Unknown")] += 1
         health_banner = _dashboard_health_banner(health_counts)
-
-        from opi.web.lotc_switch import build_lotc_dashboard, render
 
         return render(
             request,
@@ -1688,8 +1693,6 @@ async def project_details(request: Request, project_name: str):
             except SQLAlchemyError:
                 logger.exception("Could not determine deferred rollouts for project %s", project_name)
 
-        from opi.web.lotc_switch import build_lotc_project_details, render
-
         return render(
             request,
             roos="project-details.html.j2",
@@ -1866,7 +1869,6 @@ async def dashboard_resource_usage_fragment(request: Request) -> HTMLResponse:
     RVO-pagina hier had.
     """
     from opi.services.project_store import get_project_store
-    from opi.web.lotc_switch import render
 
     user = get_current_user(request)
     user_email = (user or {}).get("email", "")
@@ -2008,7 +2010,6 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
     # Ook dit fragment kent de LOTC-weergave. Zonder zou de projectpagina onder ?ui=lotc
     # wel LOTC zijn, maar het blokje dat htmx erin laadt nog roos - een pagina die
     # halverwege van vormgeving wisselt.
-    from opi.web.lotc_switch import render
 
     return render(
         request,
@@ -2054,9 +2055,11 @@ async def argocd_status_fragment(
     else:
         status = await _fetch_argocd_deployment_status(project_name, deployment, argo, create_kubectl_connector())
 
-    return get_templates().TemplateResponse(
-        "project-details/_argocd-deployment-card.html.j2",
-        {
+    return render(
+        request,
+        roos="project-details/_argocd-deployment-card.html.j2",
+        lotc="bg/_argocd-deployment-card.html.j2",
+        context={
             "request": request,
             "project": project,
             "deployment": deployment,
@@ -2181,9 +2184,11 @@ async def deployment_metrics_fragment(
 
     deployment_ctx = DeploymentContext(deployment_name, components)
 
-    return templates.TemplateResponse(
-        "partials/deployment_metrics.html.j2",
-        {
+    return render(
+        request,
+        roos="partials/deployment_metrics.html.j2",
+        lotc="bg/_deployment-metrics.html.j2",
+        context={
             "request": request,
             "project_name": project_name,
             "deployment": deployment_ctx,
@@ -2941,8 +2946,6 @@ async def projects_overview(request: Request):
         # Sort projects by name
         user_projects.sort(key=lambda p: p["display_name"] or p["name"])
 
-        from opi.web.lotc_switch import build_lotc_projects, render
-
         return render(
             request,
             roos="projects-overview.html.j2",
@@ -2983,7 +2986,6 @@ async def about_platform(request: Request):
     try:
         templates = get_templates()
         user = get_current_user(request)
-        from opi.web.lotc_switch import render
         from opi.web.navigation_lotc import get_navigation
 
         return render(

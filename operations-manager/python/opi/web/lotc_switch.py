@@ -204,6 +204,26 @@ def build_lotc_dashboard(request: Request, *, user: dict[str, Any] | None, **_on
     return {"navigation": get_navigation(user, current_path="/dashboard")}
 
 
+def build_lotc_admin(request: Request, *, user: dict[str, Any] | None, current_path: str) -> dict[str, Any]:
+    """Wat een beheerpagina extra nodig heeft: alleen de navigatie.
+
+    Een functie voor alle vier de beheerpagina's (gebruikers, het gebruikersformulier,
+    domeinbeheer en gebruik & kosten), want ze hebben alle vier hetzelfde nodig. Hun
+    routes leveren de rest al in de vorm die de sjablonen lezen; die hier omvormen zou
+    een tweede vorm van dezelfde gegevens opleveren, en dan gaat de nieuwe pagina iets
+    anders tonen dan de bestaande zodra er een veld bijkomt.
+
+    ``current_path`` bepaalt welk item in de zijkolom actief is en verschilt dus wel per
+    pagina.
+    """
+    if not wants_lotc(request):
+        return {}
+
+    from opi.web.navigation_lotc import get_navigation
+
+    return {"navigation": get_navigation(user, current_path=current_path)}
+
+
 def build_lotc_projects(
     request: Request,
     *,

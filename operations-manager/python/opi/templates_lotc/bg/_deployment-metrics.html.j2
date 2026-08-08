@@ -1,0 +1,146 @@
+{#
+  De metingen van een deployment, als los fragment.
+
+  Overname van partials/deployment_metrics.html.j2. Dezelfde drie gevallen in dezelfde
+  volgorde - componenten, ontdekte workloads (Helm), en anders "geen componenten" - plus
+  de PVC-opslag eronder, en dezelfde tijdvakknoppen erboven met precies hetzelfde
+  htmx-gedrag (hx-get naar dezelfde URL, hx-target="#metrics-content", innerHTML).
+
+  DE GRAFIEKEN ZIJN VOORTGANGSBALKEN GEWORDEN, en dat is een echt verschil
+
+  De oude versie zet per meting een <canvas class="metrics-chart"> neer met de reeks in
+  data-attributen, en laat die tekenen door initMetricsCharts() - een functie van 200
+  regels die in project-details.html.j2 staat, met .chart-wrapper uit project-details.css
+  voor de afmetingen. De LOTC-schil heeft geen van beide, en gaat ze ook niet lenen: eigen
+  tekencode en eigen CSS zijn precies wat deze omzetting kwijt wil.
+
+  Wat blijft is het getal dat je komt halen: de huidige waarde, en waar er een limiet is
+  ook de verhouding daartoe - als balk, met de aria-waarden die het thema meelevert. Dat is
+  dezelfde keuze die op het dashboard is gemaakt toen de canvas-meters verdwenen.
+
+  Wat je verliest is het VERLOOP: een piek van tien minuten geleden zie je hier niet. Dat
+  is het enige echte gat in deze omzetting en het staat als zodanig in het rapport. Terug
+  te krijgen zodra er een grafiekcomponent is die het thema volgt.
+#}
+{% set active_duration = duration | default(60) %}
+{% set durations = [(60, "1 uur"), (120, "2 uur"), (360, "6 uur"), (720, "12 uur"), (1440, "24 uur")] %}
+
+{#
+  Een meting als balk: de huidige waarde tegen de limiet. Zonder limiet zegt een percentage
+  niets, dan blijft het bij het getal.
+#}
+{% macro meting(label, huidig, eenheid, limiet, kleur) %}
+    {% if huidig is none %}
+        <c-paragraph size="sm">{{ label }}: geen gegevens</c-paragraph>
+    {% elif limiet %}
+        <c-progress-bar
+            text="{{ label }}"
+            :value="(huidig / limiet * 100) | round(1)"
+            max="100"
+            value-display="inline"
+            color="{{ kleur }}"
+            accessible-label="{{ label }}: {{ huidig }} van {{ limiet }} {{ eenheid }}" />
+        <c-paragraph size="sm">{{ huidig }} / {{ limiet }} {{ eenheid }}</c-paragraph>
+    {% else %}
+        <c-paragraph size="sm">{{ label }}: {{ huidig }} {{ eenheid }}</c-paragraph>
+    {% endif %}
+{% endmacro %}
+
+{#
+  De vier tot zes metingen van een component of workload, in de volgorde van de bestaande
+  pagina: CPU, geheugen, netwerk in en uit, en bij een component ook schijf.
+#}
+{% macro metingen(m, met_schijf) %}
+    {{ meting("CPU (millicores)", ("%.1f" | format(m.cpu[-1].value)) | float if m.cpu else none, "m", (m.cpu_limit | int) if m.cpu_limit else 0, "accent") }}
+    {{ meting("Geheugen (MB)", ("%.0f" | format(m.memory[-1].value)) | float if m.memory else none, "MB", (m.memory_limit | int) if m.memory_limit else 0, "success") }}
+    {% if m.memory_request and m.memory_request != m.memory_limit %}
+        <c-paragraph size="sm">Request: {{ m.memory_request | int }} MB</c-paragraph>
+    {% endif %}
+    {{ meting("Netwerk in (KB/s)", ("%.2f" | format(m.network_in[-1].value)) | float if m.network_in else none, "KB/s", 0, "accent") }}
+    {{ meting("Netwerk uit (KB/s)", ("%.2f" | format(m.network_out[-1].value)) | float if m.network_out else none, "KB/s", 0, "accent") }}
+    {% if met_schijf %}
+        {{ meting("Schijf lezen (KB/s)", ("%.2f" | format(m.disk_read[-1].value)) | float if m.disk_read else none, "KB/s", 0, "neutral") }}
+        {{ meting("Schijf schrijven (KB/s)", ("%.2f" | format(m.disk_write[-1].value)) | float if m.disk_write else none, "KB/s", 0, "neutral") }}
+    {% endif %}
+{% endmacro %}
+
+<c-stack gap="md">
+    <c-cluster gap="sm">
+        {% for value, label in durations %}
+            <c-button
+                size="xs"
+                type="{{ 'primary' if value == active_duration else 'secondary' }}"
+                label="{{ label }}"
+                hx-get="/projects/details/{{ project_name }}/metrics/{{ deployment.name }}?duration={{ value }}"
+                hx-target="#metrics-content"
+                hx-swap="innerHTML" />
+        {% endfor %}
+    </c-cluster>
+
+    {% if deployment.components %}
+        {% for component in deployment.components | sort(attribute='reference') %}
+            {% set component_name = component.reference %}
+            {% set m = metrics.get(component_name, {}) %}
+            <c-card outline padding="lg">
+                <c-stack gap="sm">
+                    <c-cluster gap="sm" align="center">
+                        <c-icon icon="puzzle-piece" size="md" />
+                        <c-heading type="h4" size="5" label="{{ component_name }}" />
+                    </c-cluster>
+                    {{ metingen(m, true) }}
+                </c-stack>
+            </c-card>
+        {% endfor %}
+    {% elif discovered_workloads %}
+        {# Een Helm-deployment: dan zijn de workloads niet uit het projectbestand bekend
+           maar uit het cluster ontdekt. Zonder schijfmetingen, net als de bestaande
+           pagina. #}
+        {% for workload in discovered_workloads %}
+            {% set m = metrics.get(workload.name, {}) %}
+            <c-card outline padding="lg">
+                <c-stack gap="sm">
+                    <c-cluster gap="sm" align="center">
+                        <c-icon icon="rectangle-stack" size="md" />
+                        <c-heading type="h4" size="5" label="{{ workload.name }}" />
+                        <c-tag type="default" label="{{ workload.pod_count }} pod{{ 's' if workload.pod_count != 1 else '' }}" />
+                    </c-cluster>
+                    {{ metingen(m, false) }}
+                </c-stack>
+            </c-card>
+        {% endfor %}
+    {% else %}
+        <c-alert type="info" heading="Geen components in deze deployment" />
+    {% endif %}
+
+    {% if pvc_storage %}
+        <c-heading type="h4" size="5" label="Persistent Storage" />
+        <c-paragraph size="sm">Schijfgebruik van de PVC's</c-paragraph>
+        {% for pvc_name, pvc_data in pvc_storage.items() %}
+            <c-card outline padding="lg">
+                <c-stack gap="sm">
+                    <c-cluster gap="sm" align="center">
+                        <c-icon icon="database" size="md" />
+                        <c-heading type="h5" size="6" label="{{ pvc_name }}" />
+                    </c-cluster>
+                    {% if pvc_data["values"] %}
+                        {% set gebruikt = pvc_data["values"][-1].value %}
+                        {% set percentage = (gebruikt / pvc_data.capacity_gb * 100) if pvc_data.capacity_gb else 0 %}
+                        {# Dezelfde drempels als de bestaande pagina: vanaf 80 procent
+                           waarschuwend, vanaf 90 kritiek. Daar stonden ze in een klasse op
+                           de regel eronder; hier kleurt de balk mee. #}
+                        <c-progress-bar
+                            text="Opslag (GB)"
+                            :value="percentage | round(1)"
+                            max="100"
+                            value-display="inline"
+                            color="{{ 'critical' if percentage >= 90 else 'warning' if percentage >= 80 else 'accent' }}"
+                            accessible-label="{{ pvc_name }}: {{ '%.2f' | format(gebruikt) }} van {{ '%.1f' | format(pvc_data.capacity_gb) }} GB" />
+                        <c-paragraph size="sm">{{ "%.2f" | format(gebruikt) }} GB / {{ "%.1f" | format(pvc_data.capacity_gb) }} GB ({{ "%.0f" | format(percentage) }}%)</c-paragraph>
+                    {% else %}
+                        <c-paragraph size="sm">Geen PVC-gegevens</c-paragraph>
+                    {% endif %}
+                </c-stack>
+            </c-card>
+        {% endfor %}
+    {% endif %}
+</c-stack>
