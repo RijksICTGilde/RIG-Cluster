@@ -18,27 +18,27 @@
 {% block page_title %}{{ project.display_name }} - Projectdetails{% endblock %}
 
 {% block content %}
-    <c-stack gap="0.25rem">
+    <c-stack gap="xs">
         <c-heading type="h1" size="3" label="{{ project.display_name }}" />
         <c-paragraph>{{ project.description }}</c-paragraph>
     </c-stack>
 
-    <c-cluster gap="0.75rem">
+    <c-cluster gap="sm">
         <c-button type="secondary" label="Bewerken" icon="pencil-on-square" show-icon="before" />
         <c-button type="secondary" label="Uitrollen" icon="arrow-up-arrow-down" show-icon="before" />
     </c-cluster>
 
-    <c-auto-grid min="200px" gap="1rem">
+    <c-auto-grid min="200px" gap="md">
         <c-metric icon="rectangle-stack" value="{{ project.components | length }}" label="Componenten" />
         <c-metric icon="arrow-up-arrow-down" value="{{ project.deployments | length }}" label="Deployments" />
         <c-metric icon="person-2" value="{{ project.users | length }}" label="Teamleden" />
         <c-metric icon="cylinder-split" value="{{ project.services | length }}" label="Diensten" />
     </c-auto-grid>
 
-    <c-columns columns="1" lg="2" gap="1.5rem">
+    <c-columns columns="1" lg="2" gap="lg">
         <c-card outline padding="lg">
             <c-section-head title="Componenten" icon="rectangle-stack" />
-            <c-stack gap="0.75rem">
+            <c-stack gap="sm">
                 {% for component in project.components %}
                     <c-layer
                         icon="rectangle-stack"
@@ -55,7 +55,7 @@
 
         <c-card outline padding="lg">
             <c-section-head title="Deployments" icon="arrow-up-arrow-down" />
-            <c-stack gap="0.75rem">
+            <c-stack gap="sm">
                 {% for deployment in project.deployments %}
                     <c-layer
                         icon="arrow-up-arrow-down"
@@ -71,10 +71,10 @@
         </c-card>
     </c-columns>
 
-    <c-columns columns="1" lg="2" gap="1.5rem">
+    <c-columns columns="1" lg="2" gap="lg">
         <c-card outline padding="lg">
             <c-section-head title="Team" icon="person-2" />
-            <c-stack gap="0.75rem">
+            <c-stack gap="sm">
                 {% for member in project.users %}
                     <c-layer icon="person" title="{{ member.email }}" count="{{ member.role }}" sub="lid van dit project" />
                 {% endfor %}
@@ -83,7 +83,7 @@
 
         <c-card outline padding="lg">
             <c-section-head title="Sleutels" icon="lock-closed" />
-            <c-stack gap="0.75rem">
+            <c-stack gap="sm">
                 <c-paragraph size="sm">
                     Afgeschermd getoond. Dit is de component die LOTC nog niet heeft en die
                     ZAD tijdelijk zelf levert.

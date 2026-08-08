@@ -203,7 +203,7 @@ def test_form_layer_screenshot(app_server: str, page: Page) -> None:
 # De herontworpen pagina's. Deze lijst hoort mee te groeien met opi/templates_lotc/bg/;
 # de test hieronder controleert dat ook, zodat een nieuwe pagina niet stil ongetoetst
 # blijft.
-REDESIGNED_PAGES = ["dashboard", "projects", "services", "users", "project-details"]
+REDESIGNED_PAGES = ["dashboard", "projects", "services", "users", "project-details", "wizard"]
 
 
 def test_every_redesigned_page_is_covered() -> None:
