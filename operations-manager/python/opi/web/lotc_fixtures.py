@@ -230,7 +230,19 @@ def page_data(slug: str) -> dict[str, Any]:
         return {"projects": projects}
 
     if slug == "services":
-        return {"projects": projects, "services": services_overview(projects)}
+        # Filteren op "kies ik dit zelf of is het er altijd" - dat is de vraag waarmee
+        # iemand deze pagina opent. De binding (per component, per deployment) staat als
+        # chip op de kaart; dat is verdieping, geen keuze vooraf.
+        alle = services_overview(projects)
+        return {
+            "projects": projects,
+            "services": alle,
+            "service_filters": [
+                ("", "Alle", len(alle)),
+                ("user", "Zelf te kiezen", sum(1 for s in alle if not s["kind_label"])),
+                ("system", "Altijd aan", sum(1 for s in alle if s["kind_label"])),
+            ],
+        }
 
     if slug == "wizard":
         # De velden komen uit dezelfde voorbeeldreeks als /lotc/formulier en worden door
