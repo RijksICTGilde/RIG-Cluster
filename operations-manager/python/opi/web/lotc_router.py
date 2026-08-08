@@ -9,13 +9,39 @@ De router wordt alleen geregistreerd als lord-of-the-components geinstalleerd is
 (dependency-group "lotc"), dus in de release-image bestaat hij niet.
 """
 
-from fastapi import APIRouter, Request
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from opi.core.templates_lotc import templates_lotc
+from opi.core.templates_lotc import TEMPLATES_LOTC_DIR, templates_lotc
 from opi.web.navigation_lotc import get_navigation
 
 router = APIRouter(prefix="/lotc", tags=["lotc"])
+
+
+def _previewable_pages() -> dict[str, str]:
+    """De omgezette pagina's die zonder paginadata te bekijken zijn.
+
+    Een verrassend groot deel van de applicatie toont vooral inhoud, en die pagina's
+    renderen compleet met alleen de navigatie. Precies die zijn bruikbaar om de
+    omzetting te BEKIJKEN, en dat is waar deze route voor is.
+
+    De uitkomst is een allowlist, opgebouwd bij het starten. Dat is geen sierlijkheid:
+    zonder zou de paginanaam uit de URL rechtstreeks een templatepad worden, en dan
+    kan iemand met ../ elk template in de zoekpaden laten renderen.
+    """
+    pages: dict[str, str] = {}
+    for path in sorted(TEMPLATES_LOTC_DIR.rglob("*.j2")):
+        name = str(path.relative_to(TEMPLATES_LOTC_DIR))
+        if 'extends "base_lotc.html.j2"' not in path.read_text():
+            continue
+        slug = str(Path(name).with_suffix("")).removesuffix(".html")
+        pages[slug] = name
+    return pages
+
+
+PREVIEWABLE_PAGES = _previewable_pages()
 
 
 def _context(request: Request, **extra: object) -> dict[str, object]:
@@ -41,3 +67,24 @@ async def lotc_index(request: Request) -> HTMLResponse:
     gekozen design system, en de statische bestanden onder /static/lotc/.
     """
     return templates_lotc.TemplateResponse(request, "base_lotc.html.j2", _context(request))
+
+
+@router.get("/pagina/{slug:path}", response_class=HTMLResponse, include_in_schema=False)
+async def lotc_page(request: Request, slug: str) -> HTMLResponse:
+    """Toon een omgezette pagina, om hem naast het origineel te kunnen leggen.
+
+    Alleen pagina's uit de allowlist; een onbekende naam is een 404 en geen poging tot
+    laden. Pagina's die wel bestaan maar paginadata nodig hebben, geven een 422 met de
+    reden erbij - dat is bruikbare informatie over hoever de omzetting staat, en
+    prettiger dan een stacktrace.
+    """
+    template_name = PREVIEWABLE_PAGES.get(slug)
+    if template_name is None:
+        raise HTTPException(status_code=404, detail=f"onbekende pagina: {slug}")
+    try:
+        return templates_lotc.TemplateResponse(request, template_name, _context(request))
+    except Exception as error:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{template_name} rendert nog niet zonder paginadata: {error}",
+        ) from error

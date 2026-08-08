@@ -60,8 +60,6 @@ COMPONENT_RENAMES = {
     "layout-column": "stack",
     # NLDD implementeert geen strong; <c-b> geeft hetzelfde vette element.
     "strong": "b",
-    # data-list is niet geimplementeerd; detail-list is de tegenhanger die het wel is.
-    "data-list": "detail-list",
 }
 
 # Tags waarvan LOTC geen tegenhanger heeft en die alleen omhulsel zijn: de tag valt
