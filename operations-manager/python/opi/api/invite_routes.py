@@ -1020,7 +1020,7 @@ async def invite_error(request: Request, key: str) -> Response:
     # Build detailed error message
     if error_code == "domain_mismatch" and domain:
         if language == "nl":
-            error_message = f"Uw e-mailadres moet eindigen op '{domain}'."
+            error_message = f"Je e-mailadres moet eindigen op '{domain}'."
         else:
             error_message = f"Your email address must end with '{domain}'."
     elif error_code == "user_exists":
@@ -1035,7 +1035,7 @@ async def invite_error(request: Request, key: str) -> Response:
         contact = invite.get("contact_email")
         if language == "nl":
             error_message = (
-                "Uw account is aangemaakt, maar de bijbehorende rol kon niet worden toegekend. "
+                "Je account is aangemaakt, maar de bijbehorende rol kon niet worden toegekend. "
                 "Opnieuw proberen werkt niet: het account bestaat al. "
             )
             if contact:

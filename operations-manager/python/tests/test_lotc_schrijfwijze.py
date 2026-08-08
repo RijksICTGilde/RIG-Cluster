@@ -11,10 +11,16 @@ Twee afspraken, allebei makkelijk te vergeten zodra iemand snel een zin toevoegt
    cluster, namespace) blijven; het gaat om woorden waar gewoon een Nederlands woord voor
    is.
 
-Deze test kijkt alleen naar wat WIJ schrijven: de hertekende pagina's, de schil en de
-voorbeelddata. De gegenereerde templates nemen hun tekst over uit ``opi/templates/`` en
-volgen dus de bewoording van de applicatie zelf; die veranderen hoort bij een besluit
-over de productietekst, niet bij deze bouwlijn.
+Deze test keek eerst alleen naar de hertekende pagina's. Dat bleek te smal: de wizard
+toonde "Basisinformatie over uw project", en die zin staat niet in een template maar in de
+FORMULIERDEFINITIES (opi/forms/) - het zijn Python-strings die pas op het scherm komen.
+Achttien van zulke zinnen stonden er, inclusief foutmeldingen als "Uw rol: ...". Een test
+die de helft van de teksten niet ziet, geeft een vals gevoel van dekking, dus kijkt hij nu
+ook daar.
+
+De gegenereerde templates blijven erbuiten: die nemen hun tekst over uit ``opi/templates/``
+en volgen de bewoording van de applicatie zelf. Verander je die, dan is dat een besluit
+over de productietekst.
 """
 
 import re
@@ -33,6 +39,15 @@ OWN_FILES = [
     PYTHON_DIR / "opi" / "web" / "lotc_fixtures.py",
 ]
 
+# De teksten die de wizard en de foutmeldingen tonen. Die staan als Python-string in de
+# code en niet in een template, en glipten daardoor langs de eerste versie van deze test.
+TEXT_IN_CODE = [
+    *sorted((PYTHON_DIR / "opi" / "forms").rglob("*.py")),
+    PYTHON_DIR / "opi" / "web" / "router.py",
+    PYTHON_DIR / "opi" / "api" / "invite_routes.py",
+    PYTHON_DIR / "opi" / "services" / "project_store.py",
+]
+
 # "u" als los woord, en de bezittelijke vorm. Woordgrenzen zijn nodig: zonder zou elke
 # "u" in "uur" of "nu" meetellen.
 FORMAL = re.compile(r"\b(?:U|Uw|uw)\b")
@@ -41,7 +56,7 @@ FORMAL = re.compile(r"\b(?:U|Uw|uw)\b")
 def test_texts_address_the_reader_informally() -> None:
     """Nergens "u" of "uw"; we schrijven "je"."""
     offenders: dict[str, list[str]] = {}
-    for path in OWN_FILES:
+    for path in [*OWN_FILES, *TEXT_IN_CODE]:
         if not path.exists():
             continue
         hits = [line.strip() for line in path.read_text().splitlines() if FORMAL.search(line)]
