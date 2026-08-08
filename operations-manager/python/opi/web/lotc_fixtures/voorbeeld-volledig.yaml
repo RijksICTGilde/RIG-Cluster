@@ -1,0 +1,133 @@
+# VOORBEELDPROJECT voor de LOTC-bouwlijn. Geen echt project.
+#
+# Bedoeld om de schermen te kunnen bekijken zonder te deployen: dit bestand loopt door
+# dezelfde modellen en helpers als een echt projectbestand, zodat de pagina toont wat de
+# applicatie werkelijk zou tonen.
+#
+# Er staan met opzet GEEN echte geheimen in. Waar een echt projectbestand AGE-versleutelde
+# waarden draagt, staat hier leesbare tekst die zichtbaar een plaatsvervanger is - de
+# pagina toont die achter dezelfde afscherming, dus de weergave klopt.
+#
+# Het project is bewust rijk: meerdere componenten, twee deployments, verschillende
+# diensten en een bijlage. Zo raakt de pagina al zijn onderdelen.
+schema-version: 2
+name: voorbeeld-volledig
+display-name: Voorbeeldproject (volledig)
+description: Een verzonnen project om alle schermonderdelen te kunnen bekijken.
+
+users:
+  - email: beheerder@voorbeeld.nl
+    role: admin
+  - email: ontwikkelaar@voorbeeld.nl
+    role: developer
+
+clusters:
+  - odcn-production
+
+services:
+  - publish-on-web
+  - keycloak:
+      config:
+        template: standaard
+        additional_redirect_uris:
+          - http://localhost:8080/*
+  - namespace-postgresql-database:
+      config:
+        instances: 1
+        storage: 1Gi
+  - persistent-storage
+
+registries:
+  - name: voorbeeld-registry
+    url: ghcr.io
+    username: voorbeeld-gebruiker
+    password: VOORBEELDWAARDE-geen-echt-geheim
+
+repositories:
+  - name: hoofdrepo
+    url: https://github.com/voorbeeld/voorbeeld-applicatie.git
+    username: git
+    password: VOORBEELDWAARDE-geen-echt-geheim
+    branch: main
+    path: .
+    project_name: voorbeeld-volledig
+
+components:
+  - name: backend
+    type: single
+    ports:
+      inbound: [8000]
+      outbound: [80, 443]
+    path:
+      - match: /api
+    uses-components: []
+    resources:
+      cpu: '1'
+      requests:
+        memory: 512Mi
+      limits:
+        memory: 512Mi
+    aliases:
+      POSTGRES_SERVER: $DATABASE_SERVER_HOST
+      POSTGRES_USER: $DATABASE_SERVER_USER
+      KEYCLOAK_URI: $OIDC_URL
+    services:
+      - publish-on-web
+      - keycloak
+      - namespace-postgresql-database
+
+  - name: frontend
+    type: frontend
+    ports:
+      inbound: [3000]
+      outbound: [80, 443]
+    path: /
+    uses-components: []
+    resources:
+      requests:
+        memory: 128Mi
+      limits:
+        memory: 128Mi
+    services:
+      - publish-on-web
+      - keycloak
+
+deployments:
+  - name: productie
+    cluster: odcn-production
+    namespace: voorbeeld-volledig
+    repository: hoofdrepo
+    subdomain: voorbeeld
+    components:
+      - reference: backend
+        image: ghcr.io/voorbeeld/backend:2026.08.01
+        registry: voorbeeld-registry
+        resources:
+          requests:
+            memory: 512Mi
+          limits:
+            memory: 512Mi
+      - reference: frontend
+        image: ghcr.io/voorbeeld/frontend:2026.08.01
+        registry: voorbeeld-registry
+
+  - name: acceptatie
+    cluster: odcn-production
+    namespace: voorbeeld-volledig-acc
+    repository: hoofdrepo
+    subdomain: voorbeeld-acc
+    components:
+      - reference: backend
+        image: ghcr.io/voorbeeld/backend:2026.08.02-rc1
+        registry: voorbeeld-registry
+        imagePullPolicy: Always
+
+config:
+  age-public-key: age1voorbeeld0000000000000000000000000000000000000000000000000
+  age-private-key: VOORBEELDWAARDE-geen-echte-sleutel
+  api-key: VOORBEELDWAARDE-geen-echte-sleutel
+  keycloak:
+    - host: https://keycloak.voorbeeld.nl
+      realm: voorbeeld-volledig-odcn-production
+      username: voorbeeld_admin
+      password: VOORBEELDWAARDE-geen-echt-wachtwoord
