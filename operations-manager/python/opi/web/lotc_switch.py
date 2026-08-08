@@ -244,3 +244,44 @@ def build_lotc_projects(
             for project in projects
         ],
     }
+
+
+#: De tabbladen van de projectpagina. Dezelfde drie als de bestaande pagina (Project,
+#: Deployments, Taken), met Metrics erbij: het resourcegebruik zat daar tussen de
+#: tekstblokken terwijl het het enige is dat je periodiek komt bekijken.
+PROJECT_TABS = {
+    "project": {"label": "Project"},
+    "deployments": {"label": "Deployments"},
+    "metrics": {"label": "Metrics"},
+    "taken": {"label": "Taken"},
+}
+
+
+def build_lotc_project_details(
+    request: Request,
+    *,
+    user: dict[str, Any] | None,
+    project: dict[str, Any],
+) -> dict[str, Any]:
+    """De ECHTE projectgegevens, in de vorm die de pagina met tabs leest.
+
+    Er wordt niets omgerekend: ``project`` heeft al de vorm die de route opbouwt, en het
+    sjabloon leest precies die sleutels. Wat hier gebeurt is de navigatie en het actieve
+    tabblad bepalen.
+
+    Het resourcegebruik zit hier NIET in. De bestaande pagina laadt dat apart met htmx,
+    zodat een trage Prometheus de pagina niet ophoudt, en dat blijft zo - het fragment
+    kent zijn eigen LOTC-weergave.
+    """
+    if not wants_lotc(request):
+        return {}
+
+    from opi.web.navigation_lotc import get_navigation
+
+    requested = request.query_params.get("tab", "")
+    return {
+        "navigation": get_navigation(user, current_path="/projects"),
+        "tabs": PROJECT_TABS,
+        "active_tab": requested if requested in PROJECT_TABS else next(iter(PROJECT_TABS)),
+        "project": project,
+    }

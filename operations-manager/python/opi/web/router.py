@@ -1636,9 +1636,13 @@ async def project_details(request: Request, project_name: str):
             except SQLAlchemyError:
                 logger.exception("Could not determine deferred rollouts for project %s", project_name)
 
-        return templates.TemplateResponse(
-            "project-details.html.j2",
-            {
+        from opi.web.lotc_switch import build_lotc_project_details, render
+
+        return render(
+            request,
+            roos="project-details.html.j2",
+            lotc="bg/project-tabs.html.j2",
+            context={
                 "request": request,
                 "title": f"Project Details - {project_details['display_name']}",
                 "menu_items": get_menu_items(user),
@@ -1668,6 +1672,7 @@ async def project_details(request: Request, project_name: str):
                 # after RC-5's config move kept reading the old project-level
                 # ``config.keycloak`` and silently stopped rendering).
                 "service_detail_sections": service_detail_sections,
+                **build_lotc_project_details(request, user=user, project=project_details),
             },
         )
 
@@ -1885,9 +1890,15 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
             logger.warning(f"Failed to fetch project resource usage for {project_name}: {e}")
             ctx["usage_error"] = str(e)
 
-    return get_templates().TemplateResponse(
-        request=request,
-        name="project-details/_resource-usage.html.j2",
+    # Ook dit fragment kent de LOTC-weergave. Zonder zou de projectpagina onder ?ui=lotc
+    # wel LOTC zijn, maar het blokje dat htmx erin laadt nog roos - een pagina die
+    # halverwege van vormgeving wisselt.
+    from opi.web.lotc_switch import render
+
+    return render(
+        request,
+        roos="project-details/_resource-usage.html.j2",
+        lotc="bg/_resource-usage.html.j2",
         context=ctx,
     )
 
