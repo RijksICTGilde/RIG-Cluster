@@ -15,7 +15,6 @@ De activeringsvolgorde van de design systems ligt vast: ``lotc-forms`` moet als
 laatste, na het visuele thema, anders lossen de invoervelden niet op.
 """
 
-import logging
 from pathlib import Path
 
 import markupsafe
@@ -34,8 +33,6 @@ from opi.core.templates import (
     get_version_info,
     static_url,
 )
-
-logger = logging.getLogger(__name__)
 
 # lotc-forms hoort achteraan; zie de moduledocstring.
 DESIGN_SYSTEMS = ["lotc-layout", "nldd", "lotc-forms"]
@@ -121,36 +118,3 @@ def process_components_lotc(html: str) -> markupsafe.Markup:
 
 
 templates_lotc.env.filters["process_components"] = process_components_lotc
-
-
-def _precompile_all_templates() -> int:
-    """Compileer elk LOTC-template bij het starten; geef terug hoeveel er lukten.
-
-    Dit is geen opwarming maar een noodzaak, en het is de tegenhanger van een bug in
-    LOTC 26ab110. De voorbewerker zet elke ``<c-*>``-tag om in een aanroep van een
-    renderer die pas bestaat zodra een template dat het component gebruikt ZELF als
-    hoofdtemplate is gecompileerd. Een ``{% include %}`` telt daar niet voor mee.
-
-    Gevolg zonder deze stap: een pagina waarvan de componenten alleen in ingevoegde
-    deeltemplates staan, faalt bij het renderen met "'_lotc_jinja_card' is undefined" -
-    maar alleen als geen andere pagina dat component eerder toevallig registreerde. Dat
-    maakt het een fout die van de volgorde van bezoeken afhangt, en die in een test
-    anders uitpakt dan in de browser.
-
-    Door hier alles een keer te compileren staan alle renderers klaar voordat het
-    eerste verzoek binnenkomt. Templates die niet compileren worden overgeslagen; welke
-    dat zijn en waarom staat in tests/test_lotc_conversion.py.
-    """
-    compiled = 0
-    for path in sorted(TEMPLATES_LOTC_DIR.rglob("*.j2")):
-        name = str(path.relative_to(TEMPLATES_LOTC_DIR))
-        try:
-            templates_lotc.env.get_template(name)
-        except Exception as error:
-            logger.debug("LOTC-template %s compileert nog niet: %s", name, error)
-        else:
-            compiled += 1
-    return compiled
-
-
-PRECOMPILED_TEMPLATE_COUNT = _precompile_all_templates()
