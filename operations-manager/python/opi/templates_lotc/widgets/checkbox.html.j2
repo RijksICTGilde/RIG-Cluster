@@ -1,10 +1,26 @@
-{% from "widgets/_macros.html.j2" import helper_text, render_examples, render_errors, bool_attr, htmx_attrs, extra_attrs %}
-<div class="rvo-form-group">
-    <c-checkbox name="{{ field.path|e }}" label="{{ field.label|e }}" {{ bool_attr("checked", field.value) }} {{ bool_attr("disabled", field.readonly) }} {{ htmx_attrs(field) }} {{ extra_attrs(field) }}/>
-    {% if field.readonly and field.value %}
-    <input type="hidden" name="{{ field.path|e }}" value="true" />
-    {% endif %}
-    {{ helper_text(field) }}
-    {{ render_examples(field) }}
-    {{ render_errors(field.errors) }}
-</div>
+{#
+  Aanvinkvakje voor de LOTC-bouwlijn.
+
+  c-checkbox-field draagt het label, de hulptekst en de foutmelding als een geheel, en
+  bedraadt ze aan het invoerveld. In de roos-versie stonden die er los omheen, met een
+  eigen rvo-form-group eromheen; die valt hier dus weg.
+
+  Het verborgen veld blijft: een uitgeschakeld aanvinkvakje verstuurt zijn waarde niet,
+  en zonder dit veld zou opslaan de aangevinkte stand wissen.
+#}
+{% from "widgets/_macros.html.j2" import combined_helper, render_examples %}
+<c-checkbox-field
+    id="{{ field.path|e }}"
+    name="{{ field.path|e }}"
+    label="{{ field.label|e }}"
+    :help="combined_helper(field)|trim or none"
+    :error="(field.errors[0] if field.errors else none)"
+    :attrs="dict(field_attrs(field), **{
+        'checked': 'checked' if field.value else none,
+        'disabled': 'disabled' if field.readonly else none,
+    })"
+/>
+{% if field.readonly and field.value %}
+<input type="hidden" name="{{ field.path|e }}" value="true" />
+{% endif %}
+{{ render_examples(field) }}

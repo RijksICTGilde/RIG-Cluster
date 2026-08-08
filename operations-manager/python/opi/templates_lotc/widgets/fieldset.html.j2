@@ -1,8 +1,13 @@
-{% from "widgets/_macros.html.j2" import html_attributes %}
-<c-fieldset legend="{{ fieldset.legend|e }}"{% if fieldset.css_class %} class="{{ fieldset.css_class|e }}"{% endif %} {{ html_attributes(fieldset.attributes) }}>
+{#
+  Veldgroep voor de LOTC-bouwlijn.
+
+  De beschrijving stond in de roos-versie in een <p> met een eigen rvo-klasse. Dat is
+  vormgeving die bij een themawissel achterblijft, dus het wordt een c-paragraph.
+#}
+<c-fieldset legend="{{ fieldset.legend|e }}" :class="fieldset.css_class or none" :attrs="fieldset.attributes or {}">
     <c-layout-flow gap="md">
         {% if fieldset.description %}
-        <p class="rvo-text--subtle">{{ fieldset.description|e }}</p>
+            <c-paragraph>{{ fieldset.description|e }}</c-paragraph>
         {% endif %}
         {{ children_content }}
     </c-layout-flow>

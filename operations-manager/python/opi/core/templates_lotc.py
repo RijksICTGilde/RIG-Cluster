@@ -33,6 +33,7 @@ from opi.core.templates import (
     get_version_info,
     static_url,
 )
+from opi.forms.lotc_attrs import field_attrs
 
 # lotc-forms hoort achteraan; zie de moduledocstring.
 DESIGN_SYSTEMS = ["lotc-layout", "nldd", "lotc-forms"]
@@ -77,6 +78,10 @@ templates_lotc.env.globals["version"] = VERSION
 templates_lotc.env.globals["build_date"] = BUILD_DATE
 templates_lotc.env.globals["version_info"] = get_version_info
 templates_lotc.env.globals["static_url"] = static_url
+# De attribuutbundel van een formulierveld, voor LOTC's :attrs-spread. Vervangt de
+# macro's die in de roos-templates attribuut-TEKST in de tag schreven; zie
+# opi/forms/lotc_attrs.py voor waarom dat bij LOTC niet kan.
+templates_lotc.env.globals["field_attrs"] = field_attrs
 
 templates_lotc.env.filters["service_name"] = get_service_name
 templates_lotc.env.filters["service_definition"] = get_service_definition_for_entry

@@ -1,11 +1,28 @@
-{% from "widgets/_macros.html.j2" import helper_text, render_examples, render_errors, bool_attr, extra_attrs %}
-<div class="rvo-form-group" {{ extra_attrs(field) }}>
+{#
+  Groep aanvinkvakjes voor de LOTC-bouwlijn.
+
+  De losse label-span met rvo-klassen is een c-fieldset geworden: die levert de
+  groepskop in de vormgeving van het thema in plaats van in de onze.
+
+  Omgezet uit de roos-versie: bool_attr/optional_attr zijn :prop="expr" geworden en de
+  attribuutbundels een enkele :attrs-spread. De roos-macro's schreven attribuut-TEKST
+  middenin de tag, en dat leest de LOTC-voorbewerker als een attribuutnaam.
+#}
+{% from "widgets/_macros.html.j2" import helper_text, render_examples, render_errors %}
+<div class="rvo-form-group" :attrs="field_attrs(field)">
     <span class="utrecht-form-label rvo-form-field__label-text">{{ field.label|e }}</span>
     {{ helper_text(field) }}
     {{ render_examples(field) }}
     <c-layout-flow gap="md">
         {% for option in options %}
-        <c-checkbox name="{{ field.path|e }}[]" value="{{ option.value|e }}" label="{{ option.label|e }}" {{ bool_attr("checked", option.value in selected_values) }} {{ bool_attr("disabled", field.readonly) }}/>
+        <c-checkbox
+            id="{{ field.path|e }}-{{ option.value|e }}"
+            name="{{ field.path|e }}[]"
+            value="{{ option.value|e }}"
+            label="{{ option.label|e }}"
+            :checked="option.value in selected_values"
+            :disabled="field.readonly"
+        />
         {% endfor %}
     </c-layout-flow>
     {{ render_errors(field.errors) }}

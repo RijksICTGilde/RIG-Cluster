@@ -1,4 +1,13 @@
-{% from "widgets/_macros.html.j2" import bool_attr %}
+{#
+  Voorinstellingskaarten voor de LOTC-bouwlijn.
+
+  De service-card-klassen blijven staan: dat is applicatie-CSS (wizard.css) en geen
+  design-systeem-markup. Alleen de componenttags zijn omgezet.
+
+  Omgezet uit de roos-versie: bool_attr/optional_attr zijn :prop="expr" geworden en de
+  attribuutbundels een enkele :attrs-spread. De roos-macro's schreven attribuut-TEKST
+  middenin de tag, en dat leest de LOTC-voorbewerker als een attribuutnaam.
+#}
 {% if preset_states %}
 <div class="service-cards-grid">
     {% for state in preset_states %}
@@ -12,10 +21,15 @@
          hx-target="#wizard-step-content"
          hx-swap="innerHTML"
          {% endif %}>
-        <c-checkbox name="_preset_{{ preset.id|e }}" {{ bool_attr("checked", applied) }} {{ bool_attr("disabled", locked) }}/>
+        <c-checkbox
+            id="preset-{{ preset.id|e }}"
+            name="_preset_{{ preset.id|e }}"
+            :checked="applied"
+            :disabled="locked"
+        />
         <div class="service-card__content">
             <div class="service-card__header">
-                <c-icon icon="{{ preset.icon|e }}" color="{{ preset.color|e }}" size="lg"/>
+                <c-icon icon="{{ preset.icon|e }}" color="{{ preset.color|e }}" size="lg" />
                 <span class="service-card__title">{{ preset.label|e }}</span>
             </div>
             <p class="service-card__description">{{ preset.description|e }}</p>

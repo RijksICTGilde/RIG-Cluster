@@ -1,4 +1,11 @@
-{% from "widgets/_macros.html.j2" import bool_attr %}
+{#
+  Een item in een herhaalbare reeks, als kaart. Zie sequence.html.j2 voor waarom de
+  eigen klassen blijven staan.
+
+  Omgezet uit de roos-versie: bool_attr/optional_attr zijn :prop="expr" geworden en de
+  attribuutbundels een enkele :attrs-spread. De roos-macro's schreven attribuut-TEKST
+  middenin de tag, en dat leest de LOTC-voorbewerker als een attribuutnaam.
+#}
 {% set min_items = (field.min_items or field.attributes.get('min_items', 0))|int %}
 {% set max_items = field.max_items or field.attributes.get('max_items') %}
 {% set fixed_size = max_items is not none and min_items == max_items|int %}
@@ -8,7 +15,10 @@
     {% if not fixed_size and field.add_remove %}
     <div class="rvo-sequence__item-header">
         <span></span>
-        <c-button size="sm" show-icon="before" icon="verwijderen" @ {{ bool_attr("disabled", remove_disabled) }}>
+        <c-button type="warning-subtle" size="sm"
+                  show-icon="before" icon="verwijderen"
+                  @click="sequenceRemove('{{ field.path|e }}', {{ index }})"
+                  :disabled="remove_disabled">
             {{ remove_label|e }}
         </c-button>
     </div>
