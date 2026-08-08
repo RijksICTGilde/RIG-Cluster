@@ -74,6 +74,13 @@
                ouder die ze omvat. De groepering zit dus in de volgorde, en daarom
                levert navigation_lotc de zijkolom al als (kopje, items)-paren in
                weergavevolgorde. #}
+            {# De zijkolom staat in een blok, zodat een pagina hem kan VERVANGEN in plaats
+               van er iets onder te hangen. Dat is nodig zodra je een project selecteert:
+               dan wil je geen tweede niveau onder "Projecten" maar een heel andere set
+               (Overzicht, Componenten, Deployments). Een tweede niveau kan hier ook niet:
+               c-sidenav-group is een KOPJE en geen uitklapbare ouder - het is een broer
+               van de items eronder. #}
+            {% block sidenav %}
             <c-sidenav>
                 {% for label, items in navigation.sidebar %}
                     {% if label %}
@@ -88,6 +95,7 @@
                     {% endfor %}
                 {% endfor %}
             </c-sidenav>
+            {% endblock %}
         </template>
 
         {# Een enkele stack om de pagina-inhoud, zodat elke pagina hetzelfde verticale

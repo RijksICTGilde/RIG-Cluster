@@ -1,0 +1,63 @@
+{#
+  VARIANT A: de projectpagina opgedeeld in TABS.
+
+  Een van twee prototypes voor dezelfde vraag: hoe splits je een pagina die te veel toont?
+  Variant B staat in project-context.html.j2. Ze zijn er om naast elkaar bekeken te
+  worden, niet om allebei te blijven.
+
+  Wat deze variant zegt: je blijft bij hetzelfde project en wisselt van AANZICHT. De
+  hoofdnavigatie blijft staan, de tabs zitten in de pagina.
+
+  Waarvoor het goed werkt:
+    - een handjevol aanzichten (tot een stuk of zes); daarna wordt de balk te vol
+    - snel heen en weer springen tussen twee aanzichten
+    - de gebruiker verliest de hoofdnavigatie niet uit het oog
+
+  Waar het gaat wringen:
+    - elk aanzicht dat zelf weer onderdelen heeft, want een tab in een tab leest niet
+    - de tabbalk staat op elke pagina van dit project opnieuw, dus de plek waar je bent
+      is minder duidelijk dan bij variant B
+
+  De inhoud is hier bewust beknopt: het gaat om de NAVIGATIEVORM, niet om alles nog eens
+  te tonen. Alleen het actieve tabblad heeft inhoud.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patronen.html.j2" import panel, page_head %}
+
+{% block page_title %}{{ project.display_name }} - tabs{% endblock %}
+
+{% block content %}
+    <c-breadcrumbs aria-label="Kruimelpad">
+        <c-breadcrumbs-item label="Projecten" href="/lotc/bg/projects" />
+        <c-breadcrumbs-item label="{{ project.display_name }}" />
+    </c-breadcrumbs>
+
+    {{ page_head(project.display_name, project.description) }}
+
+    <c-tabs aria-label="Aanzichten van dit project">
+        <c-tab label="Overzicht" :active="true" href="#overzicht" />
+        <c-tab label="Componenten" href="#componenten" />
+        <c-tab label="Deployments" href="#deployments" />
+        <c-tab label="Team" href="#team" />
+        <c-tab label="Sleutels" href="#sleutels" />
+    </c-tabs>
+
+    <c-auto-grid min="200px" gap="md">
+        <c-metric icon="rectangle-stack" value="{{ project.components | length }}" label="Componenten" />
+        <c-metric icon="arrow-up-arrow-down" value="{{ project.deployments | length }}" label="Deployments" />
+        <c-metric icon="person-2" value="{{ project.users | length }}" label="Teamleden" />
+        <c-metric icon="cylinder-split" value="{{ project.services | length }}" label="Diensten" />
+    </c-auto-grid>
+
+    {% call panel("Overzicht", "house") %}
+        <c-detail-list>
+            <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
+            <c-detail-item label="Diensten" value="{{ project.services | map(attribute='value') | join(', ') }}" />
+            <c-detail-item label="Repositories" value="{{ project.repositories | length }}" />
+        </c-detail-list>
+        <c-paragraph size="sm">
+            De andere aanzichten staan achter de tabbladen hierboven. In deze proef heeft
+            alleen het actieve tabblad inhoud.
+        </c-paragraph>
+    {% endcall %}
+{% endblock %}
