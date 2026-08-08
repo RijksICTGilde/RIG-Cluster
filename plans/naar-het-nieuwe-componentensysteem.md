@@ -244,3 +244,40 @@ Dit hoort gevraagd te worden aan de nog draaiende sessie, niet geraden:
 **`architecture-overview.html.j2` verdient een eigen besluit.** 1.509 regels in een blok, 85 inline styles, een eigen `<style>`. Dat is geen pagina om mee te nemen in een omzetting; het is er een om apart te beoordelen, en misschien om te vervangen in plaats van om te zetten.
 
 **De README van LOTC is op een punt verouderd** (hij noemt `lotc-bgnldd`, dat verwijderd is). Verifieer de andere aannames in dit plan tegen de branch en niet tegen de documentatie.
+
+---
+
+## Stand na RC-58, 8 augustus 2026
+
+**Fase 2 is gedaan voor zover hij veilig kan.** `c-p` is `c-paragraph` geworden: 125
+aanroepen in 32 templates. Roos kent `p` als alias van `paragraph`, dus dat rendert
+vandaag identiek - `tests/test_lotc_component_names.py` bewijst dat per aanroepvorm in
+plaats van het aan te nemen, en houdt tegen dat `c-p` terugkomt.
+
+**De tweede hernoeming kan niet.** `c-menubar` naar `c-menu` zou de applicatie vandaag
+breken, want roos kent geen `menu` (LOTC wel). De 13 aanroepen blijven dus staan. Er staat
+een test op die faalt zodra roos een `menu` krijgt; dan is de uitzondering weg en kan deze
+helft alsnog.
+
+**De open vraag is beantwoord, en het antwoord verandert de vorm van de proef.** Volledig
+in `docs/lotc-samenleven-met-jinja-roos.md`, na te doen met
+`scripts/lotc-coexistence-probe.py`. Kort:
+
+- LOTC en jinja-roos kunnen **niet in dezelfde Jinja-omgeving**. Twee voorbewerkers lopen
+  over dezelfde `<c-*>`-tags; de eerste claimt ze allemaal en breekt op wat hij niet kent.
+  Een tag die beide kennen (`c-heading`) rendert stilzwijgend door wie toevallig eerst
+  staat. Er is geen doorlaatstand: alle vier de ketencombinaties zijn gemeten en falen.
+- Ze kunnen **wel in twee losse omgevingen** in dezelfde applicatie. Pagina voor pagina kan
+  dus, maar de eenheid is de **overervingsketen**, niet de pagina: een LOTC-pagina heeft
+  een eigen `base`. Dat is te overzien - de schil gebruikt zes componenten, waarvan er vijf
+  in LOTC hetzelfde heten en een de bekende hernoeming is.
+
+**Er kwam een blokkade uit die niet in dit plan stond.** LOTC is voor dit project niet
+installeerbaar: het staat alleen op de interne Forgejo, en `jinja-roos-components` komt van
+een adres waar de bouw wel bij kan. Een dependency op `localhost:3000` maakt de OPI-image
+alleen op deze machine bouwbaar, en dat is precies wat de werkafspraak uitsluit. Fase 3b
+(de navigatieproef) is daarmee klaar qua ontwerp en geblokkeerd qua bouw, tot LOTC ergens
+staat waar de bouw erbij kan. Dat is werk aan de LOTC-kant, niet hier.
+
+**Fase 5 verandert van karakter**: niet "als laatste `base` omzetten", maar "de tweede
+schil weghalen zodra de laatste pagina om is".
