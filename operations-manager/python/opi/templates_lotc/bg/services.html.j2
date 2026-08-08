@@ -10,14 +10,12 @@
   werkelijk afnemen en geen aparte lijst die ernaast kan gaan lopen.
 #}
 {% extends "base_lotc.html.j2" %}
+{% from "bg/_patronen.html.j2" import panel, page_head %}
 
 {% block page_title %}Diensten - Self Service Portal{% endblock %}
 
 {% block content %}
-    <c-stack gap="xs">
-        <c-heading type="h1" size="3" label="Diensten" />
-        <c-paragraph>Platformdiensten die projecten kunnen afnemen.</c-paragraph>
-    </c-stack>
+    {{ page_head("Diensten", "Platformdiensten die projecten kunnen afnemen.") }}
 
     {% set service_use = {} %}
     {% for project in projects %}

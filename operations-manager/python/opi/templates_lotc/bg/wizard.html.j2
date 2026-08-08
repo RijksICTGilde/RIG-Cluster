@@ -21,16 +21,14 @@
   LOTCWidgetAdapter. Dus wat hier staat is de echte formulierlaag en geen namaak ervan.
 #}
 {% extends "base_lotc.html.j2" %}
+{% from "bg/_patronen.html.j2" import panel, page_head %}
 
 {% block page_title %}{{ flow_title }} - Self Service Portal{% endblock %}
 
 {% block content %}
 <c-center max="46rem">
     <c-stack gap="lg">
-        <c-stack gap="xs">
-            <c-heading type="h1" size="3" label="{{ flow_title }}" />
-            <c-paragraph>{{ flow_description }}</c-paragraph>
-        </c-stack>
+        {{ page_head("{{ flow_title }}", "{{ flow_description }}") }}
 
         <c-step-indicator current="{{ current_step }}" accessible-label="Stappen in deze wizard">
             {% for step in steps %}

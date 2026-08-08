@@ -18,14 +18,12 @@
     - een kop die de pagina benoemt, niet domineert
 #}
 {% extends "base_lotc.html.j2" %}
+{% from "bg/_patronen.html.j2" import panel, page_head %}
 
 {% block page_title %}Dashboard - Self Service Portal{% endblock %}
 
 {% block content %}
-    <c-stack gap="xs">
-        <c-heading type="h1" size="3" label="Dashboard" />
-        <c-paragraph>Een overzicht van uw projecten, deployments en verbruik.</c-paragraph>
-    </c-stack>
+    {{ page_head("Dashboard", "Een overzicht van uw projecten, deployments en verbruik.") }}
 
     <c-cluster gap="sm">
         <c-button type="secondary" label="Mijn projecten" icon="rectangle-stack" show-icon="before" href="/projects" />
@@ -47,9 +45,8 @@
     </c-auto-grid>
 
     <c-columns columns="1" lg="2" gap="lg">
-        <c-card outline padding="lg">
-            <c-section-head title="Mijn projecten" icon="rectangle-stack" />
-            <c-stack gap="sm">
+        {% call panel("Mijn projecten", "rectangle-stack") %}
+<c-stack gap="sm">
                 {% for project in projects %}
                     <c-layer
                         icon="rectangle-stack"
@@ -63,11 +60,10 @@
                     </c-layer>
                 {% endfor %}
             </c-stack>
-        </c-card>
+        {% endcall %}
 
-        <c-card outline padding="lg">
-            <c-section-head title="Recente activiteit" icon="timer" />
-            <c-activity>
+        {% call panel("Recente activiteit", "timer") %}
+<c-activity>
                 {% for event in activity %}
                     <c-activity-item
                         icon="{{ event.icon }}"
@@ -77,16 +73,14 @@
                         at="{{ event.at }}" />
                 {% endfor %}
             </c-activity>
-        </c-card>
+        {% endcall %}
     </c-columns>
 
-    <c-card outline padding="lg">
-        <c-section-head title="Verbruik">
-            <c-tag type="default">laatste 24 uur</c-tag>
-        </c-section-head>
+    {% set verbruik_aside %}<c-tag type="default" label="laatste 24 uur" />{% endset %}
+    {% call panel("Verbruik", aside=verbruik_aside) %}
         <c-paragraph>
             Metrics zijn niet beschikbaar: Prometheus is niet verbonden of er zijn geen
             namespaces gevonden.
         </c-paragraph>
-    </c-card>
+    {% endcall %}
 {% endblock %}

@@ -152,7 +152,13 @@ def _redesigned_pages() -> dict[str, str]:
     rechtstreeks een templatepad worden.
     """
     directory = TEMPLATES_LOTC_DIR / "bg"
-    return {path.name.removesuffix(".html.j2"): f"bg/{path.name}" for path in sorted(directory.glob("*.j2"))}
+    return {
+        path.name.removesuffix(".html.j2"): f"bg/{path.name}"
+        for path in sorted(directory.glob("*.j2"))
+        # Bestanden met een liggend streepje ervoor zijn gedeelde patronen en geen
+        # pagina; ze hebben geen eigen inhoud en zouden leeg renderen.
+        if not path.name.startswith("_")
+    }
 
 
 REDESIGNED_PAGES = _redesigned_pages()
