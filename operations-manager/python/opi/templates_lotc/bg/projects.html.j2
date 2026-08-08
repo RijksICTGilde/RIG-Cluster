@@ -36,12 +36,17 @@
         </c-filter-select>
     </c-filter-bar>
 
+    {# open-label is nodig om een kaart klikbaar te maken: zonder laat c-catalog-card
+       zijn href vallen en is er geen link. En let op - een Jinja-commentaar hoort BUITEN
+       de tag, want de voorbewerker leest woorden binnen een componenttag als
+       attribuutnamen. #}
     <c-auto-grid min="320px" gap="md">
         {% for project in projects %}
             <c-catalog-card
                 title="{{ project.display_name }}"
                 subtitle="{{ project.description }}"
-                href="/lotc/bg/project-details">
+                href="/projects/details/{{ project.name }}"
+                open-label="Openen">
                 <c-stack gap="sm">
                     {# c-cluster en geen horizontale c-stack: een stack houdt alles op
                        een regel en laat de inhoud buiten de kaart lopen zodra er meer

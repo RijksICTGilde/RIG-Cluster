@@ -333,18 +333,15 @@ def test_real_route_can_render_lotc(app_server: str, auth_page: Page, route: str
     draaien op voorbeeldprojecten; hier draait /services zelf, met de gegevens die de
     applicatie ook aan de bestaande pagina geeft. Alleen de weergave verschilt.
 
-    De toets is dubbel: zonder ?ui=lotc moet de oude pagina blijven werken. Een omzetting
-    die de bestaande pagina sloopt is geen omzetting maar een vervanging, en zolang de
-    release voorgaat mag dat niet.
+    De toets is dubbel: de nieuwe vormgeving is de standaard, EN de oude blijft bereikbaar
+    met ?layout=roos zolang niet elke pagina om is. Een omzetting die de oude weg meteen
+    afsluit laat je nergens naar terugvallen als er iets misgaat.
     """
     page = auth_page
     page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
 
+    # De nieuwe vormgeving is de standaard: zonder iets te vragen hoort die te komen.
     page.goto(f"{app_server}{route}")
-    page.wait_for_load_state("networkidle")
-    assert page.locator("nldd-card").count() == 0, f"{route} rendert nu al LOTC zonder dat erom gevraagd is"
-
-    page.goto(f"{app_server}{route}?ui=lotc")
     _wait_for_nldd(page)
 
     unimplemented = page.locator(".lotc-unimplemented")
@@ -355,6 +352,11 @@ def test_real_route_can_render_lotc(app_server: str, auth_page: Page, route: str
 
     name = route.strip("/").replace("/", "-")
     page.screenshot(path=f"{SCREENSHOT_DIR}/echt-{name}.png", full_page=True, animations="disabled")
+
+    # En de oude blijft bereikbaar zolang niet alles om is.
+    page.goto(f"{app_server}{route}?layout=roos")
+    page.wait_for_load_state("networkidle")
+    assert page.locator("nldd-card").count() == 0, f"{route}?layout=roos toont nog steeds de nieuwe vormgeving"
 
 
 def test_real_project_page_renders_lotc(app_server: str, auth_page: Page) -> None:
@@ -378,7 +380,7 @@ def test_real_project_page_renders_lotc(app_server: str, auth_page: Page) -> Non
     base = href.split("?")[0]
 
     for tab in ["project", "deployments", "metrics", "taken"]:
-        page.goto(f"{app_server}{base}?ui=lotc&tab={tab}")
+        page.goto(f"{app_server}{base}?tab={tab}")
         _wait_for_nldd(page)
 
         unimplemented = page.locator(".lotc-unimplemented")
@@ -394,7 +396,7 @@ def test_real_project_page_renders_lotc(app_server: str, auth_page: Page) -> Non
 
         page.screenshot(path=f"{SCREENSHOT_DIR}/echt-project-{tab}.png", full_page=True, animations="disabled")
 
-    # En zonder de vlag blijft de bestaande pagina zoals hij was.
-    page.goto(f"{app_server}{base}")
+    # En met ?layout=roos komt de bestaande pagina terug.
+    page.goto(f"{app_server}{base}?layout=roos")
     page.wait_for_load_state("networkidle")
-    assert page.locator("nldd-card").count() == 0, "de bestaande projectpagina rendert nu LOTC"
+    assert page.locator("nldd-card").count() == 0, "?layout=roos toont nog steeds de nieuwe vormgeving"

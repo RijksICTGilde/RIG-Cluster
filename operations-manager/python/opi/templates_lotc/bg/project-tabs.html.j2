@@ -102,7 +102,7 @@
             <c-detail-list>
                 <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
             </c-detail-list>
-            <c-secret-field value="{{ project.config['api-key'] | default('', true) }}" />
+            <c-secret-field value="{{ project.config['api-key'] | default('', true) }}" show-copy="true" />
         {% endcall %}
 
         {% call panel("Gevarenzone", "exclamation-triangle", info_text="Verwijderen kan niet ongedaan worden gemaakt: deployments, database en opslag gaan mee.") %}
@@ -133,10 +133,10 @@
     {% elif active_tab == 'metrics' %}
         {% if project.name is defined and usage is not defined %}
             {# Zelfde aanpak als de bestaande pagina: apart laden, zodat een trage of
-               afwezige Prometheus deze pagina niet ophoudt. Het fragment kent zijn eigen
-               LOTC-weergave, dus ?ui=lotc gaat mee. #}
+               afwezige Prometheus deze pagina niet ophoudt. Het fragment volgt dezelfde
+               keuze als de pagina, dus er hoeft niets meegegeven te worden. #}
             {% call panel("Resourcegebruik", "chart-x-y-axis-line", info_text="Wat dit project op dit moment gebruikt, tegen de limiet die ervoor is ingesteld.") %}
-                <div hx-get="/projects/details/{{ project.name }}/resource-usage?ui=lotc"
+                <div hx-get="/projects/details/{{ project.name }}/resource-usage"
                      hx-trigger="load"
                      hx-swap="innerHTML">
                     <c-paragraph>Metingen worden opgehaald...</c-paragraph>
