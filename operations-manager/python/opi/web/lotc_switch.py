@@ -24,11 +24,14 @@ Zodra een pagina af is, verdwijnt de keuze: dan noemt de route alleen nog het
 LOTC-sjabloon, en uiteindelijk verdwijnt deze module met de laatste pagina.
 """
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from fastapi import Request
     from starlette.responses import Response
+
+logger = logging.getLogger(__name__)
 
 #: De querystring die de LOTC-weergave kiest: ``?ui=lotc``.
 QUERY_PARAM = "ui"
@@ -66,12 +69,19 @@ def render(
     bestaat het pakket niet. Een import bovenaan zou die image laten crashen op een module
     die er niet hoort te zijn.
     """
-    if wants_lotc(request):
-        from opi.core.templates_lotc import templates_lotc
-
-        return templates_lotc.TemplateResponse(request, lotc, context)
-
     from opi.core.templates import setup_templates
+
+    if wants_lotc(request):
+        try:
+            from opi.core.templates_lotc import templates_lotc
+        except ImportError:
+            # In de release-image bestaat Lord of the Components niet: het zit in een
+            # dependency-group en niet in de runtime-dependencies. Dan hoort ?ui=lotc de
+            # gewone pagina te tonen en geen foutmelding - een gedeelde link mag een
+            # omgeving zonder de bouwlijn niet omleggen naar een 500.
+            logger.info("LOTC-weergave gevraagd maar niet geinstalleerd; toont de bestaande pagina")
+        else:
+            return templates_lotc.TemplateResponse(request, lotc, context)
 
     return setup_templates().TemplateResponse(request, roos, context)
 
