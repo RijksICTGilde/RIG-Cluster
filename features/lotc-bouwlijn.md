@@ -1,36 +1,42 @@
 # LOTC-bouwlijn: OPI op Lord of the Components
 
-Een tweede uitvoering van de hele webinterface, gebouwd op **Lord of the Components**
-(LOTC) met het NLDD-thema, naast de bestaande op `jinja-roos-components`. Bedoeld om te
-kunnen beoordelen of LOTC jinja-roos kan vervangen, zonder de lopende release te raken.
+De omzetting van de webinterface naar **Lord of the Components** (LOTC) met het
+NLDD-thema, ter vervanging van `jinja-roos-components`. Hij gaat pagina voor pagina: een
+route kiest met `?ui=lotc` welke weergave hij rendert, en zodra een pagina af is
+verdwijnt die keuze.
 
 Achtergrond en fasering: `plans/naar-het-nieuwe-componentensysteem.md`.
 De samenleefmeting: `docs/lotc-samenleven-met-jinja-roos.md`.
 
 ## Wat het is
 
-- Elke pagina bestaat twee keer. Het origineel op zijn eigen pad, de omgezette versie op
-  `/lotc/pagina/<naam>`. Dat paar is het punt: los zegt een screenshot van de nieuwe
-  versie niets over de vraag of de omzetting klopt.
+- **Echte routes** die hun pagina al door LOTC kunnen renderen: `/services`,
+  `/dashboard`, `/projects` en `/projects/details/<naam>` (met het resourcegebruik-
+  fragment dat htmx apart inlaadt). Zet er `?ui=lotc` achter.
+- Daarnaast een **proefopstelling** onder `/lotc/`, met voorbeeldprojecten. Die is er om
+  vorm te kiezen zonder een cluster nodig te hebben, niet als eindbestemming.
 - De navigatie volgt de opzet van [bg.rijks.app](https://bg.rijks.app/): hoofdnavigatie
   in een zijkolom met groepen, alleen hulplinks (account, in- en uitloggen) in de header.
 - De formulierlaag is te bekijken op `/lotc/formulier`.
 
-**Dit is een POC.** De release gaat voor. LOTC zit daarom in een eigen dependency-group
-en niet in de runtime-dependencies, en alle nieuwe code zit achter een `ImportError`-
-vangnet: in de release-image bestaat de bouwlijn niet.
+**De omzetting gaat pagina voor pagina.** Lord of the Components is een gewone
+runtime-dependency: de applicatie rendert er pagina's mee, dus hij hoort in de image. Een
+route kiest met `?ui=lotc` welke weergave hij rendert; zonder die vlag blijft de
+bestaande pagina onveranderd. Zodra een pagina af is verdwijnt die keuze, en met de
+laatste pagina verdwijnt de schakelaar zelf.
 
 ## Gebruik
 
 ```bash
 cd operations-manager/python
-uv sync --group lotc          # of: uv sync --all-groups
+uv sync
 uv run python scripts/lotc_convert_templates.py     # templates opnieuw omzetten
 uv run pytest tests/test_lotc_conversion.py tests/test_lotc_icon_mapping.py -q
 uv run pytest tests/e2e/test_lotc_visual.py -m "e2e and not sandbox" -q
 ```
 
-De screenshots landen in `tests/e2e/screenshots/lotc/` (die map staat in `.gitignore`).
+De screenshots landen in `tests/e2e/screenshots/lotc/` en staan in de repo: ze zijn het
+resultaat waar de omzetting op beoordeeld wordt, niet een wegwerpartefact.
 
 Draaiende applicatie:
 
@@ -49,7 +55,10 @@ Draaiende applicatie:
 | `opi/templates_lotc/` | de omgezette templates - **gegenereerd**, niet met de hand bewerken |
 | `opi/templates_lotc/base_lotc.html.j2` | de schil in bg-opzet - **wel** met de hand |
 | `opi/templates_lotc/widgets/` | de formulierwidgets - **wel** met de hand |
-| `opi/templates_lotc_zad/` | componenten die ZAD zelf levert zolang LOTC ze niet heeft |
+| `opi/templates_lotc/bg/` | de hertekende pagina's - **wel** met de hand |
+| `opi/templates_lotc/bg/_patterns.html.j2` | gedeelde patronen: `panel()`, `page_head()`, `info()`, `service_card()` |
+| `opi/web/lotc_switch.py` | de schakelaar waarmee een echte route zijn weergave kiest |
+| `opi/web/lotc_fixtures/` | voorbeeldprojecten voor de proefopstelling |
 | `opi/web/navigation_lotc.py` | de indeling van de navigatie en de icoonvertaling |
 | `opi/web/lotc_router.py` | de routes onder `/lotc/` |
 | `opi/forms/widgets/lotc.py` | de widget-adapter die de LOTC-templates rendert |
@@ -105,16 +114,12 @@ renderen uitsluitend via dat pakket.
 
 ### Componenten die wij zelf leveren
 
-Wat LOTC nog niet heeft, staat in `opi/templates_lotc_zad/` en wordt na
-`setup_components` in de registry gemerged onder een **eigen** owner-naam. Twee regels
-houden dat opruimbaar:
+Nu geen. Er stond een eigen `c-secret-field` omdat LOTC die niet had; sinds hun versie er
+is, is die weg. De opruiming was wat we ervan hoopten: het registratieblok weg, het
+template weg, geen paginawijziging - de aanroepvorm was al die van hen.
 
-- de **aanroep** is die van LOTC, zodat templates niet meeveranderen als hun versie komt;
-- de **vormgeving** komt uit NLDD zelf (`nldd-button`, de settings-tokens), niet uit
-  eigen kleuren.
-
-Nu alleen `c-secret-field`. Opruimen is straks: de definitie weghalen en het template
-verwijderen.
+Komt het opnieuw voor, dan is de weg: `merge_fragment` op de registry, plus de eigen
+templatemap op de `searchpath`. Twee regels, en twee regels om weer weg te halen.
 
 ## Testen
 
@@ -123,6 +128,9 @@ verwijderen.
 | `tests/test_lotc_conversion.py` | dat elk template compileert, en dat de lijst uitzonderingen niet groeit |
 | `tests/test_lotc_icon_mapping.py` | dat elke icoonvertaling naar een bestaande NLDD-naam wijst |
 | `tests/e2e/test_lotc_visual.py` | dat pagina's in een browser kloppen, met screenshots |
+| `tests/test_lotc_layout_rules.py` | dat kaarten via `panel()` gebouwd worden en gaps uit de schaal komen |
+| `tests/test_lotc_schrijfwijze.py` | dat teksten de lezer met "je" aanspreken |
+| `tests/test_lotc_switch.py` | dat `?ui=lotc` alleen op die exacte waarde aanslaat |
 
 Compileren is een echte poort en geen telling: LOTC valideert bij het compileren al of
 elk component bestaat en of elk attribuut bij dat component hoort.
@@ -142,17 +150,17 @@ in dezelfde container-image, en een drempel in plaats van een exacte match.
 
 ## Stand en wat er open staat
 
-152 van de 153 templates compileren; 17 van de 20 pagina's renderen zonder paginadata.
+Alle 164 templates compileren. Vier echte routes kunnen hun pagina door LOTC renderen.
 
 | open punt | bij wie |
 |---|---|
-| `c-data-list` onder NLDD (1 aanroep) - blokkeert het laatste template | LOTC |
-| `c-secret-field` - wij draaien een eigen tijdelijke | LOTC |
-| Lege keuzelijst bij `c-option`, `c-checkbox-field` zonder besturingselement - omweg in place | LOTC |
-| 11 iconen zonder NLDD-tegenhanger; een onbekende naam rendert stil leeg | LOTC |
-| `project-details`, `project-form-demo`, `wizard/wizard_page` renderen alleen met echte projectgegevens | ons |
+| De wizard: htmx-stappen, validatie en opslaan hangen eraan | ons |
+| `/admin/*`, `metrics-explorer`, `about` aansluiten | ons |
+| `architecture` - 1509 regels in een blok; verdient een eigen besluit | ons |
+| Iconen: de NLDD-woordenschat telt er 60, de RVO-set die roos meelevert 1163. Voorstel om die als losse implementatiemodule mee te nemen ligt bij LOTC | LOTC |
 
-De laatste rij is geen omzetprobleem: die pagina's compileren, maar de proefopstelling
-heeft geen project. Ze zijn te zien op een draaiende instantie met data. Er is bewust
-geen nepproject voor gemaakt - die context telt twintig sleutels uit services en
-registry, en namaken levert een broos beeld op dat er echt uitziet.
+### Een aandachtspunt voor de bouw
+
+LOTC komt van `git.claude.robbertuittenbroek.nl`. Dat werkt hier, maar een image die in
+een andere omgeving gebouwd wordt moet die host kunnen bereiken. `jinja-roos-components`
+komt van GitHub, dus een git-dependency is niet nieuw; deze host is dat wel.
