@@ -1,0 +1,54 @@
+{#
+  De takenlijst, als los fragment.
+
+  Overname van project-details/section-tasks.html.j2. Het gedrag blijft precies gelijk:
+  de wikkel haalt zichzelf elke vijf seconden opnieuw op zolang hij in de pagina staat, en
+  de Taken-tab ruimt zijn plek op als je hem verlaat - zo polt htmx alleen terwijl je kijkt.
+
+  De tabel was een kale <table> met eigen klassen (backup-table, tasks-table). Nu c-table.
+  Die heeft onder NLDD columns nodig, anders stapelen de cellen; zes kolommen, met de
+  ruimte naar soort en deployment omdat daar de langste teksten in staan.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+
+<div hx-get="/projects/{{ project_name }}/tasks" hx-trigger="every 5s" hx-swap="outerHTML">
+    {% call panel("Taken", "timer") %}
+        {% if not items %}
+            <c-paragraph>Er zijn nog geen taken uitgevoerd voor dit project.</c-paragraph>
+        {% else %}
+            <c-table columns="2fr 2fr 1fr 2fr 1fr 1fr">
+                <c-table-head>
+                    <c-th>Soort</c-th>
+                    <c-th>Deployment</c-th>
+                    <c-th>Status</c-th>
+                    <c-th>Door</c-th>
+                    <c-th>Gestart</c-th>
+                    <c-th>Beeindigd</c-th>
+                </c-table-head>
+                {% for item in items %}
+                    <c-table-row>
+                        <c-td>{{ item.soort }}</c-td>
+                        <c-td>{{ item.deployment or "-" }}</c-td>
+                        <c-td>
+                            <c-stack gap="xs">
+                                <c-tag
+                                    label="{{ item.status }}"
+                                    type="{{ 'success' if item.status in ('Succeeded', 'completed') else 'error' if item.status in ('Failed', 'failed') else 'warning' if item.status in ('Running', 'running') else 'default' }}" />
+                                {# Bij een lopende taak toont de bestaande pagina de stap en
+                                   het percentage eronder. Dat blijft. #}
+                                {% if item.active and item.step %}
+                                    <c-paragraph size="sm">{{ item.step }}{% if item.progress %} ({{ item.progress }}%){% endif %}</c-paragraph>
+                                {% endif %}
+                            </c-stack>
+                        </c-td>
+                        <c-td>{{ item.door or "-" }}</c-td>
+                        {# Dezelfde inkorting als de bestaande pagina: de eerste zestien
+                           tekens van de ISO-tijd, met de T als spatie. #}
+                        <c-td>{{ (item.gestart or "")[:16] | replace("T", " ") }}</c-td>
+                        <c-td>{{ ((item.beeindigd or "")[:16] | replace("T", " ")) if item.beeindigd else "-" }}</c-td>
+                    </c-table-row>
+                {% endfor %}
+            </c-table>
+        {% endif %}
+    {% endcall %}
+</div>

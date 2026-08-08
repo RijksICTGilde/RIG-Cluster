@@ -13,7 +13,6 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import requires_sso
-from opi.core.templates import get_templates
 from opi.services.runs_service import get_runs_service
 from opi.web.router_detail_edit import _require_project_member_access
 
@@ -122,7 +121,13 @@ async def project_tasks(request: Request, project_name: str) -> HTMLResponse:
     items.sort(key=lambda i: i.get("gestart") or "", reverse=True)
     items = items[:100]
 
-    return get_templates().TemplateResponse(
-        "project-details/section-tasks.html.j2",
-        {"request": request, "project_name": project_name, "items": items},
+    # Het fragment volgt dezelfde keuze als de pagina eromheen; anders verschijnt er na
+    # de eerste poll roos-markup in een NLDD-pagina.
+    from opi.web.lotc_switch import render
+
+    return render(
+        request,
+        roos="project-details/section-tasks.html.j2",
+        lotc="bg/_tasks.html.j2",
+        context={"request": request, "project_name": project_name, "items": items},
     )
