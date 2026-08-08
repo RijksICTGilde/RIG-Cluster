@@ -8,6 +8,13 @@
 #}
 {% from "widgets/_macros.html.j2" import combined_helper, description_text, render_examples %}
 {{ description_text(field) }}
+{# De gekozen waarde gaat via de attribuutbundel en niet via :value. c-select-field
+   heeft wel een value-attribuut, maar dat komt onder NLDD niet op de <nldd-combo-box>
+   terecht, waardoor de lijst dichtgeklapt leeg lijkt terwijl de juiste optie wel als
+   selected in de DOM staat. Gemeld bij het LOTC-project; via de bundel landt het wel.
+
+   En let op: een Jinja-commentaar hoort BOVEN de tag, niet erin. De voorbewerker leest
+   de woorden binnen een componenttag als attribuutnamen. #}
 <c-select-field
     id="{{ field.path|e }}"
     name="{{ field.path|e }}"
@@ -15,16 +22,13 @@
     :help="combined_helper(field)|trim or none"
     :required="field.required"
     :disabled="field.readonly"
-    :value="value_str or none"
     :error="(field.errors[0] if field.errors else none)"
-    :attrs="field_attrs(field)"
+    :attrs="dict(field_attrs(field), **{'value': value_str or none})"
 >
-    {# Bewust kale <option>-elementen en geen <c-option>. c-option rendert onder NLDD
-       een <nldd-menu-item>, en c-select-field zet zijn kinderen in een native <select>.
-       Een browser gooit alles weg wat binnen een <select> geen <option> is, dus de lijst
-       kwam leeg te staan - zichtbaar op een screenshot, onzichtbaar in de HTML. Gemeld
-       bij het LOTC-project. #}
     {% for option in field.options or [] %}
-        <option value="{{ option.value|e }}"{% if option.value|string == value_str %} selected{% endif %}>{{ option.label|e }}</option>
+        <c-option
+            value="{{ option.value|e }}"
+            label="{{ option.label|e }}"
+            :selected="option.value|string == value_str" />
     {% endfor %}
 </c-select-field>{{ render_examples(field) }}
