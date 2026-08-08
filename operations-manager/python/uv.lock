@@ -1045,6 +1045,43 @@ wheels = [
 ]
 
 [[package]]
+name = "lord-of-the-components"
+version = "0.1.0"
+source = { git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=python&rev=26ab110abc64f65d62c0b48b95a28fe49ceec2a8#26ab110abc64f65d62c0b48b95a28fe49ceec2a8" }
+dependencies = [
+    { name = "jinja2" },
+]
+
+[[package]]
+name = "lotc-forms"
+version = "0.1.0"
+source = { git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-forms&rev=26ab110abc64f65d62c0b48b95a28fe49ceec2a8#26ab110abc64f65d62c0b48b95a28fe49ceec2a8" }
+
+[[package]]
+name = "lotc-layout"
+version = "0.1.0"
+source = { git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-layout&rev=26ab110abc64f65d62c0b48b95a28fe49ceec2a8#26ab110abc64f65d62c0b48b95a28fe49ceec2a8" }
+dependencies = [
+    { name = "lord-of-the-components" },
+]
+
+[[package]]
+name = "lotc-nldd"
+version = "0.1.0"
+source = { git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-nldd&rev=26ab110abc64f65d62c0b48b95a28fe49ceec2a8#26ab110abc64f65d62c0b48b95a28fe49ceec2a8" }
+dependencies = [
+    { name = "lord-of-the-components" },
+]
+
+[[package]]
+name = "lotc-rvo"
+version = "0.1.0"
+source = { git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-rvo&rev=26ab110abc64f65d62c0b48b95a28fe49ceec2a8#26ab110abc64f65d62c0b48b95a28fe49ceec2a8" }
+dependencies = [
+    { name = "lord-of-the-components" },
+]
+
+[[package]]
 name = "lxml"
 version = "6.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2787,6 +2824,13 @@ dev = [
     { name = "ruff" },
     { name = "setuptools" },
 ]
+lotc = [
+    { name = "lord-of-the-components" },
+    { name = "lotc-forms" },
+    { name = "lotc-layout" },
+    { name = "lotc-nldd" },
+    { name = "lotc-rvo" },
+]
 test = [
     { name = "coverage" },
     { name = "freezegun" },
@@ -2863,6 +2907,13 @@ dev = [
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "ruff", specifier = ">=0.11.11" },
     { name = "setuptools", specifier = ">=80.8.0" },
+]
+lotc = [
+    { name = "lord-of-the-components", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=python&rev=26ab110abc64f65d62c0b48b95a28fe49ceec2a8" },
+    { name = "lotc-forms", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-forms&rev=26ab110abc64f65d62c0b48b95a28fe49ceec2a8" },
+    { name = "lotc-layout", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-layout&rev=26ab110abc64f65d62c0b48b95a28fe49ceec2a8" },
+    { name = "lotc-nldd", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-nldd&rev=26ab110abc64f65d62c0b48b95a28fe49ceec2a8" },
+    { name = "lotc-rvo", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-rvo&rev=26ab110abc64f65d62c0b48b95a28fe49ceec2a8" },
 ]
 test = [
     { name = "coverage", specifier = ">=7.8.2" },

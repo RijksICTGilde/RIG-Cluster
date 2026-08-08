@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import jinja_roos_components
 from authlib.integrations.starlette_client import OAuth  # type: ignore
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -510,6 +510,28 @@ def create_app() -> FastAPI:
         logger.warning(f"jinja-roos-components not available: {e}")
     except Exception as e:
         logger.error(f"Error mounting ROOS static files: {e}")
+
+    # LOTC-assets voor de POC-bouwlijn. Bewust een ImportError-vangnet: Lord of the
+    # Components zit in de dependency-group "lotc" en NIET in de runtime-dependencies,
+    # dus in de release-image is dit pakket er niet en slaat deze route stil over.
+    # De assets liggen verspreid over meerdere geinstalleerde pakketten (kern plus elk
+    # design system), vandaar een route met meerdere wortels in plaats van een mount.
+    try:
+        from opi.core.templates_lotc import resolve_lotc_static
+        from opi.web.lotc_router import router as lotc_web_router
+
+        app.include_router(lotc_web_router, include_in_schema=False)
+
+        @app.get("/static/lotc/{rel:path}", include_in_schema=False)
+        async def lotc_static(rel: str) -> FileResponse:
+            resolved = resolve_lotc_static(rel)
+            if resolved is None:
+                raise HTTPException(status_code=404, detail="Static asset not found")
+            return FileResponse(resolved)
+
+        logger.info("LOTC static files served at /static/lotc/")
+    except ImportError as e:
+        logger.info(f"lord-of-the-components not installed, LOTC build line disabled: {e}")
 
     # Mount regular static files last (more general path)
     static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
