@@ -28,6 +28,13 @@ TEMPLATES_LOTC_DIR = Path(__file__).parent.parent / "opi" / "templates_lotc"
 # Templates die nog niet compileren omdat ze Jinja-expressies op attribuutpositie
 # gebruiken. Bijna allemaal de formulierlaag; zie de moduledocstring.
 KNOWN_UNCONVERTED = {
+    # Deze valt om een andere reden: hij gebruikt c-data-list, en NLDD implementeert dat
+    # niet. Eerder beeldde de omzetter dat af op c-detail-list omdat DIE wel rendert,
+    # maar het LOTC-project wees erop dat het twee verschillende dingen zijn: data-list
+    # is een definitielijst (<dl>), detail-list een rijkere lijst met een eigen
+    # structuur. Een pagina die rendert maar iets anders toont is erger dan een pagina
+    # die niet rendert, dus die afbeelding is teruggedraaid. Een aanroep in totaal.
+    "roos-form-improved.html.j2",
     "invite-register.html.j2",
     "widgets/checkbox.html.j2",
     "widgets/checkbox_group.html.j2",

@@ -81,15 +81,15 @@ test = [
 # dependency - de release-image bouwt uit [project.dependencies] en verandert hier
 # niet van. Installeer met: uv sync --group lotc
 #
-# Gepind op commit 26ab110 van de v7-branch. Die pin is de reden dat dit veilig is:
+# Gepind op commit 05c01ac van de v7-branch. Die pin is de reden dat dit veilig is:
 # de NLDD-afgeleide componentlaag schuift met een bump mee, en 1263 aanroepen mogen
 # niet stil van vorm veranderen.
 lotc = [
-    "lord-of-the-components @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@26ab110abc64f65d62c0b48b95a28fe49ceec2a8#subdirectory=python",
-    "lotc-rvo @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@26ab110abc64f65d62c0b48b95a28fe49ceec2a8#subdirectory=packages/lotc-rvo",
-    "lotc-nldd @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@26ab110abc64f65d62c0b48b95a28fe49ceec2a8#subdirectory=packages/lotc-nldd",
-    "lotc-layout @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@26ab110abc64f65d62c0b48b95a28fe49ceec2a8#subdirectory=packages/lotc-layout",
-    "lotc-forms @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@26ab110abc64f65d62c0b48b95a28fe49ceec2a8#subdirectory=packages/lotc-forms",
+    "lord-of-the-components @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@05c01ac#subdirectory=python",
+    "lotc-rvo @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@05c01ac#subdirectory=packages/lotc-rvo",
+    "lotc-nldd @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@05c01ac#subdirectory=packages/lotc-nldd",
+    "lotc-layout @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@05c01ac#subdirectory=packages/lotc-layout",
+    "lotc-forms @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@05c01ac#subdirectory=packages/lotc-forms",
 ]
 dev = [
     "ruff>=0.11.11",
