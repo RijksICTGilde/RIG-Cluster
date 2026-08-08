@@ -124,6 +124,33 @@
             {% endblock %}
         </c-stack>
 
+        {# De voettekst stond er niet, en daarmee waren "Over het platform", de
+           architectuurpagina, de API-referentie en de versievermelding op ELKE pagina
+           onbereikbaar - vier bestemmingen die de bestaande schil wel heeft. Dit is
+           dezelfde inhoud als in base.html.j2; de vorm volgt het thema. #}
+        {% set vi = version_info() %}
+        {% set version_label = 'ZAD ' + vi.version
+            + (' @ ' + vi.branch if vi.branch else '')
+            + (' *' if vi.dirty else '')
+            + (' (' + vi.build_date + ')' if vi.build_date else '') %}
+        {% set commit_ref = vi.commit if vi.commit else (vi.version if vi.version != '0.1.0' else '') %}
+        <c-footer>
+            <c-menu aria-label="Over het platform">
+                <c-menu-item label="Over het platform" href="/about" />
+                <c-menu-item label="Architectuur" href="/architecture" />
+                <c-menu-item label="API Referentie" href="/api" />
+            </c-menu>
+            <c-menu aria-label="Versie">
+                {% if commit_ref %}
+                    <c-menu-item
+                        label="{{ version_label }}"
+                        href="https://github.com/RijksICTGilde/RIG-Cluster/commit/{{ commit_ref }}" />
+                {% else %}
+                    <c-menu-item label="{{ version_label }}" />
+                {% endif %}
+            </c-menu>
+        </c-footer>
+
         {% block additional_styles %}{% endblock %}
         {% block additional_scripts %}{% endblock %}
 
