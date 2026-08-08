@@ -111,14 +111,19 @@ def resolve_lotc_static(rel: str) -> Path | None:
     return None
 
 
-def process_components_lotc(html: str) -> markupsafe.Markup:
+def process_components_lotc(html: object) -> markupsafe.Markup:
     """Render componenttags in HTML die pas tijdens de aanvraag ontstaat.
 
     De voorbewerker van de extensie draait alleen bij het compileren van een template,
     dus een string die tijdens de aanvraag wordt samengesteld (bijvoorbeeld formulier-
     HTML uit de editables) moet er alsnog langs.
+
+    De waarde wordt eerst naar tekst gebracht. Dat is niet voor de vorm: een template
+    dat dit filter op een niet-gezette variabele toepast levert een Undefined, en die
+    rechtstreeks aan from_string geven geeft een TypeError uit de Jinja-compiler in
+    plaats van de lege uitvoer die overal elders de gewoonte is.
     """
-    rendered = templates_lotc.env.from_string(html).render()
+    rendered = templates_lotc.env.from_string(str(html)).render()
     return markupsafe.Markup(rendered)  # noqa: S704
 
 

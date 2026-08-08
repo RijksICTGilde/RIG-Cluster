@@ -1,0 +1,29 @@
+{#
+  De omgezette formulierlaag, om naar te kijken.
+
+  Dit is geen pagina uit de applicatie maar een galerij: elk veldtype dat we kennen,
+  plus de standen die bij de omzetting konden sneuvelen (hulptekst, foutmelding,
+  uitgeschakeld, htmx). De velden zijn echte FormField-objecten en geen nagemaakt
+  project - zie opi/web/lotc_form_preview.py voor waarom dat verschil telt.
+#}
+{% extends "base_lotc.html.j2" %}
+
+{% block page_title %}Formulierlaag - LOTC-bouwlijn{% endblock %}
+
+{% block content %}
+<c-layout-flow gap="lg">
+    <c-heading type="h1" size="2" label="De formulierlaag, omgezet" />
+    <c-paragraph>
+        Elk veldtype dat de applicatie kent, gerenderd door lotc-forms onder NLDD.
+        Voorbeeldvelden, geen bestaand project.
+    </c-paragraph>
+
+    <c-fieldset legend="Velden">
+        <c-layout-flow gap="md">
+            {% for html in rendered_fields %}
+                {{ html | safe }}
+            {% endfor %}
+        </c-layout-flow>
+    </c-fieldset>
+</c-layout-flow>
+{% endblock %}
