@@ -1,42 +1,79 @@
 {#
-  Dienstenoverzicht, herontworpen in bg-vorm.
+  Dienstenoverzicht, hertekend in bg-vorm.
 
   De vertaalde versie toont dienstkaarten met onze eigen service-card-klassen uit
   wizard.css. Hier zijn dat c-catalog-card's: dezelfde bedoeling, maar de vormgeving komt
   uit het thema in plaats van uit onze stylesheet. Dat is precies de winst die het
   componentenplan van een omzetting verwacht - eigen CSS die verdwijnt.
 
-  De diensten komen uit de voorbeeldprojecten, dus wat hier staat is wat die projecten
-  werkelijk afnemen en geen aparte lijst die ernaast kan gaan lopen.
+  KLEUR PER DIENST
+
+  De kleur per dienst blijft, want die helpt herkennen: mensen onthouden "de groene"
+  sneller dan een naam. Twee soorten kleur, en het verschil is belangrijk:
+
+    - c-icon color="..." kleurt het icoon zelf. NLDD neemt onze eigen ROOS-kleurnamen
+      (hemelblauw, groen) ongewijzigd over.
+    - c-tag type="..." en c-catalog-card status-type="..." zijn SEMANTISCH: default,
+      info, success, warning, error. Die horen bij een betekenis (beschikbaar, storing)
+      en niet bij een merk. Gebruik ze niet om een dienst te kleuren, anders betekent
+      groen op de ene plek "PostgreSQL" en op de andere "alles in orde".
+
+  INFO-ICONEN
+
+  Elke dienst draagt uitleg, want juist hier lopen mensen vast: de namen zeggen niets als
+  je ze nog niet kent. Wij hebben dit al met een vraagteken en een eigen hulpmodal; hier
+  komt het uit het thema.
 #}
 {% extends "base_lotc.html.j2" %}
-{% from "bg/_patronen.html.j2" import panel, page_head %}
+{% from "bg/_patterns.html.j2" import panel, page_head, info %}
 
 {% block page_title %}Diensten - Self Service Portal{% endblock %}
 
 {% block content %}
-    {{ page_head("Diensten", "Platformdiensten die projecten kunnen afnemen.") }}
+    {{ page_head("Diensten", "Platformdiensten die je project kan afnemen. Het platform levert en beheert ze.") }}
 
-    {% set service_use = {} %}
-    {% for project in projects %}
-        {% for service in project.services %}
-            {% if service_use.update({service: service_use.get(service, []) + [project.display_name]}) %}{% endif %}
-        {% endfor %}
-    {% endfor %}
-
-    <c-auto-grid min="300px" gap="md">
-        {% for service, users in service_use | dictsort %}
+    <c-auto-grid min="320px" gap="md">
+        {% for service in services %}
             <c-catalog-card
-                title="{{ service }}"
-                subtitle="Afgenomen door {{ users | length }} project{{ 's' if users | length != 1 else '' }}"
-                icon="cylinder-split">
-                {# c-cluster: breekt af als er meer chips zijn dan op een regel passen. #}
-                <c-cluster gap="sm">
-                    {% for user in users %}
-                        <c-chip>{{ user }}</c-chip>
-                    {% endfor %}
-                </c-cluster>
+                title="{{ service.label }}"
+                subtitle="{{ service.summary }}"
+                status="{{ service.status_label }}"
+                status-type="{{ service.status_type }}">
+                <c-stack gap="sm">
+                    <c-cluster gap="sm" align="center">
+                        <c-icon icon="{{ service.icon }}" color="{{ service.color }}" size="lg" />
+                        {{ info(service.help) }}
+                    </c-cluster>
+                    <c-detail-list>
+                        <c-detail-item
+                            label="Afgenomen door"
+                            value="{{ service.used_by | length }} project{{ 'en' if service.used_by | length != 1 else '' }}" />
+                    </c-detail-list>
+                    {% if service.used_by %}
+                        <c-cluster gap="sm">
+                            {% for project in service.used_by %}
+                                <c-chip>{{ project }}</c-chip>
+                            {% endfor %}
+                        </c-cluster>
+                    {% endif %}
+                </c-stack>
             </c-catalog-card>
         {% endfor %}
     </c-auto-grid>
+
+    {% call panel("Over kleur", "info-circle", info_text="Merkkleur helpt een dienst herkennen; semantische kleur zegt hoe het ermee gaat. Door elkaar halen maakt allebei onbetrouwbaar.") %}
+        <c-paragraph>
+            De gekleurde iconen hierboven zijn merkkleuren: ze helpen een dienst herkennen.
+            Het label rechtsboven op elke kaart is semantisch en zegt hoe het met de dienst
+            gaat. Die twee blijven gescheiden, anders betekent groen op de ene plek een
+            dienst en op de andere plek "in orde".
+        </c-paragraph>
+        <c-cluster gap="sm">
+            <c-tag type="success" label="beschikbaar" />
+            <c-tag type="warning" label="beperkt" />
+            <c-tag type="error" label="storing" />
+            <c-tag type="info" label="nieuw" />
+            <c-tag type="default" label="standaard" />
+        </c-cluster>
+    {% endcall %}
 {% endblock %}

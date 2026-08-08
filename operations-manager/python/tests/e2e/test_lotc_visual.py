@@ -286,3 +286,35 @@ def test_open_modal_screenshot(app_server: str, page: Page) -> None:
     expect(page.get_by_role("button", name="Verwijderen")).to_be_visible()
 
     page.screenshot(path=f"{SCREENSHOT_DIR}/bg-modal-open.png", animations="disabled")
+
+
+# De tabbladen van de projectpagina. Elk is een eigen URL, dus elk is apart te toetsen -
+# en dat hoort ook, want een tab die niemand opent is precies waar een fout blijft zitten.
+PROJECT_TABS = ["overzicht", "componenten", "deployments", "diensten", "team", "instellingen"]
+
+
+@pytest.mark.parametrize("tab", PROJECT_TABS)
+def test_project_tab_screenshot(app_server: str, page: Page, tab: str) -> None:
+    """Elk tabblad rendert, en het juiste tabblad staat actief."""
+    page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
+    response = page.goto(f"{app_server}/lotc/bg/project-tabs?tab={tab}")
+    assert response is not None
+    assert response.ok
+
+    _wait_for_nldd(page)
+
+    unimplemented = page.locator(".lotc-unimplemented")
+    assert unimplemented.count() == 0, (
+        f"tabblad {tab} bevat niet-geimplementeerde componenten: "
+        f"{unimplemented.evaluate_all('els => els.map(e => e.dataset.lotcComponent)')}"
+    )
+
+    page.screenshot(path=f"{SCREENSHOT_DIR}/bg-tab-{tab}.png", full_page=True, animations="disabled")
+
+
+def test_unknown_tab_falls_back(app_server: str, page: Page) -> None:
+    """Een verkeerd gedeelde link toont de pagina in plaats van stuk te gaan."""
+    response = page.goto(f"{app_server}/lotc/bg/project-tabs?tab=bestaatniet")
+    assert response is not None
+    assert response.ok
+    expect(page.get_by_text("Wat is dit project")).to_be_visible()
