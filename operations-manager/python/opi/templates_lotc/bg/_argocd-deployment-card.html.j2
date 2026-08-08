@@ -1,0 +1,228 @@
+{#
+  De ArgoCD-status van EEN deployment, als los fragment.
+
+  Overname van project-details/_argocd-deployment-card.html.j2. De hele bovenbouw - welke
+  variabelen er zijn, wanneer een badge de gezondheid VERVANGT, wanneer de kaart uberhaupt
+  ArgoCD-badges mag tonen - is letterlijk overgenomen, want daar zitten de besluiten van
+  RC-31 en RC-35 in en die gaan niet over vormgeving.
+
+  Verwacht dezelfde context als het bestaande fragment:
+    - deployment, project, current_cluster
+    - argocd_status: naam -> status
+    - deployment_states: naam -> DeploymentState
+    - optioneel _argocd_card_id_prefix
+
+  WAT ER ANDERS IS, en waarom
+
+  - De badges waren <span class="argo-badge argo-badge--degraded"> met een eigen kleurenset
+    in project-details.css. Nu <c-tag>: dezelfde vier verdicten, maar de kleur komt uit het
+    thema en de tekst blijft de tekst - een schermlezer las de klasse toch al niet.
+  - De uitklapbare foutenlijst was een <button onclick="toggleArgoErrors(...)"> plus een
+    paneel dat die functie zichtbaar maakte. Nu <c-accordion>: dat is een <details>, dus hij
+    werkt zonder JavaScript en zonder dat deze pagina een functie hoeft mee te brengen. De
+    id op de wikkel blijft staan, zodat wie hem aanlinkt niets merkt.
+  - De knop "View Logs" is er NIET. Die roept openLogViewer() aan, en dat is een paneel dat
+    in project-details.html.j2 staat, met een eigen WebSocket-bedrading en eigen CSS. De
+    LOTC-schil heeft dat paneel niet; een knop die niets doet is erger dan geen knop. Zodra
+    de logviewer meeverhuist hoort hij hier terug - zie het rapport bij deze omzetting.
+  - "Geen actieve deployment" en "draait op een ander cluster" stonden in een grijs kaartje
+    met een info-icoon. Dat is precies een <c-alert type="info">, en dat scheelt een kaart
+    in een kaart.
+#}
+{% set status = argocd_status.get(deployment.name, {}) %}
+{% set health = status.get('health', 'Unknown') %}
+{% set sync = status.get('sync', 'Unknown') %}
+{% set errors = status.get('errors', []) %}
+{% set has_errors = errors|length > 0 %}
+{% set _id_prefix = _argocd_card_id_prefix | default(deployment.name) %}
+{# Componenten die door de OOM-/image-pull-waker of de sanitize-stap op nul replicas zijn
+   gezet. De vlag staat per deployment-component in het projectbestand (comp.disabled +
+   comp.disabled-reason) en draagt de reden die de meldingen hieronder tonen. #}
+{% set disabled_components = deployment.components | selectattr('disabled') | list if deployment.components else [] %}
+{# Of deze kaart de ArgoCD-badges uberhaupt mag tonen. Vooraf berekend, want de chip in de
+   kop hoeft alleen te verschijnen als de badgerij dat niet doet (RC-31): anders staat
+   hetzelfde woord twee keer op een kaart. #}
+{% set has_image = deployment.components | selectattr('image', 'defined') | selectattr('image') | list | length > 0 if deployment.components else false %}
+{% set shows_argocd_status = has_image and deployment.cluster == current_cluster %}
+{# Wat de diensten over deze deployment melden (RC-35). De kaart noemt geen enkele dienst:
+   hij leest de badges die de feiten dragen, dus uitgeschakeld, slapend, en wat een
+   deployment hierna ook parkeert komen op dezelfde manier binnen. #}
+{% set deployment_state = (deployment_states | default({})).get(deployment.name) %}
+{% set state_badges = deployment_state.replacing_badges if deployment_state else [] %}
+{% set accompanying_badges = deployment_state.accompanying_badges if deployment_state else [] %}
+{% set expects_no_pods = deployment_state.expects_no_application_pods if deployment_state else false %}
+{# Een statusbadge neemt de plaats in van precies een verdict: de groene Healthy die nul
+   replicas oplevert. Elk ander verdict - Degraded, Progressing, Unknown - is iets dat ArgoCD
+   echt heeft waargenomen en houdt zijn badge, anders verbergt het uitzetten van een
+   component een echte storing. #}
+{% set state_replaces_health = state_badges and health == 'Healthy' %}
+
+<c-card outline padding="lg">
+    <c-stack gap="md">
+        {# De kop van de kaart: naam, cluster en de chips die naast het verdict staan. #}
+        <c-cluster gap="sm" align="center">
+            <c-icon icon="rectangle-stack" size="md" />
+            <c-heading type="h4" size="5" label="{{ deployment.name }}" />
+            <c-tag type="default" label="{{ deployment.cluster }}" />
+            {# Een badge die het verdict NIET vervangt hoort hier: er wordt nog verkeer
+               afgehandeld, dus de gezondheidsbadge blijft en dit zegt wat er daarnaast waar
+               is. Een vervangende badge hoeft hier alleen een chip als er geen badgerij
+               onder staat om hem te dragen. #}
+            {% for badge in accompanying_badges %}
+                <c-tag type="info" label="{{ badge }}" />
+            {% endfor %}
+            {% if not shows_argocd_status %}
+                {% for badge in state_badges %}
+                    <c-tag type="info" label="{{ badge }}" />
+                {% endfor %}
+            {% endif %}
+        </c-cluster>
+
+        {# Automatisch uitgeschakelde componenten: een foutmelding per component. De volledige
+           technische reden (een lange ImagePullBackOff-dump) zit in een uitklapper, zodat de
+           melding leesbaar blijft; de image-verwijzing is het stuk waar je iets mee kunt. #}
+        {% for comp in disabled_components %}
+            {% set reason = comp['disabled-reason'] | default('') %}
+            {% set is_image = 'ImagePull' in reason or 'InvalidImageName' in reason or 'manifest' in reason %}
+            {# De kop van de melding buiten de tag samenstellen: een voorwaarde binnen een
+               componenttag wordt als attribuutnaam gelezen. #}
+            {% set disabled_heading = comp.reference ~ ' is uitgeschakeld' ~ (': image ontbreekt' if is_image else '') %}
+            <c-alert type="error" heading="{{ disabled_heading }}">
+                <c-stack gap="sm">
+                    {% if comp.image %}
+                        <c-paragraph size="sm">De container image kon niet worden opgehaald:</c-paragraph>
+                        <c-code>{{ comp.image }}</c-code>
+                    {% endif %}
+                    <c-paragraph size="sm">Push een geldige image of deploy opnieuw met een bestaande tag om automatisch te heractiveren.</c-paragraph>
+                    {% if reason %}
+                        <c-accordion>
+                            <c-accordion-item title="Technische details">
+                                <c-paragraph size="sm">{{ reason }}</c-paragraph>
+                            </c-accordion-item>
+                        </c-accordion>
+                    {% endif %}
+                </c-stack>
+            </c-alert>
+        {% endfor %}
+
+        {% if not has_image %}
+            {# Geen enkel component heeft een image - deze deployment heeft geen resources. #}
+            <c-alert type="info" heading="Geen actieve deployment - geen container image geconfigureerd.">
+                Configureer een container image voor een component om deze deployment te activeren.
+            </c-alert>
+        {% elif deployment.cluster != current_cluster %}
+            {# De deployment draait op een ander cluster. #}
+            <c-alert type="info" heading="Deze deployment draait op cluster {{ deployment.cluster }}.">
+                ArgoCD-status is alleen beschikbaar vanaf de Operations Manager van dat cluster.
+            </c-alert>
+        {% else %}
+            {# De deployment draait op dit cluster - toon de ArgoCD-status. #}
+            <c-cluster gap="sm" align="center">
+                {# Statusbadges (RC-31, generiek sinds RC-35). Een deployment die uit staat of
+                   slaapt heeft nul replicas en ArgoCD noemt dat Healthy; die groene badge is
+                   de zin die je leest om te weten of het goed gaat, en hij was onwaar. Deze
+                   neemt zijn plaats in - maar alleen als de gezondheid niets anders te melden
+                   heeft: uit EN degraded toont allebei, anders verbergt het uitzetten van iets
+                   een echte storing. #}
+                {% for badge in state_badges %}
+                    <c-tag type="info" label="{{ badge }}" />
+                {% endfor %}
+
+                {% if not state_replaces_health %}
+                    <c-tag
+                        type="{{ 'success' if health == 'Healthy' else 'warning' if health == 'Progressing' else 'error' }}"
+                        label="{{ health }}" />
+                {% endif %}
+
+                {# De sync-badge. Unknown betekent dat ArgoCD gewenste en werkelijke staat niet
+                   kan vergelijken (vaak een render- of CMP-fout) - rood dus, niet neutraal
+                   grijs, anders leest het als "nog mee bezig". #}
+                <c-tag
+                    type="{{ 'success' if sync == 'Synced' else 'warning' if sync == 'OutOfSync' else 'error' if sync == 'Unknown' else 'default' }}"
+                    label="{{ sync }}" />
+
+                {% if status.get('revision') %}
+                    <c-tag type="default" label="{{ status.revision }}" />
+                {% endif %}
+            </c-cluster>
+
+            {% if status.get('last_sync') %}
+                <c-cluster gap="xs" align="center">
+                    <c-icon icon="timer" size="sm" />
+                    <c-paragraph size="sm">Laatste sync: {{ status.last_sync | dutch_date }}</c-paragraph>
+                </c-cluster>
+            {% endif %}
+
+            {# Hier stond de knop "View Logs", en alleen zolang er iets draaide: een slapende
+               of uitgeschakelde deployment heeft geen pods en dus geen logs, en dan suggereert
+               de knop iets dat er niet is. Die vlag heet expects_no_pods en komt uit dezelfde
+               dienstfeiten als de badges. Hij staat hierboven nog steeds klaar, zodat de knop
+               terug kan zodra het logpaneel meeverhuist - zie de kop van dit bestand. #}
+
+            {% if status.get('operation_phase') and status.operation_phase not in ['Succeeded', None] %}
+                {% set operation_line = 'Operatie: ' ~ status.operation_phase %}
+                <c-alert type="{{ 'warning' if status.operation_phase == 'Running' else 'error' }}" heading="{{ operation_line }}">
+                    {% if status.get('operation_message') %}
+                        {{ status.operation_message[:100] }}{% if status.operation_message|length > 100 %}...{% endif %}
+                    {% endif %}
+                </c-alert>
+            {% endif %}
+
+            {% if has_errors %}
+                {% set real_errors = errors | rejectattr('orphaned') | list %}
+                {% set orphan_errors = errors | selectattr('orphaned') | list %}
+                {% if real_errors %}
+                    {% set errors_title = real_errors|length ~ (' probleem gevonden' if real_errors|length == 1 else ' problemen gevonden') %}
+                    <div id="argocd-errors-{{ _id_prefix }}">
+                        <c-accordion>
+                            <c-accordion-item title="{{ errors_title }}">
+                                <c-stack gap="md">
+                                    {% for error in real_errors %}
+                                        <c-stack gap="xs">
+                                            <c-cluster gap="xs" align="center">
+                                                {% if error.get('severity') == 'informational' %}
+                                                    <c-icon icon="info-circle" size="sm" />
+                                                {% else %}
+                                                    <c-icon icon="exclamation-triangle" size="sm" />
+                                                {% endif %}
+                                                <c-code>{{ error.resource }}</c-code>
+                                                {% if error.get('count') and error.count|int > 1 %}
+                                                    <c-paragraph size="sm">({{ error.count }}x)</c-paragraph>
+                                                {% endif %}
+                                            </c-cluster>
+                                            <c-paragraph size="sm">{{ error.message }}</c-paragraph>
+                                            {% if error.get('suggestion') %}
+                                                <c-paragraph size="sm">{{ error.suggestion }}</c-paragraph>
+                                            {% endif %}
+                                            {% if error.get('original_message') %}
+                                                <c-accordion>
+                                                    <c-accordion-item title="Origineel bericht">
+                                                        <c-paragraph size="sm">{{ error.original_message }}</c-paragraph>
+                                                    </c-accordion-item>
+                                                </c-accordion>
+                                            {% endif %}
+                                            {% if error.get('age') %}
+                                                <c-paragraph size="sm">{{ error.age }}</c-paragraph>
+                                            {% endif %}
+                                        </c-stack>
+                                    {% endfor %}
+                                </c-stack>
+                            </c-accordion-item>
+                        </c-accordion>
+                    </div>
+                {% endif %}
+                {% if orphan_errors %}
+                    <c-stack gap="xs">
+                        <c-cluster gap="xs" align="center">
+                            <c-icon icon="info-circle" size="sm" />
+                            <c-paragraph size="sm">{{ orphan_errors|length }} {% if orphan_errors|length == 1 %}melding{% else %}meldingen{% endif %} van verwijderde componenten - opruiming nog niet voltooid</c-paragraph>
+                        </c-cluster>
+                        {% for error in orphan_errors %}
+                            <c-paragraph size="sm">{{ error.resource }}: {{ error.message }}{% if error.get('age') %} ({{ error.age }}){% endif %}</c-paragraph>
+                        {% endfor %}
+                    </c-stack>
+                {% endif %}
+            {% endif %}
+        {% endif %}
+    </c-stack>
+</c-card>
