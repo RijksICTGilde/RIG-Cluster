@@ -155,6 +155,18 @@ def test_post_without_csrf_token_is_rejected(app_server: str, auth_page: Page) -
     all the rendering work is theatre. Done via page.evaluate so the fetch
     runs inside the browser context and inherits the session cookie that
     auth_page already established.
+
+    NOTE FOR ANYONE READING A FAILING E2E RUN. This test is the reason the run
+    log contains
+
+        WARNING opi.utils.csrf: CSRF check failed: token missing on
+        POST /forms/wizard/create-project/step/identity
+
+    exactly once. That line is this assertion succeeding, not a symptom: no
+    other local test posts to that path without a token, and ``log_cli`` prints
+    it live, so in a shuffled run it sits next to whichever test happens to run
+    around it. Do not chase it when something else goes red -- confirm which
+    test's live-log block it falls in first.
     """
     auth_page.goto(app_server)
 
