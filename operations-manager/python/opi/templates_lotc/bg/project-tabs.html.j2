@@ -1,33 +1,30 @@
 {#
-  De projectpagina, opgedeeld in TABS. Dit is de gekozen richting.
+  De projectpagina in tabs. Dit is de gekozen richting; het alternatief (de zijkolom laten
+  meewisselen met het project) staat geparkeerd in project-context.html.j2.
 
-  Het alternatief (de zijkolom laten meewisselen met het project) staat geparkeerd in
-  project-context.html.j2, met in dat bestand waarom het geparkeerd is.
+  DE INDELING VOLGT DE BESTAANDE PAGINA
 
-  DRIE KEUZES DIE UITLEG VERDIENEN
+  Niet zelf bedacht. De huidige projectdetailpagina heeft al tabs - Project, Deployments,
+  Taken - en die verdeling is er niet zomaar: hij scheidt "wat is dit project", "waar
+  draait het" en "wat is er aan de hand". Die drie blijven dus staan, met dezelfde secties
+  eronder.
 
-  1. De tabs zijn ECHTE LINKS, elk met een eigen URL (?tab=componenten). Ze wisselen dus
-     niet in de browser maar op de server. Dat is geen omweg: het betekent dat een tab
-     deelbaar is, dat de terugknop werkt, en dat de pagina het zonder JavaScript doet.
-     Bij client-side tabs staat alles al in de HTML, en dan heb je de pagina wel
-     opgedeeld voor het oog maar niet voor de laadtijd.
+  Er komt er een bij: METRICS. Het resourcegebruik zat op de projecttab tussen de
+  tekstblokken, terwijl het het enige is dat je periodiek komt bekijken. Als eigen tab is
+  het te vinden, en er is ruimte om er meer te tonen dan twee balkjes.
 
-  2. REPOSITORIES IS WEG. Die stond op de oude pagina omdat hij in het projectbestand
-     staat, niet omdat iemand hem nodig heeft. Een tab die niemand opent maakt de andere
-     moeilijker te vinden.
+  Repositories is eruit. Die stond op de oude pagina omdat hij in het projectbestand
+  staat, niet omdat iemand hem nodig heeft.
 
-  3. OVERAL INFO-ICONEN. De terugkerende klacht is dat mensen dingen niet kunnen vinden.
-     Uitleg helpt daar alleen tegen als hij staat waar de vraag ontstaat, dus niet op een
-     hulppagina maar naast het ding zelf. Zie info() in _patterns.html.j2; wij doen dit al
-     bij de diensten, maar met eigen markup.
+  WAT ER ANDERS IS DAN DE OUDE PAGINA
 
-  DE INDELING, en waarom deze zes
+  De tabs zijn ECHTE LINKS met een eigen URL (?tab=deployments), waar de oude versie ze in
+  de browser wisselt met switchTab(). Daardoor is een tab deelbaar, werkt de terugknop, en
+  doet de pagina het zonder JavaScript.
 
-  Overzicht, Componenten, Deployments, Diensten, Team, Instellingen. Vijf daarvan
-  beantwoorden een vraag die iemand echt heeft ("wat draait er", "waar draait het", "wat
-  neem ik af", "wie mag erbij"), en Instellingen vangt wat je zelden nodig hebt maar wel
-  moet kunnen vinden. Meer dan zes wordt de balk te vol; dat is de grens waar deze vorm
-  tegenaan loopt, en de reden dat de andere variant is bewaard.
+  De balken voor CPU en geheugen waren eigen div's met een breedte in een style-attribuut
+  (usage-bar__fill). Dat is nu c-progress-bar: hetzelfde beeld, met de toegankelijkheid die
+  het thema meelevert, en het volgt een themawissel.
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head, info, explainer %}
@@ -35,12 +32,10 @@
 {% block page_title %}{{ project.display_name }} - {{ tabs[active_tab].label }}{% endblock %}
 
 {% block content %}
-    {# Het kruimelpad zoals bg het doet: waar je bent binnen de hierarchie, met elke stap
-       erboven klikbaar. Bij tabs is dat extra nodig, want de tabbalk zegt wel welk
-       AANZICHT je hebt maar niet waar je bent. #}
+    {# Het kruimelpad zegt waar je bent; de tabbalk zegt alleen welk aanzicht je hebt. #}
     <c-breadcrumbs aria-label="Kruimelpad">
-        <c-breadcrumbs-item label="Projecten" href="/lotc/bg/projects" />
-        <c-breadcrumbs-item label="{{ project.display_name }}" href="/lotc/bg/project-tabs" />
+        <c-breadcrumbs-item label="Projecten" href="/projects" />
+        <c-breadcrumbs-item label="{{ project.display_name }}" href="?tab=project" />
         <c-breadcrumbs-item label="{{ tabs[active_tab].label }}" />
     </c-breadcrumbs>
 
@@ -48,33 +43,29 @@
 
     <c-tabs aria-label="Aanzichten van dit project">
         {% for key, tab in tabs.items() %}
-            <c-tab
-                label="{{ tab.label }}"
-                href="/lotc/bg/project-tabs?tab={{ key }}"
-                :active="key == active_tab" />
+            <c-tab label="{{ tab.label }}" href="?tab={{ key }}" :active="key == active_tab" />
         {% endfor %}
     </c-tabs>
 
-    {% if active_tab == 'overzicht' %}
+    {% if active_tab == 'project' %}
         <c-auto-grid min="200px" gap="md">
-            <c-metric icon="rectangle-stack" value="{{ project.components | length }}" label="Componenten" href="/lotc/bg/project-tabs?tab=componenten" />
-            <c-metric icon="arrow-up-arrow-down" value="{{ project.deployments | length }}" label="Deployments" href="/lotc/bg/project-tabs?tab=deployments" />
-            <c-metric icon="cylinder-split" value="{{ project.services | length }}" label="Diensten" href="/lotc/bg/project-tabs?tab=diensten" />
-            <c-metric icon="person-2" value="{{ project.users | length }}" label="Teamleden" href="/lotc/bg/project-tabs?tab=team" />
+            <c-metric icon="rectangle-stack" value="{{ project.components | length }}" label="Componenten" />
+            <c-metric icon="arrow-up-arrow-down" value="{{ project.deployments | length }}" label="Deployments" href="?tab=deployments" />
+            <c-metric icon="cylinder-split" value="{{ project.services | length }}" label="Diensten" />
+            <c-metric icon="person-2" value="{{ project.users | length }}" label="Teamleden" />
         </c-auto-grid>
 
-        {% call panel("Wat is dit project", "house", info_text="Een project bundelt je componenten, waar ze draaien en wie er toegang heeft. Alles wat je hier ziet komt uit een projectbestand in git.") %}
-            <c-detail-list>
-                <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
-                <c-detail-item label="Deployments" value="{{ project.deployments | length }}" />
-                <c-detail-item label="Componenten" value="{{ project.components | length }}" />
-            </c-detail-list>
+        {% call panel("Diensten", "cylinder-split", info_text="Diensten worden door het platform geleverd en beheerd. Je hoeft ze niet zelf te installeren of bij te werken.") %}
+            <c-cluster gap="sm">
+                {% for service in project.services %}
+                    <c-chip>{{ service.value }}</c-chip>
+                {% else %}
+                    <c-paragraph>Dit project neemt geen diensten af.</c-paragraph>
+                {% endfor %}
+            </c-cluster>
         {% endcall %}
 
-    {% elif active_tab == 'componenten' %}
-        {{ explainer("Wat is een component?", "Een component is een draaiend onderdeel van je applicatie: een backend, een frontend, een verwerker. Hier beschrijf je wat het is; waar het draait bepaal je bij Deployments.") }}
-
-        {% call panel("Componenten", "rectangle-stack", info_text="Poorten bepalen waarop het component bereikbaar is. Diensten zijn wat dit component afneemt, zoals een database.") %}
+        {% call panel("Componenten", "rectangle-stack", info_text="Een component is een draaiend onderdeel van je applicatie. Waar het draait bepaal je bij Deployments.") %}
             <c-stack gap="sm">
                 {% for component in project.components %}
                     <c-layer
@@ -86,43 +77,13 @@
                             <c-chip>{{ service }}</c-chip>
                         {% endfor %}
                     </c-layer>
+                {% else %}
+                    <c-paragraph>Dit project heeft nog geen componenten.</c-paragraph>
                 {% endfor %}
             </c-stack>
         {% endcall %}
 
-    {% elif active_tab == 'deployments' %}
-        {{ explainer("Wat is een deployment?", "Een deployment brengt je componenten naar een cluster, met een eigen namespace en een eigen image per component. Je kunt er meerdere hebben, bijvoorbeeld productie en acceptatie.") }}
-
-        {% call panel("Deployments", "arrow-up-arrow-down", info_text="De namespace is de afgeschermde ruimte op het cluster waarin dit draait.") %}
-            <c-stack gap="sm">
-                {% for deployment in project.deployments %}
-                    <c-layer
-                        icon="arrow-up-arrow-down"
-                        title="{{ deployment.name }}"
-                        count="{{ deployment.components | length }} componenten"
-                        sub="{{ deployment.cluster }} / {{ deployment.namespace }}">
-                        {% for entry in deployment.components %}
-                            <c-chip>{{ entry.reference }}</c-chip>
-                        {% endfor %}
-                    </c-layer>
-                {% endfor %}
-            </c-stack>
-        {% endcall %}
-
-    {% elif active_tab == 'diensten' %}
-        {% call panel("Afgenomen diensten", "cylinder-split", info_text="Diensten worden door het platform geleverd en beheerd. Je hoeft ze niet zelf te installeren of bij te werken.") %}
-            <c-stack gap="sm">
-                {% for service in project.services %}
-                    <c-layer
-                        icon="cylinder-split"
-                        title="{{ service.value }}"
-                        sub="geleverd door het platform" />
-                {% endfor %}
-            </c-stack>
-        {% endcall %}
-
-    {% elif active_tab == 'team' %}
-        {% call panel("Teamleden", "person-2", info_text="Een beheerder mag alles, inclusief het project verwijderen. Een ontwikkelaar mag wijzigen en uitrollen, maar het project niet opheffen.") %}
+        {% call panel("Team", "person-2", info_text="Een beheerder mag alles, inclusief het project verwijderen. Een ontwikkelaar mag wijzigen en uitrollen, maar het project niet opheffen.") %}
             <c-table columns="2fr 1fr">
                 <c-table-head>
                     <c-th>E-mailadres</c-th>
@@ -137,18 +98,73 @@
             </c-table>
         {% endcall %}
 
-    {% elif active_tab == 'instellingen' %}
         {% call panel("Sleutels", "lock-closed", info_text="De API-sleutel geeft toegang tot dit project via de API. Deel hem niet, en vernieuw hem als je vermoedt dat hij is uitgelekt.") %}
             <c-detail-list>
-                <c-detail-item label="Publieke sleutel" value="{{ project.config['age-public-key'] | default('-', true) | truncate(28) }}" />
+                <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
             </c-detail-list>
             <c-secret-field value="{{ project.config['api-key'] | default('', true) }}" />
         {% endcall %}
 
-        {% call panel("Gevaarlijke acties", "exclamation-triangle", info_text="Verwijderen kan niet ongedaan worden gemaakt: deployments, database en opslag gaan mee.") %}
+        {% call panel("Gevarenzone", "exclamation-triangle", info_text="Verwijderen kan niet ongedaan worden gemaakt: deployments, database en opslag gaan mee.") %}
             <c-action-group align="start">
-                <c-button type="primary" color="destructive" label="Project verwijderen" />
+                <c-button type="warning" label="Project verwijderen" />
             </c-action-group>
+        {% endcall %}
+
+    {% elif active_tab == 'deployments' %}
+        {% call panel("Deployments", "arrow-up-arrow-down", info_text="Een deployment brengt je componenten naar een cluster, met een eigen namespace en een eigen image per component.") %}
+            <c-stack gap="sm">
+                {% for deployment in project.deployments %}
+                    <c-layer
+                        icon="arrow-up-arrow-down"
+                        title="{{ deployment.name }}"
+                        count="{{ deployment.components | length }} componenten"
+                        sub="{{ deployment.cluster }} / {{ deployment.namespace }}">
+                        {% for entry in deployment.components %}
+                            <c-chip>{{ entry.reference }}</c-chip>
+                        {% endfor %}
+                    </c-layer>
+                {% else %}
+                    <c-paragraph>Dit project heeft nog geen deployments.</c-paragraph>
+                {% endfor %}
+            </c-stack>
+        {% endcall %}
+
+    {% elif active_tab == 'metrics' %}
+        {% if usage_error %}
+            <c-alert type="info" heading="Resourcegebruik niet beschikbaar">{{ usage_error }}</c-alert>
+        {% elif usage %}
+            {% call panel("Resourcegebruik", "chart-x-y-axis-line", info_text="Wat dit project op dit moment gebruikt, tegen de limiet die ervoor is ingesteld.") %}
+                <c-paragraph size="sm">
+                    {{ usage.deployments }} deployment(s), {{ usage.pods }} pod(s) op dit cluster.
+                </c-paragraph>
+                <c-progress-bar
+                    text="CPU"
+                    :value="usage.cpu_pct"
+                    max="100"
+                    value-display="true"
+                    color="info"
+                    accessible-label="CPU-gebruik ten opzichte van de limiet" />
+                <c-progress-bar
+                    text="Geheugen"
+                    :value="usage.mem_pct"
+                    max="100"
+                    value-display="true"
+                    color="success"
+                    accessible-label="Geheugengebruik ten opzichte van de limiet" />
+            {% endcall %}
+        {% else %}
+            <c-alert type="info" heading="Nog geen meetgegevens">
+                Er zijn nog geen metingen voor dit project.
+            </c-alert>
+        {% endif %}
+
+    {% elif active_tab == 'taken' %}
+        {% call panel("Taken", "timer", info_text="Werk dat op de achtergrond loopt: uitrollen, back-ups en herstelacties. Hier zie je of het gelukt is.") %}
+            <c-paragraph>
+                Taken worden tijdens het gebruik bijgewerkt en zijn nog niet aangesloten op
+                deze weergave.
+            </c-paragraph>
         {% endcall %}
     {% endif %}
 {% endblock %}

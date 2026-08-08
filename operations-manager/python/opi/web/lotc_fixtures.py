@@ -250,14 +250,19 @@ def page_data(slug: str) -> dict[str, Any]:
         # De tabbladen. Zes, en dat is de bovengrens van deze vorm: daarna wordt de balk
         # te vol. Repositories staat er bewust NIET bij - die stond op de oude pagina
         # omdat hij in het projectbestand staat, niet omdat iemand hem nodig heeft.
+        # Dezelfde tabs als de bestaande projectpagina (Project, Deployments, Taken),
+        # met Metrics erbij. Niet zelf bedacht: die verdeling scheidt "wat is dit
+        # project", "waar draait het" en "wat is er aan de hand", en die scheiding werkt.
         context["tabs"] = {
-            "overzicht": {"label": "Overzicht"},
-            "componenten": {"label": "Componenten"},
+            "project": {"label": "Project"},
             "deployments": {"label": "Deployments"},
-            "diensten": {"label": "Diensten"},
-            "team": {"label": "Team"},
-            "instellingen": {"label": "Instellingen"},
+            "metrics": {"label": "Metrics"},
+            "taken": {"label": "Taken"},
         }
+        # De proefopstelling heeft geen cluster, dus geen metingen. Dat is dezelfde stand
+        # die een echte instantie doorgeeft als Prometheus niet bereikbaar is.
+        context["usage"] = None
+        context["usage_error"] = "Prometheus is niet verbonden in de proefopstelling."
         return context
 
     return {}
