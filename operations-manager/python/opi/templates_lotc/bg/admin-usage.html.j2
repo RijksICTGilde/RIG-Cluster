@@ -14,6 +14,26 @@
 
   De vier filtervelden stonden in een c-grid columns="four"; hier een c-auto-grid, die
   hetzelfde doet maar afbouwt op een smal scherm in plaats van vier kolommen af te dwingen.
+
+  WAAROM DE DRIE VELDEN KALE HTML ZIJN EN GEEN c-text-input-field
+
+  Prijs en jaar stonden hier als <c-text-input-field>. Onder NLDD valt die op
+  <nldd-text-field input-id="price" name="price">: een webcomponent, geen invoerveld. Er
+  is dan geen element met id `price`, geen label met id `price-label`, en - dat is het
+  ergste - een GET-formulier verstuurt hem niet, want alleen echte formulierbesturingen
+  tellen mee. Het filter zag er dus uit als een filter en deed niets: een andere prijs of
+  een ander jaar invullen leverde exact dezelfde tabel op.
+
+  Vandaar hier een echte <label> met een echte <input>, met precies de id's en namen van
+  admin/usage/_filters.html.j2 (namespace, namespace-label, price, price-label, year,
+  year-label). De keuzelijst gaat om dezelfde reden mee: <c-select-field native="true">
+  levert wel een echte <select>, maar zet zijn label in een <nldd-form-field> zonder id,
+  en dan blijft namespace-label weg.
+
+  Het laagje eromheen is dat van LOTC zelf: dezelfde regels die het select-field-component
+  onder native meestuurt, hier ook op de invoervelden. Zo blijft de rij een geheel in
+  plaats van drie stijlen naast elkaar. Zodra lotc-forms een veld levert dat een echte
+  <input> met een eigen id rendert, kan dit blok weg.
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
@@ -30,27 +50,26 @@
     {% endif %}
 
     {% call panel("") %}
-        <form method="get" action="/admin/usage">
+        <form method="get" action="/admin/usage" class="usage-filter-form">
             <c-stack gap="md">
                 <c-auto-grid min="220px" gap="md">
-                    {# De opties komen als kinderen mee, niet als een tojson-attribuut:
-                       een samenstelling krijgt in dit systeem kinderen. #}
-                    <c-select-field id="namespace" name="namespace" label="Namespace"
-                                    :value="selected_namespace">
-                        {% for option in namespace_options %}
-                            <c-option
-                                value="{{ option.value }}"
-                                label="{{ option.label }}"
-                                :selected="option.value == selected_namespace" />
-                        {% endfor %}
-                    </c-select-field>
-                    {# Het euroteken als teken en niet als &euro;: dit is een attribuut, en
-                       daar wordt een entiteit letterlijk getoond in plaats van vertaald. #}
-                    <c-text-input-field id="price" name="price" label="Prijs per GiB (€)"
-                                        type="number" value="{{ price_per_gib }}" />
-                    <c-text-input-field id="year" name="year" label="Jaar"
-                                        type="number" value="{{ year }}" />
-                    <c-action-group align="start">
+                    <div>
+                        <label class="usage-filter-label" id="namespace-label" for="namespace">Namespace</label>
+                        <select class="usage-filter-control" id="namespace" name="namespace">
+                            {% for option in namespace_options %}
+                                <option value="{{ option.value }}"{% if option.value == selected_namespace %} selected{% endif %}>{{ option.label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="usage-filter-label" id="price-label" for="price">Prijs per GiB (&euro;)</label>
+                        <input class="usage-filter-control" id="price" name="price" type="number" step="any" value="{{ price_per_gib }}" />
+                    </div>
+                    <div>
+                        <label class="usage-filter-label" id="year-label" for="year">Jaar</label>
+                        <input class="usage-filter-control" id="year" name="year" type="number" value="{{ year }}" />
+                    </div>
+                    <c-action-group align="end">
                         <c-button type="primary" size="md" label="Toepassen" html-type="submit" />
                     </c-action-group>
                 </c-auto-grid>
@@ -79,4 +98,16 @@
             </c-table-row>
         </c-table>
     {% endcall %}
+{% endblock %}
+
+{% block additional_styles %}
+{# Dezelfde regels die lotc-forms onder native="true" bij zijn <select> meestuurt, hier
+   ook op de <input>'s en de labels van dit ene formulier. Niet meer dan dat: geen eigen
+   kleuren, alleen de themavariabelen met dezelfde terugvalwaarden. #}
+<style>
+.usage-filter-form .usage-filter-label{display:block;margin-bottom:.25rem;font:inherit;font-weight:600;color:var(--nldd-color-text,#1a1a1a)}
+.usage-filter-form .usage-filter-control{width:100%;font:inherit;color:var(--nldd-color-text,#1a1a1a);background:var(--nldd-color-surface,#fff);padding:.5rem .75rem;border:1px solid var(--nldd-color-border,#767676);border-radius:6px;line-height:1.4}
+.usage-filter-form .usage-filter-control:focus{outline:2px solid var(--nldd-color-focus,#007bc7);outline-offset:1px}
+.usage-filter-form select.usage-filter-control{appearance:none;-webkit-appearance:none;background:var(--nldd-color-surface,#fff) no-repeat right .6rem center;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23154273' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");padding-right:2rem}
+</style>
 {% endblock %}

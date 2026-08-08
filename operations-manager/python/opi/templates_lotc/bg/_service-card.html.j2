@@ -1,0 +1,65 @@
+{#
+  Een dienstkaart met de INFOKNOP zoals de bestaande pagina hem heeft.
+
+  Waarom hier en niet in bg/_patterns.html.j2: de macro daar maakte van de infoknop een
+  LINK naar ?help=<dienst>, die de uitleg inline op de pagina zette. Dat was hier zelf
+  bedacht. De bestaande pagina opent een DIALOOG - widgets/_macros.html.j2 hangt
+  openServiceHelp() aan het vraagteken, static/js/wizard.js haalt de tekst op bij
+  /forms/wizard/help/<template> en zet hem in #service-help-content.
+
+  Dat gedrag is hier onveranderd overgenomen. De functienaam, de klasse
+  service-card__help-btn en de id's van de dialoog zijn LETTERLIJK dezelfde, want daar
+  hangt de JavaScript aan; alleen de vorm van de knop komt uit het thema.
+
+  De aanroep wordt met {% set %} BOVEN de tag opgebouwd en via :attrs meegegeven: een
+  componenttag verdraagt geen Jinja binnenin, en class/onclick zijn geen eigen attributen
+  van c-icon-button.
+
+  De rest van de opbouw is die van bg: icoon, naam, soort, sleutel-in-mono, kenmerken, en
+  achter een scheidingslijn waar de dienst gebruikt wordt.
+#}
+{% macro service_card(service) %}
+<c-card outline padding="md">
+    <c-stack gap="sm">
+        <c-cluster gap="sm" align="center" justify="between">
+            <c-cluster gap="sm" align="center">
+                <c-icon icon="{{ service.icon }}" color="{{ service.color }}" size="lg" />
+                <c-heading type="h3" size="5" label="{{ service.label }}" />
+                {% if service.help_template %}
+                    {# Letterlijk de aanroep uit widgets/_macros.html.j2, inclusief de
+                       stopPropagation: waar de kaart zelf klikbaar is (de dienstenkiezer
+                       in de wizard) mag het vraagteken de kaart niet meeselecteren. #}
+                    {% set help_js = "event.stopPropagation(); openServiceHelp('" ~ service.help_template ~ "')" %}
+                    <c-icon-button
+                        icon="question-mark-circle"
+                        accessible-label="Uitleg over {{ service.label }}"
+                        variant="neutral-transparent"
+                        size="sm"
+                        :attrs="{'onclick': help_js, 'class': 'service-card__help-btn'}" />
+                {% endif %}
+            </c-cluster>
+            {% if service.kind_label %}
+                <c-tag type="{{ service.kind_type }}" label="{{ service.kind_label }}" />
+            {% endif %}
+        </c-cluster>
+
+        <c-code>{{ service.name }}</c-code>
+
+        <c-cluster gap="sm">
+            {% for chip in service.chips %}
+                <c-chip>{{ chip }}</c-chip>
+            {% endfor %}
+        </c-cluster>
+
+        {% if service.used_by %}
+            <c-divider />
+            <c-cluster gap="sm" align="center">
+                <c-icon icon="rectangle-stack" size="sm" />
+                {% for project in service.used_by %}
+                    <c-chip>{{ project }}</c-chip>
+                {% endfor %}
+            </c-cluster>
+        {% endif %}
+    </c-stack>
+</c-card>
+{% endmacro %}
