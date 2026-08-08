@@ -22,7 +22,7 @@ Draaien::
         -e packages/lotc-nldd -e packages/lotc-layout -e packages/lotc-forms \
         beautifulsoup4 lxml
     # jinja-roos-components erbij (git-dependency van dit project)
-    ./probe-venv/bin/python /workspace/scripts/lotc-coexistence-probe.py
+    ./probe-venv/bin/python /workspace/operations-manager/python/scripts/lotc_coexistence_probe.py
 
 De uitkomst staat vast in ``docs/lotc-samenleven-met-jinja-roos.md``.
 """
@@ -64,7 +64,7 @@ def meet(label: str, bron: str, systemen: list[tuple[str, dict]]) -> None:
             _zet_op(env, naam, **kwargs)
         uitvoer = env.get_template("t.html.j2").render()
         print(f"  {label:<34} OK    {' '.join(uitvoer.split())[:90]}")
-    except Exception as fout:  # noqa: BLE001 - een proef: elke fout is een uitkomst
+    except Exception as fout:
         print(f"  {label:<34} FAIL  {type(fout).__name__}: {str(fout)[:110]}")
 
 

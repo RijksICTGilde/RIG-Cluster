@@ -261,7 +261,7 @@ helft alsnog.
 
 **De open vraag is beantwoord, en het antwoord verandert de vorm van de proef.** Volledig
 in `docs/lotc-samenleven-met-jinja-roos.md`, na te doen met
-`scripts/lotc-coexistence-probe.py`. Kort:
+`operations-manager/python/scripts/lotc_coexistence_probe.py`. Kort:
 
 - LOTC en jinja-roos kunnen **niet in dezelfde Jinja-omgeving**. Twee voorbewerkers lopen
   over dezelfde `<c-*>`-tags; de eerste claimt ze allemaal en breekt op wat hij niet kent.
