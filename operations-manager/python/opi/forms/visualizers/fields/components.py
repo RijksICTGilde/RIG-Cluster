@@ -46,7 +46,7 @@ COMPONENT_IMAGE = EditableVisualizer(
     editable=COMPONENT_IMAGE_EDITABLE,
     widget=WidgetType.TEXT,
     label="Container image",
-    description="Docker image van uw applicatie. Moet een rootless image zijn.",
+    description="Docker image van je applicatie. Moet een rootless image zijn.",
     help_text=(
         "Bijvoorbeeld: ghcr.io/minbzk/base-images/hello-world:latest."
         "Kan leeg gelaten worden; er wordt dan geen deployment aangemaakt voor dit component."

@@ -670,7 +670,7 @@ class GitProjectStore(ProjectStore):
         if merged is None:
             raise ConflictError(
                 f"Project '{name}' is gewijzigd sinds u begon met bewerken, en die wijziging raakt "
-                f"hetzelfde onderdeel als de uwe. Haal de laatste versie op en voer uw wijziging opnieuw uit."
+                f"hetzelfde onderdeel als dat van jou. Haal de laatste versie op en voer je wijziging opnieuw uit."
             )
 
         # Fails closed: a merge is only accepted when the RESULT is valid, never on

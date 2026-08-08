@@ -26,7 +26,7 @@ DOMAIN_FORMAT = EditableVisualizer(
     editable=DOMAIN_FORMAT_EDITABLE,
     widget=WidgetType.SELECT,
     label="URL-formaat",
-    help_text="Bepaalt hoe URL's voor uw componenten worden opgebouwd.",
+    help_text="Bepaalt hoe URL's voor je componenten worden opgebouwd.",
     attributes={"data-rerender": "true"},
 )
 
@@ -34,7 +34,7 @@ DOMAIN_SUBDOMAIN = EditableVisualizer(
     editable=DOMAIN_SUBDOMAIN_EDITABLE,
     widget=WidgetType.TEXT,
     label="Subdomein",
-    help_text="Het subdomein voor uw applicatie URLs.",
+    help_text="Het subdomein voor je applicatie-URLs.",
     attributes={"data-rerender": "true"},
 )
 
@@ -51,7 +51,7 @@ DOMAIN_CUSTOM_BASE_DOMAIN = EditableVisualizer(
     widget=WidgetType.TEXT,
     label="Eigen domein",
     placeholder="voorbeeld.nl",
-    help_text="Voer uw eigen domeinnaam in. U bent zelf verantwoordelijk voor DNS-configuratie. Gebruik het domein zonder 'subdomein', dus voorbeeld.nl en niet www.voorbeeld.nl",
+    help_text="Voer je eigen domeinnaam in. Je bent zelf verantwoordelijk voor DNS-configuratie. Gebruik het domein zonder 'subdomein', dus voorbeeld.nl en niet www.voorbeeld.nl",
     attributes={"data-rerender": "true"},
 )
 
