@@ -33,6 +33,7 @@ missen.
 from typing import TYPE_CHECKING
 
 import pytest
+from playwright.sync_api import expect
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -203,7 +204,7 @@ def test_form_layer_screenshot(app_server: str, page: Page) -> None:
 # De herontworpen pagina's. Deze lijst hoort mee te groeien met opi/templates_lotc/bg/;
 # de test hieronder controleert dat ook, zodat een nieuwe pagina niet stil ongetoetst
 # blijft.
-REDESIGNED_PAGES = ["dashboard", "projects", "services", "users", "project-details", "wizard"]
+REDESIGNED_PAGES = ["dashboard", "projects", "services", "users", "project-details", "wizard", "feedback"]
 
 
 def test_every_redesigned_page_is_covered() -> None:
@@ -243,3 +244,35 @@ def test_redesigned_page_screenshot(app_server: str, page: Page, slug: str) -> N
     )
 
     page.screenshot(path=f"{SCREENSHOT_DIR}/bg-{slug}.png", full_page=True, animations="disabled")
+
+
+def test_open_modal_screenshot(app_server: str, page: Page) -> None:
+    """Leg de bevestigingsdialoog geopend vast.
+
+    Een dialoog is dicht tot iemand hem opent, dus op de feedbackpagina zelf is hij niet
+    te zien. Met ?open=1 opent hij; dat gebeurt hier en niet standaard, want een open
+    dialoog blokkeert de rest van de pagina voor wie hem gewoon bekijkt.
+    """
+    page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
+    response = page.goto(f"{app_server}/lotc/bg/feedback")
+    assert response is not None
+    assert response.ok
+
+    _wait_for_nldd(page)
+
+    # De dialoog wordt hier geopend en niet door de pagina zelf: een proefpagina hoort
+    # geen eigen JavaScript te dragen, en een dialoog die vanzelf opent staat iedereen in
+    # de weg die de pagina gewoon wil bekijken. Openen gaat via zijn eigen show(); een
+    # open-attribuut zetten doet niets, want het element beheert een <dialog> in zijn
+    # shadow root.
+    page.evaluate("() => document.querySelector('nldd-modal-dialog').show()")
+
+    # Toetsen op de INHOUD en niet op <nldd-modal-dialog> zelf: het omhulsel blijft
+    # nul-groot omdat de echte <dialog> in zijn shadow root zit, en Playwright noemt het
+    # daarom "hidden" terwijl de dialoog gewoon openstaat.
+    expect(page.get_by_text("Project verwijderen?")).to_be_visible()
+    # En de knoppen moeten bereikbaar zijn: een dialoog die opent maar zijn inhoud niet
+    # toont is erger dan een die dicht blijft.
+    expect(page.get_by_role("button", name="Verwijderen")).to_be_visible()
+
+    page.screenshot(path=f"{SCREENSHOT_DIR}/bg-modal-open.png", animations="disabled")
