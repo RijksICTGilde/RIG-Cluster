@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from playwright.sync_api import Page
+    from playwright.sync_api import Locator, Page
 
 
 def _unique_project_name(prefix: str = "e2e") -> str:
@@ -50,6 +50,45 @@ class WizardHelper:
 
     # Stepper label of the first step (identity). Used to assert we start clean.
     STEP_IDENTITY = "Projectgegevens"
+
+    #: Het label van de actieve stap, in beide vormgevingen.
+    #:
+    #: De wizard bestaat tijdens de omzetting in twee weergaven: de bestaande
+    #: roos-markup (een <li> met eigen klassen) en de LOTC-weergave (een
+    #: <nldd-step-indicator-item>, waar het label een attribuut is en geen tekst).
+    #: Deze helper draait tegen allebei, zodat de gedragstests over GEDRAG blijven gaan
+    #: en niet over welk componentensysteem de pagina toevallig rendert.
+    ROOS_ACTIVE_STEP_LABEL = "li[aria-current='step'] .wizard-steps__label"
+    LOTC_ACTIVE_STEP_ITEM = "nldd-step-indicator-item[status='current']"
+    ACTIVE_STEP_LABEL = f"{ROOS_ACTIVE_STEP_LABEL}, {LOTC_ACTIVE_STEP_ITEM}"
+
+    #: De knop die de stap indient. In de LOTC-weergave is dat een <nldd-button> en geen
+    #: <button>, dus de selector mag niet op de tagnaam hangen. Hij levert daar TWEE
+    #: treffers - het custom element en de <button> in zijn shadow root - vandaar .first
+    #: bij het klikken: dat is het element in de gewone DOM, en het dient het formulier
+    #: netjes in (nldd-button is form-associated en roept requestSubmit() aan).
+    SUBMIT_BUTTON = "#wizard-step-form [type='submit'], .wizard-step__actions button[type='submit']"
+
+    #: Foutmeldingen bij een veld, in beide vormgevingen. De LOTC-weergave zet ze in een
+    #: <nldd-form-field-error-text>; de roos-weergave in een eigen klasse.
+    FIELD_ERRORS = ".rvo-form-field__error, .field-error, [role='alert'], nldd-form-field-error-text"
+
+    #: De echte formulierbesturing van een veld, ongeacht de vormgeving.
+    #:
+    #: Op het NAME-attribuut zoeken werkt hier niet meer. In de LOTC-weergave draagt het
+    #: custom element (<nldd-text-field>) een name en de <input> in zijn shadow root ook,
+    #: dus [name='x'] vindt er twee en Playwright weigert dat; bij een meerregelig veld
+    #: draagt juist alleen het custom element een name en de <textarea> geen.
+    #:
+    #: Het ID is in beide vormgevingen wel precies een element, en wel de besturing zelf:
+    #: de roos-widget zet id=<pad> op de input, en LOTC geeft datzelfde pad als input-id
+    #: door aan de input in de shadow root. Ids bevatten hier / en [], dus ze staan in een
+    #: attribuutselector en niet achter een #.
+    FIELD_TAGS = ("input", "textarea", "select")
+
+    def field(self, name: str) -> Locator:
+        """De invoerbesturing van het veld met dit pad."""
+        return self.page.locator(", ".join(f"{tag}[id='{name}']" for tag in self.FIELD_TAGS))
 
     def open_create_wizard(self) -> None:
         """Navigate to a FRESH create-project wizard, guaranteed to start on step 1.
@@ -99,29 +138,29 @@ class WizardHelper:
         # display-name field that lives on step 1 when the wizard resumed elsewhere.
         self.assert_on_step(self.STEP_IDENTITY)
 
-        name_input = self.page.locator("[name='display-name']")
+        name_input = self.field("display-name")
         name_input.wait_for(state="visible", timeout=15000)
         name_input.fill(display_name)
 
-        desc_input = self.page.locator("[name='description']")
+        desc_input = self.field("description")
         desc_input.wait_for(state="visible", timeout=15000)
         desc_input.fill(description)
 
         # Select cluster if provided and a select exists
         if cluster:
-            cluster_select = self.page.locator("[name='clusters']")
+            cluster_select = self.field("clusters")
             if cluster_select.count() > 0:
                 cluster_select.select_option(value=cluster)
 
     def fill_team(self, email: str = "admin@sandbox.rijksapp.dev", role: str = "admin") -> None:
         """Fill the team step with a single user."""
         # Field name uses slash notation: users[0]/email
-        email_input = self.page.locator("[name='users[0]/email']")
+        email_input = self.field("users[0]/email")
         if email_input.count() > 0:
             email_input.fill(email)
         else:
             # Fallback to partial match
-            email_input = self.page.locator("[name*='email']").first
+            email_input = self.page.locator("input[name*='email']").first
             if email_input.count() > 0:
                 email_input.fill(email)
 
@@ -142,17 +181,17 @@ class WizardHelper:
         fuzzy ``[name*='name']`` / ``[name*='image']`` selectors, which also match storage
         sub-fields and, under a late render, the wrong element.
         """
-        comp_name = self.page.locator("[name='components[0]/name']")
+        comp_name = self.field("components[0]/name")
         comp_name.wait_for(state="visible", timeout=15000)
         comp_name.fill(name)
 
-        comp_image = self.page.locator("[name='components[0]/image']").first
+        comp_image = self.field("components[0]/image").first
         if comp_image.count() > 0:
             comp_image.fill(image)
 
     def click_next(self) -> None:
         """Click the Next/submit button to advance to the next step."""
-        next_btn = self.page.locator(".wizard-step__actions button[type='submit']")
+        next_btn = self.page.locator(self.SUBMIT_BUTTON).first
         self._click_and_wait_for_step_change(next_btn)
 
     def click_previous(self) -> None:
@@ -197,10 +236,12 @@ class WizardHelper:
 
     def get_current_step_title(self) -> str | None:
         """Return the title (stepper label) of the currently-active wizard step."""
-        label = self.page.locator("li[aria-current='step'] .wizard-steps__label")
-        if label.count() > 0:
-            return (label.first.text_content() or "").strip()
-        return None
+        label = self.page.locator(self.ACTIVE_STEP_LABEL)
+        if label.count() == 0:
+            return None
+        # In de LOTC-weergave staat het label in het text-attribuut van het
+        # custom element; de tekstinhoud zit in zijn shadow root en is leeg.
+        return ((label.first.get_attribute("text") or label.first.text_content()) or "").strip()
 
     def assert_on_step(self, expected_title: str, timeout: float = 10000) -> None:
         """Assert the wizard is showing the expected step; fail fast if not.
@@ -211,7 +252,7 @@ class WizardHelper:
         clue why. This says which step we actually got, and points at the usual
         cause (leaked wizard state from a prior test in the shared context).
         """
-        label = self.page.locator("li[aria-current='step'] .wizard-steps__label")
+        label = self.page.locator(self.ACTIVE_STEP_LABEL)
         label.first.wait_for(state="visible", timeout=timeout)
         current = self.get_current_step_title() or ""
         if expected_title.lower() not in current.lower():
@@ -222,12 +263,12 @@ class WizardHelper:
 
     def has_validation_errors(self) -> bool:
         """Check if the current step shows validation errors."""
-        errors = self.page.locator(".rvo-form-field__error, .field-error, [role='alert']")
+        errors = self.page.locator(self.FIELD_ERRORS)
         return errors.count() > 0
 
     def get_validation_error_texts(self) -> list[str]:
         """Return all visible validation error messages."""
-        errors = self.page.locator(".rvo-form-field__error, .field-error, [role='alert']")
+        errors = self.page.locator(self.FIELD_ERRORS)
         return [errors.nth(i).text_content() or "" for i in range(errors.count())]
 
     def fill_services(self, services: list[str] | None = None) -> None:
@@ -254,11 +295,11 @@ class WizardHelper:
         image: str = "nginx:latest",
     ) -> None:
         """Fill deployment step fields."""
-        name_input = self.page.locator("[name*='deployment'] [name*='name'], [name*='name']").first
+        name_input = self.page.locator("input[name*='deployment'] input[name*='name'], input[name*='name']").first
         if name_input.count() > 0:
             name_input.fill(name)
 
-        image_input = self.page.locator("[name*='image']").first
+        image_input = self.page.locator("input[name*='image']").first
         if image_input.count() > 0:
             image_input.fill(image)
 
@@ -291,12 +332,22 @@ class WizardHelper:
         self.page.screenshot(path=str(path), full_page=True)
         return path
 
+    #: De stappen in de stappenbalk, in beide vormgevingen.
+    #:
+    #: Hier stond ook ``nav li``, en dat was in de LOTC-schil de ZIJKOLOM: de uitkomst was
+    #: "Dashboard, Projecten, Beheer..." in plaats van de stappen van de wizard, en dan
+    #: faalt een test op iets dat niets met de wizard te maken heeft. Alleen de balk zelf
+    #: dus, in beide vormen.
+    STEP_ITEMS = "#wizard-steps li, nldd-step-indicator-item"
+
     def get_visible_step_titles(self) -> list[str]:
         """Return all visible step titles from the step indicator."""
-        steps = self.page.locator("[data-step], .wizard-step, .step-indicator li, nav li")
+        steps = self.page.locator(self.STEP_ITEMS)
         titles = []
         for i in range(steps.count()):
-            text = steps.nth(i).text_content()
+            # In de LOTC-weergave staat het label in het text-attribuut; de tekstinhoud
+            # zit in de shadow root en is leeg.
+            text = steps.nth(i).get_attribute("text") or steps.nth(i).text_content()
             if text:
                 titles.append(text.strip())
         return titles

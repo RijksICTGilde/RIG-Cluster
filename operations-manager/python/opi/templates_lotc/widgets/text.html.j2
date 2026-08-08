@@ -11,9 +11,13 @@
 {% from "widgets/_macros.html.j2" import combined_helper, description_text, render_examples, render_warnings, format_value %}
 {% if field.help_template %}
 <div class="field-with-help">
+{# @click met Jinja erin werkt niet: de voorbewerker leest de waarde van een
+       @-attribuut als kale tekst, dus {{ ... }} komt er letterlijk uit en de knop doet
+       stilletjes niets. Via de :attrs-spread wordt het wel een expressie, en geescapet. #}
+{% set hulp_js = "openServiceHelp('" ~ field.help_template ~ "')" %}
 <c-icon icon="vraagteken" size="xl"
         class="field-help-btn"
-        @click="openServiceHelp('{{ field.help_template|e }}')" />
+        :attrs="{'onclick': hulp_js}" />
 {% endif %}
 {{ description_text(field) }}
 <c-text-input-field

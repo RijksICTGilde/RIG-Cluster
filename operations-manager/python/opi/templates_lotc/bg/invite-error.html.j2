@@ -1,0 +1,73 @@
+{#
+  Uitnodiging: er ging iets mis.
+
+  Een OVERNAME van opi/templates/invite-error.html.j2. Dezelfde vier blokken in dezelfde
+  volgorde: de foutmelding, de kaart met de uitleg en de drie mogelijke oorzaken, de knop
+  om het opnieuw te proberen (alleen als er een uitnodigingssleutel is), en het hulpblok.
+
+  DIT IS EEN PUBLIEKE PAGINA: geen navigatie, geen ingelogde gebruiker, dus een eigen
+  <c-page> met alleen een header.
+
+  De opsomming was een <ul> met utrecht-klassen erin geschreven; dat is nu <c-list>, dus
+  de opmaak komt uit het thema en niet uit klassen die wij met de hand meegeven. De
+  "probeer opnieuw"-knop was een c-action-group met een :actions="[...]"-lijst; in dit
+  systeem krijgt een samenstelling kinderen, dus het is een gewone knop in een
+  c-action-group geworden. Zelfde link, zelfde label, zelfde icoon.
+
+  De twee kaarten zijn panel() uit bg/_patterns.html.j2, dezelfde vorm als op de andere
+  pagina's.
+#}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% set is_nl = language == 'nl' %}
+{% set page_title = "Fout - Uitnodiging" if is_nl else "Error - Invitation" %}
+{% set causes_intro = "Er is een probleem opgetreden met deze uitnodiging. Dit kan verschillende oorzaken hebben:" if is_nl else "There was a problem with this invitation. This can have various causes:" %}
+{% set cause_expired = "De uitnodiging is verlopen" if is_nl else "The invitation has expired" %}
+{% set cause_link = "De uitnodigingslink is niet correct" if is_nl else "The invitation link is incorrect" %}
+{% set cause_email = "Je e-mailadres voldoet niet aan de vereisten" if is_nl else "Your email address does not meet the requirements" %}
+{% set retry_label = "Probeer opnieuw" if is_nl else "Try again" %}
+{% set help_heading = "Hulp nodig?" if is_nl else "Need help?" %}
+{% set help_text = "Neem contact op met de persoon die je de uitnodiging heeft gestuurd." if is_nl else "Contact the person who sent you the invitation for assistance." %}
+
+<c-page title="{{ page_title }}" lang="{{ language }}">
+    <c-header
+        text="RIG Cluster"
+        subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
+        link="/" />
+
+    <c-center max="46rem">
+        <c-stack gap="lg">
+            <c-alert type="error" heading="{{ error_title }}">{{ error_message if error_message else '' }}</c-alert>
+
+            {% call panel(error_title, "exclamation-triangle") %}
+                {% if error_message %}
+                    <c-paragraph>{{ error_message }}</c-paragraph>
+                {% endif %}
+
+                <c-stack gap="md">
+                    <c-paragraph>{{ causes_intro }}</c-paragraph>
+                    <c-list>
+                        <c-list-item>{{ cause_expired }}</c-list-item>
+                        <c-list-item>{{ cause_link }}</c-list-item>
+                        <c-list-item>{{ cause_email }}</c-list-item>
+                    </c-list>
+                </c-stack>
+
+                {% if invite_key %}
+                    <c-action-group align="start">
+                        <c-button
+                            type="primary"
+                            label="{{ retry_label }}"
+                            icon="chevron-right"
+                            show-icon="after"
+                            href="/invite/{{ invite_key }}" />
+                    </c-action-group>
+                {% endif %}
+            {% endcall %}
+
+            {% call panel(help_heading, "lifebuoy") %}
+                <c-paragraph>{{ help_text }}</c-paragraph>
+            {% endcall %}
+        </c-stack>
+    </c-center>
+</c-page>

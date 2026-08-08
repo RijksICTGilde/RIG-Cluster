@@ -255,7 +255,7 @@ def page_data(slug: str) -> dict[str, Any]:
         # Niet nagebouwd: dan zou de proefopstelling een vorm tonen die in de applicatie
         # niet voorkomt, en juist deze pagina is er om de formulierlaag in samenhang te
         # kunnen bekijken.
-        from types import SimpleNamespace
+        from starlette.requests import Request
 
         from opi.forms.visualizers.flows import get_flow
         from opi.forms.wizard.resolver import get_section_metadata, resolve_active_sections
@@ -270,9 +270,14 @@ def page_data(slug: str) -> dict[str, Any]:
             current_step=sections[0].section_id,
             active_sections=[section.section_id for section in sections],
         )
-        # De voorbewerker van de stap leest alleen de weergavekeuze uit het verzoek; deze
-        # pagina IS de nieuwe weergave, dus die staat hier vast.
-        request = SimpleNamespace(query_params={}, cookies={}, state=SimpleNamespace(csrf_token=""))
+        # Een kaal verzoek: _render_step_html leest er alleen de weergavekeuze uit, en
+        # zonder querystring of koekje is dat de nieuwe vormgeving - precies wat deze
+        # pagina toont. Het csrf-token is hier leeg omdat de proefopstelling niets
+        # verstuurt; in de applicatie zet de CSRF-middleware het.
+        request = Request(
+            {"type": "http", "method": "GET", "path": "/lotc/bg/wizard-page", "headers": [], "query_string": b""}
+        )
+        request.state.csrf_token = ""
         return {
             "flow_title": flow.title,
             "flow_id": "create-project",

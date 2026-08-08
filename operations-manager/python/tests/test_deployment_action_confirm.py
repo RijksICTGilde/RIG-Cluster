@@ -45,6 +45,8 @@ DEPLOYMENT = "dep-1"
 CSRF = "csrf-token-value"
 
 _TEMPLATE_ROOT = pathlib.Path(opi.__file__).parent / "templates"
+# static/ staat naast opi/, niet erin.
+_STATIC_ROOT = pathlib.Path(opi.__file__).parent.parent / "static"
 
 #: The action our stand-in service offers. Nothing in the page or the route knows it.
 FAKE_ACTION = DeploymentAction(
@@ -260,7 +262,14 @@ def test_the_page_no_longer_confirms_in_the_browser_dialog() -> None:
     assert "runDeploymentAction" not in section
     assert "window.confirm(" not in page
     assert "window.alert(" not in page
-    assert "data-confirm-action" in page, "the page must handle the outcome of the htmx POST"
+    # De afhandeling van een mislukte POST staat sinds de omzetting naar de nieuwe
+    # vormgeving in /static/js/edit_modal.js, bij de rest van het dialoog-gedrag. Ze hoort
+    # niet bij deze pagina maar bij de dialoog: beide vormgevingen openen dezelfde, en een
+    # tweede kopie loopt uit de pas. De eis is ongewijzigd - de uitkomst wordt afgehandeld,
+    # en niet in een browser-dialoog.
+    modal_js = (_STATIC_ROOT / "js" / "edit_modal.js").read_text(encoding="utf-8")
+    assert "data-confirm-action" in modal_js, "de uitkomst van de htmx-POST moet afgehandeld worden"
+    assert "window.confirm(" not in modal_js or "niet-opgeslagen wijzigingen" in modal_js
 
 
 def test_the_button_opens_the_confirmation_in_the_shared_modal() -> None:

@@ -14,6 +14,8 @@ zelf gerenderd: één stap, en fouten in een componentaanroep komen meteen naar 
 plaats van pas bij het napluizen van een string.
 """
 
+import markupsafe
+
 from opi.core.templates_lotc import templates_lotc
 from opi.forms.widgets.roos import ROOSWidgetAdapter
 
@@ -33,3 +35,14 @@ class LOTCWidgetAdapter(ROOSWidgetAdapter):
 
     def _render_template(self, template_name: str, ctx: dict[str, object]) -> str:
         return self._env.get_template(f"widgets/{template_name}").render(**ctx)
+
+    def render_flow(self, children_html: list[str]) -> str:
+        """De buitenste stapel om de velden, meteen gerenderd.
+
+        De bron is een CONSTANTE - de voorbewerker en de compiler zien alleen de tag,
+        nooit de al gerenderde velden. Die komen er als variabele in, en worden dus geen
+        tweede keer als sjabloon uitgevoerd. Dat verschil is het hele punt: die HTML
+        draagt waarden die iemand in het formulier heeft getypt.
+        """
+        template = self._env.from_string('<c-layout-flow gap="lg">{{ inner }}</c-layout-flow>')
+        return template.render(inner=markupsafe.Markup("\n".join(children_html)))  # noqa: S704
