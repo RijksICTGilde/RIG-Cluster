@@ -1,0 +1,51 @@
+{# De tabel met gebruikers. #}
+<c-card outline="true" padding="none" background-color="wit">
+    <div class="table-container">
+        <table class="users-table">
+            <thead>
+                <tr>
+                    <th class="col-name">Naam</th>
+                    <th class="col-email">E-mailadres</th>
+                    <th class="col-created">Aangemaakt</th>
+                    <th class="col-actions">Acties</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if users %}
+                    {% for user in users %}
+                    <tr class="user-row">
+                        <td class="col-name">
+                            <strong>{{ user.full_name }}</strong>
+                        </td>
+                        <td class="col-email">
+                            {{ user.email }}
+                        </td>
+                        <td class="col-created">
+                            {{ user.created_at|dutch_date(include_time=False) }}
+                        </td>
+                        <td class="col-actions">
+                            <div class="actions">
+                                <c-button label="Bewerken" size="sm" show-icon="before" icon="bewerken" @/>
+                                <form method="post" action="/admin/users/{{ user.id }}/delete" class="inline-form"
+                                      onsubmit="return confirm('Weet u zeker dat u {{ user.full_name }} wilt verwijderen?');">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                                    <c-button label="Verwijderen" size="sm" show-icon="before" icon="verwijderen" type="submit"/>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="4" class="table-empty-cell">
+                            <div class="empty-state-text">
+                                <c-icon icon="info" size="lg"/>
+                                <div>Geen gebruikers gevonden. Voeg een gebruiker toe om te beginnen.</div>
+                            </div>
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</c-card>

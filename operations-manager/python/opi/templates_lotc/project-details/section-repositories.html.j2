@@ -1,0 +1,31 @@
+{# Git Repositories Section #}
+{% if project.repositories %}
+<c-card outline="true" padding="xl" background-color="wit">
+    <c-layout-flow gap="lg">
+        <c-heading type="h2" class="section-heading"><c-icon icon="computercode" size="xl" color="oranje"/>Git Repositories</c-heading>
+        <p class="rvo-text--subtle">Gekoppelde code repositories</p>
+
+        <div class="repositories-section">
+            {% for repo in project.repositories %}
+            <c-card class="repository-card" padding="lg" background-color="grijs-050" outline="true">
+                <c-layout-flow gap="md">
+                    <div class="repo-header">
+                        <c-icon icon="computercode" size="lg" color="oranje"/>
+                        <div>
+                            <c-heading type="h3" label="{{ repo.name }}"/>
+                            <div class="repo-url">{{ repo.url }}</div>
+                        </div>
+                    </div>
+
+                    <div class="repo-details">
+                        <div class="repo-item"><strong>Branch:</strong> {{ repo.branch }}</div>
+                        <div class="repo-item"><strong>Path:</strong> {{ repo.path }}</div>
+                        <div class="repo-item"><strong>Username:</strong> {{ repo.username }}</div>
+                    </div>
+                </c-layout-flow>
+            </c-card>
+            {% endfor %}
+        </div>
+    </c-layout-flow>
+</c-card>
+{% endif %}

@@ -1,0 +1,9 @@
+{% from "widgets/_macros.html.j2" import bool_attr %}
+{% set min_items = (field.min_items or field.attributes.get('min_items', 0))|int %}
+{% set remove_disabled = (field.children|length if field.children else 0) <= min_items %}
+<div class="rvo-sequence__item rvo-sequence__item--inline" data-index="{{ index }}">
+    {{ item_html }}
+    {% if field.add_remove %}
+    <c-button size="sm" label="Verwijderen" show-icon="before" icon="verwijderen" @ {{ bool_attr("disabled", remove_disabled) }}/>
+    {% endif %}
+</div>

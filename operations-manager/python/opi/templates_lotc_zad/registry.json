@@ -1,0 +1,23 @@
+{
+  "meta": {
+    "owner": "zad",
+    "note": "Componenten die ZAD zelf levert omdat LOTC ze nog niet heeft. Tijdelijk: zodra LOTC een eigen versie levert vervalt de definitie hier en blijven de templates ongewijzigd."
+  },
+  "components": [
+    {
+      "name": "secret-field",
+      "description": "Toont een geheim afgeschermd, met tonen/verbergen en kopieren",
+      "attributes": [
+        {"name": "value", "type": "string", "description": "De af te schermen waarde"},
+        {"name": "mask-length", "type": "number", "description": "Aantal bolletjes in afgeschermde stand"},
+        {"name": "value-type", "type": "enum", "enum_values": ["text", "json"], "description": "json toont de waarde in een codeblok"},
+        {"name": "show-label", "type": "string", "description": "Label van de toon-knop"},
+        {"name": "hide-label", "type": "string", "description": "Label van de verberg-knop"},
+        {"name": "copy-label", "type": "string", "description": "Label van de kopieer-knop"},
+        {"name": "class", "type": "string", "description": "Extra CSS-klassen"}
+      ],
+      "slots": [],
+      "requires_children": false
+    }
+  ]
+}

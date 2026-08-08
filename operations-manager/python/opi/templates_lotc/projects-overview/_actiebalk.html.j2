@@ -1,0 +1,11 @@
+{# Zoeken, filteren en de knop voor een nieuw project. #}
+<div class="page-header-row">
+    <div class="page-header-actions">
+        <c-button label="Nieuw Project" size="md" show-icon="before" icon="plus" @/>
+        <c-button label="Vernieuwen" size="md" show-icon="before" icon="refresh" @/>
+    </div>
+
+    <div class="filter-row">
+        <span class="rvo-text--sm rvo-text--subtle">Totaal: <strong>{{ projects|length }} project{% if projects|length != 1 %}en{% endif %}</strong></span>
+    </div>
+</div>

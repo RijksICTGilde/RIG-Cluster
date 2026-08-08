@@ -1,0 +1,12 @@
+{# ArgoCD Status for the currently selected deployment (Deployments tab) #}
+{% if argocd_available and project.deployments %}
+{% for deployment in project.deployments | sort(attribute='name') %}
+<div class="deployment-section{% if not loop.first %} is-hidden{% endif %}" id="argocd-{{ deployment.name }}">
+
+    <div hx-get="/projects/details/{{ project.name }}/argocd-status/{{ deployment.name }}?prefix=dep-{{ deployment.name }}"
+         hx-trigger="intersect once" hx-swap="innerHTML">
+        {% include "project-details/_argocd-status-skeleton.html.j2" %}
+    </div>
+</div>
+{% endfor %}
+{% endif %}

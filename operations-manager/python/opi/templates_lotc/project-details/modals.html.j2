@@ -1,0 +1,102 @@
+{% include "widgets/service_help_modal.html.j2" %}
+
+{# Generic Edit Section Modal #}
+<div id="edit-section-backdrop" class="edit-section-backdrop" onclick="handleEditBackdropClick()"></div>
+<div id="edit-section-modal" class="edit-section-modal" role="dialog" aria-modal="true" aria-labelledby="edit-section-title" data-project-name="{{ project.name }}">
+    <div class="edit-section-header">
+        <c-heading type="h2"><c-icon icon="bewerken" size="lg" color="donkerblauw"/><span id="edit-section-title-text"></span></c-heading>
+        <c-button size="sm" label="Sluiten" show-icon="before" icon="kruis" class="edit-modal-close-btn" @/>
+    </div>
+    <div id="edit-section-error" class="edit-section-error is-hidden"></div>
+    <div id="edit-section-inner">
+        <div id="edit-section-content" class="edit-section-content">
+            <div class="edit-section-loading">
+                <p>Laden...</p>
+            </div>
+        </div>
+        <div class="edit-section-actions" id="edit-section-actions">
+            <c-button type="button" label="Annuleren" @/>
+            <c-button type="button" label="Opslaan" @/>
+        </div>
+    </div>
+</div>
+
+{# Log Viewer Slide-Out Panel #}
+<div id="log-viewer-backdrop" class="log-viewer-backdrop" onclick="closeLogViewer()"></div>
+<div id="log-viewer-panel" class="log-viewer-panel">
+    <div class="log-viewer-header">
+        <div class="log-viewer-title">
+            <c-icon icon="document-blanco" size="lg" color="wit"/>
+            <div>
+                <h3 id="log-viewer-heading">Logs</h3>
+                <div class="log-viewer-subtitle">
+                    <span id="log-viewer-deployment"></span>
+                    <select id="log-component-selector" class="log-component-select" onchange="switchLogComponent(this.value)">
+                    </select>
+                </div>
+            </div>
+        </div>
+        <div class="log-viewer-controls">
+            <button type="button" class="log-control-btn" id="log-pause-btn" onclick="toggleLogPause()" title="Pause/Resume">
+                <c-icon icon="wachtend-persoon" size="sm"/>
+            </button>
+            <button type="button" class="log-control-btn" onclick="clearLogs()" title="Clear">
+                <c-icon icon="verwijderen" size="sm"/>
+            </button>
+            <button type="button" class="log-control-btn" onclick="copyLogs()" title="Copy">
+                <c-icon icon="document-blanco" size="sm"/>
+            </button>
+            <button type="button" class="log-control-btn" onclick="downloadLogs()" title="Download">
+                <c-icon icon="downloaden" size="sm"/>
+            </button>
+            <button type="button" class="log-close-btn" onclick="closeLogViewer()" title="Close">
+                <c-icon icon="kruis" size="md"/>
+            </button>
+        </div>
+    </div>
+    <div class="log-viewer-toolbar">
+        <div class="log-search-container">
+            <c-icon icon="zoek" size="sm" color="grijs-500"/>
+            <input type="text" id="log-search-input" class="log-search-input" placeholder="Search logs..." oninput="filterLogs()" />
+            <span id="log-search-count" class="log-search-count"></span>
+            <button type="button" class="log-search-clear" id="log-search-clear" onclick="clearSearch()" title="Clear search">
+                <c-icon icon="kruis" size="sm"/>
+            </button>
+        </div>
+        <div class="log-toolbar-divider"></div>
+        <div class="log-level-filters">
+            <label class="log-level-filter">
+                <input type="checkbox" id="filter-error" checked onchange="filterLogs()" />
+                <span class="log-level-badge log-level-error">Error</span>
+            </label>
+            <label class="log-level-filter">
+                <input type="checkbox" id="filter-warn" checked onchange="filterLogs()" />
+                <span class="log-level-badge log-level-warn">Warn</span>
+            </label>
+            <label class="log-level-filter">
+                <input type="checkbox" id="filter-info" checked onchange="filterLogs()" />
+                <span class="log-level-badge log-level-info">Info</span>
+            </label>
+            <label class="log-level-filter">
+                <input type="checkbox" id="filter-debug" checked onchange="filterLogs()" />
+                <span class="log-level-badge log-level-debug">Debug</span>
+            </label>
+        </div>
+        <div class="log-toolbar-divider"></div>
+        <label class="log-wrap-toggle" title="Toggle word wrap">
+            <input type="checkbox" id="log-word-wrap" onchange="toggleWordWrap()" />
+            <span class="log-wrap-label">Wrap</span>
+        </label>
+    </div>
+    <div class="log-viewer-status" id="log-viewer-status">
+        <span class="log-status-indicator" id="log-status-indicator"></span>
+        <span id="log-status-text">Connecting...</span>
+        <span id="log-line-count" class="log-line-count"></span>
+    </div>
+    <div class="log-viewer-content" id="log-viewer-content">
+        <div class="log-empty-state" id="log-empty-state">
+            <c-icon icon="document-blanco" size="xl" color="grijs-500"/>
+            <p>Connecting to log stream...</p>
+        </div>
+    </div>
+</div>
