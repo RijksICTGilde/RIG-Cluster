@@ -508,6 +508,46 @@ class TestUserEnvVarsEncryptGenerator:
         # Value stays plain - this is a known limitation when no key exists
         assert yaml_data["components"][0]["user-env-vars"] == "SECRET=value"
 
+    def test_encrypts_the_deployment_component_override_too(self):
+        """The other layer this service owns (RC-55).
+
+        A deployment override holds the same kind of secret as the component value it
+        overrides. This generator is the backstop for when nothing else encrypted, and
+        until RC-55 it walked ``components[*]`` only -- so exactly half the layers this
+        service owns could reach git in plaintext.
+        """
+        yaml_data = {
+            "config": {"age-public-key": FAKE_PUBLIC_KEY},
+            "components": [{"name": "backend", "user-env-vars": "A=1"}],
+            "deployments": [
+                {
+                    "name": "deployment-1",
+                    "components": [{"reference": "backend", "user-env-vars": "DEPLOY_ONLY=secret"}],
+                }
+            ],
+        }
+
+        with patch("opi.utils.age.encrypt_age_content_sync", return_value=FAKE_AGE_ENCRYPTED):
+            UserEnvVarsEncryptGenerator().generate(yaml_data)
+
+        override = yaml_data["deployments"][0]["components"][0]["user-env-vars"]
+        assert "BEGIN AGE ENCRYPTED FILE" in override, "the deployment-component override was left in plaintext"
+        assert "BEGIN AGE ENCRYPTED FILE" in yaml_data["components"][0]["user-env-vars"]
+
+    def test_leaves_an_already_encrypted_deployment_override_alone(self):
+        yaml_data = {
+            "config": {"age-public-key": FAKE_PUBLIC_KEY},
+            "components": [],
+            "deployments": [
+                {"name": "deployment-1", "components": [{"reference": "backend", "user-env-vars": FAKE_AGE_ENCRYPTED}]}
+            ],
+        }
+
+        with patch("opi.utils.age.encrypt_age_content_sync") as mock:
+            UserEnvVarsEncryptGenerator().generate(yaml_data)
+
+        mock.assert_not_called()
+
 
 class TestComponentAliasesEncryptGenerator:
     """Verify that the generator encrypts each component alias value."""
