@@ -180,6 +180,16 @@ async def lotc_redesigned_page(request: Request, slug: str) -> HTMLResponse:
     # Het actieve tabblad komt uit de URL, want de tabs zijn echte links. Een onbekende
     # naam valt terug op de eerste in plaats van een fout te geven: een verkeerd
     # gedeelde link hoort de pagina te tonen, niet stuk te gaan.
+    # Filteren op de dienstenpagina. Zelfde regel als bij de tabs: de keuze staat in de
+    # URL, dus hij is deelbaar en werkt zonder JavaScript.
+    if "service_filters" in data:
+        chosen = request.query_params.get("kind", "")
+        data["service_filter"] = chosen
+        if chosen == "system":
+            data["services"] = [service for service in data["services"] if service["kind_label"]]
+        elif chosen == "user":
+            data["services"] = [service for service in data["services"] if not service["kind_label"]]
+
     tabs = data.get("tabs")
     if tabs:
         requested = request.query_params.get("tab", "")
