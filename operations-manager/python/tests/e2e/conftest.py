@@ -25,7 +25,7 @@ import pytest
 import uvicorn
 from itsdangerous import TimestampSigner
 from tests.e2e.helpers.forgejo import ForgejoClient
-from tests.e2e.testserver import SECRET_KEY, create_test_app
+from tests.e2e.testserver import SECRET_KEY, _preinitialize_kubectl_without_probing, create_test_app
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -89,6 +89,29 @@ def _quiet_faulthandler_for_e2e() -> None:
     long call phase, for E2E only, leaving the stricter unit-test setting untouched.
     Per-test timeouts still come from the helpers' own bounded waits."""
     faulthandler.cancel_dump_traceback_later()
+
+
+@pytest.fixture(autouse=True)
+def _keep_kubectl_from_probing() -> None:
+    """Re-arm the no-probe kubectl singleton that the root conftest resets each test.
+
+    ``tests/conftest.py`` has an autouse ``reset_kubectl_singleton`` that sets
+    ``KubectlConnector._instance = None`` around every test. For the unit tests that is
+    right. For E2E it is not: the app under test keeps running across tests, so the next
+    route that constructs a connector runs ``__init__`` again -- and that does a BLOCKING
+    ``subprocess.run(["kubectl", "auth", "whoami"], timeout=10)`` on the uvicorn event
+    loop. With no cluster but a kubectl binary present (any dev box with kind, and the
+    shared dev server) that hangs the full 10 seconds and stalls every request in flight.
+
+    That is what made this suite look order-dependent: the stall lands on whichever test
+    is unlucky in that shuffle, and its neighbour's own 10s wait expires with it. Rooted
+    here rather than in ``create_test_app`` precisely because the reset is per test, so
+    doing it once at startup does not hold.
+
+    Root-conftest fixtures are set up before package-level ones, so this runs after the
+    reset and puts the initialised singleton back.
+    """
+    _preinitialize_kubectl_without_probing()
 
 
 @pytest.fixture(scope="session")
