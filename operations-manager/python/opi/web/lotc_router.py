@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse
 
 from opi.core.templates_lotc import TEMPLATES_LOTC_DIR, templates_lotc
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
+from opi.web.lotc_fixtures import page_data
 from opi.web.lotc_form_preview import EXAMPLE_FIELDS
 from opi.web.navigation_lotc import get_navigation
 
@@ -144,52 +145,31 @@ _ACTIVITY = [
 ]
 
 
-@router.get("/dashboard-bg", response_class=HTMLResponse, include_in_schema=False)
-async def lotc_dashboard_bg(request: Request) -> HTMLResponse:
-    """Het dashboard zoals bg.rijks.app het zou opbouwen.
+def _redesigned_pages() -> dict[str, str]:
+    """De herontworpen paginas in bg-vorm, als allowlist opgebouwd bij het starten.
 
-    Naast de vertaalde versie op /lotc/pagina/dashboard, zodat het verschil tussen een
-    omzetting en een herontwerp te zien is in plaats van te beschrijven.
+    Zelfde reden als bij de vertaalde paginas: zonder allowlist zou de naam uit de URL
+    rechtstreeks een templatepad worden.
     """
-    from opi.web.lotc_fixtures import available_projects, build_project_details, load_project_data
+    directory = TEMPLATES_LOTC_DIR / "bg"
+    return {path.name.removesuffix(".html.j2"): f"bg/{path.name}" for path in sorted(directory.glob("*.j2"))}
 
-    projects = []
-    for name in available_projects():
-        data = load_project_data(name)
-        if data is None:
-            continue
-        details = build_project_details(data)
-        projects.append(
-            {
-                "name": details["name"],
-                "display_name": details["display_name"],
-                "description": details["description"],
-                "deployment_count": len(details["deployments"]),
-                "services": [service["value"] for service in details["services"]],
-            }
-        )
 
-    tiles = [
-        {
-            "icon": "rectangle-stack",
-            "value": str(len(projects)),
-            "label": "Projecten",
-            "sub": "voorbeelddata",
-            "href": "/projects",
-        },
-        {
-            "icon": "arrow-up-arrow-down",
-            "value": str(sum(p["deployment_count"] for p in projects)),
-            "label": "Deployments",
-            "sub": "over alle clusters",
-            "href": None,
-        },
-        {"icon": "person-2", "value": "2", "label": "Gebruikers", "sub": "1 beheerder", "href": "/admin/users"},
-        {"icon": "cylinder-split", "value": "3", "label": "Diensten", "sub": "in gebruik", "href": "/services"},
-    ]
+REDESIGNED_PAGES = _redesigned_pages()
 
+
+@router.get("/bg/{slug}", response_class=HTMLResponse, include_in_schema=False)
+async def lotc_redesigned_page(request: Request, slug: str) -> HTMLResponse:
+    """Een pagina zoals bg.rijks.app hem zou opbouwen.
+
+    Naast de vertaalde versie op /lotc/pagina/<naam>. Het verschil tussen die twee is het
+    verschil tussen een omzetting en een herontwerp, en dat hoort te zien te zijn.
+    """
+    template_name = REDESIGNED_PAGES.get(slug)
+    if template_name is None:
+        raise HTTPException(status_code=404, detail=f"onbekende pagina: {slug}")
     return templates_lotc.TemplateResponse(
         request,
-        "dashboard-bg.html.j2",
-        _context(request, tiles=tiles, projects=projects, activity=_ACTIVITY),
+        template_name,
+        _context(request, **page_data(slug)),
     )
