@@ -355,3 +355,46 @@ def test_real_route_can_render_lotc(app_server: str, auth_page: Page, route: str
 
     name = route.strip("/").replace("/", "-")
     page.screenshot(path=f"{SCREENSHOT_DIR}/echt-{name}.png", full_page=True, animations="disabled")
+
+
+def test_real_project_page_renders_lotc(app_server: str, auth_page: Page) -> None:
+    """De ECHTE projectpagina rendert de tabs, en elk tabblad doet het.
+
+    Dit is de rijkste pagina van de applicatie en daarmee de zwaarste toets: de
+    projectcontext telt twintig sleutels, en het resourcegebruik wordt apart met htmx
+    geladen. Als dat fragment zijn LOTC-weergave niet kent, wisselt de pagina halverwege
+    van vormgeving - en dat is precies het soort fout dat je alleen ziet als je kijkt.
+    """
+    page = auth_page
+    page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
+
+    # Een bestaand project uit de lijst pakken in plaats van een naam vastzetten: welke
+    # projecten de testopstelling kent, hoort deze test niet te weten.
+    page.goto(f"{app_server}/projects")
+    page.wait_for_load_state("networkidle")
+    link = page.locator("a[href*='/projects/details/']").first
+    href = link.get_attribute("href")
+    assert href, "geen enkel project om te openen"
+    base = href.split("?")[0]
+
+    for tab in ["project", "deployments", "metrics", "taken"]:
+        page.goto(f"{app_server}{base}?ui=lotc&tab={tab}")
+        _wait_for_nldd(page)
+
+        unimplemented = page.locator(".lotc-unimplemented")
+        assert unimplemented.count() == 0, (
+            f"tabblad {tab} bevat niet-geimplementeerde componenten: "
+            f"{unimplemented.evaluate_all('els => els.map(e => e.dataset.lotcComponent)')}"
+        )
+        # Het metrics-tabblad laadt zijn inhoud met htmx. Zonder htmx op de pagina blijft
+        # de plaatshouder staan, en dat is zichtbaar op het scherm maar stil in een test
+        # die alleen naar componenten kijkt. Vandaar deze assertie.
+        if tab == "metrics":
+            expect(page.get_by_text("Metingen worden opgehaald")).not_to_be_visible()
+
+        page.screenshot(path=f"{SCREENSHOT_DIR}/echt-project-{tab}.png", full_page=True, animations="disabled")
+
+    # En zonder de vlag blijft de bestaande pagina zoals hij was.
+    page.goto(f"{app_server}{base}")
+    page.wait_for_load_state("networkidle")
+    assert page.locator("nldd-card").count() == 0, "de bestaande projectpagina rendert nu LOTC"

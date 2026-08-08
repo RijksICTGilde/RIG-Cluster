@@ -131,7 +131,18 @@
         {% endcall %}
 
     {% elif active_tab == 'metrics' %}
-        {% if usage_error %}
+        {% if project.name is defined and usage is not defined %}
+            {# Zelfde aanpak als de bestaande pagina: apart laden, zodat een trage of
+               afwezige Prometheus deze pagina niet ophoudt. Het fragment kent zijn eigen
+               LOTC-weergave, dus ?ui=lotc gaat mee. #}
+            {% call panel("Resourcegebruik", "chart-x-y-axis-line", info_text="Wat dit project op dit moment gebruikt, tegen de limiet die ervoor is ingesteld.") %}
+                <div hx-get="/projects/details/{{ project.name }}/resource-usage?ui=lotc"
+                     hx-trigger="load"
+                     hx-swap="innerHTML">
+                    <c-paragraph>Metingen worden opgehaald...</c-paragraph>
+                </div>
+            {% endcall %}
+        {% elif usage_error %}
             <c-alert type="info" heading="Resourcegebruik niet beschikbaar">{{ usage_error }}</c-alert>
         {% elif usage %}
             {% call panel("Resourcegebruik", "chart-x-y-axis-line", info_text="Wat dit project op dit moment gebruikt, tegen de limiet die ervoor is ingesteld.") %}

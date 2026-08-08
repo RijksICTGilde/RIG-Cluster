@@ -34,7 +34,16 @@
 
 {% set page_title_value %}{% block page_title %}Self Service Portal{% endblock %}{% endset %}
 
-<c-page title="{{ page_title_value }}" lang="nl">
+{# htmx komt niet vanzelf mee. setup_components(htmx=True) zet alleen de validatie van
+   hx-attributen aan; het script moet je zelf laden. Zonder blijft elk blok dat de pagina
+   lazy inlaadt op zijn plaatshouder staan - zichtbaar op het scherm, stil in de tests.
+
+   Zelfde bron en versie als de bestaande pagina (base.html.j2), zodat dit geen nieuwe
+   keuze wordt. Htmx in eigen beheer nemen in plaats van van een CDN halen is een aparte
+   afweging, en die hoort niet in deze omzetting thuis. #}
+{% set lotc_head %}<script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"></script>{% endset %}
+
+<c-page title="{{ page_title_value }}" lang="nl" head="{{ lotc_head }}">
 
     {# width is de breedte van de zijkolom; bg gebruikt 16rem. #}
     <c-app-shell width="16rem">

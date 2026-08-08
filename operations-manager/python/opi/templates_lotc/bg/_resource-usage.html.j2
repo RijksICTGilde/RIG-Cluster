@@ -1,0 +1,51 @@
+{#
+  Het resourcegebruik van een project, als los fragment.
+
+  De projectpagina laadt dit apart met htmx (hx-trigger="intersect once"), zodat een trage
+  of afwezige Prometheus de pagina niet ophoudt. Dat blijft zo; alleen de weergave is
+  omgezet.
+
+  De balken waren eigen div's met een breedte in een style-attribuut. Nu c-progress-bar:
+  hetzelfde beeld, met de rol en de aria-waarden die het thema meelevert, en het volgt een
+  themawissel.
+#}
+{% if usage_error %}
+    <c-alert type="info" heading="Resourcegebruik niet beschikbaar">{{ usage_error }}</c-alert>
+{% elif usage %}
+    <c-stack gap="md">
+        <c-paragraph size="sm">
+            {{ usage.deployments }} deployment(s), {{ usage.pods }} pod(s) op dit cluster.
+        </c-paragraph>
+        {# Zonder limiet zegt een percentage niets: dan is er geen bovengrens om tegen af
+           te zetten. In dat geval alleen het getal. #}
+        {% if usage.cpu_limit > 0 %}
+            <c-progress-bar
+                text="CPU"
+                :value="usage.cpu_pct"
+                max="100"
+                value-display="true"
+                color="info"
+                accessible-label="CPU-gebruik ten opzichte van de limiet" />
+        {% else %}
+            <c-detail-list>
+                <c-detail-item label="CPU" value="{{ usage.cpu_used | round(2) }} cores" />
+            </c-detail-list>
+        {% endif %}
+
+        {% if usage.mem_limit > 0 %}
+            <c-progress-bar
+                text="Geheugen (in gebruik)"
+                :value="usage.mem_pct"
+                max="100"
+                value-display="true"
+                color="success"
+                accessible-label="Geheugengebruik ten opzichte van de limiet" />
+        {% else %}
+            <c-detail-list>
+                <c-detail-item label="Geheugen (in gebruik)" value="{{ (usage.mem_used / 1048576) | round | int }} MiB" />
+            </c-detail-list>
+        {% endif %}
+    </c-stack>
+{% else %}
+    <c-paragraph>Er zijn nog geen metingen voor dit project.</c-paragraph>
+{% endif %}
