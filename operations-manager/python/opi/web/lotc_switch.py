@@ -24,11 +24,14 @@ Zodra een pagina af is, verdwijnt de keuze: dan noemt de route alleen nog het
 LOTC-sjabloon, en uiteindelijk verdwijnt deze module met de laatste pagina.
 """
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from fastapi import Request
     from starlette.responses import Response
+
+logger = logging.getLogger(__name__)
 
 #: Het koekje waarin de keuze bewaard blijft.
 COOKIE_NAME = "zad_layout"
@@ -149,12 +152,21 @@ def build_lotc_services(
                 "chips": chips,
                 "kind_label": "altijd aan" if is_platform else "",
                 "kind_type": "info",
-                "help": definition.description,
+                "help_template": getattr(definition, "help_template", None),
                 # Welke projecten een dienst afnemen weet deze route niet; dat vergt de
                 # projectenlijst en die haalt hij niet op. Liever leeg dan verzonnen.
                 "used_by": [],
             }
         )
+
+    # De uitgebreide hulptekst van een dienst, als erom gevraagd is. Server-side en niet
+    # in een tooltip: elke dienst heeft een eigen help-template met een echt verhaal, en
+    # dat wil je LEZEN. Een tooltip verschijnt bij zweven en verdwijnt weer; mensen
+    # klikken. Zo is de uitleg bovendien een deelbare URL en werkt hij zonder JavaScript.
+    gevraagde_hulp = request.query_params.get("help", "")
+    for service in services:
+        service["help_open"] = service["name"] == gevraagde_hulp
+        service["help_html"] = _render_help(request, service["help_template"]) if service["help_open"] else ""
 
     chosen = request.query_params.get("kind", "")
     if chosen == "system":
@@ -325,3 +337,25 @@ def remember_layout(request: Request, response: Response) -> Response:
             samesite="lax",
         )
     return response
+
+
+def _render_help(request: Request, template_name: str | None) -> str:
+    """Render de hulptekst van een dienst tot HTML.
+
+    Met de BESTAANDE templateomgeving: die teksten zijn in roos-componenten geschreven en
+    horen daar thuis. Wat eruit komt is gewone HTML, dus hij past net zo goed in een
+    LOTC-pagina. Ze omzetten zou een tweede versie van elke hulptekst opleveren, en dat is
+    precies het soort verdubbeling dat vroeg of laat uiteenloopt.
+    """
+    if not template_name:
+        return ""
+
+    from opi.core.templates import setup_templates
+
+    path = template_name if "/" in template_name else f"help/{template_name}"
+    try:
+        template = setup_templates().env.get_template(path)
+    except Exception:
+        logger.warning("hulptekst niet gevonden: %s", path)
+        return ""
+    return template.render(request=request)

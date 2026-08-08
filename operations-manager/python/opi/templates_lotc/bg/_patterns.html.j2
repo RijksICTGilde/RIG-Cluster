@@ -30,10 +30,10 @@
 <c-card outline padding="lg">
     <c-stack gap="{{ gap }}">
         {% if title %}
-            <c-section-head title="{{ title }}" :icon="icon or none">
-                {%- if info_text %}{{ info(info_text) }}{% endif -%}
-                {{ aside }}
-            </c-section-head>
+            <c-section-head title="{{ title }}" :icon="icon or none">{{ aside }}</c-section-head>
+        {%- if info_text %}
+            {{ info(info_text) }}
+        {%- endif %}
         {% endif %}
         {{ caller() }}
     </c-stack>
@@ -56,38 +56,18 @@
 
 
 {#
-  Een info-icoon met uitleg, naast een label of een kopregel.
+  Uitleg bij een kopregel.
 
-  WAAROM DIT ER IS
+  GEEN icoon met een tooltip. Die stond hier twee versies lang en deed niets zichtbaars:
+  een tooltip verschijnt bij zweven, en mensen klikken. Een klikbare popover werkte ook
+  niet betrouwbaar door het custom element eromheen.
 
-  De terugkerende klacht is dat mensen dingen niet kunnen vinden. Uitleg toevoegen helpt
-  daar alleen tegen als hij STAAT WAAR DE VRAAG ONTSTAAT - niet op een aparte hulppagina
-  die je moet weten te vinden. Vandaar een icoon dat overal hetzelfde werkt.
-
-  Wij hebben dit al bij de diensten (het vraagteken naast een dienstkaart, dat een
-  hulpmodal opent), maar dat is met de hand gebouwd: een eigen icoonknop, een eigen
-  backdrop en een eigen modal. Deze macro doet hetzelfde met wat het thema ervoor heeft,
-  dus het volgt de vormgeving en het is toetsenbord- en schermlezervriendelijk zonder dat
-  wij daar iets voor hoeven te doen.
-
-      {{ info("Een component is een draaiend onderdeel van je applicatie.") }}
-
-  Voor een langere uitleg die je een keer leest en dan wegklikt is er uitleg_blok()
-  hieronder; die is nadrukkelijker en hoort bij een scherm dat iemand voor het eerst ziet.
+  Korte uitleg hoort gewoon te STAAN. Hij is kort genoeg om niet in de weg te zitten, en
+  wie hem niet nodig heeft leest eroverheen. Voor een lang verhaal is er de hulptekst van
+  een dienst, die met een klik opengaat - zie service_card().
 #}
-{% macro info(text, label='Uitleg') %}
-{# De uitleg zit in het TEXT-attribuut van de knop, niet in een <c-tooltip> ernaast.
-   c-icon-button gooit zijn kinderen weg, dus een tooltip als kind rendert nooit - het
-   icoontje stond er wel en deed niets. De knop heeft er zelf iets voor: text plus
-   tooltip-timing, met hide-lg-text zodat alleen het icoon zichtbaar blijft. #}
-<c-icon-button
-    icon="info-circle"
-    text="{{ text }}"
-    accessible-label="{{ label }}"
-    tooltip-timing="instant"
-    hide-lg-text="true"
-    variant="neutral-transparent"
-    size="sm" />
+{% macro info(text) %}
+<c-paragraph size="sm">{{ text }}</c-paragraph>
 {% endmacro %}
 
 
@@ -132,6 +112,14 @@
   semantisch en zeggen iets over betekenis. Die twee blijven gescheiden, anders betekent
   groen op de ene plek een dienst en op de andere "in orde".
 #}
+{#
+  Een dienstkaart met de uitleg die opengeklapt kan worden.
+
+  Het informatie-icoon is een LINK naar ?help=<naam>, geen tooltip en geen dialoog in de
+  browser. Elke dienst heeft een eigen help-template met een echt verhaal, en dat wil je
+  lezen: een tooltip verschijnt bij zweven en verdwijnt weer. Zo is de uitleg bovendien
+  een deelbare URL, werkt hij zonder JavaScript, en kun je hem printen.
+#}
 {% macro service_card(service) %}
 <c-card outline padding="md">
     <c-stack gap="sm">
@@ -139,7 +127,14 @@
             <c-cluster gap="sm" align="center">
                 <c-icon icon="{{ service.icon }}" color="{{ service.color }}" size="lg" />
                 <c-heading type="h3" size="5" label="{{ service.label }}" />
-                {% if service.help %}{{ info(service.help) }}{% endif %}
+                {% if service.help_template %}
+                    <c-icon-button
+                        icon="info-circle"
+                        accessible-label="Uitleg over {{ service.label }}"
+                        href="{{ '?' if not service.help_open else '?help=' }}{{ 'help=' ~ service.name if not service.help_open else '' }}"
+                        variant="neutral-transparent"
+                        size="sm" />
+                {% endif %}
             </c-cluster>
             {% if service.kind_label %}
                 <c-tag type="{{ service.kind_type }}" label="{{ service.kind_label }}" />
@@ -153,6 +148,11 @@
                 <c-chip>{{ chip }}</c-chip>
             {% endfor %}
         </c-cluster>
+
+        {% if service.help_html %}
+            <c-divider />
+            <div class="zad-service-help">{{ service.help_html | safe }}</div>
+        {% endif %}
 
         {% if service.used_by %}
             <c-divider />
