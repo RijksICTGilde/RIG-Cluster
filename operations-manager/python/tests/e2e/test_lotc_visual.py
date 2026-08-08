@@ -290,7 +290,7 @@ def test_open_modal_screenshot(app_server: str, page: Page) -> None:
 
 # De tabbladen van de projectpagina. Elk is een eigen URL, dus elk is apart te toetsen -
 # en dat hoort ook, want een tab die niemand opent is precies waar een fout blijft zitten.
-PROJECT_TABS = ["overzicht", "componenten", "deployments", "diensten", "team", "instellingen"]
+PROJECT_TABS = ["project", "deployments", "metrics", "taken"]
 
 
 @pytest.mark.parametrize("tab", PROJECT_TABS)
@@ -317,7 +317,7 @@ def test_unknown_tab_falls_back(app_server: str, page: Page) -> None:
     response = page.goto(f"{app_server}/lotc/bg/project-tabs?tab=bestaatniet")
     assert response is not None
     assert response.ok
-    expect(page.get_by_text("Wat is dit project")).to_be_visible()
+    expect(page.get_by_text("Diensten").first).to_be_visible()
 
 
 # De echte routes die hun pagina al door LOTC kunnen laten renderen. Deze lijst groeit
