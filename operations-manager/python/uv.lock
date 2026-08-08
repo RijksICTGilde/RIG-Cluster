@@ -2784,6 +2784,11 @@ dependencies = [
     { name = "jinja2-base64-filters" },
     { name = "jsonpath-ng" },
     { name = "jsonschema" },
+    { name = "lord-of-the-components" },
+    { name = "lotc-forms" },
+    { name = "lotc-layout" },
+    { name = "lotc-nldd" },
+    { name = "lotc-rvo" },
     { name = "lxml" },
     { name = "mako" },
     { name = "opentelemetry-api" },
@@ -2824,13 +2829,6 @@ dev = [
     { name = "ruff" },
     { name = "setuptools" },
 ]
-lotc = [
-    { name = "lord-of-the-components" },
-    { name = "lotc-forms" },
-    { name = "lotc-layout" },
-    { name = "lotc-nldd" },
-    { name = "lotc-rvo" },
-]
 test = [
     { name = "coverage" },
     { name = "freezegun" },
@@ -2868,6 +2866,11 @@ requires-dist = [
     { name = "jinja2-base64-filters", specifier = ">=0.1.4" },
     { name = "jsonpath-ng", specifier = ">=1.7.0" },
     { name = "jsonschema", specifier = ">=4.26.0" },
+    { name = "lord-of-the-components", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=python&rev=dfcddbf" },
+    { name = "lotc-forms", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-forms&rev=dfcddbf" },
+    { name = "lotc-layout", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-layout&rev=dfcddbf" },
+    { name = "lotc-nldd", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-nldd&rev=dfcddbf" },
+    { name = "lotc-rvo", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-rvo&rev=dfcddbf" },
     { name = "lxml", specifier = ">=6.0.1" },
     { name = "mako", specifier = ">=1.3.12" },
     { name = "opentelemetry-api", specifier = ">=1.27.0" },
@@ -2907,13 +2910,6 @@ dev = [
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "ruff", specifier = ">=0.11.11" },
     { name = "setuptools", specifier = ">=80.8.0" },
-]
-lotc = [
-    { name = "lord-of-the-components", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=python&rev=dfcddbf" },
-    { name = "lotc-forms", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-forms&rev=dfcddbf" },
-    { name = "lotc-layout", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-layout&rev=dfcddbf" },
-    { name = "lotc-nldd", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-nldd&rev=dfcddbf" },
-    { name = "lotc-rvo", git = "https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git?subdirectory=packages%2Flotc-rvo&rev=dfcddbf" },
 ]
 test = [
     { name = "coverage", specifier = ">=7.8.2" },

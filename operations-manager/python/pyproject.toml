@@ -43,6 +43,18 @@ dependencies = [
     "jsonpath-ng>=1.7.0",
     "tenacity>=9.1.2",
     "jinja-roos-components @ git+https://github.com/RijksICTGilde/jinja-roos-components.git@table-and-more-conversion",
+    # Lord of the Components: het componentensysteem waar de interface naartoe gaat. Een
+    # gewone runtime-dependency en geen dev-extra, want de applicatie rendert er pagina's
+    # mee - hij hoort dus in de image te zitten.
+    #
+    # Gepind op een commit. Die pin is de reden dat dit veilig is: de NLDD-afgeleide
+    # componentlaag schuift met een bump mee, en meer dan duizend aanroepen mogen niet
+    # stil van vorm veranderen.
+    "lord-of-the-components @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@dfcddbf#subdirectory=python",
+    "lotc-rvo @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@dfcddbf#subdirectory=packages/lotc-rvo",
+    "lotc-nldd @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@dfcddbf#subdirectory=packages/lotc-nldd",
+    "lotc-layout @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@dfcddbf#subdirectory=packages/lotc-layout",
+    "lotc-forms @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@dfcddbf#subdirectory=packages/lotc-forms",
     "beautifulsoup4>=4.13.4",
     "lxml>=6.0.1",
     "python-keycloak>=5.3.0",
@@ -76,20 +88,6 @@ test = [
     "pytest-minio-mock>=0.4.17",
     "pytest-timeout>=2.3.1",
     "testcontainers[postgres]>=4.0.0",
-]
-# Lord of the Components: de POC-bouwlijn naast de release. Bewust GEEN runtime-
-# dependency - de release-image bouwt uit [project.dependencies] en verandert hier
-# niet van. Installeer met: uv sync --group lotc
-#
-# Gepind op commit dfcddbf van de v7-branch. Die pin is de reden dat dit veilig is:
-# de NLDD-afgeleide componentlaag schuift met een bump mee, en 1263 aanroepen mogen
-# niet stil van vorm veranderen.
-lotc = [
-    "lord-of-the-components @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@dfcddbf#subdirectory=python",
-    "lotc-rvo @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@dfcddbf#subdirectory=packages/lotc-rvo",
-    "lotc-nldd @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@dfcddbf#subdirectory=packages/lotc-nldd",
-    "lotc-layout @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@dfcddbf#subdirectory=packages/lotc-layout",
-    "lotc-forms @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@dfcddbf#subdirectory=packages/lotc-forms",
 ]
 dev = [
     "ruff>=0.11.11",

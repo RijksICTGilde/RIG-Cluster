@@ -13,8 +13,8 @@ route, dezelfde gegevens, dezelfde rechten - alleen een andere weergave.
 
 Waarom een schakelaar en niet gewoon omzetten:
 
-- **De release gaat voor.** Zolang de omzetting loopt moet de bestaande pagina blijven
-  werken. Een schakelaar houdt de oude weg intact tot de nieuwe aantoonbaar beter is.
+- **Pagina voor pagina.** De omzetting gaat per pagina; een schakelaar houdt de oude weg
+  intact tot de nieuwe aantoonbaar beter is, zodat de omzetting niet in een keer hoeft.
 - **Vergelijken op DEZELFDE gegevens.** Dat is de enige eerlijke toets. Twee pagina's
   naast elkaar met verschillende data vertelt niets; ``?ui=lotc`` op dezelfde route wel.
 - **Terugvallen kost niets.** Gaat er iets mis in productie, dan is het weghalen van een
@@ -24,14 +24,11 @@ Zodra een pagina af is, verdwijnt de keuze: dan noemt de route alleen nog het
 LOTC-sjabloon, en uiteindelijk verdwijnt deze module met de laatste pagina.
 """
 
-import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from fastapi import Request
     from starlette.responses import Response
-
-logger = logging.getLogger(__name__)
 
 #: De querystring die de LOTC-weergave kiest: ``?ui=lotc``.
 QUERY_PARAM = "ui"
@@ -64,24 +61,16 @@ def render(
         lotc: de LOTC-template, in ``opi/templates_lotc/``.
         context: de gegevens, identiek voor beide.
 
-    De import van de LOTC-omgeving staat binnenin en niet bovenaan: Lord of the Components
-    zit in een dependency-group en niet in de runtime-dependencies, dus in de release-image
-    bestaat het pakket niet. Een import bovenaan zou die image laten crashen op een module
-    die er niet hoort te zijn.
+    De import staat binnenin en niet bovenaan om een kringloop te vermijden: de
+    LOTC-omgeving leent zijn filters en globals van de roos-omgeving, en die wordt door de
+    routes geimporteerd die deze module gebruiken.
     """
-    from opi.core.templates import setup_templates
-
     if wants_lotc(request):
-        try:
-            from opi.core.templates_lotc import templates_lotc
-        except ImportError:
-            # In de release-image bestaat Lord of the Components niet: het zit in een
-            # dependency-group en niet in de runtime-dependencies. Dan hoort ?ui=lotc de
-            # gewone pagina te tonen en geen foutmelding - een gedeelde link mag een
-            # omgeving zonder de bouwlijn niet omleggen naar een 500.
-            logger.info("LOTC-weergave gevraagd maar niet geinstalleerd; toont de bestaande pagina")
-        else:
-            return templates_lotc.TemplateResponse(request, lotc, context)
+        from opi.core.templates_lotc import templates_lotc
+
+        return templates_lotc.TemplateResponse(request, lotc, context)
+
+    from opi.core.templates import setup_templates
 
     return setup_templates().TemplateResponse(request, roos, context)
 
