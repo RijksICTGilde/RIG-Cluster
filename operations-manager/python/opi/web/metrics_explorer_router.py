@@ -13,8 +13,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.config import settings
-from opi.core.templates import get_templates
+from opi.web.lotc_switch import render
 from opi.web.menu import get_menu_items
+from opi.web.navigation_lotc import get_navigation
 
 logger = logging.getLogger(__name__)
 
@@ -78,15 +79,19 @@ def _get_prometheus_external_url() -> str:
 @requires_sso
 async def metrics_explorer_page(request: Request):
     """Serve the metrics explorer page."""
-    templates = get_templates()
     user = get_current_user(request)
 
-    return templates.TemplateResponse(
-        "metrics-explorer.html.j2",
-        {
+    return render(
+        request,
+        roos="metrics-explorer.html.j2",
+        lotc="bg/metrics-explorer.html.j2",
+        context={
             "request": request,
             "title": "Metrics Explorer",
             "menu_items": get_menu_items(user),
+            # De navigatie van de nieuwe schil. Kost niets als de bestaande weergave
+            # gekozen is: dat sjabloon leest hem niet.
+            "navigation": get_navigation(user, current_path="/metrics-explorer"),
             "user": user,
             "services": MONITORED_SERVICES,
             "prometheus_url": _get_prometheus_external_url(),

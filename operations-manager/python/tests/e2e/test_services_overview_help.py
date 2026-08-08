@@ -21,7 +21,10 @@ def test_every_service_on_the_overview_has_a_help_button(app_server: str, auth_p
     assert response is not None
     assert response.ok
 
-    cards = auth_page.locator(".rvo-card")
+    # De kaart heet .rvo-card onder ROOS en <nldd-card> onder NLDD. De tagnaam is precies
+    # wat het thema bepaalt, dus beide vormen tellen mee; welk van de twee je krijgt hangt
+    # af van de standaardvormgeving en dat is geen onderwerp van deze test.
+    cards = auth_page.locator(".rvo-card, nldd-card")
     buttons = auth_page.locator(".service-card__help-btn")
     assert cards.count() > 0, "no service cards on the overview"
     assert buttons.count() == cards.count(), (
