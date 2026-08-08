@@ -64,7 +64,7 @@
 
   Korte uitleg hoort gewoon te STAAN. Hij is kort genoeg om niet in de weg te zitten, en
   wie hem niet nodig heeft leest eroverheen. Voor een lang verhaal is er de hulptekst van
-  een dienst, die met een klik opengaat - zie service_card().
+  een dienst, die met een klik in een venster opengaat - zie bg/_service-card.html.j2.
 #}
 {% macro info(text) %}
 <c-paragraph size="sm">{{ text }}</c-paragraph>
@@ -120,52 +120,6 @@
   lezen: een tooltip verschijnt bij zweven en verdwijnt weer. Zo is de uitleg bovendien
   een deelbare URL, werkt hij zonder JavaScript, en kun je hem printen.
 #}
-{% macro service_card(service) %}
-<c-card outline padding="md">
-    <c-stack gap="sm">
-        <c-cluster gap="sm" align="center" justify="between">
-            <c-cluster gap="sm" align="center">
-                <c-icon icon="{{ service.icon }}" color="{{ service.color }}" size="lg" />
-                <c-heading type="h3" size="5" label="{{ service.label }}" />
-                {% if service.help_template %}
-                    <c-icon-button
-                        icon="info-circle"
-                        accessible-label="Uitleg over {{ service.label }}"
-                        href="{{ '?' if not service.help_open else '?help=' }}{{ 'help=' ~ service.name if not service.help_open else '' }}"
-                        variant="neutral-transparent"
-                        size="sm" />
-                {% endif %}
-            </c-cluster>
-            {% if service.kind_label %}
-                <c-tag type="{{ service.kind_type }}" label="{{ service.kind_label }}" />
-            {% endif %}
-        </c-cluster>
-
-        <c-code>{{ service.name }}</c-code>
-
-        <c-cluster gap="sm">
-            {% for chip in service.chips %}
-                <c-chip>{{ chip }}</c-chip>
-            {% endfor %}
-        </c-cluster>
-
-        {% if service.help_html %}
-            <c-divider />
-            <div class="zad-service-help">{{ service.help_html | safe }}</div>
-        {% endif %}
-
-        {% if service.used_by %}
-            <c-divider />
-            <c-cluster gap="sm" align="center">
-                <c-icon icon="rectangle-stack" size="sm" />
-                {% for project in service.used_by %}
-                    <c-chip>{{ project }}</c-chip>
-                {% endfor %}
-            </c-cluster>
-        {% endif %}
-    </c-stack>
-</c-card>
-{% endmacro %}
 
 
 {#

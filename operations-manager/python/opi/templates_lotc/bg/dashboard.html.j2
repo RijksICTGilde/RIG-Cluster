@@ -8,7 +8,7 @@
     _kop                 -> page_head()
     _gezondheidsmelding  -> c-alert, met dezelfde drie standen en dezelfde links
     _kerncijfers         -> c-metric in plaats van vier kaarten met een eigen stat-grid
-    _resourcegebruik     -> c-progress-bar in plaats van canvas-meters
+    _resourcegebruik     -> dezelfde canvas-meters, in een apart opgehaald blok
     _resourceverdeling   -> c-progress-bar met segmenten in plaats van een eigen balk
     _projecten           -> c-layer met de gezondheid als label
 
@@ -16,9 +16,13 @@
   de verdeling over projecten en de gezondheid per project stonden er, dus staan ze er
   weer.
 
-  De meters waren <canvas>-elementen die door dashboard.js werden getekend. Dat wordt een
-  voortgangsbalk: hetzelfde getal, maar leesbaar voor een schermlezer en zonder eigen
-  tekencode.
+  DE METERS
+
+  Hier stonden een tijd voortgangsbalken in plaats van de canvas-meters. Dat is
+  teruggedraaid - zie bg/_dashboard-usage.html.j2. De tekencode en de stylesheet die ze
+  nodig hebben worden hieronder geladen, in de PAGINA en niet in het fragment: het
+  fragment komt via htmx binnen en een stylesheet die pas dan arriveert laat de meters
+  eerst verkeerd staan.
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
@@ -91,4 +95,15 @@
             {% endfor %}
         </c-stack>
     {% endcall %}
+{% endblock %}
+
+{% block additional_styles %}
+<link rel="stylesheet" href="{{ static_url('css/dashboard.css') }}">
+{% endblock %}
+
+{% block additional_scripts %}
+{# Dezelfde bron en versie als de bestaande pagina; dit is een overname, geen nieuwe
+   keuze. Chart.js zelf in beheer nemen is een aparte afweging. #}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="{{ static_url('js/dashboard_gauges.js') }}"></script>
 {% endblock %}

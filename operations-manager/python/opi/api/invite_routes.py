@@ -17,7 +17,6 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from opi.core.config import settings
-from opi.core.templates import get_templates
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.invite_manager import (
     InviteAuthMethodError,
@@ -28,6 +27,7 @@ from opi.manager.invite_manager import (
 )
 from opi.services.project_store import get_project_store
 from opi.utils.naming import generate_project_realm_name
+from opi.web.lotc_switch import render
 from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
@@ -325,14 +325,14 @@ async def invite_landing(request: Request, key: str) -> Response:
     Returns:
         HTML response with landing page
     """
-    templates = get_templates()
-
     # Find project and invite
     result = await _find_project_by_invite_key(key)
     if not result:
-        return templates.TemplateResponse(
-            "invite-error.html.j2",
-            {
+        return render(
+            request,
+            roos="invite-error.html.j2",
+            lotc="bg/invite-error.html.j2",
+            context={
                 "request": request,
                 "error_title": "Uitnodiging niet gevonden",
                 "error_message": "De opgegeven uitnodiging bestaat niet of is niet meer geldig.",
@@ -366,9 +366,11 @@ async def invite_landing(request: Request, key: str) -> Response:
     # Get identity provider display names for SSO buttons
     identity_providers = realm_auth.get("identity_providers", [])
 
-    return templates.TemplateResponse(
-        "invite-landing.html.j2",
-        {
+    return render(
+        request,
+        roos="invite-landing.html.j2",
+        lotc="bg/invite-landing.html.j2",
+        context={
             "request": request,
             "project_name": project_name,
             "display_name": display_name,
@@ -657,14 +659,14 @@ async def invite_register_form(request: Request, key: str) -> Response:
     Returns:
         HTML response with registration form
     """
-    templates = get_templates()
-
     # Find and validate invite
     result = await _find_project_by_invite_key(key)
     if not result:
-        return templates.TemplateResponse(
-            "invite-error.html.j2",
-            {
+        return render(
+            request,
+            roos="invite-error.html.j2",
+            lotc="bg/invite-error.html.j2",
+            context={
                 "request": request,
                 "error_title": "Uitnodiging niet gevonden",
                 "error_message": "De opgegeven uitnodiging bestaat niet of is niet meer geldig.",
@@ -685,9 +687,11 @@ async def invite_register_form(request: Request, key: str) -> Response:
             auth_error_msg = "Account aanmaken is niet beschikbaar voor deze uitnodiging."
         else:
             auth_error_msg = "Account creation is not available for this invitation."
-        return templates.TemplateResponse(
-            "invite-error.html.j2",
-            {
+        return render(
+            request,
+            roos="invite-error.html.j2",
+            lotc="bg/invite-error.html.j2",
+            context={
                 "request": request,
                 "error_title": error_messages["auth_method_not_allowed"],
                 "error_message": auth_error_msg,
@@ -699,9 +703,11 @@ async def invite_register_form(request: Request, key: str) -> Response:
     message = invite_manager.project_file_handler.get_invite_message(invite, language)
     domain_restriction = invite.get("restrict_domain")
 
-    return templates.TemplateResponse(
-        "invite-register.html.j2",
-        {
+    return render(
+        request,
+        roos="invite-register.html.j2",
+        lotc="bg/invite-register.html.j2",
+        context={
             "request": request,
             "project_name": project_name,
             "display_name": display_name,
@@ -728,14 +734,14 @@ async def invite_register_submit(request: Request, key: str) -> Response:
     Returns:
         Redirect to success page or re-render form with errors
     """
-    templates = get_templates()
-
     # Find and validate invite
     result = await _find_project_by_invite_key(key)
     if not result:
-        return templates.TemplateResponse(
-            "invite-error.html.j2",
-            {
+        return render(
+            request,
+            roos="invite-error.html.j2",
+            lotc="bg/invite-error.html.j2",
+            context={
                 "request": request,
                 "error_title": "Uitnodiging niet gevonden",
                 "error_message": "De opgegeven uitnodiging bestaat niet of is niet meer geldig.",
@@ -752,9 +758,11 @@ async def invite_register_submit(request: Request, key: str) -> Response:
     try:
         invite_manager.validate_auth_method(project_data, invite, "local")
     except InviteError as e:
-        return templates.TemplateResponse(
-            "invite-error.html.j2",
-            {
+        return render(
+            request,
+            roos="invite-error.html.j2",
+            lotc="bg/invite-error.html.j2",
+            context={
                 "request": request,
                 "error_title": error_messages.get(e.error_code, error_messages["generic_error"]),
                 "error_message": e.message,
@@ -816,9 +824,11 @@ async def invite_register_submit(request: Request, key: str) -> Response:
     if errors:
         display_name = project_data.get("display-name", project_name)
         message = invite_manager.project_file_handler.get_invite_message(invite, language)
-        return templates.TemplateResponse(
-            "invite-register.html.j2",
-            {
+        return render(
+            request,
+            roos="invite-register.html.j2",
+            lotc="bg/invite-register.html.j2",
+            context={
                 "request": request,
                 "project_name": project_name,
                 "display_name": display_name,
@@ -880,9 +890,11 @@ async def invite_register_submit(request: Request, key: str) -> Response:
             general_error = error_messages.get(e.error_code, e.message)
 
         display_name = project_data.get("display-name", project_name)
-        return templates.TemplateResponse(
-            "invite-register.html.j2",
-            {
+        return render(
+            request,
+            roos="invite-register.html.j2",
+            lotc="bg/invite-register.html.j2",
+            context={
                 "request": request,
                 "project_name": project_name,
                 "display_name": display_name,
@@ -897,9 +909,11 @@ async def invite_register_submit(request: Request, key: str) -> Response:
     except Exception:
         logger.exception(f"Error creating local account for invite '{key}'")
         display_name = project_data.get("display-name", project_name)
-        return templates.TemplateResponse(
-            "invite-register.html.j2",
-            {
+        return render(
+            request,
+            roos="invite-register.html.j2",
+            lotc="bg/invite-register.html.j2",
+            context={
                 "request": request,
                 "project_name": project_name,
                 "display_name": display_name,
@@ -925,14 +939,14 @@ async def invite_success(request: Request, key: str) -> Response:
     Returns:
         HTML response with success page
     """
-    templates = get_templates()
-
     # Find project and invite
     result = await _find_project_by_invite_key(key)
     if not result:
-        return templates.TemplateResponse(
-            "invite-error.html.j2",
-            {
+        return render(
+            request,
+            roos="invite-error.html.j2",
+            lotc="bg/invite-error.html.j2",
+            context={
                 "request": request,
                 "error_title": "Uitnodiging niet gevonden",
                 "error_message": "De opgegeven uitnodiging bestaat niet of is niet meer geldig.",
@@ -957,9 +971,11 @@ async def invite_success(request: Request, key: str) -> Response:
     application_url = invite.get("application_url", "")
     display_name = project_data.get("display-name", project_name)
 
-    return templates.TemplateResponse(
-        "invite-success.html.j2",
-        {
+    return render(
+        request,
+        roos="invite-success.html.j2",
+        lotc="bg/invite-success.html.j2",
+        context={
             "request": request,
             "project_name": project_name,
             "display_name": display_name,
@@ -986,8 +1002,6 @@ async def invite_error(request: Request, key: str) -> Response:
     Returns:
         HTML response with error page
     """
-    templates = get_templates()
-
     # Try to find project for language detection
     result = await _find_project_by_invite_key(key)
     invite: dict[str, Any] = {}
@@ -1036,9 +1050,11 @@ async def invite_error(request: Request, key: str) -> Response:
     else:
         error_message = ""
 
-    return templates.TemplateResponse(
-        "invite-error.html.j2",
-        {
+    return render(
+        request,
+        roos="invite-error.html.j2",
+        lotc="bg/invite-error.html.j2",
+        context={
             "request": request,
             "error_title": error_title,
             "error_message": error_message,
