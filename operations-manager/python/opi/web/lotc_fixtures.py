@@ -127,3 +127,110 @@ def build_details_context(name: str) -> dict[str, Any] | None:
         "deployment_service_sections": {},
         "service_detail_sections": [],
     }
+
+
+# Activiteit voor het dashboard. Verzonnen, maar consistent met de voorbeeldprojecten:
+# een tweede werkelijkheid naast de fixtures zou het beeld juist onbetrouwbaar maken.
+ACTIVITY = [
+    {
+        "icon": "plus",
+        "actor": "Voorbeeldbeheerder",
+        "action": "project aangemaakt",
+        "resource": "voorbeeld-klein",
+        "at": "vandaag 09:12",
+    },
+    {
+        "icon": "arrow-up-arrow-down",
+        "actor": "Voorbeeldontwikkelaar",
+        "action": "deployment uitgerold",
+        "resource": "voorbeeld-volledig / productie",
+        "at": "gisteren 16:40",
+    },
+    {
+        "icon": "lock-closed",
+        "actor": "Voorbeeldbeheerder",
+        "action": "sleutel vernieuwd",
+        "resource": "voorbeeld-volledig / api-key",
+        "at": "gisteren 11:05",
+    },
+]
+
+
+def all_projects() -> list[dict[str, Any]]:
+    """Elk voorbeeldproject in de vorm die de overzichtspagina's gebruiken."""
+    projects: list[dict[str, Any]] = []
+    for name in available_projects():
+        data = load_project_data(name)
+        if data is None:
+            continue
+        details = build_project_details(data)
+        projects.append(
+            {
+                "name": details["name"],
+                "display_name": details["display_name"],
+                "description": details["description"],
+                "clusters": details["clusters"],
+                "users": details["users"],
+                "components": details["components"],
+                "deployments": details["deployments"],
+                "deployment_count": len(details["deployments"]),
+                "services": [service["value"] for service in details["services"]],
+            }
+        )
+    return projects
+
+
+def page_data(slug: str) -> dict[str, Any]:
+    """De gegevens die een herontworpen pagina nodig heeft.
+
+    Een eenvoudige tabel en geen slim mechanisme: elke pagina heeft andere gegevens
+    nodig, en dat expliciet opschrijven leest prettiger dan een laag die het probeert te
+    raden. Een onbekende naam levert een lege context, en dan valt op de pagina zelf te
+    zien wat er ontbreekt.
+    """
+    projects = all_projects()
+
+    if slug == "dashboard":
+        return {
+            "tiles": [
+                {
+                    "icon": "rectangle-stack",
+                    "value": str(len(projects)),
+                    "label": "Projecten",
+                    "sub": "voorbeelddata",
+                    "href": "/lotc/bg/projects",
+                },
+                {
+                    "icon": "arrow-up-arrow-down",
+                    "value": str(sum(project["deployment_count"] for project in projects)),
+                    "label": "Deployments",
+                    "sub": "over alle clusters",
+                    "href": None,
+                },
+                {
+                    "icon": "person-2",
+                    "value": str(sum(len(project["users"]) for project in projects)),
+                    "label": "Gebruikers",
+                    "sub": "1 beheerder",
+                    "href": "/lotc/bg/users",
+                },
+                {
+                    "icon": "cylinder-split",
+                    "value": str(len({service for project in projects for service in project["services"]})),
+                    "label": "Diensten",
+                    "sub": "in gebruik",
+                    "href": "/lotc/bg/services",
+                },
+            ],
+            "projects": projects,
+            "activity": ACTIVITY,
+        }
+
+    if slug in ("projects", "services", "users"):
+        return {"projects": projects}
+
+    if slug == "project-details":
+        context = build_details_context(available_projects()[-1])
+        return context or {}
+
+    return {}

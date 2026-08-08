@@ -1,0 +1,44 @@
+{#
+  Dienstenoverzicht, herontworpen in bg-vorm.
+
+  De vertaalde versie toont dienstkaarten met onze eigen service-card-klassen uit
+  wizard.css. Hier zijn dat c-catalog-card's: dezelfde bedoeling, maar de vormgeving komt
+  uit het thema in plaats van uit onze stylesheet. Dat is precies de winst die het
+  componentenplan van een omzetting verwacht - eigen CSS die verdwijnt.
+
+  De diensten komen uit de voorbeeldprojecten, dus wat hier staat is wat die projecten
+  werkelijk afnemen en geen aparte lijst die ernaast kan gaan lopen.
+#}
+{% extends "base_lotc.html.j2" %}
+
+{% block page_title %}Diensten - Self Service Portal{% endblock %}
+
+{% block content %}
+    <c-stack gap="0.25rem">
+        <c-heading type="h1" size="3" label="Diensten" />
+        <c-paragraph>Platformdiensten die projecten kunnen afnemen.</c-paragraph>
+    </c-stack>
+
+    {% set service_use = {} %}
+    {% for project in projects %}
+        {% for service in project.services %}
+            {% if service_use.update({service: service_use.get(service, []) + [project.display_name]}) %}{% endif %}
+        {% endfor %}
+    {% endfor %}
+
+    <c-auto-grid min="300px" gap="1rem">
+        {% for service, users in service_use | dictsort %}
+            <c-catalog-card
+                title="{{ service }}"
+                subtitle="Afgenomen door {{ users | length }} project{{ 's' if users | length != 1 else '' }}"
+                icon="cylinder-split">
+                {# c-cluster: breekt af als er meer chips zijn dan op een regel passen. #}
+                <c-cluster gap="0.5rem">
+                    {% for user in users %}
+                        <c-chip>{{ user }}</c-chip>
+                    {% endfor %}
+                </c-cluster>
+            </c-catalog-card>
+        {% endfor %}
+    </c-auto-grid>
+{% endblock %}

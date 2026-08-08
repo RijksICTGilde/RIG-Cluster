@@ -1,0 +1,42 @@
+{#
+  Gebruikers, herontworpen in bg-vorm.
+
+  Dit was eerst een tabel, want een gebruikerslijst is tabellair: je wilt kolommen naast
+  elkaar kunnen lezen. Maar c-table is onder NLDD onbruikbaar - de cellen stapelen, omdat
+  <nldd-cell> een breedte nodig heeft en c-th en c-td die niet doorgeven. Gemeld bij het
+  LOTC-project.
+
+  Zolang dat zo is staat hier de vorm die bg zelf gebruikt: elke gebruiker een regel met
+  zijn gegevens ernaast. Dat is geen noodgreep - de bg-referentie bevat nergens een
+  tabel - maar zodra c-table werkt is een tabel voor deze pagina beter, en dan hoort dit
+  template terug te veranderen.
+#}
+{% extends "base_lotc.html.j2" %}
+
+{% block page_title %}Gebruikers - Self Service Portal{% endblock %}
+
+{% block content %}
+    <c-stack gap="0.25rem">
+        <c-heading type="h1" size="3" label="Gebruikers" />
+        <c-paragraph>Wie toegang heeft, en met welke rol.</c-paragraph>
+    </c-stack>
+
+    <c-columns columns="1" lg="2" gap="1.5rem">
+        {% for project in projects %}
+            <c-card outline padding="lg">
+                <c-section-head title="{{ project.display_name }}" icon="person-2" />
+                <c-stack gap="0.75rem">
+                    {% for member in project.users %}
+                        <c-layer
+                            icon="person"
+                            title="{{ member.email }}"
+                            count="{{ member.role }}"
+                            sub="toegang tot {{ project.name }}">
+                            <c-chip>{{ member.role }}</c-chip>
+                        </c-layer>
+                    {% endfor %}
+                </c-stack>
+            </c-card>
+        {% endfor %}
+    </c-columns>
+{% endblock %}
