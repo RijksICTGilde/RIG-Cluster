@@ -65,6 +65,7 @@ class TaskType(StrEnum):
     UPDATE_COMPONENT = "update_component"
     ADD_SERVICE = "add_service"
     CONFIGURE_SERVICE = "configure_service"
+    CONFIGURE_SERVICE_VALUES = "configure_service_values"
     BACKUP = "backup"
     RESTORE = "restore"
 

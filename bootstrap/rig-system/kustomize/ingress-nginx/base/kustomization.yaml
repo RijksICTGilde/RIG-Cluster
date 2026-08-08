@@ -27,6 +27,14 @@ patches:
     data:
       allow-snippet-annotations: "true"
       annotations-risk-level: "Critical"
+      # OPI praat met Keycloak via deze ingress, en zijn admin-token draagt een
+      # resource_access-entry per realm (~337 bytes). Bij 15 realms was de
+      # Authorization-header 8446 bytes en gaf nginx "400 Request Header Or Cookie
+      # Too Large" op de standaard 8k, waardoor een verse OPI-pod niet meer kon
+      # opstarten. Dit is een noodverband: het token blijft groeien met het aantal
+      # projecten (~19KB bij 47), dus de echte oplossing is dat admin-verkeer niet
+      # door deze ingress loopt of dat het token kleiner wordt.
+      large-client-header-buffers: "4 16k"
 
 # Ensure ingress controller runs on control-plane node with ingress-ready=true label
 # KIND clusters have port mappings (80/443) only on the control-plane node

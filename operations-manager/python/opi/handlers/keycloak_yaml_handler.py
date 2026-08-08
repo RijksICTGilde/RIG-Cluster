@@ -153,6 +153,15 @@ class KeycloakYamlHandler:
         Returns:
             Parsed YAML as dictionary
         """
+        return self._load_yaml_resolving_extends(yaml_path, ())
+
+    def _load_yaml_resolving_extends(self, yaml_path: str | Path, seen: tuple[str, ...]) -> dict[str, Any]:
+        """Load a config, resolving an ``extends:`` chain onto it.
+
+        A blueprint that only differs from a shared one in a few places declares
+        ``extends: <name>`` and carries just those places. Without it the only way to add
+        one client to one realm is to copy the whole template, and the copy then drifts.
+        """
         path = Path(yaml_path)
         if not path.exists():
             msg = f"YAML configuration file not found: {yaml_path}"
@@ -165,7 +174,58 @@ class KeycloakYamlHandler:
             msg = f"Invalid YAML configuration: expected dict, got {type(config)}"
             raise TypeError(msg)
 
-        return config
+        base_name = config.pop("extends", None)
+        if base_name is None:
+            return config
+
+        if base_name in seen:
+            msg = f"Circular 'extends' in Keycloak blueprints: {' -> '.join([*seen, base_name])}"
+            raise ValueError(msg)
+
+        base_path = path.parent / f"{base_name}.yaml"
+        base = self._load_yaml_resolving_extends(base_path, (*seen, base_name))
+        return self._merge_config(base, config)
+
+    #: Keys that identify an entry in a config list, so a child can override one entry
+    #: instead of appending a second one with the same name.
+    _IDENTITY_KEYS = ("clientId", "realm", "alias", "username", "name")
+
+    def _merge_config(self, base: Any, override: Any) -> Any:
+        """Merge a child blueprint over its base.
+
+        Dicts recurse. Lists merge on the entry's identity: same identity overrides, new
+        identity appends. Anything else is replaced.
+        """
+        if isinstance(base, dict) and isinstance(override, dict):
+            merged = dict(base)
+            for key, value in override.items():
+                merged[key] = self._merge_config(base[key], value) if key in base else value
+            return merged
+        if isinstance(base, list) and isinstance(override, list):
+            return self._merge_list(base, override)
+        return override
+
+    def _merge_list(self, base: list[Any], override: list[Any]) -> list[Any]:
+        merged = list(base)
+        for item in override:
+            index = self._find_by_identity(merged, item)
+            if index is None:
+                merged.append(item)
+            else:
+                merged[index] = self._merge_config(merged[index], item)
+        return merged
+
+    def _find_by_identity(self, entries: list[Any], item: Any) -> int | None:
+        if not isinstance(item, dict):
+            return None
+        for key in self._IDENTITY_KEYS:
+            if key not in item:
+                continue
+            for index, existing in enumerate(entries):
+                if isinstance(existing, dict) and existing.get(key) == item[key]:
+                    return index
+            return None
+        return None
 
     def _substitute_variables(self, value: Any, variables: dict[str, Any]) -> Any:
         """Recursively substitute {{ variable }} placeholders.

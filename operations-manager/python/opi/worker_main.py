@@ -40,6 +40,7 @@ async def main() -> None:
         handle_add_component_to_deployment,
         handle_add_service,
         handle_configure_service,
+        handle_configure_service_values,
         handle_delete_component,
         handle_update_component,
     )
@@ -79,6 +80,7 @@ async def main() -> None:
     worker.register_handler(TaskType.ADD_COMPONENT_TO_DEPLOYMENT, handle_add_component_to_deployment)
     worker.register_handler(TaskType.ADD_SERVICE, handle_add_service)
     worker.register_handler(TaskType.CONFIGURE_SERVICE, handle_configure_service)
+    worker.register_handler(TaskType.CONFIGURE_SERVICE_VALUES, handle_configure_service_values)
 
     # Handle graceful shutdown
     loop = asyncio.get_running_loop()

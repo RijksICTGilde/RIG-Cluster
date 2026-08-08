@@ -442,6 +442,28 @@ async def get_decoded_project_private_key(project_config: dict) -> str:
     return await decrypt_age_content(encoded_private_key, cast("str", settings.SOPS_AGE_PRIVATE_KEY))
 
 
+def get_decoded_project_private_key_sync(project_config: dict) -> str:
+    """Get a project's AGE private key from inside a synchronous callback.
+
+    The async sibling above is the normal path. This one exists for callers that run
+    inside a synchronous change function (``ProjectStore.mutate``) and still have to
+    decrypt a stored value. It raises rather than returning None on every failure: it
+    is used on write paths where "no key" must stop the write, not fall back to
+    plaintext.
+    """
+    config = project_config.get("config", {})
+    encoded_private_key = config.get("age-private-key")
+    if not encoded_private_key:
+        raise ValueError("Missing age-private-key, check and fix legacy sops-private-key if exists")
+    system_private_key = settings.SOPS_AGE_PRIVATE_KEY
+    if not system_private_key:
+        raise ValueError("Missing system AGE private key; cannot decode the project private key")
+    decoded = decrypt_age_content_sync(encoded_private_key, system_private_key)
+    if not decoded:
+        raise ValueError("Could not decrypt the project's age-private-key with the system key")
+    return decoded
+
+
 def decrypt_password_smart_auto_sync(password: str) -> str:
     """
     Smart password decryption that automatically retrieves the Age key from settings (synchronous version).
