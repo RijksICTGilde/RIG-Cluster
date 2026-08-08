@@ -99,17 +99,26 @@
 
     <c-card outline padding="lg">
         <c-section-head title="Repositories" icon="chevron-left-forward-slash-chevron-right" />
-        {# Geen c-table: onder NLDD stapelen de cellen omdat <nldd-cell> een breedte
-           nodig heeft die c-th en c-td niet doorgeven. Gemeld bij het LOTC-project; tot
-           dan de vorm die bg zelf gebruikt. #}
-        <c-stack gap="0.75rem">
+        {# NLDD maakt van een tabel een CSS-grid, en zonder het columns-attribuut valt
+           alles in een kolom en stapelen de cellen - dat is geen bug maar de manier
+           waarop nldd-table werkt. Onder RVO is het een native tabel die vanzelf
+           uitlijnt, dus daar zou columns niet nodig zijn; dat verschil is precies wat
+           hier misging.
+
+           En let op: c-table-head IS de kopregel. Er hoort geen c-table-row in. #}
+        <c-table columns="1fr 3fr 1fr">
+            <c-table-head>
+                <c-th>Naam</c-th>
+                <c-th>URL</c-th>
+                <c-th>Branch</c-th>
+            </c-table-head>
             {% for repository in project.repositories %}
-                <c-detail-list>
-                    <c-detail-item label="Naam" value="{{ repository.name }}" />
-                    <c-detail-item label="URL" value="{{ repository.url }}" />
-                    <c-detail-item label="Branch" value="{{ repository.branch | default('-', true) }}" />
-                </c-detail-list>
+                <c-table-row>
+                    <c-td>{{ repository.name }}</c-td>
+                    <c-td>{{ repository.url }}</c-td>
+                    <c-td>{{ repository.branch | default('-', true) }}</c-td>
+                </c-table-row>
             {% endfor %}
-        </c-stack>
+        </c-table>
     </c-card>
 {% endblock %}
