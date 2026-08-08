@@ -19,15 +19,15 @@
 
 {% if not enabled %}
     <c-card outline="true" padding="md" backgroundColor="wit">
-        <c-p>De databaseconsole is uitgeschakeld op dit cluster.</c-p>
+        <c-paragraph>De databaseconsole is uitgeschakeld op dit cluster.</c-paragraph>
     </c-card>
 
 {% elif state == 'running' and session %}
     <c-card outline="true" padding="lg" background="color" backgroundColor="groen-150">
         <c-layout-flow gap="md">
             <c-heading type="h5" textContent="Console actief" />
-            <c-p>Tool: {{ session.tool }} &middot; Gestart door: {{ session.opened_by }}</c-p>
-            <c-p>Verloopt om {{ session.expires_at.strftime("%H:%M") }} UTC (max {{ (ttl_seconds // 60) }} min).</c-p>
+            <c-paragraph>Tool: {{ session.tool }} &middot; Gestart door: {{ session.opened_by }}</c-paragraph>
+            <c-paragraph>Verloopt om {{ session.expires_at.strftime("%H:%M") }} UTC (max {{ (ttl_seconds // 60) }} min).</c-paragraph>
             <c-layout-row gap="md">
                 <c-link href="{{ session.url }}" target="_blank" content="Console openen" />
                 <c-button
@@ -47,7 +47,7 @@
     <c-card outline="true" padding="md" backgroundColor="wit">
         <c-layout-flow gap="sm">
             <c-heading type="h5" textContent="Console wordt opgestart..." />
-            <c-p>Even geduld, de databaseconsole start op. Dit kan een halve minuut duren.</c-p>
+            <c-paragraph>Even geduld, de databaseconsole start op. Dit kan een halve minuut duren.</c-paragraph>
         </c-layout-flow>
     </c-card>
 
@@ -55,7 +55,7 @@
     <c-card outline="true" padding="lg" backgroundColor="wit">
         <c-layout-flow gap="md">
             <c-heading type="h5" textContent="Nieuwe databaseconsole" />
-            <c-p>Start tijdelijk (max {{ (ttl_seconds // 60) }} min) een webconsole voor de database van deze deployment. Alleen projectleden kunnen inloggen.</c-p>
+            <c-paragraph>Start tijdelijk (max {{ (ttl_seconds // 60) }} min) een webconsole voor de database van deze deployment. Alleen projectleden kunnen inloggen.</c-paragraph>
             <div id="db-console-form-{{ deployment_name }}">
                 <c-layout-flow gap="md">
                     <c-layout-row gap="md">

@@ -3,10 +3,10 @@
     Prometheus Metrics Scraper
 </c-heading>
 
-<c-p>
+<c-paragraph>
     Laat Prometheus de metrics van je component ophalen. Zonder deze service wordt je
     component niet uitgelezen, ook niet als het wel een metrics-endpoint heeft.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Wanneer gebruik je dit?</c-heading>
 
@@ -19,17 +19,17 @@
 <c-heading type="h3">Wat wordt er ingesteld?</c-heading>
 
 <c-layout-flow gap="md">
-    <c-p>
+    <c-paragraph>
         Je pod krijgt de annotaties waarmee Prometheus hem vindt. Standaard wordt
         <c-strong>/metrics</c-strong>
         op de eerste poort van je component uitgelezen; je kunt een andere poort en een
         ander pad instellen.
-    </c-p>
+    </c-paragraph>
 
-    <c-p>
+    <c-paragraph>
         Je component krijgt de variabele
         <c-strong>METRICS_AUTH_TOKEN</c-strong>.
         Prometheus stuurt die mee als bearer-token bij het ophalen. Controleer hem in je
         applicatie, dan is je metrics-endpoint niet voor iedereen open.
-    </c-p>
+    </c-paragraph>
 </c-layout-flow>

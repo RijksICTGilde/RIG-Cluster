@@ -32,7 +32,7 @@
             {% if blocked_reason %}
             <c-alert kind="warning" content="{{ blocked_reason }}" />
             {% else %}
-            <c-p>{{ message }}</c-p>
+            <c-paragraph>{{ message }}</c-paragraph>
             {% endif %}
             <div id="confirm-action-error" class="edit-section-error is-hidden"></div>
         </c-layout-flow>

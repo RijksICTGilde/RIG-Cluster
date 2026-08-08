@@ -3,11 +3,11 @@
     Redis Cache
 </c-heading>
 
-<c-p>
+<c-paragraph>
     Een snelle sleutel-waardeopslag die je project deelt met andere projecten op de
     gedeelde Redis van het platform. Je krijgt een eigen gebruiker en een eigen prefix,
     zodat je alleen bij je eigen sleutels kunt.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Wanneer gebruik je dit?</c-heading>
 
@@ -19,17 +19,17 @@
 
 <c-heading type="h3">Verschil met Namespace Redis Cache</c-heading>
 
-<c-p>
+<c-paragraph>
     Deze service gebruikt de gedeelde Redis en is voor vrijwel iedereen de juiste keuze.
     <c-strong>Namespace Redis Cache</c-strong>
     is bedoeld voor een eigen Redis per project; die variant kies je niet zelf, het
     platform bepaalt wanneer hij van toepassing is.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Wat wordt er ingesteld?</c-heading>
 
 <c-layout-flow gap="md">
-    <c-p>
+    <c-paragraph>
         Er wordt een Redis-gebruiker met een eigen wachtwoord en een sleutelprefix
         aangemaakt. Je component krijgt
         <c-strong>REDIS_HOST</c-strong>,
@@ -39,12 +39,12 @@
         <c-strong>REDIS_PREFIX</c-strong>
         en
         <c-strong>REDIS_URL</c-strong>.
-    </c-p>
+    </c-paragraph>
 
-    <c-p>
+    <c-paragraph>
         Bouw je sleutels en kanalen als
         <c-strong>prefix:naam</c-strong>:
         je toegang is beperkt tot sleutels die met jouw prefix beginnen. Redis is een
         cache, geen bewaarplaats; ga ervan uit dat gegevens kunnen verdwijnen.
-    </c-p>
+    </c-paragraph>
 </c-layout-flow>
