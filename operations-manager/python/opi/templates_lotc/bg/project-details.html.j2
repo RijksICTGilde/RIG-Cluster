@@ -86,7 +86,7 @@
                     <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
                     <c-detail-item label="Publieke sleutel" value="{{ project.config['age-public-key'] | default('-', true) | truncate(28) }}" />
                 </c-detail-list>
-                <c-secret-field value="{{ project.config['api-key'] | default('', true) }}" />
+                <c-secret-field value="{{ project.config['api-key'] | default('', true) }}" show-copy="true" />
             </c-stack>
         {% endcall %}
     </c-columns>
