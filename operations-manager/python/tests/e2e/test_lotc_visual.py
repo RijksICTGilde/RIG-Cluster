@@ -400,3 +400,24 @@ def test_real_project_page_renders_lotc(app_server: str, auth_page: Page) -> Non
     page.goto(f"{app_server}{base}?layout=roos")
     page.wait_for_load_state("networkidle")
     assert page.locator("nldd-card").count() == 0, "?layout=roos toont nog steeds de nieuwe vormgeving"
+
+
+def test_service_help_opens_with_a_click(app_server: str, auth_page: Page) -> None:
+    """Een klik op het informatie-icoon van een dienst toont de uitgebreide hulptekst.
+
+    Deze test bestaat omdat twee eerdere versies van dat icoon NIETS deden en toch door
+    alle tests kwamen: die keken naar markup, niet naar wat een gebruiker doet. Vandaar
+    een test die klikt en kijkt of er tekst bij komt.
+    """
+    page = auth_page
+    page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
+    page.goto(f"{app_server}/services")
+    _wait_for_nldd(page)
+
+    voor = page.locator(".zad-service-help").count()
+    assert voor == 0, "er staat al uitleg open zonder dat erom gevraagd is"
+
+    page.locator("nldd-icon-button[href*='help=']").first.click()
+    page.wait_for_load_state("networkidle")
+
+    expect(page.locator(".zad-service-help").first).to_be_visible()
