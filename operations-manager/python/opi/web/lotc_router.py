@@ -15,6 +15,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.templates_lotc import TEMPLATES_LOTC_DIR, templates_lotc
+from opi.forms.widgets.lotc import LOTCWidgetAdapter
+from opi.web.lotc_form_preview import EXAMPLE_FIELDS
 from opi.web.navigation_lotc import get_navigation
 
 router = APIRouter(prefix="/lotc", tags=["lotc"])
@@ -88,3 +90,19 @@ async def lotc_page(request: Request, slug: str) -> HTMLResponse:
             status_code=422,
             detail=f"{template_name} rendert nog niet zonder paginadata: {error}",
         ) from error
+
+
+@router.get("/formulier", response_class=HTMLResponse, include_in_schema=False)
+async def lotc_form_preview(request: Request) -> HTMLResponse:
+    """De omgezette formulierlaag, gerenderd uit voorbeeldvelden.
+
+    De wizard heeft een echt project nodig, dus zonder deze route zou de laag die het
+    zwaarst is omgezet ook de enige zijn die niemand kan bekijken.
+    """
+    adapter = LOTCWidgetAdapter()
+    rendered_fields = [adapter.render_field(field) for field in EXAMPLE_FIELDS]
+    return templates_lotc.TemplateResponse(
+        request,
+        "form-preview.html.j2",
+        _context(request, rendered_fields=rendered_fields),
+    )
