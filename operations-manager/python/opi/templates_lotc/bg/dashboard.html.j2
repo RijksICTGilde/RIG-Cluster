@@ -62,17 +62,18 @@
             </c-stack>
         {% endcall %}
 
-        {% call panel("Recente activiteit", "timer") %}
-<c-activity>
-                {% for event in activity %}
-                    <c-activity-item
-                        icon="{{ event.icon }}"
-                        actor="{{ event.actor }}"
-                        action="{{ event.action }}"
-                        res="{{ event.resource }}"
-                        at="{{ event.at }}" />
-                {% endfor %}
-            </c-activity>
+        {% call panel("Gezondheid", "shield-check-mark", info_text="De stand van je projecten zoals ArgoCD hem meldt. Staat er niets, dan is er niets te melden.") %}
+            {% if health %}
+                <c-stack gap="sm">
+                    {% for entry in health %}
+                        <c-detail-list>
+                            <c-detail-item label="{{ entry.label }}" value="{{ entry.count }}" />
+                        </c-detail-list>
+                    {% endfor %}
+                </c-stack>
+            {% else %}
+                <c-paragraph>Geen bijzonderheden.</c-paragraph>
+            {% endif %}
         {% endcall %}
     </c-columns>
 

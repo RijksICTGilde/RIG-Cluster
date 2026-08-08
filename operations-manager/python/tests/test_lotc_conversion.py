@@ -6,9 +6,8 @@ paginadata te toetsen valt, en dat is meer dan het lijkt: LOTC valideert bij het
 COMPILEREN al of elk component bestaat en of elk attribuut bij dat component hoort.
 Een template dat compileert, gebruikt dus aantoonbaar een bestaande woordenschat.
 
-Waarom een lijst met bekende uitzonderingen en geen simpele "alles moet compileren":
-er is er nog een, en die kunnen wij niet zelf oplossen. De lijst bewaakt twee kanten op:
-groeit hij, dan is er iets kapot gegaan; krimpt hij, dan kan er iets af.
+Alles compileert. De lijst met uitzonderingen hieronder is leeg en blijft bestaan omdat
+hij twee kanten op bewaakt: groeit hij, dan is er iets kapot gegaan.
 """
 
 from pathlib import Path
@@ -17,16 +16,11 @@ import pytest
 
 TEMPLATES_LOTC_DIR = Path(__file__).parent.parent / "opi" / "templates_lotc"
 
-KNOWN_UNCONVERTED = {
-    # De enige die overblijft, en niet door ons op te lossen: hij gebruikt c-data-list,
-    # en NLDD implementeert dat niet. Eerder beeldde de omzetter dat af op c-detail-list
-    # omdat DIE wel rendert, maar het LOTC-project wees erop dat het twee verschillende
-    # dingen zijn: data-list is een definitielijst (<dl>), detail-list een rijkere lijst
-    # met een eigen structuur. Een pagina die rendert maar iets anders toont is erger dan
-    # een pagina die niet rendert, dus die afbeelding is teruggedraaid. Een aanroep in
-    # totaal; LOTC heeft data-list onder NLDD op de lijst staan.
-    "roos-form-improved.html.j2",
-}
+# Leeg, en dat is het doel. Hier stonden eerst twintig templates: negentien op de
+# formulierlaag (opgelost met :prop="expr or none" en de :attrs-spread) en een op
+# c-data-list, dat NLDD sinds dfcddbf implementeert. De lijst blijft staan omdat hij twee
+# kanten op bewaakt: groeit hij, dan is er iets kapot gegaan.
+KNOWN_UNCONVERTED: set[str] = set()
 
 
 def _compile_all() -> tuple[set[str], dict[str, str]]:
