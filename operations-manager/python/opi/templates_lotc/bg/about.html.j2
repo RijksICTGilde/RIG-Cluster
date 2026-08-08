@@ -1,0 +1,63 @@
+{#
+  Over ZAD.
+
+  Een OVERNAME van opi/templates/about.html.j2 en zijn vier deeltemplates. Dezelfde kop
+  en dezelfde drie blokken, in dezelfde volgorde, met dezelfde tekst:
+
+    about/_kop     -> page_head()
+    about/_waarom  -> panel("Waarom dit platform?")
+    about/_hoe     -> panel("Hoe werkt het?")
+    about/_veilig  -> panel("Veilig ingericht")
+
+  De vier deeltemplates zijn hier tot een bestand geworden, en dat is met opzet. Een
+  include van een deeltemplate dat zelf componenten gebruikt breekt in deze omgeving
+  zodra de schil <template slot=...> gebruikt - zie de kop van base_lotc.html.j2. De
+  gedeelde vorm zit hier bovendien al in panel() uit bg/_patterns.html.j2, dus het
+  opdelen leverde hier niets op wat de macro niet levert.
+
+  De kaarten hadden backgroundColor="wit"; dat valt weg, want de achtergrond komt nu uit
+  het thema.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}Over ZAD - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head("Over ZAD", "Zelfservice Applicatie Deployment binnen ODC-Noord.") }}
+
+    {% call panel("Waarom dit platform?", "question-mark-circle") %}
+        <c-paragraph>
+            Als je een applicatie ontwikkelt weet je aan het begin vaak nog niet precies wat je
+            nodig hebt. Een database? Opslag? Authenticatie? Dat groeit gaandeweg. Tegelijkertijd
+            wil je wel ergens draaien waar je je werk kunt laten zien, zonder eerst een heel
+            ops-traject te doorlopen.
+        </c-paragraph>
+        <c-paragraph>
+            Binnen de overheid is het niet altijd eenvoudig om een plek te vinden waar je een
+            applicatie kunt hosten. Dit platform biedt die plek, voor ontwikkeling en voor productie.
+        </c-paragraph>
+    {% endcall %}
+
+    {% call panel("Hoe werkt het?", "gear") %}
+        <c-paragraph>
+            ZAD neemt het ops-gedeelte van applicatieontwikkeling uit handen. Via een
+            overzichtelijke UI configureer je je project: welke componenten je hebt, welke
+            services je wilt gebruiken, en hoe je deployments eruitzien. Het platform regelt
+            de rest, infrastructuur, secrets, netwerk, deployment.
+        </c-paragraph>
+        <c-paragraph>
+            Alles wat je via de UI kunt doen is ook beschikbaar via de API, zodat je het kunt
+            integreren in je CI/CD pipeline. Image updaten, deployment refreshen, component
+            toevoegen, één API-call.
+        </c-paragraph>
+    {% endcall %}
+
+    {% call panel("Veilig ingericht", "shield-check-mark") %}
+        <c-paragraph>
+            Het platform is gebouwd op bewezen technologie en voldoet aan de beveiligingseisen
+            van de overheid. Je hoeft je daar niet mee bezig te houden, dat is al geregeld.
+            Jij focust op je applicatie, wij op de rest.
+        </c-paragraph>
+    {% endcall %}
+{% endblock %}

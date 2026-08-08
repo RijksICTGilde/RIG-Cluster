@@ -1,0 +1,80 @@
+{#
+  De samenvatting voor het aanmaken, als los fragment.
+
+  Een OVERNAME van wizard/wizard_review.html.j2: dezelfde kop, per stap een kaart met een
+  bewerkknop, en onderaan terug plus aanmaken. De htmx-bedrading is ongewijzigd, inclusief
+  de hx-indicator die de melding "Project wordt aangemaakt" aanzet.
+
+  De kaarten gaan via panel() uit bg/_patterns.html.j2. Een <c-card> is geen stack: zet je
+  er een kop en een blok inhoud in zonder stack ertussen, dan plakken die aan elkaar.
+
+  summary_html is HTML die router_wizard zelf opbouwt en die daar al geescaped wordt
+  (_summary_text). Hij gaat er met | safe in, net als in het origineel, en niet door
+  process_components - dat zou een tweede render zijn over ingevulde waarden.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+
+{# De stappenbalk wisselt buiten het doel om mee: op de samenvatting is geen enkele stap
+   meer de huidige, en dat hoort de balk te tonen. #}
+<div id="wizard-steps" hx-swap-oob="outerHTML">
+    {% include "bg/_wizard-steps.html.j2" %}
+</div>
+
+<div id="wizard-step-inner">
+    <c-stack gap="lg">
+        <c-stack gap="xs">
+            <c-cluster gap="sm" align="center">
+                <c-icon icon="check-mark-circle" size="xl" />
+                <c-heading type="h2" size="4" label="Controleer je gegevens" />
+            </c-cluster>
+            <c-paragraph>Controleer de ingevulde gegevens hieronder voordat je het project aanmaakt.</c-paragraph>
+        </c-stack>
+
+        {% for section in section_summaries %}
+            {% set bewerken %}<c-button
+                type="tertiary"
+                size="sm"
+                label="Bewerken"
+                icon="pencil-on-square"
+                show-icon="before"
+                hx-get="/forms/wizard/{{ flow_id }}/step/{{ section.section_id }}"
+                hx-target="#wizard-step-content"
+                hx-swap="innerHTML" />{% endset %}
+            {% call panel(section.title, nldd_icon(section.icon or ''), aside=bewerken) %}
+                <div class="wizard-review__section-content">{{ section.summary_html | safe }}</div>
+            {% endcall %}
+        {% endfor %}
+
+        <c-action-group align="between">
+            <c-button
+                type="secondary"
+                label="Terug"
+                hx-get="/forms/wizard/{{ flow_id }}/step/{{ steps.last }}"
+                hx-target="#wizard-step-content"
+                hx-swap="innerHTML"
+                hx-disabled-elt="this" />
+
+            <c-cluster gap="sm" align="center">
+                <span id="wizard-review-submitting" class="wizard-review__submitting" aria-hidden="true">Project wordt aangemaakt&hellip;</span>
+                {# hx-headers draagt JSON en dus aanhalingstekens. Een los attribuut met
+                   een expressie erin komt ongeescaped naar buiten en breekt de tag; de
+                   :attrs-spread escapet elke waarde. #}
+                {% set verzend_attrs = {
+                    'hx-post': '/forms/wizard/' ~ flow_id ~ '/submit',
+                    'hx-headers': '{"X-CSRF-Token": "' ~ request.state.csrf_token ~ '"}',
+                    'hx-target': '#wizard-step-content',
+                    'hx-swap': 'innerHTML',
+                    'hx-disabled-elt': 'this',
+                    'hx-indicator': '#wizard-review-submitting',
+                } %}
+                <c-button
+                    id="wizard-review-submit"
+                    type="primary"
+                    label="Project aanmaken"
+                    icon="file-text"
+                    show-icon="before"
+                    :attrs="verzend_attrs" />
+            </c-cluster>
+        </c-action-group>
+    </c-stack>
+</div>

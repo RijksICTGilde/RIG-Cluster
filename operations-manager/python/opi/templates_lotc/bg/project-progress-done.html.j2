@@ -1,0 +1,32 @@
+{#
+  Taak niet beschikbaar.
+
+  Een OVERNAME van opi/templates/project-progress-done.html.j2. Dezelfde kop, dezelfde
+  twee zinnen en dezelfde knop naar het projectoverzicht.
+
+  Het htmx-gedrag van die knop blijft ongewijzigd: hx-get met hx-target="body" en
+  hx-push-url, precies zoals nu. LOTC laat hx-attributen op een component toe
+  (setup_components(htmx=True)), dus dit is een letterlijke overname en geen navigatie
+  die er toevallig hetzelfde uitziet.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}Taak niet beschikbaar{% endblock %}
+
+{% block content %}
+    {{ page_head("Taak niet beschikbaar", "Deze taak is niet (meer) beschikbaar. Mogelijk is de verwerking al voltooid of bestaat de taak niet.") }}
+
+    {% call panel("") %}
+        <c-paragraph>Controleer de status van je project via het projectoverzicht.</c-paragraph>
+        <c-action-group align="start">
+            <c-button
+                type="primary"
+                label="Naar projectoverzicht"
+                hx-boost="true"
+                hx-get="/projects"
+                hx-target="body"
+                hx-push-url="true" />
+        </c-action-group>
+    {% endcall %}
+{% endblock %}

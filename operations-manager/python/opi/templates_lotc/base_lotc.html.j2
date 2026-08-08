@@ -41,7 +41,10 @@
    Zelfde bron en versie als de bestaande pagina (base.html.j2), zodat dit geen nieuwe
    keuze wordt. Htmx in eigen beheer nemen in plaats van van een CDN halen is een aparte
    afweging, en die hoort niet in deze omzetting thuis. #}
-{% set lotc_head %}<script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"></script>{% endset %}
+{# Een pagina die de gedeelde dialoog gebruikt zet hier zijn eigen stylesheet en scripts
+   bij, via {% block head_extra %}. Ze staan bewust NIET standaard in de schil: de meeste
+   pagina's openen geen dialoog, en dan is het drie bestanden voor niets. #}
+{% set lotc_head %}<script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"></script>{% block head_extra %}{% endblock %}{% endset %}
 
 <c-page title="{{ page_title_value }}" lang="nl" head="{{ lotc_head }}">
 

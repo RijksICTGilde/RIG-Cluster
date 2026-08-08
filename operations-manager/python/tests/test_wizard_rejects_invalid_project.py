@@ -244,6 +244,16 @@ def test_schema_error_is_placed_on_the_step_that_owns_the_field() -> None:
     assert editable_path == "components[0]/command"
 
 
+def _roos_request() -> SimpleNamespace:
+    """Een verzoek dat om de bestaande weergave vraagt.
+
+    _render_step_html leest alleen de weergavekeuze uit het verzoek. Deze tests gaan over
+    de roos-uitvoer en over het process_components-filter dat daarbij hoort, dus die
+    keuze staat hier expliciet.
+    """
+    return SimpleNamespace(query_params={"layout": "roos"}, cookies={})
+
+
 def test_a_placed_message_actually_reaches_the_rendered_step() -> None:
     """Placing it is only half the job: the step must render it at the field.
 
@@ -255,6 +265,7 @@ def test_a_placed_message_actually_reaches_the_rendered_step() -> None:
     from opi.web.router_wizard import _render_step_html
 
     html = _render_step_html(
+        _roos_request(),
         COMPONENTS_SECTION,
         yaml_data={"components": [{"name": "web", "image": "nginx:1.25"}]},
         errors={_schema_path_to_editable_path("components/0/command"): ["Het startcommando is ongeldig"]},
@@ -342,6 +353,7 @@ def test_a_field_message_cannot_execute_in_the_second_render(payload: str) -> No
     from opi.web.router_wizard import _render_step_html
 
     html = _render_step_html(
+        _roos_request(),
         COMPONENTS_SECTION,
         yaml_data={"components": [{"name": "web", "image": "nginx:1.25"}]},
         errors={"components[0]/command": [f"Ongeldige waarde: {payload}"]},
@@ -388,12 +400,15 @@ async def test_a_rejected_save_marks_the_field_and_puts_the_text_where_it_is_saf
 
     captured: dict[str, Any] = {}
 
-    class _Templates:
-        def TemplateResponse(self, name: str, context: dict[str, Any]) -> Any:
-            captured.update(context)
-            return SimpleNamespace(template_name=name)
+    def _capture(_request: Any, *, roos: str, lotc: str, context: dict[str, Any]) -> Any:
+        captured.update(context)
+        return SimpleNamespace(template_name=roos)
 
-    request = SimpleNamespace(state=SimpleNamespace(user={"email": OWNER_EMAIL}, csrf_token="t"))
+    request = SimpleNamespace(
+        state=SimpleNamespace(user={"email": OWNER_EMAIL}, csrf_token="t"),
+        query_params={"layout": "roos"},
+        cookies={},
+    )
 
     with (
         patch("opi.web.router_wizard.get_wizard_state", return_value=state),
@@ -406,8 +421,9 @@ async def test_a_rejected_save_marks_the_field_and_puts_the_text_where_it_is_saf
         patch.object(EditableFormProcessor, "enforce_sections", new=AsyncMock(return_value=[])),
         patch("opi.forms.editables.lifecycle.run_hooks", new=AsyncMock()),
         patch("opi.web.router_wizard._save_existing_project", side_effect=rejection),
+        patch("opi.web.router_wizard.render", side_effect=_capture),
     ):
-        await _do_submit(request, "edit-project", _Templates())
+        await _do_submit(request, "edit-project")
 
     assert captured["errors"] == {"components[0]/image": [SCHEMA_FIELD_MARKER]}
     global_errors = captured["global_errors"]

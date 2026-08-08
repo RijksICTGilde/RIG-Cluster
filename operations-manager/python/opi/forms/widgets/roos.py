@@ -292,6 +292,16 @@ class ROOSWidgetAdapter(WidgetAdapter):
             "fieldset.html.j2", {"fieldset": fieldset, "children_content": "\n".join(children_html)}
         )
 
+    def render_flow(self, children_html: list[str]) -> str:
+        """De buitenste verticale stapel om de velden van een stap.
+
+        Stond als kale tekst in de renderer. Hij hoort bij de adapter omdat het een
+        COMPONENTaanroep is: de roos-versie laat hem als tag staan (``process_components``
+        zet hem later om), en de LOTC-adapter rendert hem meteen.
+        """
+        inner = "\n".join(children_html)
+        return f'<c-layout-flow gap="lg">\n{inner}\n</c-layout-flow>'
+
     def render_div(self, div: Div, children_html: list[str]) -> str:
         return self._render_template("div.html.j2", {"div": div, "children_content": "\n".join(children_html)})
 
@@ -355,6 +365,7 @@ def render_preset_cards(
     yaml_data: dict | None = None,
     locked_presets: dict[str, str] | None = None,
     csrf_token: str = "",
+    env: Environment | None = None,
 ) -> str:
     """Render preset cards using the same visual style as service cards.
 
@@ -367,6 +378,10 @@ def render_preset_cards(
             cannot be toggled (e.g. forced by a service dependency).
         csrf_token: CSRF token rendered into the cards' hx-post header so
             the preset POST passes central CSRF enforcement.
+        env: Jinja-omgeving waarin het kaarttemplate rendert. Standaard de kale
+            roos-omgeving; de LOTC-bouwlijn geeft hier zijn eigen omgeving mee, zodat
+            dezelfde voorbereiding het omgezette template voedt in plaats van dat er
+            een tweede kopie van deze functie naast komt te staan.
     """
     if not presets:
         return ""
@@ -386,7 +401,7 @@ def render_preset_cards(
             }
         )
 
-    env = _get_widget_env()
+    env = env or _get_widget_env()
     template = env.get_template("widgets/preset_cards.html.j2")
     return template.render(
         preset_states=preset_states,

@@ -15,12 +15,13 @@
 
   WAT ER ANDERS IS DAN DE BESTAANDE PAGINA, en waarom
 
-  - De knoppen "Bewerken", "Webadres" en "Verwijderen" staan er NIET. Alle drie roepen
-    openEditModal()/openServiceModal() aan, en dat is de gedeelde modal-schil van
-    project-details.html.j2. De LOTC-schil (base_lotc.html.j2) heeft die schil niet, en
-    <c-button> laat sowieso geen onclick toe. Een knop die niets doet is erger dan geen
-    knop; zodra de modal-schil meeverhuist horen ze hier terug. Zie het rapport bij deze
-    omzetting - de Gevarenzone-knop op de projecttab staat om dezelfde reden stil.
+  - De knoppen "Bewerken", "Webadres" en "Verwijderen" openen de gedeelde dialoog, net als
+    op de bestaande pagina, met dezelfde flow-id en dezelfde bevestigings-URL. <c-button>
+    laat geen onclick toe, maar :attrs zet het attribuut wel door; de aanroep wordt boven
+    de tag opgebouwd omdat een genest aanhalingsteken binnen :attrs als het einde van het
+    attribuut gelezen wordt. De volgorde is alfabetisch en de index in het projectbestand
+    telt door, want die index IS de flow-id - sorteren zonder dat zou de knop "Bewerken"
+    stilletjes op een andere deployment richten.
   - De publieke links waren knoppen met @click="window.open(this.dataset.url)". Nu gewoon
     <c-button href=... target="_blank">: zelfde bestemming, zelfde nieuw venster, zonder
     tekst als JavaScript uit te voeren.
@@ -32,6 +33,17 @@
 
 {% macro deployment_panel(deployment, project, approval_notices={}, user_role='') %}
 {% call panel("Deployment: " ~ deployment.name, "arrow-up-arrow-down") %}
+    {% if user_role in ['admin', 'owner'] %}
+        {% set original_index = project.deployments.index(deployment) %}
+        {% set bewerken = "openEditModal('modal-edit-deployment-" ~ original_index ~ "', 'Deployment bewerken - " ~ deployment.name ~ "')" %}
+        {% set webadres = "openEditModal('modal-edit-domain-" ~ original_index ~ "', 'Webadres bewerken - " ~ deployment.name ~ "')" %}
+        {% set verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-deployment/confirm?target=" ~ (deployment.name | urlencode) ~ "', 'Deployment verwijderen')" %}
+        <c-action-group align="start">
+            <c-button type="secondary" size="sm" label="Bewerken" icon="pencil" :attrs="{'onclick': bewerken}" />
+            <c-button type="secondary" size="sm" label="Webadres" icon="globe" :attrs="{'onclick': webadres}" />
+            <c-button type="warning" size="sm" label="Verwijderen" icon="trash" :attrs="{'onclick': verwijderen}" />
+        </c-action-group>
+    {% endif %}
     {# Goedkeuringen die nog niet verleend zijn, zoals de eigenaardienst ze meldt. #}
     {% for notice in approval_notices.get(deployment.name, []) %}
         <c-alert type="{{ 'error' if notice.status == 'denied' else 'warning' }}" heading="{{ notice.text }}">

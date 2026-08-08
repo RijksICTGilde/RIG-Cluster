@@ -300,8 +300,7 @@ class FormRenderer:
 
         if isinstance(layout, list):
             content_parts = [self._render_layout_element(elem, fields_by_name, yaml_data) for elem in layout]
-            inner = "\n".join(content_parts)
-            return f'<c-layout-flow gap="lg">\n{inner}\n</c-layout-flow>'
+            return self.adapter.render_flow(content_parts)
         return self._render_layout_element(layout, fields_by_name, yaml_data)
 
     def _build_fields_from_editables(
