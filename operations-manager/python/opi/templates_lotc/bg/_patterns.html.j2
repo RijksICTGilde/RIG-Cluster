@@ -98,3 +98,66 @@
 {% macro explainer(title, text) %}
 <c-alert type="info" heading="{{ title }}" closable="true">{{ text }}</c-alert>
 {% endmacro %}
+
+
+{#
+  Een kaart voor een dienst, in de vorm die bg.rijks.app gebruikt op het artefactregister.
+
+  DE OPBOUW, en waarom die vaststaat
+
+  bg's kaarten lezen prettig omdat elk kaartje dezelfde plekken gebruikt: je oog weet na
+  de eerste kaart waar het de naam, de herkomst en de kenmerken moet zoeken. Dat werkt
+  alleen als de vorm overal gelijk is, en dus hoort hij in een macro en niet in elke
+  pagina opnieuw.
+
+      +--------------------------------------------------+
+      | [icoon] naam            soort           [merk]    |
+      |         sleutel-in-mono                           |
+      |         [chip] [chip] [chip]                      |
+      |  ----------------------------------------------   |
+      |  [icoon] waar hij gebruikt wordt                  |
+      +--------------------------------------------------+
+
+  De onderste regel staat achter een scheidingslijn, net als bij bg: het is een ander
+  soort gegeven (herkomst, gebruik) dan de kenmerken erboven.
+
+  KLEUR
+
+  Het icoon draagt de MERKkleur van de dienst - die helpt herkennen. Chips en labels zijn
+  semantisch en zeggen iets over betekenis. Die twee blijven gescheiden, anders betekent
+  groen op de ene plek een dienst en op de andere "in orde".
+#}
+{% macro service_card(service) %}
+<c-card outline padding="md">
+    <c-stack gap="sm">
+        <c-cluster gap="sm" align="center" justify="between">
+            <c-cluster gap="sm" align="center">
+                <c-icon icon="{{ service.icon }}" color="{{ service.color }}" size="lg" />
+                <c-heading type="h3" size="5" label="{{ service.label }}" />
+                {% if service.help %}{{ info(service.help) }}{% endif %}
+            </c-cluster>
+            {% if service.kind_label %}
+                <c-tag type="{{ service.kind_type }}" label="{{ service.kind_label }}" />
+            {% endif %}
+        </c-cluster>
+
+        <c-code>{{ service.name }}</c-code>
+
+        <c-cluster gap="sm">
+            {% for chip in service.chips %}
+                <c-chip>{{ chip }}</c-chip>
+            {% endfor %}
+        </c-cluster>
+
+        {% if service.used_by %}
+            <c-divider />
+            <c-cluster gap="sm" align="center">
+                <c-icon icon="rectangle-stack" size="sm" />
+                {% for project in service.used_by %}
+                    <c-chip>{{ project }}</c-chip>
+                {% endfor %}
+            </c-cluster>
+        {% endif %}
+    </c-stack>
+</c-card>
+{% endmacro %}

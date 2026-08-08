@@ -9,10 +9,10 @@
 {% set page_title = title_nl if language == 'nl' else title_en %}
 
 {# Pre-compute language-specific strings #}
-{% set heading_text = "Kies hoe u wilt inloggen" if language == 'nl' else "Choose how to sign in" %}
+{% set heading_text = "Kies hoe je wilt inloggen" if language == 'nl' else "Choose how to sign in" %}
 {% set intro_text = "Selecteer een van de onderstaande opties om toegang te krijgen tot " ~ display_name ~ "." if language == 'nl' else "Select one of the options below to get access to " ~ display_name ~ "." %}
 {% set sso_heading = "Single Sign-On" %}
-{% set sso_description = "Login met uw organisatie account." if language == 'nl' else "Sign in with your organization account." %}
+{% set sso_description = "Log in met je organisatieaccount." if language == 'nl' else "Sign in with your organization account." %}
 {% set local_heading = "Lokaal Account" if language == 'nl' else "Local Account" %}
 {% set local_description = "Maak een nieuw account aan met een e-mailadres en wachtwoord." if language == 'nl' else "Create a new account with an email address and password." %}
 {% set local_button_label = "Account aanmaken" if language == 'nl' else "Create Account" %}
@@ -88,7 +88,7 @@
                         <c-heading type="h3" textContent="{{ help_heading }}" />
                         <p class="rvo-paragraph">
                             {% if language == 'nl' %}
-                            Neem contact op via <a href="mailto:{{ contact_email }}">{{ contact_email }}</a> als u problemen ondervindt.
+                            Neem contact op via <a href="mailto:{{ contact_email }}">{{ contact_email }}</a> als je problemen hebt.
                             {% else %}
                             Contact <a href="mailto:{{ contact_email }}">{{ contact_email }}</a> if you experience any issues.
                             {% endif %}
