@@ -1,0 +1,92 @@
+{#
+  Het dashboard, HERONTWORPEN in de opzet van bg.rijks.app.
+
+  Dit is bewust geen vertaling. De omzetter levert een getrouwe kopie van onze bestaande
+  markup (zie dashboard.html.j2 ernaast), en die was nooit in bg-vorm gebouwd: onze
+  pagina's zijn rijen en kolommen met losse tekst, bg werkt met tegels, kaarten en
+  kopregels. Een vertaling houdt dus onze oude indeling, alleen met andere componenten.
+
+  Deze pagina laat zien wat er wel kan. Ze staat naast de vertaalde versie zodat het
+  verschil te zien is in plaats van te beschrijven, en zodat de keuze om pagina's echt te
+  hertekenen (fase 4 van het plan) op een beeld rust.
+
+  Wat bg doet en wij hier overnemen:
+    - kerncijfers als <c-metric> in een <c-auto-grid>, niet als tekst in een kaart
+    - inhoud in <c-card outline padding="lg"> met een <c-section-head> erboven
+    - twee kolommen via <c-columns>, die op smalle schermen onder elkaar vallen
+    - het verticale ritme uit een enkele <c-stack> met een vaste gap
+    - een kop die de pagina benoemt, niet domineert
+#}
+{% extends "base_lotc.html.j2" %}
+
+{% block page_title %}Dashboard - Self Service Portal{% endblock %}
+
+{% block content %}
+    <c-stack gap="0.25rem">
+        <c-heading type="h1" size="3" label="Dashboard" />
+        <c-paragraph>Een overzicht van uw projecten, deployments en verbruik.</c-paragraph>
+    </c-stack>
+
+    <c-stack direction="horizontal" gap="0.75rem">
+        <c-button type="secondary" label="Mijn projecten" icon="rectangle-stack" show-icon="before" href="/projects" />
+        <c-button type="primary" label="Nieuw project" icon="plus" show-icon="before" href="/forms/wizard/restart" />
+    </c-stack>
+
+    {# De kerncijfers. In de vertaalde versie zijn dit vier kaarten met een getal en een
+       woord erin; als tegel dragen ze ook een icoon, een toelichting en een link, en
+       staan ze in een raster dat zich naar de breedte voegt. #}
+    <c-auto-grid min="220px" gap="1rem">
+        {% for tile in tiles %}
+            <c-metric
+                icon="{{ tile.icon }}"
+                value="{{ tile.value }}"
+                label="{{ tile.label }}"
+                :sub="tile.sub or none"
+                :href="tile.href or none" />
+        {% endfor %}
+    </c-auto-grid>
+
+    <c-columns columns="1" lg="2" gap="1.5rem">
+        <c-card outline padding="lg">
+            <c-section-head title="Mijn projecten" icon="rectangle-stack" />
+            <c-stack gap="0.75rem">
+                {% for project in projects %}
+                    <c-layer
+                        icon="rectangle-stack"
+                        title="{{ project.display_name }}"
+                        count="{{ project.deployment_count }} deployments"
+                        sub="{{ project.description }}"
+                        href="/projects/{{ project.name }}">
+                        {% for service in project.services %}
+                            <c-chip>{{ service }}</c-chip>
+                        {% endfor %}
+                    </c-layer>
+                {% endfor %}
+            </c-stack>
+        </c-card>
+
+        <c-card outline padding="lg">
+            <c-section-head title="Recente activiteit" icon="timer" />
+            <c-activity>
+                {% for event in activity %}
+                    <c-activity-item
+                        icon="{{ event.icon }}"
+                        actor="{{ event.actor }}"
+                        action="{{ event.action }}"
+                        res="{{ event.resource }}"
+                        at="{{ event.at }}" />
+                {% endfor %}
+            </c-activity>
+        </c-card>
+    </c-columns>
+
+    <c-card outline padding="lg">
+        <c-section-head title="Verbruik">
+            <c-tag type="default">laatste 24 uur</c-tag>
+        </c-section-head>
+        <c-paragraph>
+            Metrics zijn niet beschikbaar: Prometheus is niet verbonden of er zijn geen
+            namespaces gevonden.
+        </c-paragraph>
+    </c-card>
+{% endblock %}

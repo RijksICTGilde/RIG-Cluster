@@ -40,6 +40,13 @@
     <c-app-shell width="16rem">
 
         <template slot="header">
+            {# De statusbalk helemaal bovenaan. bg gebruikt hem om te melden dat het een
+               mock-up is; bij ons meldt hij dat dit de proefopstelling naast de release
+               is. Dat is geen sier: deze pagina's zijn tot in de vormgeving een kopie van
+               de echte applicatie, en zonder deze regel is op een screenshot niet te zien
+               welke van de twee je voor je hebt. #}
+            <c-status-bar text="LOTC-bouwlijn: een proefopstelling naast de release. Geen productiegegevens." />
+
             <c-header
                 text="Zelfservice voor Applicatie Deployment"
                 subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
@@ -83,12 +90,19 @@
             </c-sidenav>
         </template>
 
-        {% block content %}
-            <c-layout-flow gap="lg">
-                <c-heading type="h1" size="2" label="Welkom bij het Self Service Portal" />
-                <c-paragraph>Gebruik de navigatie om door de verschillende secties te bladeren.</c-paragraph>
-            </c-layout-flow>
-        {% endblock %}
+        {# Een enkele stack om de pagina-inhoud, zodat elke pagina hetzelfde verticale
+           ritme krijgt in plaats van de optelsom van marges die elk blok zelf meebrengt.
+           bg doet het zo, en het is het verschil tussen "blokken onder elkaar" en een
+           pagina die rustig oogt. Paginas die zelf al een stack meebrengen, nesten
+           gewoon; gap werkt niet door in kinderen. #}
+        <c-stack gap="1.5rem">
+            {% block content %}
+                <c-stack gap="0.25rem">
+                    <c-heading type="h1" size="3" label="Welkom bij het Self Service Portal" />
+                    <c-paragraph>Gebruik de navigatie om door de verschillende secties te bladeren.</c-paragraph>
+                </c-stack>
+            {% endblock %}
+        </c-stack>
 
         {% block additional_styles %}{% endblock %}
         {% block additional_scripts %}{% endblock %}

@@ -47,7 +47,7 @@ OUTPUT_DIR = Path(__file__).parent.parent / "opi" / "templates_lotc"
 # Daar staat :prop="expr or none" tegenover voor losse attributen en :attrs="<dict>"
 # voor een hele bundel. Dat is geen vertaling die een script kan maken; het is per
 # widget een keuze welk attribuut waar hoort.
-HANDWRITTEN = {"base_lotc.html.j2"}
+HANDWRITTEN = {"base_lotc.html.j2", "dashboard-bg.html.j2", "form-preview.html.j2"}
 HANDWRITTEN_DIRS = {"widgets"}
 
 # Componenten die in LOTC anders heten. Alles wat hier niet staat houdt zijn naam;
