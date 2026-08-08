@@ -50,11 +50,11 @@
 
     {% if status == "completed" and on_complete is defined and on_complete %}
     <div class="edit-progress-actions">
-        <c-button label="{{ on_complete_label | default('Ok') }}" @/>
+        {% set lotc_onclick_1 %}{{ on_complete }}{% endset %}<c-button label="{{ on_complete_label | default('Ok') }}"/>
     </div>
     {% elif status == "failed" and on_complete is defined and on_complete %}
     <div class="edit-progress-actions">
-        <c-button label="{{ on_complete_label | default('Sluiten') }}" @/>
+        {% set lotc_onclick_2 %}{{ on_complete }}{% endset %}<c-button label="{{ on_complete_label | default('Sluiten') }}"/>
     </div>
     {% endif %}
 </div>

@@ -21,10 +21,10 @@
     paneel dat die functie zichtbaar maakte. Nu <c-accordion>: dat is een <details>, dus hij
     werkt zonder JavaScript en zonder dat deze pagina een functie hoeft mee te brengen. De
     id op de wikkel blijft staan, zodat wie hem aanlinkt niets merkt.
-  - De knop "View Logs" is er NIET. Die roept openLogViewer() aan, en dat is een paneel dat
-    in project-details.html.j2 staat, met een eigen WebSocket-bedrading en eigen CSS. De
-    LOTC-schil heeft dat paneel niet; een knop die niets doet is erger dan geen knop. Zodra
-    de logviewer meeverhuist hoort hij hier terug - zie het rapport bij deze omzetting.
+  - De knop "Logs bekijken" opent hetzelfde paneel als de bestaande pagina. Dat paneel en
+    zijn WebSocket-bedrading stonden in project-details.html.j2; ze staan nu in
+    bg/_log-viewer.html.j2 en static/js/log_viewer.js, zodat beide vormgevingen er een
+    gebruiken. De knop verschijnt alleen als er pods zijn, net als in het origineel.
   - "Geen actieve deployment" en "draait op een ander cluster" stonden in een grijs kaartje
     met een info-icoon. Dat is precies een <c-alert type="info">, en dat scheelt een kaart
     in een kaart.
@@ -153,11 +153,31 @@
                 </c-cluster>
             {% endif %}
 
-            {# Hier stond de knop "View Logs", en alleen zolang er iets draaide: een slapende
-               of uitgeschakelde deployment heeft geen pods en dus geen logs, en dan suggereert
+            {# De knop "View Logs", en alleen zolang er iets draait: een slapende of
+               uitgeschakelde deployment heeft geen pods en dus geen logs, en dan suggereert
                de knop iets dat er niet is. Die vlag heet expects_no_pods en komt uit dezelfde
-               dienstfeiten als de badges. Hij staat hierboven nog steeds klaar, zodat de knop
-               terug kan zodra het logpaneel meeverhuist - zie de kop van dit bestand. #}
+               dienstfeiten als de badges, zodat een tweede dienst die een deployment parkeert
+               dit gratis meekrijgt.
+
+               De aanroep wordt boven de tag opgebouwd: een genest aanhalingsteken binnen
+               :attrs leest de voorbewerker als het einde van het attribuut. De argumenten
+               gaan door tojson, precies zoals in het origineel - een componentnaam belandt
+               zo als GEGEVEN in de aanroep en niet als code. #}
+            {% if deployment.components and not expects_no_pods %}
+                {% set logs_js = 'openLogViewer('
+                    ~ (project.name | tojson) ~ ', '
+                    ~ (deployment.name | tojson) ~ ', '
+                    ~ (deployment.components[0].reference | tojson) ~ ', '
+                    ~ (deployment.components | tojson) ~ ')' %}
+                <c-action-group align="start">
+                    <c-button
+                        type="secondary"
+                        size="sm"
+                        label="Logs bekijken"
+                        icon="document"
+                        :attrs="{'onclick': logs_js, 'class': 'log-viewer-btn', 'title': 'Bekijk live logs voor deze deployment'}" />
+                </c-action-group>
+            {% endif %}
 
             {% if status.get('operation_phase') and status.operation_phase not in ['Succeeded', None] %}
                 {% set operation_line = 'Operatie: ' ~ status.operation_phase %}

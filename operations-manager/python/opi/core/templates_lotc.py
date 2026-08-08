@@ -15,12 +15,15 @@ De activeringsvolgorde van de design systems ligt vast: ``lotc-forms`` moet als
 laatste, na het visuele thema, anders lossen de invoervelden niet op.
 """
 
+import logging
 from pathlib import Path
+from typing import Any
 
 import markupsafe
 from fastapi.templating import Jinja2Templates
-from jinja2 import FileSystemLoader
+from jinja2 import FileSystemLoader, TemplateNotFound
 from lord_of_the_components import get_static_roots, setup_components
+from markupsafe import Markup
 
 from opi.core.config import BUILD_DATE, VERSION
 from opi.core.templates import (
@@ -34,6 +37,8 @@ from opi.core.templates import (
 )
 from opi.forms.lotc_attrs import field_attrs
 from opi.forms.widgets.roos import _attr_escape as attr_escape
+
+logger = logging.getLogger(__name__)
 
 # lotc-forms hoort achteraan; zie de moduledocstring.
 DESIGN_SYSTEMS = ["lotc-layout", "nldd", "lotc-forms"]
@@ -69,6 +74,55 @@ templates_lotc.env.globals["static_url"] = static_url
 # macro's die in de roos-templates attribuut-TEKST in de tag schreven; zie
 # opi/forms/lotc_attrs.py voor waarom dat bij LOTC niet kan.
 templates_lotc.env.globals["field_attrs"] = field_attrs
+
+
+def render_roos(name: str, **context: Any) -> Markup:
+    """Render een template uit de ROOS-omgeving en zet het resultaat hier neer.
+
+    Dit is de uitweg voor blokken die een DIENST meelevert: die sjablonen staan in
+    opi/services/catalog/ en zijn in roos-componenten geschreven. Ze renderen niet in deze
+    omgeving - de map staat niet op dit zoekpad, en twee componentsystemen kunnen niet in
+    een Jinja-omgeving, want de eerst geregistreerde voorbewerker eist elke <c-*>-tag op.
+
+    De afweging: zo'n blok in de nieuwe vormgeving NAmaken betekent een tweede kopie die
+    uit de pas gaat lopen zodra een dienst zijn eigen sjabloon wijzigt - en diensten zijn
+    juist het deel van dit platform dat blijft groeien. Het blok WEGLATEN is erger: dan
+    verdwijnt functionaliteit zonder dat iemand het merkt, en dat is precies wat deze
+    omzetting niet mag doen.
+
+    Dus rendert het blok met zijn eigen omgeving en komt het als HTML binnen. Dat is
+    eerlijk zichtbaar: zo'n blok draagt rvo-klassen en ziet er anders uit dan de rest van
+    de pagina, totdat de dienst zelf meegaat. Zichtbaar anders is beter dan stilletjes weg.
+
+    Een sjabloon dat niet bestaat wordt overgeslagen met een melding in het log, niet met
+    een foutpagina: een dienst die een blok aankondigt dat er niet is, mag de projectpagina
+    niet meenemen in zijn val.
+    """
+    from opi.core.templates import get_templates
+
+    try:
+        template = get_templates().env.get_template(name)
+    except TemplateNotFound:
+        logger.warning("Dienstblok overgeslagen, sjabloon niet gevonden: %s", name)
+        return Markup("")
+
+    # Markup() zegt: dit is HTML, escape het niet nog een keer. Dat is hier veilig en
+    # noodzakelijk, en het is de moeite waard om te zeggen WAAROM, want een verkeerde
+    # Markup() is hoe cross-site scripting binnenkomt.
+    #
+    # De naam komt niet van een gebruiker maar uit de dienstenregistry - een vaste lijst in
+    # de code - en het sjabloon zelf is van ons. De GEGEVENS erin worden door de
+    # roos-omgeving geescaped, want die staat op autoescape: een projectnaam met
+    # <script> erin komt er als tekst uit. Wat hier binnenkomt is dus al veilige HTML, en
+    # zonder Markup() zou je die HTML letterlijk op het scherm zien staan.
+    #
+    # Wat hier NIET mag gebeuren, en de reden dat dit een aparte functie is: gerenderde
+    # HTML nog een keer door een sjabloonmotor halen. Dan wordt {{ }} in een ingevulde
+    # waarde alsnog uitgevoerd, en dat is in deze codebase eerder een lek geweest.
+    return Markup(template.render(**context))  # noqa: S704
+
+
+templates_lotc.env.globals["render_roos"] = render_roos
 
 # De widgettemplates delen macro's die een attribuutwaarde escapen (optional_attr,
 # bool_attr). Dat filter hoort bij de kale widget-omgeving van de roos-adapter; de

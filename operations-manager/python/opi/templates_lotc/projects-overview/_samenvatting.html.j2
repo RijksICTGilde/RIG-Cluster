@@ -4,8 +4,8 @@
     <c-card class="summary-card" outline="true" padding="lg" background-color="wit">
         <c-layout-flow gap="sm">
             <div class="summary-number">{{ projects|length }}</div>
-            <div class="summary-label">Uw projecten</div>
-            <div class="summary-change">Waartoe u toegang heeft</div>
+            <div class="summary-label">Je projecten</div>
+            <div class="summary-change">Waar je toegang toe hebt</div>
         </c-layout-flow>
     </c-card>
 
@@ -13,7 +13,7 @@
         <c-layout-flow gap="sm">
             <div class="summary-number">{{ (projects|map(attribute='users')|map('length')|sum) or 0 }}</div>
             <div class="summary-label">Teamleden totaal</div>
-            <div class="summary-change">In al uw projecten</div>
+            <div class="summary-change">In al je projecten</div>
         </c-layout-flow>
     </c-card>
 
@@ -30,7 +30,7 @@
     <c-card class="summary-card" outline="true" padding="lg" background-color="wit">
         <c-layout-flow gap="sm">
             <div class="summary-number">{{ user.role|default('User')|title }}</div>
-            <div class="summary-label">Uw rol</div>
+            <div class="summary-label">Je rol</div>
             <div class="summary-change">{{ user.email }}</div>
         </c-layout-flow>
     </c-card>

@@ -8,7 +8,7 @@
             <c-icon icon="vinkje" size="lg" color="donkerblauw"/>
             <span id="approval-title-text">Domeingoedkeuring</span>
         </c-heading>
-        <c-button size="sm" label="Sluiten" show-icon="before" icon="kruis" class="edit-modal-close-btn" @/>
+        {% set lotc_onclick_1 %}closeApprovalModal(){% endset %}<c-button size="sm" label="Sluiten" show-icon="before" icon="kruis" class="edit-modal-close-btn"/>
     </div>
     <div id="approval-error" class="edit-section-error is-hidden"></div>
     <div id="edit-section-inner">

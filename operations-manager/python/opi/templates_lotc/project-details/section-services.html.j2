@@ -4,7 +4,7 @@
         <c-layout-flow row="true" justify-content="space-between" align-items="center">
             <c-heading type="h2"><c-icon icon="applicatie" size="xl" color="groen"/>Services & Integraties</c-heading>
             {% if user_role in ["admin", "owner"] %}
-            <c-button size="sm" label="Bewerken" show-icon="before" icon="bewerken" @/>
+            {% set lotc_onclick_1 %}openEditModal('modal-edit-services', 'Services beheren'){% endset %}<c-button size="sm" label="Bewerken" show-icon="before" icon="bewerken"/>
             {% endif %}
         </c-layout-flow>
         <p class="rvo-text--subtle">Geactiveerde services voor dit project</p>
@@ -27,7 +27,7 @@
                     <p class="rvo-text--sm rvo-text--subtle">{{ config_hint }}</p>
                     {% endif %}
                     {% if user_role in ["admin", "owner"] and service.value in service_config_sections %}
-                    <c-button label="Configureer" size="sm" icon="bewerken" @/>
+                    {% set lotc_onclick_2 %}openEditModal('{{ service_config_sections[service.value] }}', '{{ service_def.name }} configuratie'){% endset %}<c-button label="Configureer" size="sm" icon="bewerken"/>
                     {% endif %}
                 </c-layout-flow>
             </c-card>

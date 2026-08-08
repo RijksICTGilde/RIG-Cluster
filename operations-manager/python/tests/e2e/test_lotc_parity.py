@@ -74,6 +74,31 @@ AANVAARD: dict[str, str] = {
     # De metrics-explorer bindt zijn knop met addEventListener in plaats van met een
     # onclick-attribuut, omdat <c-button> geen onclick doorlaat. Zelfde gedrag.
     "showMetric": "gebonden met addEventListener in plaats van een onclick-attribuut",
+    # De knoppenbalk onderin de gedeelde dialoog is DODE markup: "Opslaan" roept
+    # submitEditModal() aan, en die functie bestaat nergens in de codebase. Zichtbaar was
+    # hij ook nooit - de modal-wizard vervangt de hele #edit-section-inner zodra hij laadt,
+    # inclusief die balk. Zulke markup neem je bij een verhuizing niet mee.
+    "submitEditModal": "riep een functie aan die niet bestaat; nooit zichtbaar geweest",
+    "edit-section-submit": "hoort bij die dode knoppenbalk",
+    "edit-section-actions": "hoort bij die dode knoppenbalk",
+    # De drie tabbladwikkels van de oude pagina. Die bestaan alleen omdat alle tabs daar in
+    # een document staan en switchTab() ze toont en verbergt; met een eigen URL per tab is
+    # er niets te tonen of te verbergen.
+    "tab-project": "de oude tabwikkel; elk tabblad heeft nu een eigen URL",
+    "tab-deployments": "de oude tabwikkel; elk tabblad heeft nu een eigen URL",
+    "tab-taken": "de oude tabwikkel; elk tabblad heeft nu een eigen URL",
+    # Hetzelfde verhaal: de oude pagina laadt de takenlijst pas als switchTab('taken') hem
+    # aanwijst. Het nieuwe tabblad haalt hem bij het laden op - zelfde lijst, zelfde URL,
+    # zonder dat er een tweede plek is die weet wanneer het moet.
+    "tasks-content": "de takenlijst laadt nu bij het openen van zijn eigen tabblad",
+    # Ongebruikte markup: log_viewer.js noemt log-pause-icon nergens. De pauzeknop zelf
+    # (log-pause-btn) staat er wel en werkt.
+    "log-pause-icon": "dode markup; het script gebruikt dit id niet",
+    # applyRules() is hoe het geheim-veld van ROOS zichzelf toont en verbergt - code van
+    # dat design system, niet van ons. Het LOTC-veld doet hetzelfde met zijn eigen
+    # mechanisme (en heeft er een kopieerknop bij). Het gedrag is er dus wel; alleen de
+    # naam van de functie die het uitvoert hoort bij de vormgeving.
+    "applyRules": "de interne implementatie van het geheim-veld van roos; LOTC heeft zijn eigen",
 }
 
 

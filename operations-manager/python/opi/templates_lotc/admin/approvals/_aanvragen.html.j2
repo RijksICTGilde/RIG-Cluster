@@ -7,7 +7,7 @@
                 <c-icon icon="applicatie" size="md"/>
                 {{ project.project_name }}
             </c-heading>
-            <c-button label="Beheren" size="sm" show-icon="before" icon="bewerken" @/>
+            {% set lotc_onclick_1 %}openApprovalModal('{{ project.project_name }}'){% endset %}<c-button label="Beheren" size="sm" show-icon="before" icon="bewerken"/>
         </div>
         <div class="table-container">
             <table class="domains-table">

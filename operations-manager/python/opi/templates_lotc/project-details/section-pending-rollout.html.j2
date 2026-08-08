@@ -11,7 +11,7 @@
     {% if pending_rollout.since %}<br />De oudste wacht sinds {{ pending_rollout.since | dutch_date }}.{% endif %}
     {% if user_role in ["admin", "owner"] %}
     <br />
-    <c-button size="sm" label="Nu verwerken" show-icon="before" icon="refresh" @/>
+    {% set lotc_onclick_1 %}openServiceModal('/projects/{{ project.name }}/actions/refresh-project/confirm', 'Project herverwerken'){% endset %}<c-button size="sm" label="Nu verwerken" show-icon="before" icon="refresh"/>
     {% endif %}
 </c-alert>
 {% endif %}

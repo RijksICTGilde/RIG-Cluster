@@ -50,3 +50,15 @@
         </div>
     </div>
 </div>
+
+{# De hulpdialoog van een dienst. De bestaande projectpagina heeft hem ook: de
+   dienstblokken op deze pagina openen hem met openServiceHelp(). #}
+{% include "widgets/service_help_modal.html.j2" %}
+
+{# Het logpaneel, met de bediening die erbij hoort. Het script MOET na deze markup komen:
+   het pakt zijn elementen op het moment dat het draait. In de <head> zou elke verwijzing
+   null zijn en zou de viewer stilzwijgend niets doen. #}
+{% include "bg/_log-viewer.html.j2" %}
+<link rel="stylesheet" href="{{ static_url('css/project-details.css') }}">
+<script src="{{ static_url('js/wizard.js') }}"></script>
+<script src="{{ static_url('js/log_viewer.js') }}"></script>
