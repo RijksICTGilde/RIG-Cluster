@@ -9,18 +9,15 @@
   kopregel zetten, zodat hij hetzelfde ritme volgt als de rest.
 #}
 {% extends "base_lotc.html.j2" %}
+{% from "bg/_patronen.html.j2" import panel, page_head %}
 
 {% block page_title %}Gebruikers - Self Service Portal{% endblock %}
 
 {% block content %}
-    <c-stack gap="xs">
-        <c-heading type="h1" size="3" label="Gebruikers" />
-        <c-paragraph>Wie toegang heeft, en met welke rol.</c-paragraph>
-    </c-stack>
+    {{ page_head("Gebruikers", "Wie toegang heeft, en met welke rol.") }}
 
-    <c-card outline padding="lg">
-        <c-section-head title="Projectleden" icon="person-2" />
-        {# NLDD maakt van een tabel een CSS-grid, en zonder het columns-attribuut valt
+    {% call panel("Projectleden", "person-2") %}
+{# NLDD maakt van een tabel een CSS-grid, en zonder het columns-attribuut valt
            alles in een kolom en stapelen de cellen - dat is geen bug maar de manier
            waarop nldd-table werkt. Onder RVO is het een native tabel die vanzelf
            uitlijnt, dus daar zou columns niet nodig zijn; dat verschil is precies wat
@@ -43,5 +40,5 @@
                 {% endfor %}
             {% endfor %}
         </c-table>
-    </c-card>
+    {% endcall %}
 {% endblock %}

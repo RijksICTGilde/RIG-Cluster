@@ -14,14 +14,12 @@
   zou tonen.
 #}
 {% extends "base_lotc.html.j2" %}
+{% from "bg/_patronen.html.j2" import panel, page_head %}
 
 {% block page_title %}{{ project.display_name }} - Projectdetails{% endblock %}
 
 {% block content %}
-    <c-stack gap="xs">
-        <c-heading type="h1" size="3" label="{{ project.display_name }}" />
-        <c-paragraph>{{ project.description }}</c-paragraph>
-    </c-stack>
+    {{ page_head("{{ project.display_name }}", "{{ project.description }}") }}
 
     <c-cluster gap="sm">
         <c-button type="secondary" label="Bewerken" icon="pencil-on-square" show-icon="before" />
@@ -36,9 +34,8 @@
     </c-auto-grid>
 
     <c-columns columns="1" lg="2" gap="lg">
-        <c-card outline padding="lg">
-            <c-section-head title="Componenten" icon="rectangle-stack" />
-            <c-stack gap="sm">
+        {% call panel("Componenten", "rectangle-stack") %}
+<c-stack gap="sm">
                 {% for component in project.components %}
                     <c-layer
                         icon="rectangle-stack"
@@ -51,11 +48,10 @@
                     </c-layer>
                 {% endfor %}
             </c-stack>
-        </c-card>
+        {% endcall %}
 
-        <c-card outline padding="lg">
-            <c-section-head title="Deployments" icon="arrow-up-arrow-down" />
-            <c-stack gap="sm">
+        {% call panel("Deployments", "arrow-up-arrow-down") %}
+<c-stack gap="sm">
                 {% for deployment in project.deployments %}
                     <c-layer
                         icon="arrow-up-arrow-down"
@@ -68,22 +64,20 @@
                     </c-layer>
                 {% endfor %}
             </c-stack>
-        </c-card>
+        {% endcall %}
     </c-columns>
 
     <c-columns columns="1" lg="2" gap="lg">
-        <c-card outline padding="lg">
-            <c-section-head title="Team" icon="person-2" />
-            <c-stack gap="sm">
+        {% call panel("Team", "person-2") %}
+<c-stack gap="sm">
                 {% for member in project.users %}
                     <c-layer icon="person" title="{{ member.email }}" count="{{ member.role }}" sub="lid van dit project" />
                 {% endfor %}
             </c-stack>
-        </c-card>
+        {% endcall %}
 
-        <c-card outline padding="lg">
-            <c-section-head title="Sleutels" icon="lock-closed" />
-            <c-stack gap="sm">
+        {% call panel("Sleutels", "lock-closed") %}
+<c-stack gap="sm">
                 <c-paragraph size="sm">
                     Afgeschermd getoond. Dit is de component die LOTC nog niet heeft en die
                     ZAD tijdelijk zelf levert.
@@ -94,12 +88,11 @@
                 </c-detail-list>
                 <c-secret-field value="{{ project.config['api-key'] | default('', true) }}" />
             </c-stack>
-        </c-card>
+        {% endcall %}
     </c-columns>
 
-    <c-card outline padding="lg">
-        <c-section-head title="Repositories" icon="chevron-left-forward-slash-chevron-right" />
-        {# NLDD maakt van een tabel een CSS-grid, en zonder het columns-attribuut valt
+    {% call panel("Repositories", "chevron-left-forward-slash-chevron-right") %}
+{# NLDD maakt van een tabel een CSS-grid, en zonder het columns-attribuut valt
            alles in een kolom en stapelen de cellen - dat is geen bug maar de manier
            waarop nldd-table werkt. Onder RVO is het een native tabel die vanzelf
            uitlijnt, dus daar zou columns niet nodig zijn; dat verschil is precies wat
@@ -120,5 +113,5 @@
                 </c-table-row>
             {% endfor %}
         </c-table>
-    </c-card>
+    {% endcall %}
 {% endblock %}
