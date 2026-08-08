@@ -18,12 +18,12 @@
     - een kop die de pagina benoemt, niet domineert
 #}
 {% extends "base_lotc.html.j2" %}
-{% from "bg/_patronen.html.j2" import panel, page_head %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
 
 {% block page_title %}Dashboard - Self Service Portal{% endblock %}
 
 {% block content %}
-    {{ page_head("Dashboard", "Een overzicht van uw projecten, deployments en verbruik.") }}
+    {{ page_head("Dashboard", "Een overzicht van je projecten, deployments en verbruik.") }}
 
     <c-cluster gap="sm">
         <c-button type="secondary" label="Mijn projecten" icon="rectangle-stack" show-icon="before" href="/projects" />

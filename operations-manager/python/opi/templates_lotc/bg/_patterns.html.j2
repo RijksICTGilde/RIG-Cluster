@@ -1,0 +1,100 @@
+{#
+  Gedeelde patronen voor de hertekende pagina's.
+
+  WAAROM DIT BESTAAT
+
+  Een gap bestaat in dit systeem alleen waar een stack de OUDER is. Een <c-card> is geen
+  stack: hij zet zijn kinderen achter elkaar in een container. Wie dus dit schrijft:
+
+      <c-card>
+          <c-section-head title="Mijn projecten" />
+          <c-stack gap="md"> ... </c-stack>
+      </c-card>
+
+  krijgt een kop die tegen zijn eigen inhoud aan plakt. De stack regelt de afstand tussen
+  zijn kinderen, niet die tussen zichzelf en de kop erboven. Dat is geen vergissing die je
+  een keer maakt maar een die je op elke kaart opnieuw maakt.
+
+  De oplossing is niet "eraan denken" maar het onmogelijk maken: gebruik panel(), dan zit
+  de kop altijd IN de stack en klopt de afstand vanzelf.
+
+      {% call panel('Mijn projecten', 'rectangle-stack') %}
+          ...inhoud...
+      {% endcall %}
+
+  Dezelfde regel geldt overal: twee blokken naast elkaar zonder stack eromheen raken
+  elkaar. tests/test_lotc_layout_rules.py bewaakt dat voor de kaarten.
+#}
+
+{% macro panel(title, icon='', gap='md', aside='', info_text='') %}
+<c-card outline padding="lg">
+    <c-stack gap="{{ gap }}">
+        {% if title %}
+            <c-section-head title="{{ title }}" :icon="icon or none">
+                {%- if info_text %}{{ info(info_text) }}{% endif -%}
+                {{ aside }}
+            </c-section-head>
+        {% endif %}
+        {{ caller() }}
+    </c-stack>
+</c-card>
+{% endmacro %}
+
+
+{#
+  De kop van een pagina: titel plus een regel uitleg. Staat hier omdat elke pagina hem
+  heeft en de afstand tussen die twee overal gelijk hoort te zijn.
+#}
+{% macro page_head(title, intro='') %}
+<c-stack gap="xs">
+    <c-heading type="h1" size="3" label="{{ title }}" />
+    {% if intro %}
+        <c-paragraph>{{ intro }}</c-paragraph>
+    {% endif %}
+</c-stack>
+{% endmacro %}
+
+
+{#
+  Een info-icoon met uitleg, naast een label of een kopregel.
+
+  WAAROM DIT ER IS
+
+  De terugkerende klacht is dat mensen dingen niet kunnen vinden. Uitleg toevoegen helpt
+  daar alleen tegen als hij STAAT WAAR DE VRAAG ONTSTAAT - niet op een aparte hulppagina
+  die je moet weten te vinden. Vandaar een icoon dat overal hetzelfde werkt.
+
+  Wij hebben dit al bij de diensten (het vraagteken naast een dienstkaart, dat een
+  hulpmodal opent), maar dat is met de hand gebouwd: een eigen icoonknop, een eigen
+  backdrop en een eigen modal. Deze macro doet hetzelfde met wat het thema ervoor heeft,
+  dus het volgt de vormgeving en het is toetsenbord- en schermlezervriendelijk zonder dat
+  wij daar iets voor hoeven te doen.
+
+      {{ info("Een component is een draaiend onderdeel van je applicatie.") }}
+
+  Voor een langere uitleg die je een keer leest en dan wegklikt is er uitleg_blok()
+  hieronder; die is nadrukkelijker en hoort bij een scherm dat iemand voor het eerst ziet.
+#}
+{% macro info(text, label='Uitleg') %}
+<c-icon-button
+    icon="info-circle"
+    accessible-label="{{ label }}"
+    variant="neutral-transparent"
+    size="sm">
+    <c-tooltip text="{{ text }}" />
+</c-icon-button>
+{% endmacro %}
+
+
+{#
+  Uitleg boven aan een scherm: een alinea die verklaart wat je hier ziet, voor wie het
+  voor het eerst opent.
+
+  Bewust een gewone info-melding en GEEN c-just-in-time-education. Die laatste klinkt
+  alsof hij hiervoor bedoeld is, maar het is een verankerde coach-mark: hij positioneert
+  zichzelf bij een element en landde in onze proef linksboven over de zijkolom heen. Hij
+  hoort bij een handeling ("klik hier voor..."), niet bij een scherm.
+#}
+{% macro explainer(title, text) %}
+<c-alert type="info" heading="{{ title }}" closable="true">{{ text }}</c-alert>
+{% endmacro %}

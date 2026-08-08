@@ -174,8 +174,15 @@ async def lotc_redesigned_page(request: Request, slug: str) -> HTMLResponse:
     template_name = REDESIGNED_PAGES.get(slug)
     if template_name is None:
         raise HTTPException(status_code=404, detail=f"onbekende pagina: {slug}")
-    return templates_lotc.TemplateResponse(
-        request,
-        template_name,
-        _context(request, **page_data(slug)),
-    )
+
+    data = page_data(slug)
+
+    # Het actieve tabblad komt uit de URL, want de tabs zijn echte links. Een onbekende
+    # naam valt terug op de eerste in plaats van een fout te geven: een verkeerd
+    # gedeelde link hoort de pagina te tonen, niet stuk te gaan.
+    tabs = data.get("tabs")
+    if tabs:
+        requested = request.query_params.get("tab", "")
+        data["active_tab"] = requested if requested in tabs else next(iter(tabs))
+
+    return templates_lotc.TemplateResponse(request, template_name, _context(request, **data))
