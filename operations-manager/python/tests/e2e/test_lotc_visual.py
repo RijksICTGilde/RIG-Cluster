@@ -414,16 +414,19 @@ def test_service_help_opens_with_a_click(app_server: str, auth_page: Page) -> No
     Deze test bestaat omdat twee eerdere versies van dat icoon NIETS deden en toch door
     alle tests kwamen: die keken naar markup, niet naar wat een gebruiker doet. Vandaar
     een test die klikt en kijkt of er tekst bij komt.
+
+    De uitleg gaat open in de DIALOOG die de bestaande pagina ook gebruikt. Een derde
+    versie zette hem inline op de pagina via ?help=<dienst>; dat was hier zelf bedacht en
+    is teruggedraaid, zie tests/e2e/test_lotc_pariteit.py.
     """
     page = auth_page
     page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
     page.goto(f"{app_server}/services")
     _wait_for_nldd(page)
 
-    voor = page.locator(".zad-service-help").count()
-    assert voor == 0, "er staat al uitleg open zonder dat erom gevraagd is"
+    expect(page.locator("#service-help-modal")).not_to_be_visible()
 
-    page.locator("nldd-icon-button[href*='help=']").first.click()
-    page.wait_for_load_state("networkidle")
+    page.locator(".service-card__help-btn").first.click()
 
-    expect(page.locator(".zad-service-help").first).to_be_visible()
+    expect(page.locator("#service-help-modal")).to_be_visible()
+    expect(page.locator("#service-help-content h3").first).to_be_visible()

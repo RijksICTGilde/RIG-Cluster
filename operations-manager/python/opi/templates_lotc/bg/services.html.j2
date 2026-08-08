@@ -21,18 +21,30 @@
   INFO-ICONEN
 
   Elke dienst draagt uitleg, want juist hier lopen mensen vast: de namen zeggen niets als
-  je ze nog niet kent. Wij hebben dit al met een vraagteken en een eigen hulpmodal; hier
-  komt het uit het thema.
+  je ze nog niet kent. Die uitleg opent in een DIALOOG, precies zoals op de bestaande
+  pagina: het vraagteken roept openServiceHelp() aan, static/js/wizard.js haalt de tekst
+  op bij /forms/wizard/help/<template> en zet hem in #service-help-content.
+
+  Hier stond een tijd een link naar ?help=<dienst>, die de uitleg inline op de pagina
+  zette. Dat was bij het omzetten zelf bedacht en het is teruggedraaid: een omzetting mag
+  er anders uitzien, maar niet iets anders doen. De kaart komt daarom uit
+  bg/_service-card.html.j2 en niet uit de macro in bg/_patterns.html.j2, die nog de
+  linkvorm heeft.
+
+  Deze pagina heeft daarvoor static/css/wizard.css en static/js/wizard.js nodig, net als
+  de bestaande services-overview.html.j2. Zonder die twee rendert de knop wel en doet hij
+  niets.
 #}
 {% extends "base_lotc.html.j2" %}
-{% from "bg/_patterns.html.j2" import panel, page_head, info, service_card, filter_row %}
+{% from "bg/_patterns.html.j2" import panel, page_head, info, filter_row %}
+{% from "bg/_service-card.html.j2" import service_card %}
 
 {% block page_title %}Diensten - Self Service Portal{% endblock %}
 
 {% block content %}
     {{ page_head("Diensten", "Platformdiensten die je project kan afnemen. Het platform levert en beheert ze.") }}
 
-    {{ filter_row("/lotc/bg/services", "kind", service_filter, service_filters) }}
+    {{ filter_row("/services", "kind", service_filter, service_filters) }}
 
     <c-columns columns="1" lg="2" gap="md">
         {% for service in services %}
@@ -40,4 +52,13 @@
         {% endfor %}
     </c-columns>
 
+    {% include "widgets/service_help_modal.html.j2" %}
+{% endblock %}
+
+{% block additional_styles %}
+<link rel="stylesheet" href="{{ static_url('css/wizard.css') }}">
+{% endblock %}
+
+{% block additional_scripts %}
+<script src="{{ static_url('js/wizard.js') }}"></script>
 {% endblock %}

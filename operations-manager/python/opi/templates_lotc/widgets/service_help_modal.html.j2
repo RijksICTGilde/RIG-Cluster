@@ -1,14 +1,40 @@
 {#
-  Service help modal - populated via fetch from openServiceHelp() in static/js/wizard.js.
+  De hulpdialoog van een dienst, in de nieuwe vormgeving.
 
-  Included wherever a service block with a help button is rendered: the wizard,
-  the project-details page and the service overview. Needs /static/css/wizard.css
-  and /static/js/wizard.js on the same page.
+  Een OVERNAME van widgets/service_help_modal.html.j2: dezelfde drie id's
+  (service-help-backdrop, service-help-modal, service-help-content), dezelfde klassen uit
+  static/css/wizard.css en dezelfde twee functies uit static/js/wizard.js. Die zijn geen
+  vormgeving - openServiceHelp() zoekt de elementen op id op en vult
+  #service-help-content, dus een andere naam is een stille storing.
+
+  WAAROM DIT BESTAND MET DE HAND GESCHREVEN IS
+
+  De omzetter maakte er <c-icon icon="kruis" ... @/> van, en dat rendert als
+  <nldd-icon name="kruis" on="">: "kruis" is een RVO-icoonnaam die de NLDD-set niet kent,
+  en de @click is tot een leeg attribuut verdampt. De dialoog ging dan wel open maar had
+  geen werkende sluitknop meer - stil, want er komt geen foutmelding van.
+
+  De omzetter kan die vertaling niet maken (welk attribuut waar hoort verschilt per
+  component), en daarom staat de hele map widgets/ in HANDWRITTEN_DIRS van
+  scripts/lotc_convert_templates.py.
+  Zowel de dienstenpagina als de wizard includen dit ene bestand: een tweede kopie van een
+  dialoog loopt gegarandeerd uit de pas.
+
+  Sluiten kan op drie manieren, net als in het origineel: de knop, de achtergrond, Escape
+  (die laatste zit in wizard.js).
 #}
 <div id="service-help-backdrop" class="service-help-backdrop" onclick="closeServiceHelp()"></div>
 <div id="service-help-modal" class="service-help-modal" role="dialog" aria-modal="true">
     <div class="service-help-modal__header">
-        <c-icon icon="kruis" size="xl" color="grijs-600" class="service-help-modal__close" @/>
+        {# De aanroep BOVEN de tag: een componenttag verdraagt geen Jinja binnenin, en
+           onclick/class zijn geen eigen attributen van c-icon-button. #}
+        {% set sluiten_js = "closeServiceHelp()" %}
+        <c-icon-button
+            icon="dismiss"
+            accessible-label="Sluiten"
+            variant="neutral-transparent"
+            size="sm"
+            :attrs="{'onclick': sluiten_js, 'class': 'service-help-modal__close'}" />
     </div>
     <div id="service-help-content" class="service-help-modal__body"></div>
 </div>
