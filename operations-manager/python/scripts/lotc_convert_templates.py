@@ -37,9 +37,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 TEMPLATES_DIR = Path(__file__).parent.parent / "opi" / "templates"
 OUTPUT_DIR = Path(__file__).parent.parent / "opi" / "templates_lotc"
 
-# De schil is met de hand geschreven (bg-indeling, zie base_lotc.html.j2) en wordt
-# niet overschreven. Alles wat base.html.j2 uitbreidt, gaat naar die schil.
+# Met de hand geschreven, en dus niet overschreven.
+#
+# De schil (base_lotc.html.j2) omdat de INDELING verandert en niet alleen de namen: de
+# navigatie verhuist naar een zijkolom, in de opzet van bg.rijks.app.
+#
+# De formulierwidgets omdat ze wezenlijk anders werken. In de roos-templates schreven
+# macro's stukken attribuut-TEKST middenin de componenttag, en dat kan bij LOTC niet.
+# Daar staat :prop="expr or none" tegenover voor losse attributen en :attrs="<dict>"
+# voor een hele bundel. Dat is geen vertaling die een script kan maken; het is per
+# widget een keuze welk attribuut waar hoort.
 HANDWRITTEN = {"base_lotc.html.j2"}
+HANDWRITTEN_DIRS = {"widgets"}
 
 # Componenten die in LOTC anders heten. Alles wat hier niet staat houdt zijn naam;
 # dat is het overgrote deel, want beide systemen delen hun woordenschat grotendeels.
@@ -86,6 +95,90 @@ UNCONVERTIBLE = {
     "list": "items",
 }
 
+# Een heel attribuut achter een voorwaarde, binnen de tag:
+#
+#     {% if form_data.email %}value="{{ form_data.email }}"{% endif %}
+#
+# De roos-parser laat dat door, de LOTC-parser leest {% als een attribuutnaam. LOTC
+# heeft er een nettere vorm voor: :naam="expr", waarbij none betekent weglaten. Deze
+# regel doet die vertaling, inclusief waarden die tekst en expressie mengen.
+CONDITIONAL_ATTR_RE = re.compile(
+    r"\{%-?\s*if\s+(?P<cond>.+?)\s*-?%\}\s*(?P<name>[A-Za-z_:@][A-Za-z0-9_:@-]*)=\"(?P<value>[^\"]*)\"\s*\{%-?\s*endif\s*-?%\}",
+    re.DOTALL,
+)
+INTERPOLATION_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}", re.DOTALL)
+
+
+def value_as_expression(value: str) -> str:
+    """Zet een attribuutwaarde om in een Jinja-expressie.
+
+    ``{{ naam }}`` wordt de expressie zelf; losse tekst eromheen wordt een string, en
+    de delen worden aan elkaar geplakt. Zo overleeft een waarde die tekst en expressie
+    mengt de omzetting zonder dat de betekenis verschuift.
+    """
+    parts: list[str] = []
+    position = 0
+    for match in INTERPOLATION_RE.finditer(value):
+        literal = value[position : match.start()]
+        if literal:
+            parts.append(repr(literal))
+        parts.append(f"({match.group(1)})")
+        position = match.end()
+    tail = value[position:]
+    if tail:
+        parts.append(repr(tail))
+    if not parts:
+        return "''"
+    return " ~ ".join(parts)
+
+
+# Een voorwaarde BINNEN de aanhalingstekens van een attribuutwaarde:
+#
+#     label="{% if language == 'nl' %}Nieuw account{% else %}New account{% endif %}"
+#
+# Ook dit leest de LOTC-parser niet. Als expressie kan het wel, en dan is het meteen
+# korter: :label="'Nieuw account' if language == 'nl' else 'New account'".
+INLINE_IF_RE = re.compile(
+    r"(?P<name>[A-Za-z_:@][A-Za-z0-9_:@-]*)=\"\{%-?\s*if\s+(?P<cond>.+?)\s*-?%\}"
+    r"(?P<then>.*?)"
+    r"(?:\{%-?\s*else\s*-?%\}(?P<other>.*?))?"
+    r"\{%-?\s*endif\s*-?%\}\"",
+    re.DOTALL,
+)
+
+
+def convert_inline_conditions(source: str) -> tuple[str, int]:
+    """Vervang een if/else binnen een attribuutwaarde door een Jinja-expressie."""
+    count = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal count
+        # Een keten met {% elif %} of andere geneste Jinja laat deze regel met rust: een
+        # half begrepen voorwaarde omzetten levert stille onzin op, en niet-omzetten is
+        # zichtbaar. Die gevallen komen als melding naar boven.
+        if "{%" in match.group("then") or "{%" in (match.group("other") or ""):
+            return match.group(0)
+        count += 1
+        then_expression = value_as_expression(match.group("then"))
+        other_expression = value_as_expression(match.group("other") or "")
+        return f':{match.group("name")}="({then_expression}) if ({match.group("cond")}) else ({other_expression})"'
+
+    return INLINE_IF_RE.sub(replace, source), count
+
+
+def convert_conditional_attributes(source: str) -> tuple[str, int]:
+    """Vervang voorwaardelijke attributen binnen tags door de LOTC-vorm."""
+    count = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal count
+        count += 1
+        expression = value_as_expression(match.group("value"))
+        return f':{match.group("name")}="({expression}) if ({match.group("cond")}) else none"'
+
+    return CONDITIONAL_ATTR_RE.sub(replace, source), count
+
+
 TAG_RE = re.compile(r"<c-([a-z0-9-]+)((?:[^>\"']|\"[^\"]*\"|'[^']*')*?)(/?)>")
 CLOSE_RE = re.compile(r"</c-([a-z0-9-]+)>")
 ATTR_RE = re.compile(r"(:?)([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*(\"[^\"]*\"|'[^']*')")
@@ -127,6 +220,12 @@ def convert_source(source: str, known_attributes: dict[str, set[str]]) -> tuple[
         name, attrs, selfclose = match.group(1), match.group(2), match.group(3)
         if name in UNWRAP:
             return ""
+        # Alleen BINNEN de tag: buiten een tag is {% if %} gewone Jinja en moet hij blijven.
+        attrs, inline = convert_inline_conditions(attrs)
+        attrs, conditionals = convert_conditional_attributes(attrs)
+        conditionals += inline
+        if conditionals:
+            notes.append(f'{conditionals} voorwaardelijke attributen op c-{name} omgezet naar :naam="expr"')
         prop = UNCONVERTIBLE.get(name)
         if prop and re.search(rf"[:\s]{prop}\s*=", attrs):
             notes.append(f"c-{name} draagt :{prop} - in LOTC zijn dat kinderen, met de hand omzetten")
@@ -189,7 +288,7 @@ def main() -> int:
 
     for source_path in sources:
         relative = source_path.relative_to(TEMPLATES_DIR)
-        if relative.name in HANDWRITTEN:
+        if relative.name in HANDWRITTEN or relative.parts[0] in HANDWRITTEN_DIRS:
             continue
         converted, notes = convert_source(source_path.read_text(), known_attributes)
         if notes:

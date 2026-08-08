@@ -81,15 +81,15 @@ test = [
 # dependency - de release-image bouwt uit [project.dependencies] en verandert hier
 # niet van. Installeer met: uv sync --group lotc
 #
-# Gepind op commit 9d8f9ce van de v7-branch. Die pin is de reden dat dit veilig is:
+# Gepind op commit 00c03fc van de v7-branch. Die pin is de reden dat dit veilig is:
 # de NLDD-afgeleide componentlaag schuift met een bump mee, en 1263 aanroepen mogen
 # niet stil van vorm veranderen.
 lotc = [
-    "lord-of-the-components @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@9d8f9ce#subdirectory=python",
-    "lotc-rvo @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@9d8f9ce#subdirectory=packages/lotc-rvo",
-    "lotc-nldd @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@9d8f9ce#subdirectory=packages/lotc-nldd",
-    "lotc-layout @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@9d8f9ce#subdirectory=packages/lotc-layout",
-    "lotc-forms @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@9d8f9ce#subdirectory=packages/lotc-forms",
+    "lord-of-the-components @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@00c03fc#subdirectory=python",
+    "lotc-rvo @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@00c03fc#subdirectory=packages/lotc-rvo",
+    "lotc-nldd @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@00c03fc#subdirectory=packages/lotc-nldd",
+    "lotc-layout @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@00c03fc#subdirectory=packages/lotc-layout",
+    "lotc-forms @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@00c03fc#subdirectory=packages/lotc-forms",
 ]
 dev = [
     "ruff>=0.11.11",

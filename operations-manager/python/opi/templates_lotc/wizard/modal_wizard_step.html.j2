@@ -93,7 +93,7 @@
                     <c-icon icon="refresh" size="sm"/>Bezig met opslaan&hellip;
                 </span>
                 {% endif %}
-                <c-button type="submit" show-icon="before" icon="publicatie" label="{% if flow_id is defined and flow_id in ('modal-backup', 'modal-restore') %}Verder{% else %}Opslaan{% endif %}"/>
+                <c-button type="submit" show-icon="before" icon="publicatie" :label="('Verder') if (flow_id is defined and flow_id in ('modal-backup', 'modal-restore')) else ('Opslaan')"/>
                 {% else %}
                 <c-button type="submit" label="Volgende" show-icon="after" icon="delta-naar-rechts"/>
                 {% endif %}

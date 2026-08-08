@@ -1,3 +1,17 @@
-{% from "widgets/_macros.html.j2" import html_attributes %}
-<form id="{{ form_id|e }}" method="{{ method|e }}" action="{{ action|e }}"{% if enctype %} enctype="{{ enctype|e }}"{% endif %} {{ html_attributes(htmx_attrs) }} autocomplete="off">
-    <c-layout-flow gap="xl">
+{#
+  Begin van een formulier, voor de LOTC-bouwlijn.
+
+  Hier staat bewust kale HTML in plaats van <c-stack>. De reden is structureel: dit
+  template OPENT een omhulsel dat form_end.html.j2 weer sluit, en een componenttag kan
+  niet in het ene bestand beginnen en in het andere eindigen - de voorbewerker leest elk
+  template op zichzelf en ziet dan een tag die nooit dichtgaat.
+
+  De klasse is die van lotc-layout's stack, dus de uitkomst is dezelfde markup als
+  <c-stack> zou geven. Zou het opdelen in start en eind ooit verdwijnen, dan kan hier
+  gewoon weer een component staan.
+#}
+<form id="{{ form_id|e }}" method="{{ method|e }}" action="{{ action|e }}"
+      {% if enctype %}enctype="{{ enctype|e }}"{% endif %}
+      {% for key, value in (htmx_attrs or {}).items() %}{{ key|e }}="{{ value|e }}" {% endfor %}
+      autocomplete="off">
+    <div class="lotc-stack" style="--lotc-stack-gap: 2rem;">

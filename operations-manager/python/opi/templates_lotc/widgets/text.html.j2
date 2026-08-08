@@ -1,10 +1,34 @@
-{% from "widgets/_macros.html.j2" import combined_helper, description_text, render_examples, render_warnings, bool_attr, optional_attr, htmx_attrs, extra_attrs, format_value %}
+{#
+  Tekstveld voor de LOTC-bouwlijn.
+
+  Verschil met de roos-versie: daar schreven macro's stukken attribuut-TEKST middenin
+  de tag ({{ optional_attr(...) }}). Dat leest de LOTC-voorbewerker als een
+  attribuutnaam. In LOTC doe je hetzelfde met :prop="expr or none" - leeg betekent
+  weglaten - en een hele bundel losse attributen met :attrs="<dict>".
+
+  De aparte invalid-vlag is weg: lotc-forms leidt de foutstaat af uit error.
+#}
+{% from "widgets/_macros.html.j2" import combined_helper, description_text, render_examples, render_warnings, format_value %}
 {% if field.help_template %}
 <div class="field-with-help">
-<c-icon icon="vraagteken" size="xl" color="hemelblauw" class="field-help-btn" @/>
+<c-icon icon="vraagteken" size="xl"
+        class="field-help-btn"
+        @click="openServiceHelp('{{ field.help_template|e }}')" />
 {% endif %}
 {{ description_text(field) }}
-<c-text-input-field id="{{ field.path|e }}" name="{{ field.path|e }}" label="{{ field.label|e }}" type="{{ input_type|default('text') }}" {{ optional_attr("helperText", combined_helper(field)|trim) }} {{ optional_attr("placeholder", field.placeholder) }} {{ bool_attr("required", field.required) }} {{ bool_attr("disabled", field.readonly) }} {{ optional_attr("value", format_value(field.value)) }} {{ optional_attr("invalid", "true" if field.errors else "") }} {{ optional_attr("errorText", field.errors[0] if field.errors else "") }} {{ htmx_attrs(field) }} {{ extra_attrs(field) }}/>{{ render_examples(field) }}
+<c-text-input-field
+    id="{{ field.path|e }}"
+    name="{{ field.path|e }}"
+    label="{{ field.label|e }}"
+    type="{{ input_type|default('text') }}"
+    :help="combined_helper(field)|trim or none"
+    :placeholder="field.placeholder or none"
+    :required="field.required"
+    :disabled="field.readonly"
+    :value="format_value(field.value) or none"
+    :error="(field.errors[0] if field.errors else none)"
+    :attrs="field_attrs(field)"
+/>{{ render_examples(field) }}
 {{ render_warnings(field.warnings) }}
 {% if field.help_template %}
 </div>
