@@ -39,6 +39,7 @@ Most tools talk to live infrastructure and read credentials/config from environm
 |---|---|
 | `argo_diagnostics.py` | ArgoCD diagnostics. |
 | `diagnose_oom.py` | OOM-kill diagnostics for tuning/analysis. |
+| `lotc_coexistence_probe.py` | One-off measurement: can LOTC (`lotc-layout`/`nldd`/`lotc-forms`) and `jinja-roos-components` render in the same app? Needs a LOTC checkout in its own venv (recipe in the module docstring); LOTC is not a dependency of this project. Outcome is written up in `docs/lotc-samenleven-met-jinja-roos.md`. |
 
 ## Project-file maintenance
 

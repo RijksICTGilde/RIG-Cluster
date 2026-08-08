@@ -23,7 +23,6 @@ import pytest
 from jinja2 import Environment, FileSystemLoader
 from jinja_roos_components import setup_components
 from jinja_roos_components.registry import ComponentRegistry
-
 from opi.core.templates import CATALOG_DIR, TEMPLATES_DIR
 
 # Een componenttag met naam ``p``: ``<c-p>``, ``<c-p ...>``, ``<c-p/>`` en ``</c-p>``.
@@ -60,7 +59,7 @@ def test_oude_paragraaftag_komt_nergens_meer_voor() -> None:
     ]
     assert gevonden == [], (
         "Deze templates gebruiken nog <c-p>. LOTC kent die naam niet; schrijf <c-paragraph>, "
-        f"wat roos net zo rendert:\n  " + "\n  ".join(gevonden)
+        "wat roos net zo rendert:\n  " + "\n  ".join(gevonden)
     )
 
 
