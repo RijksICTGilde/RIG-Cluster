@@ -3,11 +3,11 @@
     MinIO Object Storage
 </c-heading>
 
-<c-p>
+<c-paragraph>
     Opslag voor bestanden via een S3-compatibele koppeling. Je krijgt een eigen bucket
     waarin je applicatie documenten, afbeeldingen of grote bestanden kan zetten en weer
     ophalen.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Wanneer gebruik je dit?</c-heading>
 
@@ -18,15 +18,15 @@
     <c-li>Je gebruikt al een S3-bibliotheek in je applicatie</c-li>
 </c-ul>
 
-<c-p>
+<c-paragraph>
     Voor bestanden die bij één pod horen en niet gedeeld hoeven te worden is
     <c-strong>Permanente opslag</c-strong>
     eenvoudiger.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Wat wordt er ingesteld?</c-heading>
 
-<c-p>
+<c-paragraph>
     Er worden een bucket en toegangssleutels aangemaakt. Je component krijgt
     <c-strong>OBJECT_STORE_HOST</c-strong>,
     <c-strong>OBJECT_STORE_PORT</c-strong>,
@@ -37,4 +37,4 @@
     <c-strong>OBJECT_STORE_REGION</c-strong>.
     Bij het verwijderen van de service wordt de bucket gemarkeerd voor uitgestelde
     verwijdering, zodat je bestanden niet meteen weg zijn.
-</c-p>
+</c-paragraph>

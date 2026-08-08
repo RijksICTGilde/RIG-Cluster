@@ -1,29 +1,29 @@
 <div class="rvo-alert rvo-alert--info">
     <c-icon icon="info" size="md"/>
     <div class="rvo-alert__content">
-        <c-p><strong>Hoe worden web adressen gegenereerd?</strong></c-p>
+        <c-paragraph><strong>Hoe worden web adressen gegenereerd?</strong></c-paragraph>
 
         <c-layout-flow gap="lg">
             <div>
-                <c-p><strong>Formaten met "component-" prefix</strong></c-p>
-                <c-p>Elk component krijgt een eigen unieke URL, bijvoorbeeld:<br/>
-                    <code>frontend-poc-myapp.domein</code> en <code>backend-poc-myapp.domein</code>.</c-p>
+                <c-paragraph><strong>Formaten met "component-" prefix</strong></c-paragraph>
+                <c-paragraph>Elk component krijgt een eigen unieke URL, bijvoorbeeld:<br/>
+                    <code>frontend-poc-myapp.domein</code> en <code>backend-poc-myapp.domein</code>.</c-paragraph>
             </div>
 
             <div>
-                <c-p><strong>Formaten zonder "component-" prefix</strong></c-p>
-                <c-p>Alle componenten delen dezelfde URL en worden onderscheiden via paden,
-                    bijvoorbeeld <code>/</code> voor de frontend en <code>/api</code> voor de backend.</c-p>
-                <c-p class="rvo-text--sm rvo-text--subtle">Dit voorkomt CORS-problemen
-                    tussen componenten.</c-p>
+                <c-paragraph><strong>Formaten zonder "component-" prefix</strong></c-paragraph>
+                <c-paragraph>Alle componenten delen dezelfde URL en worden onderscheiden via paden,
+                    bijvoorbeeld <code>/</code> voor de frontend en <code>/api</code> voor de backend.</c-paragraph>
+                <c-paragraph class="rvo-text--sm rvo-text--subtle">Dit voorkomt CORS-problemen
+                    tussen componenten.</c-paragraph>
             </div>
 
             <div>
-                <c-p><strong>Formaten met "-subdomain"</strong></c-p>
-                <c-p>U kiest een eigen subdomein en basisdomein. De URL wordt dan bijvoorbeeld
-                    <code>frontend.mijnapp.rijks.app</code> of <code>mijnapp.rijks.app</code>.</c-p>
-                <c-p class="rvo-text--sm rvo-text--subtle">Het basisdomein moet
-                    punt-gescheiden URLs ondersteunen (bijv. rijks.app of rijksapp.nl).</c-p>
+                <c-paragraph><strong>Formaten met "-subdomain"</strong></c-paragraph>
+                <c-paragraph>U kiest een eigen subdomein en basisdomein. De URL wordt dan bijvoorbeeld
+                    <code>frontend.mijnapp.rijks.app</code> of <code>mijnapp.rijks.app</code>.</c-paragraph>
+                <c-paragraph class="rvo-text--sm rvo-text--subtle">Het basisdomein moet
+                    punt-gescheiden URLs ondersteunen (bijv. rijks.app of rijksapp.nl).</c-paragraph>
             </div>
         </c-layout-flow>
     </div>

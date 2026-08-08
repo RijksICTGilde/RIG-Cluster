@@ -3,10 +3,10 @@
     Deployment gezondheid
 </c-heading>
 
-<c-p>
+<c-paragraph>
     Een systeemdienst: deze staat altijd aan en is niet iets wat je aanvinkt. Na een
     uitrol kijkt het platform naar de pods van je deployment en beoordeelt wat het ziet.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Wat doet het voor je?</c-heading>
 
@@ -20,16 +20,16 @@
 <c-heading type="h3">Wat gebeurt er precies?</c-heading>
 
 <c-layout-flow gap="md">
-    <c-p>
+    <c-paragraph>
         Er wordt uitsluitend naar de pods van je applicatie gekeken. Een pod die een
         andere dienst ernaast draait -- de wekker van de slaapstand bijvoorbeeld -- telt
         niet mee, ook al draagt hij hetzelfde label.
-    </c-p>
+    </c-paragraph>
 
-    <c-p>
+    <c-paragraph>
         Voordat er een oordeel valt, wordt eerst aan de andere diensten gevraagd wat zij
         over deze deployment weten. Slaapt hij, dan zijn nul pods de bedoeling en is dat
         geen storing. Wat wél waargenomen wordt op een draaiende pod blijft altijd een
         storing: geen enkele dienst kan een echt probleem wegpraten.
-    </c-p>
+    </c-paragraph>
 </c-layout-flow>

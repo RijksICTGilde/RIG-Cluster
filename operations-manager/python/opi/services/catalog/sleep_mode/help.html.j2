@@ -3,11 +3,11 @@
     Slaapstand
 </c-heading>
 
-<c-p>
+<c-paragraph>
     Zet deployments die een tijd niet gebruikt zijn in slaapstand, en wek ze weer op
     wanneer iemand ze nodig heeft. Een slapende deployment gebruikt geen geheugen en
     geen CPU meer.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Wanneer gebruik je dit?</c-heading>
 
@@ -17,17 +17,17 @@
     <c-li>Je wilt niet handmatig omgevingen aan- en uitzetten</c-li>
 </c-ul>
 
-<c-p>
+<c-paragraph>
     Doe dit
     <c-strong>niet</c-strong>
     bij een productieomgeving of bij iets wat altijd meteen moet antwoorden: de
     applicatie start koud op, dat duurt even.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Wat wordt er ingesteld?</c-heading>
 
 <c-layout-flow gap="md">
-    <c-p>
+    <c-paragraph>
         Met
         <c-strong>match</c-strong>
         bepaal je welke deployments meedoen, en met een deadline na hoeveel tijd zonder
@@ -35,12 +35,12 @@
         pods. Wekken kan met de knop in het portaal, via de API, en bij een web-gepubliceerd
         component ook door de URL te bezoeken: de bezoeker krijgt dan een
         "applicatie wordt gestart"-pagina tot de applicatie er weer is.
-    </c-p>
+    </c-paragraph>
 
-    <c-p>
+    <c-paragraph>
         <c-strong>Let op:</c-strong>
         het is slaapstand, geen sluimerstand. Er wordt niets bewaard: sessies, caches en
         geheugen zijn na het wekken weg. Gegevens in een database of in opslag blijven
         uiteraard gewoon staan.
-    </c-p>
+    </c-paragraph>
 </c-layout-flow>

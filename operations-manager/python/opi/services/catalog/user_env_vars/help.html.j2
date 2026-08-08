@@ -3,34 +3,34 @@
     Eigen omgevingsvariabelen
 </c-heading>
 
-<c-p>
+<c-paragraph>
     Een systeemdienst: deze staat altijd aan en is niet iets wat je aanvinkt. Elk
     component heeft eigen omgevingsvariabelen, en hier stel je ze in.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Wat doet het voor je?</c-heading>
 
-<c-p>
+<c-paragraph>
     Je geeft je applicatie instellingen mee zonder je container-image aan te passen: een
     logniveau, een feature-vlag, het adres van een externe koppeling of een sleutel van
     een andere partij. De waarden worden versleuteld opgeslagen, dus ook een wachtwoord
     kan hier.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Waar let je op?</c-heading>
 
 <c-layout-flow gap="md">
-    <c-p>
+    <c-paragraph>
         Je schrijft ze als
         <c-strong>NAAM=waarde</c-strong>
         of als YAML. Je kunt naar platformvariabelen verwijzen met
         <c-strong>$DATABASE_SERVER_HOST</c-strong>-achtige verwijzingen; een verwijzing
         die niet bestaat blijft hier gewoon staan, want een dollarteken in een wachtwoord
         is geen typefout.
-    </c-p>
+    </c-paragraph>
 
-    <c-p>
+    <c-paragraph>
         Je kunt ze per component instellen en per deployment overschrijven, zodat een
         testomgeving andere waarden kan hebben dan productie.
-    </c-p>
+    </c-paragraph>
 </c-layout-flow>

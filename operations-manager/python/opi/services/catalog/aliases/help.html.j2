@@ -3,15 +3,15 @@
     Aliassen
 </c-heading>
 
-<c-p>
+<c-paragraph>
     Een systeemdienst: deze staat altijd aan en is niet iets wat je aanvinkt. Een alias
     geeft een platformvariabele een tweede naam, namelijk de naam die jouw applicatie
     verwacht.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Wat doet het voor je?</c-heading>
 
-<c-p>
+<c-paragraph>
     Verwacht je applicatie
     <c-strong>POSTGRES_HOST</c-strong>
     terwijl het platform
@@ -20,14 +20,14 @@
     <c-strong>POSTGRES_HOST: $DATABASE_SERVER_HOST</c-strong>.
     Je hoeft je applicatie of je image dus niet aan te passen aan de namen van het
     platform.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Waar let je op?</c-heading>
 
-<c-p>
+<c-paragraph>
     Een alias die naar een variabele verwijst die niet bestaat is hier een
     <c-strong>harde fout</c-strong>:
     het uitrollen stopt. Dat is anders dan bij een eigen omgevingsvariabele, waar zo'n
     verwijzing blijft staan. Een alias is per slot van rekening altijd bedoeld als
     verwijzing.
-</c-p>
+</c-paragraph>
