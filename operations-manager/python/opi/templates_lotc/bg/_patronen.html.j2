@@ -1,0 +1,52 @@
+{#
+  Gedeelde patronen voor de hertekende pagina's.
+
+  WAAROM DIT BESTAAT
+
+  Een gap bestaat in dit systeem alleen waar een stack de OUDER is. Een <c-card> is geen
+  stack: hij zet zijn kinderen achter elkaar in een container. Wie dus dit schrijft:
+
+      <c-card>
+          <c-section-head title="Mijn projecten" />
+          <c-stack gap="md"> ... </c-stack>
+      </c-card>
+
+  krijgt een kop die tegen zijn eigen inhoud aan plakt. De stack regelt de afstand tussen
+  zijn kinderen, niet die tussen zichzelf en de kop erboven. Dat is geen vergissing die je
+  een keer maakt maar een die je op elke kaart opnieuw maakt.
+
+  De oplossing is niet "eraan denken" maar het onmogelijk maken: gebruik panel(), dan zit
+  de kop altijd IN de stack en klopt de afstand vanzelf.
+
+      {% call panel('Mijn projecten', 'rectangle-stack') %}
+          ...inhoud...
+      {% endcall %}
+
+  Dezelfde regel geldt overal: twee blokken naast elkaar zonder stack eromheen raken
+  elkaar. tests/test_lotc_layout_rules.py bewaakt dat voor de kaarten.
+#}
+
+{% macro panel(title, icon='', gap='md', aside='') %}
+<c-card outline padding="lg">
+    <c-stack gap="{{ gap }}">
+        {% if title %}
+            <c-section-head title="{{ title }}" :icon="icon or none">{{ aside }}</c-section-head>
+        {% endif %}
+        {{ caller() }}
+    </c-stack>
+</c-card>
+{% endmacro %}
+
+
+{#
+  De kop van een pagina: titel plus een regel uitleg. Staat hier omdat elke pagina hem
+  heeft en de afstand tussen die twee overal gelijk hoort te zijn.
+#}
+{% macro page_head(title, intro='') %}
+<c-stack gap="xs">
+    <c-heading type="h1" size="3" label="{{ title }}" />
+    {% if intro %}
+        <c-paragraph>{{ intro }}</c-paragraph>
+    {% endif %}
+</c-stack>
+{% endmacro %}
