@@ -15,5 +15,5 @@ SERVICES = EditableVisualizer(
     editable=SERVICES_EDITABLE,
     widget=WidgetType.SERVICE_CARDS,
     label="Beschikbare Services",
-    description="Selecteer de services die u wilt activeren voor uw project",
+    description="Selecteer de services die je wilt activeren voor je project",
 )
