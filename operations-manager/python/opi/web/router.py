@@ -858,6 +858,200 @@ def _dashboard_health_banner(health_counts: dict[str, int]) -> dict[str, Any] | 
     }
 
 
+async def collect_dashboard_metrics(
+    all_namespaces: list[str],
+    user_projects: list[dict],
+) -> tuple[dict, bool, int]:
+    """Haal het resourcegebruik voor het dashboard op bij Prometheus.
+
+    Uit de dashboardroute getrokken zodat twee plekken hem kunnen gebruiken: die route
+    zelf (voor de bestaande pagina) en het fragment dat de nieuwe pagina apart inlaadt.
+    Verdubbelen zou betekenen dat een verbetering aan de ene kant stilletjes niet aan de
+    andere kant landt.
+
+    Zet ook ``cpu_cores`` per project in ``user_projects``, want de verdeelbalk rekent
+    daarmee.
+
+    Returns:
+        De metrics, of Prometheus bereikbaar was, en het aantal pods.
+    """
+    metrics: dict = {}
+    prometheus_available = False
+    pod_count = 0
+    ns_regex = "|".join(all_namespaces)
+
+    if all_namespaces:
+        try:
+            from opi.connectors.prometheus import get_metrics_connector
+
+            prom = await get_metrics_connector()
+            prometheus_available = prom.is_connected
+
+            if prometheus_available:
+                # CPU usage and limits
+                cpu_usage_val = 0.0
+                cpu_limit_val = 0.0
+                try:
+                    result = await prom.custom_query(
+                        f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{ns_regex}",container!=""}}[5m]))'
+                    )
+                    if result and result[0].get("value"):
+                        cpu_usage_val = float(result[0]["value"][1])
+                except Exception as e:
+                    logger.debug(f"Dashboard CPU usage query failed: {e}")
+
+                try:
+                    result = await prom.custom_query(
+                        f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="cpu"}})'
+                    )
+                    if result and result[0].get("value"):
+                        cpu_limit_val = float(result[0]["value"][1])
+                except Exception as e:
+                    logger.debug(f"Dashboard CPU limits query failed: {e}")
+
+                # Memory usage and limits
+                mem_usage_val = 0.0
+                mem_limit_val = 0.0
+                try:
+                    result = await prom.custom_query(
+                        f'sum(container_memory_working_set_bytes{{namespace=~"{ns_regex}",container!=""}})'
+                    )
+                    if result and result[0].get("value"):
+                        mem_usage_val = float(result[0]["value"][1])
+                except Exception as e:
+                    logger.debug(f"Dashboard memory usage query failed: {e}")
+
+                try:
+                    result = await prom.custom_query(
+                        f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="memory"}})'
+                    )
+                    if result and result[0].get("value"):
+                        mem_limit_val = float(result[0]["value"][1])
+                except Exception as e:
+                    logger.debug(f"Dashboard memory limits query failed: {e}")
+
+                # Storage usage and capacity
+                storage_used_val = 0.0
+                storage_cap_val = 0.0
+                try:
+                    result = await prom.custom_query(f'sum(kubelet_volume_stats_used_bytes{{namespace=~"{ns_regex}"}})')
+                    if result and result[0].get("value"):
+                        storage_used_val = float(result[0]["value"][1])
+                except Exception as e:
+                    logger.debug(f"Dashboard storage usage query failed: {e}")
+
+                try:
+                    result = await prom.custom_query(
+                        f'sum(kubelet_volume_stats_capacity_bytes{{namespace=~"{ns_regex}"}})'
+                    )
+                    if result and result[0].get("value"):
+                        storage_cap_val = float(result[0]["value"][1])
+                except Exception as e:
+                    logger.debug(f"Dashboard storage capacity query failed: {e}")
+
+                # Pod count
+                try:
+                    result = await prom.custom_query(f'count(kube_pod_info{{namespace=~"{ns_regex}"}})')
+                    if result and result[0].get("value"):
+                        pod_count = int(float(result[0]["value"][1]))
+                except Exception as e:
+                    logger.debug(f"Dashboard pod count query failed: {e}")
+
+                # Network traffic time-series (last 30min, 5min step)
+                network_in_data: list[dict] = []
+                network_out_data: list[dict] = []
+                try:
+                    now = datetime.now(UTC)
+                    start = now.timestamp() - 1800  # 30 minutes ago
+                    end = now.timestamp()
+                    in_results = await prom.query_range(
+                        f'sum(rate(container_network_receive_bytes_total{{namespace=~"{ns_regex}"}}[5m]))',
+                        start_time=str(int(start)),
+                        end_time=str(int(end)),
+                        step="300",
+                    )
+                    if in_results:
+                        for ts, val in in_results[0].get("values", []):
+                            network_in_data.append(
+                                {
+                                    "t": datetime.fromtimestamp(ts, tz=UTC).strftime("%H:%M"),
+                                    "v": round(float(val) / 1024, 1),
+                                }
+                            )
+
+                    out_results = await prom.query_range(
+                        f'sum(rate(container_network_transmit_bytes_total{{namespace=~"{ns_regex}"}}[5m]))',
+                        start_time=str(int(start)),
+                        end_time=str(int(end)),
+                        step="300",
+                    )
+                    if out_results:
+                        for ts, val in out_results[0].get("values", []):
+                            network_out_data.append(
+                                {
+                                    "t": datetime.fromtimestamp(ts, tz=UTC).strftime("%H:%M"),
+                                    "v": round(float(val) / 1024, 1),
+                                }
+                            )
+                except Exception as e:
+                    logger.debug(f"Dashboard network query failed: {e}")
+
+                # Compute display values
+                def _pct(used: float, total: float) -> int:
+                    if total <= 0:
+                        return 0
+                    return min(100, round(used / total * 100))
+
+                def _format_cores(val: float) -> str:
+                    if val < 1:
+                        return f"{int(val * 1000)}m"
+                    return f"{val:.1f}"
+
+                def _format_gib(val_bytes: float) -> str:
+                    gib = val_bytes / (1024**3)
+                    if gib < 0.1:
+                        mib = val_bytes / (1024**2)
+                        return f"{mib:.0f} MiB"
+                    return f"{gib:.1f} GiB"
+
+                metrics = {
+                    "cpu_percentage": _pct(cpu_usage_val, cpu_limit_val),
+                    "cpu_usage_display": _format_cores(cpu_usage_val),
+                    "cpu_limit_display": _format_cores(cpu_limit_val),
+                    "memory_percentage": _pct(mem_usage_val, mem_limit_val),
+                    "memory_usage_display": _format_gib(mem_usage_val),
+                    "memory_limit_display": _format_gib(mem_limit_val),
+                    "storage_percentage": _pct(storage_used_val, storage_cap_val),
+                    "storage_usage_display": _format_gib(storage_used_val),
+                    "storage_capacity_display": _format_gib(storage_cap_val),
+                    "network_in_data": network_in_data,
+                    "network_out_data": network_out_data,
+                }
+                # Per-project CPU usage for resource comparison bar
+                for project in user_projects:
+                    proj_ns = project.get("namespaces", [])
+                    if not proj_ns:
+                        project["cpu_cores"] = 0.0
+                        continue
+                    try:
+                        proj_regex = "|".join(proj_ns)
+                        result = await prom.custom_query(
+                            f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{proj_regex}",container!=""}}[5m]))'
+                        )
+                        if result and result[0].get("value"):
+                            project["cpu_cores"] = float(result[0]["value"][1])
+                        else:
+                            project["cpu_cores"] = 0.0
+                    except Exception as e:
+                        logger.debug(f"Dashboard per-project CPU query failed for {project['name']}: {e}")
+                        project["cpu_cores"] = 0.0
+
+        except Exception as e:
+            logger.warning(f"Dashboard: failed to fetch Prometheus metrics: {e}")
+
+    return metrics, prometheus_available, pod_count
+
+
 @web_router.get("/dashboard", response_class=HTMLResponse)
 @requires_sso
 async def dashboard(request: Request):
@@ -869,8 +1063,6 @@ async def dashboard(request: Request):
         HTML response with the dashboard showing project overview, metrics, and activity
     """
     try:
-        from datetime import UTC, datetime
-
         templates = get_templates()
         user = get_current_user(request)
         user_email = user.get("email", "").lower()
@@ -928,181 +1120,24 @@ async def dashboard(request: Request):
         user_projects.sort(key=lambda p: p["display_name"] or p["name"])
 
         # --- Query Prometheus metrics (scoped to user's namespaces) ---
+        #
+        # Zes queries achter elkaar, plus een per project. Dat is wat het dashboard traag
+        # maakt, en het is precies waarom de RVO-pagina hier lazy loading voor had. De
+        # nieuwe weergave doet dat ook: die haalt dit blok apart op via
+        # /dashboard/resource-usage, zodat de pagina er meteen staat en een trage of
+        # afwezige Prometheus hem niet ophoudt.
+        from opi.web.lotc_switch import wants_lotc
+
         metrics: dict = {}
         prometheus_available = False
         pod_count = 0
         ns_regex = "|".join(all_namespaces)
 
-        if all_namespaces:
-            try:
-                from opi.connectors.prometheus import get_metrics_connector
-
-                prom = await get_metrics_connector()
-                prometheus_available = prom.is_connected
-
-                if prometheus_available:
-                    # CPU usage and limits
-                    cpu_usage_val = 0.0
-                    cpu_limit_val = 0.0
-                    try:
-                        result = await prom.custom_query(
-                            f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{ns_regex}",container!=""}}[5m]))'
-                        )
-                        if result and result[0].get("value"):
-                            cpu_usage_val = float(result[0]["value"][1])
-                    except Exception as e:
-                        logger.debug(f"Dashboard CPU usage query failed: {e}")
-
-                    try:
-                        result = await prom.custom_query(
-                            f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="cpu"}})'
-                        )
-                        if result and result[0].get("value"):
-                            cpu_limit_val = float(result[0]["value"][1])
-                    except Exception as e:
-                        logger.debug(f"Dashboard CPU limits query failed: {e}")
-
-                    # Memory usage and limits
-                    mem_usage_val = 0.0
-                    mem_limit_val = 0.0
-                    try:
-                        result = await prom.custom_query(
-                            f'sum(container_memory_working_set_bytes{{namespace=~"{ns_regex}",container!=""}})'
-                        )
-                        if result and result[0].get("value"):
-                            mem_usage_val = float(result[0]["value"][1])
-                    except Exception as e:
-                        logger.debug(f"Dashboard memory usage query failed: {e}")
-
-                    try:
-                        result = await prom.custom_query(
-                            f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="memory"}})'
-                        )
-                        if result and result[0].get("value"):
-                            mem_limit_val = float(result[0]["value"][1])
-                    except Exception as e:
-                        logger.debug(f"Dashboard memory limits query failed: {e}")
-
-                    # Storage usage and capacity
-                    storage_used_val = 0.0
-                    storage_cap_val = 0.0
-                    try:
-                        result = await prom.custom_query(
-                            f'sum(kubelet_volume_stats_used_bytes{{namespace=~"{ns_regex}"}})'
-                        )
-                        if result and result[0].get("value"):
-                            storage_used_val = float(result[0]["value"][1])
-                    except Exception as e:
-                        logger.debug(f"Dashboard storage usage query failed: {e}")
-
-                    try:
-                        result = await prom.custom_query(
-                            f'sum(kubelet_volume_stats_capacity_bytes{{namespace=~"{ns_regex}"}})'
-                        )
-                        if result and result[0].get("value"):
-                            storage_cap_val = float(result[0]["value"][1])
-                    except Exception as e:
-                        logger.debug(f"Dashboard storage capacity query failed: {e}")
-
-                    # Pod count
-                    try:
-                        result = await prom.custom_query(f'count(kube_pod_info{{namespace=~"{ns_regex}"}})')
-                        if result and result[0].get("value"):
-                            pod_count = int(float(result[0]["value"][1]))
-                    except Exception as e:
-                        logger.debug(f"Dashboard pod count query failed: {e}")
-
-                    # Network traffic time-series (last 30min, 5min step)
-                    network_in_data: list[dict] = []
-                    network_out_data: list[dict] = []
-                    try:
-                        now = datetime.now(UTC)
-                        start = now.timestamp() - 1800  # 30 minutes ago
-                        end = now.timestamp()
-                        in_results = await prom.query_range(
-                            f'sum(rate(container_network_receive_bytes_total{{namespace=~"{ns_regex}"}}[5m]))',
-                            start_time=str(int(start)),
-                            end_time=str(int(end)),
-                            step="300",
-                        )
-                        if in_results:
-                            for ts, val in in_results[0].get("values", []):
-                                network_in_data.append(
-                                    {
-                                        "t": datetime.fromtimestamp(ts, tz=UTC).strftime("%H:%M"),
-                                        "v": round(float(val) / 1024, 1),
-                                    }
-                                )
-
-                        out_results = await prom.query_range(
-                            f'sum(rate(container_network_transmit_bytes_total{{namespace=~"{ns_regex}"}}[5m]))',
-                            start_time=str(int(start)),
-                            end_time=str(int(end)),
-                            step="300",
-                        )
-                        if out_results:
-                            for ts, val in out_results[0].get("values", []):
-                                network_out_data.append(
-                                    {
-                                        "t": datetime.fromtimestamp(ts, tz=UTC).strftime("%H:%M"),
-                                        "v": round(float(val) / 1024, 1),
-                                    }
-                                )
-                    except Exception as e:
-                        logger.debug(f"Dashboard network query failed: {e}")
-
-                    # Compute display values
-                    def _pct(used: float, total: float) -> int:
-                        if total <= 0:
-                            return 0
-                        return min(100, round(used / total * 100))
-
-                    def _format_cores(val: float) -> str:
-                        if val < 1:
-                            return f"{int(val * 1000)}m"
-                        return f"{val:.1f}"
-
-                    def _format_gib(val_bytes: float) -> str:
-                        gib = val_bytes / (1024**3)
-                        if gib < 0.1:
-                            mib = val_bytes / (1024**2)
-                            return f"{mib:.0f} MiB"
-                        return f"{gib:.1f} GiB"
-
-                    metrics = {
-                        "cpu_percentage": _pct(cpu_usage_val, cpu_limit_val),
-                        "cpu_usage_display": _format_cores(cpu_usage_val),
-                        "cpu_limit_display": _format_cores(cpu_limit_val),
-                        "memory_percentage": _pct(mem_usage_val, mem_limit_val),
-                        "memory_usage_display": _format_gib(mem_usage_val),
-                        "memory_limit_display": _format_gib(mem_limit_val),
-                        "storage_percentage": _pct(storage_used_val, storage_cap_val),
-                        "storage_usage_display": _format_gib(storage_used_val),
-                        "storage_capacity_display": _format_gib(storage_cap_val),
-                        "network_in_data": network_in_data,
-                        "network_out_data": network_out_data,
-                    }
-                    # Per-project CPU usage for resource comparison bar
-                    for project in user_projects:
-                        proj_ns = project.get("namespaces", [])
-                        if not proj_ns:
-                            project["cpu_cores"] = 0.0
-                            continue
-                        try:
-                            proj_regex = "|".join(proj_ns)
-                            result = await prom.custom_query(
-                                f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{proj_regex}",container!=""}}[5m]))'
-                            )
-                            if result and result[0].get("value"):
-                                project["cpu_cores"] = float(result[0]["value"][1])
-                            else:
-                                project["cpu_cores"] = 0.0
-                        except Exception as e:
-                            logger.debug(f"Dashboard per-project CPU query failed for {project['name']}: {e}")
-                            project["cpu_cores"] = 0.0
-
-            except Exception as e:
-                logger.warning(f"Dashboard: failed to fetch Prometheus metrics: {e}")
+        metrics, prometheus_available, pod_count = (
+            await collect_dashboard_metrics(all_namespaces, user_projects)
+            if not wants_lotc(request)
+            else ({}, False, 0)
+        )
 
         total_cpu_usage = sum(p.get("cpu_cores", 0) for p in user_projects)
 
@@ -1793,6 +1828,69 @@ async def _fetch_argocd_deployment_status(
     except Exception as app_error:
         logger.warning(f"Failed to fetch ArgoCD status for {app_name}: {app_error}")
         return _argocd_unavailable_result(app_name, str(app_error), source="API")
+
+
+@web_router.get("/dashboard/resource-usage", response_class=HTMLResponse)
+@requires_sso
+async def dashboard_resource_usage_fragment(request: Request) -> HTMLResponse:
+    """Het resourcegebruik van het dashboard, apart opgehaald.
+
+    De zes Prometheus-queries plus een per project duren te lang om de pagina op te laten
+    wachten. Dit is dezelfde aanpak als de projectpagina al gebruikte, en dezelfde die de
+    RVO-pagina hier had.
+    """
+    from opi.services.project_store import get_project_store
+    from opi.web.lotc_switch import render
+
+    user = get_current_user(request)
+    user_email = (user or {}).get("email", "")
+
+    # Dezelfde verzameling namespaces als de dashboardroute: alleen projecten waar deze
+    # gebruiker bij mag. Zonder die grens zou dit fragment meer laten zien dan de pagina.
+    from opi.core.cluster_config import get_prefixed_namespace
+
+    all_namespaces: list[str] = []
+    user_projects: list[dict] = []
+    for project in get_project_store().get_all():
+        if not is_user_authorized_for_project(project.name, user_email):
+            continue
+
+        project_data = project.data or {}
+        namespaces: list[str] = []
+        for deployment in project_data.get("deployments", []):
+            cluster = deployment.get("cluster")
+            namespace = deployment.get("namespace")
+            if not (cluster and namespace):
+                continue
+            k8s_namespace = get_prefixed_namespace(cluster, namespace)
+            if k8s_namespace not in namespaces:
+                namespaces.append(k8s_namespace)
+            if k8s_namespace not in all_namespaces:
+                all_namespaces.append(k8s_namespace)
+
+        user_projects.append(
+            {
+                "name": project.name,
+                "display_name": project_data.get("display-name", project.name),
+                "namespaces": namespaces,
+            }
+        )
+
+    metrics, prometheus_available, _pods = await collect_dashboard_metrics(all_namespaces, user_projects)
+    total_cpu_usage = sum(project.get("cpu_cores", 0) for project in user_projects)
+
+    return render(
+        request,
+        roos="dashboard/_resourcegebruik.html.j2",
+        lotc="bg/_dashboard-usage.html.j2",
+        context={
+            "request": request,
+            "metrics": metrics,
+            "prometheus_available": prometheus_available,
+            "projects": user_projects,
+            "total_cpu_usage": total_cpu_usage,
+        },
+    )
 
 
 @web_router.get("/projects/details/{project_name}/resource-usage", response_class=HTMLResponse)
