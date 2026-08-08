@@ -200,16 +200,37 @@ def test_form_layer_screenshot(app_server: str, page: Page) -> None:
     page.screenshot(path=f"{SCREENSHOT_DIR}/formulierlaag.png", full_page=True, animations="disabled")
 
 
-def test_redesigned_dashboard_screenshot(app_server: str, page: Page) -> None:
-    """Leg het herontworpen dashboard vast, naast de vertaalde versie.
+# De herontworpen pagina's. Deze lijst hoort mee te groeien met opi/templates_lotc/bg/;
+# de test hieronder controleert dat ook, zodat een nieuwe pagina niet stil ongetoetst
+# blijft.
+REDESIGNED_PAGES = ["dashboard", "projects", "services", "users", "project-details"]
+
+
+def test_every_redesigned_page_is_covered() -> None:
+    """Elke pagina in bg/ staat in de lijst hierboven.
+
+    Zonder deze toets zou een nieuwe herontworpen pagina er wel zijn maar nooit
+    gescreenshot worden, en dat is precies de pagina waar een fout in zou blijven zitten.
+    """
+    from opi.web.lotc_router import REDESIGNED_PAGES as available
+
+    assert sorted(available) == sorted(REDESIGNED_PAGES), (
+        f"niet gedekt: {sorted(set(available) - set(REDESIGNED_PAGES))}; "
+        f"bestaat niet meer: {sorted(set(REDESIGNED_PAGES) - set(available))}"
+    )
+
+
+@pytest.mark.parametrize("slug", REDESIGNED_PAGES)
+def test_redesigned_page_screenshot(app_server: str, page: Page, slug: str) -> None:
+    """Leg elke herontworpen pagina vast, naast de vertaalde versie.
 
     De omzetter levert een getrouwe kopie van onze bestaande markup, en die was nooit in
-    bg-vorm gebouwd. Deze pagina laat zien wat er met dezelfde componenten wel kan:
-    kerncijfers als tegels, inhoud in kaarten met een kopregel, twee kolommen. Het
-    verschil hoort zichtbaar te zijn en niet beschreven.
+    bg-vorm gebouwd. Deze pagina's laten zien wat er met dezelfde componenten wel kan:
+    kerncijfers als tegels, inhoud in kaarten met een kopregel, kolommen. Het verschil
+    hoort zichtbaar te zijn en niet beschreven.
     """
     page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
-    response = page.goto(f"{app_server}/lotc/dashboard-bg")
+    response = page.goto(f"{app_server}/lotc/bg/{slug}")
     assert response is not None
     assert response.ok
 
@@ -217,8 +238,8 @@ def test_redesigned_dashboard_screenshot(app_server: str, page: Page) -> None:
 
     unimplemented = page.locator(".lotc-unimplemented")
     assert unimplemented.count() == 0, (
-        f"herontworpen dashboard bevat niet-geimplementeerde componenten: "
+        f"{slug} bevat niet-geimplementeerde componenten: "
         f"{unimplemented.evaluate_all('els => els.map(e => e.dataset.lotcComponent)')}"
     )
 
-    page.screenshot(path=f"{SCREENSHOT_DIR}/dashboard-bg.png", full_page=True, animations="disabled")
+    page.screenshot(path=f"{SCREENSHOT_DIR}/bg-{slug}.png", full_page=True, animations="disabled")

@@ -1,0 +1,115 @@
+{#
+  Projectdetails, herontworpen in bg-vorm.
+
+  De rijkste pagina van de applicatie, en in de vertaalde versie ook de langste: alles
+  onder elkaar in tabbladen van honderden regels. Hier is het een samenstelling:
+  kerncijfers bovenaan, en daaronder per onderwerp een kaart met een kopregel.
+
+  Dat is meer dan een andere indeling. Op de oude pagina moet je scrollen om te weten wat
+  een project IS; hier staat dat in vier tegels, en de rest is verdieping. Dat is precies
+  waar bg zijn kaarten en tegels voor gebruikt.
+
+  De gegevens komen uit een voorbeeldprojectbestand dat door dezelfde helpers loopt als
+  een echt project (opi/web/lotc_fixtures.py), dus wat hier staat is wat de applicatie
+  zou tonen.
+#}
+{% extends "base_lotc.html.j2" %}
+
+{% block page_title %}{{ project.display_name }} - Projectdetails{% endblock %}
+
+{% block content %}
+    <c-stack gap="0.25rem">
+        <c-heading type="h1" size="3" label="{{ project.display_name }}" />
+        <c-paragraph>{{ project.description }}</c-paragraph>
+    </c-stack>
+
+    <c-cluster gap="0.75rem">
+        <c-button type="secondary" label="Bewerken" icon="pencil-on-square" show-icon="before" />
+        <c-button type="secondary" label="Uitrollen" icon="arrow-up-arrow-down" show-icon="before" />
+    </c-cluster>
+
+    <c-auto-grid min="200px" gap="1rem">
+        <c-metric icon="rectangle-stack" value="{{ project.components | length }}" label="Componenten" />
+        <c-metric icon="arrow-up-arrow-down" value="{{ project.deployments | length }}" label="Deployments" />
+        <c-metric icon="person-2" value="{{ project.users | length }}" label="Teamleden" />
+        <c-metric icon="cylinder-split" value="{{ project.services | length }}" label="Diensten" />
+    </c-auto-grid>
+
+    <c-columns columns="1" lg="2" gap="1.5rem">
+        <c-card outline padding="lg">
+            <c-section-head title="Componenten" icon="rectangle-stack" />
+            <c-stack gap="0.75rem">
+                {% for component in project.components %}
+                    <c-layer
+                        icon="rectangle-stack"
+                        title="{{ component.name }}"
+                        count="{{ component.type }}"
+                        sub="poorten: {{ component.ports.inbound | join(', ') if component.ports else 'geen' }}">
+                        {% for service in component.services or [] %}
+                            <c-chip>{{ service }}</c-chip>
+                        {% endfor %}
+                    </c-layer>
+                {% endfor %}
+            </c-stack>
+        </c-card>
+
+        <c-card outline padding="lg">
+            <c-section-head title="Deployments" icon="arrow-up-arrow-down" />
+            <c-stack gap="0.75rem">
+                {% for deployment in project.deployments %}
+                    <c-layer
+                        icon="arrow-up-arrow-down"
+                        title="{{ deployment.name }}"
+                        count="{{ deployment.components | length }} componenten"
+                        sub="{{ deployment.cluster }} / {{ deployment.namespace }}">
+                        {% for entry in deployment.components %}
+                            <c-chip>{{ entry.reference }}</c-chip>
+                        {% endfor %}
+                    </c-layer>
+                {% endfor %}
+            </c-stack>
+        </c-card>
+    </c-columns>
+
+    <c-columns columns="1" lg="2" gap="1.5rem">
+        <c-card outline padding="lg">
+            <c-section-head title="Team" icon="person-2" />
+            <c-stack gap="0.75rem">
+                {% for member in project.users %}
+                    <c-layer icon="person" title="{{ member.email }}" count="{{ member.role }}" sub="lid van dit project" />
+                {% endfor %}
+            </c-stack>
+        </c-card>
+
+        <c-card outline padding="lg">
+            <c-section-head title="Sleutels" icon="lock-closed" />
+            <c-stack gap="0.75rem">
+                <c-paragraph size="sm">
+                    Afgeschermd getoond. Dit is de component die LOTC nog niet heeft en die
+                    ZAD tijdelijk zelf levert.
+                </c-paragraph>
+                <c-detail-list>
+                    <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
+                    <c-detail-item label="Publieke sleutel" value="{{ project.config['age-public-key'] | default('-', true) | truncate(28) }}" />
+                </c-detail-list>
+                <c-secret-field value="{{ project.config['api-key'] | default('', true) }}" />
+            </c-stack>
+        </c-card>
+    </c-columns>
+
+    <c-card outline padding="lg">
+        <c-section-head title="Repositories" icon="chevron-left-forward-slash-chevron-right" />
+        {# Geen c-table: onder NLDD stapelen de cellen omdat <nldd-cell> een breedte
+           nodig heeft die c-th en c-td niet doorgeven. Gemeld bij het LOTC-project; tot
+           dan de vorm die bg zelf gebruikt. #}
+        <c-stack gap="0.75rem">
+            {% for repository in project.repositories %}
+                <c-detail-list>
+                    <c-detail-item label="Naam" value="{{ repository.name }}" />
+                    <c-detail-item label="URL" value="{{ repository.url }}" />
+                    <c-detail-item label="Branch" value="{{ repository.branch | default('-', true) }}" />
+                </c-detail-list>
+            {% endfor %}
+        </c-stack>
+    </c-card>
+{% endblock %}
