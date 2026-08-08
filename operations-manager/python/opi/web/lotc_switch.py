@@ -30,20 +30,41 @@ if TYPE_CHECKING:
     from fastapi import Request
     from starlette.responses import Response
 
-#: De querystring die de LOTC-weergave kiest: ``?ui=lotc``.
-QUERY_PARAM = "ui"
-LOTC_VALUE = "lotc"
+#: Het koekje waarin de keuze bewaard blijft.
+COOKIE_NAME = "zad_layout"
+
+#: De waarden die het koekje kan hebben. Zonder koekje geldt de standaard, en die is de
+#: nieuwe vormgeving: we zijn aan het overgaan, niet aan het uitproberen.
+LAYOUT_LOTC = "nldd"
+LAYOUT_ROOS = "roos"
+DEFAULT_LAYOUT = LAYOUT_LOTC
+
+#: De querystring blijft bestaan om de keuze te ZETTEN (``?layout=roos``). Handig om in
+#: een melding een link mee te sturen, en om eenmalig te vergelijken.
+QUERY_PARAM = "layout"
+
+
+def chosen_layout(request: Request) -> str:
+    """Welke vormgeving dit verzoek krijgt.
+
+    Volgorde: de querystring wint van het koekje, en het koekje van de standaard. Zo kun
+    je met een link laten zien wat je bedoelt zonder de voorkeur van de ander te
+    overschrijven; die komt pas vast te staan als hij zelf wisselt.
+    """
+    requested = request.query_params.get(QUERY_PARAM)
+    if requested in (LAYOUT_LOTC, LAYOUT_ROOS):
+        return requested
+
+    stored = request.cookies.get(COOKIE_NAME)
+    if stored in (LAYOUT_LOTC, LAYOUT_ROOS):
+        return stored
+
+    return DEFAULT_LAYOUT
 
 
 def wants_lotc(request: Request) -> bool:
-    """Of dit verzoek de LOTC-weergave wil.
-
-    Bewust uit de URL en niet uit een instelling of een cookie: een instelling geldt voor
-    iedereen tegelijk, en een cookie maakt onzichtbaar welke versie iemand ziet. Met een
-    querystring is het zichtbaar in de adresbalk, deelbaar in een melding, en weg zodra je
-    hem weglaat.
-    """
-    return request.query_params.get(QUERY_PARAM) == LOTC_VALUE
+    """Of dit verzoek de nieuwe vormgeving krijgt."""
+    return chosen_layout(request) == LAYOUT_LOTC
 
 
 def render(
@@ -68,11 +89,11 @@ def render(
     if wants_lotc(request):
         from opi.core.templates_lotc import templates_lotc
 
-        return templates_lotc.TemplateResponse(request, lotc, context)
+        return remember_layout(request, templates_lotc.TemplateResponse(request, lotc, context))
 
     from opi.core.templates import setup_templates
 
-    return setup_templates().TemplateResponse(request, roos, context)
+    return remember_layout(request, setup_templates().TemplateResponse(request, roos, context))
 
 
 # Hoe een dienst gebonden is, in gewone taal. De registry noemt dit "binding", en dat
@@ -228,6 +249,9 @@ def build_lotc_projects(
 
     from opi.web.navigation_lotc import get_navigation
 
+    # Tellen op de LIJSTEN die deze route levert, niet op een deployment_count-sleutel.
+    # Die bestaat wel op het dashboard maar niet hier, en het gevolg was een overzicht
+    # waarin alles nul was terwijl er projecten met deployments stonden.
     return {
         "navigation": get_navigation(user, current_path="/projects"),
         "projects": [
@@ -235,10 +259,15 @@ def build_lotc_projects(
                 "name": project["name"],
                 "display_name": project.get("display_name") or project["name"],
                 "description": project.get("description", ""),
-                "deployment_count": project.get("deployment_count", 0),
-                "components": project.get("project_data", {}).get("components", []),
-                "clusters": project.get("project_data", {}).get("clusters", []),
-                "services": [],
+                "deployment_count": len(project.get("deployments") or []),
+                "components": project.get("components") or [],
+                "clusters": project.get("clusters") or [],
+                # De dienstenlijst uit het projectbestand kan strings of dicts bevatten
+                # (een dienst met configuratie is een dict). Alleen de naam is hier nodig.
+                "services": [
+                    service if isinstance(service, str) else next(iter(service))
+                    for service in (project.get("services") or [])
+                ],
             }
             for project in projects
         ],
@@ -284,3 +313,23 @@ def build_lotc_project_details(
         "active_tab": requested if requested in PROJECT_TABS else next(iter(PROJECT_TABS)),
         "project": project,
     }
+
+
+def remember_layout(request: Request, response: Response) -> Response:
+    """Bewaar een expliciete keuze uit de querystring in het koekje.
+
+    Alleen bij een EXPLICIETE keuze: wie de standaard krijgt, krijgt geen koekje. Anders
+    zou iedereen die een keer een pagina opent zijn voorkeur vastzetten op wat toevallig
+    de standaard was, en dan verandert een latere wijziging van die standaard niets meer
+    voor hem.
+    """
+    requested = request.query_params.get(QUERY_PARAM)
+    if requested in (LAYOUT_LOTC, LAYOUT_ROOS):
+        response.set_cookie(
+            COOKIE_NAME,
+            requested,
+            max_age=60 * 60 * 24 * 365,
+            httponly=False,
+            samesite="lax",
+        )
+    return response

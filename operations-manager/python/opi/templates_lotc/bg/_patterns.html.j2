@@ -76,13 +76,18 @@
   hieronder; die is nadrukkelijker en hoort bij een scherm dat iemand voor het eerst ziet.
 #}
 {% macro info(text, label='Uitleg') %}
+{# De uitleg zit in het TEXT-attribuut van de knop, niet in een <c-tooltip> ernaast.
+   c-icon-button gooit zijn kinderen weg, dus een tooltip als kind rendert nooit - het
+   icoontje stond er wel en deed niets. De knop heeft er zelf iets voor: text plus
+   tooltip-timing, met hide-lg-text zodat alleen het icoon zichtbaar blijft. #}
 <c-icon-button
     icon="info-circle"
+    text="{{ text }}"
     accessible-label="{{ label }}"
+    tooltip-timing="instant"
+    hide-lg-text="true"
     variant="neutral-transparent"
-    size="sm">
-    <c-tooltip text="{{ text }}" />
-</c-icon-button>
+    size="sm" />
 {% endmacro %}
 
 
