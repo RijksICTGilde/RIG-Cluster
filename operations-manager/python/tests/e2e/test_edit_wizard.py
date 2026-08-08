@@ -67,9 +67,16 @@ class TestEditIdentity:
 
         new_description = "Updated description via E2E test"
         modal.fill_field("description", new_description)
-        modal.submit_step()
 
+        # The submit itself is INSIDE the try. It is the step that changes the shared
+        # project, and it can fail after the server already saved -- measured: the step
+        # POST exceeded its own 10s wait while the response was still coming, so the save
+        # landed and the restore below never ran. `test_detail_page_renders` then failed
+        # on a description this test had overwritten, which reads as an unrelated,
+        # order-dependent failure. Whatever may have been written has to be undone, so
+        # the restore has to cover the write, not only the assertions after it.
         try:
+            modal.submit_step()
             modal.wait_for_success()
             body = modal.get_body_text()
             assert "Wijzigingen opgeslagen" in body
