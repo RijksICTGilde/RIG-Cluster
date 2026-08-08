@@ -19,7 +19,7 @@
 
 {% if not enabled %}
     <c-card outline="true" padding="lg" backgroundColor="wit">
-        <c-p>Jobs zijn uitgeschakeld op dit cluster.</c-p>
+        <c-paragraph>Jobs zijn uitgeschakeld op dit cluster.</c-paragraph>
     </c-card>
 
 {% elif state in ['starting', 'running', 'succeeded', 'failed'] and job %}
@@ -27,9 +27,9 @@
     <c-card outline="true" padding="lg" background="color" backgroundColor="{{ bg }}">
         <c-layout-flow gap="md">
             <c-heading type="h5" textContent="{{ {'starting': 'Job wordt gestart...', 'running': 'Job draait...', 'succeeded': 'Job voltooid', 'failed': 'Job mislukt'}[state] }}" />
-            <c-p>Image: {{ job.image }}</c-p>
-            <c-p>Commando: {{ job.command }}</c-p>
-            <c-p>Gestart door: {{ job.opened_by }} &middot; verloopt om {{ job.expires_at.strftime("%H:%M") }} UTC</c-p>
+            <c-paragraph>Image: {{ job.image }}</c-paragraph>
+            <c-paragraph>Commando: {{ job.command }}</c-paragraph>
+            <c-paragraph>Gestart door: {{ job.opened_by }} &middot; verloopt om {{ job.expires_at.strftime("%H:%M") }} UTC</c-paragraph>
             <c-layout-row gap="md">
                 <c-button
                     kind="primary"
@@ -55,7 +55,7 @@
     <c-card outline="true" padding="md" backgroundColor="wit">
         <c-layout-flow gap="sm">
             <c-heading type="h5" textContent="Job wordt gestart..." />
-            <c-p>Even geduld, de job wordt opgestart.</c-p>
+            <c-paragraph>Even geduld, de job wordt opgestart.</c-paragraph>
         </c-layout-flow>
     </c-card>
 
@@ -63,7 +63,7 @@
     <c-card outline="true" padding="lg" backgroundColor="wit">
         <c-layout-flow gap="md">
             <c-heading type="h5" textContent="Nieuwe job" />
-            <c-p>Voer eenmalig een image + commando uit voor deze deployment (bijv. een migratie). De job krijgt de databaseverbinding van de deployment.</c-p>
+            <c-paragraph>Voer eenmalig een image + commando uit voor deze deployment (bijv. een migratie). De job krijgt de databaseverbinding van de deployment.</c-paragraph>
             <form id="job-form-{{ deployment_name }}"
                   hx-post="/projects/{{ project_name }}/jobs"
                   hx-headers="{&quot;X-CSRF-Token&quot;: &quot;{{ request.state.csrf_token }}&quot;}"

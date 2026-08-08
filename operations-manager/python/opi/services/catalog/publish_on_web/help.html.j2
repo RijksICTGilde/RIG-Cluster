@@ -3,11 +3,11 @@
     Publiceren op het web
 </c-heading>
 
-<c-p>
+<c-paragraph>
     Hiermee krijgt je component een webadres en is het bereikbaar via het internet.
     Zonder deze service draait je component wel, maar kan niemand er van buiten de
     cluster bij.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Wanneer gebruik je dit?</c-heading>
 
@@ -17,27 +17,27 @@
     <c-li>Je hebt dit nodig voor Keycloak-inloggen of de Authorization Wall</c-li>
 </c-ul>
 
-<c-p>
+<c-paragraph>
     Sla dit over voor een component dat alleen door andere componenten in hetzelfde
     project wordt aangeroepen, bijvoorbeeld een achterliggende worker.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Wat wordt er ingesteld?</c-heading>
 
 <c-layout-flow gap="md">
-    <c-p>
+    <c-paragraph>
         Er komt een ingress met een hostnaam en een geldig certificaat. Het webadres
         stel je per deployment in bij Webadres; het platform regelt standaard zelf het
         certificaat. Je kunt ook je eigen certificaat op de ingress laten aanbieden of
         het verkeer ongemoeid naar je pod laten doorlopen (passthrough), bijvoorbeeld
         voor mTLS.
-    </c-p>
+    </c-paragraph>
 
-    <c-p>
+    <c-paragraph>
         Je component krijgt de variabelen
         <c-strong>PUBLIC_HOST</c-strong>
         en
         <c-strong>PUBLIC_HOSTNAME</c-strong>
         met het adres waarop het bereikbaar is.
-    </c-p>
+    </c-paragraph>
 </c-layout-flow>

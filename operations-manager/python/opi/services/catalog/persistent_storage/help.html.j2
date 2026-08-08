@@ -3,11 +3,11 @@
     Permanente opslag
 </c-heading>
 
-<c-p>
+<c-paragraph>
     Een schijf die aan je component gekoppeld wordt en waarvan de inhoud bewaard blijft.
     Herstart de pod, of wordt hij vervangen bij een nieuwe uitrol, dan staan je bestanden
     er nog steeds.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Wanneer gebruik je dit?</c-heading>
 
@@ -19,29 +19,29 @@
 
 <c-heading type="h3">Verschil met tijdelijke schijfruimte</c-heading>
 
-<c-p>
+<c-paragraph>
     <c-strong>Permanente opslag</c-strong>
     overleeft een herstart,
     <c-strong>Tijdelijke schijfruimte</c-strong>
     niet. Permanente opslag kost blijvend ruimte en kan meegenomen worden in een backup.
     Gebruik tijdelijke schijfruimte voor werkbestanden en caches die je zo weer kunt
     aanmaken; kies permanente opslag alleen als verlies van de gegevens een probleem is.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Wat wordt er ingesteld?</c-heading>
 
 <c-layout-flow gap="md">
-    <c-p>
+    <c-paragraph>
         Er wordt een volume (een PVC) aangemaakt en in je pod gekoppeld. Per volume geef
         je een naam, een grootte en een koppelpad op; standaard is dat 1Gi op
         <c-strong>/data</c-strong>.
         Je component krijgt de variabele
         <c-strong>DATA_PATH</c-strong>.
-    </c-p>
+    </c-paragraph>
 
-    <c-p>
+    <c-paragraph>
         Bij het verwijderen van deze service wordt de opslag niet meteen weggegooid,
         maar gemarkeerd voor uitgestelde verwijdering, zodat een vergissing te herstellen
         is.
-    </c-p>
+    </c-paragraph>
 </c-layout-flow>
