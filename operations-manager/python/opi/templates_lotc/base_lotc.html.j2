@@ -1,0 +1,74 @@
+{#
+  Basistemplate voor de LOTC-bouwlijn.
+
+  De tegenhanger van templates/base.html.j2, maar gerenderd door de LOTC-omgeving
+  (opi/core/templates_lotc.py) in plaats van door jinja-roos. Zolang de omzetting
+  loopt bestaan beide schillen naast elkaar; deze verdwijnt niet, de andere wel.
+
+  De grens tussen de twee systemen loopt per overervingsketen: een pagina die dit
+  template uitbreidt wordt door de LOTC-omgeving gerenderd en mag dus uitsluitend
+  LOTC-componenten gebruiken. Mengen binnen een keten kan niet - beide systemen
+  eisen alle <c-*>-tags op.
+
+  Drie verschillen met de roos-schil die bij het omzetten steeds terugkomen:
+    - attributen zijn kebab-case (body-class, max-width), niet camelCase
+    - samenstellingen krijgen KINDEREN, geen data-props: <c-menu> met <c-menu-item>
+      in plaats van :items="menu_items"
+    - <c-page> bedraadt zelf de <head>, inclusief de CSS/JS van elk actief design
+      system onder /static/lotc/
+#}
+
+{% set page_title_value %}{% block page_title %}Self Service Portal{% endblock %}{% endset %}
+
+<c-page title="{{ page_title_value }}" lang="nl" body-class="nldd-theme">
+
+    <c-app-shell>
+
+        <c-header
+            text="Zelfservice voor Applicatie Deployment"
+            subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
+            link="/" />
+
+        {# Waar roos :items="menu_items" kreeg, bouwt LOTC het menu uit kinderen op.
+           De itemvorm uit opi/web/menu.py blijft ongewijzigd; alleen de weergave
+           verandert, zodat routes niets hoeven te weten van welke schil ze bedienen. #}
+        <c-menu type="bar" size="md" aria-label="Hoofdnavigatie">
+            {% for item in menu_items %}
+                {# Geen {% if %} binnen een componenttag: de voorbewerker leest dat als
+                   een tweede attribuut. Een voorwaarde hoort in de expressie. #}
+                <c-menu-item
+                    label="{{ item.label }}"
+                    href="{{ item.link }}"
+                    icon="{{ item.icon | default('', true) }}" />
+            {% endfor %}
+        </c-menu>
+
+        <main>
+            {% block content %}
+                <c-layout-flow gap="lg">
+                    <c-heading type="h1" label="Welkom bij het Self Service Portal" />
+                    <c-paragraph>Gebruik de navigatie om door de verschillende secties te bladeren.</c-paragraph>
+                </c-layout-flow>
+            {% endblock %}
+        </main>
+
+        {# Versieregel, gelijk aan de roos-schil: leest live uit opi/version.json. #}
+        {% set vi = version_info() %}
+        {% set version_label = 'ZAD ' + vi.version
+            + (' @ ' + vi.branch if vi.branch else '')
+            + (' *' if vi.dirty else '')
+            + (' (' + vi.build_date + ')' if vi.build_date else '') %}
+        <c-footer max-width="lg">
+            <c-menu aria-label="Platform">
+                <c-menu-item label="Over het platform" href="/about" />
+                <c-menu-item label="Architectuur" href="/architecture" />
+                <c-menu-item label="API Referentie" href="/api" />
+            </c-menu>
+            <c-paragraph>{{ version_label }}</c-paragraph>
+        </c-footer>
+
+        {% block additional_styles %}{% endblock %}
+        {% block additional_scripts %}{% endblock %}
+
+    </c-app-shell>
+</c-page>
