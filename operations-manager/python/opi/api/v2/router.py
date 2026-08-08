@@ -11,7 +11,7 @@ import logging
 from inspect import Parameter, Signature
 from typing import Annotated, Any, NamedTuple
 
-from fastapi import APIRouter, Body, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi import Path as FastAPIPath
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
@@ -79,7 +79,11 @@ from opi.services.catalog.actions import (
 from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
-from opi.services.project_authorization import get_user_role_for_project, is_user_authorized_for_project
+from opi.services.project_authorization import (
+    PROJECT_EDIT_ROLES,
+    get_user_role_for_project,
+    is_user_authorized_for_project,
+)
 from opi.services.project_store import get_project_store
 from opi.services.registry import SERVICES, get_service
 from opi.services.services import ServiceAdapter, service_entry_config, service_entry_name
@@ -682,8 +686,8 @@ async def upsert_deployment_v2(
     },
 )
 @validate_user_token
-async def list_projects_v2(request: Request) -> ProjectListResponse:
-    """List the projects this caller may see, with their API keys.
+async def list_projects_v2(request: Request, response: Response) -> ProjectListResponse:
+    """List the projects this caller may see, with the API key of the ones they administer.
 
     A CLI that starts up knows a token and nothing else: the per-project API key
     cannot be used to ask which projects exist, because you need the project name
@@ -695,11 +699,14 @@ async def list_projects_v2(request: Request) -> ProjectListResponse:
     is a member of it. A project the caller may not see is absent entirely, name
     included.
 
-    **The response contains secrets.** Every entry carries that project's API key,
-    so the CLI can switch context and act without a second call. It is the same
-    key the project detail page already shows to the same people, behind the same
-    authorization, so this is a second door to one secret rather than a new
-    exposure -- but do not log this response.
+    **The response contains secrets.** An entry carries that project's API key
+    when the caller's role in it is ``admin`` or ``owner``, so the CLI can switch
+    context and act without a second call. That is exactly the gate the project
+    detail page uses for the same key, and exactly the gate the web UI puts in
+    front of every project mutation: the key itself carries no role, so handing
+    it to a ``developer`` would let them do through the API what the UI refuses
+    them. A ``developer`` therefore sees the project, its description and their
+    role, and ``api_key`` is ``null``. Do not log this response.
 
     **A platform administrator sees every project, with every key.** That is
     deliberate and follows from the platform-admin rule the whole application
@@ -718,17 +725,24 @@ async def list_projects_v2(request: Request) -> ProjectListResponse:
     # that just created a project elsewhere does not get an empty list.
     await store.reconcile()
 
-    projects = [
-        ProjectListItem(
-            name=project.name,
-            description=str((project.data or {}).get("description") or ""),
-            role=get_user_role_for_project(project.name, caller_email),
-            api_key=project.api_key,
+    projects = []
+    for project in sorted(store.get_all(), key=lambda p: p.name):
+        if not is_user_authorized_for_project(project.name, caller_email):
+            continue
+        role = get_user_role_for_project(project.name, caller_email)
+        projects.append(
+            ProjectListItem(
+                name=project.name,
+                description=str((project.data or {}).get("description") or ""),
+                role=role,
+                # Same gate as the detail page and as every mutating web route:
+                # the API key grants full project mutation and knows no roles.
+                api_key=project.api_key if role in PROJECT_EDIT_ROLES else None,
+            )
         )
-        for project in sorted(store.get_all(), key=lambda p: p.name)
-        if is_user_authorized_for_project(project.name, caller_email)
-    ]
 
+    # The response carries secrets; keep it out of every cache in between.
+    response.headers["Cache-Control"] = "no-store"
     logger.info("V2 list projects requested by %s: %d project(s) visible", caller_email, len(projects))
     return ProjectListResponse(projects=projects)
 

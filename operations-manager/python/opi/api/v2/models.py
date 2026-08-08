@@ -125,12 +125,14 @@ class CreateProjectAcceptedResponse(BaseModel):
 
 
 class ProjectListItem(BaseModel):
-    """One project a caller may see, with everything needed to act on it.
+    """One project a caller may see, with what they need to act on it.
 
-    Carries the project's API key. That is the same secret the project detail
-    page already shows to the same people, behind the same authorization, so
-    this adds no exposure -- but a caller holds a secret after reading this and
-    should treat the response accordingly.
+    Carries the project's API key only when the caller's role in the project is
+    ``admin`` or ``owner``. That is the same gate the project detail page puts in
+    front of the same secret, and the same gate the web UI puts in front of every
+    project mutation -- the key itself knows no roles, so a ``developer`` holding
+    it could do through the API what the UI refuses them. A caller holds a secret
+    after reading this and should treat the response accordingly.
     """
 
     name: str = Field(..., description="The technical project name", examples=["mijn-project"])
@@ -140,9 +142,13 @@ class ProjectListItem(BaseModel):
         description="The caller's role in this project ('admin' or 'developer'); 'admin' for platform admins",
         examples=["admin"],
     )
-    api_key: str = Field(
-        ...,
-        description="SECRET. The project's API key, for the X-API-Key header on every per-project call",
+    api_key: str | None = Field(
+        default=None,
+        description=(
+            "SECRET. The project's API key, for the X-API-Key header on every per-project call. "
+            "Only present for the roles 'admin' and 'owner'; null for a 'developer', who may not "
+            "change the project through the web UI either"
+        ),
         examples=["Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ"],
     )
 
@@ -163,7 +169,13 @@ class ProjectListResponse(BaseModel):
                         "description": "Nog een test",
                         "role": "admin",
                         "api_key": "Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ",
-                    }
+                    },
+                    {
+                        "name": "project-van-het-team",
+                        "description": "Waar ik in meewerk",
+                        "role": "developer",
+                        "api_key": None,
+                    },
                 ]
             }
         }

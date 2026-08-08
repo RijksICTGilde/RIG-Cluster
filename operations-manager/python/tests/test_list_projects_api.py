@@ -12,10 +12,14 @@ a member of, and a project the caller may not see is absent entirely, name
 included. The identity is the verified email from the token, and the rule is the
 one the rest of the application uses (``is_user_authorized_for_project``).
 
-Third, the consequences of that rule, both deliberate: every entry carries the
-project's API key, and a platform administrator sees every project with every
-key. Both are covered below so a change to either is a failing test rather than a
-surprise.
+Third, who gets the key. The API key opens every mutating per-project route and
+carries no role of its own, so it goes only to the roles that may change the
+project anyway: ``admin`` and ``owner``, the same gate the detail page and every
+mutating web route use. A ``developer`` sees the project and their role, and
+``api_key`` is null -- otherwise the list would hand them through the API what
+the UI refuses them. A platform administrator sees every project with every key;
+that is deliberate and covered below, so a change to it is a failing test rather
+than a surprise.
 """
 
 import time
@@ -92,12 +96,13 @@ PROJECTS = [
     _StoredProject("beta-project", "key-beta", "De tweede", [{"email": MEMBER, "role": "developer"}]),
     _StoredProject("alpha-project", "key-alpha", "De eerste", [{"email": MEMBER, "role": "admin"}]),
     _StoredProject("andermans-project", "key-ander", "Niet van jou", [{"email": OUTSIDER, "role": "admin"}]),
+    _StoredProject("gamma-project", "key-gamma", "De derde", [{"email": MEMBER, "role": "owner"}]),
 ]
 
 
 @pytest.fixture
 def store() -> Any:
-    """A store holding three projects, two of which MEMBER belongs to.
+    """A store holding four projects, three of which MEMBER belongs to.
 
     Both the endpoint and the authorization functions read through
     ``get_project_store``, so patching it in both places keeps one set of facts.
@@ -168,7 +173,7 @@ class TestWhatTheCallerSees:
 
     def test_only_the_projects_this_user_belongs_to(self, listed: Any) -> None:
         """Someone else's project is absent entirely, not just key-less."""
-        assert [project["name"] for project in listed] == ["alpha-project", "beta-project"]
+        assert [project["name"] for project in listed] == ["alpha-project", "beta-project", "gamma-project"]
 
     def test_the_other_projects_name_does_not_leak(self, listed: Any) -> None:
         assert "andermans-project" not in str(listed)
@@ -180,9 +185,26 @@ class TestWhatTheCallerSees:
         assert listed[1]["description"] == "De tweede"
         assert listed[1]["role"] == "developer"
 
-    def test_the_api_key_is_in_the_list(self, listed: Any) -> None:
-        """Decision A: one call is enough, the CLI can act straight away."""
-        assert [project["api_key"] for project in listed] == ["key-alpha", "key-beta"]
+    def test_an_admin_gets_the_key_in_the_same_call(self, listed: Any) -> None:
+        """Decision A: for who may act, one call is enough to act straight away."""
+        assert listed[0]["role"] == "admin"
+        assert listed[0]["api_key"] == "key-alpha"
+
+    def test_an_owner_gets_the_key_too(self, listed: Any) -> None:
+        """The gate is the pair admin/owner, exactly as the web edit gate is."""
+        assert listed[2]["role"] == "owner"
+        assert listed[2]["api_key"] == "key-gamma"
+
+    def test_a_developer_gets_the_project_but_not_the_key(self, listed: Any) -> None:
+        """The key knows no roles: it opens every mutating per-project route.
+
+        The web UI refuses a developer both the key (the detail page hides the
+        secrets block) and every mutation (403). Handing it out here would be a
+        way around that gate, so the list mirrors it: project yes, key no.
+        """
+        assert listed[1]["role"] == "developer"
+        assert listed[1]["api_key"] is None
+        assert "key-beta" not in str(listed)
 
     def test_a_user_with_no_projects_gets_an_empty_list(
         self, test_client: TestClient, realm: Any, store: Any, platform_admins: Any
@@ -194,6 +216,13 @@ class TestWhatTheCallerSees:
     def test_projects_edited_outside_zad_are_picked_up(self, listed: Any, store: Any) -> None:
         """Without the reconcile a CLI would not see a project another cluster made."""
         store.reconcile.assert_awaited()
+
+    def test_the_response_is_not_cached_anywhere(
+        self, test_client: TestClient, realm: Any, store: Any, platform_admins: Any
+    ) -> None:
+        """A response that can carry a secret has no business in any cache."""
+        response = _get(test_client, realm["token_for"](MEMBER))
+        assert response.headers["Cache-Control"] == "no-store"
 
 
 class TestPlatformAdministrator:
@@ -212,11 +241,17 @@ class TestPlatformAdministrator:
             "alpha-project",
             "andermans-project",
             "beta-project",
+            "gamma-project",
         ]
 
     def test_an_administrator_gets_every_key(self, listed_for_admin: Any) -> None:
         """The documented consequence of the rule: one call, all the keys."""
-        assert [project["api_key"] for project in listed_for_admin] == ["key-alpha", "key-ander", "key-beta"]
+        assert [project["api_key"] for project in listed_for_admin] == [
+            "key-alpha",
+            "key-ander",
+            "key-beta",
+            "key-gamma",
+        ]
 
     def test_an_administrator_is_reported_as_admin_everywhere(self, listed_for_admin: Any) -> None:
         assert {project["role"] for project in listed_for_admin} == {"admin"}
@@ -230,6 +265,13 @@ class TestTheDocumentationSaysSo:
         description = spec["paths"]["/api/v2/projects"]["get"]["description"].lower()
         assert "secret" in description
         assert "platform administrator" in description
+
+    def test_the_description_says_a_developer_gets_no_key(self, test_client: TestClient) -> None:
+        """The role gate on the key is part of the contract, not an implementation detail."""
+        spec = test_client.app.openapi()
+        description = spec["paths"]["/api/v2/projects"]["get"]["description"].lower()
+        assert "developer" in description
+        assert "null" in description
 
     def test_the_api_key_field_is_marked_as_a_secret(self, test_client: TestClient) -> None:
         spec = test_client.app.openapi()

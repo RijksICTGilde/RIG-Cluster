@@ -8,7 +8,7 @@ bestond alleen `POST`, en alles daaronder (`/projects/{naam}/...`) vraagt de
 al weet. Zonder lijst geen naam, zonder naam geen sleutel.
 
 `GET /api/v2/projects` doorbreekt dat: met hetzelfde SSO-token krijg je de projecten waar
-je bij mag, inclusief de sleutel waarmee je verder kunt.
+je bij mag, en van de projecten die je beheert ook de sleutel waarmee je verder kunt.
 
 ## Gebruik
 
@@ -25,6 +25,12 @@ curl "https://zad.rijksapps.nl/api/v2/projects" \
       "description": "Nog een test",
       "role": "admin",
       "api_key": "Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ"
+    },
+    {
+      "name": "project-van-het-team",
+      "description": "Waar ik in meewerk",
+      "role": "developer",
+      "api_key": null
     }
   ]
 }
@@ -35,7 +41,9 @@ curl "https://zad.rijksapps.nl/api/v2/projects" \
 | `name` | De technische projectnaam, waarmee je de andere endpoints aanroept. |
 | `description` | Waar het project voor is. |
 | `role` | De rol van de aanroeper in dit project: `admin` of `developer`. |
-| `api_key` | **Geheim.** De projectsleutel, voor de `X-API-Key`-header op elke volgende aanroep. |
+| `api_key` | **Geheim.** De projectsleutel, voor de `X-API-Key`-header op elke volgende aanroep. Alleen gevuld bij de rollen `admin` en `owner`; `null` voor een `developer`. |
+
+Het antwoord kan een geheim dragen en gaat daarom met `Cache-Control: no-store` de deur uit.
 
 De lijst is gesorteerd op naam. Antwoordcodes: `200` met de lijst (leeg als je nergens bij
 hoort), `401` geen geldig token of geen toegang tot het platform.
@@ -64,7 +72,7 @@ met de UI, waar een beheerder elke projectpagina kan openen en de sleutel daar k
 Het is géén aparte "toon alles"-modus: er is geen `?all=true` en die hoort er ook niet
 ongemerkt bij te komen. Wie zoiets wil, neemt daar een eigen besluit over.
 
-## Waarom de sleutel in de lijst zit
+## Wie de sleutel krijgt, en waarom niet iedereen
 
 Overwogen zijn twee vormen:
 
@@ -73,17 +81,31 @@ Overwogen zijn twee vormen:
 | **A. Lijst mét sleutels** | Eén aanroep, de CLI kan meteen verder. |
 | **B. Lijst zonder sleutels, plus een aparte `GET .../key`** | Wie alleen wil weten wat er is, krijgt geen geheimen. |
 
-Het is **A** geworden. De doorslag: de sleutel staat **al** op de projectdetailpagina
-achter dezelfde autorisatie (`section-config.html.j2` toont `config.api-key` in een
-`c-secret-field`). Wie deze lijst mag opvragen, kan die sleutel vandaag al zien door de
-pagina te openen. Dezelfde informatie via een andere deur, aan dezelfde mensen -- geen
-nieuwe blootstelling.
+Het is **A** geworden, maar dan achter dezelfde rolpoort als de UI: `api_key` is gevuld voor
+de rollen `admin` en `owner` en `null` voor een `developer`.
 
-Wat wél verandert is de *bundeling*: één gestolen SSO-token levert in één aanroep alle
-sleutels op waar die gebruiker bij mag, waar één gestolen projectsleutel één project opent.
-Daarom staat in de OpenAPI-omschrijving van het endpoint en bij het veld zelf expliciet dat
-er een geheim in het antwoord zit, zodat een aanroeper dat weet vóórdat hij het antwoord
-ergens logt.
+Die rolpoort is het punt. De oorspronkelijke onderbouwing van A was "de sleutel staat al op
+de projectdetailpagina, dus dit is dezelfde informatie via een andere deur, aan dezelfde
+mensen". Nagemeten klopt dat alleen voor beheerders: `section-config.html.j2` zet het hele
+blok Configuratie & Secrets, inclusief `config['api-key']`, achter
+`{% if user_role in ["admin", "owner"] %}`. Een `developer` ziet die sleutel via de UI dus
+níét.
+
+En het gaat verder dan zichtbaarheid: **de projectsleutel kent zelf geen rollen.** Elke
+route achter `@validate_api_token` accepteert hem zonder rolcontrole -- een deployment
+verwijderen, een component toevoegen, een image wisselen, een database of bucket klonen.
+De webkant zet daar wél een rolpoort voor (`require_project_edit_access` weigert elke
+bewerking met 403 als de rol geen `admin` of `owner` is). Een lijst die de sleutel aan een
+`developer` geeft, zou hem via de API laten doen wat de UI hem verbiedt -- en langlevend
+ook, want de sleutel blijft geldig als zijn rol wordt ingetrokken. Daarom is de sleutel in
+deze route achter exact dezelfde poort gezet, letterlijk dezelfde constante
+(`PROJECT_EDIT_ROLES` in `opi/services/project_authorization.py`) die de webkant gebruikt.
+
+Voor wie de sleutel wél krijgt blijft de bundeling staan: één gestolen SSO-token levert in
+één aanroep alle sleutels op van de projecten die die persoon beheert, waar één gestolen
+projectsleutel één project opent. Daarom staat in de OpenAPI-omschrijving van het endpoint
+en bij het veld zelf expliciet dat er een geheim in het antwoord zit, zodat een aanroeper
+dat weet vóórdat hij het antwoord ergens logt.
 
 ## Verse gegevens
 
@@ -107,7 +129,10 @@ veranderd.
   kapot token, geweigerd buiten de allowlist;
 - het filter: alleen de projecten van deze gebruiker, de naam van andermans project lekt
   niet, en iemand zonder projecten krijgt een lege lijst;
-- de inhoud: naam, omschrijving, rol en de sleutel, plus dat er gereconcilieerd wordt;
+- de inhoud: naam, omschrijving en rol, plus dat er gereconcilieerd wordt en dat het
+  antwoord `Cache-Control: no-store` draagt;
+- de sleutel: een `admin` en een `owner` krijgen hem, een `developer` krijgt zijn project
+  wél en de sleutel `null` -- en die sleutel komt dan ook nergens anders in het antwoord voor;
 - de beheerder: ziet elk project, met elke sleutel, overal als `admin`;
-- de documentatie: de omschrijving noemt het geheim én de beheerder, en het veld `api_key`
-  is als geheim gemarkeerd.
+- de documentatie: de omschrijving noemt het geheim, de beheerder én dat een `developer`
+  geen sleutel krijgt, en het veld `api_key` is als geheim gemarkeerd.
