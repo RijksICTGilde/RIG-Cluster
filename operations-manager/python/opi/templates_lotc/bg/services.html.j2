@@ -25,12 +25,14 @@
   komt het uit het thema.
 #}
 {% extends "base_lotc.html.j2" %}
-{% from "bg/_patterns.html.j2" import panel, page_head, info, service_card %}
+{% from "bg/_patterns.html.j2" import panel, page_head, info, service_card, filter_row %}
 
 {% block page_title %}Diensten - Self Service Portal{% endblock %}
 
 {% block content %}
     {{ page_head("Diensten", "Platformdiensten die je project kan afnemen. Het platform levert en beheert ze.") }}
+
+    {{ filter_row("/lotc/bg/services", "kind", service_filter, service_filters) }}
 
     <c-columns columns="1" lg="2" gap="md">
         {% for service in services %}
