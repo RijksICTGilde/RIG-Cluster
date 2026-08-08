@@ -1,0 +1,87 @@
+{#
+  Gebruikersbeheer.
+
+  Een OVERNAME van admin/users.html.j2 met de nieuwe componenten, geen herontwerp.
+  Dezelfde vier blokken in dezelfde volgorde, dezelfde gegevens, hetzelfde gedrag:
+
+    _kop         -> page_head()
+    _actiebalk   -> de knop in de kopregel van het paneel, met de telling erbij
+    _tabel       -> c-table in plaats van een eigen <table> met admin-users.css
+    _meldingen   -> c-alert in plaats van een kaart met een vinkje en een eigen klasse
+
+  De melding staat onderaan, net als in het origineel. Dat leest niet best - je komt hier
+  na een omleiding met ?success=... en die bevestiging vind je dan pas na de hele lijst -
+  maar het verplaatsen is een besluit over de pagina en niet over de componenten, en dus
+  niet iets om ongemerkt in een omzetting mee te nemen.
+
+  Het verwijderen blijft een gewoon formulier met een confirm(), precies zoals nu. Het is
+  geen htmx en geen dialoog, en er is in deze omzetting geen reden om daar iets anders van
+  te maken; alleen de aanspreekvorm is informeel geworden, zoals overal in deze bouwlijn.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}Gebruikersbeheer - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head("Gebruikersbeheer", "Beheer de platformgebruikers: e-mailadressen en namen.") }}
+
+    {% set toevoegen %}<c-button type="primary" size="sm" label="Gebruiker toevoegen" icon="plus" show-icon="before" href="/admin/users/create" />{% endset %}
+    {% call panel("Platformgebruikers", "person-2", aside=toevoegen) %}
+        <c-paragraph size="sm">Totaal: {{ users | length }} gebruiker{{ 's' if users | length != 1 else '' }}</c-paragraph>
+
+        {% if users %}
+{# NLDD maakt van een tabel een CSS-grid: zonder columns valt alles in een
+               kolom en stapelen de cellen. En c-table-head IS de kopregel, daar hoort
+               geen c-table-row in. #}
+            {# De laatste kolom draagt twee knoppen naast elkaar en heeft daarom meer
+               ruimte nodig dan de datum ervoor; met gelijke breedtes vallen ze onder
+               elkaar. #}
+            <c-table columns="2fr 2fr 1fr 2fr">
+                <c-table-head>
+                    <c-th>Naam</c-th>
+                    <c-th>E-mailadres</c-th>
+                    <c-th>Aangemaakt</c-th>
+                    <c-th>Acties</c-th>
+                </c-table-head>
+                {% for user in users %}
+                    <c-table-row>
+                        <c-td><c-b>{{ user.full_name }}</c-b></c-td>
+                        <c-td>{{ user.email }}</c-td>
+                        <c-td>{{ user.created_at | dutch_date(include_time=False) }}</c-td>
+                        <c-td>
+                            <c-cluster gap="sm" align="center">
+                                <c-button
+                                    type="tertiary"
+                                    size="sm"
+                                    label="Bewerken"
+                                    icon="pencil-on-square"
+                                    show-icon="before"
+                                    href="/admin/users/{{ user.id }}/edit" />
+                                {# Het formulier draagt de bevestiging en het CSRF-token, net als nu.
+                                   De knop erin is alleen de verzendknop. #}
+                                <form method="post" action="/admin/users/{{ user.id }}/delete"
+                                      onsubmit="return confirm('Weet je zeker dat je {{ user.full_name }} wilt verwijderen?');">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                                    <c-button
+                                        type="warning"
+                                        size="sm"
+                                        label="Verwijderen"
+                                        icon="trash"
+                                        show-icon="before"
+                                        html-type="submit" />
+                                </form>
+                            </c-cluster>
+                        </c-td>
+                    </c-table-row>
+                {% endfor %}
+            </c-table>
+        {% else %}
+            <c-paragraph>Geen gebruikers gevonden. Voeg een gebruiker toe om te beginnen.</c-paragraph>
+        {% endif %}
+    {% endcall %}
+
+    {% if success_message %}
+        <c-alert type="success" heading="{{ success_message }}" />
+    {% endif %}
+{% endblock %}
