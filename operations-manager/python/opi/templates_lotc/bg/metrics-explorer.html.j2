@@ -1,0 +1,229 @@
+{#
+  Metrics Explorer.
+
+  Een OVERNAME van opi/templates/metrics-explorer.html.j2 met de nieuwe componenten.
+  Dezelfde vier blokken in dezelfde volgorde, dezelfde gegevens, hetzelfde gedrag:
+
+    _bediening -> panel() met de twee keuzelijsten, het filter en de knop
+    _laden     -> dezelfde plaatshouder, nu een c-paragraph
+    _fout      -> c-alert in plaats van een kaart met een rode alinea
+    _grafiek   -> panel() om hetzelfde <iframe>
+
+  DE KEUZELIJSTEN
+
+  Deze pagina vult zijn opties tijdens het gebruik met JavaScript: bijvullen na een fetch,
+  de selectie uitlezen, luisteren op change. Dat is gewone DOM-code tegen een <select>.
+
+  Onder NLDD valt c-select-field normaal op een nldd-combo-box: een Lit-element met een
+  eigen value-property en menu-item-kinderen. Daar werkt die code niet tegen. Ze stonden
+  hier daarom een tijd als kale <select> - werkend, maar een eiland in een NLDD-pagina.
+
+  Het LOTC-project heeft daar native="true" voor gemaakt: dan rendert c-select-field een
+  ECHTE <select> met een themalaagje eromheen. De JavaScript werkt dus gewoon, en de lijst
+  hoort weer bij het systeem. Let op: de opties blijven kale <option>-elementen, want
+  c-option zou naar een menu-item swappen en dat sloopt de native select.
+
+
+  TWEE DINGEN DIE WEL AAN HET SCRIPT VERANDERD ZIJN, allebei omdat het thema onze eigen
+  stylesheet niet meebrengt:
+
+    - verbergen gaat via het HTML-attribuut `hidden` in plaats van de klasse `is-hidden`
+      uit static/css/base.css. Native, en dus zonder stylesheet werkend.
+    - de knop krijgt zijn klik via addEventListener in plaats van een @click-attribuut,
+      want <c-button> laat geen onclick toe.
+
+  De rest van het script is ongewijzigd overgenomen, inclusief de URL's en de teksten.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}Metrics Explorer - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head("Metrics Explorer", "Selecteer een service om de beschikbare Prometheus metrics te verkennen.") }}
+
+    {% call panel("Kies een service en een metric", "chart-x-y-axis-line") %}
+        <c-cluster gap="md" align="end">
+            <div>
+                <c-stack gap="xs">
+                    <c-select-field id="service-select" name="service" label="Service" native="true">
+                        <option value="">-- Selecteer een service --</option>
+                        {% for service in services %}
+                            <option value="{{ service.id }}">{{ service.name }}</option>
+                        {% endfor %}
+                    </c-select-field>
+                    <c-paragraph size="sm" id="service-description" />
+                </c-stack>
+            </div>
+
+            <div>
+                <c-stack gap="xs">
+                    <c-select-field id="metric-select" name="metric" label="Metric" native="true" disabled="true">
+                        <option value="">-- Selecteer eerst een service --</option>
+                    </c-select-field>
+                    <c-paragraph size="sm" id="metric-count" />
+                </c-stack>
+            </div>
+
+            <c-button id="show-btn" type="primary" label="Tonen in Prometheus" disabled />
+        </c-cluster>
+
+        <div id="filter-container" hidden>
+            <c-stack gap="xs">
+                <label for="metric-filter"><strong>Filter metrics:</strong></label>
+                <input type="text" id="metric-filter" placeholder="Type om te filteren..." oninput="filterMetrics()" />
+            </c-stack>
+        </div>
+    {% endcall %}
+
+    <div id="loading" hidden>
+        <c-paragraph>Metrics ophalen...</c-paragraph>
+    </div>
+
+    <div id="error-msg" hidden>
+        <c-alert type="error" heading="Metrics ophalen mislukt">
+            <span id="error-text">Fout bij het ophalen van metrics.</span>
+        </c-alert>
+    </div>
+
+    <div id="prometheus-frame-container" hidden>
+        {% call panel("Prometheus Graph", "chart-x-y-axis-line") %}
+            <iframe id="prometheus-frame"
+                    width="100%"
+                    height="600"
+                    sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+                    title="Prometheus Graph UI">
+            </iframe>
+            <c-paragraph size="sm">
+                <a id="prometheus-direct-link" href="#" target="_blank" rel="noopener">Open in nieuw tabblad</a>
+            </c-paragraph>
+        {% endcall %}
+    </div>
+{% endblock %}
+
+{% block additional_scripts %}
+<script>
+    const PROMETHEUS_URL = "{{ prometheus_url }}";
+    const SERVICE_INFO = {
+        {% for service in services %}
+            "{{ service.id }}": {
+                "description": "{{ service.description }}",
+                "range": "{{ service.range }}"
+            }{% if not loop.last %},{% endif %}
+        {% endfor %}
+    };
+
+    // Alle metrics van de gekozen service, voor het filteren.
+    let allMetrics = [];
+
+    const serviceSelect = document.getElementById("service-select");
+    const metricSelect = document.getElementById("metric-select");
+    const showBtn = document.getElementById("show-btn");
+    const loading = document.getElementById("loading");
+    const errorMsg = document.getElementById("error-msg");
+    const errorText = document.getElementById("error-text");
+    const filterContainer = document.getElementById("filter-container");
+    const metricFilter = document.getElementById("metric-filter");
+    const metricCount = document.getElementById("metric-count");
+    const serviceDescription = document.getElementById("service-description");
+
+    serviceSelect.addEventListener("change", async function() {
+        const serviceId = this.value;
+        metricSelect.innerHTML = '<option value="">-- Laden... --</option>';
+        metricSelect.disabled = true;
+        showBtn.disabled = true;
+        filterContainer.hidden = true;
+        metricFilter.value = "";
+        metricCount.textContent = "";
+        allMetrics = [];
+
+        // De omschrijving bij de gekozen service.
+        serviceDescription.textContent = serviceId ? (SERVICE_INFO[serviceId] || {}).description || "" : "";
+
+        if (!serviceId) {
+            metricSelect.innerHTML = '<option value="">-- Selecteer eerst een service --</option>';
+            return;
+        }
+
+        loading.hidden = false;
+        errorMsg.hidden = true;
+
+        try {
+            const response = await fetch(`/ui/metrics-explorer/metrics/${serviceId}`);
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || "Onbekende fout");
+            }
+
+            allMetrics = data.metrics || [];
+            populateMetricDropdown(allMetrics);
+
+            if (allMetrics.length > 10) {
+                filterContainer.hidden = false;
+            }
+            metricCount.textContent = `${allMetrics.length} metrics beschikbaar`;
+
+        } catch (err) {
+            errorText.textContent = `Fout: ${err.message}`;
+            errorMsg.hidden = false;
+            metricSelect.innerHTML = '<option value="">-- Fout bij ophalen --</option>';
+        } finally {
+            loading.hidden = true;
+        }
+    });
+
+    metricSelect.addEventListener("change", function() {
+        showBtn.disabled = !this.value;
+    });
+
+    showBtn.addEventListener("click", showMetric);
+
+    function populateMetricDropdown(metrics) {
+        metricSelect.innerHTML = '<option value="">-- Selecteer een metric --</option>';
+        for (const name of metrics) {
+            const opt = document.createElement("option");
+            opt.value = name;
+            opt.textContent = name;
+            metricSelect.appendChild(opt);
+        }
+        metricSelect.disabled = metrics.length === 0;
+    }
+
+    function filterMetrics() {
+        const query = metricFilter.value.toLowerCase();
+        const filtered = allMetrics.filter(m => m.toLowerCase().includes(query));
+        populateMetricDropdown(filtered);
+        metricCount.textContent = `${filtered.length} van ${allMetrics.length} metrics`;
+    }
+
+    function showMetric() {
+        const metric = metricSelect.value;
+        if (!metric) return;
+
+        // Het standaardbereik van de service (7d voor jobs die per twee uur scrapen, 1h
+        // voor de rest).
+        const serviceId = serviceSelect.value;
+        const range = (SERVICE_INFO[serviceId] || {}).range || "1h";
+
+        // De Prometheus-grafiek-URL, met de metric als expressie.
+        const params = new URLSearchParams({
+            "g0.expr": metric,
+            "g0.tab": "0",        // Grafiektab
+            "g0.range_input": range
+        });
+
+        const graphUrl = `${PROMETHEUS_URL}/graph?${params.toString()}`;
+
+        const frameContainer = document.getElementById("prometheus-frame-container");
+        const frame = document.getElementById("prometheus-frame");
+        const directLink = document.getElementById("prometheus-direct-link");
+
+        frame.src = graphUrl;
+        directLink.href = graphUrl;
+        frameContainer.hidden = false;
+
+        frameContainer.scrollIntoView({ behavior: "smooth" });
+    }
+</script>
+{% endblock %}
