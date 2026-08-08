@@ -116,7 +116,12 @@ def build_details_context(name: str) -> dict[str, Any] | None:
         "service_config_hint": {},
         "prometheus_available": False,
         "argocd_available": False,
-        "approval_notices": [],
+        # Een dict, want zo levert de echte route hem aan: per deploymentnaam de
+        # goedkeuringen die nog niet verleend zijn. Als lijst gaf dit een 500 op de
+        # proefopstelling zodra het sjabloon .get(deployment.name) deed - de voorbeelddata
+        # moet de VORM van de echte gegevens hebben, anders bewijst de proefopstelling
+        # niets over de echte pagina.
+        "approval_notices": {},
         "backups_available": False,
         "current_cluster": "odcn-production",
         "cluster_base_domains": {},

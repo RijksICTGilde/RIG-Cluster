@@ -220,6 +220,15 @@ REDESIGNED_PAGES = [
     "admin-approvals",
     "wizard-start",
     "wizard-page",
+    "about",
+    "metrics-explorer",
+    "permission-denied",
+    "project-progress",
+    "project-progress-done",
+    "invite-landing",
+    "invite-register",
+    "invite-success",
+    "invite-error",
 ]
 
 
