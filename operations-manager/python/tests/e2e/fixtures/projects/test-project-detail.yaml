@@ -85,3 +85,26 @@ deployments:
     components:
       - reference: web-app
         image: "nginx:latest"
+
+# Helm-charts en helmfile op projectniveau. Ze staan hier omdat de bijbehorende secties
+# ANDERS NIET TE METEN ZIJN: zowel de bestaande als de hertekende pagina zetten er
+# `{% if project.helm_charts %}` omheen, dus zonder gegevens rendert er aan beide kanten
+# niets en zegt een vergelijking niets.
+helm-charts:
+  - name: redis-cache
+    repository: https://charts.bitnami.com/bitnami
+    chart: redis
+    version: "18.1.5"
+    helm-values:
+      architecture: standalone
+      auth:
+        enabled: true
+
+helmfile:
+  - name: monitoring-stack
+    repository: https://github.com/example/monitoring
+    path: helmfile.d/monitoring.yaml
+    branch: main
+    helm-values:
+      grafana:
+        enabled: true

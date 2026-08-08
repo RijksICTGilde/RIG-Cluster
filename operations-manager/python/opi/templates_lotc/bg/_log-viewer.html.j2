@@ -1,0 +1,101 @@
+{#
+  Het schuifpaneel met de live logstroom van een component.
+
+  Een OVERNAME van het tweede deel van project-details/modals.html.j2. De id's staan er
+  LETTERLIJK, want /static/js/log_viewer.js zoekt zijn hele bediening op id op: het
+  paneel, de achtergrond, de kop, de componentkiezer, de statusregel, de teller, de
+  inhoud, de zoekbalk, de vier niveaufilters en de regelterugloop. Een andere naam is hier
+  geen vormgeving maar een stille storing - de viewer opent dan gewoon en doet niets.
+
+  Wat WEL omgezet is: de iconen en de knoppen. De bedieningsknoppen in de kop dragen hun
+  aanroep via :attrs, want <c-button> en <c-icon-button> laten geen onclick toe.
+
+  De vier niveaufilters en de regelterugloop blijven kale <input type="checkbox">: het
+  script leest ze uit met .checked en zet luisteraars op change. Een aanvinkvak dat onder
+  NLDD een webcomponent wordt, heeft die eigenschap niet op dezelfde plek.
+
+  De componentkiezer is een ECHTE <select> (c-select-field native="true"): het script vult
+  hem tijdens het gebruik met new Option() en leest this.value.
+#}
+<div id="log-viewer-backdrop" class="log-viewer-backdrop" onclick="closeLogViewer()"></div>
+<div id="log-viewer-panel" class="log-viewer-panel">
+    <div class="log-viewer-header">
+        <div class="log-viewer-title">
+            <c-icon icon="document" size="lg" />
+            <div>
+                <c-heading type="h3" size="5" id="log-viewer-heading" label="Logs" />
+                <div class="log-viewer-subtitle">
+                    <span id="log-viewer-deployment"></span>
+                    <c-select-field
+                        id="log-component-selector"
+                        name="log-component"
+                        label="Component"
+                        native="true"
+                        :attrs="{'class': 'log-component-select', 'onchange': 'switchLogComponent(this.value)'}" />
+                </div>
+            </div>
+        </div>
+        <div class="log-viewer-controls">
+            {% set pauzeren = "toggleLogPause()" %}
+            {% set legen = "clearLogs()" %}
+            {% set kopieren = "copyLogs()" %}
+            {% set downloaden = "downloadLogs()" %}
+            {% set sluiten = "closeLogViewer()" %}
+            <c-icon-button icon="pause" accessible-label="Pauzeren of hervatten" variant="neutral-transparent" size="sm"
+                           :attrs="{'id': 'log-pause-btn', 'class': 'log-control-btn', 'onclick': pauzeren}" />
+            <c-icon-button icon="trash" accessible-label="Leegmaken" variant="neutral-transparent" size="sm"
+                           :attrs="{'class': 'log-control-btn', 'onclick': legen}" />
+            <c-icon-button icon="copy" accessible-label="Kopieren" variant="neutral-transparent" size="sm"
+                           :attrs="{'class': 'log-control-btn', 'onclick': kopieren}" />
+            <c-icon-button icon="arrow-down-tray" accessible-label="Downloaden" variant="neutral-transparent" size="sm"
+                           :attrs="{'class': 'log-control-btn', 'onclick': downloaden}" />
+            <c-icon-button icon="dismiss" accessible-label="Sluiten" variant="neutral-transparent" size="sm"
+                           :attrs="{'class': 'log-close-btn', 'onclick': sluiten}" />
+        </div>
+    </div>
+    <div class="log-viewer-toolbar">
+        <div class="log-search-container">
+            <c-icon icon="search" size="sm" />
+            <input type="text" id="log-search-input" class="log-search-input" placeholder="Zoek in logs..." oninput="filterLogs()" />
+            <span id="log-search-count" class="log-search-count"></span>
+            <button type="button" class="log-search-clear" id="log-search-clear" onclick="clearSearch()" title="Zoekopdracht wissen">
+                <c-icon icon="dismiss" size="sm" />
+            </button>
+        </div>
+        <div class="log-toolbar-divider"></div>
+        <div class="log-level-filters">
+            <label class="log-level-filter">
+                <input type="checkbox" id="filter-error" checked onchange="filterLogs()" />
+                <span class="log-level-badge log-level-error">Error</span>
+            </label>
+            <label class="log-level-filter">
+                <input type="checkbox" id="filter-warn" checked onchange="filterLogs()" />
+                <span class="log-level-badge log-level-warn">Warn</span>
+            </label>
+            <label class="log-level-filter">
+                <input type="checkbox" id="filter-info" checked onchange="filterLogs()" />
+                <span class="log-level-badge log-level-info">Info</span>
+            </label>
+            <label class="log-level-filter">
+                <input type="checkbox" id="filter-debug" checked onchange="filterLogs()" />
+                <span class="log-level-badge log-level-debug">Debug</span>
+            </label>
+        </div>
+        <div class="log-toolbar-divider"></div>
+        <label class="log-wrap-toggle" title="Regelterugloop aan of uit">
+            <input type="checkbox" id="log-word-wrap" onchange="toggleWordWrap()" />
+            <span class="log-wrap-label">Terugloop</span>
+        </label>
+    </div>
+    <div class="log-viewer-status" id="log-viewer-status">
+        <span class="log-status-indicator" id="log-status-indicator"></span>
+        <span id="log-status-text">Verbinden...</span>
+        <span id="log-line-count" class="log-line-count"></span>
+    </div>
+    <div class="log-viewer-content" id="log-viewer-content">
+        <div class="log-empty-state" id="log-empty-state">
+            <c-icon icon="document" size="xl" />
+            <c-paragraph>Verbinden met de logstroom...</c-paragraph>
+        </div>
+    </div>
+</div>

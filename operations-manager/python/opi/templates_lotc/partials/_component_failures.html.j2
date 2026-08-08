@@ -16,7 +16,7 @@
 <c-alert heading="{{ failure.title }}">
     <c-paragraph/>
     {% if failure.failure_type != "image_pull" and project_name is defined and project_name and failure.deployment %}
-    <c-link href="#" @/>
+    {% set lotc_onclick_1 %}event.preventDefault(); if(typeof openLogViewer==='function'){openLogViewer('{{ project_name }}','{{ failure.deployment }}','{{ failure.component }}',[{reference:'{{ failure.component }}'}])}{% endset %}<c-link href="#"/>
     {% endif %}
 </c-alert>
 {% endfor %}

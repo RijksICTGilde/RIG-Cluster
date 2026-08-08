@@ -1,0 +1,53 @@
+{#
+  De acties per deployment.
+
+  Overname van project-details/section-deployment-actions.html.j2: dezelfde poort
+  (alleen admin/owner), dezelfde twee vaste knoppen in dezelfde volgorde, en daarna de
+  knoppen die de diensten leveren (databaseconsole, job uitvoeren, slapen/wekken,
+  cross-domain). Dezelfde flow-id's en dezelfde bevestigings-URL's.
+
+  De index in het projectbestand telt door en wordt NIET meegesorteerd: die index IS de
+  flow-id van de bewerk-dialoog, dus sorteren zonder dat zou "Images bewerken" stilletjes
+  op een andere deployment richten.
+
+  De wikkel is letterlijk overgenomen: ``class="deployment-section"`` en
+  ``id="deployment-actions-<naam>"``. switchDeployment() zoekt op precies die id.
+
+  De aanroep wordt met {% set %} BOVEN de tag opgebouwd: <c-button> laat geen onclick toe,
+  :attrs zet het attribuut wel door, en een genest aanhalingsteken binnen :attrs leest de
+  voorbewerker als het einde van het attribuut.
+
+  De twee takken van een dienstknop (een eigen modal-URL of de gedeelde
+  bevestigingsroute) staan hier als een expressie in de {% set %} in plaats van als twee
+  hele knoppen: een {% if %} BINNEN een componenttag kan niet, maar in een {% set %} wel.
+  Het icoon en de soort komen ongewijzigd van de dienst.
+#}
+{% set deployment_service_actions = deployment_service_actions | default({}) %}
+{% if user_role in ["admin", "owner"] and project.deployments %}
+    {% for deployment in project.deployments | sort(attribute='name') %}
+    {% set original_index = project.deployments.index(deployment) %}
+    <div class="deployment-section{% if not loop.first %} is-hidden{% endif %}" id="deployment-actions-{{ deployment.name }}">
+        <c-card outline padding="lg">
+            <c-stack gap="md">
+                <c-section-head title="Acties" icon="gear" />
+                <c-cluster gap="sm">
+                    {% set images_bewerken = "openEditModal('modal-edit-deployment-" ~ original_index ~ "', 'Images bewerken - " ~ deployment.name ~ "')" %}
+                    {% set herverwerken = "openServiceModal('/projects/" ~ project.name ~ "/actions/refresh-deployment/confirm?target=" ~ (deployment.name | urlencode) ~ "', 'Deployment herverwerken')" %}
+                    <c-button type="secondary" size="sm" show-icon="before" icon="pencil"
+                              label="Images bewerken" :attrs="{'onclick': images_bewerken}" />
+                    <c-button type="secondary" size="sm" show-icon="before" icon="refresh"
+                              label="Deployment herverwerken" :attrs="{'onclick': herverwerken}" />
+
+                    {% for action in deployment_service_actions.get(deployment.name, []) if action.visible %}
+                    {% set doel = action.modal_endpoint if action.modal_endpoint else "/projects/" ~ project.name ~ "/deployments/" ~ deployment.name ~ "/actions/" ~ (action | deployment_action_key) ~ "/confirm" %}
+                    {% set titel = action.modal_title if action.modal_endpoint else action.label %}
+                    {% set dienstactie = "openServiceModal('" ~ doel ~ "', '" ~ titel ~ "')" %}
+                    <c-button type="{{ action.kind }}" size="sm" show-icon="before" icon="{{ action.icon }}"
+                              label="{{ action.label }}" :attrs="{'onclick': dienstactie}" />
+                    {% endfor %}
+                </c-cluster>
+            </c-stack>
+        </c-card>
+    </div>
+    {% endfor %}
+{% endif %}

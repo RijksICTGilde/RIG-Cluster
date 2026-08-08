@@ -32,7 +32,7 @@
 
                     <c-textarea-field id="input_text" name="input_text" label="Input Text" rows="8" placeholder="Enter text here..."/>
 
-                    <c-button label="Process" @/>
+                    {% set lotc_onclick_1 %}handleSubmit(event){% endset %}<c-button label="Process"/>
                 </c-layout-flow>
             </form>
         </c-card>

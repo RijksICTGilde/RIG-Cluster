@@ -5,7 +5,7 @@
 <div id="edit-section-modal" class="edit-section-modal" role="dialog" aria-modal="true" aria-labelledby="edit-section-title" data-project-name="{{ project.name }}">
     <div class="edit-section-header">
         <c-heading type="h2"><c-icon icon="bewerken" size="lg" color="donkerblauw"/><span id="edit-section-title-text"></span></c-heading>
-        <c-button size="sm" label="Sluiten" show-icon="before" icon="kruis" class="edit-modal-close-btn" @/>
+        {% set lotc_onclick_1 %}closeEditModal(){% endset %}<c-button size="sm" label="Sluiten" show-icon="before" icon="kruis" class="edit-modal-close-btn"/>
     </div>
     <div id="edit-section-error" class="edit-section-error is-hidden"></div>
     <div id="edit-section-inner">
@@ -15,8 +15,8 @@
             </div>
         </div>
         <div class="edit-section-actions" id="edit-section-actions">
-            <c-button type="button" label="Annuleren" @/>
-            <c-button type="button" label="Opslaan" @/>
+            {% set lotc_onclick_2 %}closeEditModal(){% endset %}<c-button type="button" label="Annuleren"/>
+            {% set lotc_onclick_3 %}submitEditModal(){% endset %}<c-button type="button" label="Opslaan"/>
         </div>
     </div>
 </div>

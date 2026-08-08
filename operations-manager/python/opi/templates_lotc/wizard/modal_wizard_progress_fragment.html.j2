@@ -36,13 +36,13 @@
 
     {% if status == "completed" %}
     <div class="edit-progress-actions">
-        <c-button label="Bekijk volledige voortgang" @/>
-        <c-button label="Ok" @/>
+        {% set lotc_onclick_1 %}window.open('/projects/progress/{{ task_id }}', '_blank'){% endset %}<c-button label="Bekijk volledige voortgang"/>
+        {% set lotc_onclick_2 %}closeEditModalAndReload(){% endset %}<c-button label="Ok"/>
     </div>
     {% elif status == "failed" %}
     <div class="edit-progress-actions">
-        <c-button label="Bekijk details" @/>
-        <c-button label="Sluiten" @/>
+        {% set lotc_onclick_3 %}window.open('/projects/progress/{{ task_id }}', '_blank'){% endset %}<c-button label="Bekijk details"/>
+        {% set lotc_onclick_4 %}closeEditModalAndReload(){% endset %}<c-button label="Sluiten"/>
     </div>
     {% endif %}
 </div>

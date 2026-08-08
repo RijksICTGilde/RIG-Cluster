@@ -71,7 +71,17 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
     <c-icon icon="{{ icon|e }}" color="{{ color|e }}" size="{{ icon_size|e }}"/>
     <span class="service-card__title">{{ name|e }}</span>
     {% if help_template %}
-    <c-icon icon="vraagteken" size="xl" color="hemelblauw" class="service-card__help-btn" @/>
+    {# De vraagtekenknop opent de hulpdialoog van deze dienst. De aanroep gaat via een
+       {% raw %}{% set %}{% endraw %}-blok en :attrs: <c-icon-button> laat geen onclick toe, en een genest
+       aanhalingsteken binnen :attrs leest de voorbewerker als het einde van het attribuut.
+       stopPropagation staat er omdat de kaart eronder zelf ook een klik afhandelt. #}
+    {% set hulp_js %}event.stopPropagation(); openServiceHelp('{{ help_template|e }}'){% endset %}
+    <c-icon-button
+        icon="question-circle"
+        accessible-label="Uitleg over deze dienst"
+        variant="neutral-transparent"
+        size="sm"
+        :attrs="{'onclick': hulp_js, 'class': 'service-card__help-btn'}" />
     {% endif %}
 </div>
 <p class="service-card__description">{{ description|e }}</p>

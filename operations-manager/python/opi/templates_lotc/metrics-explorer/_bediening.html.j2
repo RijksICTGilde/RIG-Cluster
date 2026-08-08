@@ -24,7 +24,7 @@
 
         {# Show button #}
         <div class="metrics-controls__field metrics-controls__field--button">
-            <c-button label="Tonen in Prometheus" disabled @/>
+            {% set lotc_onclick_1 %}showMetric(){% endset %}<c-button label="Tonen in Prometheus" disabled/>
         </div>
     </div>
 
