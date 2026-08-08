@@ -1,0 +1,121 @@
+{#
+  Foutmeldingen en gebruikersfeedback, herontworpen in bg-vorm.
+
+  Dit is de laag waar de omzetting het meeste oplevert, en waar hij vandaag het minst ver
+  is. Onze meldingen en dialogen zijn met de hand gebouwd uit eigen klassen:
+
+      <div class="edit-section-backdrop"></div>
+      <div class="edit-section-modal" role="dialog" aria-modal="true">
+        <div class="edit-section-header"> ... </div>
+        <div class="edit-section-error is-hidden"></div>
+
+  Dat werkt, maar het is precies de omlijsting die bij een themawissel achterblijft: de
+  pagina wordt NLDD, de dialoog blijft van ons. En het is de laag waar dat het meest
+  opvalt, want een foutmelding is het moment waarop iemand oplet.
+
+  Hier staat wat het thema er zelf voor heeft. Elke variant staat er met de situatie
+  erbij waarin wij hem gebruiken, zodat dit ook een keuzehulp is en niet alleen een
+  etalage.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patronen.html.j2" import panel, page_head %}
+
+{% block page_title %}Meldingen en dialogen - LOTC-bouwlijn{% endblock %}
+
+{% block content %}
+    {{ page_head("Meldingen en dialogen", "Wat het thema zelf levert voor fouten, waarschuwingen en bevestigingen.") }}
+
+    {% call panel("Meldingen op een pagina", "exclamation-triangle") %}
+        <c-paragraph size="sm">
+            Onze <c-b>c-alert</c-b> valt onder NLDD op een banner. Wij gebruiken drie
+            soorten: fout, waarschuwing en informatie.
+        </c-paragraph>
+        <c-alert type="error" heading="Opslaan mislukt">
+            Het projectbestand kon niet worden weggeschreven. Probeer het opnieuw, of neem
+            contact op als het blijft misgaan.
+        </c-alert>
+        <c-alert type="warning" heading="Nog niet uitgerold">
+            Er staan twee wijzigingen klaar die nog niet naar het cluster zijn gebracht.
+        </c-alert>
+        <c-alert type="info" heading="Metrics niet beschikbaar">
+            Prometheus is niet verbonden, dus het verbruik kan niet worden getoond.
+        </c-alert>
+    {% endcall %}
+
+    {% call panel("Bevestiging voor een onomkeerbare actie", "exclamation-triangle") %}
+        <c-paragraph size="sm">
+            Vandaag een eigen dialoog met eigen klassen; hier
+            <c-b>c-modal-dialog</c-b> met variant <c-b>destructive</c-b>. Die zet zelf de
+            rol, de aria-koppeling en het gedrag bij Escape, wat onze versie met de hand
+            moest doen.
+        </c-paragraph>
+        <c-modal-dialog
+            variant="destructive"
+            icon="exclamation-triangle"
+            text="Project verwijderen?"
+            supporting-text="Alles van dit project wordt verwijderd: deployments, database en opslag. Dit kan niet ongedaan worden gemaakt."
+            accessible-label="Project verwijderen bevestigen">
+            <c-action-group align="end">
+                <c-button type="secondary" label="Annuleren" />
+                <c-button type="primary" color="destructive" label="Verwijderen" />
+            </c-action-group>
+        </c-modal-dialog>
+
+    {% endcall %}
+
+    {% call panel("Een fout binnen een dialoog", "exclamation-triangle") %}
+        <c-paragraph size="sm">
+            Als een actie in de dialoog zelf misgaat, hoort de melding daar te staan en
+            niet op de pagina erachter. Wij hebben daar nu een verborgen div voor;
+            <c-b>c-inline-dialog</c-b> is de tegenhanger.
+        </c-paragraph>
+        <c-inline-dialog
+            variant="error"
+            icon="exclamation-triangle"
+            text="Verwijderen mislukt"
+            supporting-text="De deployment draait nog. Stop hem eerst, of kies Forceren." />
+    {% endcall %}
+
+    {% call panel("Terugkoppeling na een actie", "check-mark-circle") %}
+        <c-paragraph size="sm">
+            Kort en weg: bevestigen dat iets gelukt is, zonder de gebruiker te
+            onderbreken.
+        </c-paragraph>
+        <c-notification>
+            <c-notification-item
+                icon="check-mark-circle"
+                title="Project opgeslagen">
+                De wijzigingen staan in git en worden uitgerold.
+            </c-notification-item>
+            <c-notification-item
+                icon="exclamation-triangle"
+                title="Uitrollen wacht">
+                ArgoCD is niet bereikbaar; er wordt opnieuw geprobeerd.
+            </c-notification-item>
+        </c-notification>
+    {% endcall %}
+
+    {% call panel("Fouten bij een veld", "pencil-on-square") %}
+        <c-paragraph size="sm">
+            De belangrijkste winst van de omzetting zit hier, en hij is niet zichtbaar:
+            lotc-forms koppelt de foutmelding met aria-describedby aan het invoerveld.
+            Onze eigen velden doen dat niet, dus wie een schermlezer gebruikt hoort nu wel
+            het label maar niet wat er misging.
+        </c-paragraph>
+        <c-stack gap="md">
+            <c-text-input-field
+                id="voorbeeld-email"
+                name="voorbeeld-email"
+                label="E-mailadres beheerder"
+                value="geen-adres"
+                error="Dit is geen geldig e-mailadres." />
+            <c-text-input-field
+                id="voorbeeld-naam"
+                name="voorbeeld-naam"
+                label="Projectnaam"
+                value="Mijn Project"
+                help="Alleen kleine letters, cijfers en streepjes."
+                error="Hoofdletters zijn niet toegestaan." />
+        </c-stack>
+    {% endcall %}
+{% endblock %}
