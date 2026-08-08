@@ -34,6 +34,7 @@ ROOS_TO_NLDD_ICONS = {
     "applicatie": "rectangle-stack",
     "beveiligingsscan": "shield-check-mark",
     "bewerken": "pencil-on-square",
+    "envelop": "envelope",
     "groep-3-personen": "person-2",
     "kalender": "calendar",
     "computercode": "chevron-left-forward-slash-chevron-right",
@@ -44,11 +45,15 @@ ROOS_TO_NLDD_ICONS = {
     "grafiek": "chart-x-y-axis-line",
     "informatie-op-internet": "globe",
     "instellingen": "gear",
+    # netwerk heeft geen eigen icoon; link is het dichtstbijzijnde dat het idee van
+    # verbinding draagt.
+    "netwerk": "link",
     "klok": "timer",
     "map": "folder-stack",
     "pijl-naar-rechts": "chevron-right",
     "publicatie": "file-text",
     "puzzel": "puzzle-piece",
+    "schild-met-vinkje-erop": "shield-check-mark",
     "server": "cylinder-split",
     "sleutel": "lock-closed",
     "user": "person",
@@ -56,6 +61,7 @@ ROOS_TO_NLDD_ICONS = {
     "wachtend-persoon": "person",
     "waarschuwing": "exclamation-triangle",
     "wereldbol": "globe",
+    "zandloper": "timer",
     "zoek": "search",
 }
 

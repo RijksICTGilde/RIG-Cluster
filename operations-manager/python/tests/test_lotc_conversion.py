@@ -70,14 +70,19 @@ def test_the_shell_and_its_pages_compile() -> None:
     assert not broken, f"paginas op de LOTC-schil die niet compileren: {broken}"
 
 
-def test_our_own_components_are_registered() -> None:
-    """Wat ZAD zelf levert zolang LOTC het niet heeft, is aanroepbaar."""
+def test_secret_field_comes_from_lotc() -> None:
+    """c-secret-field wordt door LOTC zelf geleverd, niet meer door ons.
+
+    Wij hadden hier een tijdelijke eigen versie omdat LOTC hem nog niet had. Deze test
+    houdt vast dat de opruiming klopt: de component bestaat, rendert niet als placeholder,
+    en komt niet uit onze eigen map.
+    """
     pytest.importorskip("lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd")
     from opi.core.templates_lotc import templates_lotc
 
     rendered = templates_lotc.env.from_string('<c-secret-field value="geheim" />').render()
-    assert "zad-secret-field" in rendered
-    assert "lotc-unimplemented" not in rendered
+    assert "lotc-unimplemented" not in rendered, "c-secret-field is niet geimplementeerd"
+    assert "zad-secret-field" not in rendered, "er staat nog een eigen versie in de weg"
     assert "geheim" in rendered
 
 

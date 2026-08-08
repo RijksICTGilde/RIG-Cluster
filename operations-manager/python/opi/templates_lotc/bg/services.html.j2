@@ -25,55 +25,17 @@
   komt het uit het thema.
 #}
 {% extends "base_lotc.html.j2" %}
-{% from "bg/_patterns.html.j2" import panel, page_head, info %}
+{% from "bg/_patterns.html.j2" import panel, page_head, info, service_card %}
 
 {% block page_title %}Diensten - Self Service Portal{% endblock %}
 
 {% block content %}
     {{ page_head("Diensten", "Platformdiensten die je project kan afnemen. Het platform levert en beheert ze.") }}
 
-    <c-auto-grid min="320px" gap="md">
+    <c-columns columns="1" lg="2" gap="md">
         {% for service in services %}
-            <c-catalog-card
-                title="{{ service.label }}"
-                subtitle="{{ service.summary }}"
-                status="{{ service.status_label }}"
-                status-type="{{ service.status_type }}">
-                <c-stack gap="sm">
-                    <c-cluster gap="sm" align="center">
-                        <c-icon icon="{{ service.icon }}" color="{{ service.color }}" size="lg" />
-                        {{ info(service.help) }}
-                    </c-cluster>
-                    <c-detail-list>
-                        <c-detail-item
-                            label="Afgenomen door"
-                            value="{{ service.used_by | length }} project{{ 'en' if service.used_by | length != 1 else '' }}" />
-                    </c-detail-list>
-                    {% if service.used_by %}
-                        <c-cluster gap="sm">
-                            {% for project in service.used_by %}
-                                <c-chip>{{ project }}</c-chip>
-                            {% endfor %}
-                        </c-cluster>
-                    {% endif %}
-                </c-stack>
-            </c-catalog-card>
+            {{ service_card(service) }}
         {% endfor %}
-    </c-auto-grid>
+    </c-columns>
 
-    {% call panel("Over kleur", "info-circle", info_text="Merkkleur helpt een dienst herkennen; semantische kleur zegt hoe het ermee gaat. Door elkaar halen maakt allebei onbetrouwbaar.") %}
-        <c-paragraph>
-            De gekleurde iconen hierboven zijn merkkleuren: ze helpen een dienst herkennen.
-            Het label rechtsboven op elke kaart is semantisch en zegt hoe het met de dienst
-            gaat. Die twee blijven gescheiden, anders betekent groen op de ene plek een
-            dienst en op de andere plek "in orde".
-        </c-paragraph>
-        <c-cluster gap="sm">
-            <c-tag type="success" label="beschikbaar" />
-            <c-tag type="warning" label="beperkt" />
-            <c-tag type="error" label="storing" />
-            <c-tag type="info" label="nieuw" />
-            <c-tag type="default" label="standaard" />
-        </c-cluster>
-    {% endcall %}
 {% endblock %}
