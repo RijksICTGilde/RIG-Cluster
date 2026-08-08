@@ -1,5 +1,5 @@
 {#
-  Basistemplate voor de LOTC-bouwlijn.
+  Basistemplate voor de LOTC-bouwlijn, in de opzet van bg.rijks.app.
 
   De tegenhanger van templates/base.html.j2, maar gerenderd door de LOTC-omgeving
   (opi/core/templates_lotc.py) in plaats van door jinja-roos. Zolang de omzetting
@@ -9,6 +9,20 @@
   template uitbreidt wordt door de LOTC-omgeving gerenderd en mag dus uitsluitend
   LOTC-componenten gebruiken. Mengen binnen een keten kan niet - beide systemen
   eisen alle <c-*>-tags op.
+
+  WAAROM DE SCHIL IN EEN BESTAND STAAT EN NIET IN DEELTEMPLATES
+  Een {% include %} van een deeltemplate dat zelf componenten gebruikt, breekt zodra
+  dit template <template slot=...> gebruikt: de ingevoegde partial verliest dan de
+  renderers voor zijn eigen componenten ("'_lotc_jinja_menu_item' is undefined").
+  Gemeten op LOTC 26ab110, gemeld aan het LOTC-project. Tot dat verholpen is staat de
+  markup van de schil hier bij elkaar.
+
+  Dat is geen verlies aan compartimentering, want de markup is niet waar de keuzes
+  zitten. De INDELING staat in opi/web/navigation_lotc.py: welke items in de hulpbalk
+  horen en welke in de zijkolom, hoe ze gegroepeerd zijn, en hoe onze ROOS-iconen op
+  de NLDD-woordenschat afbeelden. Wie de opzet wil verschuiven - en dat gaat gebeuren,
+  bg.rijks.app is ons voorbeeld en nog in beweging - verandert dat bestand en raakt
+  geen template aan.
 
   Drie verschillen met de roos-schil die bij het omzetten steeds terugkomen:
     - attributen zijn kebab-case (body-class, max-width), niet camelCase
@@ -20,52 +34,61 @@
 
 {% set page_title_value %}{% block page_title %}Self Service Portal{% endblock %}{% endset %}
 
-<c-page title="{{ page_title_value }}" lang="nl" body-class="nldd-theme">
+<c-page title="{{ page_title_value }}" lang="nl">
 
-    <c-app-shell>
+    {# width is de breedte van de zijkolom; bg gebruikt 16rem. #}
+    <c-app-shell width="16rem">
 
-        <c-header
-            text="Zelfservice voor Applicatie Deployment"
-            subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
-            link="/" />
+        <template slot="header">
+            <c-header
+                text="Zelfservice voor Applicatie Deployment"
+                subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
+                link="/">
 
-        {# Waar roos :items="menu_items" kreeg, bouwt LOTC het menu uit kinderen op.
-           De itemvorm uit opi/web/menu.py blijft ongewijzigd; alleen de weergave
-           verandert, zodat routes niets hoeven te weten van welke schil ze bedienen. #}
-        <c-menu type="bar" size="md" aria-label="Hoofdnavigatie">
-            {% for item in menu_items %}
-                {# Geen {% if %} binnen een componenttag: de voorbewerker leest dat als
-                   een tweede attribuut. Een voorwaarde hoort in de expressie. #}
-                <c-menu-item
-                    label="{{ item.label }}"
-                    href="{{ item.link }}"
-                    icon="{{ item.icon | default('', true) }}" />
-            {% endfor %}
-        </c-menu>
+                {# De balk in de header is hier GEEN hoofdnavigatie meer maar een
+                   hulpbalk (account, in- en uitloggen), net als bij bg. De
+                   hoofdnavigatie staat in de zijkolom hieronder. #}
+                <c-menu type="bar" slot="utility" aria-label="Hulplinks">
+                    {% for item in navigation.utility %}
+                        {# Geen {% if %} binnen een componenttag: de voorbewerker leest
+                           dat als een tweede attribuut. Een voorwaarde hoort in de
+                           expressie. #}
+                        <c-menu-item
+                            label="{{ item.label }}"
+                            href="{{ item.link }}"
+                            icon="{{ item.icon | default('', true) }}" />
+                    {% endfor %}
+                </c-menu>
+            </c-header>
+        </template>
 
-        <main>
-            {% block content %}
-                <c-layout-flow gap="lg">
-                    <c-heading type="h1" label="Welkom bij het Self Service Portal" />
-                    <c-paragraph>Gebruik de navigatie om door de verschillende secties te bladeren.</c-paragraph>
-                </c-layout-flow>
-            {% endblock %}
-        </main>
+        <template slot="sidebar">
+            {# <c-sidenav-group> is een BROER van de items die eronder horen, geen
+               ouder die ze omvat. De groepering zit dus in de volgorde, en daarom
+               levert navigation_lotc de zijkolom al als (kopje, items)-paren in
+               weergavevolgorde. #}
+            <c-sidenav>
+                {% for label, items in navigation.sidebar %}
+                    {% if label %}
+                        <c-sidenav-group label="{{ label }}" />
+                    {% endif %}
+                    {% for item in items %}
+                        <c-sidenav-item
+                            label="{{ item.label }}"
+                            href="{{ item.link }}"
+                            icon="{{ item.icon | default('', true) }}"
+                            :active="item.active" />
+                    {% endfor %}
+                {% endfor %}
+            </c-sidenav>
+        </template>
 
-        {# Versieregel, gelijk aan de roos-schil: leest live uit opi/version.json. #}
-        {% set vi = version_info() %}
-        {% set version_label = 'ZAD ' + vi.version
-            + (' @ ' + vi.branch if vi.branch else '')
-            + (' *' if vi.dirty else '')
-            + (' (' + vi.build_date + ')' if vi.build_date else '') %}
-        <c-footer max-width="lg">
-            <c-menu aria-label="Platform">
-                <c-menu-item label="Over het platform" href="/about" />
-                <c-menu-item label="Architectuur" href="/architecture" />
-                <c-menu-item label="API Referentie" href="/api" />
-            </c-menu>
-            <c-paragraph>{{ version_label }}</c-paragraph>
-        </c-footer>
+        {% block content %}
+            <c-layout-flow gap="lg">
+                <c-heading type="h1" size="2" label="Welkom bij het Self Service Portal" />
+                <c-paragraph>Gebruik de navigatie om door de verschillende secties te bladeren.</c-paragraph>
+            </c-layout-flow>
+        {% endblock %}
 
         {% block additional_styles %}{% endblock %}
         {% block additional_scripts %}{% endblock %}

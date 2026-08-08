@@ -13,7 +13,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.templates_lotc import templates_lotc
-from opi.web.menu import get_menu_items
+from opi.web.navigation_lotc import get_navigation
 
 router = APIRouter(prefix="/lotc", tags=["lotc"])
 
@@ -21,11 +21,16 @@ router = APIRouter(prefix="/lotc", tags=["lotc"])
 def _context(request: Request, **extra: object) -> dict[str, object]:
     """Basiscontext voor een LOTC-pagina.
 
-    Dezelfde menu-items als de roos-schil: opi/web/menu.py blijft de ene bron. De
-    omzetting gaat over hoe een menu getoond wordt, niet over wat erin staat.
+    Dezelfde menu-items als de roos-schil: opi/web/menu.py blijft de ene bron voor
+    welke links er zijn en wie ze mag zien. navigation_lotc herschikt ze alleen naar
+    de bg-opzet, zodat de omzetting over weergave gaat en niet over inhoud.
     """
     user = request.session.get("user") if hasattr(request, "session") else None
-    return {"request": request, "menu_items": get_menu_items(user), **extra}
+    return {
+        "request": request,
+        "navigation": get_navigation(user, current_path=request.url.path.removeprefix("/lotc")),
+        **extra,
+    }
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
