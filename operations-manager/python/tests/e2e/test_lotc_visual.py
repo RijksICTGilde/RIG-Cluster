@@ -184,17 +184,41 @@ def test_form_layer_screenshot(app_server: str, page: Page) -> None:
     assert page.locator("nldd-form-field-help-text").count() > 0
     assert page.locator("nldd-form-field-error-text").count() > 0
 
-    # Twee dingen die alleen in een BROWSER opvallen, en allebei kwamen ze hier boven:
+    # Twee dingen die alleen in een BROWSER opvielen, en allebei kwamen ze hier boven:
+    # een keuzelijst zonder opties, en een aanvinkvakje dat een leeg <div> was. Beide
+    # zijn inmiddels in LOTC zelf verholpen.
     #
-    # De keuzelijst moet opties hebben. c-option rendert onder NLDD een <nldd-menu-item>,
-    # en c-select-field zet zijn kinderen in een native <select>; een browser gooit alles
-    # weg wat daar geen <option> is. De HTML zag er goed uit, de lijst was leeg.
-    options = page.locator("select option")
-    assert options.count() > 0, "de keuzelijst heeft geen opties in de DOM"
+    # De asserties toetsen daarom de UITKOMST en niet de opbouw. Dat is geen luiheid maar
+    # de les uit die vangst: de eerste versie hiervan controleerde op een native <select>
+    # met <option>-kinderen, en faalde zodra NLDD - terecht - naar een combo-box ging.
+    # Een test die aan een implementatievorm hangt, gaat kapot bij een verbetering.
+    assert page.get_by_text("ODC-Noord productie").count() > 0, "de gekozen optie van de keuzelijst is nergens te zien"
 
-    # En het aanvinkvakje moet een echt invoerelement zijn. c-checkbox-field rendert
-    # onder NLDD een leeg <div> zonder besturingselement.
     checkbox = page.locator("nldd-checkbox-field, input[type=checkbox]")
     assert checkbox.count() > 0, "er staat geen echt aanvinkvakje op de pagina"
 
     page.screenshot(path=f"{SCREENSHOT_DIR}/formulierlaag.png", full_page=True, animations="disabled")
+
+
+def test_redesigned_dashboard_screenshot(app_server: str, page: Page) -> None:
+    """Leg het herontworpen dashboard vast, naast de vertaalde versie.
+
+    De omzetter levert een getrouwe kopie van onze bestaande markup, en die was nooit in
+    bg-vorm gebouwd. Deze pagina laat zien wat er met dezelfde componenten wel kan:
+    kerncijfers als tegels, inhoud in kaarten met een kopregel, twee kolommen. Het
+    verschil hoort zichtbaar te zijn en niet beschreven.
+    """
+    page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
+    response = page.goto(f"{app_server}/lotc/dashboard-bg")
+    assert response is not None
+    assert response.ok
+
+    _wait_for_nldd(page)
+
+    unimplemented = page.locator(".lotc-unimplemented")
+    assert unimplemented.count() == 0, (
+        f"herontworpen dashboard bevat niet-geimplementeerde componenten: "
+        f"{unimplemented.evaluate_all('els => els.map(e => e.dataset.lotcComponent)')}"
+    )
+
+    page.screenshot(path=f"{SCREENSHOT_DIR}/dashboard-bg.png", full_page=True, animations="disabled")

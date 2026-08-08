@@ -21,6 +21,9 @@ from opi.web.navigation_lotc import get_navigation
 
 router = APIRouter(prefix="/lotc", tags=["lotc"])
 
+#: De gebruiker die de proefopstelling toont als er niemand is ingelogd.
+PREVIEW_USER = {"email": "beheerder@voorbeeld.nl", "name": "Voorbeeldbeheerder"}
+
 
 def _previewable_pages() -> dict[str, str]:
     """De omgezette pagina's die zonder paginadata te bekijken zijn.
@@ -54,6 +57,11 @@ def _context(request: Request, **extra: object) -> dict[str, object]:
     de bg-opzet, zodat de omzetting over weergave gaat en niet over inhoud.
     """
     user = request.session.get("user") if hasattr(request, "session") else None
+    # Zonder gebruiker toont het menu alleen "Inloggen", en dan is de hulplinkbalk in de
+    # header zo goed als leeg. Voor een proefopstelling die bedoeld is om de VORMGEVING
+    # te beoordelen is dat de minst leerzame stand, dus valt hij terug op een
+    # voorbeeldgebruiker. Zichtbaar een voorbeeld, net als de projectbestanden.
+    user = user or PREVIEW_USER
     return {
         "request": request,
         "navigation": get_navigation(user, current_path=request.url.path.removeprefix("/lotc")),
@@ -105,4 +113,83 @@ async def lotc_form_preview(request: Request) -> HTMLResponse:
         request,
         "form-preview.html.j2",
         _context(request, rendered_fields=rendered_fields),
+    )
+
+
+# Voorbeelddata voor het herontworpen dashboard. Uit de voorbeeldprojecten, zodat het
+# beeld klopt met wat een echte instantie zou tonen en er geen tweede verzonnen
+# werkelijkheid naast staat.
+_ACTIVITY = [
+    {
+        "icon": "plus",
+        "actor": "Voorbeeldbeheerder",
+        "action": "project aangemaakt",
+        "resource": "voorbeeld-klein",
+        "at": "vandaag 09:12",
+    },
+    {
+        "icon": "arrow-up-arrow-down",
+        "actor": "Voorbeeldontwikkelaar",
+        "action": "deployment uitgerold",
+        "resource": "voorbeeld-volledig / productie",
+        "at": "gisteren 16:40",
+    },
+    {
+        "icon": "lock-closed",
+        "actor": "Voorbeeldbeheerder",
+        "action": "sleutel vernieuwd",
+        "resource": "voorbeeld-volledig / api-key",
+        "at": "gisteren 11:05",
+    },
+]
+
+
+@router.get("/dashboard-bg", response_class=HTMLResponse, include_in_schema=False)
+async def lotc_dashboard_bg(request: Request) -> HTMLResponse:
+    """Het dashboard zoals bg.rijks.app het zou opbouwen.
+
+    Naast de vertaalde versie op /lotc/pagina/dashboard, zodat het verschil tussen een
+    omzetting en een herontwerp te zien is in plaats van te beschrijven.
+    """
+    from opi.web.lotc_fixtures import available_projects, build_project_details, load_project_data
+
+    projects = []
+    for name in available_projects():
+        data = load_project_data(name)
+        if data is None:
+            continue
+        details = build_project_details(data)
+        projects.append(
+            {
+                "name": details["name"],
+                "display_name": details["display_name"],
+                "description": details["description"],
+                "deployment_count": len(details["deployments"]),
+                "services": [service["value"] for service in details["services"]],
+            }
+        )
+
+    tiles = [
+        {
+            "icon": "rectangle-stack",
+            "value": str(len(projects)),
+            "label": "Projecten",
+            "sub": "voorbeelddata",
+            "href": "/projects",
+        },
+        {
+            "icon": "arrow-up-arrow-down",
+            "value": str(sum(p["deployment_count"] for p in projects)),
+            "label": "Deployments",
+            "sub": "over alle clusters",
+            "href": None,
+        },
+        {"icon": "person-2", "value": "2", "label": "Gebruikers", "sub": "1 beheerder", "href": "/admin/users"},
+        {"icon": "cylinder-split", "value": "3", "label": "Diensten", "sub": "in gebruik", "href": "/services"},
+    ]
+
+    return templates_lotc.TemplateResponse(
+        request,
+        "dashboard-bg.html.j2",
+        _context(request, tiles=tiles, projects=projects, activity=_ACTIVITY),
     )
