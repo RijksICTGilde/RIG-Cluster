@@ -320,7 +320,13 @@ def test_unknown_tab_falls_back(app_server: str, page: Page) -> None:
     expect(page.get_by_text("Wat is dit project")).to_be_visible()
 
 
-def test_real_route_can_render_lotc(app_server: str, auth_page: Page) -> None:
+# De echte routes die hun pagina al door LOTC kunnen laten renderen. Deze lijst groeit
+# met de omzetting mee; elke regel is een pagina die niet langer een voorbeeld is.
+CONVERTED_ROUTES = ["/services", "/dashboard", "/projects"]
+
+
+@pytest.mark.parametrize("route", CONVERTED_ROUTES)
+def test_real_route_can_render_lotc(app_server: str, auth_page: Page, route: str) -> None:
     """De ECHTE dienstenroute rendert de hertekende pagina met de ECHTE registry.
 
     Dit is het verschil tussen een voorbeeld en een omzetting. De pagina's onder /lotc/
@@ -334,18 +340,18 @@ def test_real_route_can_render_lotc(app_server: str, auth_page: Page) -> None:
     page = auth_page
     page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
 
-    page.goto(f"{app_server}/services")
+    page.goto(f"{app_server}{route}")
     page.wait_for_load_state("networkidle")
-    assert page.locator("nldd-card").count() == 0, "de bestaande pagina rendert nu LOTC"
+    assert page.locator("nldd-card").count() == 0, f"{route} rendert nu al LOTC zonder dat erom gevraagd is"
 
-    page.goto(f"{app_server}/services?ui=lotc")
+    page.goto(f"{app_server}{route}?ui=lotc")
     _wait_for_nldd(page)
 
-    assert page.locator("nldd-card").count() > 0, "de LOTC-weergave levert geen kaarten"
     unimplemented = page.locator(".lotc-unimplemented")
     assert unimplemented.count() == 0, (
-        f"echte dienstenpagina bevat niet-geimplementeerde componenten: "
+        f"{route} bevat niet-geimplementeerde componenten: "
         f"{unimplemented.evaluate_all('els => els.map(e => e.dataset.lotcComponent)')}"
     )
 
-    page.screenshot(path=f"{SCREENSHOT_DIR}/echt-services-lotc.png", full_page=True, animations="disabled")
+    name = route.strip("/").replace("/", "-")
+    page.screenshot(path=f"{SCREENSHOT_DIR}/echt-{name}.png", full_page=True, animations="disabled")

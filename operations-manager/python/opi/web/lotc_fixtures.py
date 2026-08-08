@@ -129,33 +129,6 @@ def build_details_context(name: str) -> dict[str, Any] | None:
     }
 
 
-# Activiteit voor het dashboard. Verzonnen, maar consistent met de voorbeeldprojecten:
-# een tweede werkelijkheid naast de fixtures zou het beeld juist onbetrouwbaar maken.
-ACTIVITY = [
-    {
-        "icon": "plus",
-        "actor": "Voorbeeldbeheerder",
-        "action": "project aangemaakt",
-        "resource": "voorbeeld-klein",
-        "at": "vandaag 09:12",
-    },
-    {
-        "icon": "arrow-up-arrow-down",
-        "actor": "Voorbeeldontwikkelaar",
-        "action": "deployment uitgerold",
-        "resource": "voorbeeld-volledig / productie",
-        "at": "gisteren 16:40",
-    },
-    {
-        "icon": "lock-closed",
-        "actor": "Voorbeeldbeheerder",
-        "action": "sleutel vernieuwd",
-        "resource": "voorbeeld-volledig / api-key",
-        "at": "gisteren 11:05",
-    },
-]
-
-
 def all_projects() -> list[dict[str, Any]]:
     """Elk voorbeeldproject in de vorm die de overzichtspagina's gebruiken."""
     projects: list[dict[str, Any]] = []
@@ -223,7 +196,10 @@ def page_data(slug: str) -> dict[str, Any]:
                 },
             ],
             "projects": projects,
-            "activity": ACTIVITY,
+            # Dezelfde vorm als de echte route levert (opi/web/lotc_switch.py). Een
+            # proefopstelling die een ANDERE vorm voedt dan de applicatie zou het
+            # sjabloon laten werken op iets dat in productie nooit voorkomt.
+            "health": [{"label": "Healthy", "count": len(projects)}],
         }
 
     if slug in ("projects", "users"):
