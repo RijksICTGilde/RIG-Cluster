@@ -1163,9 +1163,13 @@ async def dashboard(request: Request):
             health_counts[p.get("health", "Unknown")] += 1
         health_banner = _dashboard_health_banner(health_counts)
 
-        return templates.TemplateResponse(
-            "dashboard.html.j2",
-            {
+        from opi.web.lotc_switch import build_lotc_dashboard, render
+
+        return render(
+            request,
+            roos="dashboard.html.j2",
+            lotc="bg/dashboard.html.j2",
+            context={
                 "request": request,
                 "menu_items": get_menu_items(user),
                 "active_projects": len(user_projects),
@@ -1179,6 +1183,16 @@ async def dashboard(request: Request):
                 "health_counts": health_counts,
                 "health_banner": health_banner,
                 "total_cpu_usage": total_cpu_usage,
+                **build_lotc_dashboard(
+                    request,
+                    user=user,
+                    active_projects=len(user_projects),
+                    total_deployments=total_deployments,
+                    total_users=len(unique_users),
+                    pod_count=pod_count,
+                    projects=user_projects,
+                    health_counts=health_counts,
+                ),
             },
         )
 
@@ -2801,9 +2815,19 @@ async def projects_overview(request: Request):
         # Sort projects by name
         user_projects.sort(key=lambda p: p["display_name"] or p["name"])
 
-        return templates.TemplateResponse(
-            "projects-overview.html.j2",
-            {"request": request, "menu_items": get_menu_items(user), "projects": user_projects, "user": user},
+        from opi.web.lotc_switch import build_lotc_projects, render
+
+        return render(
+            request,
+            roos="projects-overview.html.j2",
+            lotc="bg/projects.html.j2",
+            context={
+                "request": request,
+                "menu_items": get_menu_items(user),
+                "projects": user_projects,
+                "user": user,
+                **build_lotc_projects(request, user=user, projects=user_projects),
+            },
         )
 
     except Exception as e:
