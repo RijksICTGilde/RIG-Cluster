@@ -51,7 +51,13 @@ secrets-overview-*.yaml
 /.claude/worktrees/
 
 # E2E test screenshots (generated artifacts)
-/operations-manager/python/tests/e2e/screenshots/
+# Let op de /* in plaats van /: git daalt niet af in een uitgesloten MAP, dus een
+# uitzondering erbinnen zou nooit werken. Op bestandsniveau uitsluiten kan dat wel.
+/operations-manager/python/tests/e2e/screenshots/*
+# Uitzondering: de screenshots van de LOTC-bouwlijn zijn geen wegwerpartefact maar het
+# resultaat waar de omzetting op beoordeeld wordt. Ze horen bij de PR, en zonder ze in
+# de repo kan niemand zien wat er gebouwd is zonder eerst de tests te draaien.
+!/operations-manager/python/tests/e2e/screenshots/lotc/
 /operations-manager/docs/
 /operations-manager/python/tests/e2e/artifacts/
 /.env
