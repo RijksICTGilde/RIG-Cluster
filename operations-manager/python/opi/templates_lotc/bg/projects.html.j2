@@ -1,0 +1,65 @@
+{#
+  Projectenoverzicht, herontworpen in bg-vorm.
+
+  In de vertaalde versie is dit een rij kaarten met tekst erin. bg zou het als catalogus
+  opzetten: een filterbalk boven een raster van kaarten die elk hun eigen kerngegevens
+  dragen. Dat is hier overgenomen met c-filter-bar en c-catalog-card.
+
+  Het componentenplan noemde deze pagina als eerste omzetkandidaat, en niet toevallig:
+  hij toont veel en doet weinig, dus het verschil tussen vertalen en hertekenen is er
+  goed te zien zonder dat er gedrag op het spel staat.
+#}
+{% extends "base_lotc.html.j2" %}
+
+{% block page_title %}Projecten - Self Service Portal{% endblock %}
+
+{% block content %}
+    <c-stack gap="0.25rem">
+        <c-heading type="h1" size="3" label="Projecten" />
+        <c-paragraph>De projecten waar u toegang toe heeft.</c-paragraph>
+    </c-stack>
+
+    <c-cluster gap="0.75rem">
+        <c-button type="primary" label="Nieuw project" icon="plus" show-icon="before" href="/forms/wizard/restart" />
+    </c-cluster>
+
+    {# De filterbalk hoort bij de catalogusvorm: bij twee projecten is hij overbodig, bij
+       vijftig onmisbaar. Hij staat er omdat deze pagina laat zien hoe de vorm werkt, niet
+       omdat de voorbeelddata erom vraagt. #}
+    <c-filter-bar>
+        <c-filter-select label="Cluster">
+            <c-option value="" label="Alle clusters" />
+            <c-option value="odcn-production" label="ODC-Noord productie" />
+        </c-filter-select>
+        <c-filter-select label="Dienst">
+            <c-option value="" label="Alle diensten" />
+            <c-option value="keycloak" label="Keycloak" />
+            <c-option value="publish-on-web" label="Publiceren op het web" />
+        </c-filter-select>
+    </c-filter-bar>
+
+    <c-auto-grid min="320px" gap="1rem">
+        {% for project in projects %}
+            <c-catalog-card
+                title="{{ project.display_name }}"
+                subtitle="{{ project.description }}"
+                href="/lotc/bg/project-details">
+                <c-stack gap="0.5rem">
+                    {# c-cluster en geen horizontale c-stack: een stack houdt alles op
+                       een regel en laat de inhoud buiten de kaart lopen zodra er meer
+                       chips zijn dan passen. Een cluster breekt af. #}
+                    <c-cluster gap="0.5rem">
+                        {% for service in project.services %}
+                            <c-chip>{{ service }}</c-chip>
+                        {% endfor %}
+                    </c-cluster>
+                    <c-detail-list>
+                        <c-detail-item label="Deployments" value="{{ project.deployment_count }}" />
+                        <c-detail-item label="Componenten" value="{{ project.components | length }}" />
+                        <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
+                    </c-detail-list>
+                </c-stack>
+            </c-catalog-card>
+        {% endfor %}
+    </c-auto-grid>
+{% endblock %}

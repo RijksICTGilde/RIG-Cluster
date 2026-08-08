@@ -42,13 +42,18 @@ OUTPUT_DIR = Path(__file__).parent.parent / "opi" / "templates_lotc"
 # De schil (base_lotc.html.j2) omdat de INDELING verandert en niet alleen de namen: de
 # navigatie verhuist naar een zijkolom, in de opzet van bg.rijks.app.
 #
+# De map bg/ omdat dat HERONTWORPEN paginas zijn en geen vertalingen: dezelfde
+# componenten, maar in de indeling van bg.rijks.app (tegels, kaarten, kopregels) in
+# plaats van onze oude rijen en kolommen. Een omzetter kan dat niet maken, want het is
+# een ontwerpkeuze en geen vertaling.
+#
 # De formulierwidgets omdat ze wezenlijk anders werken. In de roos-templates schreven
 # macro's stukken attribuut-TEKST middenin de componenttag, en dat kan bij LOTC niet.
 # Daar staat :prop="expr or none" tegenover voor losse attributen en :attrs="<dict>"
 # voor een hele bundel. Dat is geen vertaling die een script kan maken; het is per
 # widget een keuze welk attribuut waar hoort.
-HANDWRITTEN = {"base_lotc.html.j2", "dashboard-bg.html.j2", "form-preview.html.j2"}
-HANDWRITTEN_DIRS = {"widgets"}
+HANDWRITTEN = {"base_lotc.html.j2", "form-preview.html.j2"}
+HANDWRITTEN_DIRS = {"widgets", "bg"}
 
 # Componenten die in LOTC anders heten. Alles wat hier niet staat houdt zijn naam;
 # dat is het overgrote deel, want beide systemen delen hun woordenschat grotendeels.
