@@ -1,3 +1,21 @@
-{% from "widgets/_macros.html.j2" import combined_helper, description_text, render_examples, bool_attr, optional_attr, htmx_attrs, extra_attrs %}
+{#
+  Meerregelig tekstveld voor de LOTC-bouwlijn.
+
+  De waarde staat hier als attribuut en niet als inhoud tussen de tags: c-textarea-field
+  neemt value, en inhoud meegeven zou hem twee keer zetten.
+#}
+{% from "widgets/_macros.html.j2" import combined_helper, description_text, render_examples %}
 {{ description_text(field) }}
-<c-textarea-field id="{{ field.path|e }}" name="{{ field.path|e }}" label="{{ field.label|e }}" {{ optional_attr("helperText", combined_helper(field)|trim) }} {{ optional_attr("placeholder", field.placeholder) }} {{ bool_attr("required", field.required) }} {{ bool_attr("disabled", field.readonly) }} rows="{{ field.attributes.get('rows', '4') }}" {{ optional_attr("invalid", "true" if field.errors else "") }} {{ optional_attr("errorText", field.errors[0] if field.errors else "") }} {{ optional_attr("value", (field.value|string if field.value else '')) }} {{ htmx_attrs(field) }} {{ extra_attrs(field) }}>{{ (field.value|string if field.value else '')|e }}</c-textarea-field>{{ render_examples(field) }}
+<c-textarea-field
+    id="{{ field.path|e }}"
+    name="{{ field.path|e }}"
+    label="{{ field.label|e }}"
+    :help="combined_helper(field)|trim or none"
+    :placeholder="field.placeholder or none"
+    :required="field.required"
+    :disabled="field.readonly"
+    :rows="field.attributes.get('rows', 4)"
+    :value="(field.value|string if field.value else none)"
+    :error="(field.errors[0] if field.errors else none)"
+    :attrs="field_attrs(field)"
+/>{{ render_examples(field) }}

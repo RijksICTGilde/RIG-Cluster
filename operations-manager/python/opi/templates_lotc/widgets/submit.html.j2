@@ -1,2 +1,17 @@
-{% from "widgets/_macros.html.j2" import html_attributes %}
-<c-button type="submit" size="{{ submit.size|e }}" label="{{ submit.label|e }}" {% if submit.icon %}show-icon="{{ submit.icon_position|e }}" icon="{{ submit.icon|e }}"{% endif %} {% if submit.css_class %}class="{{ submit.css_class|e }}"{% endif %} {{ html_attributes(submit.attributes) }}/>
+{#
+  Verzendknop voor de LOTC-bouwlijn.
+
+  Twee naamsverschillen die makkelijk verwarren: onze "kind" (primair, secundair) heet
+  in LOTC "type", en het HTML-type submit heet daar "html-type". In de roos-versie zat
+  submit in "type" en de soort in "kind".
+#}
+<c-button
+    html-type="submit"
+    type="{{ submit.kind|e }}"
+    size="{{ submit.size|e }}"
+    label="{{ submit.label|e }}"
+    :show-icon="(submit.icon_position if submit.icon else none)"
+    :icon="submit.icon or none"
+    :class="submit.css_class or none"
+    :attrs="submit.attributes or {}"
+/>

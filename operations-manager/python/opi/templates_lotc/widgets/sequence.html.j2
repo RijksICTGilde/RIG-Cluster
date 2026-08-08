@@ -1,4 +1,14 @@
-{% from "widgets/_macros.html.j2" import helper_text, render_errors, bool_attr %}
+{#
+  Herhaalbare reeks voor de LOTC-bouwlijn.
+
+  De rvo-sequence-klassen zijn haken waar wizard.js aan hangt (toevoegen en verwijderen
+  van items), dus die blijven ongewijzigd.
+
+  Omgezet uit de roos-versie: bool_attr/optional_attr zijn :prop="expr" geworden en de
+  attribuutbundels een enkele :attrs-spread. De roos-macro's schreven attribuut-TEKST
+  middenin de tag, en dat leest de LOTC-voorbewerker als een attribuutnaam.
+#}
+{% from "widgets/_macros.html.j2" import helper_text, render_errors %}
 {% set min_items = (field.min_items or field.attributes.get('min_items', 0))|int %}
 {% set max_items = field.max_items or field.attributes.get('max_items') %}
 {% set add_label = field.attributes.get('add_label', 'Item toevoegen') %}
@@ -14,7 +24,10 @@
     </div>
     {% if not fixed_size and field.add_remove %}
     <div class="rvo-sequence__actions">
-        <c-button size="sm" show-icon="before" icon="plus" @ {{ bool_attr("disabled", add_disabled) }}>
+        <c-button type="tertiary" size="sm"
+                  show-icon="before" icon="plus"
+                  @click="sequenceAdd('{{ field.path|e }}')"
+                  :disabled="add_disabled">
             {{ add_label|e }}
         </c-button>
     </div>

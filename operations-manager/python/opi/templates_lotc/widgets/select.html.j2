@@ -1,3 +1,28 @@
-{% from "widgets/_macros.html.j2" import combined_helper, description_text, render_examples, bool_attr, optional_attr, htmx_attrs, extra_attrs %}
+{#
+  Keuzelijst voor de LOTC-bouwlijn.
+
+  Grootste verschil met de roos-versie: die gaf de opties mee als JSON in een prop
+  (:options="{{ options_json }}"). In LOTC zijn opties KINDEREN. Daardoor kan dit
+  template rechtstreeks over field.options lopen en is de JSON-omweg overbodig -
+  options_json wordt hier niet meer gebruikt.
+#}
+{% from "widgets/_macros.html.j2" import combined_helper, description_text, render_examples %}
 {{ description_text(field) }}
-<c-select-field id="{{ field.path|e }}" name="{{ field.path|e }}" label="{{ field.label|e }}" {{ optional_attr("helperText", combined_helper(field)|trim) }} {{ bool_attr("required", field.required) }} {{ bool_attr("disabled", field.readonly) }} {{ optional_attr("value", value_str) }} {{ bool_attr("hasError", field.errors) }} {{ optional_attr("errorMessage", field.errors[0] if field.errors else "") }} {{ htmx_attrs(field) }} {{ extra_attrs(field) }}/>{{ render_examples(field) }}
+<c-select-field
+    id="{{ field.path|e }}"
+    name="{{ field.path|e }}"
+    label="{{ field.label|e }}"
+    :help="combined_helper(field)|trim or none"
+    :required="field.required"
+    :disabled="field.readonly"
+    :value="value_str or none"
+    :error="(field.errors[0] if field.errors else none)"
+    :attrs="field_attrs(field)"
+>
+    {% for option in field.options or [] %}
+        <c-option
+            value="{{ option.value|e }}"
+            label="{{ option.label|e }}"
+            :selected="option.value|string == value_str" />
+    {% endfor %}
+</c-select-field>{{ render_examples(field) }}
