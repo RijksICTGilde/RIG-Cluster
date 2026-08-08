@@ -25,7 +25,7 @@
                         </td>
                         <td class="col-actions">
                             <div class="actions">
-                                <c-button label="Bewerken" size="sm" show-icon="before" icon="bewerken" @/>
+                                {% set lotc_onclick_1 %}window.location.href='/admin/users/{{ user.id }}/edit'{% endset %}<c-button label="Bewerken" size="sm" show-icon="before" icon="bewerken"/>
                                 <form method="post" action="/admin/users/{{ user.id }}/delete" class="inline-form"
                                       onsubmit="return confirm('Weet u zeker dat u {{ user.full_name }} wilt verwijderen?');">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />

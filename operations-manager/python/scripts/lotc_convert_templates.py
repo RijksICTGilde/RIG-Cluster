@@ -194,6 +194,37 @@ def to_kebab(name: str) -> str:
     return re.sub(r"(?<!^)(?=[A-Z])", "-", name).lower()
 
 
+CLICK_RE = re.compile(r"@click\s*=\s*(\"[^\"]*\"|'[^']*')")
+
+
+def convert_click_handlers(attrs: str, teller: list[int]) -> tuple[str, list[str]]:
+    """Zet @click="expr" om naar een :attrs-spread met een onclick.
+
+    Waarom dit nodig is: de attribuutregex hierboven leest van ``@click="f()"`` alleen
+    het stuk ``click="f()"``, ziet dat c-button geen attribuut "click" kent, en laat het
+    vallen. Wat er dan overblijft is een kale ``@`` in de tag - de knop rendert, en doet
+    niets. Dat is precies het soort storing dat niemand ziet: geen foutmelding, geen
+    ontbrekend element, alleen een knop die zwijgt. Het is 58 keer in 35 bestanden
+    gebeurd voordat het opviel.
+
+    LOTC laat geen onclick als eigen attribuut toe, maar de spread ``:attrs`` zet elk
+    paar door naar het element. De aanroep gaat via een ``{% set %}``-blok dat vóór de
+    tag komt te staan, om twee redenen: een genest aanhalingsteken binnen :attrs leest de
+    voorbewerker als het einde van het attribuut, en de blokvorm rendert de Jinja die in
+    zo'n aanroep zit (``{{ project.name }}``) gewoon mee.
+    """
+    prelude: list[str] = []
+
+    def vervang(match: re.Match[str]) -> str:
+        expr = match.group(1)[1:-1]
+        teller[0] += 1
+        naam = f"lotc_onclick_{teller[0]}"
+        prelude.append("{% set " + naam + " %}" + expr + "{% endset %}")
+        return f":attrs=\"{{'onclick': {naam}}}\""
+
+    return CLICK_RE.sub(vervang, attrs), prelude
+
+
 def convert_attributes(attrs: str, known: set[str] | None) -> tuple[str, list[str]]:
     """Vertaal de attributen van een componenttag; geef terug wat is weggelaten.
 
@@ -220,11 +251,18 @@ def convert_attributes(attrs: str, known: set[str] | None) -> tuple[str, list[st
 def convert_source(source: str, known_attributes: dict[str, set[str]]) -> tuple[str, list[str]]:
     """Zet de componenttags in een template om; geef de meldingen terug."""
     notes: list[str] = []
+    # Loopt door het hele bestand, zodat twee knoppen in dezelfde template niet dezelfde
+    # variabelenaam krijgen.
+    click_counter = [0]
 
     def open_tag(match: re.Match[str]) -> str:
         name, attrs, selfclose = match.group(1), match.group(2), match.group(3)
         if name in UNWRAP:
             return ""
+        # @click eerst: die moet weg voordat de attribuutregex hem half opeet.
+        attrs, click_prelude = convert_click_handlers(attrs, click_counter)
+        if click_prelude:
+            notes.append(f"{len(click_prelude)} @click op c-{name} omgezet naar een onclick via :attrs")
         # Alleen BINNEN de tag: buiten een tag is {% if %} gewone Jinja en moet hij blijven.
         attrs, inline = convert_inline_conditions(attrs)
         attrs, conditionals = convert_conditional_attributes(attrs)
@@ -243,7 +281,10 @@ def convert_source(source: str, known_attributes: dict[str, set[str]]) -> tuple[
         if name == "menubar" and "type=" not in new_attrs:
             new_attrs = f'type="bar" {new_attrs}'.strip()
         space = " " if new_attrs else ""
-        return f"<c-{new_name}{space}{new_attrs}{'/' if selfclose else ''}>"
+        tag = f"<c-{new_name}{space}{new_attrs}{'/' if selfclose else ''}>"
+        # De {% set %}-blokken komen VOOR de tag; het zijn Jinja-statements, dus ze
+        # voegen niets aan de uitvoer toe.
+        return "".join(click_prelude) + tag
 
     def close_tag(match: re.Match[str]) -> str:
         name = match.group(1)

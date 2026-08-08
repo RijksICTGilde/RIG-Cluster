@@ -1,0 +1,37 @@
+{#
+  Het metingenblok van EEN deployment, in de nieuwe vormgeving.
+
+  Overname van opi/services/catalog/metrics_scraper/section-deployment.html.j2. Dezelfde
+  twee takken (beschikbaar of niet, met dezelfde reden), dezelfde teksten, en hetzelfde
+  htmx-gedrag: het blok haalt zijn eigen metingen op zodra het in beeld komt.
+
+  ``id="metrics-content-<naam>"`` is letterlijk overgenomen: dat is het doel van het
+  fragment, en een verborgen blok zichtbaar maken (de deploymentwissel) laat het
+  intersecten - daarom hoeft de JavaScript bij een wissel niets op te halen.
+#}
+{% set ctx = section.context %}
+{% if ctx.available %}
+<c-card outline padding="lg">
+    <c-stack gap="md">
+        <c-section-head title="Resource Metrics" icon="chart-x-y-axis-line" />
+        <c-paragraph size="sm">Resource usage per component</c-paragraph>
+
+        <div id="metrics-content-{{ ctx.deployment_name }}"
+             hx-get="/projects/details/{{ ctx.project_name }}/metrics/{{ ctx.deployment_name }}"
+             hx-trigger="intersect once"
+             hx-swap="innerHTML">
+            <c-paragraph>Metrics laden...</c-paragraph>
+        </div>
+    </c-stack>
+</c-card>
+{% else %}
+<c-card outline padding="lg">
+    <c-cluster gap="md" align="center">
+        <c-icon icon="info-circle" size="lg" />
+        <c-stack gap="xs">
+            <strong>Metrics niet beschikbaar</strong>
+            <c-paragraph size="sm">{{ ctx.unavailable_reason }}</c-paragraph>
+        </c-stack>
+    </c-cluster>
+</c-card>
+{% endif %}

@@ -1,0 +1,37 @@
+{#
+  Wat de diensten over een deployment melden.
+
+  Overname van project-details/section-deployment-state.html.j2: dezelfde lus over
+  dezelfde feiten, dezelfde tekst (``fact.summary``), dezelfde naam van de dienst uit
+  ServiceAdapter. Alleen de kaart is een LOTC-kaart.
+
+  De wikkel is LETTERLIJK overgenomen: ``class="deployment-section"`` plus
+  ``data-deployment``, en ``is-hidden`` op alles behalve de eerste. Daar hangt
+  switchDeployment() aan (static/js/deployment_switch.js), dus dat is geen vormgeving.
+
+  Geen dienstnaam en geen voorwaarde in dit sjabloon: het toont wat de diensten melden,
+  wat dat ook is. Een dienst die een deployment in een bijzondere stand zet krijgt dit
+  blok daardoor vanzelf.
+#}
+{% set deployment_state_facts = deployment_state_facts | default({}) %}
+{% for deployment in project.deployments | sort(attribute='name') %}
+{% set facts = deployment_state_facts.get(deployment.name, []) %}
+{% if facts %}
+<div class="deployment-section{% if not loop.first %} is-hidden{% endif %}"
+     data-deployment="{{ deployment.name }}">
+    <c-stack gap="md">
+        {% for fact in facts %}
+        <c-card outline padding="lg">
+            <c-cluster gap="md" align="center">
+                <c-icon icon="info-circle" size="lg" />
+                <c-stack gap="xs">
+                    <strong>{{ ServiceAdapter.get_service_definition(ServiceAdapter.get_service_by_value(fact.service)).name }}</strong>
+                    <c-paragraph size="sm">{{ fact.summary }}</c-paragraph>
+                </c-stack>
+            </c-cluster>
+        </c-card>
+        {% endfor %}
+    </c-stack>
+</div>
+{% endif %}
+{% endfor %}

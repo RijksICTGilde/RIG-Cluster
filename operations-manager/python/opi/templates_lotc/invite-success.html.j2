@@ -26,14 +26,14 @@
                     {# Success Details Card #}
                     <c-card outline="true" padding="lg">
                         <c-layout-flow gap="lg">
-                            <c-heading type="h2" :label="('Uw toegang') if (language == 'nl') else ('Your access')"/>
+                            <c-heading type="h2" :label="('Je toegang') if (language == 'nl') else ('Your access')"/>
 
                             {% if email %}
                                 <p class="rvo-paragraph"><strong>{% if language == 'nl' %}E-mailadres{% else %}Email address{% endif %}:</strong> {{ email }}</p>
                             {% endif %}
 
                             {% if application_url %}
-                            <c-button :label="('Ga naar applicatie') if (language == 'nl') else ('Go to application')" show-icon="after" icon="pijl-naar-rechts" @/>
+                            {% set lotc_onclick_1 %}window.location.href='{{ application_url }}'{% endset %}<c-button :label="('Ga naar applicatie') if (language == 'nl') else ('Go to application')" show-icon="after" icon="pijl-naar-rechts"/>
                             {% endif %}
                         </c-layout-flow>
                     </c-card>

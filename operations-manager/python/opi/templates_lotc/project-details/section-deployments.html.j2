@@ -12,9 +12,9 @@
                 </div>
                 <div class="deployment-actions">
                     {% if user_role in ['admin', 'owner'] %}
-                    <c-button size="sm" label="Bewerken" show-icon="before" icon="bewerken" @/>
-                    <c-button size="sm" label="Webadres" show-icon="before" icon="wereldbol" @/>
-                    <c-button size="sm" label="Verwijderen" show-icon="before" icon="verwijderen" @/>
+                    {% set lotc_onclick_1 %}openEditModal('modal-edit-deployment-{{ original_index }}', 'Deployment bewerken - {{ deployment.name }}'){% endset %}<c-button size="sm" label="Bewerken" show-icon="before" icon="bewerken"/>
+                    {% set lotc_onclick_2 %}openEditModal('modal-edit-domain-{{ original_index }}', 'Webadres bewerken - {{ deployment.name }}'){% endset %}<c-button size="sm" label="Webadres" show-icon="before" icon="wereldbol"/>
+                    {% set lotc_onclick_3 %}openServiceModal('/projects/{{ project.name }}/actions/delete-deployment/confirm?target={{ deployment.name | urlencode }}', 'Deployment verwijderen'){% endset %}<c-button size="sm" label="Verwijderen" show-icon="before" icon="verwijderen"/>
                     {% endif %}
                 </div>
             </div>
@@ -98,7 +98,7 @@
                                     <span class="rvo-text--sm text-strong">Helm Values</span>
                                     <span class="env-vars-count-badge">{{ helmfile['helm-values']|length }} waarde{% if helmfile['helm-values']|length != 1 %}n{% endif %}</span>
                                 </c-layout-flow>
-                                <c-secret-field value="{{ helmfile['helm-values'] | tojson(indent=2) }}" value-type="json"/>
+                                <c-secret-field value="{{ helmfile['helm-values'] | tojson(indent=2) }}" value-type="json" content-width="lg"/>
                             </div>
                             {% endif %}
                         </c-layout-flow>
@@ -114,7 +114,7 @@
                 <c-heading type="h4"><c-icon icon="externe-link" size="md" color="hemelblauw"/>Publieke links</c-heading>
                 <c-layout-flow gap="sm">
                     {% for link in deployment.ingress_links %}
-                    <c-button label="{{ link.component_name }}{% if link.path and link.path != '/' %} {{ link.path }}{% endif %}" size="sm" show-icon="after" icon="externe-link" @/>
+                    {% set lotc_onclick_4 %}window.open(this.dataset.url, '_blank'){% endset %}<c-button label="{{ link.component_name }}{% if link.path and link.path != '/' %} {{ link.path }}{% endif %}" size="sm" show-icon="after" icon="externe-link"/>
                     {% endfor %}
                 </c-layout-flow>
             </c-layout-flow>

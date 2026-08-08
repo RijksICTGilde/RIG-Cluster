@@ -14,7 +14,7 @@
                 </div>
                 <div class="config-value config-value--inline">
                     <code class="config-code">{{ project.name }}</code>
-                    <c-button size="sm" label="Kopieer" show-icon="before" icon="document-blanco" class="copy-btn" @/>
+                    {% set lotc_onclick_1 %}copyToClipboard('.config-code', event, '.config-item'){% endset %}<c-button size="sm" label="Kopieer" show-icon="before" icon="document-blanco" class="copy-btn"/>
                 </div>
             </div>
 
@@ -42,7 +42,7 @@
                 </div>
                 <div class="config-value config-value--inline">
                     <code class="config-code">{{ project.config['age-public-key'] }}</code>
-                    <c-button size="sm" label="Kopieer" show-icon="before" icon="document-blanco" class="copy-btn" @/>
+                    {% set lotc_onclick_2 %}copyToClipboard('.config-code', event, '.config-item'){% endset %}<c-button size="sm" label="Kopieer" show-icon="before" icon="document-blanco" class="copy-btn"/>
                 </div>
             </div>
             {% endif %}

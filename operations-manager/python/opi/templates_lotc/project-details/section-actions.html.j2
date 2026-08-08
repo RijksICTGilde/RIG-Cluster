@@ -4,7 +4,7 @@
     <c-layout-flow gap="md">
         <c-heading type="h2" class="section-heading"><c-icon icon="instellingen" size="xl" color="hemelblauw"/>Acties</c-heading>
         <c-cluster gap="sm">
-            <c-button label="Deployment toevoegen" size="sm" show-icon="before" icon="plus" @/>
+            {% set lotc_onclick_1 %}openEditModal('modal-add-deployment-{{ project.deployments|length if project.deployments else 0 }}', 'Deployment toevoegen'){% endset %}<c-button label="Deployment toevoegen" size="sm" show-icon="before" icon="plus"/>
         </c-cluster>
     </c-layout-flow>
 </c-card>

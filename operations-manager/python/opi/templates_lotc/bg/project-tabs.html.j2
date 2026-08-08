@@ -36,8 +36,20 @@
        niet-opgeslagen werk). json-enc.js bedraadt de formulieren erin, net als op de
        bestaande pagina. #}
     <link rel="stylesheet" href="{{ static_url('css/modal.css') }}">
+    {# base.css om EEN klasse: .is-hidden (display:none !important). Het tabblad
+       Deployments toont een deployment tegelijk en switchDeployment() wisselt dat met
+       precies die klasse; zonder deze stylesheet staat alles tegelijk in beeld. De rest
+       van base.css hangt aan rvo-klassen die op deze pagina niet voorkomen. #}
+    <link rel="stylesheet" href="{{ static_url('css/base.css') }}">
     <script src="{{ static_url('js/json-enc.js') }}"></script>
     <script src="{{ static_url('js/edit_modal.js') }}"></script>
+    {# switchDeployment(): dezelfde functie als op de bestaande pagina, sinds deze
+       omzetting in een eigen bestand omdat beide pagina's hem nodig hebben. #}
+    <script src="{{ static_url('js/deployment_switch.js') }}"></script>
+    {# copyToClipboard(): de kopieerknop naast de projectnaam en de age-sleutel. Stond
+       inline op de bestaande pagina; sinds deze omzetting in een eigen bestand omdat
+       beide pagina's en de dienstblokken hem aanroepen. #}
+    <script src="{{ static_url('js/copy_to_clipboard.js') }}"></script>
 {% endblock %}
 
 {% block page_title %}{{ project.display_name }} - {{ tabs[active_tab].label }}{% endblock %}
@@ -59,6 +71,18 @@
     </c-tabs>
 
     {% if active_tab == 'project' %}
+        {# DE VOLGORDE VAN DIT TABBLAD IS DIE VAN project-details/tab-project.html.j2.
+
+           Niet omdat die volgorde heilig is, maar omdat afwijken betekent dat je hem
+           opnieuw moet verdedigen, en dat is niet waar deze omzetting over gaat. Twee
+           dingen wijken WEL af, en allebei op verzoek:
+
+             - het RESOURCEGEBRUIK staat op het eigen tabblad Metrics;
+             - REPOSITORIES is eruit; die stond op de oude pagina omdat hij in het
+               projectbestand staat, niet omdat iemand hem nodig heeft.
+
+           De kerncijfers bovenaan zijn nieuw. Ze tonen niets dat er niet al staat: het
+           zijn de aantallen van de secties eronder, als ingang. #}
         <c-auto-grid min="200px" gap="md">
             <c-metric icon="rectangle-stack" value="{{ project.components | length }}" label="Componenten" />
             <c-metric icon="arrow-up-arrow-down" value="{{ project.deployments | length }}" label="Deployments" href="?tab=deployments" />
@@ -66,41 +90,59 @@
             <c-metric icon="person-2" value="{{ project.users | length }}" label="Teamleden" />
         </c-auto-grid>
 
-        {% call panel("Diensten", "cylinder-split", info_text="Diensten worden door het platform geleverd en beheerd. Je hoeft ze niet zelf te installeren of bij te werken.") %}
-            <c-cluster gap="sm">
-                {% for service in project.services %}
-                    <c-chip>{{ service.value }}</c-chip>
-                {% else %}
-                    <c-paragraph>Dit project neemt geen diensten af.</c-paragraph>
-                {% endfor %}
-            </c-cluster>
-        {% endcall %}
+        {# ---- Acties (project-details/section-actions.html.j2) ---------------- #}
+        {% if user_role in ["admin", "owner"] %}
+            {# De flow-id telt de deployments: de modal-wizard opent daarmee een NIEUWE
+               regel achter de bestaande. Letterlijk overgenomen, inclusief de nul bij
+               een project zonder deployments. #}
+            {% set deployment_toevoegen = "openEditModal('modal-add-deployment-" ~ (project.deployments | length) ~ "', 'Deployment toevoegen')" %}
+            {% call panel("Acties", "gear") %}
+                <c-action-group align="start">
+                    <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" :attrs="{'onclick': deployment_toevoegen}" />
+                </c-action-group>
+            {% endcall %}
+        {% endif %}
 
-        {% call panel("Componenten", "rectangle-stack", info_text="Een component is een draaiend onderdeel van je applicatie. Waar het draait bepaal je bij Deployments.") %}
-            <c-stack gap="sm">
-                {% for component in project.components %}
-                    <c-layer
-                        icon="rectangle-stack"
-                        title="{{ component.name }}"
-                        count="{{ component.type }}"
-                        sub="poorten: {{ component.ports.inbound | join(', ') if component.ports else 'geen' }}">
-                        {% for service in component.services or [] %}
-                            <c-chip>{{ service }}</c-chip>
-                        {% endfor %}
-                    </c-layer>
-                {% else %}
-                    <c-paragraph>Dit project heeft nog geen componenten.</c-paragraph>
-                {% endfor %}
-            </c-stack>
-        {% endcall %}
+        {# ---- Deployment Status (section-deployment-status.html.j2) ----------- #}
+        {# De statuskaarten halen zichzelf op, precies zoals op de bestaande pagina:
+           dezelfde URL, dezelfde prefix (de KALE deploymentnaam - het tabblad
+           Deployments gebruikt dep-<naam>, en die twee mogen niet door elkaar lopen
+           omdat de prefix de id's van de foutenlijst uniek houdt), intersect once en
+           hx-swap="innerHTML". Intersect once en niet load: elke kaart kost een
+           ArgoCD-aanroep. #}
+        {% if argocd_available and project.deployments %}
+            {% call panel("Deployment Status", "arrow-up-arrow-down", info_text="ArgoCD synchronisatie en health status per deployment") %}
+                <c-auto-grid min="260px" gap="md">
+                    {% for deployment in project.deployments | sort(attribute='name') %}
+                        <div id="deployment-status-{{ deployment.name }}"
+                             hx-get="/projects/details/{{ project.name }}/argocd-status/{{ deployment.name }}?prefix={{ deployment.name }}"
+                             hx-trigger="intersect once"
+                             hx-swap="innerHTML">
+                            {% include "bg/_argocd-status-skeleton.html.j2" %}
+                        </div>
+                    {% endfor %}
+                </c-auto-grid>
+            {% endcall %}
+        {% elif project.deployments %}
+            <c-alert type="info" heading="Deployment status niet beschikbaar">
+                ArgoCD is niet verbonden. Deployment status wordt getoond wanneer ArgoCD beschikbaar is.
+            </c-alert>
+        {% endif %}
 
+        {# ---- Team & Toegang (section-team.html.j2) --------------------------- #}
         {% call panel("Team", "person-2", info_text="Een beheerder mag alles, inclusief het project verwijderen. Een ontwikkelaar mag wijzigen en uitrollen, maar het project niet opheffen.") %}
+            {% if user_role in ["admin", "owner"] %}
+                {% set team_bewerken = "openEditModal('modal-edit-team', 'Projectleden beheren')" %}
+                <c-action-group align="start">
+                    <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': team_bewerken}" />
+                </c-action-group>
+            {% endif %}
             <c-table columns="2fr 1fr">
                 <c-table-head>
                     <c-th>E-mailadres</c-th>
                     <c-th>Rol</c-th>
                 </c-table-head>
-                {% for member in project.users %}
+                {% for member in project.users | sort(attribute='email') %}
                     <c-table-row>
                         <c-td>{{ member.email }}</c-td>
                         <c-td><c-tag type="default" label="{{ member.role }}" /></c-td>
@@ -109,50 +151,397 @@
             </c-table>
         {% endcall %}
 
-        {% call panel("Sleutels", "lock-closed", info_text="De API-sleutel geeft toegang tot dit project via de API. Deel hem niet, en vernieuw hem als je vermoedt dat hij is uitgelekt.") %}
-            <c-detail-list>
-                <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
-            </c-detail-list>
-            <c-secret-field value="{{ project.config['api-key'] | default('', true) }}" show-copy="true" />
+        {# ---- Configuratie & Secrets (section-config.html.j2) ----------------- #}
+        {# De klassen config-item / config-code / copy-btn zijn GEEN vormgeving: daar
+           hangt copyToClipboard() aan. Hij zoekt vanaf de aangeklikte knop de
+           dichtstbijzijnde .config-item en pakt daarbinnen de .config-code. Daarom
+           staan ze hier letterlijk, net als bij de gedeelde dialoog. De functie zelf
+           staat sinds deze omzetting in /static/js/copy_to_clipboard.js - hij werd al
+           door vier templates aangeroepen en stond inline op de oude pagina. #}
+        {% if user_role in ["admin", "owner"] %}
+            {% set kopieer = "copyToClipboard('.config-code', event, '.config-item')" %}
+            {% call panel("Configuratie & Secrets", "lock-closed", info_text="Project configuratie en gevoelige informatie") %}
+                <div class="config-item">
+                    <c-stack gap="xs">
+                        <c-heading type="h3" size="6" label="Project Naam" />
+                        <c-cluster gap="sm" align="center">
+                            <c-code class="config-code">{{ project.name }}</c-code>
+                            <c-button type="tertiary" size="sm" label="Kopieer" class="copy-btn" :attrs="{'onclick': kopieer}" />
+                        </c-cluster>
+                    </c-stack>
+                </div>
+
+                {% if project.config %}
+                    {% if project.config.get('api-key') %}
+                        <c-stack gap="xs">
+                            <c-heading type="h3" size="6" label="API Key" />
+                            <c-secret-field value="{{ project.config['api-key'] }}" show-copy="true" />
+                        </c-stack>
+                    {% endif %}
+
+                    {% if project.config.get('age-public-key') %}
+                        <div class="config-item">
+                            <c-stack gap="xs">
+                                <c-heading type="h3" size="6" label="Age Public Key" />
+                                <c-cluster gap="sm" align="center">
+                                    <c-code class="config-code">{{ project.config['age-public-key'] }}</c-code>
+                                    <c-button type="tertiary" size="sm" label="Kopieer" class="copy-btn" :attrs="{'onclick': kopieer}" />
+                                </c-cluster>
+                            </c-stack>
+                        </div>
+                    {% endif %}
+
+                    {% if project.config.get('age-private-key') %}
+                        <c-stack gap="xs">
+                            <c-heading type="h3" size="6" label="Age Private Key" />
+                            <c-secret-field value="{{ project.config['age-private-key'] }}" show-copy="true" />
+                        </c-stack>
+                    {% endif %}
+                {% else %}
+                    <c-paragraph>Geen configuratie beschikbaar</c-paragraph>
+                {% endif %}
+
+                {# Het cluster staat niet in de bestaande sectie, maar wel al op deze
+                   pagina sinds de eerste omzetting. Weghalen zou gegevens laten
+                   verdwijnen die er nu staan, dus hij blijft. #}
+                <c-detail-list>
+                    <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
+                </c-detail-list>
+            {% endcall %}
+        {% endif %}
+
+        {# ---- De secties die de DIENSTEN zelf leveren ------------------------- #}
+        {# De blokken die de DIENSTEN leveren (de Keycloak-realm, de uitnodigingen, de
+           bijlagen). Ze staan bij hun dienst en zijn in roos-componenten geschreven, en
+           twee componentsystemen kunnen niet in een Jinja-omgeving: de eerst
+           geregistreerde voorbewerker eist alle c-tags op. render_roos() rendert ze
+           daarom met hun eigen omgeving en zet het resultaat hier neer.
+
+           Zo'n blok draagt rvo-klassen en ziet er dus anders uit dan de rest van deze
+           pagina. Dat is zichtbaar onaf, en dat is precies goed: het alternatief was dat
+           de Keycloak-instellingen en de uitnodigingen stilzwijgend van de projectpagina
+           verdwenen. Zichtbaar anders is beter dan ongemerkt weg. #}
+        {% for section in service_detail_sections | default([]) %}
+            {{ render_roos(section.template, request=request, section=section) }}
+        {% endfor %}
+
+        {# ---- Services & Integraties (section-services.html.j2) --------------- #}
+        {% call panel("Diensten", "cylinder-split", info_text="Diensten worden door het platform geleverd en beheerd. Je hoeft ze niet zelf te installeren of bij te werken.") %}
+            {% if user_role in ["admin", "owner"] %}
+                {% set diensten_bewerken = "openEditModal('modal-edit-services', 'Services beheren')" %}
+                <c-action-group align="start">
+                    <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': diensten_bewerken}" />
+                </c-action-group>
+            {% endif %}
+            {% if project.services %}
+                <c-auto-grid min="280px" gap="md">
+                    {% for service in project.services %}
+                        {% set service_def = ServiceAdapter.get_service_definition(service.enum) %}
+                        {# service_binding_label en service_config_hint zijn FUNCTIES op de
+                           echte route, maar de proefopstelling (/lotc/bg/project-tabs,
+                           opi/web/lotc_fixtures.py) geeft er lege dicts voor door. Ze
+                           zonder meer aanroepen laat die pagina met een 500 omvallen, en
+                           dat is precies de pagina waarop deze secties gescreenshot
+                           worden. Vandaar de callable-toets. #}
+                        {% set binding_label = service_binding_label(service.enum) if service_binding_label is callable else '' %}
+                        {% set config_hint = service_config_hint(service.enum) if service_config_hint is callable else '' %}
+                        <c-card outline padding="md">
+                            <c-stack gap="sm">
+                                <c-heading type="h3" size="5" label="{{ service_def.name }}" />
+                                {% if binding_label %}
+                                    <c-chip>{{ binding_label }}</c-chip>
+                                {% endif %}
+                                <c-paragraph size="sm">{{ service_def.description }}</c-paragraph>
+                                {% if config_hint %}
+                                    <c-paragraph size="sm">{{ config_hint }}</c-paragraph>
+                                {% endif %}
+                                {% if user_role in ["admin", "owner"] and service.value in service_config_sections %}
+                                    {% set configureer = "openEditModal('" ~ service_config_sections[service.value] ~ "', '" ~ service_def.name ~ " configuratie')" %}
+                                    <c-action-group align="start">
+                                        <c-button type="tertiary" size="sm" label="Configureer" icon="gear" show-icon="before" :attrs="{'onclick': configureer}" />
+                                    </c-action-group>
+                                {% endif %}
+                            </c-stack>
+                        </c-card>
+                    {% endfor %}
+                </c-auto-grid>
+            {% else %}
+                <c-alert type="info" heading="Geen services geconfigureerd" />
+            {% endif %}
         {% endcall %}
 
-        {% call panel("Gevarenzone", "exclamation-triangle", info_text="Verwijderen kan niet ongedaan worden gemaakt: deployments, database en opslag gaan mee.") %}
-            {# De aanroep wordt hierboven opgebouwd en niet in de tag zelf: een
-               genest aanhalingsteken binnen :attrs leest de voorbewerker als het einde
-               van het attribuut. #}
-            {% set herverwerken = "openServiceModal('/projects/" ~ project.name ~ "/actions/refresh-project/confirm', 'Project herverwerken')" %}
-            {% set verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-project/confirm', 'Project verwijderen')" %}
-            <c-action-group align="start">
-                <c-button type="secondary" label="Project herverwerken" :attrs="{'onclick': herverwerken}" />
-                <c-button type="warning" label="Project verwijderen" :attrs="{'onclick': verwijderen}" />
-            </c-action-group>
+        {# ---- Components (section-components.html.j2) ------------------------- #}
+        {% call panel("Componenten", "rectangle-stack", info_text="Een component is een draaiend onderdeel van je applicatie. Waar het draait bepaal je bij Deployments.") %}
+            {% if user_role in ["admin", "owner"] %}
+                {% set component_toevoegen = "openEditModal('modal-edit-component-" ~ (project.components | length) ~ "', 'Component toevoegen')" %}
+                <c-action-group align="start">
+                    <c-button type="secondary" size="sm" label="Toevoegen" icon="plus" show-icon="before" :attrs="{'onclick': component_toevoegen}" />
+                </c-action-group>
+            {% endif %}
+            {% if project.components %}
+                <c-stack gap="md">
+                    {# Alfabetisch tonen, maar de flow-id van de bewerkdialoog blijft de
+                       oorspronkelijke index in het projectbestand - anders bewerk je een
+                       ander component dan je aanklikt. Overgenomen. #}
+                    {% for component in project.components | sort(attribute='name') %}
+                        {% set original_index = project.components.index(component) %}
+                        {% set component_bewerken = "openEditModal('modal-edit-component-" ~ original_index ~ "', 'Component bewerken - " ~ component.name ~ "')" %}
+                        {% set component_verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-component/confirm?target=" ~ (component.name | urlencode) ~ "', 'Component verwijderen')" %}
+                        <c-card outline padding="md">
+                            <c-stack gap="sm">
+                                <c-cluster gap="sm" align="center" justify="between">
+                                    <c-stack gap="xs">
+                                        <c-heading type="h3" size="5" label="{{ component.name }}" />
+                                        <c-paragraph size="sm">{{ component.type | title }}</c-paragraph>
+                                    </c-stack>
+                                    {% if user_role in ["admin", "owner"] %}
+                                        <c-action-group align="end">
+                                            <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': component_bewerken}" />
+                                            <c-button type="warning" size="sm" label="Verwijderen" :attrs="{'onclick': component_verwijderen}" />
+                                        </c-action-group>
+                                    {% endif %}
+                                </c-cluster>
+
+                                {% if component.ports %}
+                                    <c-paragraph size="sm">
+                                        <b>Poorten:</b>
+                                        {% if component.ports.inbound %}Inbound: {{ component.ports.inbound | join(", ") }}{% endif %}
+                                        {% if component.ports.outbound %}{% if component.ports.inbound %} | {% endif %}Outbound: {{ component.ports.outbound | join(", ") }}{% endif %}
+                                    </c-paragraph>
+                                {% endif %}
+
+                                {% if component.resources %}
+                                    {% set req = component.resources.get('requests', {}) or {} %}
+                                    {% set lim = component.resources.get('limits', {}) or {} %}
+                                    <c-paragraph size="sm">
+                                        <b>Resources:</b>
+                                        {% if req.get('memory') or lim.get('memory') %}
+                                            Memory: {{ req.get('memory', '?') }} / {{ lim.get('memory', '?') }}
+                                        {% elif component.resources.memory is string %}
+                                            Memory: {{ component.resources.memory }}
+                                        {% endif %}
+                                        {% if req.get('cpu') or lim.get('cpu') %}
+                                            | CPU: {{ req.get('cpu', '?') }} / {{ lim.get('cpu', '?') }}
+                                        {% elif component.resources.cpu is string %}
+                                            | CPU: {{ component.resources.cpu }}
+                                        {% endif %}
+                                    </c-paragraph>
+                                {% endif %}
+
+                                {% if component.services %}
+                                    {# Dezelfde lezing als de bestaande pagina: de naam via
+                                       het service_name-filter, want een regel kan een
+                                       tekst, een {naam: {...}} of een {reference: ...}
+                                       zijn. Een kale {{ regel }} toonde bij die laatste
+                                       twee een python-dict. #}
+                                    <c-cluster gap="sm" align="center">
+                                        <b>Services:</b>
+                                        {% for svc in component.services %}
+                                            {% set definition = svc | service_definition %}
+                                            <c-chip>{{ definition.name if definition else svc | service_name }}</c-chip>
+                                        {% endfor %}
+                                    </c-cluster>
+                                {% endif %}
+
+                                {% if component.ingress_links %}
+                                    {# De knop opent zijn eigen data-url; de URL staat op het
+                                       element en niet in de aanroep, precies zoals op de
+                                       bestaande pagina. #}
+                                    {% set open_link = "window.open(this.dataset.url, '_blank')" %}
+                                    <c-stack gap="xs">
+                                        <c-heading type="h4" size="6" label="Publieke links" />
+                                        <c-cluster gap="sm">
+                                            {% for link in component.ingress_links %}
+                                                <c-button
+                                                    type="secondary"
+                                                    size="sm"
+                                                    label="{{ link.deployment_name }} ({{ link.cluster }}){% if link.path and link.path != '/' %} {{ link.path }}{% endif %}"
+                                                    icon="link"
+                                                    show-icon="after"
+                                                    :attrs="{'data-url': link.url, 'onclick': open_link}" />
+                                            {% endfor %}
+                                        </c-cluster>
+                                    </c-stack>
+                                {% endif %}
+
+                                {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars'] | length > 0 %}
+                                    <c-paragraph size="sm">
+                                        {{ component['user-env-vars'] | length }} omgevingsvariabele{{ 'n' if component['user-env-vars'] | length != 1 else '' }} (zie Omgevingsvariabelen sectie)
+                                    </c-paragraph>
+                                {% endif %}
+                            </c-stack>
+                        </c-card>
+                    {% endfor %}
+                </c-stack>
+            {% else %}
+                <c-alert type="info" heading="Geen componenten geconfigureerd" />
+            {% endif %}
         {% endcall %}
+
+        {# ---- Helm Charts (section-helm-charts.html.j2) ----------------------- #}
+        {% if project.helm_charts %}
+            {% call panel("Helm Charts", "folder-stack", info_text="Helm chart definities op project niveau") %}
+                <c-stack gap="md">
+                    {% for helm_chart in project.helm_charts %}
+                        <c-card outline padding="md">
+                            <c-stack gap="sm">
+                                <c-heading type="h3" size="5" label="{{ helm_chart.name }}" />
+                                {% if helm_chart.get('repository') %}
+                                    <c-paragraph size="sm">{{ helm_chart.repository }}</c-paragraph>
+                                {% endif %}
+                                <c-detail-list>
+                                    {% if helm_chart.get('chart') %}
+                                        <c-detail-item label="Chart" value="{{ helm_chart.chart }}" />
+                                    {% endif %}
+                                    {% if helm_chart.get('version') %}
+                                        <c-detail-item label="Version" value="{{ helm_chart.version }}" />
+                                    {% endif %}
+                                </c-detail-list>
+                                {% if helm_chart.get('helm-values') and helm_chart['helm-values'] is mapping and helm_chart['helm-values'] | length > 0 %}
+                                    <c-divider />
+                                    <c-cluster gap="sm" align="center">
+                                        <b>Helm Values (Base)</b>
+                                        <c-chip>{{ helm_chart['helm-values'] | length }} waarde{{ 'n' if helm_chart['helm-values'] | length != 1 else '' }}</c-chip>
+                                    </c-cluster>
+                                    <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) }}" show-copy="true" />
+                                {% endif %}
+                            </c-stack>
+                        </c-card>
+                    {% endfor %}
+                </c-stack>
+            {% endcall %}
+        {% endif %}
+
+        {# ---- Helmfile (section-helmfile.html.j2) ----------------------------- #}
+        {% if project.helmfile %}
+            {% call panel("Helmfile", "square-on-square", info_text="Helmfile definities op project niveau") %}
+                <c-stack gap="md">
+                    {% for helmfile in project.helmfile %}
+                        <c-card outline padding="md">
+                            <c-stack gap="sm">
+                                <c-heading type="h3" size="5" label="{{ helmfile.name }}" />
+                                {% if helmfile.get('repository') %}
+                                    <c-paragraph size="sm">{{ helmfile.repository }}</c-paragraph>
+                                {% endif %}
+                                <c-detail-list>
+                                    {% if helmfile.get('path') %}
+                                        <c-detail-item label="Path" value="{{ helmfile.path }}" />
+                                    {% endif %}
+                                    {% if helmfile.get('branch') %}
+                                        <c-detail-item label="Branch" value="{{ helmfile.branch }}" />
+                                    {% endif %}
+                                </c-detail-list>
+                                {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping and helmfile['helm-values'] | length > 0 %}
+                                    <c-divider />
+                                    <c-cluster gap="sm" align="center">
+                                        <b>Helm Values (Base)</b>
+                                        <c-chip>{{ helmfile['helm-values'] | length }} waarde{{ 'n' if helmfile['helm-values'] | length != 1 else '' }}</c-chip>
+                                    </c-cluster>
+                                    <c-secret-field value="{{ helmfile['helm-values'] | tojson(indent=2) }}" show-copy="true" />
+                                {% endif %}
+                            </c-stack>
+                        </c-card>
+                    {% endfor %}
+                </c-stack>
+            {% endcall %}
+        {% endif %}
+
+        {# ---- Danger zone (section-danger-zone.html.j2) ----------------------- #}
+        {% if user_role in ["admin", "owner"] %}
+            {% call panel("Gevarenzone", "exclamation-triangle", info_text="Verwijderen kan niet ongedaan worden gemaakt: deployments, database en opslag gaan mee.") %}
+                {# De aanroep wordt hierboven opgebouwd en niet in de tag zelf: een
+                   genest aanhalingsteken binnen :attrs leest de voorbewerker als het einde
+                   van het attribuut. #}
+                {% set herverwerken = "openServiceModal('/projects/" ~ project.name ~ "/actions/refresh-project/confirm', 'Project herverwerken')" %}
+                {% set verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-project/confirm', 'Project verwijderen')" %}
+                <c-action-group align="start">
+                    <c-button type="secondary" label="Project herverwerken" :attrs="{'onclick': herverwerken}" />
+                    <c-button type="warning" label="Project verwijderen" :attrs="{'onclick': verwijderen}" />
+                </c-action-group>
+            {% endcall %}
+        {% endif %}
 
     {% elif active_tab == 'deployments' %}
-        {# Per deployment het paneel uit _section-deployments, en daaronder de
-           ArgoCD-statuskaart die zichzelf inlaadt. Dat inladen is LETTERLIJK overgenomen
-           van project-details/section-deployment-argocd.html.j2: dezelfde URL, dezelfde
-           prefix (dep-<naam>, die de id's van de foutenlijst uniek houdt zodat twee
-           deployments elkaar niet overschrijven), hx-trigger="intersect once" en
-           hx-swap="innerHTML". Intersect once en niet load: er kunnen tien deployments
-           staan en elke kaart kost een ArgoCD-aanroep, dus ze worden opgehaald zodra je
-           ze in beeld krijgt en daarna niet meer.
+        {# DIT TABBLAD VOLGT project-details/tab-deployments.html.j2, SECTIE VOOR SECTIE.
 
-           De statuskaart komt alleen als ArgoCD er is; de bestaande pagina zet er om
-           dezelfde reden argocd_available omheen. #}
+           Dezelfde blokken in dezelfde volgorde: de deploymentkiezer, de stand die de
+           diensten melden, de acties, de ArgoCD-statuskaart, de blokken die de diensten
+           per deployment leveren (backups, metrics), de deploymentlijst zelf, en de
+           omgevingsvariabelen.
+
+           EEN DEPLOYMENT TEGELIJK, net als op de bestaande pagina. Elk blok dat bij een
+           deployment hoort draagt ``class="deployment-section"`` en zegt met een id
+           (``deployment-<naam>``, ``deployment-actions-<naam>``, ``argocd-<naam>``) of met
+           ``data-deployment`` bij welke het hoort. switchDeployment() wisselt ze; die
+           namen zijn dus geen vormgeving en staan hier letterlijk. Alles behalve de eerste
+           staat op ``is-hidden``.
+
+           De omgevingsvariabelen horen NIET bij een deployment - dat blok toont ze
+           allemaal - en staat daarom buiten het wisselen, precies als in het origineel. #}
+
+        {% if project.deployments | length > 1 %}
+        <div class="deployment-global-selector">
+            <label for="global-deployment-selector"><strong>Deployment:</strong></label>
+            <select id="global-deployment-selector" class="deployment-select" onchange="switchDeployment(this.value)">
+                {% for deployment in project.deployments | sort(attribute='name') %}
+                <option value="{{ deployment.name }}">{{ deployment.name }} ({{ deployment.cluster }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+
         <c-stack gap="md">
-            {% for deployment in project.deployments | sort(attribute='name') %}
-                {{ deployment_panel(deployment, project, approval_notices | default({}), user_role | default('')) }}
-                {% if argocd_available | default(false) %}
-                    <div hx-get="/projects/details/{{ project.name }}/argocd-status/{{ deployment.name }}?prefix=dep-{{ deployment.name }}"
+            {% include "bg/_deployment-state.html.j2" %}
+            {% include "bg/_deployment-actions.html.j2" %}
+
+            {# De ArgoCD-statuskaart per deployment, zoals
+               project-details/section-deployment-argocd.html.j2: dezelfde URL,
+               hx-trigger="intersect once" en hx-swap="innerHTML". Intersect once en niet
+               load: er kunnen tien deployments staan en elke kaart kost een
+               ArgoCD-aanroep, dus ze worden opgehaald zodra je ze in beeld krijgt.
+
+               De prefix is de KALE deploymentnaam. Die prefix maakt de id's van de
+               foutenlijst in de kaart uniek; op de bestaande pagina staan het
+               projecttabblad en het deploymenttabblad in EEN document en is daar
+               dep-<naam> voor nodig, hier is elk tabblad een eigen pagina. #}
+            {% if argocd_available | default(false) and project.deployments %}
+                {% for deployment in project.deployments | sort(attribute='name') %}
+                <div class="deployment-section{% if not loop.first %} is-hidden{% endif %}" id="argocd-{{ deployment.name }}">
+                    <div hx-get="/projects/details/{{ project.name }}/argocd-status/{{ deployment.name }}?prefix={{ deployment.name }}"
                          hx-trigger="intersect once"
                          hx-swap="innerHTML">
                         {% include "bg/_argocd-status-skeleton.html.j2" %}
                     </div>
-                {% endif %}
+                </div>
+                {% endfor %}
+            {% endif %}
+
+            {# De blokken die de diensten per deployment leveren (RC-24): de backups, de
+               metingen. Een dienst beslist zelf of zijn blok voor deze deployment geldt,
+               dus hier staat geen dienstnaam en geen voorwaarde. #}
+            {% for deployment in project.deployments | sort(attribute='name') %}
+            <div class="deployment-section{% if not loop.first %} is-hidden{% endif %}"
+                 data-deployment="{{ deployment.name }}">
+                <c-stack gap="md">
+                    {% with sections = (deployment_service_sections | default({})).get(deployment.name, []) %}
+                        {% include "bg/_deployment-service-sections.html.j2" %}
+                    {% endwith %}
+                </c-stack>
+            </div>
+            {% endfor %}
+
+            {# De deploymentlijst zelf. Het paneel komt uit _section-deployments; de wikkel
+               eromheen is die van de bestaande pagina, want switchDeployment() zoekt op
+               id="deployment-<naam>" - ook om te bepalen of een deployment nog bestaat. #}
+            {% for deployment in project.deployments | sort(attribute='name') %}
+                <div class="deployment-section{% if not loop.first %} is-hidden{% endif %}" id="deployment-{{ deployment.name }}">
+                    {{ deployment_panel(deployment, project, approval_notices | default({}), user_role | default('')) }}
+                </div>
             {% else %}
                 <c-alert type="info" heading="Geen deployments geconfigureerd" />
             {% endfor %}
+
+            {% include "bg/_env-vars.html.j2" %}
         </c-stack>
 
     {% elif active_tab == 'metrics' %}

@@ -32,7 +32,7 @@
                where someone has to decide something, so it is the place that needed it
                most and was the only surface without it. #}
             {% if section.help_template %}
-            <c-icon icon="vraagteken" size="xl" color="hemelblauw" class="service-card__help-btn" @/>
+            {% set lotc_onclick_1 %}openServiceHelp('{{ section.help_template|e }}'){% endset %}<c-icon icon="vraagteken" size="xl" color="hemelblauw" class="service-card__help-btn"/>
             {% endif %}
         </c-heading>
         {% if section.description %}
@@ -83,7 +83,7 @@
             {% if not steps.is_first %}
             <c-button label="Vorige" show-icon="before" icon="delta-naar-links"/>
             {% else %}
-            <c-button type="button" label="Annuleren" @/>
+            {% set lotc_onclick_2 %}closeEditModal(){% endset %}<c-button type="button" label="Annuleren"/>
             {% endif %}
 
             <div class="wizard-step__actions-right">

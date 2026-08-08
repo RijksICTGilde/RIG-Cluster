@@ -5,7 +5,7 @@
         <c-layout-flow row="true" justify-content="space-between" align-items="center">
             <c-heading type="h2"><c-icon icon="puzzel" size="xl" color="donkerblauw"/>Components</c-heading>
             {% if user_role in ["admin", "owner"] %}
-            <c-button size="sm" label="Toevoegen" show-icon="before" icon="plus" @/>
+            {% set lotc_onclick_1 %}openEditModal('modal-edit-component-{{ project.components|length if project.components else 0 }}', 'Component toevoegen'){% endset %}<c-button size="sm" label="Toevoegen" show-icon="before" icon="plus"/>
             {% endif %}
         </c-layout-flow>
         <p class="rvo-text--subtle">Applicatie componenten en hun configuratie</p>
@@ -25,8 +25,8 @@
                         </div>
                         {% if user_role in ["admin", "owner"] %}
                         <c-layout-flow row="true" gap="xs">
-                            <c-button size="sm" label="Bewerken" show-icon="before" icon="bewerken" @/>
-                            <c-button size="sm" label="Verwijderen" show-icon="before" icon="verwijderen" @/>
+                            {% set lotc_onclick_2 %}openEditModal('modal-edit-component-{{ original_index }}', 'Component bewerken - {{ component.name }}'){% endset %}<c-button size="sm" label="Bewerken" show-icon="before" icon="bewerken"/>
+                            {% set lotc_onclick_3 %}openServiceModal('/projects/{{ project.name }}/actions/delete-component/confirm?target={{ component.name | urlencode }}', 'Component verwijderen'){% endset %}<c-button size="sm" label="Verwijderen" show-icon="before" icon="verwijderen"/>
                         </c-layout-flow>
                         {% endif %}
                     </div>
@@ -91,7 +91,7 @@
                         <c-heading type="h5"><c-icon icon="externe-link" size="sm" color="hemelblauw"/>Publieke links</c-heading>
                         <c-layout-flow gap="sm">
                             {% for link in component.ingress_links %}
-                            <c-button label="{{ link.deployment_name }} ({{ link.cluster }}){% if link.path and link.path != '/' %} {{ link.path }}{% endif %}" size="sm" show-icon="after" icon="externe-link" @/>
+                            {% set lotc_onclick_4 %}window.open(this.dataset.url, '_blank'){% endset %}<c-button label="{{ link.deployment_name }} ({{ link.cluster }}){% if link.path and link.path != '/' %} {{ link.path }}{% endif %}" size="sm" show-icon="after" icon="externe-link"/>
                             {% endfor %}
                         </c-layout-flow>
                     </c-layout-flow>
