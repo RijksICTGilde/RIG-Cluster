@@ -35,6 +35,44 @@ task test-e2e-random SEED=12345    # speel een specifieke schudbeurt terug
 Een rode geschudde run is na te spelen omdat `pytest-randomly` het zaad in de
 report-header afdrukt: `Using --randomly-seed=<n>`. Neem dat getal over in `SEED=<n>`.
 
+## Een rode geschudde run lezen
+
+Twee valkuilen, allebei tegengekomen bij het beoordelen van deze suite.
+
+**1. Elke run een andere valler betekent niet "een test laat rommel achter".** Zoek dan
+niet in de projectbestanden maar naar iets dat de hele app tegenhoudt. Gemeten geval, en
+precies dit patroon: `KubectlConnector.__init__` doet een **blokkerende**
+`subprocess.run(["kubectl", "auth", "whoami"], timeout=10)` op de thread die hem bouwt --
+in deze opzet de uvicorn-eventloop die elk verzoek bedient. Er is geen cluster, maar op
+een machine die wel een `kubectl` heeft (elke dev-box met kind, en de gedeelde dev-server)
+faalt die probe niet snel: hij hangt de volle 10 seconden en alles wat op dat moment
+onderweg is wacht mee. De connector is een singleton, dus dat gebeurt precies een keer --
+bij die ene test die er toevallig naast valt, elke schudbeurt een andere, en de buurtest
+verloopt zijn eigen 10s-wachttijd mee.
+
+De reparatie zit in `tests/e2e/conftest.py` (`_keep_kubectl_from_probing`), niet in de
+tests die omvielen. Let op waarom hij daar staat en niet in `create_test_app`: de
+root-conftest heeft een autouse `reset_kubectl_singleton` die `_instance` bij ELKE test op
+None zet, dus eenmalig bij het opstarten stubben houdt geen stand. `tests/e2e/test_no_kubectl_probe.py`
+bewaakt allebei de helften.
+
+Wisselt de valler per run en is er geen zulke gedeelde blokkade, kijk dan naar vaste
+wachttijden en korte timeouts. Meet het verschil door hetzelfde zaad te herhalen: dezelfde
+valler bij hetzelfde zaad is een koppeling, een andere valler is belasting.
+
+**1b. Een test die de gedeelde staat wijzigt, zet die terug in een `finally` die ook de
+SCHRIJFACTIE omsluit.** Zelfde gemeten geval: `test_saves_description_change` had het
+opslaan buiten zijn `try` staan. Toen dat opslaan zijn wachttijd overschreed -- terwijl de
+server het wel degelijk uitvoerde -- liep het herstel nooit, en viel
+`test_detail_page_renders` om op een omschrijving die deze test had overschreven. Dat leest
+als een niet-verwante volgordefout en is het niet.
+
+**2. `CSRF check failed: token missing` in het log is geen aanwijzing.** Die regel hoort
+er precies een keer in te staan en komt uit `test_csrf_browser.py::test_post_without_csrf_token_is_rejected`,
+die hem opzettelijk uitlokt en slaagt. `log_cli` drukt live af, dus in een geschudde run
+staat hij naast een willekeurige buur. Kijk in welk `live log call`-blok hij valt voordat
+je hem als oorzaak aanmerkt.
+
 ## Configuratie
 
 | Onderdeel | Waar |
