@@ -3,7 +3,7 @@
 Gemeten op 8 augustus 2026, tegen `lord-of-the-components` op branch
 `plan-v7-lotc-thema-agnostische-compiler-performanc` (commit `26ab110`) en tegen de
 `jinja-roos-components` die dit project vandaag gebruikt (`table-and-more-conversion`,
-`d6ef4eb`). Na te doen met `scripts/lotc-coexistence-probe.py`.
+`d6ef4eb`). Na te doen met `operations-manager/python/scripts/lotc_coexistence_probe.py`.
 
 Dit is de vraag die het componentenplan (`plans/naar-het-nieuwe-componentensysteem.md`)
 open liet staan, en hij bepaalt de vorm van de hele proef: **kan de omzetting pagina voor
@@ -109,5 +109,5 @@ VIRTUAL_ENV=$PWD/probe-venv uv pip install -e python -e packages/lotc-rvo \
     -e packages/lotc-nldd -e packages/lotc-layout -e packages/lotc-forms \
     beautifulsoup4 lxml
 # jinja-roos-components erbij zetten (de git-dependency van dit project)
-./probe-venv/bin/python /workspace/scripts/lotc-coexistence-probe.py
+./probe-venv/bin/python /workspace/operations-manager/python/scripts/lotc_coexistence_probe.py
 ```
