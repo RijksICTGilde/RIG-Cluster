@@ -33,6 +33,7 @@ from opi.api.task_models import (
     CloneBucketResult,
     CloneDatabaseResult,
     ConfigureServiceResult,
+    ConfigureServiceValuesResult,
     DeleteDeploymentResult,
     RefreshDeploymentResult,
     RefreshProjectResult,
@@ -74,8 +75,13 @@ from opi.services.catalog.actions import (
     ServiceAction,
     UploadedFile,
 )
-from opi.services.catalog.base import ConfigLayer
+from opi.services.catalog.base import ConfigLayer, ValueStorage
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
+from opi.services.component_values import VALUES_LAYERS, ComponentValuesError, ValuesOperation
+from opi.services.component_values import locate as locate_values_node
+from opi.services.component_values import validate_key as validate_values_key
+from opi.services.component_values import validate_value as validate_values_value
+from opi.services.component_values import validate_value_for_storage as validate_values_value_for_storage
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
 from opi.services.project_store import get_project_store
 from opi.services.registry import SERVICES, get_service
@@ -90,7 +96,7 @@ from opi.utils.naming import (
 )
 from opi.utils.project_utils import ProjectApiKeyError, generate_base_project_file, validate_project_name
 from opi.utils.yaml_util import dump_yaml_to_string
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -1318,6 +1324,17 @@ def _accepts_config_at(service, layer: ConfigLayer) -> bool:
     return layer in service.config_layers() and service.config_model_for(layer) is not None
 
 
+def _values_targets(service) -> list[ConfigLayer]:
+    """The layers where this service's owned key/value map has endpoints (RC-55).
+
+    The single derivation both the catalog and the route generator use, so what a client
+    is told exists and what actually exists cannot come apart.
+    """
+    if service.owned_values_storage is None or service.owned_property is None:
+        return []
+    return [layer for layer in service.config_layers() if layer in VALUES_LAYERS]
+
+
 def _supported_targets(service) -> list[str]:
     """The config targets a service accepts, measured from its own declarations."""
     return [layer.value for layer in ConfigLayer if _accepts_config_at(service, layer)]
@@ -1359,6 +1376,17 @@ class ServiceCatalogEntry(BaseModel):
         None,
         description="Version of the service's config schema; null when the service has no config model",
     )
+    value_targets: list[ConfigLayer] = Field(
+        default_factory=list,
+        description=(
+            "Targets where this service owns a key/value map that can be managed entry by entry "
+            "under /api/v2/projects/{project_name}/services/{name}/values/... Empty for every "
+            "service that keeps its config in a `services:` list. Discoverable rather than "
+            "guessable: `aliases` owns values on the component only, because the project schema "
+            "has no place for them inside a deployment, and a client should be able to see that "
+            "instead of finding out from a 404."
+        ),
+    )
 
 
 class ServiceCatalogResponse(BaseModel):
@@ -1390,6 +1418,7 @@ async def list_configurable_services_v2() -> ServiceCatalogResponse:
                 description=definition.description if definition else "",
                 config_schema_version=service.config_schema_version,
                 targets=[ConfigLayer(t) for t in targets],
+                value_targets=_values_targets(service),
                 configurable=bool(targets),
             )
         )
@@ -1961,3 +1990,326 @@ def _register_service_action_routes(router: APIRouter) -> None:
 
 
 _register_service_action_routes(v2_router)
+
+
+# --- owned key/value routes (RC-55) ------------------------------------------
+# ``user-env-vars`` and ``aliases`` were the only two registered services without a
+# single endpoint. Not an oversight: they own a plain property on a component
+# (``user-env-vars:``, ``aliases:``) instead of a block in a ``services:`` list, so the
+# generic config routes above -- which read and write exactly that block -- have nothing
+# to address, and ``_accepts_config_at`` skips them on purpose. What was missing is an
+# endpoint for the owned-property shape, which is what this section is.
+#
+# The unit addressed is one entry, not the whole map: the stored form is encrypted (one
+# block for the set, or one ciphertext per value), so "send me the whole thing back with
+# your change in it" would mean handing every secret to the caller first. Adding,
+# patching and deleting by name never has to read a value out to the client.
+#
+# The layers come from the service (``config_layers()``), so ``aliases`` gets component
+# endpoints only. That is not an omission but the shape of the project file: the
+# ``deployment-component`` object in ``opi/schemas/project_v2.json`` has
+# ``additionalProperties: false`` and no ``aliases`` property, and putting one there is a
+# schema version bump plus a legacy patch, deliberately not taken (the alias mechanism is
+# on its way out; see features/component-values-api.md).
+
+
+class ServiceValuesPayload(BaseModel):
+    """One or more name/value pairs to add or patch."""
+
+    values: dict[str, str] = Field(
+        ...,
+        description=(
+            "The values to write, keyed by name. Bulk is the only form: a map of one entry is "
+            "the single case. A name must be a valid environment-variable name and a value may "
+            "not contain a newline or a null byte, because these travel to the workload as "
+            "KEY=value lines."
+        ),
+        examples=[{"DATABASE_TIMEOUT": "30", "FEATURE_X": "on"}],
+    )
+
+    @field_validator("values")
+    @classmethod
+    def _valid(cls, values: dict[str, str]) -> dict[str, str]:
+        if not values:
+            raise ValueError("Geef minstens een naam/waarde-paar op.")
+        for key, value in values.items():
+            validate_values_key(key)
+            validate_values_value(key, value)
+        return values
+
+
+class ServiceValueKeysPayload(BaseModel):
+    """The names to remove."""
+
+    keys: list[str] = Field(
+        ...,
+        description="The names to remove. Every name must exist; an unknown one fails the whole request.",
+        examples=[["DATABASE_TIMEOUT", "FEATURE_X"]],
+    )
+
+    @field_validator("keys")
+    @classmethod
+    def _valid(cls, keys: list[str]) -> list[str]:
+        if not keys:
+            raise ValueError("Geef minstens een naam op.")
+        for key in keys:
+            validate_values_key(key)
+        return keys
+
+
+def _values_route(layer: ConfigLayer) -> tuple[str, tuple[str, ...]]:
+    """The path suffix and the path-param names for a values layer."""
+    if layer is ConfigLayer.COMPONENT:
+        return "/values/component/{component_name}", ("component_name",)
+    if layer is ConfigLayer.DEPLOYMENT_COMPONENT:
+        return "/values/deployment/{deployment_name}/component/{component_name}", (
+            "deployment_name",
+            "component_name",
+        )
+    raise ValueError(f"No values route for layer {layer!r}")
+
+
+def _values_signature(name_params: tuple[str, ...], body_model: type | None, *, keyed: bool) -> Signature:
+    """The signature FastAPI introspects for a values route."""
+    params = [
+        Parameter("request", Parameter.POSITIONAL_OR_KEYWORD, annotation=Request),
+        Parameter("project_name", Parameter.POSITIONAL_OR_KEYWORD, annotation=ProjectNamePath),
+    ]
+    for name_param in name_params:
+        annotation = DeploymentNamePath if name_param == "deployment_name" else ComponentNamePath
+        params.append(Parameter(name_param, Parameter.POSITIONAL_OR_KEYWORD, annotation=annotation))
+    if keyed:
+        params.append(
+            Parameter(
+                "value_key",
+                Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=str,
+                default=FastAPIPath(..., description="The name to remove."),
+            )
+        )
+    if body_model is not None:
+        params.append(Parameter("body", Parameter.POSITIONAL_OR_KEYWORD, annotation=body_model, default=Body(...)))
+    params.append(Parameter("rollout", Parameter.POSITIONAL_OR_KEYWORD, annotation=RolloutQuery, default=True))
+    return Signature(params, return_annotation=JSONResponse)
+
+
+async def _enqueue_values_write(
+    request: Request,
+    project_name: str,
+    service_name: str,
+    layer: ConfigLayer,
+    operation: ValuesOperation,
+    *,
+    component_name: str,
+    deployment_name: str | None = None,
+    values: dict[str, str] | None = None,
+    keys: list[str] | None = None,
+    rollout: bool = True,
+) -> JSONResponse:
+    """Check what can be checked now, then enqueue the write.
+
+    A component that is not there is a 404 here rather than a task that fails later:
+    the caller asked about a thing that does not exist, and that is an answer this
+    request can give. The same check runs again inside the mutation, against the
+    freshest file, because between the two the file can change.
+    """
+    logger.info("V2 %s '%s' values at %s in project: %s", operation.value, service_name, layer.value, project_name)
+    if not validate_project_name(project_name):
+        raise HTTPException(status_code=400, detail="Invalid project name format.")
+    project = get_project_store().get(project_name)
+    if not project or not project.data:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+    if locate_values_node(project.data, layer, component_name, deployment_name) is None:
+        where = f"component '{component_name}'" + (f" in deployment '{deployment_name}'" if deployment_name else "")
+        raise HTTPException(status_code=404, detail=f"No {where} in project '{project_name}'")
+
+    task = await create_async_task(
+        request=request,
+        task_type="configure_service_values",
+        project_name=project_name,
+        payload={
+            "project_name": project_name,
+            "service": service_name,
+            "target": layer.value,
+            "operation": operation.value,
+            "component": component_name,
+            "deployment": deployment_name,
+            "values": values,
+            "keys": keys,
+            "rollout": rollout,
+        },
+    )
+    return _accepted_response(task, "configure_service_values")
+
+
+def _make_values_endpoint(
+    service_name: str,
+    storage: ValueStorage,
+    layer: ConfigLayer,
+    operation: ValuesOperation,
+    *,
+    keyed: bool = False,
+):
+    """Build one values endpoint: the operation is fixed, the payload shape follows it."""
+
+    async def endpoint(**kwargs: Any) -> JSONResponse:
+        body = kwargs.get("body")
+        keys: list[str] | None = None
+        if operation in (ValuesOperation.ADD, ValuesOperation.PATCH):
+            # Storage-dependent, so it cannot live in the shared payload model: a BLOCK
+            # service loses edge whitespace and surrounding quotes on read-back, which
+            # would make every write of such a value a fresh commit.
+            try:
+                for key, value in body.values.items():
+                    validate_values_value_for_storage(key, value, storage)
+            except ComponentValuesError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+        if operation is ValuesOperation.DELETE:
+            keys = [kwargs["value_key"]] if keyed else list(body.keys)
+            if keyed:
+                # A name in the PATH gets no pydantic validation, so it is checked here
+                # and turned into the same 422 a name in a body would produce -- not the
+                # 500 an escaping ComponentValuesError would be.
+                try:
+                    validate_values_key(keys[0])
+                except ComponentValuesError as error:
+                    raise HTTPException(status_code=422, detail=str(error)) from error
+        return await _enqueue_values_write(
+            kwargs["request"],
+            kwargs["project_name"],
+            service_name,
+            layer,
+            operation,
+            component_name=kwargs["component_name"],
+            deployment_name=kwargs.get("deployment_name"),
+            values=body.values if operation in (ValuesOperation.ADD, ValuesOperation.PATCH) else None,
+            keys=keys,
+            rollout=kwargs.get("rollout", True),
+        )
+
+    name_params = _values_route(layer)[1]
+    body_model: type | None = None
+    if operation in (ValuesOperation.ADD, ValuesOperation.PATCH):
+        body_model = ServiceValuesPayload
+    elif operation is ValuesOperation.DELETE and not keyed:
+        body_model = ServiceValueKeysPayload
+    endpoint.__signature__ = _values_signature(name_params, body_model, keyed=keyed)
+    suffix = "one" if keyed else "many"
+    endpoint.__name__ = (
+        f"{operation.value}_{'' if operation is not ValuesOperation.DELETE else suffix + '_'}"
+        f"{service_name}_values_{layer.value}"
+    ).replace("-", "_")
+    return endpoint
+
+
+#: Where the values land, per layer, in the caller's terms.
+_VALUES_PLACE = {
+    ConfigLayer.COMPONENT: "component `{component_name}`",
+    ConfigLayer.DEPLOYMENT_COMPONENT: "component `{component_name}` inside deployment `{deployment_name}`",
+}
+
+#: What each operation promises about a name that is or is not already there.
+_VALUES_RULE = {
+    ValuesOperation.ADD: "A name that is already there fails the whole request; use PATCH to change one.",
+    ValuesOperation.PATCH: "A name that is not there fails the whole request; use POST to add one.",
+    ValuesOperation.DELETE: "A name that is not there fails the whole request.",
+    ValuesOperation.CLEAR: "Removes every value at this layer. Nothing stored is still a success.",
+}
+
+
+def _values_description(
+    service_name: str, storage: ValueStorage, layer: ConfigLayer, operation: ValuesOperation
+) -> str:
+    """What a values write does, beyond what its summary already says."""
+    stored = (
+        "The whole set is stored as ONE AGE-encrypted block of `KEY=value` lines"
+        if storage is ValueStorage.BLOCK
+        else "The names stay readable and EVERY value is AGE-encrypted on its own"
+    )
+    fidelity = [
+        "A value that would not read back byte for byte is refused with a 422 rather than "
+        "stored: decryption strips leading and trailing whitespace"
+        + (
+            ", and reading the `KEY=value` line back also removes a single pair of surrounding quotes"
+            if storage is ValueStorage.BLOCK
+            else ""
+        )
+        + ". Send the value as the workload should receive it, without those edge characters.",
+        "",
+    ]
+    return "\n".join(
+        [
+            f"Change the `{service_name}` values on {_VALUES_PLACE[layer]}, in the project's YAML "
+            "file in `zad-projects`.",
+            "",
+            _VALUES_RULE[operation],
+            "",
+            f"{stored}, so every change is a decrypt -> change -> re-encrypt of what is stored. "
+            "Values are never returned: reading one back would hand out the secret this endpoint "
+            "exists to keep encrypted.",
+            "",
+            *fidelity,
+            "A request that leaves the stored values exactly as they were commits nothing and rolls "
+            "nothing out (`changed: false` in the task result). Otherwise the change is rolled out: "
+            "the project is processed again, manifests are regenerated and ArgoCD applies them.",
+            "",
+            "Asynchronous: the response is 202 with a task id. Poll `/api/tasks/{task_id}` for the "
+            "result; the write and the rollout both happen inside that task.",
+        ]
+    )
+
+
+#: OpenAPI responses shared by every values route.
+_VALUES_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {"model": TaskResponse[ConfigureServiceValuesResult], "description": "Task completed (when polled)"},
+    202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+}
+
+
+def _register_service_values_routes(router: APIRouter) -> None:
+    """Generate the owned key/value routes for every service that declares a storage shape.
+
+    Registry-driven like the config routes: a service that starts owning a values map
+    gets its endpoints by declaring ``owned_values_storage``, and only for the layers it
+    already declares -- so a layer the project schema has no place for cannot get a route.
+    """
+    for service_type, service in SERVICES.items():
+        storage = service.owned_values_storage
+        if storage is None or service.owned_property is None:
+            continue
+        service_name = service_type.value
+        for layer in _values_targets(service):
+            suffix, _ = _values_route(layer)
+            path = f"/projects/{{project_name}}/services/{service_name}{suffix}"
+            routes = [
+                (path, "POST", ValuesOperation.ADD, False, f"Add {service_name} values ({layer.value})"),
+                (path, "PATCH", ValuesOperation.PATCH, False, f"Change {service_name} values ({layer.value})"),
+                (path, "DELETE", ValuesOperation.CLEAR, False, f"Clear all {service_name} values ({layer.value})"),
+                (
+                    f"{path}/{{value_key}}",
+                    "DELETE",
+                    ValuesOperation.DELETE,
+                    True,
+                    f"Remove one {service_name} value ({layer.value})",
+                ),
+                (
+                    f"{path}/:delete",
+                    "POST",
+                    ValuesOperation.DELETE,
+                    False,
+                    f"Remove {service_name} values ({layer.value})",
+                ),
+            ]
+            for route_path, method, operation, keyed, summary in routes:
+                router.add_api_route(
+                    route_path,
+                    validate_api_token(_make_values_endpoint(service_name, storage, layer, operation, keyed=keyed)),
+                    methods=[method],
+                    tags=[service_name],
+                    responses=_VALUES_RESPONSES,
+                    summary=summary,
+                    description=_values_description(service_name, storage, layer, operation),
+                )
+
+
+_register_service_values_routes(v2_router)

@@ -174,38 +174,6 @@ clients:
     attributes:
       login_theme: "nl-design-system"
 
-  # Client for the zad-cli command-line tool
-  # A distributed CLI cannot keep a client secret, so this is a public client using
-  # authorization code + PKCE with a loopback redirect (RFC 8252): the CLI listens on
-  # 127.0.0.1 on a free port, opens the browser here, and exchanges the code itself.
-  # Keycloak ignores the port when matching a loopback redirect URI, so no port is pinned.
-  # The audience mapper puts this API in the access token's aud; without it the API
-  # refuses the token, because a token minted for something else must not be accepted here.
-  - clientId: "{{ cli_client_id }}"
-    name: "ZAD CLI"
-    enabled: true
-    publicClient: true
-    protocol: "openid-connect"
-    redirectUris:
-      - "http://127.0.0.1/*"
-      - "http://localhost/*"
-    postLogoutRedirectUris:
-      - "+"
-    webOrigins: []
-    standardFlowEnabled: true
-    implicitFlowEnabled: false
-    directAccessGrantsEnabled: false
-    serviceAccountsEnabled: false
-    pkceCodeChallengeMethod: "S256"
-    protocolMappers:
-      - name: "zad-api-audience"
-        protocol: "openid-connect"
-        protocolMapper: "oidc-audience-mapper"
-        config:
-          included.custom.audience: "{{ cli_token_audience }}"
-          id.token.claim: "false"
-          access.token.claim: "true"
-
 clientScopes:
   - name: "custom_attributes_passthrough"
     description: "Custom attributes passthrough for project realm (no override mappers)"
