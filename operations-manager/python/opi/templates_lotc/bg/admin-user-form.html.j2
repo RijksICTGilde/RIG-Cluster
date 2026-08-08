@@ -1,0 +1,44 @@
+{#
+  Het formulier waarmee een platformgebruiker wordt toegevoegd of bewerkt.
+
+  Een OVERNAME van admin/user-form.html.j2. Dezelfde route, dezelfde velden, dezelfde
+  twee knoppen; alleen de omlijsting komt nu uit het thema.
+
+    <c-heading>            -> page_head(), zonder ondertitel want de bestaande pagina
+                              heeft er geen en er is er hier niets bij te verzinnen
+    <c-card> met <form>    -> panel() zonder kop, zodat de kaart een kaart blijft en de
+                              afstanden erbinnen uit de stack komen
+    div.user-form-actions  -> c-action-group, de plek die het thema voor formulier-
+                              knoppen heeft
+
+  De VELDEN zelf staan hier niet: die komen als HTML mee in form_html, gerenderd uit de
+  editables. Bij deze weergave gebeurt dat door de LOTCWidgetAdapter, zodat de velden uit
+  hetzelfde systeem komen als de rest van de pagina - zie _render_form_html() in
+  opi/web/router_user_admin.py.
+
+  Het CSRF-token blijft een gewone verborgen input. Er is geen componentvorm voor, en die
+  is er ook niet nodig: het is geen zichtbaar veld.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}{{ page_heading }} - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head(page_heading) }}
+
+    {% call panel("") %}
+        <form method="post" action="{{ form_action }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+            <c-stack gap="lg">
+                {{ form_html | safe }}
+
+                <c-action-group align="start">
+                    <c-button type="primary" size="md" label="Opslaan" html-type="submit" />
+                    <c-button type="secondary" size="md" label="Annuleren" href="/admin/users" />
+                </c-action-group>
+            </c-stack>
+        </form>
+    {% endcall %}
+{% endblock %}

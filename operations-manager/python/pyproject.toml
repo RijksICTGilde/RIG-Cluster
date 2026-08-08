@@ -50,11 +50,11 @@ dependencies = [
     # Gepind op een commit. Die pin is de reden dat dit veilig is: de NLDD-afgeleide
     # componentlaag schuift met een bump mee, en meer dan duizend aanroepen mogen niet
     # stil van vorm veranderen.
-    "lord-of-the-components @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@3275843#subdirectory=python",
-    "lotc-rvo @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@3275843#subdirectory=packages/lotc-rvo",
-    "lotc-nldd @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@3275843#subdirectory=packages/lotc-nldd",
-    "lotc-layout @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@3275843#subdirectory=packages/lotc-layout",
-    "lotc-forms @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@3275843#subdirectory=packages/lotc-forms",
+    "lord-of-the-components @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@85753c0#subdirectory=python",
+    "lotc-rvo @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@85753c0#subdirectory=packages/lotc-rvo",
+    "lotc-nldd @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@85753c0#subdirectory=packages/lotc-nldd",
+    "lotc-layout @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@85753c0#subdirectory=packages/lotc-layout",
+    "lotc-forms @ git+https://git.claude.robbertuittenbroek.nl/robbert/lord-of-the-components.git@85753c0#subdirectory=packages/lotc-forms",
     "beautifulsoup4>=4.13.4",
     "lxml>=6.0.1",
     "python-keycloak>=5.3.0",
