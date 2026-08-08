@@ -1,13 +1,22 @@
 {#
-  Projectenoverzicht, herontworpen in bg-vorm.
+  Projectenoverzicht.
 
-  In de vertaalde versie is dit een rij kaarten met tekst erin. bg zou het als catalogus
-  opzetten: een filterbalk boven een raster van kaarten die elk hun eigen kerngegevens
-  dragen. Dat is hier overgenomen met c-filter-bar en c-catalog-card.
+  Bewust sober. Wat iemand hier komt doen is een project vinden en openen, en alles wat
+  daar niet bij helpt maakt dat moeilijker in plaats van makkelijker. Dus: naam,
+  omschrijving, het aantal deployments, en klikken.
 
-  Het componentenplan noemde deze pagina als eerste omzetkandidaat, en niet toevallig:
-  hij toont veel en doet weinig, dus het verschil tussen vertalen en hertekenen is er
-  goed te zien zonder dat er gedrag op het spel staat.
+  Wat er BEWUST NIET staat:
+    - de diensten. Die horen op de projectpagina zelf, niet in een lijst waar je aan het
+      zoeken bent.
+    - het aantal componenten en het cluster. Interessant als je een project al gekozen
+      hebt, ruis als je nog aan het kiezen bent.
+    - een filterbalk. Er stond er een, maar hij deed niets: hij was overgenomen uit de
+      vorm van bg zonder dat er iets achter zat. Een zoekveld dat niet zoekt is erger dan
+      geen zoekveld. Komt hij terug, dan server-side met een eigen URL, net als de tabs.
+
+  c-layer en geen c-catalog-card: die laatste heeft open-label nodig om zijn href te
+  gebruiken, en dan staat er een losse "Openen"-link in de kaart. Een layer is in zijn
+  geheel klikbaar en toont dat met een pijl.
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
@@ -21,48 +30,18 @@
         <c-button type="primary" label="Nieuw project" icon="plus" show-icon="before" href="/forms/wizard/restart" />
     </c-cluster>
 
-    {# De filterbalk hoort bij de catalogusvorm: bij twee projecten is hij overbodig, bij
-       vijftig onmisbaar. Hij staat er omdat deze pagina laat zien hoe de vorm werkt, niet
-       omdat de voorbeelddata erom vraagt. #}
-    <c-filter-bar>
-        <c-filter-select label="Cluster">
-            <c-option value="" label="Alle clusters" />
-            <c-option value="odcn-production" label="ODC-Noord productie" />
-        </c-filter-select>
-        <c-filter-select label="Dienst">
-            <c-option value="" label="Alle diensten" />
-            <c-option value="keycloak" label="Keycloak" />
-            <c-option value="publish-on-web" label="Publiceren op het web" />
-        </c-filter-select>
-    </c-filter-bar>
-
-    {# open-label is nodig om een kaart klikbaar te maken: zonder laat c-catalog-card
-       zijn href vallen en is er geen link. En let op - een Jinja-commentaar hoort BUITEN
-       de tag, want de voorbewerker leest woorden binnen een componenttag als
-       attribuutnamen. #}
-    <c-auto-grid min="320px" gap="md">
-        {% for project in projects %}
-            <c-catalog-card
-                title="{{ project.display_name }}"
-                subtitle="{{ project.description }}"
-                href="/projects/details/{{ project.name }}"
-                open-label="Openen">
-                <c-stack gap="sm">
-                    {# c-cluster en geen horizontale c-stack: een stack houdt alles op
-                       een regel en laat de inhoud buiten de kaart lopen zodra er meer
-                       chips zijn dan passen. Een cluster breekt af. #}
-                    <c-cluster gap="sm">
-                        {% for service in project.services %}
-                            <c-chip>{{ service }}</c-chip>
-                        {% endfor %}
-                    </c-cluster>
-                    <c-detail-list>
-                        <c-detail-item label="Deployments" value="{{ project.deployment_count }}" />
-                        <c-detail-item label="Componenten" value="{{ project.components | length }}" />
-                        <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
-                    </c-detail-list>
-                </c-stack>
-            </c-catalog-card>
-        {% endfor %}
-    </c-auto-grid>
+    {% call panel("Mijn projecten", "rectangle-stack") %}
+        <c-stack gap="sm">
+            {% for project in projects %}
+                <c-layer
+                    icon="rectangle-stack"
+                    title="{{ project.display_name }}"
+                    count="{{ project.deployment_count }} deployment{{ 's' if project.deployment_count != 1 else '' }}"
+                    sub="{{ project.description }}"
+                    href="/projects/details/{{ project.name }}" />
+            {% else %}
+                <c-paragraph>Je hebt nog geen projecten.</c-paragraph>
+            {% endfor %}
+        </c-stack>
+    {% endcall %}
 {% endblock %}

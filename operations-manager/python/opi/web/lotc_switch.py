@@ -260,14 +260,6 @@ def build_lotc_projects(
                 "display_name": project.get("display_name") or project["name"],
                 "description": project.get("description", ""),
                 "deployment_count": len(project.get("deployments") or []),
-                "components": project.get("components") or [],
-                "clusters": project.get("clusters") or [],
-                # De dienstenlijst uit het projectbestand kan strings of dicts bevatten
-                # (een dienst met configuratie is een dict). Alleen de naam is hier nodig.
-                "services": [
-                    service if isinstance(service, str) else next(iter(service))
-                    for service in (project.get("services") or [])
-                ],
             }
             for project in projects
         ],
