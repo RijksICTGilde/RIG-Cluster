@@ -21,6 +21,13 @@ worden. Er staat bewust nog GEEN pixelvergelijking met een baseline op: zolang d
 omzetting loopt verandert het beeld elke stap, en een baseline zou dan alleen maar
 elke stap opnieuw goedgekeurd worden. Dat is geen test maar een ritueel. De
 vergelijking komt zodra een pagina af is.
+
+Wanneer die baseline er komt, horen er drie dingen bij (advies van het LOTC-project,
+dat hetzelfde harnas al draait): een gepinde ``device_scale_factor`` naast de vaste
+viewport hieronder, vastleggen en vergelijken in dezelfde container-image, en een
+drempel in plaats van een exacte match - zij draaien ``maxDiffPixelRatio`` 0.01 met
+een per-pixel drempel van 0.2, wat antialiasing opvangt zonder echte regressies te
+missen.
 """
 
 from typing import TYPE_CHECKING
@@ -34,20 +41,21 @@ pytestmark = pytest.mark.e2e
 
 SCREENSHOT_DIR = "tests/e2e/screenshots/lotc"
 
-# Custom elements die op de schil voorkomen. Zolang deze niet gedefinieerd zijn,
-# heeft de browser de pagina nog niet opgebouwd en zegt een screenshot niets.
-NLDD_ELEMENTS = ["nldd-title", "nldd-icon"]
+VIEWPORT_WIDTH = 1440
+VIEWPORT_HEIGHT = 900
 
 
 def _wait_for_nldd(page: Page) -> None:
-    """Wacht tot nldd.js de custom elements heeft geregistreerd en opgebouwd."""
+    """Wacht tot elk nldd-element op de pagina door de browser is opgebouwd.
+
+    De toets is ``:not(:defined)``: die selecteert precies de custom elements die de
+    browser nog niet kent. Zolang er een over is, is nldd.js nog niet klaar en toont
+    een screenshot ongestileerde tekst. Dit is de grootste bron van flakiness bij een
+    webcomponentenlaag, en de reden dat wachten op load-state alleen niet genoeg is.
+    """
     page.wait_for_load_state("networkidle")
-    for tag in NLDD_ELEMENTS:
-        page.wait_for_function(f"() => window.customElements.get({tag!r}) !== undefined", timeout=15000)
-    # Na registratie moet de browser ze nog opbouwen; whenDefined lost op zodra dat
-    # voor alle geregistreerde elementen gebeurd is.
     page.wait_for_function(
-        f"() => Promise.all({NLDD_ELEMENTS}.map(t => window.customElements.whenDefined(t))).then(() => true)",
+        "() => document.querySelectorAll('*:not(:defined)').length === 0",
         timeout=15000,
     )
 
@@ -75,6 +83,7 @@ def test_lotc_shell_serves_its_assets(app_server: str, page: Page) -> None:
 
 def test_lotc_shell_renders_nldd_components(app_server: str, page: Page) -> None:
     """De schil komt als NLDD-webcomponenten binnen en wordt door de browser opgebouwd."""
+    page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
     page.goto(f"{app_server}/lotc/")
     _wait_for_nldd(page)
 
@@ -95,12 +104,14 @@ def test_lotc_shell_screenshot(app_server: str, page: Page) -> None:
     Het paar is het punt: los zegt een screenshot van de nieuwe schil niets over de
     vraag of de omzetting klopt.
     """
-    page.set_viewport_size({"width": 1440, "height": 900})
+    page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
 
     page.goto(f"{app_server}/lotc/")
     _wait_for_nldd(page)
-    page.screenshot(path=f"{SCREENSHOT_DIR}/shell-lotc-nldd.png", full_page=True)
+    # animations="disabled" bevriest CSS-transities; anders schiet je soms halverwege
+    # een animatie en wijkt het beeld af zonder dat er iets veranderd is.
+    page.screenshot(path=f"{SCREENSHOT_DIR}/shell-lotc-nldd.png", full_page=True, animations="disabled")
 
     page.goto(f"{app_server}/architecture")
     page.wait_for_load_state("networkidle")
-    page.screenshot(path=f"{SCREENSHOT_DIR}/shell-roos.png", full_page=True)
+    page.screenshot(path=f"{SCREENSHOT_DIR}/shell-roos.png", full_page=True, animations="disabled")
