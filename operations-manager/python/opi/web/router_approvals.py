@@ -17,6 +17,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
+from starlette.responses import Response
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
@@ -157,7 +158,7 @@ def _collect_all_projects_approval_data() -> list[dict[str, Any]]:
 
 @approvals_router.get("", response_class=HTMLResponse)
 @requires_sso
-async def list_subdomains(request: Request) -> HTMLResponse:
+async def list_subdomains(request: Request) -> Response:
     """List all domain/subdomain requests across all projects."""
 
     user = _require_admin(request)
@@ -168,14 +169,21 @@ async def list_subdomains(request: Request) -> HTMLResponse:
 
     projects_data = _collect_all_projects_approval_data()
 
-    templates = get_templates()
-    return templates.TemplateResponse(
-        "admin/approvals.html.j2",
-        {
+    # Dezelfde gegevens, twee weergaven; zie opi/web/lotc_switch.py. Alleen de LIJST gaat
+    # mee: het beoordelingsvenster erin haalt zijn inhoud op bij de modal-wizard hieronder,
+    # en die blijft roos renderen zolang de wizard zelf niet om is.
+    from opi.web.lotc_switch import build_lotc_admin, render
+
+    return render(
+        request,
+        roos="admin/approvals.html.j2",
+        lotc="bg/admin-approvals.html.j2",
+        context={
             "request": request,
             "menu_items": get_menu_items(user),
             "projects_data": projects_data,
             "success_message": request.query_params.get("success"),
+            **build_lotc_admin(request, user=user, current_path="/admin/approvals"),
         },
     )
 

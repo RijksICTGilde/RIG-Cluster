@@ -1,0 +1,182 @@
+{#
+  Domeinbeheer: de aanvragen voor domeinen en subdomeinen, per project.
+
+  Een OVERNAME van admin/approvals.html.j2 plus zijn vier deeltemplates. Dezelfde blokken
+  in dezelfde volgorde, dezelfde gegevens, hetzelfde gedrag:
+
+    _kop        -> page_head()
+    _melding    -> c-alert
+    _aanvragen  -> per project een panel() met een c-table; de badges voor soort en
+                   status zijn c-tag geworden in plaats van spans met eigen klassen
+    _modal      -> zie hieronder, en dat is de plek waar deze pagina afwijkt
+
+  WAAROM DE DIALOOG GEEN c-modal-dialog IS
+
+  Het thema heeft er een (<c-modal-dialog>), en op de meeste plekken zou die de juiste
+  keuze zijn. Hier niet, om een reden die pas bij het meten bleek: de dialoog van deze
+  pagina wordt niet door zichzelf bestuurd maar door /static/js/edit_modal.js, en dat
+  bestand selecteert op de KLASSE ``.edit-section-modal``. Daar hangt alles aan wat je van
+  een beoordelingsvenster verwacht:
+
+    - Escape sluit het venster, tenzij er een taak loopt
+    - een klik op de achtergrond waarschuwt bij niet-opgeslagen werk
+    - zolang de goedkeuring draait is het venster niet weg te klikken
+    - de scrollpositie blijft staan over htmx-wisselingen heen
+
+  ``class`` komt op c-modal-dialog niet door: het component geeft alleen id en zijn eigen
+  attributen door aan het custom element. De dialoog zou er dus uitzien als NLDD en
+  ondertussen stilletjes zijn Escape-afhandeling en zijn blokkade tijdens een lopende taak
+  kwijt zijn. Dat is precies het soort verlies dat je pas merkt als het misgaat.
+
+  Bovendien wordt de INHOUD van dit venster door de andere omgeving gerenderd: het is de
+  modal-wizard uit opi/templates/wizard/, in roos-componenten. Die kan hier niet
+  meeverhuizen zonder de wizard zelf om te zetten, en dat is fase 4.
+
+  Daarom staat de dialoog hier zoals hij is, met dezelfde markup, dezelfde klassen en
+  dezelfde scripts. Wat de LOTC-schil niet zelf meebrengt (json-enc en edit_modal.js komen
+  bij de bestaande pagina uit base.html.j2) wordt hieronder alsnog geladen.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}Domeinbeheer - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head("Domeinbeheer", "Beheer domein- en subdomeinaanvragen voor alle projecten.") }}
+
+    {% if success_message %}
+        <c-alert type="success" heading="{{ success_message }}" />
+    {% endif %}
+
+    {% if projects_data %}
+        {% for project in projects_data %}
+            {% set beheren %}<c-button type="primary" size="sm" label="Beheren" icon="pencil-on-square" show-icon="before" @click="openApprovalModal('{{ project.project_name }}')" />{% endset %}
+            {% call panel(project.project_name, "rectangle-stack", aside=beheren) %}
+{# c-table-head IS de kopregel; daar hoort geen c-table-row in. En zonder
+                   columns stapelen de cellen, want NLDD maakt er een CSS-grid van. #}
+                <c-table columns="1fr 2fr 2fr 1fr 2fr">
+                    <c-table-head>
+                        <c-th>Type</c-th>
+                        <c-th>Domein</c-th>
+                        <c-th>Naam</c-th>
+                        <c-th>Status</c-th>
+                        <c-th>Laatste wijziging</c-th>
+                    </c-table-head>
+                    {% for item in project.approval_items %}
+                        <c-table-row>
+                            <c-td>
+                                <c-tag type="default" label="{{ 'Subdomein' if item.type == 'subdomain' else 'Domein' }}" />
+                            </c-td>
+                            <c-td>{{ item.domain }}</c-td>
+                            <c-td><c-b>{{ item.name }}</c-b></c-td>
+                            <c-td>
+                                {# De kleur zat in het origineel in de klasse van de badge;
+                                   hier in het soort tag. Aangevraagd blijft opvallen, want
+                                   dat is de rij waar je iets mee moet. #}
+                                {% set status_labels = {'requested': 'Aangevraagd', 'approved': 'Goedgekeurd', 'denied': 'Afgewezen'} %}
+                                {% set status_types = {'requested': 'warning', 'approved': 'success', 'denied': 'error'} %}
+                                <c-tag
+                                    type="{{ status_types.get(item.current_status, 'default') }}"
+                                    label="{{ status_labels.get(item.current_status, item.current_status) }}" />
+                            </c-td>
+                            <c-td>
+                                {% if item.history %}
+                                    {% set last = item.history[-1] %}
+                                    <c-stack gap="xs">
+                                        <c-paragraph size="sm" no-spacing>{{ last.date | dutch_date(include_time=False) }}</c-paragraph>
+                                        {% if last.by %}
+                                            <c-paragraph size="sm" no-spacing>door {{ last.by }}</c-paragraph>
+                                        {% endif %}
+                                    </c-stack>
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </c-td>
+                        </c-table-row>
+                    {% endfor %}
+                </c-table>
+            {% endcall %}
+        {% endfor %}
+    {% else %}
+        {% call panel("") %}
+            <c-paragraph>Geen domein- of subdomeinaanvragen gevonden.</c-paragraph>
+        {% endcall %}
+    {% endif %}
+
+    {# Het venster waarin een aanvraag wordt beoordeeld. Dezelfde markup als de bestaande
+       pagina, inclusief de klassen waar edit_modal.js op selecteert. De achtergrond gaat
+       langs de gedeelde afhandeling en niet rechtstreeks langs sluiten: die negeert de
+       klik zolang er een taak loopt en waarschuwt bij niet-opgeslagen werk. #}
+    <div id="approval-backdrop" class="edit-section-backdrop" onclick="handleEditBackdropClick()"></div>
+    <div id="approval-modal" class="edit-section-modal" role="dialog" aria-modal="true">
+        <div class="edit-section-header">
+            <c-heading type="h2" size="4" id="approval-title">
+                <c-icon icon="check-mark-circle" size="lg" />
+                <span id="approval-title-text">Domeingoedkeuring</span>
+            </c-heading>
+            <c-button type="tertiary" size="sm" label="Sluiten" icon="dismiss" show-icon="before"
+                      class="edit-modal-close-btn"
+                      @click="closeApprovalModal()" />
+        </div>
+        <div id="approval-error" class="edit-section-error is-hidden"></div>
+        <div id="edit-section-inner">
+            <div class="edit-section-content">
+                <div class="edit-section-loading"><c-paragraph>Laden...</c-paragraph></div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block additional_styles %}
+    <link rel="stylesheet" href="{{ static_url('css/modal.css') }}">
+    <link rel="stylesheet" href="{{ static_url('css/wizard.css') }}">
+{% endblock %}
+
+{% block additional_scripts %}
+    {# Deze twee komen bij de bestaande pagina uit base.html.j2 en dus niet mee met de
+       LOTC-schil: json-enc laat htmx het stapformulier als JSON versturen (de route weigert
+       iets anders), en edit_modal.js draagt het sluiten, Escape en de blokkade tijdens een
+       lopende taak. Zonder allebei doet het venster het niet. #}
+    <script src="{{ static_url('js/json-enc.js') }}"></script>
+    <script src="{{ static_url('js/edit_modal.js') }}"></script>
+    <script>
+        function openApprovalModal(projectName) {
+            document.getElementById('approval-title-text').textContent = 'Domeingoedkeuring - ' + projectName;
+
+            var errorEl = document.getElementById('approval-error');
+            errorEl.classList.add('is-hidden');
+
+            var innerEl = document.getElementById('edit-section-inner');
+            innerEl.innerHTML =
+                '<div class="edit-section-content">' +
+                    '<div class="edit-section-loading"><p>Laden...</p></div>' +
+                '</div>';
+
+            document.getElementById('approval-backdrop').classList.add('is-open');
+            document.getElementById('approval-modal').classList.add('is-open');
+            document.body.style.overflow = 'hidden';
+
+            fetch('/admin/approvals/' + projectName + '/modal-wizard/admin-approval', {
+                credentials: 'same-origin',
+            })
+            .then(function(response) {
+                if (!response.ok) throw new Error('Fout bij het laden van het formulier');
+                return response.text();
+            })
+            .then(function(html) {
+                innerEl.innerHTML = html;
+                htmx.process(innerEl);
+            })
+            .catch(function(err) {
+                errorEl.textContent = err.message;
+                errorEl.classList.remove('is-hidden');
+            });
+        }
+
+        // closeEditModal / closeEditModalAndReload komen uit edit_modal.js hierboven. Deze
+        // dialoog doet aan dat systeem mee doordat hij de klassen .edit-section-modal en
+        // .edit-section-backdrop draagt; daar zitten ook de Escape-afhandeling en de
+        // blokkade tijdens een lopende taak in, dus die staan hier niet nog een keer.
+        function closeApprovalModal() { closeEditModal(); }
+    </script>
+{% endblock %}
