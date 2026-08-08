@@ -1,0 +1,100 @@
+{#
+  De voortgang van een taak, als los te renderen fragment.
+
+  De tegenhanger van partials/task_progress_fragment.html.j2 (plus de macro's
+  progress_bar en progress_task_list uit widgets/_macros.html.j2, die het gebruikt).
+  Dezelfde context, dezelfde drie standen, hetzelfde htmx-gedrag: zolang de taak loopt
+  vervangt hij zichzelf elke twee seconden door wat de pollroute teruggeeft.
+
+  WAAROM DIT EEN TWEEDE FRAGMENT IS EN GEEN INCLUDE VAN HET BESTAANDE
+
+  De grens tussen de twee componentsystemen loopt per Jinja-omgeving. Het bestaande
+  fragment is een roos-template en wordt door de roos-omgeving gerenderd; het hier
+  invoegen zou zijn <c-*>-tags door LOTC laten lezen, en die kent `kind="primary"` niet.
+
+  Gevolg voor de route: de pollroute moet dit fragment renderen zolang de pagina in
+  LOTC-vorm getoond wordt, anders staat er na twee seconden roos-markup in een
+  NLDD-pagina. Zie het rapport bij deze omzetting; het raakt opi/web/router.py.
+
+  DRIE VERSCHILLEN MET HET BESTAANDE FRAGMENT, allemaal met een reden:
+
+  - De voortgangsbalk is <c-progress-bar> en geen <div> met een style="width: N%". Dat
+    was de enige style= die in de templates was blijven staan, en hier is hij niet meer
+    nodig: de waarde is een attribuut.
+  - De afsluitknop is een LINK naar de projectdetails in plaats van een knop die
+    `on_complete` als JavaScript uitvoert. <c-button> laat geen onclick toe, en die
+    `on_complete` is voor deze pagina altijd precies die navigatie (zie
+    _progress_page_context in opi/web/router.py). Zelfde bestemming, zelfde label,
+    zonder tekst als code uit te voeren.
+  - De foutmelding per component toont de titel en de suggestie, maar niet de link naar
+    de logs. Die link roept openLogViewer() aan, en dat is een roos-modal die op deze
+    pagina niet staat. Een link die niets doet is erger dan geen link.
+#}
+{% set _container_id = container_id | default("task-progress-" ~ task_id) %}
+{% set _success_msg = success_message | default("Wijzigingen succesvol verwerkt!") %}
+<div id="{{ _container_id }}"
+     {% if status not in ("completed", "failed") %}
+     hx-get="{{ progress_url }}"
+     hx-trigger="every 2s"
+     hx-target="#{{ _container_id }}"
+     hx-swap="outerHTML"
+     {% endif %}>
+
+    <c-stack gap="md">
+        <c-progress-bar
+            text="Voortgang"
+            :value="progress"
+            max="100"
+            value-display="true"
+            color="{{ 'error' if status == 'failed' else 'success' if status == 'completed' else 'info' }}"
+            accessible-label="Voortgang: {{ progress }} procent" />
+
+        {% if status == "completed" %}
+            <c-alert type="success" heading="{{ _success_msg }}" />
+        {% elif status == "failed" %}
+            {% if component_failures is defined and component_failures %}
+                {% for failure in component_failures %}
+                    <c-alert type="error" heading="{{ failure.title }}">{{ failure.suggestion }}</c-alert>
+                {% endfor %}
+            {% else %}
+                <c-alert type="error" heading="Verwerking mislukt">{{ error or "Onbekende fout" }}</c-alert>
+            {% endif %}
+        {% else %}
+            <c-paragraph>{{ current_step }} {{ progress }}%</c-paragraph>
+        {% endif %}
+
+        {% if tasks %}
+            <c-stack gap="xs">
+                {% for task in tasks %}
+                    <c-cluster gap="sm" align="center">
+                        <c-icon size="sm"
+                                icon="{{ 'check-mark-circle' if task.status == 'completed' else 'dismiss-circle' if task.status == 'failed' else 'chevron-right' if task.status == 'running' else 'clock' }}" />
+                        <c-paragraph size="sm">{{ task.name }}</c-paragraph>
+                    </c-cluster>
+                    {% if task.error %}
+                        <c-paragraph size="sm">{{ task.error }}</c-paragraph>
+                    {% endif %}
+                    {% for subtask in task.subtasks or [] %}
+                        <c-cluster gap="sm" align="center">
+                            <c-icon size="sm"
+                                    icon="{{ 'check-mark-circle' if subtask.status == 'completed' else 'dismiss-circle' if subtask.status == 'failed' else 'chevron-right' if subtask.status == 'running' else 'clock' }}" />
+                            <c-paragraph size="sm">{{ subtask.name }}</c-paragraph>
+                        </c-cluster>
+                        {% if subtask.error %}
+                            <c-paragraph size="sm">{{ subtask.error }}</c-paragraph>
+                        {% endif %}
+                    {% endfor %}
+                {% endfor %}
+            </c-stack>
+        {% endif %}
+
+        {% if status in ("completed", "failed") and on_complete is defined and on_complete and project_name %}
+            <c-action-group align="end">
+                <c-button
+                    type="primary"
+                    label="{{ on_complete_label | default('Ok' if status == 'completed' else 'Sluiten') }}"
+                    href="/projects/details/{{ project_name }}" />
+            </c-action-group>
+        {% endif %}
+    </c-stack>
+</div>

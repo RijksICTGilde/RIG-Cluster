@@ -12,7 +12,11 @@ De samenleefmeting: `docs/lotc-samenleven-met-jinja-roos.md`.
 
 - **Echte routes** die hun pagina al door LOTC kunnen renderen: `/services`,
   `/dashboard`, `/projects` en `/projects/details/<naam>` (met het resourcegebruik-
-  fragment dat htmx apart inlaadt). Zet er `?ui=lotc` achter.
+  fragment dat htmx apart inlaadt), plus de beheerpagina's `/admin/users` (inclusief het
+  formulier op `/admin/users/create` en `/admin/users/<id>/edit`), `/admin/approvals` en
+  `/admin/usage`, en **de wizard** (`/forms/wizard/start`, `/forms/wizard/<flow>`,
+  `/forms/wizard/<flow>/edit/<project>`, elke htmx-stap en de samenvatting). Zet er
+  `?ui=lotc` achter.
 - Daarnaast een **proefopstelling** onder `/lotc/`, met voorbeeldprojecten. Die is er om
   vorm te kiezen zonder een cluster nodig te hebben, niet als eindbestemming.
 - De navigatie volgt de opzet van [bg.rijks.app](https://bg.rijks.app/): hoofdnavigatie
@@ -57,6 +61,7 @@ Draaiende applicatie:
 | `opi/templates_lotc/widgets/` | de formulierwidgets - **wel** met de hand |
 | `opi/templates_lotc/bg/` | de hertekende pagina's - **wel** met de hand |
 | `opi/templates_lotc/bg/_patterns.html.j2` | gedeelde patronen: `panel()`, `page_head()`, `info()`, `service_card()` |
+| `opi/templates_lotc/bg/wizard-page.html.j2`, `wizard-start.html.j2`, `_wizard-step.html.j2`, `_wizard-steps.html.j2`, `_wizard-review.html.j2` | de wizard: de hele pagina, de startpagina, en de drie fragmenten die htmx wisselt |
 | `opi/web/lotc_switch.py` | de schakelaar waarmee een echte route zijn weergave kiest |
 | `opi/web/lotc_fixtures/` | voorbeeldprojecten voor de proefopstelling |
 | `opi/web/navigation_lotc.py` | de indeling van de navigatie en de icoonvertaling |
@@ -154,7 +159,7 @@ Alle 164 templates compileren. Vier echte routes kunnen hun pagina door LOTC ren
 
 | open punt | bij wie |
 |---|---|
-| De wizard: htmx-stappen, validatie en opslaan hangen eraan | ons |
+| De wizard: de e2e-gedragstests zijn op de roos-markup geschreven | ons |
 | `/admin/*`, `metrics-explorer`, `about` aansluiten | ons |
 | `architecture` - 1509 regels in een blok; verdient een eigen besluit | ons |
 | Iconen: de NLDD-woordenschat telt er 60, de RVO-set die roos meelevert 1163. Voorstel om die als losse implementatiemodule mee te nemen ligt bij LOTC | LOTC |

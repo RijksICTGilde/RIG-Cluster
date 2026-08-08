@@ -1,0 +1,136 @@
+{#
+  Uitnodiging: een lokaal account aanmaken.
+
+  Een OVERNAME van opi/templates/invite-register.html.j2. Dezelfde vijf velden in dezelfde
+  volgorde, dezelfde meldingen erboven, dezelfde twee knoppen, hetzelfde formulier met
+  hetzelfde CSRF-veld en dezelfde action.
+
+  DIT IS EEN PUBLIEKE PAGINA: geen navigatie, geen ingelogde gebruiker, dus een eigen
+  <c-page> met alleen een header, net als de bestaande pagina.
+
+  De vorm volgt de formulierregel van deze bouwlijn: <c-center max="46rem"> eromheen, een
+  <c-fieldset> om de velden, en <c-action-group align="end"> voor de knoppen. De velden
+  zijn <c-text-input-field> uit lotc-forms, met dezelfde id's en names als nu - de
+  serverkant hoeft er niets voor te veranderen. De kaart eromheen is panel() uit
+  bg/_patterns.html.j2, zodat de kop en het formulier dezelfde afstand houden als op elke
+  andere pagina. De fieldset draagt geen eigen legenda: de kop van de kaart ("Nieuw
+  Account") zegt al wat de groep is, en die tweemaal onder elkaar zetten leest als twee
+  groepen.
+
+  Alle tweetalige teksten staan bovenaan als variabele. Dat is hier geen stijlkeuze: een
+  voorwaarde binnen de aanhalingstekens van een attribuut kan niet, want de voorbewerker
+  leest de tag zelf. Hetzelfde geldt voor de waarden en foutteksten, die met
+  `or none`-expressies wegvallen als ze er niet zijn.
+
+  WAT DE OMZETTING HIER OPLEVERT en niet zichtbaar is: lotc-forms koppelt de hulptekst en
+  de foutmelding met aria-describedby aan het invoerveld. Onze eigen velden doen dat niet,
+  dus wie een schermlezer gebruikt hoort nu wel het label maar niet wat er misging.
+#}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% set title_nl = "Account Aanmaken - " ~ display_name %}
+{% set title_en = "Create Account - " ~ display_name %}
+{% set page_title = title_nl if language == 'nl' else title_en %}
+
+{% set is_nl = language == 'nl' %}
+{% set new_account_heading = "Nieuw Account" if is_nl else "New Account" %}
+{% set error_heading = "Fout" if is_nl else "Error" %}
+{% set domain_heading = "E-mail beperking" if is_nl else "Email restriction" %}
+{% set domain_text = ("Je e-mailadres moet eindigen op " ~ domain_restriction) if is_nl else ("Your email address must end with " ~ domain_restriction) %}
+{% set email_label = "E-mailadres" if is_nl else "Email address" %}
+{% set email_placeholder = "naam@organisatie.nl" if is_nl else "name@organization.com" %}
+{% set first_name_label = "Voornaam" if is_nl else "First name" %}
+{% set last_name_label = "Achternaam" if is_nl else "Last name" %}
+{% set password_label = "Wachtwoord" if is_nl else "Password" %}
+{% set password_placeholder = "Minimaal 12 tekens" if is_nl else "At least 12 characters" %}
+{% set password_help = "Minimaal 12 tekens, met hoofdletter, kleine letter en cijfer." if is_nl else "At least 12 characters, including uppercase, lowercase and number." %}
+{% set confirm_label = "Bevestig wachtwoord" if is_nl else "Confirm password" %}
+{% set confirm_placeholder = "Herhaal wachtwoord" if is_nl else "Repeat password" %}
+{% set submit_label = "Account Aanmaken" if is_nl else "Create Account" %}
+{% set cancel_label = "Annuleren" if is_nl else "Cancel" %}
+
+<c-page title="{{ page_title }}" lang="{{ language }}">
+    <c-header
+        text="RIG Cluster"
+        subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
+        link="/" />
+
+    <c-center max="46rem">
+        <c-stack gap="lg">
+            {{ page_head(display_name) }}
+
+            {% call panel(new_account_heading, "person-badge-plus") %}
+            <form method="POST" action="/invite/{{ invite_key }}/register" autocomplete="off">
+                <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+                <c-stack gap="lg">
+                    {% if general_error %}
+                        <c-alert type="error" heading="{{ error_heading }}">{{ general_error }}</c-alert>
+                    {% endif %}
+
+                    {% if domain_restriction %}
+                        <c-alert type="info" heading="{{ domain_heading }}">{{ domain_text }}</c-alert>
+                    {% endif %}
+
+                    <c-fieldset>
+                        <c-stack gap="md">
+                            <c-text-input-field
+                                id="email"
+                                name="email"
+                                type="email"
+                                label="{{ email_label }}"
+                                placeholder="{{ email_placeholder }}"
+                                :value="(form_data and form_data.email) or none"
+                                required
+                                :error="(errors and errors.email) or none" />
+
+                            <c-text-input-field
+                                id="first_name"
+                                name="first_name"
+                                type="text"
+                                label="{{ first_name_label }}"
+                                placeholder="{{ first_name_label }}"
+                                :value="(form_data and form_data.first_name) or none"
+                                required
+                                :error="(errors and errors.first_name) or none" />
+
+                            <c-text-input-field
+                                id="last_name"
+                                name="last_name"
+                                type="text"
+                                label="{{ last_name_label }}"
+                                placeholder="{{ last_name_label }}"
+                                :value="(form_data and form_data.last_name) or none"
+                                required
+                                :error="(errors and errors.last_name) or none" />
+
+                            <c-text-input-field
+                                id="password"
+                                name="password"
+                                type="password"
+                                label="{{ password_label }}"
+                                placeholder="{{ password_placeholder }}"
+                                help="{{ password_help }}"
+                                required
+                                :error="(errors and errors.password) or none" />
+
+                            <c-text-input-field
+                                id="password_confirm"
+                                name="password_confirm"
+                                type="password"
+                                label="{{ confirm_label }}"
+                                placeholder="{{ confirm_placeholder }}"
+                                required
+                                :error="(errors and errors.password_confirm) or none" />
+                        </c-stack>
+                    </c-fieldset>
+
+                    <c-action-group align="end">
+                        <c-button type="secondary" label="{{ cancel_label }}" href="/invite/{{ invite_key }}" />
+                        <c-button type="primary" html-type="submit" label="{{ submit_label }}" />
+                    </c-action-group>
+                </c-stack>
+            </form>
+            {% endcall %}
+        </c-stack>
+    </c-center>
+</c-page>

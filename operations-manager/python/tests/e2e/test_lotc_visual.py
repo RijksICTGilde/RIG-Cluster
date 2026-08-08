@@ -214,6 +214,12 @@ REDESIGNED_PAGES = [
     "feedback",
     "project-tabs",
     "project-context",
+    "admin-users",
+    "admin-user-form",
+    "admin-usage",
+    "admin-approvals",
+    "wizard-start",
+    "wizard-page",
 ]
 
 

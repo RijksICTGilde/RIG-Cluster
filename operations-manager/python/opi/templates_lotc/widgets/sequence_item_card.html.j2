@@ -15,9 +15,13 @@
     {% if not fixed_size and field.add_remove %}
     <div class="rvo-sequence__item-header">
         <span></span>
+        {# @click met Jinja erin werkt niet: de voorbewerker leest de waarde van een
+       @-attribuut als kale tekst, dus {{ ... }} komt er letterlijk uit en de knop doet
+       stilletjes niets. Via de :attrs-spread wordt het wel een expressie, en geescapet. #}
+        {% set verwijder_js = "sequenceRemove('" ~ field.path ~ "', " ~ index|string ~ ")" %}
         <c-button type="warning-subtle" size="sm"
                   show-icon="before" icon="verwijderen"
-                  @click="sequenceRemove('{{ field.path|e }}', {{ index }})"
+                  :attrs="{'onclick': verwijder_js}"
                   :disabled="remove_disabled">
             {{ remove_label|e }}
         </c-button>

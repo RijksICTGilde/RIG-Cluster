@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from starlette.responses import Response
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
@@ -32,7 +33,9 @@ from opi.forms.wizard.state import CLEARED_FIELD
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.schema_migration import normalize_service_entries
 from opi.utils.csrf import reject_misfired_form_get
+from opi.web.lotc_switch import render, wants_lotc
 from opi.web.menu import get_menu_items
+from opi.web.navigation_lotc import get_navigation, to_nldd_icon
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.flows import FormFlow
@@ -44,12 +47,43 @@ logger = logging.getLogger(__name__)
 wizard_router = APIRouter(prefix="/forms/wizard", tags=["wizard"])
 
 
-def _create_renderer() -> FormRenderer:
-    """Create a configured FormRenderer for wizard forms."""
+def _create_renderer(lotc: bool = False) -> FormRenderer:
+    """Create a configured FormRenderer for wizard forms.
+
+    De VOORBEREIDING per veldtype is gedeeld - welke opties, welke waarde, hoe een reeks
+    wordt opgebouwd is bedrijfslogica en verandert niet mee met het componentensysteem.
+    Alleen de adapter wisselt, en daarmee welke templates het veld renderen.
+
+    Waarom de import hier binnen staat: de LOTC-bouwlijn is een aparte dependency-groep,
+    dus in de release-image bestaat het pakket niet. Bovenaan importeren zou deze module
+    daar onlaadbaar maken.
+    """
+    if lotc:
+        from opi.forms.widgets.lotc import LOTCWidgetAdapter
+
+        return FormRenderer(
+            widget_adapter=LOTCWidgetAdapter(),
+            translator=get_default_nl_translator(),
+        )
     return FormRenderer(
         widget_adapter=ROOSWidgetAdapter(),
         translator=get_default_nl_translator(),
     )
+
+
+def _lotc_page_context(request: Request, user: dict[str, Any] | None) -> dict[str, Any]:
+    """Wat een HELE wizardpagina extra nodig heeft in de LOTC-weergave: de navigatie.
+
+    Levert niets op als de LOTC-weergave niet gevraagd is; dan is dit werk voor niets en
+    hoeft de bestaande pagina er niet mee lastiggevallen te worden.
+
+    Het pad is dat van "Nieuw project" in het menu, zodat dat item in de zijkolom
+    oplicht zolang je in de wizard zit.
+    """
+    if not wants_lotc(request):
+        return {}
+
+    return {"navigation": get_navigation(user, current_path="/forms/wizard/restart")}
 
 
 def _get_section_from_flow(flow_id: str, section_id: str) -> FormSection:
@@ -90,13 +124,20 @@ def _defuse_template_syntax(messages: dict[str, list[str]] | None) -> dict[str, 
 
 
 def _render_step_html(
+    request: Request,
     section: FormSection,
     yaml_data: dict[str, Any],
     errors: dict[str, list[str]] | None = None,
     edit_mode: bool = False,
     warnings: dict[str, list[str]] | None = None,
 ) -> str:
-    """Render the form fields for a single wizard step."""
+    """Render the form fields for a single wizard step.
+
+    ``request`` bepaalt alleen WELKE componenten het veld renderen: dezelfde velden,
+    dezelfde waarden, dezelfde foutmeldingen, maar door de LOTC-adapter in plaats van de
+    roos-adapter zodra de pagina eromheen de LOTC-weergave is. Het een zonder het ander
+    zou een pagina opleveren die uit twee componentsystemen bestaat, en dat rendert niet.
+    """
     import copy
 
     from opi.forms.editables.service_path import smart_get_value, smart_set_value
@@ -104,7 +145,7 @@ def _render_step_html(
     errors = _defuse_template_syntax(errors)
     warnings = _defuse_template_syntax(warnings)
 
-    renderer = _create_renderer()
+    renderer = _create_renderer(lotc=wants_lotc(request))
     if not section.layout:
         return ""
 
@@ -193,7 +234,7 @@ def _build_step_context(
     # Build preset cards HTML if presets exist for this section
     yaml_data = state.get_merged_data()
     preset_html = _render_preset_html(
-        flow_id, section.section_id, yaml_data=yaml_data, csrf_token=request.state.csrf_token
+        request, flow_id, section.section_id, yaml_data=yaml_data, csrf_token=request.state.csrf_token
     )
 
     # All steps already completed = user came back from review/submit to fix something
@@ -213,16 +254,39 @@ def _build_step_context(
         "all_steps_completed": all_steps_completed,
         "menu_items": get_menu_items(user),
         "user": user,
+        # Onze secties dragen Nederlandse ROOS-iconnamen; de LOTC-templates hebben de
+        # NLDD-woordenschat nodig. De roos-templates raken dit niet aan.
+        "nldd_icon": to_nldd_icon,
     }
 
 
+def _step_response(request: Request, context: dict[str, Any]) -> Response:
+    """Het antwoord op een stap, in de weergave die dit verzoek gekozen heeft.
+
+    Een fragment en geen hele pagina: htmx wisselt hiermee de inhoud van
+    ``#wizard-step-content``. De stappenbalk gaat mee via een OOB-swap in het fragment
+    zelf, precies zoals in de bestaande wizard.
+    """
+    return render(
+        request,
+        roos="wizard/wizard_step.html.j2",
+        lotc="bg/_wizard-step.html.j2",
+        context=context,
+    )
+
+
 def _render_preset_html(
+    request: Request,
     flow_id: str,
     section_id: str,
     yaml_data: dict[str, Any] | None = None,
     csrf_token: str = "",
 ) -> str:
-    """Render preset cards for a section, if any presets exist."""
+    """Render preset cards for a section, if any presets exist.
+
+    Dezelfde voorbereiding voor beide weergaven; alleen de Jinja-omgeving waarin het
+    kaarttemplate rendert wisselt mee met de pagina eromheen.
+    """
     from opi.forms.presets.loader import load_presets
     from opi.forms.widgets.roos import render_preset_cards
 
@@ -239,6 +303,12 @@ def _render_preset_html(
         # Detect which presets are locked by active services.
         locked_presets = _detect_locked_presets(presets, section.editables, yaml_data)
 
+    env = None
+    if wants_lotc(request):
+        from opi.core.templates_lotc import templates_lotc
+
+        env = templates_lotc.env
+
     return render_preset_cards(
         presets,
         flow_id,
@@ -246,6 +316,7 @@ def _render_preset_html(
         yaml_data=yaml_data,
         locked_presets=locked_presets,
         csrf_token=csrf_token,
+        env=env,
     )
 
 
@@ -323,16 +394,18 @@ async def wizard_restart(request: Request) -> RedirectResponse:
 
 @wizard_router.get("/start", response_class=HTMLResponse)
 @requires_sso
-async def wizard_start(request: Request) -> HTMLResponse:
+async def wizard_start(request: Request) -> Response:
     """Render the wizard introduction / landing page."""
     user = get_current_user(request)
-    templates = get_templates()
-    return templates.TemplateResponse(
-        "wizard/wizard_start.html.j2",
-        {
+    return render(
+        request,
+        roos="wizard/wizard_start.html.j2",
+        lotc="bg/wizard-start.html.j2",
+        context={
             "request": request,
             "menu_items": get_menu_items(user),
             "user": user,
+            **_lotc_page_context(request, user),
         },
     )
 
@@ -348,7 +421,6 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
     """Render the full wizard page, resuming existing state if available."""
     flow = get_flow(flow_id)
     user = get_current_user(request)
-    templates = get_templates()
 
     # Check for existing wizard state for this flow
     existing_state = get_wizard_state(request)
@@ -428,6 +500,7 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
     yaml_data = state.get_merged_data()
     section = _get_section_from_flow(flow_id, state.current_step)
     step_html = _render_step_html(
+        request,
         section,
         yaml_data=yaml_data,
         edit_mode=state.is_edit,
@@ -437,9 +510,11 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
     section_meta = get_section_metadata(active_sections)
     steps = state.get_steps(section_meta)
 
-    return templates.TemplateResponse(
-        "wizard/wizard_page.html.j2",
-        {
+    return render(
+        request,
+        roos="wizard/wizard_page.html.j2",
+        lotc="bg/wizard-page.html.j2",
+        context={
             "request": request,
             "flow_title": flow.title,
             "flow_id": flow_id,
@@ -452,6 +527,8 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
             "show_review": flow.show_review,
             "menu_items": get_menu_items(user),
             "user": user,
+            "nldd_icon": to_nldd_icon,
+            **_lotc_page_context(request, user),
         },
     )
 
@@ -469,7 +546,6 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
 
     flow = get_flow(flow_id)
     user = get_current_user(request)
-    templates = get_templates()
 
     # Enforce admin/owner role: the wizard edit flow exposes users/role and
     # config fields as editable, so a plain member must not be able to enter
@@ -513,16 +589,18 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
 
     # Render the first step with pre-filled data
     section = _get_section_from_flow(flow_id, first_step)
-    step_html = _render_step_html(section, yaml_data=project_data, edit_mode=True)
+    step_html = _render_step_html(request, section, yaml_data=project_data, edit_mode=True)
 
     active_sections = resolve_active_sections(flow, state.step_data)
     section_meta = get_section_metadata(active_sections)
     steps = state.get_steps(section_meta)
 
     display_name = project_data.get("display-name", project_name)
-    return templates.TemplateResponse(
-        "wizard/wizard_page.html.j2",
-        {
+    return render(
+        request,
+        roos="wizard/wizard_page.html.j2",
+        lotc="bg/wizard-page.html.j2",
+        context={
             "request": request,
             "flow_title": f"{flow.title} - {display_name}",
             "flow_id": flow_id,
@@ -535,6 +613,8 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
             "show_review": flow.show_review,
             "menu_items": get_menu_items(user),
             "user": user,
+            "nldd_icon": to_nldd_icon,
+            **_lotc_page_context(request, user),
         },
     )
 
@@ -632,7 +712,6 @@ async def _navigate_to_step(
     state: WizardState,
     flow_id: str,
     target_section_id: str,
-    templates: Any,
 ) -> HTMLResponse:
     """Save state and render the target step.
 
@@ -668,6 +747,7 @@ async def _navigate_to_step(
             errors = None
 
     step_html = _render_step_html(
+        request,
         target_section,
         yaml_data=yaml_data,
         errors=errors,
@@ -680,7 +760,7 @@ async def _navigate_to_step(
         step_html,
         errors=errors,
     )
-    response = templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+    response = _step_response(request, context)
     response.headers["HX-Push-Url"] = f"/forms/wizard/{flow_id}/step/{target_section_id}"
     return response
 
@@ -704,11 +784,10 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
         # No session - redirect to the wizard start page which will init state
         return RedirectResponse(url=f"/forms/wizard/{flow_id}", status_code=302)  # type: ignore[return-value]
 
-    templates = get_templates()
     is_htmx = request.headers.get("HX-Request") == "true"
 
     if is_htmx:
-        return await _navigate_to_step(request, state, flow_id, section_id, templates)
+        return await _navigate_to_step(request, state, flow_id, section_id)
 
     # Direct browser access: return the full page with the step embedded
     section = _get_section_from_flow(flow_id, section_id)
@@ -732,6 +811,7 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
             errors = None
 
     step_html = _render_step_html(
+        request,
         section,
         yaml_data=yaml_data,
         errors=errors,
@@ -744,11 +824,15 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
     section_meta = get_section_metadata(active_sections)
     steps = state.get_steps(section_meta)
 
-    preset_html = _render_preset_html(flow_id, section_id, yaml_data=yaml_data, csrf_token=request.state.csrf_token)
+    preset_html = _render_preset_html(
+        request, flow_id, section_id, yaml_data=yaml_data, csrf_token=request.state.csrf_token
+    )
 
-    return templates.TemplateResponse(
-        "wizard/wizard_page.html.j2",
-        {
+    return render(
+        request,
+        roos="wizard/wizard_page.html.j2",
+        lotc="bg/wizard-page.html.j2",
+        context={
             "request": request,
             "flow_title": flow.title,
             "flow_id": flow_id,
@@ -762,6 +846,8 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
             "show_review": flow.show_review,
             "menu_items": get_menu_items(user),
             "user": user,
+            "nldd_icon": to_nldd_icon,
+            **_lotc_page_context(request, user),
         },
     )
 
@@ -798,7 +884,6 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
     section = _get_section_from_flow(flow_id, section_id)
     flow = get_flow(flow_id)
-    templates = get_templates()
 
     # Parse JSON body (submitted via HTMX json-enc extension)
     body = await request.json()
@@ -851,10 +936,10 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
         save_wizard_state(request, state)
 
         step_html = _render_step_html(
-            section, yaml_data=submitted_yaml, edit_mode=edit_mode, warnings=processor.field_warnings
+            request, section, yaml_data=submitted_yaml, edit_mode=edit_mode, warnings=processor.field_warnings
         )
         context = _build_step_context(request, flow_id, section, step_html)
-        return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+        return _step_response(request, context)
 
     # Process the nested JSON: validate, convert, and write to yaml in one pass.
     submitted_yaml, errors = await processor.process_json_submission(
@@ -897,6 +982,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
                 group_errors.extend(msgs)
 
         step_html = _render_step_html(
+            request,
             section,
             yaml_data=submitted_yaml,
             errors=errors,
@@ -911,7 +997,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
             errors=errors,
             global_errors=group_errors or None,
         )
-        return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+        return _step_response(request, context)
 
     # Forward navigation: run section-level enforcer for cross-field validation
     if is_forward and section.enforcer:
@@ -927,6 +1013,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
                 global_errors,
             )
             step_html = _render_step_html(
+                request,
                 section,
                 yaml_data=submitted_yaml,
                 errors=errors,
@@ -941,7 +1028,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
                 errors=errors,
                 global_errors=global_errors,
             )
-            return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+            return _step_response(request, context)
         else:
             logger.info("[%s validation PASSED] section-level (enforcer) validation ok", section_id)
 
@@ -982,16 +1069,16 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     # Review page
     if target_section_id == "review":
         save_wizard_state(request, state)
-        return await _render_review(request, flow_id, templates)
+        return await _render_review(request, flow_id)
 
     # Submit (last step, no review)
     if target_section_id is None:
         save_wizard_state(request, state)
         if flow.show_review:
-            return await _render_review(request, flow_id, templates)
-        return await _do_submit(request, flow_id, templates)
+            return await _render_review(request, flow_id)
+        return await _do_submit(request, flow_id)
 
-    return await _navigate_to_step(request, state, flow_id, target_section_id, templates)
+    return await _navigate_to_step(request, state, flow_id, target_section_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1034,14 +1121,14 @@ async def toggle_preset(
 
     # Re-render the section with the new values
     step_html = _render_step_html(
+        request,
         section,
         yaml_data=yaml_data,
         edit_mode=state.is_edit,
     )
 
-    templates = get_templates()
     context = _build_step_context(request, flow_id, section, step_html)
-    return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+    return _step_response(request, context)
 
 
 def _apply_preset(preset: Any, yaml_data: dict[str, Any]) -> None:
@@ -1208,10 +1295,9 @@ async def _handle_sequence_action(
     state.store_step_data(section_id, section_data)
     save_wizard_state(request, state)
 
-    step_html = _render_step_html(section, yaml_data=yaml_data, edit_mode=edit_mode)
-    templates = get_templates()
+    step_html = _render_step_html(request, section, yaml_data=yaml_data, edit_mode=edit_mode)
     context = _build_step_context(request, flow_id, section, step_html)
-    return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+    return _step_response(request, context)
 
 
 def _prune_empty_dicts(data: Any) -> None:
@@ -1403,14 +1489,12 @@ def _is_service_config_child(relative_path: str) -> bool:
 @requires_sso
 async def review_page(request: Request, flow_id: str) -> HTMLResponse | RedirectResponse:
     """Render the review page."""
-    templates = get_templates()
-    return await _render_review(request, flow_id, templates)
+    return await _render_review(request, flow_id)
 
 
 async def _render_review(
     request: Request,
     flow_id: str,
-    templates: Any,
 ) -> HTMLResponse | RedirectResponse:
     """Build and render the review page."""
     state = get_wizard_state(request)
@@ -1441,15 +1525,18 @@ async def _render_review(
             }
         )
 
-    return templates.TemplateResponse(
-        "wizard/wizard_review.html.j2",
-        {
+    return render(
+        request,
+        roos="wizard/wizard_review.html.j2",
+        lotc="bg/_wizard-review.html.j2",
+        context={
             "request": request,
             "steps": steps,
             "flow_id": flow_id,
             "section_summaries": section_summaries,
             "menu_items": get_menu_items(user),
             "user": user,
+            "nldd_icon": to_nldd_icon,
         },
     )
 
@@ -1902,8 +1989,7 @@ def _resolve_option_labels(editable: Any, value: Any) -> str:
 @requires_sso
 async def submit_wizard(request: Request, flow_id: str) -> HTMLResponse | RedirectResponse:
     """Final submission: validate all steps and create/update the project."""
-    templates = get_templates()
-    return await _do_submit(request, flow_id, templates)
+    return await _do_submit(request, flow_id)
 
 
 def _collect_all_editable_paths(editables) -> set[str]:
@@ -2040,7 +2126,6 @@ def _validate_finished_project(data: dict[str, Any], *, project_name: str) -> No
 async def _do_submit(
     request: Request,
     flow_id: str,
-    templates: Any,
 ) -> HTMLResponse | RedirectResponse:
     """Execute the final wizard submission."""
     state = get_wizard_state(request)
@@ -2098,6 +2183,7 @@ async def _do_submit(
         save_wizard_state(request, state)
 
         step_html = _render_step_html(
+            request,
             error_section,
             yaml_data=yaml_data,
             errors=errors,
@@ -2111,7 +2197,7 @@ async def _do_submit(
             errors=errors,
             global_errors=["Er zijn nog validatiefouten. Controleer de gemarkeerde velden."],
         )
-        return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+        return _step_response(request, context)
 
     # Cross-section enforcement
     enforce_field_errors: dict[str, list[str]] = {}
@@ -2131,7 +2217,7 @@ async def _do_submit(
         state.current_step = error_section.section_id
         save_wizard_state(request, state)
 
-        step_html = _render_step_html(error_section, yaml_data=yaml_data, errors=enforce_field_errors)
+        step_html = _render_step_html(request, error_section, yaml_data=yaml_data, errors=enforce_field_errors)
         context = _build_step_context(
             request,
             flow_id,
@@ -2140,7 +2226,7 @@ async def _do_submit(
             errors=enforce_field_errors,
             global_errors=global_errors,
         )
-        return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+        return _step_response(request, context)
 
     # Remove empty nested dicts left after field removal (e.g. restrict-access: {})
     _prune_empty_dicts(final_data)
@@ -2250,11 +2336,13 @@ async def _do_submit(
         # Beide kanten: RC-47 brengt de foutafhandeling (het veld krijgt een markering,
         # de boodschap zelf gaat autoescaped naar global_errors), RC-43 brengt state.is_edit
         # als naam voor "het project bestaat al".
-        step_html = _render_step_html(error_section, yaml_data=yaml_data, errors=field_errors, edit_mode=state.is_edit)
+        step_html = _render_step_html(
+            request, error_section, yaml_data=yaml_data, errors=field_errors, edit_mode=state.is_edit
+        )
         context = _build_step_context(
             request, flow_id, error_section, step_html, errors=field_errors, global_errors=global_errors
         )
-        return templates.TemplateResponse("wizard/wizard_step.html.j2", context)
+        return _step_response(request, context)
     except Exception:
         logger.exception("Wizard submit failed")
         raise
