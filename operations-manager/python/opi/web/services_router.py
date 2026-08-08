@@ -52,14 +52,22 @@ async def services_overview(request: Request):
                 }
             )
 
-        return templates.TemplateResponse(
-            "services-overview.html.j2",
-            {
+        # Dezelfde gegevens, twee weergaven. Met ?ui=lotc rendert deze route de
+        # hertekende pagina; zonder blijft alles zoals het was. Zie opi/web/lotc_switch.py
+        # voor waarom dat een schakelaar is en geen omzetting ineens.
+        from opi.web.lotc_switch import build_lotc_services, render
+
+        return render(
+            request,
+            roos="services-overview.html.j2",
+            lotc="bg/services.html.j2",
+            context={
                 "request": request,
                 "title": "Services Overview",
                 "menu_items": get_menu_items(user),
                 "services": services_info,
                 "user": user,
+                **build_lotc_services(request, services_info, user),
             },
         )
 

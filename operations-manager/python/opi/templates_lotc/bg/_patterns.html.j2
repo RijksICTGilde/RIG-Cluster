@@ -161,3 +161,34 @@
     </c-stack>
 </c-card>
 {% endmacro %}
+
+
+{#
+  Een rij filterknoppen, zoals bg ze boven het artefactregister zet.
+
+  WAAROM KNOPPEN MET EEN URL EN GEEN c-segmented-control
+
+  Die laatste ziet er precies zo uit en lijkt dus de juiste keuze, maar het is een
+  FORMULIERBESTURING: hij draagt een radio-input en kent geen href. Filteren zou dan
+  alleen in de browser werken, en dat botst met de regel die we bij de tabs hebben
+  gekozen: een selectie hoort een eigen URL te hebben, zodat je hem kunt delen, de
+  terugknop werkt en de pagina het zonder JavaScript doet.
+
+  Vandaar knoppen met een href. De actieve is primary, de rest secondary; dat is precies
+  het verschil dat bg ook toont.
+
+      {{ filter_row("/lotc/bg/services", "kind", huidige_keuze, [
+             ("", "Alle", 19), ("user", "Zelf te kiezen", 14), ("system", "Altijd aan", 5),
+         ]) }}
+#}
+{% macro filter_row(base_url, param, current, options) %}
+<c-cluster gap="sm">
+    {% for value, label, count in options %}
+        <c-button
+            type="{{ 'primary' if value == current else 'secondary' }}"
+            size="sm"
+            label="{{ label }}{{ ' (' ~ count ~ ')' if count is not none else '' }}"
+            href="{{ base_url }}{{ '?' ~ param ~ '=' ~ value if value else '' }}" />
+    {% endfor %}
+</c-cluster>
+{% endmacro %}
