@@ -124,6 +124,52 @@ class CreateProjectAcceptedResponse(BaseModel):
     }
 
 
+class ProjectListItem(BaseModel):
+    """One project a caller may see, with everything needed to act on it.
+
+    Carries the project's API key. That is the same secret the project detail
+    page already shows to the same people, behind the same authorization, so
+    this adds no exposure -- but a caller holds a secret after reading this and
+    should treat the response accordingly.
+    """
+
+    name: str = Field(..., description="The technical project name", examples=["mijn-project"])
+    description: str = Field(default="", description="What this project is for", examples=["Nog een test"])
+    role: str | None = Field(
+        default=None,
+        description="The caller's role in this project ('admin' or 'developer'); 'admin' for platform admins",
+        examples=["admin"],
+    )
+    api_key: str = Field(
+        ...,
+        description="SECRET. The project's API key, for the X-API-Key header on every per-project call",
+        examples=["Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ"],
+    )
+
+
+class ProjectListResponse(BaseModel):
+    """The projects this caller may see."""
+
+    projects: list[ProjectListItem] = Field(
+        default_factory=list, description="Projects the caller is a member of, sorted by name"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "projects": [
+                    {
+                        "name": "mijn-project",
+                        "description": "Nog een test",
+                        "role": "admin",
+                        "api_key": "Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ",
+                    }
+                ]
+            }
+        }
+    }
+
+
 # ---------------------------------------------------------------------------
 # Read-only deployment detail models
 # ---------------------------------------------------------------------------
