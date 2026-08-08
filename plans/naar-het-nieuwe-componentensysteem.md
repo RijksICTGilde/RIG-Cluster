@@ -1,6 +1,16 @@
 # Naar het nieuwe componentensysteem
 
-Status: inventarisatie plus plan, 7 augustus 2026. **GEPARKEERD op 7 augustus**, bewust en niet vergeten: het staat klaar voor straks. Bewust niet geshipt, want dan zou een agent fase 1 nog eens doen (dat is RC-48, inmiddels binnen) en daarna vastlopen op de POC die volgens de werkafspraak op de release wacht. Dit is naslagwerk met de metingen en de besluiten, geen opdracht.
+Status: inventarisatie plus plan, 7 augustus 2026, **hervat op 8 augustus**.
+
+**Wat er sinds het schrijven veranderd is, opnieuw gemeten op 8 augustus:**
+
+- **Fase 1 is af en gemerged** (RC-48). Inline styling van 260 naar 92, waarvan 85 in de ene pagina die bewust buiten scope bleef; `<style>`-blokken van 17 naar 1; deeltemplates van 26 naar 67. Er staat een guard-test op, inclusief tests die falen zodra een uitzondering niet meer nodig is.
+- **`lotc-forms` bestaat** aan hun kant, met alle negen velden die wij doorgaven, `id`/`name`/`label` als gemeenschappelijke basis, en `file-input-field` als zichtbare uitzondering onder NLDD.
+- Onze componentaanroepen staan nu op **1263** (was 1280); de opdeling heeft er een paar samengevoegd.
+
+Fase 1 uit dit plan is dus klaar en hoeft niet opnieuw. Begin bij fase 2.
+
+**Oorspronkelijke parkeernotitie van 7 augustus**, bewust en niet vergeten: het staat klaar voor straks. Bewust niet geshipt, want dan zou een agent fase 1 nog eens doen (dat is RC-48, inmiddels binnen) en daarna vastlopen op de POC die volgens de werkafspraak op de release wacht. Dit is naslagwerk met de metingen en de besluiten, geen opdracht.
 
 Niet gebouwd. Aanleiding: er is een nieuw componentensysteem (Lord of the Components, LOTC) en het voornemen om OPI in de vormgeving van [bg.rijks.app](https://bg.rijks.app/) te gieten, via de NLDD-implementatie.
 
