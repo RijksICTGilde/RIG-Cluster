@@ -229,6 +229,31 @@ def page_data(slug: str) -> dict[str, Any]:
     if slug in ("projects", "services", "users"):
         return {"projects": projects}
 
+    if slug == "wizard":
+        # De velden komen uit dezelfde voorbeeldreeks als /lotc/formulier en worden door
+        # dezelfde adapter gerenderd. Zo toont deze pagina de ECHTE formulierlaag; een
+        # eigen setje velden zou een tweede werkelijkheid zijn die stil kan gaan afwijken.
+        from opi.forms.widgets.lotc import LOTCWidgetAdapter
+        from opi.web.lotc_form_preview import EXAMPLE_FIELDS
+
+        adapter = LOTCWidgetAdapter()
+        rendered = [adapter.render_field(field) for field in EXAMPLE_FIELDS]
+        return {
+            "flow_title": "Nieuw project",
+            "flow_description": "Vul de gegevens in. U kunt tussentijds terug zonder iets kwijt te raken.",
+            "current_step": 2,
+            "steps": [
+                {"label": "Project", "status": "complete"},
+                {"label": "Diensten", "status": "current"},
+                {"label": "Componenten", "status": None},
+                {"label": "Controleren", "status": None},
+            ],
+            "field_groups": [
+                {"legend": "Projectgegevens", "fields": rendered[:4]},
+                {"legend": "Instellingen", "fields": rendered[4:]},
+            ],
+        }
+
     if slug == "project-details":
         context = build_details_context(available_projects()[-1])
         return context or {}

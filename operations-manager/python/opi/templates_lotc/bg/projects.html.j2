@@ -14,12 +14,12 @@
 {% block page_title %}Projecten - Self Service Portal{% endblock %}
 
 {% block content %}
-    <c-stack gap="0.25rem">
+    <c-stack gap="xs">
         <c-heading type="h1" size="3" label="Projecten" />
         <c-paragraph>De projecten waar u toegang toe heeft.</c-paragraph>
     </c-stack>
 
-    <c-cluster gap="0.75rem">
+    <c-cluster gap="sm">
         <c-button type="primary" label="Nieuw project" icon="plus" show-icon="before" href="/forms/wizard/restart" />
     </c-cluster>
 
@@ -38,17 +38,17 @@
         </c-filter-select>
     </c-filter-bar>
 
-    <c-auto-grid min="320px" gap="1rem">
+    <c-auto-grid min="320px" gap="md">
         {% for project in projects %}
             <c-catalog-card
                 title="{{ project.display_name }}"
                 subtitle="{{ project.description }}"
                 href="/lotc/bg/project-details">
-                <c-stack gap="0.5rem">
+                <c-stack gap="sm">
                     {# c-cluster en geen horizontale c-stack: een stack houdt alles op
                        een regel en laat de inhoud buiten de kaart lopen zodra er meer
                        chips zijn dan passen. Een cluster breekt af. #}
-                    <c-cluster gap="0.5rem">
+                    <c-cluster gap="sm">
                         {% for service in project.services %}
                             <c-chip>{{ service }}</c-chip>
                         {% endfor %}

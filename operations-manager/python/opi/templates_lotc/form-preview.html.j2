@@ -5,25 +5,44 @@
   plus de standen die bij de omzetting konden sneuvelen (hulptekst, foutmelding,
   uitgeschakeld, htmx). De velden zijn echte FormField-objecten en geen nagemaakt
   project - zie opi/web/lotc_form_preview.py voor waarom dat verschil telt.
+
+  De opzet volgt hun eigen forms-demo (tests/visual/fixtures/forms-demo.html):
+
+    - <c-center max="46rem"> eromheen. Een formulier over de volle breedte van een
+      breedbeeldscherm is onleesbaar; de invoervelden worden meters lang en het oog
+      verliest de koppeling tussen label en veld. Dit was de belangrijkste oorzaak van
+      de rommelige indruk.
+    - gaps uit de SCHAAL van het design system (lg, md) in plaats van eigen rem-waarden.
+      Zo staat de afstand tussen velden overal gelijk, ook als het thema hem verandert.
+    - <c-action-group align="end"> voor de knoppen onderaan.
 #}
 {% extends "base_lotc.html.j2" %}
 
 {% block page_title %}Formulierlaag - LOTC-bouwlijn{% endblock %}
 
 {% block content %}
-<c-layout-flow gap="lg">
-    <c-heading type="h1" size="2" label="De formulierlaag, omgezet" />
-    <c-paragraph>
-        Elk veldtype dat de applicatie kent, gerenderd door lotc-forms onder NLDD.
-        Voorbeeldvelden, geen bestaand project.
-    </c-paragraph>
+<c-center max="46rem">
+    <c-stack gap="lg">
+        <c-stack gap="sm">
+            <c-heading type="h1" size="3" label="De formulierlaag, omgezet" />
+            <c-paragraph>
+                Elk veldtype dat de applicatie kent, gerenderd door lotc-forms onder NLDD.
+                Voorbeeldvelden, geen bestaand project.
+            </c-paragraph>
+        </c-stack>
 
-    <c-fieldset legend="Velden">
-        <c-layout-flow gap="md">
-            {% for html in rendered_fields %}
-                {{ html | safe }}
-            {% endfor %}
-        </c-layout-flow>
-    </c-fieldset>
-</c-layout-flow>
+        <c-fieldset legend="Projectgegevens">
+            <c-stack gap="md">
+                {% for html in rendered_fields %}
+                    {{ html | safe }}
+                {% endfor %}
+            </c-stack>
+        </c-fieldset>
+
+        <c-action-group align="end">
+            <c-button type="secondary" label="Annuleren" />
+            <c-button type="primary" label="Opslaan" />
+        </c-action-group>
+    </c-stack>
+</c-center>
 {% endblock %}
