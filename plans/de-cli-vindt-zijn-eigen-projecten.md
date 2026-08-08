@@ -38,7 +38,11 @@ Twee vormen, en de keuze hoort bewust gemaakt te worden:
 | **A. Lijst mét sleutels** | Eén aanroep, de CLI kan meteen verder. Wat de vraag was. |
 | **B. Lijst zonder sleutels, plus `GET /projects/{naam}/key`** | Wie alleen wil weten wat er is, krijgt geen geheimen. De sleutel haal je op als je hem nodig hebt. |
 
-**Advies: B**, omdat het het gewone geval (wat heb ik?) scheidt van het gevoelige geval (geef me de sleutel), en omdat het de blast radius van een gelekt token kleiner houdt zonder de CLI iets te kosten: die doet één extra aanroep op het moment dat hij van project wisselt. Maar A is verdedigbaar en was de vraag; leg de keuze vast met de reden, zoals bij `rollout=false` en `confirm_in_use`.
+**Besloten op 8 augustus: A, de lijst draagt de sleutels.**
+
+De reden is sterker dan mijn oorspronkelijke bezwaar. De sleutel staat **al** op de projectdetailpagina, achter dezelfde autorisatie (`section-config.html.j2` toont `config.api-key` in een `c-secret-field`). Wie deze lijst mag opvragen, kan die sleutel vandaag al zien door de pagina te openen. Een lijst met sleutels voegt dus geen nieuwe blootstelling toe; het is dezelfde informatie via een andere deur, aan dezelfde mensen.
+
+Wat overeind blijft en in de uitvoering hoort: de OpenAPI-omschrijving moet **zeggen** dat er een geheim in het antwoord zit, zodat een aanroeper dat weet voordat hij het antwoord ergens logt.
 
 ## Voorstel
 
