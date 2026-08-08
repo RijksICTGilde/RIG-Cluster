@@ -1,0 +1,48 @@
+{#
+  Het resourcegebruik van het dashboard, als los fragment.
+
+  Overname van dashboard/_resourcegebruik.html.j2 en _resourceverdeling.html.j2, met een
+  verschil dat er toe doet: het wordt APART opgehaald. Die zes Prometheus-queries plus een
+  per project duurden te lang om de pagina op te laten wachten - precies waarom de
+  RVO-pagina hier ook lazy loading voor had.
+
+  De meters waren <canvas>-elementen die dashboard.js tekende. Nu voortgangsbalken:
+  hetzelfde getal, leesbaar voor een schermlezer, en zonder eigen tekencode.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+
+{% if prometheus_available and metrics %}
+    {% call panel("Resourcegebruik", "chart-x-y-axis-line") %}
+        <c-progress-bar text="CPU" :value="metrics.cpu_percentage" max="100" value-display="true" color="info"
+                        accessible-label="CPU: {{ metrics.cpu_usage_display }} van {{ metrics.cpu_limit_display }} cores" />
+        <c-paragraph size="sm">{{ metrics.cpu_usage_display }} / {{ metrics.cpu_limit_display }} cores</c-paragraph>
+
+        <c-progress-bar text="Geheugen" :value="metrics.memory_percentage" max="100" value-display="true" color="success"
+                        accessible-label="Geheugen: {{ metrics.memory_usage_display }} van {{ metrics.memory_limit_display }}" />
+        <c-paragraph size="sm">{{ metrics.memory_usage_display }} / {{ metrics.memory_limit_display }}</c-paragraph>
+
+        <c-progress-bar text="Opslag" :value="metrics.storage_percentage" max="100" value-display="true" color="warning"
+                        accessible-label="Opslag: {{ metrics.storage_usage_display }} van {{ metrics.storage_capacity_display }}" />
+        <c-paragraph size="sm">{{ metrics.storage_usage_display }} / {{ metrics.storage_capacity_display }}</c-paragraph>
+    {% endcall %}
+
+    {% if total_cpu_usage > 0 %}
+        {% call panel("Verdeling over projecten", "chart-x-y-axis-line") %}
+            <c-stack gap="sm">
+                {% for project in projects if project.cpu_cores is defined and project.cpu_cores > 0 %}
+                    <c-progress-bar
+                        text="{{ project.display_name }}"
+                        :value="(project.cpu_cores / total_cpu_usage * 100) | round(1)"
+                        max="100"
+                        value-display="true"
+                        color="info"
+                        accessible-label="{{ project.display_name }}: {{ '%.3f' | format(project.cpu_cores) }} cores" />
+                {% endfor %}
+            </c-stack>
+        {% endcall %}
+    {% endif %}
+{% else %}
+    <c-alert type="info" heading="Resourcegebruik niet beschikbaar">
+        Prometheus is niet verbonden, of er zijn geen namespaces gevonden.
+    </c-alert>
+{% endif %}
