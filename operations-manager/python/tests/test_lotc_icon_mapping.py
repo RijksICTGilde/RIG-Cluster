@@ -76,7 +76,6 @@ def _icons_used_by_services() -> set[str]:
     meegenomen. Juist daar zat het grootste gat: van de negentien zichtbare diensten
     hadden er zeventien geen icoon, en dat viel pas op een screenshot op.
     """
-    pytest.importorskip("lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd")
     from opi.services.services import ServiceAdapter
 
     return {ServiceAdapter.SERVICE_DEFINITIONS[service_type].icon for service_type in ServiceAdapter.get_all_services()}
