@@ -7,14 +7,14 @@
 <c-alert
     kind="success"
     heading="Project succesvol aangemaakt!"
-    messages="Uw project is succesvol verwerkt en alle resources zijn aangemaakt."/>
+    messages="Je project is verwerkt en alle resources zijn aangemaakt."/>
 {% endblock %}
 
 {% block heading %}Project {{ project_name }} is klaar{% endblock %}
 
 {% block body %}
 <p class="rvo-paragraph rvo-paragraph--lg">
-    Gefeliciteerd! Uw project <strong>{{ project_name }}</strong> is succesvol aangemaakt en geconfigureerd.
+    Gefeliciteerd! Je project <strong>{{ project_name }}</strong> is succesvol aangemaakt en geconfigureerd.
 </p>
 
 {% if project_description %}
@@ -40,7 +40,7 @@
 <c-alert
     kind="info"
     heading="Volgende stappen"
-    messages="Uw project wordt nu automatisch uitgerold via ArgoCD. Het kan enkele minuten duren voordat alle resources beschikbaar zijn."/>
+    messages="Je project wordt nu automatisch uitgerold via ArgoCD. Het kan enkele minuten duren voordat alle resources beschikbaar zijn."/>
 
 <c-layout-flow gap="md">
     <c-action-group

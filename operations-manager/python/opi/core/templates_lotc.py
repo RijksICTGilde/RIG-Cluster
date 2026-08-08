@@ -21,7 +21,6 @@ import markupsafe
 from fastapi.templating import Jinja2Templates
 from jinja2 import FileSystemLoader
 from lord_of_the_components import get_static_roots, setup_components
-from lord_of_the_components.registry import ComponentRegistry
 
 from opi.core.config import BUILD_DATE, VERSION
 from opi.core.templates import (
@@ -51,25 +50,12 @@ if not isinstance(templates_lotc.env.loader, FileSystemLoader):
 templates_lotc.env.autoescape = True
 setup_components(templates_lotc.env, design_systems=DESIGN_SYSTEMS, htmx=True)
 
-# Componenten die ZAD zelf levert omdat LOTC ze nog niet heeft. Zie
-# opi/templates_lotc_zad/registry.json voor het waarom per component.
+# Hier stond een eigen c-secret-field, omdat LOTC die nog niet had. Sinds 8192d6a levert
+# het LOTC-project hem zelf, en de opruiming was precies wat we ervan hoopten: dit blok
+# weg, het template weg, geen enkele paginawijziging - de aanroepvorm was al die van hen.
 #
-# Ze staan op een EIGEN owner-naam en niet op die van een design system: ze zijn niet
-# van NLDD, en dat hoort in de registry te zien zijn. Dit is de weg die het LOTC-project
-# hiervoor aanwijst.
-#
-# Tijdelijk, en met opzet zo dat het opruimen een verwijdering is: de aanroep in de
-# templates is die van LOTC, dus zodra hun versie er is vervalt alleen dit blok.
-_ZAD_COMPONENTS_DIR = Path(__file__).parent.parent / "templates_lotc_zad"
-_ZAD_OWNER_THEME = "zad"
-
-_lotc_extension = next(
-    ext
-    for ext in templates_lotc.env.extensions.values()
-    if isinstance(getattr(ext, "registry", None), ComponentRegistry)
-)
-_lotc_extension.registry.merge_fragment(_ZAD_COMPONENTS_DIR / "registry.json", theme=_ZAD_OWNER_THEME)
-templates_lotc.env.loader.searchpath.append(str(_ZAD_COMPONENTS_DIR))
+# De weg om zoiets opnieuw te doen staat beschreven in features/lotc-bouwlijn.md:
+# merge_fragment op de registry plus de eigen templatemap op de searchpath.
 
 # Dezelfde globals en filters als de roos-omgeving, zodat een omgezet template niet
 # ook nog zijn aanroepen naar version_info(), static_url() en de filters hoeft te

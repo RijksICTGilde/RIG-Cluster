@@ -30,12 +30,12 @@
                     <c-alert
                         kind="success"
                         heading="{{ success_title }}"
-                        content="{% if language == 'nl' %}U heeft nu toegang tot {{ display_name }}.{% else %}You now have access to {{ display_name }}.{% endif %}"/>
+                        content="{% if language == 'nl' %}Je hebt nu toegang tot {{ display_name }}.{% else %}You now have access to {{ display_name }}.{% endif %}"/>
 
                     {# Success Details Card #}
                     <c-card outline="true" padding="lg">
                         <c-layout-flow gap="lg">
-                            <c-heading type="h2" textContent="{% if language == 'nl' %}Uw toegang{% else %}Your access{% endif %}" />
+                            <c-heading type="h2" textContent="{% if language == 'nl' %}Je toegang{% else %}Your access{% endif %}" />
 
                             {% if email %}
                                 <p class="rvo-paragraph"><strong>{% if language == 'nl' %}E-mailadres{% else %}Email address{% endif %}:</strong> {{ email }}</p>

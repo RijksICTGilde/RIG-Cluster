@@ -33,7 +33,7 @@
     <div class="rvo-form-field">
         <label class="rvo-form-field__label" for="deployment_name"><strong>Deployment</strong></label>
         <p class="rvo-text--sm rvo-text--subtle backup-step__intro">
-            Selecteer de deployment waarvoor u een backup wilt aanmaken.
+            Selecteer de deployment waarvan je een back-up wilt maken.
         </p>
         <select
             id="deployment_name"
@@ -55,7 +55,7 @@
     <fieldset>
         <legend class="rvo-form-field__label"><strong>Resource types</strong></legend>
         <p class="rvo-text--sm rvo-text--subtle backup-step__intro">
-            Selecteer welke resource types u wilt back-uppen. Standaard worden alle beschikbare types geselecteerd.
+            Selecteer welke resourcetypes je wilt back-uppen. Standaard worden alle beschikbare types geselecteerd.
         </p>
         {% for rt in ns.active_dep.resource_types %}
         {% set meta = label_meta.get(rt, {}) %}

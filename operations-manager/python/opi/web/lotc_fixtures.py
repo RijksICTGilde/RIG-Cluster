@@ -275,70 +275,62 @@ def page_data(slug: str) -> dict[str, Any]:
     return {}
 
 
-# Wat een dienst is, in gewone taal. Zonder dit zijn het namen zonder betekenis, en dat
-# is precies waar mensen op vastlopen: "namespace-postgresql-database" zegt niets tenzij
-# je het al weet.
-#
-# De kleur is een MERKkleur en helpt herkennen. Hij staat los van de status rechtsboven op
-# de kaart, want die is semantisch: groen betekent daar "beschikbaar" en niet "database".
-SERVICE_INFO: dict[str, dict[str, str]] = {
-    "publish-on-web": {
-        "label": "Publiceren op het web",
-        "summary": "Maakt je applicatie bereikbaar vanaf internet",
-        "help": "Het platform regelt een hostnaam, een certificaat en de route ernaartoe. Je hoeft zelf geen ingress of DNS te maken.",
-        "icon": "globe",
-        "color": "hemelblauw",
-    },
-    "keycloak": {
-        "label": "Inloggen (Keycloak)",
-        "summary": "Gebruikers laten inloggen zonder zelf accounts te beheren",
-        "help": "Je krijgt een eigen realm met je eigen gebruikers en rollen. De applicatie praat er via OIDC mee.",
-        "icon": "lock-closed",
-        "color": "donkerblauw",
-    },
-    "namespace-postgresql-database": {
-        "label": "PostgreSQL-database",
-        "summary": "Een eigen database, met back-ups",
-        "help": "Het platform maakt de database, de gebruiker en het wachtwoord aan, en geeft ze als omgevingsvariabelen door aan je component.",
-        "icon": "database",
-        "color": "groen",
-    },
-    "persistent-storage": {
-        "label": "Blijvende opslag",
-        "summary": "Schijfruimte die een herstart overleeft",
-        "help": "Voor bestanden die moeten blijven bestaan als je component opnieuw start. Wat in de container zelf staat is weg na een herstart.",
-        "icon": "folder-stack",
-        "color": "oranje",
-    },
-}
-
-# Waar een dienst niet in SERVICE_INFO staat, tonen we hem alsnog: onbekend is beter dan
-# verstopt. Dat het onbekend is, is dan meteen zichtbaar.
-UNKNOWN_SERVICE = {
-    "summary": "Nog geen omschrijving",
-    "help": "Voor deze dienst is nog geen uitleg vastgelegd.",
-    "icon": "cylinder-split",
-    "color": "grijs-600",
+# Hoe een dienst gebonden is, in gewone taal. De registry noemt dit "binding" en dat zegt
+# een gebruiker niets; dit zegt wat het voor hem betekent.
+BINDING_LABELS = {
+    "component": "per component",
+    "deployment": "per deployment",
+    "project": "per project",
 }
 
 
 def services_overview(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Elke dienst die de voorbeeldprojecten afnemen, met uitleg en gebruikers."""
+    """Alle zichtbare diensten uit de ECHTE registry, met wie ze afneemt.
+
+    Bewust de registry en geen eigen lijst: naam, omschrijving, icoon, kleur, binding en
+    hulptekst staan daar al, en een tweede lijst ernaast gaat vroeg of laat afwijken van
+    wat de applicatie werkelijk aanbiedt.
+    """
+    from opi.services.services import ServiceAdapter
+    from opi.web.navigation_lotc import to_nldd_icon
+
     used_by: dict[str, list[str]] = {}
     for project in projects:
         for service in project["services"]:
             used_by.setdefault(service, []).append(project["display_name"])
 
     overview: list[dict[str, Any]] = []
-    for name in sorted(used_by):
-        info = SERVICE_INFO.get(name, {**UNKNOWN_SERVICE, "label": name})
+    for service_type in ServiceAdapter.get_all_services():
+        definition = ServiceAdapter.SERVICE_DEFINITIONS[service_type]
+        if getattr(definition, "hidden", False):
+            continue
+
+        binding = getattr(definition.binding, "value", str(definition.binding))
+        is_platform = definition.kind.value == "system"
+
+        chips = [BINDING_LABELS.get(binding, binding)]
+        if definition.variables:
+            chips.append(f"{len(definition.variables)} variabelen")
+        if definition.requires:
+            chips.append(f"vereist {len(definition.requires)}")
+
         overview.append(
             {
-                "name": name,
-                "used_by": used_by[name],
-                "status_label": "beschikbaar",
-                "status_type": "success",
-                **info,
+                "name": service_type.value,
+                "label": definition.name,
+                "summary": definition.description,
+                # Door dezelfde vertaaltabel als de navigatie: onze iconen dragen
+                # Nederlandse ROOS-namen en NLDD kent alleen zijn eigen woordenschat.
+                # Zonder deze stap blijft het icoon leeg, en dat gebeurt STIL.
+                "icon": to_nldd_icon(definition.icon),
+                "color": definition.color,
+                "chips": chips,
+                # Alleen een label waar het iets zegt. Een dienst die je zelf kiest heeft
+                # geen label nodig; dat is de normale situatie.
+                "kind_label": "altijd aan" if is_platform else "",
+                "kind_type": "info",
+                "help": definition.description,
+                "used_by": used_by.get(service_type.value, []),
             }
         )
     return overview
