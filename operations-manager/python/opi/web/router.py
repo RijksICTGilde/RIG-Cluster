@@ -327,7 +327,7 @@ async def delete_project_web(request: Request, project_name: str) -> HTMLRespons
     if user_role not in ["admin", "owner"]:
         raise HTTPException(
             status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen projecten verwijderen. Uw rol: {user_role}",
+            detail=f"Alleen admin of owner rollen kunnen projecten verwijderen. Je rol: {user_role}",
         )
 
     if not get_project_store().get(project_name):
@@ -359,7 +359,7 @@ async def delete_deployment_web(request: Request, project_name: str, deployment_
     if user_role not in ["admin", "owner"]:
         raise HTTPException(
             status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen deployments verwijderen. Uw rol: {user_role}",
+            detail=f"Alleen admin of owner rollen kunnen deployments verwijderen. Je rol: {user_role}",
         )
 
     project = get_project_store().get(project_name)
@@ -399,7 +399,7 @@ async def delete_component_web(request: Request, project_name: str, component_na
     if user_role not in ["admin", "owner"]:
         raise HTTPException(
             status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen components verwijderen. Uw rol: {user_role}",
+            detail=f"Alleen admin of owner rollen kunnen components verwijderen. Je rol: {user_role}",
         )
 
     project = get_project_store().get(project_name)
@@ -479,7 +479,7 @@ async def refresh_project_web(request: Request, project_name: str) -> HTMLRespon
     if user_role not in ["admin", "owner"]:
         raise HTTPException(
             status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen een project herverwerken. Uw rol: {user_role}",
+            detail=f"Alleen admin of owner rollen kunnen een project herverwerken. Je rol: {user_role}",
         )
 
     project = get_project_store().get(project_name)
@@ -513,7 +513,7 @@ async def refresh_deployment_web(request: Request, project_name: str, deployment
     if user_role not in ["admin", "owner"]:
         raise HTTPException(
             status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen een deployment herverwerken. Uw rol: {user_role}",
+            detail=f"Alleen admin of owner rollen kunnen een deployment herverwerken. Je rol: {user_role}",
         )
 
     project = get_project_store().get(project_name)
@@ -576,7 +576,7 @@ async def wake_deployment_web(request: Request, project_name: str, deployment_na
     if user_role not in ["admin", "owner"]:
         raise HTTPException(
             status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen een deployment wekken. Uw rol: {user_role}",
+            detail=f"Alleen admin of owner rollen kunnen een deployment wekken. Je rol: {user_role}",
         )
 
     project = get_project_store().get(project_name)
@@ -615,7 +615,7 @@ async def sleep_deployment_web(request: Request, project_name: str, deployment_n
     if user_role not in ["admin", "owner"]:
         raise HTTPException(
             status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen een deployment slapen. Uw rol: {user_role}",
+            detail=f"Alleen admin of owner rollen kunnen een deployment slapen. Je rol: {user_role}",
         )
 
     project = get_project_store().get(project_name)
@@ -665,7 +665,7 @@ async def deployment_action_confirm(
     if user_role not in ["admin", "owner"]:
         raise HTTPException(
             status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen deployment acties uitvoeren. Uw rol: {user_role}",
+            detail=f"Alleen admin of owner rollen kunnen deployment acties uitvoeren. Je rol: {user_role}",
         )
 
     project = get_project_store().get(project_name)
@@ -714,7 +714,7 @@ async def project_action_confirm(
     if user_role not in ["admin", "owner"]:
         raise HTTPException(
             status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen deze actie uitvoeren. Uw rol: {user_role}",
+            detail=f"Alleen admin of owner rollen kunnen deze actie uitvoeren. Je rol: {user_role}",
         )
 
     project = get_project_store().get(project_name)

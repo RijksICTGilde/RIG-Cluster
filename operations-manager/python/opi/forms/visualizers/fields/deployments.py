@@ -76,7 +76,7 @@ DEPLOYMENT_CUSTOM_BASE_DOMAIN = EditableVisualizer(
     widget=WidgetType.TEXT,
     label="Eigen domein",
     placeholder="voorbeeld.nl",
-    help_text="Voer uw eigen domeinnaam in. U bent zelf verantwoordelijk voor DNS-configuratie. Gebruik het domein zonder 'subdomein', dus voorbeeld.nl en niet www.voorbeeld.nl",
+    help_text="Voer je eigen domeinnaam in. Je bent zelf verantwoordelijk voor DNS-configuratie. Gebruik het domein zonder 'subdomein', dus voorbeeld.nl en niet www.voorbeeld.nl",
 )
 
 DEPLOYMENT_DOMAIN_MODE = EditableVisualizer(
@@ -145,7 +145,7 @@ BACKUP_RESOURCE_TYPES = EditableVisualizer(
     editable=BACKUP_RESOURCE_TYPES_EDITABLE,
     widget=WidgetType.CHECKBOX_GROUP,
     label="Resource types",
-    description="Selecteer welke resource types u wilt back-uppen.",
+    description="Selecteer welke resource types je wilt back-uppen.",
 )
 
 DEPLOYMENT_COMP_REFERENCE = EditableVisualizer(

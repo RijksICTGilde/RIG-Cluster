@@ -175,7 +175,7 @@ class ProjectFormModel(BaseModel):
             label="project.description",
             description="project.description.description",
             widget="textarea",
-            placeholder="Beschrijf het doel van uw project...",
+            placeholder="Beschrijf het doel van je project...",
             section="details",
         ),
     ] = Field(default=None)
