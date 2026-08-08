@@ -60,40 +60,13 @@
         <c-metric icon="cylinder-split" value="{{ pod_count }}" label="Pods" />
     </c-auto-grid>
 
-    {% if prometheus_available and metrics %}
-        {% call panel("Resourcegebruik", "chart-x-y-axis-line") %}
-            <c-progress-bar text="CPU" :value="metrics.cpu_percentage" max="100" value-display="true" color="info"
-                            accessible-label="CPU: {{ metrics.cpu_usage_display }} van {{ metrics.cpu_limit_display }} cores" />
-            <c-paragraph size="sm">{{ metrics.cpu_usage_display }} / {{ metrics.cpu_limit_display }} cores</c-paragraph>
-
-            <c-progress-bar text="Geheugen" :value="metrics.memory_percentage" max="100" value-display="true" color="success"
-                            accessible-label="Geheugen: {{ metrics.memory_usage_display }} van {{ metrics.memory_limit_display }}" />
-            <c-paragraph size="sm">{{ metrics.memory_usage_display }} / {{ metrics.memory_limit_display }}</c-paragraph>
-
-            <c-progress-bar text="Opslag" :value="metrics.storage_percentage" max="100" value-display="true" color="warning"
-                            accessible-label="Opslag: {{ metrics.storage_usage_display }} van {{ metrics.storage_capacity_display }}" />
-            <c-paragraph size="sm">{{ metrics.storage_usage_display }} / {{ metrics.storage_capacity_display }}</c-paragraph>
-        {% endcall %}
-    {% endif %}
-
-    {# De verdeling van het CPU-gebruik over de projecten. Stond in de bestaande pagina
-       als een eigen balk met gekleurde segmenten; hier per project een regel, want dat
-       leest bij meer dan een handvol projecten beter dan een balk met een legenda. #}
-    {% if prometheus_available and total_cpu_usage is defined and total_cpu_usage > 0 %}
-        {% call panel("Verdeling over projecten", "chart-x-y-axis-line") %}
-            <c-stack gap="sm">
-                {% for project in projects if project.cpu_cores is defined and project.cpu_cores > 0 %}
-                    <c-progress-bar
-                        text="{{ project.display_name }}"
-                        :value="(project.cpu_cores / total_cpu_usage * 100) | round(1)"
-                        max="100"
-                        value-display="true"
-                        color="info"
-                        accessible-label="{{ project.display_name }}: {{ '%.3f' | format(project.cpu_cores) }} cores" />
-                {% endfor %}
-            </c-stack>
-        {% endcall %}
-    {% endif %}
+    {# Het resourcegebruik wordt APART opgehaald. Zes Prometheus-queries plus een per
+       project duren te lang om de pagina op te laten wachten, en dat is precies waarom de
+       RVO-pagina hier lazy loading voor had. Zo staat de pagina er meteen en houdt een
+       trage of afwezige Prometheus hem niet op. #}
+    <div hx-get="/dashboard/resource-usage" hx-trigger="load" hx-swap="innerHTML">
+        <c-paragraph>Resourcegebruik wordt opgehaald...</c-paragraph>
+    </div>
 
     {% set nieuw_project %}<c-button type="primary" size="sm" label="Nieuw project" icon="plus" show-icon="before" href="/forms/wizard/restart" />{% endset %}
     {% call panel("Mijn projecten", "rectangle-stack", aside=nieuw_project) %}
