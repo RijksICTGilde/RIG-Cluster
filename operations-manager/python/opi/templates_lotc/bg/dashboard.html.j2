@@ -22,12 +22,12 @@
 {% block page_title %}Dashboard - Self Service Portal{% endblock %}
 
 {% block content %}
-    <c-stack gap="0.25rem">
+    <c-stack gap="xs">
         <c-heading type="h1" size="3" label="Dashboard" />
         <c-paragraph>Een overzicht van uw projecten, deployments en verbruik.</c-paragraph>
     </c-stack>
 
-    <c-cluster gap="0.75rem">
+    <c-cluster gap="sm">
         <c-button type="secondary" label="Mijn projecten" icon="rectangle-stack" show-icon="before" href="/projects" />
         <c-button type="primary" label="Nieuw project" icon="plus" show-icon="before" href="/forms/wizard/restart" />
     </c-cluster>
@@ -35,7 +35,7 @@
     {# De kerncijfers. In de vertaalde versie zijn dit vier kaarten met een getal en een
        woord erin; als tegel dragen ze ook een icoon, een toelichting en een link, en
        staan ze in een raster dat zich naar de breedte voegt. #}
-    <c-auto-grid min="220px" gap="1rem">
+    <c-auto-grid min="220px" gap="md">
         {% for tile in tiles %}
             <c-metric
                 icon="{{ tile.icon }}"
@@ -46,10 +46,10 @@
         {% endfor %}
     </c-auto-grid>
 
-    <c-columns columns="1" lg="2" gap="1.5rem">
+    <c-columns columns="1" lg="2" gap="lg">
         <c-card outline padding="lg">
             <c-section-head title="Mijn projecten" icon="rectangle-stack" />
-            <c-stack gap="0.75rem">
+            <c-stack gap="sm">
                 {% for project in projects %}
                     <c-layer
                         icon="rectangle-stack"

@@ -14,7 +14,7 @@
 {% block page_title %}Diensten - Self Service Portal{% endblock %}
 
 {% block content %}
-    <c-stack gap="0.25rem">
+    <c-stack gap="xs">
         <c-heading type="h1" size="3" label="Diensten" />
         <c-paragraph>Platformdiensten die projecten kunnen afnemen.</c-paragraph>
     </c-stack>
@@ -26,14 +26,14 @@
         {% endfor %}
     {% endfor %}
 
-    <c-auto-grid min="300px" gap="1rem">
+    <c-auto-grid min="300px" gap="md">
         {% for service, users in service_use | dictsort %}
             <c-catalog-card
                 title="{{ service }}"
                 subtitle="Afgenomen door {{ users | length }} project{{ 's' if users | length != 1 else '' }}"
                 icon="cylinder-split">
                 {# c-cluster: breekt af als er meer chips zijn dan op een regel passen. #}
-                <c-cluster gap="0.5rem">
+                <c-cluster gap="sm">
                     {% for user in users %}
                         <c-chip>{{ user }}</c-chip>
                     {% endfor %}

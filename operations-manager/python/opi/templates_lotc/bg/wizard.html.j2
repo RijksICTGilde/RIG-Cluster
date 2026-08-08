@@ -1,0 +1,66 @@
+{#
+  De wizard, herontworpen in bg-vorm.
+
+  Dit is de pagina waar de omzetting het meest oplevert en het meest op het spel staat.
+  De formulierlaag zit hier, en die is net omgezet van macro's-in-tags naar
+  :prop="expr" en :attrs. Deze pagina laat die laag in samenhang zien: velden in
+  fieldsets, met een stappenbalk erboven en knoppen eronder.
+
+  De opzet volgt hun eigen forms-demo (tests/visual/fixtures/forms-demo.html):
+
+    - <c-center max="46rem"> eromheen. Een formulier over de volle breedte is
+      onleesbaar; het oog verliest de koppeling tussen label en veld.
+    - gaps uit de schaal van het design system (lg, md), niet uit eigen rem-waarden.
+    - <c-fieldset> per groep, met <c-stack gap="md"> voor de velden erbinnen.
+    - <c-action-group align="end"> voor de knoppen.
+
+  De stappenbalk is <c-step-indicator>. In de huidige wizard is dat een eigen blok met
+  rvo-klassen; hier komt hij uit het thema, dus hij verandert mee als het thema verandert.
+
+  De velden zijn dezelfde FormField-objecten als op /lotc/formulier, gerenderd door de
+  LOTCWidgetAdapter. Dus wat hier staat is de echte formulierlaag en geen namaak ervan.
+#}
+{% extends "base_lotc.html.j2" %}
+
+{% block page_title %}{{ flow_title }} - Self Service Portal{% endblock %}
+
+{% block content %}
+<c-center max="46rem">
+    <c-stack gap="lg">
+        <c-stack gap="xs">
+            <c-heading type="h1" size="3" label="{{ flow_title }}" />
+            <c-paragraph>{{ flow_description }}</c-paragraph>
+        </c-stack>
+
+        <c-step-indicator current="{{ current_step }}" accessible-label="Stappen in deze wizard">
+            {% for step in steps %}
+                <c-step-indicator-item text="{{ step.label }}" :status="step.status or none" />
+            {% endfor %}
+        </c-step-indicator>
+
+        <form method="post" action="#">
+            {# Een stack om de fieldsets: zonder staan twee groepen tegen elkaar aan en
+               lijkt de legenda van de tweede bij het laatste veld van de eerste te horen. #}
+            <c-stack gap="lg">
+                {% for group in field_groups %}
+                    <c-fieldset legend="{{ group.legend }}">
+                        <c-stack gap="md">
+                            {% for html in group.fields %}
+                                {{ html | safe }}
+                            {% endfor %}
+                        </c-stack>
+                    </c-fieldset>
+                {% endfor %}
+
+                {# Geen icoon op "Vorige": NLDD heeft geen chevron naar links, en een pijl
+                   die de verkeerde kant op wijst is erger dan geen pijl. Aangevraagd bij
+                   het LOTC-project (icoon "terug"). #}
+                <c-action-group align="between">
+                    <c-button type="secondary" label="Vorige" />
+                    <c-button type="primary" label="Volgende" icon="chevron-right" show-icon="after" />
+                </c-action-group>
+            </c-stack>
+        </form>
+    </c-stack>
+</c-center>
+{% endblock %}
