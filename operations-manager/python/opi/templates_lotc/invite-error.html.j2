@@ -59,7 +59,7 @@
                     {# Help Section #}
                     <c-card outline="true" padding="md">
                         <c-layout-flow gap="sm">
-                            <c-heading type="h3" label="{% if language == 'nl' %}Hulp nodig?{% else %}Need help?{% endif %}"/>
+                            <c-heading type="h3" :label="('Hulp nodig?') if (language == 'nl') else ('Need help?')"/>
                             <p class="rvo-paragraph">
                                 {% if language == 'nl' %}
                                 Neem contact op met de persoon die u de uitnodiging heeft gestuurd voor assistentie.

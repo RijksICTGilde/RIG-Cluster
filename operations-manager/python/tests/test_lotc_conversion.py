@@ -7,16 +7,8 @@ COMPILEREN al of elk component bestaat en of elk attribuut bij dat component hoo
 Een template dat compileert, gebruikt dus aantoonbaar een bestaande woordenschat.
 
 Waarom een lijst met bekende uitzonderingen en geen simpele "alles moet compileren":
-de resterende templates falen allemaal op hetzelfde, en dat is niets wat wij in een
-template kunnen repareren. Onze formulierwidgets bouwen attributen voorwaardelijk op
-met macro's die of niets of een heel attribuut teruggeven:
-
-    <c-text-input-field id="..." {{ bool_attr("required", field.required) }} />
-
-De roos-parser laat dat door, de LOTC-parser leest de haakjes als attribuutnaam. Dat
-is bij het LOTC-project neergelegd. Tot het opgelost is horen deze bestanden hier, met
-hun aantal, zodat twee dingen opvallen: dat de lijst groeit (er is iets kapot gegaan)
-en dat hij krimpt (er kan iets van af).
+er is er nog een, en die kunnen wij niet zelf oplossen. De lijst bewaakt twee kanten op:
+groeit hij, dan is er iets kapot gegaan; krimpt hij, dan kan er iets af.
 """
 
 from pathlib import Path
@@ -25,36 +17,15 @@ import pytest
 
 TEMPLATES_LOTC_DIR = Path(__file__).parent.parent / "opi" / "templates_lotc"
 
-# Templates die nog niet compileren omdat ze Jinja-expressies op attribuutpositie
-# gebruiken. Bijna allemaal de formulierlaag; zie de moduledocstring.
 KNOWN_UNCONVERTED = {
-    # Deze valt om een andere reden: hij gebruikt c-data-list, en NLDD implementeert dat
-    # niet. Eerder beeldde de omzetter dat af op c-detail-list omdat DIE wel rendert,
-    # maar het LOTC-project wees erop dat het twee verschillende dingen zijn: data-list
-    # is een definitielijst (<dl>), detail-list een rijkere lijst met een eigen
-    # structuur. Een pagina die rendert maar iets anders toont is erger dan een pagina
-    # die niet rendert, dus die afbeelding is teruggedraaid. Een aanroep in totaal.
+    # De enige die overblijft, en niet door ons op te lossen: hij gebruikt c-data-list,
+    # en NLDD implementeert dat niet. Eerder beeldde de omzetter dat af op c-detail-list
+    # omdat DIE wel rendert, maar het LOTC-project wees erop dat het twee verschillende
+    # dingen zijn: data-list is een definitielijst (<dl>), detail-list een rijkere lijst
+    # met een eigen structuur. Een pagina die rendert maar iets anders toont is erger dan
+    # een pagina die niet rendert, dus die afbeelding is teruggedraaid. Een aanroep in
+    # totaal; LOTC heeft data-list onder NLDD op de lijst staan.
     "roos-form-improved.html.j2",
-    "invite-register.html.j2",
-    "widgets/checkbox.html.j2",
-    "widgets/checkbox_group.html.j2",
-    "widgets/column.html.j2",
-    "widgets/date.html.j2",
-    "widgets/fieldset.html.j2",
-    "widgets/form_start.html.j2",
-    "widgets/number.html.j2",
-    "widgets/preset_cards.html.j2",
-    "widgets/radio.html.j2",
-    "widgets/row.html.j2",
-    "widgets/select.html.j2",
-    "widgets/sequence.html.j2",
-    "widgets/sequence_item_card.html.j2",
-    "widgets/sequence_item_inline.html.j2",
-    "widgets/service_cards.html.j2",
-    "widgets/submit.html.j2",
-    "widgets/text.html.j2",
-    "widgets/textarea.html.j2",
-    "wizard/modal_wizard_review.html.j2",
 }
 
 
@@ -108,3 +79,44 @@ def test_our_own_components_are_registered() -> None:
     assert "zad-secret-field" in rendered
     assert "lotc-unimplemented" not in rendered
     assert "geheim" in rendered
+
+
+def test_form_widgets_render_through_the_lotc_adapter() -> None:
+    """De omgezette widgets worden ook echt gebruikt, en leveren NLDD-markup.
+
+    Zonder deze toets zouden de widget-templates kunnen compileren zonder dat er iets
+    ze aanroept - dan is de formulierlaag omgezet op papier en niet in de applicatie.
+    """
+    pytest.importorskip("lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd")
+    from types import SimpleNamespace
+
+    from opi.forms.widgets.lotc import LOTCWidgetAdapter
+
+    field = SimpleNamespace(
+        path="naam",
+        label="Projectnaam",
+        placeholder="mijn-project",
+        required=True,
+        readonly=False,
+        value="waarde",
+        errors=[],
+        warnings=[],
+        help_text="Alleen kleine letters",
+        description=None,
+        help_template=None,
+        widget_type="text",
+        htmx_attrs={"hx-get": "/controleer"},
+        attributes={"data-q": "1", "converter": "hoort-er-niet-in"},
+        options=None,
+    )
+    rendered = LOTCWidgetAdapter().render_text(field)
+
+    assert "nldd-text-field" in rendered, "het veld rendert niet als NLDD-component"
+    # De hulptekst hoort een eigen element te zijn dat aan het invoerveld gekoppeld is;
+    # dat is de toegankelijkheidswinst die roos hier niet levert.
+    assert "nldd-form-field-help-text" in rendered
+    # De attribuutbundel landt op het invoerveld...
+    assert 'hx-get="/controleer"' in rendered
+    assert 'data-q="1"' in rendered
+    # ...maar velddefinitie-instellingen horen niet in de HTML.
+    assert "converter" not in rendered

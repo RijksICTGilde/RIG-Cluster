@@ -1,4 +1,7 @@
-{% from "widgets/_macros.html.j2" import html_attributes %}
-<c-cluster gap="{{ row.gap|e }}"{% if row.css_class %} class="{{ row.css_class|e }}"{% endif %} {{ html_attributes(row.attributes) }}>
+{#
+  Rij voor de LOTC-bouwlijn. c-layout-row heet in lotc-layout c-cluster: een rij die
+  mag afbreken als hij niet past.
+#}
+<c-cluster gap="{{ row.gap|e }}" :class="row.css_class or none" :attrs="row.attributes or {}">
     {{ children_content }}
 </c-cluster>

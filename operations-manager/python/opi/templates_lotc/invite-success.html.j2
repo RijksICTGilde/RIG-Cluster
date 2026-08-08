@@ -17,7 +17,7 @@
             <c-layout-flow gap="xl">
                     {# Error Alert - shown if there were issues assigning roles/groups #}
                     {% if assigned and assigned.errors %}
-                    <c-alert heading="{% if language == 'nl' %}Let op: sommige rechten konden niet worden toegewezen{% else %}Warning: some permissions could not be assigned{% endif %}"/>
+                    <c-alert :heading="('Let op: sommige rechten konden niet worden toegewezen') if (language == 'nl') else ('Warning: some permissions could not be assigned')"/>
                     {% endif %}
 
                     {# Success Alert #}
@@ -26,14 +26,14 @@
                     {# Success Details Card #}
                     <c-card outline="true" padding="lg">
                         <c-layout-flow gap="lg">
-                            <c-heading type="h2" label="{% if language == 'nl' %}Uw toegang{% else %}Your access{% endif %}"/>
+                            <c-heading type="h2" :label="('Uw toegang') if (language == 'nl') else ('Your access')"/>
 
                             {% if email %}
                                 <p class="rvo-paragraph"><strong>{% if language == 'nl' %}E-mailadres{% else %}Email address{% endif %}:</strong> {{ email }}</p>
                             {% endif %}
 
                             {% if application_url %}
-                            <c-button label="{% if language == 'nl' %}Ga naar applicatie{% else %}Go to application{% endif %}" show-icon="after" icon="pijl-naar-rechts" @/>
+                            <c-button :label="('Ga naar applicatie') if (language == 'nl') else ('Go to application')" show-icon="after" icon="pijl-naar-rechts" @/>
                             {% endif %}
                         </c-layout-flow>
                     </c-card>
