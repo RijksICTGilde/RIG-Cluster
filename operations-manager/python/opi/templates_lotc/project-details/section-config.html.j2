@@ -1,0 +1,72 @@
+{# Configuration & Secrets Section #}
+{% if user_role in ["admin", "owner"] %}
+<c-card outline="true" padding="xl" background-color="wit">
+    <c-layout-flow gap="lg">
+        <c-heading type="h2" class="section-heading"><c-icon icon="instellingen" size="xl" color="donkerblauw"/>Configuratie & Secrets</c-heading>
+        <p class="rvo-text--subtle">Project configuratie en gevoelige informatie</p>
+
+        <div class="config-section">
+            {# Project Name - always show #}
+            <div class="config-item">
+                <div class="config-label">
+                    <c-icon icon="publicatie" size="md" color="hemelblauw"/>
+                    <strong>Project Naam</strong>
+                </div>
+                <div class="config-value config-value--inline">
+                    <code class="config-code">{{ project.name }}</code>
+                    <c-button size="sm" label="Kopieer" show-icon="before" icon="document-blanco" class="copy-btn" @/>
+                </div>
+            </div>
+
+            {% if project.config %}
+
+            {# API Key Section #}
+            {% if project.config.get('api-key') %}
+            <div class="config-item">
+                <div class="config-label">
+                    <c-icon icon="sleutel" size="md" color="rood"/>
+                    <strong>API Key</strong>
+                </div>
+                <div class="config-value">
+                    <c-secret-field value="{{ project.config['api-key'] }}"/>
+                </div>
+            </div>
+            {% endif %}
+
+            {# Age Public Key #}
+            {% if project.config.get('age-public-key') %}
+            <div class="config-item">
+                <div class="config-label">
+                    <c-icon icon="beveiligingsscan" size="md" color="groen"/>
+                    <strong>Age Public Key</strong>
+                </div>
+                <div class="config-value config-value--inline">
+                    <code class="config-code">{{ project.config['age-public-key'] }}</code>
+                    <c-button size="sm" label="Kopieer" show-icon="before" icon="document-blanco" class="copy-btn" @/>
+                </div>
+            </div>
+            {% endif %}
+
+            {# Age Private Key #}
+            {% if project.config.get('age-private-key') %}
+            <div class="config-item">
+                <div class="config-label">
+                    <c-icon icon="beveiligingsscan" size="md" color="rood"/>
+                    <strong>Age Private Key</strong>
+                </div>
+                <div class="config-value">
+                    <c-secret-field value="{{ project.config['age-private-key'] }}"/>
+                </div>
+            </div>
+            {% endif %}
+
+            {% else %}
+            <div class="empty-state">
+                <c-icon icon="info" size="lg" color="grijs-050"/>
+                <p class="rvo-text--md">Geen configuratie beschikbaar</p>
+            </div>
+            {% endif %}
+        </div>
+    </c-layout-flow>
+</c-card>
+{% endif %}

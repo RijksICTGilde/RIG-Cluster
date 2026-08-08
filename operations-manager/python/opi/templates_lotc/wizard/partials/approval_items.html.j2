@@ -1,0 +1,96 @@
+{#
+  Admin domain/subdomain approval step.
+
+  Expected context (via yaml_data / wizard state):
+    - _approval_items: list of dicts with keys:
+        type, domain, name, current_status, status, history
+#}
+{% set items = _approval_items | default([]) %}
+
+{% if items %}
+<c-layout-flow gap="lg">
+    {% for item in items %}
+    <c-card outline="true" padding="md" background-color="wit">
+        <c-layout-flow gap="md">
+            {# Summary row #}
+            <div class="approval-item-summary">
+                <div class="approval-item-info">
+                    {% if item.type == 'subdomain' %}
+                        <span class="approval-type-badge approval-type-subdomain">Subdomein</span>
+                    {% else %}
+                        <span class="approval-type-badge approval-type-domain">Domein</span>
+                    {% endif %}
+                    <strong>{{ item.name }}</strong>
+                    {% if item.type == 'subdomain' %}
+                        <span class="rvo-text--subtle">.{{ item.domain }}</span>
+                    {% endif %}
+                </div>
+                <div>
+                    {% if item.current_status == 'requested' %}
+                        <span class="approval-status-badge approval-status-requested">Aangevraagd</span>
+                    {% elif item.current_status == 'approved' %}
+                        <span class="approval-status-badge approval-status-approved">Goedgekeurd</span>
+                    {% elif item.current_status == 'denied' %}
+                        <span class="approval-status-badge approval-status-denied">Afgewezen</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            {# History #}
+            {% if item.history %}
+            <details class="approval-history">
+                <summary class="rvo-text--sm rvo-text--subtle">Geschiedenis ({{ item.history | length }})</summary>
+                <div class="approval-history-entries">
+                    {% for entry in item.history | reverse %}
+                    <div class="approval-history-entry">
+                        <span class="approval-history-date">{{ entry.date | dutch_date(include_time=False) }}</span>
+                        <span class="approval-status-badge approval-status-{{ entry.status }}">
+                            {% if entry.status == 'requested' %}Aangevraagd{% elif entry.status == 'approved' %}Goedgekeurd{% elif entry.status == 'denied' %}Afgewezen{% endif %}
+                        </span>
+                        {% if entry.by %}<span class="rvo-text--sm rvo-text--subtle">door {{ entry.by }}</span>{% endif %}
+                        {% if entry.message %}<span class="rvo-text--sm"> — {{ entry.message }}</span>{% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </details>
+            {% endif %}
+
+            {# Action fields #}
+            <div class="approval-item-actions">
+                {# Hidden context fields #}
+                <input type="hidden" name="_approval_items[{{ loop.index0 }}][service]" value="{{ item.service }}" />
+                <input type="hidden" name="_approval_items[{{ loop.index0 }}][type]" value="{{ item.type }}" />
+                <input type="hidden" name="_approval_items[{{ loop.index0 }}][domain]" value="{{ item.domain }}" />
+                <input type="hidden" name="_approval_items[{{ loop.index0 }}][name]" value="{{ item.name }}" />
+                <input type="hidden" name="_approval_items[{{ loop.index0 }}][current_status]" value="{{ item.current_status }}" />
+
+                <div class="approval-action-fields">
+                    <div class="rvo-form-field approval-action-field">
+                        <label class="rvo-form-field__label" for="status-{{ loop.index0 }}">Actie</label>
+                        <select id="status-{{ loop.index0 }}"
+                                name="_approval_items[{{ loop.index0 }}][status]"
+                                class="rvo-select approval-select">
+                            <option value="skip" {% if item.status == 'skip' %}selected{% endif %}>Niet wijzigen</option>
+                            <option value="approved" {% if item.status == 'approved' %}selected{% endif %}>Goedkeuren</option>
+                            <option value="denied" {% if item.status == 'denied' %}selected{% endif %}>Afwijzen</option>
+                        </select>
+                    </div>
+                    <div class="rvo-form-field approval-message-field">
+                        <label class="rvo-form-field__label" for="message-{{ loop.index0 }}">Opmerking</label>
+                        <input type="text"
+                               id="message-{{ loop.index0 }}"
+                               name="_approval_items[{{ loop.index0 }}][message]"
+                               class="rvo-text-input"
+                               placeholder="Optioneel: reden"
+                               value="{{ item.message | default('', true) }}" />
+                    </div>
+                </div>
+            </div>
+        </c-layout-flow>
+    </c-card>
+    {% endfor %}
+</c-layout-flow>
+
+{% else %}
+<p class="rvo-text--subtle">Geen domein- of subdomeinaanvragen voor dit project.</p>
+{% endif %}

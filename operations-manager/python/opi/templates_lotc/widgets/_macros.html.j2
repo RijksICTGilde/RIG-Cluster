@@ -1,0 +1,171 @@
+{#
+  Shared macros for widget templates.
+
+  Usage: {% from "widgets/_macros.html.j2" import helper_text, render_examples, bool_attr, optional_attr, render_errors, htmx_attrs, extra_attrs, format_value, combined_helper, description_text %}
+#}
+
+{# --- Attribute helpers --- #}
+
+{% macro bool_attr(name, value) %}{% if value %}:{{ name }}="true"{% endif %}{% endmacro %}
+
+{% macro optional_attr(name, value) %}{% if value is not none and value != '' %}{{ name }}="{{ value|attr_escape }}"{% endif %}{% endmacro %}
+
+{% macro htmx_attrs(field) %}{% if field.htmx_attrs %}{% for k, v in field.htmx_attrs.items() %}{{ k|e }}="{{ v|e }}" {% endfor %}{% endif %}{% endmacro %}
+
+{% macro extra_attrs(field, handled) %}
+{%- set skip = handled|default(['rows','min','max','step','accept','multiple','min_items','max_items','add_label','remove_label','options_provider','converter','validator','kv_format','icon','icon_color']) -%}
+{%- for k, v in field.attributes.items() if k not in skip %}{{ k|e }}="{{ v|e }}" {% endfor -%}
+{% endmacro %}
+
+{% macro html_attributes(attrs) %}{% for k, v in attrs.items() %}{{ k|e }}="{{ v|e }}" {% endfor %}{% endmacro %}
+
+{# --- Text helpers --- #}
+
+{% macro combined_helper(field) %}
+{%- if field.help_text -%}{{ field.help_text }}
+{%- elif field.description -%}{{ field.description }}
+{%- endif -%}
+{% endmacro %}
+
+{% macro description_text(field) %}
+{%- if field.description and field.help_text -%}
+<span class="rvo-form-field__helper-text">{{ field.description }}<br><br></span>
+{%- endif -%}
+{% endmacro %}
+
+{% macro helper_text(field) %}
+{% if field.description and field.help_text %}
+<div class="rvo-form-field__helper-group">
+<span class="rvo-form-field__helper-text">{{ field.description }}</span>
+<span class="rvo-form-field__helper-text">{{ field.help_text }}</span>
+</div>
+{% elif field.description %}
+<span class="rvo-form-field__helper-text">{{ field.description }}</span>
+{% elif field.help_text %}
+<span class="rvo-form-field__helper-text">{{ field.help_text }}</span>
+{% endif %}
+{% endmacro %}
+
+{% macro render_examples(field) %}
+{% if field.examples %}
+<div class="rvo-form-field__examples">
+Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{# --- Service block --- #}
+
+{#
+  One service, rendered the same everywhere: icon, name, help button, description.
+  Used by the service picker (widgets/service_cards.html.j2) and the service
+  overview page (services-overview.html.j2). Both used to build this themselves
+  and drifted apart -- the overview lost the help button. Keep it here.
+
+  The help button only appears when the service has a help_template, and needs
+  openServiceHelp() (static/js/wizard.js) plus the help modal
+  (widgets/service_help_modal.html.j2) on the page.
+#}
+{% macro service_block(name, description, icon, color, help_template=None, icon_size="lg") %}
+<div class="service-card__header">
+    <c-icon icon="{{ icon|e }}" color="{{ color|e }}" size="{{ icon_size|e }}"/>
+    <span class="service-card__title">{{ name|e }}</span>
+    {% if help_template %}
+    <c-icon icon="vraagteken" size="xl" color="hemelblauw" class="service-card__help-btn" @/>
+    {% endif %}
+</div>
+<p class="service-card__description">{{ description|e }}</p>
+{% endmacro %}
+
+{# --- Task progress --- #}
+
+{#
+  De voortgang van een taak, gedeeld door de twee fragmenten die hem tonen:
+  partials/task_progress_fragment.html.j2 (inline en in de bewerkmodal) en
+  wizard/modal_wizard_progress_fragment.html.j2 (de wizardmodal). Die twee hadden
+  zeventien identieke blokken van zes regels of meer; wat hieronder staat is precies
+  dat gedeelte.
+
+  progress_bar is de enige plek in de templates waar nog een style= staat: de breedte
+  is de waarde zelf en kan niet in een CSS-bestand. De vormgeving eromheen zit in
+  static/css/modal.css (.edit-progress-*).
+#}
+{% macro progress_bar(progress) %}
+<div class="edit-progress-bar-wrapper">
+    <div class="edit-progress-bar" style="width: {{ progress }}%"></div>
+</div>
+{% endmacro %}
+
+{% macro task_status_icon(status) %}
+{%- if status == "completed" -%}
+<c-icon icon="vinkje" size="sm" color="groen"/>
+{%- elif status == "failed" -%}
+<c-icon icon="kruis" size="sm" color="rood"/>
+{%- elif status == "running" -%}
+<c-icon icon="pijl-naar-rechts" size="sm" color="hemelblauw"/>
+{%- else -%}
+<c-icon icon="klok" size="sm" color="grijs-600"/>
+{%- endif -%}
+{% endmacro %}
+
+{#
+  De takenlijst met per taak een icoon en per taak zijn subtaken. ``show_errors`` staat
+  uit voor de wizardmodal, die de foutregels van een taak bewust niet toont.
+#}
+{% macro progress_task_list(tasks, show_errors=True) %}
+{% if tasks %}
+<div class="edit-progress-tasks">
+    {% for task in tasks %}
+    <div class="edit-progress-task-item">
+        {{ task_status_icon(task.status) }}
+        <span>{{ task.name }}</span>
+    </div>
+    {% if show_errors and task.error %}
+    <div class="edit-progress-task-error">{{ task.error }}</div>
+    {% endif %}
+    {% for subtask in task.subtasks or [] %}
+    <div class="edit-progress-task-item edit-progress-subtask">
+        {{ task_status_icon(subtask.status) }}
+        <span>{{ subtask.name }}</span>
+    </div>
+    {% if show_errors and subtask.error %}
+    <div class="edit-progress-task-error edit-progress-subtask">{{ subtask.error }}</div>
+    {% endif %}
+    {% endfor %}
+    {% endfor %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{# --- Error helpers --- #}
+
+{% macro render_errors(errors) %}
+{% if errors %}
+<div class="rvo-form-field__errors">
+{% for error in errors %}
+<span class="rvo-form-field__error-text">{{ error }}</span>
+{% endfor %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{# --- Warning helpers --- #}
+
+{% macro render_warnings(warnings) %}
+{% if warnings %}
+{% for warning in warnings %}
+<c-alert>{{ warning }}</c-alert>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{# --- Value formatting --- #}
+
+{% macro format_value(value) %}
+{%- if value is none -%}
+{%- elif value is iterable and value is not string -%}
+{{ value|join(', ') }}
+{%- else -%}
+{{ value }}
+{%- endif -%}
+{% endmacro %}

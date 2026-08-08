@@ -1,0 +1,139 @@
+{#
+  Improved ROOS Form - Project Creation
+
+  This demonstrates the proper usage of jinja-roos-components for building forms
+  using the newly created form field components that match RVO patterns.
+#}
+
+<c-page title="Project Aanmaken - ROOS (Verbeterd)" lang="nl" body-class="rvo-theme rvo-responsive">
+
+    {# Header with proper RVO styling #}
+    <c-header subtitle="Project Management Platform"/>
+
+    {# Main Content with proper layout #}
+    <main class="rvo-max-width-layout rvo-max-width-layout--lg">
+        <c-layout-flow gap="xl">
+
+            {# Page Header Section #}
+            <section class="rvo-page-header">
+                <c-card background-color="hemelblauw" padding="lg">
+                    <c-layout-flow gap="md">
+                        <c-heading type="h1" label="Nieuw Project Aanmaken" class="rvo-heading--wit"/>
+                        <p class="rvo-text--lg roos-form-header__intro">
+                            Maak een nieuw Kubernetes project aan in de geselecteerde cluster omgeving
+                        </p>
+                    </c-layout-flow>
+                </c-card>
+            </section>
+
+            {# Alert for Important Information #}
+            <c-alert heading="Project configuratie" max-width="lg"/>
+
+            {# Main Form #}
+            <c-card outline="true" padding="xl">
+                <form method="POST" action="/api/projects/create-basic" autocomplete="off">
+                    <c-layout-flow gap="xl">
+
+                        {# Basic Project Information Section #}
+                        <c-fieldset legend="Basisgegevens">
+                            <c-layout-flow gap="lg">
+
+                                <c-text-input-field id="project-name" name="project-name" label="Projectnaam" type="text" placeholder="mijn-project" required="true"/>
+
+                                <c-text-input-field id="project-description" name="project-description" label="Projectbeschrijving" type="text" placeholder="Korte beschrijving van het project"/>
+
+                            </c-layout-flow>
+                        </c-fieldset>
+
+                        {# Infrastructure Configuration Section #}
+                        <c-fieldset legend="Infrastructuur configuratie">
+                            <c-layout-flow gap="lg">
+
+                                <c-select-field id="cluster" name="cluster" label="Doelcluster" required="true" placeholder="Selecteer een cluster"/>
+
+                                <c-text-input-field id="image-url" name="image-url" label="Container Image" type="text" placeholder="nginxdemos/hello" required="true"/>
+
+                                <c-grid columns="two" gap="lg">
+                                    <c-text-input-field id="cpu-limit" name="cpu-limit" label="CPU Limiet" type="text" placeholder="500m"/>
+
+                                    <c-text-input-field id="memory-limit" name="memory-limit" label="Geheugen Limiet" type="text" placeholder="512Mi"/>
+                                </c-grid>
+
+                            </c-layout-flow>
+                        </c-fieldset>
+
+                        {# Service Configuration Section #}
+                        <c-fieldset legend="Service configuratie">
+                            <c-layout-flow gap="lg">
+
+                                <div class="rvo-form-group">
+                                    <span class="utrecht-form-label">Netwerk opties</span>
+                                    <c-layout-flow gap="md">
+                                        <c-checkbox name="expose-web" label="Publiceren op web (Ingress)"/>
+
+                                        <c-checkbox name="internal-service" label="Interne service (ClusterIP)"/>
+                                    </c-layout-flow>
+                                </div>
+
+                                <div class="rvo-form-group">
+                                    <span class="utrecht-form-label">Authenticatie en beveiliging</span>
+                                    <c-layout-flow gap="md">
+                                        <c-checkbox name="sso-rijk" label="SSO-Rijk integratie"/>
+
+                                        <c-checkbox name="network-policy" label="Network Policy toepassen"/>
+                                    </c-layout-flow>
+                                </div>
+
+                            </c-layout-flow>
+                        </c-fieldset>
+
+                        {# Advanced Settings Section #}
+                        <details class="rvo-details">
+                            <summary class="rvo-details__summary">
+                                <c-icon icon="pijl-naar-rechts" size="sm"/>
+                                Geavanceerde instellingen
+                            </summary>
+                            <div class="rvo-details__content">
+                                <c-layout-flow gap="lg">
+
+                                    <c-select-field id="restart-policy" name="restart-policy" label="Restart Policy" value="Always"/>
+
+                                    <c-text-input-field id="replicas" name="replicas" label="Aantal Replicas" type="number" value="1"/>
+
+                                </c-layout-flow>
+                            </div>
+                        </details>
+
+                        {# Form Actions with ActionGroup #}
+                        <c-action-group/>
+
+                    </c-layout-flow>
+                </form>
+            </c-card>
+
+            {# Information Cards #}
+            <c-grid columns="two" gap="lg">
+
+                <c-card title="Hulp nodig?" outline="true" padding="lg">
+                    <c-layout-flow gap="md">
+                        <p>Meer informatie over het aanmaken van projecten vindt u in de documentatie.</p>
+                        <c-action-group/>
+                    </c-layout-flow>
+                </c-card>
+
+                <c-card title="Project overzicht" outline="true" padding="lg">
+                    <c-layout-flow gap="md">
+                        <p>Na aanmaak kunt u uw project beheren via het project dashboard.</p>
+                        <c-detail-list/>
+                    </c-layout-flow>
+                </c-card>
+
+            </c-grid>
+
+        </c-layout-flow>
+    </main>
+
+    {# Footer #}
+    <c-footer max-width="lg"/>
+
+</c-page>

@@ -1,0 +1,4 @@
+{% from "widgets/_macros.html.j2" import html_attributes %}
+<div class="rvo-action-group rvo-action-group--{{ button_group.alignment|e }}{% if button_group.css_class %} {{ button_group.css_class|e }}{% endif %}" style="display: flex; gap: var(--rvo-space-{{ button_group.gap|e }});" {{ html_attributes(button_group.attributes) }}>
+    {{ buttons_content }}
+</div>

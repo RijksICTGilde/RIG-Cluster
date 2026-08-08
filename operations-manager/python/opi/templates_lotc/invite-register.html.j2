@@ -1,0 +1,60 @@
+{#
+  Invite Registration Form Template
+
+  Displays the local account registration form for invite users.
+#}
+
+{% set title_nl = "Account Aanmaken - " ~ display_name %}
+{% set title_en = "Create Account - " ~ display_name %}
+{% set page_title = title_nl if language == 'nl' else title_en %}
+
+<c-page title="{{ page_title }}" lang="{{ language }}" body-class="rvo-theme rvo-responsive">
+    {# Header #}
+    <c-header text="RIG Cluster" subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie" link="/"/>
+
+    <c-layout-flow gap="xl" size="lg">
+        <main>
+            <c-layout-flow gap="xl">
+                    {# Registration Form Card #}
+                    <c-card outline="true" padding="lg">
+                        <form method="POST" action="/invite/{{ invite_key }}/register" autocomplete="off">
+                            <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+                            <c-layout-flow gap="lg">
+                                <c-heading type="h1" label="{{ display_name }}"/>
+                                <c-heading type="h2" label="{% if language == 'nl' %}Nieuw Account{% else %}New Account{% endif %}"/>
+
+                                {% if general_error %}
+                                <c-alert heading="{% if language == 'nl' %}Fout{% else %}Error{% endif %}"/>
+                                {% endif %}
+
+                                {% if domain_restriction %}
+                                <c-alert heading="{% if language == 'nl' %}E-mail beperking{% else %}Email restriction{% endif %}"/>
+                                {% endif %}
+
+                                {# Email Field #}
+                                <c-text-input-field id="email" name="email" type="email" label="{% if language == 'nl' %}E-mailadres{% else %}Email address{% endif %}" placeholder="{% if language == 'nl' %}naam@organisatie.nl{% else %}name@organization.com{% endif %}" {% if form_data and form_data.email %}value="{{ form_data.email }}"{% endif %} required="true" {% if errors and errors.email %}{% endif %}/>
+
+                                {# First Name Field #}
+                                <c-text-input-field id="first_name" name="first_name" type="text" label="{% if language == 'nl' %}Voornaam{% else %}First name{% endif %}" placeholder="{% if language == 'nl' %}Voornaam{% else %}First name{% endif %}" {% if form_data and form_data.first_name %}value="{{ form_data.first_name }}"{% endif %} required="true" {% if errors and errors.first_name %}{% endif %}/>
+
+                                {# Last Name Field #}
+                                <c-text-input-field id="last_name" name="last_name" type="text" label="{% if language == 'nl' %}Achternaam{% else %}Last name{% endif %}" placeholder="{% if language == 'nl' %}Achternaam{% else %}Last name{% endif %}" {% if form_data and form_data.last_name %}value="{{ form_data.last_name }}"{% endif %} required="true" {% if errors and errors.last_name %}{% endif %}/>
+
+                                {# Password Field #}
+                                <c-text-input-field id="password" name="password" type="password" label="{% if language == 'nl' %}Wachtwoord{% else %}Password{% endif %}" placeholder="{% if language == 'nl' %}Minimaal 12 tekens{% else %}At least 12 characters{% endif %}" required="true" {% if errors and errors.password %}{% endif %}/>
+
+                                {# Confirm Password Field #}
+                                <c-text-input-field id="password_confirm" name="password_confirm" type="password" label="{% if language == 'nl' %}Bevestig wachtwoord{% else %}Confirm password{% endif %}" placeholder="{% if language == 'nl' %}Herhaal wachtwoord{% else %}Repeat password{% endif %}" required="true" {% if errors and errors.password_confirm %}{% endif %}/>
+
+                                {# Form Actions #}
+                                <c-layout-flow gap="md" row="true">
+                                    <c-button type="submit" label="{% if language == 'nl' %}Account Aanmaken{% else %}Create Account{% endif %}"/>
+                                    <c-button type="button" label="{% if language == 'nl' %}Annuleren{% else %}Cancel{% endif %}" @/>
+                                </c-layout-flow>
+                            </c-layout-flow>
+                        </form>
+                    </c-card>
+            </c-layout-flow>
+        </main>
+    </c-layout-flow>
+</c-page>

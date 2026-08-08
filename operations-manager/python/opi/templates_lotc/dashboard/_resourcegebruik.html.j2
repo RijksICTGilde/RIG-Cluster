@@ -1,0 +1,65 @@
+{# De meters voor CPU, geheugen, opslag en netwerk. #}
+<c-layout-flow gap="lg">
+    <c-heading type="h2" label="Resource Usage"/>
+
+    {% if prometheus_available and metrics %}
+    <div class="metrics-grid">
+        {# CPU Usage Gauge #}
+        <c-card class="metric-card" outline="true" padding="lg" background-color="wit">
+            <c-layout-flow gap="md">
+                <c-heading type="h3" label="CPU Usage"/>
+                <div class="gauge-container">
+                    <canvas id="cpu-gauge" class="gauge"></canvas>
+                    <div class="gauge-value">
+                        <span class="gauge-percentage">{{ metrics.cpu_percentage }}{{ '%' }}</span>
+                        <span class="gauge-label">{{ metrics.cpu_usage_display }} / {{ metrics.cpu_limit_display }} cores</span>
+                    </div>
+                </div>
+            </c-layout-flow>
+        </c-card>
+
+        {# Memory Usage Gauge #}
+        <c-card class="metric-card" outline="true" padding="lg" background-color="wit">
+            <c-layout-flow gap="md">
+                <c-heading type="h3" label="Memory Usage"/>
+                <div class="gauge-container">
+                    <canvas id="memory-gauge" class="gauge"></canvas>
+                    <div class="gauge-value">
+                        <span class="gauge-percentage">{{ metrics.memory_percentage }}{{ '%' }}</span>
+                        <span class="gauge-label">{{ metrics.memory_usage_display }} / {{ metrics.memory_limit_display }}</span>
+                    </div>
+                </div>
+            </c-layout-flow>
+        </c-card>
+
+        {# Storage Usage Gauge #}
+        <c-card class="metric-card" outline="true" padding="lg" background-color="wit">
+            <c-layout-flow gap="md">
+                <c-heading type="h3" label="Storage Usage"/>
+                <div class="gauge-container">
+                    <canvas id="storage-gauge" class="gauge"></canvas>
+                    <div class="gauge-value">
+                        <span class="gauge-percentage">{{ metrics.storage_percentage }}{{ '%' }}</span>
+                        <span class="gauge-label">{{ metrics.storage_usage_display }} / {{ metrics.storage_capacity_display }}</span>
+                    </div>
+                </div>
+            </c-layout-flow>
+        </c-card>
+
+        {# Network Traffic #}
+        <c-card class="metric-card" outline="true" padding="lg" background-color="wit">
+            <c-layout-flow gap="md">
+                <c-heading type="h3" label="Network Traffic"/>
+                <div class="chart-container">
+                    <canvas id="network-chart" class="chart"></canvas>
+                </div>
+                <p class="rvo-text--sm rvo-text--subtle">Inbound/Outbound (KB/s, laatste 30 min)</p>
+            </c-layout-flow>
+        </c-card>
+    </div>
+    {% else %}
+    <c-card outline="true" padding="lg" background-color="wit">
+        <p class="rvo-text--md rvo-text--subtle">Metrics niet beschikbaar. Prometheus is niet verbonden of er zijn geen namespaces gevonden.</p>
+    </c-card>
+    {% endif %}
+</c-layout-flow>

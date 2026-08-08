@@ -1,0 +1,43 @@
+{#
+  Invite Success Page Template
+
+  Displays the success page after completing the invite flow.
+#}
+
+{% set title_nl = success_title ~ " - " ~ display_name %}
+{% set title_en = success_title ~ " - " ~ display_name %}
+{% set page_title = title_nl if language == 'nl' else title_en %}
+
+<c-page title="{{ page_title }}" lang="{{ language }}" body-class="rvo-theme rvo-responsive">
+    {# Header #}
+    <c-header text="RIG Cluster" subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie" link="/"/>
+
+    <c-layout-flow gap="xl" size="lg">
+        <main>
+            <c-layout-flow gap="xl">
+                    {# Error Alert - shown if there were issues assigning roles/groups #}
+                    {% if assigned and assigned.errors %}
+                    <c-alert heading="{% if language == 'nl' %}Let op: sommige rechten konden niet worden toegewezen{% else %}Warning: some permissions could not be assigned{% endif %}"/>
+                    {% endif %}
+
+                    {# Success Alert #}
+                    <c-alert heading="{{ success_title }}"/>
+
+                    {# Success Details Card #}
+                    <c-card outline="true" padding="lg">
+                        <c-layout-flow gap="lg">
+                            <c-heading type="h2" label="{% if language == 'nl' %}Uw toegang{% else %}Your access{% endif %}"/>
+
+                            {% if email %}
+                                <p class="rvo-paragraph"><strong>{% if language == 'nl' %}E-mailadres{% else %}Email address{% endif %}:</strong> {{ email }}</p>
+                            {% endif %}
+
+                            {% if application_url %}
+                            <c-button label="{% if language == 'nl' %}Ga naar applicatie{% else %}Go to application{% endif %}" show-icon="after" icon="pijl-naar-rechts" @/>
+                            {% endif %}
+                        </c-layout-flow>
+                    </c-card>
+            </c-layout-flow>
+        </main>
+    </c-layout-flow>
+</c-page>

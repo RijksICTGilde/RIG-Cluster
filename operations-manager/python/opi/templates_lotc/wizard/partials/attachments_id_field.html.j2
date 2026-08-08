@@ -1,0 +1,4 @@
+{# Identifier field for a new attachment. Re-rendered by validate-id (swapped into
+   #wiz-att-id-field) with the standard field error state when the id is invalid/duplicate,
+   so it matches every other form field instead of a separate alert. #}
+<c-text-input-field id="wiz-att-id" name="attachment_id" label="Identifier" value="{{ attachment_id | default('', true) }}"/>

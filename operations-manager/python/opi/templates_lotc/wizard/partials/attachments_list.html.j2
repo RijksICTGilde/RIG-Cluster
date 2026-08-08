@@ -1,0 +1,46 @@
+{# Unified attachments list: existing catalog entries (removable, applied on save) plus
+   files staged this session (removable via unstage). Swapped into #wiz-att-list. #}
+{% if error %}
+{# style= blijft hier staan: c-alert zet een meegegeven style= op twee elementen en een
+   meegegeven class= op maar een. Dit overzetten naar een klasse zou de marge dus
+   verplaatsen in plaats van verhuizen. #}
+<c-alert/>
+{% endif %}
+{% set ns = namespace(items=[]) %}
+{% for s in services | default([]) %}
+  {% if s is mapping and s.attachments is mapping %}
+    {% for e in s.attachments.data | default([]) %}{% set ns.items = ns.items + [e] %}{% endfor %}
+  {% endif %}
+{% endfor %}
+{% if ns.items or (staged | default([])) %}
+<c-layout-flow gap="sm">
+    {% for att in ns.items %}
+    <c-card padding="sm" background-color="grijs-050" outline="true">
+        <div class="attachment-row">
+            <div><strong>{{ att.filename | default(att.id) }}</strong> <span class="rvo-text--sm rvo-text--subtle">(id: {{ att.id }})</span></div>
+            <c-button type="button" size="xs" label="Verwijderen"/>
+        </div>
+    </c-card>
+    {% endfor %}
+    {% for att in staged | default([]) %}
+    <c-card padding="sm" background-color="grijs-050" outline="true">
+        <div class="attachment-row">
+            <div><strong>{{ att.filename }}</strong> <span class="rvo-text--sm rvo-text--subtle">(id: {{ att.id }}, nog niet opgeslagen)</span></div>
+            <c-button type="button" size="xs" label="Verwijderen"/>
+        </div>
+    </c-card>
+    {% endfor %}
+</c-layout-flow>
+{% else %}
+<p class="rvo-text--sm rvo-text--subtle"><em>Nog geen bijlagen.</em></p>
+{% endif %}
+{% if reset %}
+{# Out-of-band: clear the inputs and flash a success tick after a successful upload. #}
+<div id="wiz-att-id-field" hx-swap-oob="true">
+    {% include "wizard/partials/attachments_id_field.html.j2" %}
+</div>
+<input type="file" id="wiz-att-file" name="file" class="rvo-file-input" hx-swap-oob="true">
+<div id="wiz-att-feedback" hx-swap-oob="true">
+    <span class="att-upload-ok"><c-icon icon="vinkje" color="groen" size="sm"/>Geüpload</span>
+</div>
+{% endif %}
