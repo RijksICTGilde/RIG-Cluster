@@ -1,9 +1,8 @@
 # LOTC-bouwlijn: OPI op Lord of the Components
 
 De omzetting van de webinterface naar **Lord of the Components** (LOTC) met het
-NLDD-thema, ter vervanging van `jinja-roos-components`. Hij gaat pagina voor pagina: een
-route kiest met `?ui=lotc` welke weergave hij rendert, en zodra een pagina af is
-verdwijnt die keuze.
+NLDD-thema, ter vervanging van `jinja-roos-components`. De nieuwe vormgeving is inmiddels
+de STANDAARD; de oude is er nog als terugvaloptie.
 
 Achtergrond en fasering: `plans/naar-het-nieuwe-componentensysteem.md`.
 De samenleefmeting: `docs/lotc-samenleven-met-jinja-roos.md`.
@@ -16,18 +15,21 @@ De samenleefmeting: `docs/lotc-samenleven-met-jinja-roos.md`.
   formulier op `/admin/users/create` en `/admin/users/<id>/edit`), `/admin/approvals` en
   `/admin/usage`, en **de wizard** (`/forms/wizard/start`, `/forms/wizard/<flow>`,
   `/forms/wizard/<flow>/edit/<project>`, elke htmx-stap en de samenvatting). Zet er
-  `?ui=lotc` achter.
+  `?layout=roos` achter voor de oude weergave.
 - Daarnaast een **proefopstelling** onder `/lotc/`, met voorbeeldprojecten. Die is er om
   vorm te kiezen zonder een cluster nodig te hebben, niet als eindbestemming.
 - De navigatie volgt de opzet van [bg.rijks.app](https://bg.rijks.app/): hoofdnavigatie
   in een zijkolom met groepen, alleen hulplinks (account, in- en uitloggen) in de header.
 - De formulierlaag is te bekijken op `/lotc/formulier`.
 
-**De omzetting gaat pagina voor pagina.** Lord of the Components is een gewone
-runtime-dependency: de applicatie rendert er pagina's mee, dus hij hoort in de image. Een
-route kiest met `?ui=lotc` welke weergave hij rendert; zonder die vlag blijft de
-bestaande pagina onveranderd. Zodra een pagina af is verdwijnt die keuze, en met de
-laatste pagina verdwijnt de schakelaar zelf.
+**Welke weergave je krijgt** bepaalt `opi/web/lotc_switch.py`, in deze volgorde:
+
+1. `?layout=nldd` of `?layout=roos` in de URL,
+2. anders de cookie `zad_layout`, die alleen gezet wordt als je expliciet gekozen hebt,
+3. anders de standaard, en dat is **nldd**.
+
+Lord of the Components is een gewone runtime-dependency: de applicatie rendert er
+pagina's mee, dus hij hoort in de image.
 
 ## Gebruik
 
@@ -135,7 +137,8 @@ templatemap op de `searchpath`. Twee regels, en twee regels om weer weg te halen
 | `tests/e2e/test_lotc_visual.py` | dat pagina's in een browser kloppen, met screenshots |
 | `tests/test_lotc_layout_rules.py` | dat kaarten via `panel()` gebouwd worden en gaps uit de schaal komen |
 | `tests/test_lotc_schrijfwijze.py` | dat teksten de lezer met "je" aanspreken |
-| `tests/test_lotc_switch.py` | dat `?ui=lotc` alleen op die exacte waarde aanslaat |
+| `tests/test_lotc_switch.py` | dat de volgorde URL > cookie > standaard klopt |
+| `tests/e2e/test_lotc_parity.py` | dat de nieuwe pagina alles KAN wat de oude kon |
 
 Compileren is een echte poort en geen telling: LOTC valideert bij het compileren al of
 elk component bestaat en of elk attribuut bij dat component hoort.
@@ -153,15 +156,103 @@ verandert het beeld elke stap, en dan wordt een baseline elke stap opnieuw goedg
 Komt die er, dan hoort erbij: een gepinde `device_scale_factor`, vastleggen en vergelijken
 in dezelfde container-image, en een drempel in plaats van een exacte match.
 
+## De meetlat: gedrag, niet uiterlijk
+
+Een omzetting mag een pagina er anders uit laten zien. Wat hij niet mag, is hem minder
+laten doen. Dat gaat mis zonder dat iemand het merkt: een verdwenen keuzelijst, een knop
+die iets anders aanroept, een invoerveld dat wegvalt - de pagina rendert gewoon, er komt
+geen foutmelding, en je ontdekt het pas als je het nodig hebt.
+
+In deze omzetting is dat meermalen gebeurd, en het is er niet uitgekomen door goed kijken
+maar door meten. `scripts/lotc_compare_behaviour.py` haalt elke omgezette route twee keer
+op - `?layout=roos` en `?layout=nldd` - en legt het gedragsoppervlak naast elkaar:
+
+- waar je heen kunt: `href`, elk attribuut op `-href`, `action`
+- wat htmx ophaalt: elke `hx-get`/`hx-post`/...
+- welke JavaScript wordt aangeroepen: uit `onclick`, `@click`, `onchange`, `oninput`
+- elk invoerveld met een naam, en elk `id` waar code aan kan hangen
+
+Tagnamen, klassen, teksten en stylesheets tellen niet mee: dat IS de vormgeving.
+
+```bash
+uv run python scripts/lotc_compare_behaviour.py \
+  --base https://zad.sandbox.rijksapp.dev \
+  --secret "<SECRET_KEY van de draaiende applicatie>" \
+  --email <adres dat toegang heeft> --project <projectnaam>
+```
+
+`tests/e2e/test_lotc_parity.py` is dezelfde meting als poort, tegen de testserver. De lijst
+aanvaarde verschillen staat in het SCRIPT en wordt door de test geimporteerd - twee kopieen
+zouden uit de pas lopen, en dan zegt de een schoon waar de ander kapot zegt.
+
+Twee dingen om te weten voor je die poort vertrouwt:
+
+- Hij meet wat er in de HTML staat, en dus alleen gedrag dat met de GEGEVENS van de
+  testserver zichtbaar is. Die heeft geen Prometheus en geen ArgoCD. Voor die blokken is
+  het script tegen een echte sandbox de meting, niet de test.
+- Elk aanvaard verschil draagt een reden, en er is een test die dat afdwingt. Een
+  uitzondering zonder reden is geen besluit maar een schuld.
+
+De meetlat heeft zichzelf twee keer op vals alarm betrapt: hij keek alleen naar `href`
+terwijl NLDD op sommige componenten `website-href` schrijft, en hij volgde de blokken niet
+die een pagina bewust nalaadt, waardoor hij de dashboardmeters als verdwenen meldde. Dat
+soort fout is erger dan geen meting - je leert hem negeren.
+
+## Wat de omzetter met klikken deed
+
+`@click="f()"` werd half gelezen: de attribuutregex zag alleen `click="f()"`, kende dat
+attribuut niet op het component, en liet het vallen. Wat overbleef was een kale `@` in de
+tag. **58 keer, in 35 bestanden** - knoppen die keurig renderen en zwijgen.
+
+De omzetter maakt er nu een echte `onclick` van via LOTC's `:attrs`-spread, met de aanroep
+in een `{% set %}`-blok vlak voor de tag. Dat blok is er om twee redenen: een genest
+aanhalingsteken binnen `:attrs` leest de voorbewerker als het einde van het attribuut, en
+de blokvorm rendert de Jinja die in zo'n aanroep zit gewoon mee.
+
+## Blokken die diensten zelf leveren
+
+Diensten leveren hun eigen sjablonen (`opi/services/catalog/<dienst>/`). Die zijn in
+roos-componenten geschreven en renderen niet in de LOTC-omgeving: de map staat niet op dat
+zoekpad, en twee componentsystemen kunnen sowieso niet in een Jinja-omgeving samen.
+
+Er waren drie mogelijkheden, en twee ervan zijn fout. Nabouwen levert een kopie die uit de
+pas loopt zodra een dienst zijn sjabloon wijzigt - en diensten zijn juist het deel van dit
+platform dat blijft groeien. Weglaten laat functionaliteit ongemerkt verdwijnen. Dus
+rendert `render_roos()` (in `opi/core/templates_lotc.py`) zo'n blok met zijn eigen omgeving
+en komt het als HTML binnen.
+
+Gevolg: zo'n blok draagt rvo-klassen en ziet er anders uit dan de rest van de pagina,
+totdat de dienst zelf meegaat. **Zichtbaar onaf is beter dan ongemerkt weg.** Waar wel een
+LOTC-tegenhanger geschreven is (backups, metrics per deployment) gaat die voor.
+
+## Testen in twee vormgevingen
+
+De bestaande e2e-tests zijn op de roos-markup geschreven. Toen nldd de standaard werd,
+landden ze op de nieuwe pagina en faalden ze - niet omdat de applicatie stuk was, maar
+omdat ze iets anders maten dan ze dachten.
+
+`tests/e2e/conftest.py` zet daarom een `zad_layout=roos`-cookie in de
+browsercontext. Dat is geen doofpot: `?layout=` in de URL wint van de cookie, en de tests
+die de NIEUWE weergave meten zetten dat er zelf bij (`test_lotc_parity.py`,
+`test_lotc_confirmations.py`, `test_lotc_project_tab.py`, `test_lotc_deployments_tab.py`).
+Zo blijft het vangnet onder de release liggen en wordt de nieuwe vormgeving ook echt
+getoetst, in plaats van dat een van de twee stilletjes onbewaakt raakt.
+
 ## Stand en wat er open staat
 
-Alle 164 templates compileren. Vier echte routes kunnen hun pagina door LOTC renderen.
+Alle templates compileren. De nieuwe vormgeving is de standaard, en op de sandbox staat de
+meting op **nul verdwenen gedrag** over alle omgezette routes - met echte projecten, dus
+inclusief ArgoCD en Prometheus.
+
+Om: dashboard, projecten, projectdetails (vier tabbladen), diensten, about, voortgang,
+uitnodigingen, metrics-explorer, de beheerpagina's en de wizard, plus de gedeelde dialoog
+en de logviewer.
 
 | open punt | bij wie |
 |---|---|
-| De wizard: de e2e-gedragstests zijn op de roos-markup geschreven | ons |
-| `/admin/*`, `metrics-explorer`, `about` aansluiten | ons |
-| `architecture` - 1509 regels in een blok; verdient een eigen besluit | ons |
+| `architecture` - 1509 regels in een blok; verdient een eigen besluit, en staat op verzoek als laatste | ons |
+| De blokken die diensten leveren dragen nog de oude opmaak (zie hierboven) | ons, per dienst |
+| Het percentage in de dashboardmeter vraagt een RVO-kleurvariabele die NLDD niet heeft; erft nu de tekstkleur | ons |
 | Iconen: de NLDD-woordenschat telt er 60, de RVO-set die roos meelevert 1163. Voorstel om die als losse implementatiemodule mee te nemen ligt bij LOTC | LOTC |
 
 ### Een aandachtspunt voor de bouw
