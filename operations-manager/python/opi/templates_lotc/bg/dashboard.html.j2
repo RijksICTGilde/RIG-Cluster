@@ -1,21 +1,24 @@
 {#
-  Het dashboard, HERONTWORPEN in de opzet van bg.rijks.app.
+  Dashboard.
 
-  Dit is bewust geen vertaling. De omzetter levert een getrouwe kopie van onze bestaande
-  markup (zie dashboard.html.j2 ernaast), en die was nooit in bg-vorm gebouwd: onze
-  pagina's zijn rijen en kolommen met losse tekst, bg werkt met tegels, kaarten en
-  kopregels. Een vertaling houdt dus onze oude indeling, alleen met andere componenten.
+  Een OVERNAME van de bestaande dashboard.html.j2 met de nieuwe componenten, niet een
+  herontwerp. Dezelfde zes blokken in dezelfde volgorde, dezelfde gegevens, hetzelfde
+  gedrag - alleen de vormgeving komt nu uit het thema in plaats van uit dashboard.css.
 
-  Deze pagina laat zien wat er wel kan. Ze staat naast de vertaalde versie zodat het
-  verschil te zien is in plaats van te beschrijven, en zodat de keuze om pagina's echt te
-  hertekenen (fase 4 van het plan) op een beeld rust.
+    _kop                 -> page_head()
+    _gezondheidsmelding  -> c-alert, met dezelfde drie standen en dezelfde links
+    _kerncijfers         -> c-metric in plaats van vier kaarten met een eigen stat-grid
+    _resourcegebruik     -> c-progress-bar in plaats van canvas-meters
+    _resourceverdeling   -> c-progress-bar met segmenten in plaats van een eigen balk
+    _projecten           -> c-layer met de gezondheid als label
 
-  Wat bg doet en wij hier overnemen:
-    - kerncijfers als <c-metric> in een <c-auto-grid>, niet als tekst in een kaart
-    - inhoud in <c-card outline padding="lg"> met een <c-section-head> erboven
-    - twee kolommen via <c-columns>, die op smalle schermen onder elkaar vallen
-    - het verticale ritme uit een enkele <c-stack> met een vaste gap
-    - een kop die de pagina benoemt, niet domineert
+  Wat er dus NIET gebeurt: blokken weglaten omdat ze lastig zijn. De gezondheidsbanner,
+  de verdeling over projecten en de gezondheid per project stonden er, dus staan ze er
+  weer.
+
+  De meters waren <canvas>-elementen die door dashboard.js werden getekend. Dat wordt een
+  voortgangsbalk: hetzelfde getal, maar leesbaar voor een schermlezer en zonder eigen
+  tekencode.
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
@@ -23,65 +26,96 @@
 {% block page_title %}Dashboard - Self Service Portal{% endblock %}
 
 {% block content %}
-    {{ page_head("Dashboard", "Een overzicht van je projecten, deployments en verbruik.") }}
+    {{ page_head("Dashboard", "Een overzicht van je projecten, deployments en resourcegebruik.") }}
 
-    <c-cluster gap="sm">
-        <c-button type="secondary" label="Mijn projecten" icon="rectangle-stack" show-icon="before" href="/projects" />
-        <c-button type="primary" label="Nieuw project" icon="plus" show-icon="before" href="/forms/wizard/restart" />
-    </c-cluster>
+    {# De gezondheidsmelding. Dezelfde volgorde als de bestaande pagina: problemen gaan
+       voor bijwerken, en bijwerken voor "niets aan de hand". #}
+    {% if health_counts is defined %}
+        {% if health_counts.Degraded > 0 %}
+            <c-alert type="error" heading="{{ health_counts.Degraded }} project{{ 'en' if health_counts.Degraded != 1 }} {{ 'hebben' if health_counts.Degraded != 1 else 'heeft' }} problemen">
+                <c-stack gap="xs">
+                    {% for project in projects if project.health == 'Degraded' %}
+                        <c-link href="/projects/details/{{ project.name }}#deployment-status">{{ project.display_name }} - bekijk de deploymentstatus</c-link>
+                    {% endfor %}
+                </c-stack>
+            </c-alert>
+        {% elif health_counts.Progressing > 0 %}
+            <c-alert type="warning" heading="{{ health_counts.Progressing }} project{{ 'en' if health_counts.Progressing != 1 }} {{ 'worden' if health_counts.Progressing != 1 else 'wordt' }} bijgewerkt">
+                <c-stack gap="xs">
+                    {% for project in projects if project.health == 'Progressing' %}
+                        <c-link href="/projects/details/{{ project.name }}#deployment-status">{{ project.display_name }} - bekijk de deploymentstatus</c-link>
+                    {% endfor %}
+                </c-stack>
+            </c-alert>
+        {% elif health_banner %}
+            <c-alert type="info" heading="{{ health_banner }}" />
+        {% endif %}
+    {% endif %}
 
-    {# De kerncijfers. In de vertaalde versie zijn dit vier kaarten met een getal en een
-       woord erin; als tegel dragen ze ook een icoon, een toelichting en een link, en
-       staan ze in een raster dat zich naar de breedte voegt. #}
-    <c-auto-grid min="220px" gap="md">
-        {% for tile in tiles %}
-            <c-metric
-                icon="{{ tile.icon }}"
-                value="{{ tile.value }}"
-                label="{{ tile.label }}"
-                :sub="tile.sub or none"
-                :href="tile.href or none" />
-        {% endfor %}
+    {# De vier kerncijfers, met dezelfde bijschriften als de bestaande pagina. #}
+    <c-auto-grid min="200px" gap="md">
+        <c-metric icon="rectangle-stack" value="{{ active_projects }}" label="Actieve projecten" sub="{{ total_deployments }} deployments" href="/projects" />
+        <c-metric icon="arrow-up-arrow-down" value="{{ total_deployments }}" label="Deployments" />
+        <c-metric icon="person-2" value="{{ total_users }}" label="Gebruikers" />
+        <c-metric icon="cylinder-split" value="{{ pod_count }}" label="Pods" />
     </c-auto-grid>
 
-    <c-columns columns="1" lg="2" gap="lg">
-        {% call panel("Mijn projecten", "rectangle-stack") %}
-<c-stack gap="sm">
-                {% for project in projects %}
-                    <c-layer
-                        icon="rectangle-stack"
-                        title="{{ project.display_name }}"
-                        count="{{ project.deployment_count }} deployments"
-                        sub="{{ project.description }}"
-                        href="/projects/{{ project.name }}">
-                        {% for service in project.services %}
-                            <c-chip>{{ service }}</c-chip>
-                        {% endfor %}
-                    </c-layer>
+    {% if prometheus_available and metrics %}
+        {% call panel("Resourcegebruik", "chart-x-y-axis-line") %}
+            <c-progress-bar text="CPU" :value="metrics.cpu_percentage" max="100" value-display="true" color="info"
+                            accessible-label="CPU: {{ metrics.cpu_usage_display }} van {{ metrics.cpu_limit_display }} cores" />
+            <c-paragraph size="sm">{{ metrics.cpu_usage_display }} / {{ metrics.cpu_limit_display }} cores</c-paragraph>
+
+            <c-progress-bar text="Geheugen" :value="metrics.memory_percentage" max="100" value-display="true" color="success"
+                            accessible-label="Geheugen: {{ metrics.memory_usage_display }} van {{ metrics.memory_limit_display }}" />
+            <c-paragraph size="sm">{{ metrics.memory_usage_display }} / {{ metrics.memory_limit_display }}</c-paragraph>
+
+            <c-progress-bar text="Opslag" :value="metrics.storage_percentage" max="100" value-display="true" color="warning"
+                            accessible-label="Opslag: {{ metrics.storage_usage_display }} van {{ metrics.storage_capacity_display }}" />
+            <c-paragraph size="sm">{{ metrics.storage_usage_display }} / {{ metrics.storage_capacity_display }}</c-paragraph>
+        {% endcall %}
+    {% endif %}
+
+    {# De verdeling van het CPU-gebruik over de projecten. Stond in de bestaande pagina
+       als een eigen balk met gekleurde segmenten; hier per project een regel, want dat
+       leest bij meer dan een handvol projecten beter dan een balk met een legenda. #}
+    {% if prometheus_available and total_cpu_usage is defined and total_cpu_usage > 0 %}
+        {% call panel("Verdeling over projecten", "chart-x-y-axis-line") %}
+            <c-stack gap="sm">
+                {% for project in projects if project.cpu_cores is defined and project.cpu_cores > 0 %}
+                    <c-progress-bar
+                        text="{{ project.display_name }}"
+                        :value="(project.cpu_cores / total_cpu_usage * 100) | round(1)"
+                        max="100"
+                        value-display="true"
+                        color="info"
+                        accessible-label="{{ project.display_name }}: {{ '%.3f' | format(project.cpu_cores) }} cores" />
                 {% endfor %}
             </c-stack>
         {% endcall %}
+    {% endif %}
 
-        {% call panel("Gezondheid", "shield-check-mark", info_text="De stand van je projecten zoals ArgoCD hem meldt. Staat er niets, dan is er niets te melden.") %}
-            {% if health %}
-                <c-stack gap="sm">
-                    {% for entry in health %}
-                        <c-detail-list>
-                            <c-detail-item label="{{ entry.label }}" value="{{ entry.count }}" />
-                        </c-detail-list>
-                    {% endfor %}
-                </c-stack>
+    {% set nieuw_project %}<c-button type="primary" size="sm" label="Nieuw project" icon="plus" show-icon="before" href="/forms/wizard/restart" />{% endset %}
+    {% call panel("Mijn projecten", "rectangle-stack", aside=nieuw_project) %}
+        <c-stack gap="sm">
+            {% for project in projects %}
+                <c-layer
+                    icon="rectangle-stack"
+                    title="{{ project.display_name }}"
+                    count="{{ project.deployment_count | default(0) }} deployment{{ 's' if project.deployment_count | default(0) != 1 else '' }}"
+                    sub="{{ project.description }}"
+                    href="/projects/details/{{ project.name }}">
+                    {# De gezondheid stond op de bestaande kaart als een gekleurde rand;
+                       hier als label, want een kleur alleen is geen informatie voor wie
+                       hem niet ziet. #}
+                    {% set health = project.health | default('Unknown') %}
+                    <c-tag
+                        label="{{ health }}"
+                        type="{{ 'error' if health == 'Degraded' else 'warning' if health == 'Progressing' else 'success' if health == 'Healthy' else 'default' }}" />
+                </c-layer>
             {% else %}
-                <c-paragraph>Geen bijzonderheden.</c-paragraph>
-            {% endif %}
-        {% endcall %}
-    </c-columns>
-
-    {% set verbruik_aside %}<c-tag type="default" label="laatste 24 uur" />{% endset %}
-    {% call panel("Verbruik", aside=verbruik_aside) %}
-        <c-paragraph>
-            Metrics zijn niet beschikbaar: Prometheus is niet verbonden of er zijn geen
-            namespaces gevonden.
-        </c-paragraph>
+                <c-paragraph>Je hebt nog geen projecten.</c-paragraph>
+            {% endfor %}
+        </c-stack>
     {% endcall %}
 {% endblock %}

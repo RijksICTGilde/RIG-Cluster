@@ -1183,16 +1183,7 @@ async def dashboard(request: Request):
                 "health_counts": health_counts,
                 "health_banner": health_banner,
                 "total_cpu_usage": total_cpu_usage,
-                **build_lotc_dashboard(
-                    request,
-                    user=user,
-                    active_projects=len(user_projects),
-                    total_deployments=total_deployments,
-                    total_users=len(unique_users),
-                    pod_count=pod_count,
-                    projects=user_projects,
-                    health_counts=health_counts,
-                ),
+                **build_lotc_dashboard(request, user=user),
             },
         )
 

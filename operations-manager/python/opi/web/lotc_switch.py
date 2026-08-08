@@ -188,65 +188,20 @@ def build_lotc_services(
     }
 
 
-def build_lotc_dashboard(
-    request: Request,
-    *,
-    user: dict[str, Any] | None,
-    active_projects: int,
-    total_deployments: int,
-    total_users: int,
-    pod_count: int,
-    projects: list[dict[str, Any]],
-    health_counts: dict[str, int],
-) -> dict[str, Any]:
-    """De ECHTE dashboardgegevens, in de vorm die de hertekende pagina leest.
+def build_lotc_dashboard(request: Request, *, user: dict[str, Any] | None, **_ongebruikt: Any) -> dict[str, Any]:
+    """Wat het dashboard extra nodig heeft: alleen de navigatie.
 
-    De vier tegels tellen wat de route toch al berekent. De tweede kaart toont de
-    GEZONDHEID van de projecten en niet een activiteitenlijst: die had ik voor de
-    proefopstelling verzonnen, en de route heeft geen bron voor "wie deed wat wanneer".
-    Wat hij wel heeft is per project een gezondheidsstand, en dat is bruikbaarder.
+    De route levert alle gegevens al - kerncijfers, gezondheid, metrics, projecten - en
+    het sjabloon leest precies die sleutels. Ze hier omvormen zou een tweede vorm van
+    dezelfde gegevens opleveren, en dan gaat de nieuwe pagina iets anders tonen dan de
+    bestaande zodra er een veld bijkomt.
     """
     if not wants_lotc(request):
         return {}
 
     from opi.web.navigation_lotc import get_navigation
 
-    return {
-        "navigation": get_navigation(user, current_path="/dashboard"),
-        "tiles": [
-            {
-                "icon": "rectangle-stack",
-                "value": str(active_projects),
-                "label": "Projecten",
-                "sub": None,
-                "href": "/projects",
-            },
-            {
-                "icon": "arrow-up-arrow-down",
-                "value": str(total_deployments),
-                "label": "Deployments",
-                "sub": "over alle clusters",
-                "href": None,
-            },
-            {"icon": "person-2", "value": str(total_users), "label": "Gebruikers", "sub": None, "href": None},
-            {"icon": "cylinder-split", "value": str(pod_count), "label": "Pods", "sub": None, "href": None},
-        ],
-        "projects": [
-            {
-                "name": project["name"],
-                "display_name": project.get("display_name") or project["name"],
-                "description": project.get("description", ""),
-                "deployment_count": project.get("deployment_count", 0),
-                # De projectenlijst van deze route draagt geen dienstenlijst mee. Liever
-                # geen chips dan chips met verzonnen inhoud.
-                "services": [],
-            }
-            for project in projects
-        ],
-        # Alleen standen die daadwerkelijk voorkomen: een rij nullen leest als een
-        # probleemlijst terwijl er niets aan de hand is.
-        "health": [{"label": label, "count": count} for label, count in health_counts.items() if count],
-    }
+    return {"navigation": get_navigation(user, current_path="/dashboard")}
 
 
 def build_lotc_projects(
