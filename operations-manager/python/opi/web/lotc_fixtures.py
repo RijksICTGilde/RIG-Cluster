@@ -22,6 +22,7 @@ Die staan op "niet beschikbaar", en dat is geen verzinsel maar een stand die de
 templates zelf kennen en tonen.
 """
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -243,6 +244,134 @@ def page_data(slug: str) -> dict[str, Any]:
                 {"legend": "Projectgegevens", "fields": rendered[:4]},
                 {"legend": "Instellingen", "fields": rendered[4:]},
             ],
+        }
+
+    if slug == "wizard-start":
+        # De startpagina toont alleen uitleg en een knop; die heeft geen gegevens nodig.
+        return {}
+
+    if slug == "wizard-page":
+        # De ECHTE wizard, met de echte stappen en de echte velden van de eerste stap.
+        # Niet nagebouwd: dan zou de proefopstelling een vorm tonen die in de applicatie
+        # niet voorkomt, en juist deze pagina is er om de formulierlaag in samenhang te
+        # kunnen bekijken.
+        from types import SimpleNamespace
+
+        from opi.forms.visualizers.flows import get_flow
+        from opi.forms.wizard.resolver import get_section_metadata, resolve_active_sections
+        from opi.forms.wizard.state import WizardState
+        from opi.web.navigation_lotc import to_nldd_icon
+        from opi.web.router_wizard import _render_step_html
+
+        flow = get_flow("create-project")
+        sections = resolve_active_sections(flow, {})
+        state = WizardState(
+            flow_id="create-project",
+            current_step=sections[0].section_id,
+            active_sections=[section.section_id for section in sections],
+        )
+        # De voorbewerker van de stap leest alleen de weergavekeuze uit het verzoek; deze
+        # pagina IS de nieuwe weergave, dus die staat hier vast.
+        request = SimpleNamespace(query_params={}, cookies={}, state=SimpleNamespace(csrf_token=""))
+        return {
+            "flow_title": flow.title,
+            "flow_id": "create-project",
+            "project_name": None,
+            "steps": state.get_steps(get_section_metadata(sections)),
+            "section": sections[0],
+            "step_html": _render_step_html(request, sections[0], yaml_data={}),
+            "preset_html": "",
+            "errors": {},
+            "global_errors": [],
+            "show_review": flow.show_review,
+            "all_steps_completed": False,
+            "nldd_icon": to_nldd_icon,
+        }
+
+    if slug == "admin-users":
+        # De platformgebruikers zijn de mensen die in de voorbeeldprojecten staan; zo komt
+        # ook deze lijst uit dezelfde bron als de rest en niet uit een tweede verzinsel.
+        leden = {
+            member["email"]: project["display_name"]
+            for project in projects
+            for member in project["users"]
+            if member.get("email")
+        }
+        return {
+            "users": [
+                {
+                    "id": str(nummer),
+                    "email": email,
+                    "full_name": email.split("@")[0].replace(".", " ").title(),
+                    "created_at": datetime(2026, 8, 1, tzinfo=UTC),
+                }
+                for nummer, email in enumerate(sorted(leden), start=1)
+            ],
+            "csrf_token": "",
+            "success_message": "",
+        }
+
+    if slug == "admin-user-form":
+        # De velden komen uit dezelfde editables als de echte route, gerenderd door
+        # dezelfde adapter. Een eigen setje velden zou een tweede werkelijkheid zijn.
+        from opi.web.router_user_admin import _render_form_html
+
+        return {
+            "page_heading": "Gebruiker bewerken",
+            "form_action": "/admin/users/1/edit",
+            "form_html": _render_form_html(
+                data={"email": "voorbeeldbeheerder@rijksoverheid.nl", "full_name": "Voorbeeldbeheerder"},
+                edit_mode=True,
+                lotc=True,
+            ),
+            "csrf_token": "",
+        }
+
+    if slug == "admin-usage":
+        # Voorbeeldcijfers, en zichtbaar rond. De proefopstelling heeft geen Grafana, dus
+        # de melding daarover hoort er ook te staan - dat is dezelfde stand die een echte
+        # instantie zonder billing-datasource doorgeeft.
+        maanden = [
+            {"month": nummer, "name": name, "year": 2026, "gib": gib, "cost": round(gib * 27.0, 2)}
+            for nummer, (name, gib) in enumerate([("January", 12.5), ("February", 13.0), ("March", 14.25)], start=1)
+        ]
+        return {
+            "year": 2026,
+            "month_data": maanden,
+            "total_gib": round(sum(maand["gib"] for maand in maanden), 2),
+            "total_cost": round(sum(maand["cost"] for maand in maanden), 2),
+            "selected_namespace": "all",
+            "namespace_options": [{"value": "all", "label": "Alle namespaces"}]
+            + [{"value": f"rig-{project['name']}", "label": f"rig-{project['name']}"} for project in projects],
+            "price_per_gib": 27.0,
+            "has_billing_datasource": False,
+        }
+
+    if slug == "admin-approvals":
+        # Een aanvraag per stand, zodat de drie labels op het scherm naast elkaar staan.
+        return {
+            "projects_data": [
+                {
+                    "project_name": projects[0]["name"],
+                    "approval_items": [
+                        {
+                            "type": "subdomain",
+                            "domain": "rijksapps.nl",
+                            "name": "voorbeeld",
+                            "current_status": "requested",
+                            "history": [{"date": datetime(2026, 8, 1, tzinfo=UTC), "by": "voorbeeldgebruiker"}],
+                        },
+                        {
+                            "type": "domain",
+                            "domain": "voorbeeld.nl",
+                            "name": "voorbeeld.nl",
+                            "current_status": "approved",
+                            "history": [{"date": datetime(2026, 7, 14, tzinfo=UTC), "by": "voorbeeldbeheerder"}],
+                        },
+                    ],
+                }
+            ],
+            "success_message": "",
         }
 
     if slug in ("project-details", "project-tabs", "project-context"):
