@@ -152,3 +152,46 @@ def test_converted_page_screenshot(app_server: str, page: Page, slug: str) -> No
 
     name = slug.replace("/", "-")
     page.screenshot(path=f"{SCREENSHOT_DIR}/pagina-{name}.png", full_page=True, animations="disabled")
+
+
+def test_form_layer_screenshot(app_server: str, page: Page) -> None:
+    """Leg de omgezette formulierlaag vast.
+
+    Dit is de zwaarste stap van de omzetting geweest en tegelijk de enige die niet op
+    een gewone pagina staat: de velden zitten in de wizard, en die heeft een echt
+    project nodig. /lotc/formulier rendert ze uit voorbeeldvelden, zodat er iets te
+    beoordelen valt.
+    """
+    page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
+    response = page.goto(f"{app_server}/lotc/formulier")
+    assert response is not None
+    assert response.ok
+
+    _wait_for_nldd(page)
+
+    unimplemented = page.locator(".lotc-unimplemented")
+    assert unimplemented.count() == 0, (
+        f"formulierlaag bevat niet-geimplementeerde componenten: "
+        f"{unimplemented.evaluate_all('els => els.map(e => e.dataset.lotcComponent)')}"
+    )
+
+    # De hulptekst en de foutmelding zijn eigen elementen die aan het invoerveld
+    # gekoppeld worden. Dat is de toegankelijkheidswinst van deze omzetting: onze
+    # roos-velden koppelen ze niet, dus een schermlezer las ze niet voor.
+    assert page.locator("nldd-form-field-help-text").count() > 0
+    assert page.locator("nldd-form-field-error-text").count() > 0
+
+    # Twee dingen die alleen in een BROWSER opvallen, en allebei kwamen ze hier boven:
+    #
+    # De keuzelijst moet opties hebben. c-option rendert onder NLDD een <nldd-menu-item>,
+    # en c-select-field zet zijn kinderen in een native <select>; een browser gooit alles
+    # weg wat daar geen <option> is. De HTML zag er goed uit, de lijst was leeg.
+    options = page.locator("select option")
+    assert options.count() > 0, "de keuzelijst heeft geen opties in de DOM"
+
+    # En het aanvinkvakje moet een echt invoerelement zijn. c-checkbox-field rendert
+    # onder NLDD een leeg <div> zonder besturingselement.
+    checkbox = page.locator("nldd-checkbox-field, input[type=checkbox]")
+    assert checkbox.count() > 0, "er staat geen echt aanvinkvakje op de pagina"
+
+    page.screenshot(path=f"{SCREENSHOT_DIR}/formulierlaag.png", full_page=True, animations="disabled")
