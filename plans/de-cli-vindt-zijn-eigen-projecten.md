@@ -44,6 +44,14 @@ De reden is sterker dan mijn oorspronkelijke bezwaar. De sleutel staat **al** op
 
 Wat overeind blijft en in de uitvoering hoort: de OpenAPI-omschrijving moet **zeggen** dat er een geheim in het antwoord zit, zodat een aanroeper dat weet voordat hij het antwoord ergens logt.
 
+### Correctie na de securityreview, 8 augustus: A, maar achter de rolpoort van de UI
+
+De onderbouwing hierboven klopt niet zoals ze er staat. Nagemeten dekt "dezelfde deur, dezelfde mensen" alleen `admin` en `owner`: `section-config.html.j2:2` zet het hele secrets-blok, inclusief `config['api-key']`, achter `{% if user_role in ["admin", "owner"] %}`, terwijl het filter van deze route lidmaatschap is (`is_user_authorized_for_project`), niet rol. Een `developer` zou de sleutel dus via deze lijst krijgen en via de UI niet -- dat is wél een nieuwe blootstelling.
+
+En het weegt zwaarder dan zichtbaarheid, want de projectsleutel kent zelf geen rollen: elke `@validate_api_token`-route accepteert hem zonder rolcontrole (deployment verwijderen, component toevoegen, image wisselen, klonen), terwijl de webkant diezelfde mutaties voor een `developer` met 403 weigert (`require_project_edit_access`). Een `developer` met de sleutel is dus een verticale rechtenverhoging, en een langlevende: de sleutel overleeft het intrekken van zijn rol.
+
+Uitgevoerd is daarom de variant die de UI exact spiegelt: `api_key` is gevuld voor `admin` en `owner`, en `null` voor een `developer`, achter dezelfde constante (`PROJECT_EDIT_ROLES`) die de webkant gebruikt. Vorm A blijft dus overeind voor wie mag handelen -- één aanroep, meteen verder -- zonder de rolgrens op te heffen. Wie de sleutelkant voor een `developer` alsnog wil, moet vorm B nemen (aparte sleutelroute achter dezelfde rolpoort) of het rolmodel zelf veranderen; geen van beide hoort in deze route.
+
 ## Voorstel
 
 1. **`GET /api/v2/projects`**, met hetzelfde tokenpad als de `POST`. Geen nieuwe manier van herkennen, alleen een tweede route die hem gebruikt.
