@@ -254,7 +254,9 @@ def page_data(slug: str) -> dict[str, Any]:
             ],
         }
 
-    if slug == "project-details":
+    # De twee navigatieprototypes tonen hetzelfde project als de detailpagina: het gaat
+    # om de navigatievorm, en dan moet de inhoud eronder juist gelijk zijn.
+    if slug in ("project-details", "project-tabs", "project-context"):
         context = build_details_context(available_projects()[-1])
         return context or {}
 
