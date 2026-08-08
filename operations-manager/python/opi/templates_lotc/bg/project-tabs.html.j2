@@ -30,6 +30,16 @@
 {% from "bg/_patterns.html.j2" import panel, page_head, info, explainer %}
 {% from "bg/_section-deployments.html.j2" import deployment_panel %}
 
+{% block head_extra %}
+    {# De gedeelde dialoog: zijn vormgeving (modal.css) en zijn gedrag (edit_modal.js:
+       openen, Escape, de blokkade zolang er een taak loopt, de waarschuwing bij
+       niet-opgeslagen werk). json-enc.js bedraadt de formulieren erin, net als op de
+       bestaande pagina. #}
+    <link rel="stylesheet" href="{{ static_url('css/modal.css') }}">
+    <script src="{{ static_url('js/json-enc.js') }}"></script>
+    <script src="{{ static_url('js/edit_modal.js') }}"></script>
+{% endblock %}
+
 {% block page_title %}{{ project.display_name }} - {{ tabs[active_tab].label }}{% endblock %}
 
 {% block content %}
@@ -107,8 +117,14 @@
         {% endcall %}
 
         {% call panel("Gevarenzone", "exclamation-triangle", info_text="Verwijderen kan niet ongedaan worden gemaakt: deployments, database en opslag gaan mee.") %}
+            {# De aanroep wordt hierboven opgebouwd en niet in de tag zelf: een
+               genest aanhalingsteken binnen :attrs leest de voorbewerker als het einde
+               van het attribuut. #}
+            {% set herverwerken = "openServiceModal('/projects/" ~ project.name ~ "/actions/refresh-project/confirm', 'Project herverwerken')" %}
+            {% set verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-project/confirm', 'Project verwijderen')" %}
             <c-action-group align="start">
-                <c-button type="warning" label="Project verwijderen" />
+                <c-button type="secondary" label="Project herverwerken" :attrs="{'onclick': herverwerken}" />
+                <c-button type="warning" label="Project verwijderen" :attrs="{'onclick': verwijderen}" />
             </c-action-group>
         {% endcall %}
 
@@ -186,4 +202,8 @@
             <c-paragraph>Taken worden opgehaald...</c-paragraph>
         </div>
     {% endif %}
+
+    {# De gedeelde dialoog hoort onderaan de pagina, buiten de tabs: hij wordt vanuit elke
+       tab geopend en mag niet met de inhoud meeverdwijnen. #}
+    {% include "bg/_modals.html.j2" %}
 {% endblock %}

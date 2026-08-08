@@ -133,4 +133,114 @@
         }
         window.closeEditModal();
     };
+
+    /* De projectnaam staat op de dialoog zelf (data-project-name). Die stond hiervoor via
+       Jinja in de pagina gebakken, en dat is precies waarom deze code niet gedeeld kon
+       worden. */
+    function projectName() {
+        var modal = document.getElementById('edit-section-modal');
+        return modal ? modal.dataset.projectName : '';
+    }
+
+    /* ---------------------------------------------------------------
+     * Edit Section Modal - server-driven wizard via HTMX
+     *
+     * The submit-in-flight flag lives on ``window`` in
+     * /static/js/edit_modal.js so the shared close helpers can read it.
+     * --------------------------------------------------------------- */
+
+    window.openEditModal = function (flowId, title, params) {
+        window.isEditSubmitting = false;
+
+        // Set title text (icon is already in the DOM via Jinja preprocessing)
+        document.getElementById('edit-section-title-text').textContent = title;
+
+        // Hide error
+        var errorEl = document.getElementById('edit-section-error');
+        errorEl.classList.add('is-hidden');
+
+        // Show loading state
+        var innerEl = document.getElementById('edit-section-inner');
+        innerEl.innerHTML =
+            '<div class="edit-section-content">' +
+                '<div class="edit-section-loading"><p>Laden...</p></div>' +
+            '</div>';
+
+        // Show modal
+        document.getElementById('edit-section-backdrop').classList.add('is-open');
+        document.getElementById('edit-section-modal').classList.add('is-open');
+        document.body.style.overflow = 'hidden';
+
+        // Fetch first step from server-driven modal wizard.
+        // When the caller needs to scope the flow to a specific deployment (e.g. backup),
+        // they pass that via `params` — no URL-hash sniffing, no global lookups.
+        let url = '/projects/' + projectName() + '/modal-wizard/' + flowId;
+        if (params && Object.keys(params).length > 0) {
+            url += '?' + new URLSearchParams(params).toString();
+        }
+        fetch(url, {
+            credentials: 'same-origin',
+        })
+        .then(function(response) {
+            if (!response.ok) throw new Error('Fout bij het laden van het formulier');
+            return response.text();
+        })
+        .then(function(html) {
+            innerEl.innerHTML = html;
+            // Activate HTMX on the new server-rendered content
+            if (typeof htmx !== 'undefined') htmx.process(innerEl);
+            // Initialize wizard widgets (service cards, KV editors) in the new content
+            if (typeof initWizardWidgets === 'function') initWizardWidgets(innerEl);
+        })
+        .catch(function(err) {
+            innerEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';
+        });
+    };
+
+    /* Service-contributed modal (RC-24): reuse the edit-modal shell and load the body
+       from the service's own fragment URL. The body drives itself via HTMX (start, poll
+       status, stop). One function for every such modal -- the database console and the
+       job runner used to have a hand-copied opener each. */
+    window.openServiceModal = function (endpoint, title) {
+        document.getElementById('edit-section-title-text').textContent = title;
+        var errorEl = document.getElementById('edit-section-error');
+        if (errorEl) errorEl.classList.add('is-hidden');
+        var innerEl = document.getElementById('edit-section-inner');
+        innerEl.innerHTML =
+            '<div class="edit-section-content">' +
+                '<div class="edit-section-loading"><p>Laden...</p></div>' +
+            '</div>';
+        document.getElementById('edit-section-backdrop').classList.add('is-open');
+        document.getElementById('edit-section-modal').classList.add('is-open');
+        document.body.style.overflow = 'hidden';
+
+        fetch(endpoint, { credentials: 'same-origin' })
+        .then(function(response) {
+            if (!response.ok) throw new Error('Fout bij het laden van ' + title);
+            return response.text();
+        })
+        .then(function(html) {
+            innerEl.innerHTML = html;
+            if (typeof htmx !== 'undefined') htmx.process(innerEl);
+        })
+        .catch(function(err) {
+            innerEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';
+        });
+    };
+
+    /* Failure of a confirmed action (project-details/action-confirm.html.j2, which marks
+       itself with data-confirm-action). A successful POST answers with the shared task
+       progress fragment and htmx swaps it into the dialog, so success needs nothing here;
+       only a refusal or an error has no fragment to show, and is reported inside the
+       modal itself -- window.confirm/window.alert are gone. */
+    document.addEventListener('htmx:afterRequest', function(evt) {
+        var trigger = evt.detail.elt;
+        if (!trigger || !trigger.closest || !trigger.closest('[data-confirm-action]')) return;
+        var status = evt.detail.xhr ? evt.detail.xhr.status : 0;
+        if (status >= 200 && status < 300) return;
+        var errorEl = document.getElementById('confirm-action-error');
+        if (!errorEl) return;
+        errorEl.textContent = status ? 'Actie mislukt (' + status + ')' : 'Actie mislukt';
+        errorEl.classList.remove('is-hidden');
+    });
 })();

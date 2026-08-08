@@ -33,6 +33,7 @@ from opi.core.templates import (
     static_url,
 )
 from opi.forms.lotc_attrs import field_attrs
+from opi.forms.widgets.roos import _attr_escape as attr_escape
 
 # lotc-forms hoort achteraan; zie de moduledocstring.
 DESIGN_SYSTEMS = ["lotc-layout", "nldd", "lotc-forms"]
@@ -68,6 +69,12 @@ templates_lotc.env.globals["static_url"] = static_url
 # macro's die in de roos-templates attribuut-TEKST in de tag schreven; zie
 # opi/forms/lotc_attrs.py voor waarom dat bij LOTC niet kan.
 templates_lotc.env.globals["field_attrs"] = field_attrs
+
+# De widgettemplates delen macro's die een attribuutwaarde escapen (optional_attr,
+# bool_attr). Dat filter hoort bij de kale widget-omgeving van de roos-adapter; de
+# LOTC-adapter rendert dezelfde macro's in DEZE omgeving, dus hier hoort het ook te
+# staan. Zonder valt de formulierlaag om op elk veld dat de macro's gebruikt.
+templates_lotc.env.filters["attr_escape"] = attr_escape
 
 templates_lotc.env.filters["service_name"] = get_service_name
 templates_lotc.env.filters["service_definition"] = get_service_definition_for_entry

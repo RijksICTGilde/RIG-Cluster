@@ -24,9 +24,13 @@
     </div>
     {% if not fixed_size and field.add_remove %}
     <div class="rvo-sequence__actions">
+        {# @click met Jinja erin werkt niet: de voorbewerker leest de waarde van een
+       @-attribuut als kale tekst, dus {{ ... }} komt er letterlijk uit en de knop doet
+       stilletjes niets. Via de :attrs-spread wordt het wel een expressie, en geescapet. #}
+        {% set toevoegen_js = "sequenceAdd('" ~ field.path ~ "')" %}
         <c-button type="tertiary" size="sm"
                   show-icon="before" icon="plus"
-                  @click="sequenceAdd('{{ field.path|e }}')"
+                  :attrs="{'onclick': toevoegen_js}"
                   :disabled="add_disabled">
             {{ add_label|e }}
         </c-button>

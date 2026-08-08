@@ -1,0 +1,87 @@
+{#
+  Geen toegang.
+
+  Een OVERNAME van opi/templates/permission-denied.html.j2 en zijn drie deeltemplates.
+  Dezelfde drie blokken in dezelfde volgorde, met dezelfde teksten en dezelfde twee
+  gevallen:
+
+    permission-denied/_uitleg      -> een c-alert met de reden, plus de uitleg eronder
+    permission-denied/_organisatie -> c-detail-list in plaats van een <c-ul> met vet
+    permission-denied/_acties      -> c-action-group met dezelfde mailto-link
+
+  Het onderscheid tussen de twee gevallen (`reason == 'email-not-verified'` en de rest)
+  blijft precies zoals het was: andere kop, andere uitleg, een andere lijst met wat je
+  eraan kunt doen.
+
+  De kop staat in een c-alert en niet meer alleen als h1. Dit is de enige pagina die een
+  gebruiker te zien krijgt als hij nergens bij mag; dat is een melding, en het thema
+  heeft daar een vorm voor. De h1 blijft er wel, want een pagina hoort er een te hebben.
+
+  De organisatiegegevens worden alleen getoond als de route ze meelevert - dat was zo en
+  dat blijft zo.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}Geen toegang - Self Service Portal{% endblock %}
+
+{% block content %}
+    {% if reason == 'email-not-verified' %}
+        {{ page_head("Geen Toegang: e-mailadres niet geverifieerd") }}
+
+        <c-alert type="warning" heading="Wat betekent dit?">
+            Je bent ingelogd, maar je e-mailadres is niet geverifieerd. Om
+            veiligheidsredenen krijg je alleen toegang met een geverifieerd e-mailadres.
+        </c-alert>
+
+        {% call panel("Hoe krijg ik toegang?", "info-circle") %}
+            <c-list>
+                <c-list-item>Zorg dat je e-mailadres geverifieerd is</c-list-item>
+                <c-list-item>
+                    Denk je dat dit onterecht is? Neem contact op met de
+                    <c-link href="mailto:robbert.uittenbroek@rijksoverheid.nl" label="platformbeheerder" />
+                </c-list-item>
+            </c-list>
+        {% endcall %}
+    {% else %}
+        {{ page_head("Geen Toegang tot ZAD") }}
+
+        <c-alert type="warning" heading="Wat betekent dit?">
+            Je bent succesvol ingelogd, maar je e-mailadres staat niet op de lijst van
+            geautoriseerde gebruikers voor dit platform.
+        </c-alert>
+
+        {% call panel("Hoe krijg ik toegang?", "info-circle") %}
+            <c-list>
+                <c-list-item>
+                    Neem contact op met een collega die al een project in ZAD heeft of de
+                    <c-link href="mailto:robbert.uittenbroek@rijksoverheid.nl"
+                            label="platformbeheerder"
+                            icon="info-circle"
+                            show-icon="before" />
+                </c-list-item>
+            </c-list>
+        {% endcall %}
+    {% endif %}
+
+    {% if user and user.organization %}
+        {% call panel("Je Organisatie Informatie", "person") %}
+            <c-detail-list>
+                <c-detail-item label="Organisatie" value="{{ user.organization.name }}" />
+                {% if user.organization.number %}
+                    <c-detail-item label="Organisatie Nummer" value="{{ user.organization.number }}" />
+                {% endif %}
+                {% if user.organization.role %}
+                    <c-detail-item label="Rol" value="{{ user.organization.role }}" />
+                {% endif %}
+            </c-detail-list>
+        {% endcall %}
+    {% endif %}
+
+    <c-action-group align="start">
+        <c-link href="mailto:robbert.uittenbroek@rijksoverheid.nl"
+                label="Contact Opnemen"
+                icon="info-circle"
+                show-icon="before" />
+    </c-action-group>
+{% endblock %}

@@ -1,0 +1,89 @@
+{#
+  De startpagina van de wizard: wat je gaat doen, en de knop om te beginnen.
+
+  Een OVERNAME van wizard/wizard_start.html.j2 en zijn vier deeltemplates. Dezelfde vier
+  blokken in dezelfde volgorde en met dezelfde teksten:
+
+    _kruimelpad  -> c-breadcrumbs
+    _uitleg      -> kop plus alinea's, ongewijzigd
+    _stappen     -> de zes stappen; stonden in een handgemaakte rvo-alert met een eigen
+                    <div> per stap, nu een c-alert met per stap een kop en een uitleg
+    _startknop   -> c-button met href, in plaats van een <a> met een knop erin
+
+  De teksten blijven letterlijk wat ze waren, met een uitzondering: "Wat kunt u
+  verwachten?" wordt "Wat kun je verwachten?". De rest van de bouwlijn spreekt de lezer
+  met "je" aan en tests/test_lotc_schrijfwijze.py bewaakt dat.
+
+  De pagina is als enige van de wizard niet in een smalle kolom gezet: er staat geen
+  formulier op, alleen uitleg, en die stond in de bestaande pagina ook over de volle
+  breedte van de inhoud.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import page_head %}
+
+{% block page_title %}Nieuw Project Aanmaken{% endblock %}
+
+{% block content %}
+<c-stack gap="lg">
+    <c-breadcrumbs aria-label="Kruimelpad">
+        <c-breadcrumbs-item label="Projecten" href="/projects" />
+        <c-breadcrumbs-item label="Nieuw project" />
+    </c-breadcrumbs>
+
+    {{ page_head("Nieuw Project Aanmaken") }}
+
+    <c-stack gap="sm">
+        <c-paragraph>Met deze wizard maak je stap voor stap een nieuw ZAD-project aan.</c-paragraph>
+        <c-paragraph>
+            In een ZAD-project leg je vast wat je applicatie nodig heeft.
+            Een applicatie bestaat uit een of meerdere onderdelen, in ZAD noemen we dit componenten.
+        </c-paragraph>
+        <c-paragraph>
+            Een component bestaat uit basisconfiguratie en een (Docker) image. Denk hierbij bijvoorbeeld
+            aan een frontend component, zoals een statische website in React of HTML, en een backend
+            component, bijvoorbeeld een API in Java of Python.
+        </c-paragraph>
+        <c-paragraph>
+            Daarnaast kan een applicatie services nodig hebben, zoals een database.
+            Services worden voor je ingericht en de benodigde configuratie wordt aan de componenten
+            beschikbaar gesteld. Zie ook <c-link label="de services pagina" href="/services" target="_blank" />.
+        </c-paragraph>
+    </c-stack>
+
+    <c-alert type="info" heading="Wat kun je verwachten?">
+        <c-stack gap="md">
+            <c-stack gap="xs">
+                <c-heading type="h2" size="5" label="1. Project gegevens" />
+                <c-paragraph>Basisgegevens over het project</c-paragraph>
+            </c-stack>
+            <c-stack gap="xs">
+                <c-heading type="h2" size="5" label="2. Services kiezen" />
+                <c-paragraph>
+                    Selecteer de services die je applicatie nodig heeft, zoals een
+                    PostgreSQL database, Keycloak SSO, of object storage.
+                </c-paragraph>
+            </c-stack>
+            <c-stack gap="xs">
+                <c-heading type="h2" size="5" label="3. Team samenstellen" />
+                <c-paragraph>Toekennen van (extra) personen en rollen.</c-paragraph>
+            </c-stack>
+            <c-stack gap="xs">
+                <c-heading type="h2" size="5" label="4. Componenten configureren" />
+                <c-paragraph>Configureer de naam, poorten en resources voor elk component.</c-paragraph>
+            </c-stack>
+            <c-stack gap="xs">
+                <c-heading type="h2" size="5" label="5. Domeinen en deployment" />
+                <c-paragraph>Bepaal hoe je applicatie bereikbaar wordt.</c-paragraph>
+            </c-stack>
+            <c-stack gap="xs">
+                <c-heading type="h2" size="5" label="6. Controleren en aanmaken" />
+                <c-paragraph>Controleer alle ingevulde gegevens in een overzicht.</c-paragraph>
+            </c-stack>
+        </c-stack>
+    </c-alert>
+
+    <c-action-group align="start">
+        <c-button type="primary" size="md" label="Start de wizard" href="/forms/wizard/create-project" />
+    </c-action-group>
+</c-stack>
+{% endblock %}
