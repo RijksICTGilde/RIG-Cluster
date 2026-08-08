@@ -22,6 +22,7 @@ Run: uv run pytest tests/e2e/test_wizard_cross_domain_policy.py -m "e2e and not 
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -94,7 +95,9 @@ def _walk(wizard: WizardHelper, page: Page, until: str | None) -> None:
 def _fill_inbound_rule(page: Page, name: str) -> None:
     """Add one inbound rule and fill every field of it, cascading select by select."""
     page.locator("button:has-text('Item toevoegen')").first.click()
-    page.wait_for_timeout(800)
+    # Wait for the row that the click adds, not for a fixed 800 ms: filling a field that
+    # is not there yet is the failure this used to produce on a busy machine.
+    page.locator(f"[name='{FIELD}/name']").wait_for(state="visible", timeout=10000)
 
     page.fill(f"[name='{FIELD}/name']", name)
     # Choosing the peer project is what makes the next two lists exist at all. Every one of
@@ -158,7 +161,13 @@ def _project_from_wizard(app_server: str, page: Page, captured: list[str], rule_
 
     _walk(wizard, page, until=None)
     wizard.submit_wizard()
-    page.wait_for_timeout(2000)
+
+    # Wait for the captured project file rather than for two seconds: the submit runs
+    # server-side, and how long that takes is a property of the machine, not of the
+    # behaviour under test. A submit that never produces a file still fails below.
+    deadline = time.monotonic() + 30
+    while not captured and time.monotonic() < deadline:
+        page.wait_for_timeout(100)
 
     assert captured, f"the wizard created no project (stuck at {page.url})"
     project = yaml.safe_load(captured[-1])
