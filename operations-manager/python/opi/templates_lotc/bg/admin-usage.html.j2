@@ -1,0 +1,82 @@
+{#
+  Gebruik & Kosten.
+
+  Een OVERNAME van admin/usage.html.j2 plus zijn twee deeltemplates. Dezelfde vier
+  blokken in dezelfde volgorde, dezelfde gegevens:
+
+    kop        -> page_head()
+    melding    -> c-alert, dezelfde tekst en dezelfde voorwaarde
+    _filters   -> hetzelfde GET-formulier op /admin/usage, met de velden uit lotc-forms
+    _tabel     -> c-table met de totaalregel eronder, zoals nu
+
+  Het filterformulier blijft een GET-formulier en geen htmx: de keuze hoort in de URL, dan
+  is hij te delen en werkt de terugknop. Dat was al zo en dat blijft zo.
+
+  De vier filtervelden stonden in een c-grid columns="four"; hier een c-auto-grid, die
+  hetzelfde doet maar afbouwt op een smal scherm in plaats van vier kolommen af te dwingen.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}Gebruik & Kosten - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head("Gebruik & Kosten", "Overzicht van geheugengebruik en kosten per maand.") }}
+
+    {% if not has_billing_datasource %}
+        <c-alert type="warning" heading="Billing datasource niet geconfigureerd">
+            Stel GRAFANA_BILLING_DATASOURCE_UID in om gebruik op te halen.
+        </c-alert>
+    {% endif %}
+
+    {% call panel("") %}
+        <form method="get" action="/admin/usage">
+            <c-stack gap="md">
+                <c-auto-grid min="220px" gap="md">
+                    {# De opties komen als kinderen mee, niet als een tojson-attribuut:
+                       een samenstelling krijgt in dit systeem kinderen. #}
+                    <c-select-field id="namespace" name="namespace" label="Namespace"
+                                    :value="selected_namespace">
+                        {% for option in namespace_options %}
+                            <c-option
+                                value="{{ option.value }}"
+                                label="{{ option.label }}"
+                                :selected="option.value == selected_namespace" />
+                        {% endfor %}
+                    </c-select-field>
+                    {# Het euroteken als teken en niet als &euro;: dit is een attribuut, en
+                       daar wordt een entiteit letterlijk getoond in plaats van vertaald. #}
+                    <c-text-input-field id="price" name="price" label="Prijs per GiB (€)"
+                                        type="number" value="{{ price_per_gib }}" />
+                    <c-text-input-field id="year" name="year" label="Jaar"
+                                        type="number" value="{{ year }}" />
+                    <c-action-group align="start">
+                        <c-button type="primary" size="md" label="Toepassen" html-type="submit" />
+                    </c-action-group>
+                </c-auto-grid>
+            </c-stack>
+        </form>
+    {% endcall %}
+
+    {% call panel("Geheugengebruik en kosten " ~ year, "euro-sign") %}
+        <c-table columns="2fr 1fr 1fr">
+            <c-table-head>
+                <c-th>Maand</c-th>
+                <c-th>Gebruik (GiB)</c-th>
+                <c-th>Kosten (&euro;)</c-th>
+            </c-table-head>
+            {% for month in month_data %}
+                <c-table-row>
+                    <c-td>{{ month.name }} {{ month.year }}</c-td>
+                    <c-td>{{ month.gib }}</c-td>
+                    <c-td>&euro; {{ month.cost }}</c-td>
+                </c-table-row>
+            {% endfor %}
+            <c-table-row>
+                <c-td><c-b>Totaal</c-b></c-td>
+                <c-td><c-b>{{ total_gib }}</c-b></c-td>
+                <c-td><c-b>&euro; {{ total_cost }}</c-b></c-td>
+            </c-table-row>
+        </c-table>
+    {% endcall %}
+{% endblock %}
