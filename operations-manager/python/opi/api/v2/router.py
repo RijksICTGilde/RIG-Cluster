@@ -49,6 +49,8 @@ from opi.api.v2.models import (
     DeploymentDetail,
     DeploymentListResponse,
     DeploymentStatus,
+    ProjectListItem,
+    ProjectListResponse,
     StatusError,
 )
 from opi.api.validation import (
@@ -77,6 +79,7 @@ from opi.services.catalog.actions import (
 from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
+from opi.services.project_authorization import get_user_role_for_project, is_user_authorized_for_project
 from opi.services.project_store import get_project_store
 from opi.services.registry import SERVICES, get_service
 from opi.services.services import ServiceAdapter, service_entry_config, service_entry_name
@@ -666,6 +669,68 @@ async def upsert_deployment_v2(
         },
     )
     return _accepted_response(task, "upsert_deployment")
+
+
+@v2_router.get(
+    "/projects",
+    tags=["projects"],
+    summary="List the projects this caller may see",
+    response_model=ProjectListResponse,
+    responses={
+        200: {"model": ProjectListResponse, "description": "The projects this caller may see"},
+        401: {"description": "No valid bearer token"},
+    },
+)
+@validate_user_token
+async def list_projects_v2(request: Request) -> ProjectListResponse:
+    """List the projects this caller may see, with their API keys.
+
+    A CLI that starts up knows a token and nothing else: the per-project API key
+    cannot be used to ask which projects exist, because you need the project name
+    before you can have its key. So this endpoint takes the same SSO access token
+    as project creation: ``Authorization: Bearer <token>``.
+
+    The caller is identified by the verified email in the token -- the same
+    identity the web UI uses -- and a project is listed only when that identity
+    is a member of it. A project the caller may not see is absent entirely, name
+    included.
+
+    **The response contains secrets.** Every entry carries that project's API key,
+    so the CLI can switch context and act without a second call. It is the same
+    key the project detail page already shows to the same people, behind the same
+    authorization, so this is a second door to one secret rather than a new
+    exposure -- but do not log this response.
+
+    **A platform administrator sees every project, with every key.** That is
+    deliberate and follows from the platform-admin rule the whole application
+    uses: an administrator can already open any project's page and read its key
+    there. It is not a separate "list everything" mode and there is no flag to
+    ask for one.
+
+    Headers:
+        Authorization: Bearer <SSO access token> (required)
+    """
+    user = get_current_user(request) or {}
+    caller_email = str(user.get("email", ""))
+
+    store = get_project_store()
+    # Pick up projects created by another cluster or edited outside ZAD, so a CLI
+    # that just created a project elsewhere does not get an empty list.
+    await store.reconcile()
+
+    projects = [
+        ProjectListItem(
+            name=project.name,
+            description=str((project.data or {}).get("description") or ""),
+            role=get_user_role_for_project(project.name, caller_email),
+            api_key=project.api_key,
+        )
+        for project in sorted(store.get_all(), key=lambda p: p.name)
+        if is_user_authorized_for_project(project.name, caller_email)
+    ]
+
+    logger.info("V2 list projects requested by %s: %d project(s) visible", caller_email, len(projects))
+    return ProjectListResponse(projects=projects)
 
 
 @v2_router.post(
