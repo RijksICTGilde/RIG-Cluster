@@ -71,7 +71,6 @@ def test_secret_field_comes_from_lotc() -> None:
     houdt vast dat de opruiming klopt: de component bestaat, rendert niet als placeholder,
     en komt niet uit onze eigen map.
     """
-    pytest.importorskip("lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd")
     from opi.core.templates_lotc import templates_lotc
 
     rendered = templates_lotc.env.from_string('<c-secret-field value="geheim" />').render()
@@ -86,7 +85,6 @@ def test_form_widgets_render_through_the_lotc_adapter() -> None:
     Zonder deze toets zouden de widget-templates kunnen compileren zonder dat er iets
     ze aanroept - dan is de formulierlaag omgezet op papier en niet in de applicatie.
     """
-    pytest.importorskip("lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd")
     from types import SimpleNamespace
 
     from opi.forms.widgets.lotc import LOTCWidgetAdapter
