@@ -68,6 +68,54 @@ JS_NEGEER = {"switchTab"}
 
 # Bestemmingen die per definitie verschillen: elk design system brengt zijn eigen
 # stylesheets en scripts mee. Dat is geen gedrag, dat is de vormgeving zelf.
+# Verschillen die we aanvaarden, elk met de reden erbij. Een regel hier is een BESLUIT.
+AANVAARD: dict[str, str] = {
+    # De gebruiker heeft hier zelf om gevraagd: "wat sowieso niet getoond hoeft te worden
+    # is repositories".
+    "repositories": "op verzoek van de gebruiker niet overgenomen",
+    # De oude pagina wisselt tabbladen in de browser; de nieuwe geeft elk tabblad een
+    # eigen URL, zodat een tab deelbaar is en de terugknop werkt.
+    "switchTab": "tabs zijn echte links geworden",
+    # De metrics-explorer bindt zijn knop met addEventListener in plaats van met een
+    # onclick-attribuut, omdat <c-button> geen onclick doorlaat. Zelfde gedrag.
+    "showMetric": "gebonden met addEventListener in plaats van een onclick-attribuut",
+    # De knoppenbalk onderin de gedeelde dialoog is DODE markup: "Opslaan" roept
+    # submitEditModal() aan, en die functie bestaat nergens in de codebase. Zichtbaar was
+    # hij ook nooit - de modal-wizard vervangt de hele #edit-section-inner zodra hij laadt,
+    # inclusief die balk. Zulke markup neem je bij een verhuizing niet mee.
+    "submitEditModal": "riep een functie aan die niet bestaat; nooit zichtbaar geweest",
+    "edit-section-submit": "hoort bij die dode knoppenbalk",
+    "edit-section-actions": "hoort bij die dode knoppenbalk",
+    # De drie tabbladwikkels van de oude pagina. Die bestaan alleen omdat alle tabs daar in
+    # een document staan en switchTab() ze toont en verbergt; met een eigen URL per tab is
+    # er niets te tonen of te verbergen.
+    "tab-project": "de oude tabwikkel; elk tabblad heeft nu een eigen URL",
+    "tab-deployments": "de oude tabwikkel; elk tabblad heeft nu een eigen URL",
+    "tab-taken": "de oude tabwikkel; elk tabblad heeft nu een eigen URL",
+    # Hetzelfde verhaal: de oude pagina laadt de takenlijst pas als switchTab('taken') hem
+    # aanwijst. Het nieuwe tabblad haalt hem bij het laden op - zelfde lijst, zelfde URL,
+    # zonder dat er een tweede plek is die weet wanneer het moet.
+    "tasks-content": "de takenlijst laadt nu bij het openen van zijn eigen tabblad",
+    # Ongebruikte markup: log_viewer.js noemt log-pause-icon nergens. De pauzeknop zelf
+    # (log-pause-btn) staat er wel en werkt.
+    "log-pause-icon": "dode markup; het script gebruikt dit id niet",
+    # applyRules() is hoe het geheim-veld van ROOS zichzelf toont en verbergt - code van
+    # dat design system, niet van ons. Het LOTC-veld doet hetzelfde met zijn eigen
+    # mechanisme (en heeft er een kopieerknop bij). Het gedrag is er dus wel; alleen de
+    # naam van de functie die het uitvoert hoort bij de vormgeving.
+    "applyRules": "de interne implementatie van het geheim-veld van roos; LOTC heeft zijn eigen",
+    # De uitklapbare foutenlijst van een ArgoCD-kaart was een knop plus een paneel dat
+    # toggleArgoErrors() zichtbaar maakte. Nu een <details>: hetzelfde uitklappen, zonder
+    # dat de pagina daar JavaScript voor hoeft mee te brengen.
+    "toggleArgoErrors": "uitklappen gaat nu met <details>, zonder JavaScript",
+    # De id-voorvoegsels van die foutenlijsten. Op de oude pagina staan projecttab en
+    # deploymentstab in EEN document, dus moesten de id's daar uit elkaar gehouden worden
+    # met dep-. Met een eigen URL per tabblad botst er niets meer.
+    "argocd-errors-dep-": "voorvoegsel was er om twee tabbladen in een document te scheiden",
+    "?prefix=dep-": "voorvoegsel was er om twee tabbladen in een document te scheiden",
+}
+
+
 def is_ruis(bestemming: str) -> bool:
     return bestemming.startswith(("/static/roos/", "/static/lotc/", "/static/css/", "/static/js/")) or (
         "unpkg.com" in bestemming
@@ -127,6 +175,40 @@ def haal_op(client: httpx.Client, basis: str, pad: str, layout: str) -> str:
     return r.text
 
 
+def meet_met_fragmenten(client: httpx.Client, basis: str, pad: str, layout: str) -> Oppervlak:
+    """Meet de pagina PLUS wat hij zelf met htmx inlaadt.
+
+    Zonder dit meet je een pagina die zijn werk uitstelt te laag. Het dashboard haalt zijn
+    meters bijvoorbeeld apart op - bewust, want inline was het traag - en dan meldt een
+    vergelijking die alleen de pagina leest dat die meters verdwenen zijn terwijl ze er
+    gewoon zijn. Dat is een vals alarm, en daar leer je een meetlat van negeren.
+
+    Een niveau diep, en alleen hx-get: dat is ophalen en dus veilig te herhalen. Een
+    fragment dat zelf weer iets inlaadt telt niet mee; tot nu toe komt dat niet voor, en
+    ongelimiteerd doorlopen zou van een meting een kruiptocht maken.
+    """
+    oppervlak = meet(haal_op(client, basis, pad, layout))
+
+    for item in sorted(oppervlak.htmx):
+        if not item.startswith("hx-get="):
+            continue
+        url = item[len("hx-get=") :]
+        if not url.startswith("/"):
+            continue
+        try:
+            deel = meet(haal_op(client, basis, url, layout))
+        except httpx.HTTPError:
+            continue
+        oppervlak.bestemmingen |= deel.bestemmingen
+        oppervlak.functies |= deel.functies
+        oppervlak.velden |= deel.velden
+        oppervlak.ids |= deel.ids
+        # De htmx-adressen van een fragment NIET overnemen: die zouden een volgende ronde
+        # uitlokken, en het gaat hier om wat de pagina kan, niet hoe diep hij nest.
+
+    return oppervlak
+
+
 def meet(html: str) -> Oppervlak:
     o = Oppervlak()
     o.feed(html)
@@ -142,7 +224,9 @@ def vergelijk(oud: Oppervlak, nieuw: Oppervlak) -> list[str]:
         ("veld", oud.velden, nieuw.velden),
         ("id", oud.ids, nieuw.ids),
     ):
-        regels.extend(f"  WEG      {label:11s} {weg}" for weg in sorted(a - b))
+        regels.extend(
+            f"  WEG      {label:11s} {weg}" for weg in sorted(a - b) if not any(sleutel in weg for sleutel in AANVAARD)
+        )
         regels.extend(f"  NIEUW    {label:11s} {erbij}" for erbij in sorted(b - a))
     return regels
 
@@ -191,8 +275,8 @@ def main() -> int:
         if args.only and args.only not in pad:
             continue
         try:
-            oud = meet(haal_op(client, args.base, pad, "roos"))
-            nieuw = meet(haal_op(client, args.base, pad, "nldd"))
+            oud = meet_met_fragmenten(client, args.base, pad, "roos")
+            nieuw = meet_met_fragmenten(client, args.base, pad, "nldd")
         except httpx.HTTPError as e:
             print(f"{pad}\n  FOUT bij ophalen: {e}\n")
             continue
@@ -207,8 +291,8 @@ def main() -> int:
 
     pad = TABPAGINA.format(project=project)
     if not args.only or args.only in pad:
-        oud = meet(haal_op(client, args.base, pad, "roos"))
-        nieuw = verenig([meet(haal_op(client, args.base, f"{pad}?tab={t}", "nldd")) for t in TABBLADEN])
+        oud = meet_met_fragmenten(client, args.base, pad, "roos")
+        nieuw = verenig([meet_met_fragmenten(client, args.base, f"{pad}?tab={t}", "nldd") for t in TABBLADEN])
         regels = vergelijk(oud, nieuw)
         weg = [r for r in regels if r.startswith("  WEG")]
         totaal += len(weg)
