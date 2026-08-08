@@ -1,0 +1,35 @@
+{# De banner die meldt hoeveel projecten problemen hebben. #}
+{% if health_counts is defined %}
+    {% if health_counts.Degraded > 0 %}
+    <c-alert heading="{{ health_counts.Degraded }} project{{ 'en' if health_counts.Degraded != 1 }} {{ 'hebben' if health_counts.Degraded != 1 else 'heeft' }} problemen" max-width="lg">
+        <c-layout-flow gap="xs">
+            {% for project in projects if project.health == 'Degraded' %}
+            <c-link href="/projects/details/{{ project.name }}#deployment-status" weight="bold"/>
+            {% endfor %}
+        </c-layout-flow>
+    </c-alert>
+    {% elif health_counts.Progressing > 0 %}
+    <c-alert heading="{{ health_counts.Progressing }} project{{ 'en' if health_counts.Progressing != 1 }} {{ 'worden' if health_counts.Progressing != 1 else 'wordt' }} bijgewerkt" max-width="lg">
+        <c-layout-flow gap="xs">
+            {% for project in projects if project.health == 'Progressing' %}
+            <c-link href="/projects/details/{{ project.name }}#deployment-status" weight="bold"/>
+            {% endfor %}
+        </c-layout-flow>
+    </c-alert>
+    {% elif health_banner %}
+    {# The wording is decided in _dashboard_health_banner, not here: "Alle N projecten
+       zijn gezond" stopped being true the moment one of them ran nothing on purpose,
+       and what stands there instead is a text choice (RC-31). #}
+    <c-alert heading="{{ health_banner.heading }}" max-width="lg">
+        {% if health_banner.lines %}
+        <c-layout-flow gap="xs">
+            {% for line in health_banner.lines %}
+            <span class="rvo-text--sm">{{ line }}</span>
+            {% endfor %}
+        </c-layout-flow>
+        {% endif %}
+    </c-alert>
+    {% elif not argocd_available %}
+    <c-alert heading="Status informatie niet beschikbaar" max-width="lg"/>
+    {% endif %}
+{% endif %}

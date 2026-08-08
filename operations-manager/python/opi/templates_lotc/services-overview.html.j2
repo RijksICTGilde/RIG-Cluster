@@ -1,0 +1,23 @@
+{% extends "base_lotc.html.j2" %}
+
+{% block content %}
+    <div class="rvo-max-width-layout rvo-max-width-layout--lg">
+        <c-layout-flow gap="xl">
+
+            {% include "services-overview/_kop.html.j2" %}
+
+            {% include "services-overview/_diensten.html.j2" %}
+
+        </c-layout-flow>
+    </div>
+
+    {% include "widgets/service_help_modal.html.j2" %}
+{% endblock %}
+
+{% block additional_styles %}
+<link rel="stylesheet" href="{{ static_url('css/wizard.css') }}">
+{% endblock %}
+
+{% block additional_scripts %}
+<script src="{{ static_url('js/wizard.js') }}"></script>
+{% endblock %}

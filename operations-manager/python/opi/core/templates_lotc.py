@@ -21,6 +21,7 @@ import markupsafe
 from fastapi.templating import Jinja2Templates
 from jinja2 import FileSystemLoader
 from lord_of_the_components import get_static_roots, setup_components
+from lord_of_the_components.registry import ComponentRegistry
 
 from opi.core.config import BUILD_DATE, VERSION
 from opi.core.templates import (
@@ -48,6 +49,26 @@ if not isinstance(templates_lotc.env.loader, FileSystemLoader):
 # al-veilige Markup. Met autoescape uit zou gebruikersdata niet geescaped worden.
 templates_lotc.env.autoescape = True
 setup_components(templates_lotc.env, design_systems=DESIGN_SYSTEMS, htmx=True)
+
+# Componenten die ZAD zelf levert omdat LOTC ze nog niet heeft. Zie
+# opi/templates_lotc_zad/registry.json voor het waarom per component.
+#
+# Ze worden geregistreerd op naam van het actieve thema, want een component dat door
+# geen enkel actief design system geimplementeerd wordt, rendert als een zichtbare
+# placeholder. Dat is precies wat deze aanvulling voorkomt.
+#
+# Tijdelijk, en met opzet zo dat het opruimen een verwijdering is: de aanroep in de
+# templates is die van LOTC, dus zodra hun versie er is vervalt alleen dit blok.
+_ZAD_COMPONENTS_DIR = Path(__file__).parent.parent / "templates_lotc_zad"
+_ZAD_OWNER_THEME = "nldd"
+
+_lotc_extension = next(
+    ext
+    for ext in templates_lotc.env.extensions.values()
+    if isinstance(getattr(ext, "registry", None), ComponentRegistry)
+)
+_lotc_extension.registry.merge_fragment(_ZAD_COMPONENTS_DIR / "registry.json", theme=_ZAD_OWNER_THEME)
+templates_lotc.env.loader.searchpath.append(str(_ZAD_COMPONENTS_DIR))
 
 # Dezelfde globals en filters als de roos-omgeving, zodat een omgezet template niet
 # ook nog zijn aanroepen naar version_info(), static_url() en de filters hoeft te

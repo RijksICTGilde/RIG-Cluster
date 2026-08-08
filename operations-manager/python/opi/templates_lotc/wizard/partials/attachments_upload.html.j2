@@ -1,0 +1,46 @@
+{# Attachments: one unified list (catalog + staged) at the top, the upload form below.
+   Used in the create wizard AND the modal-edit flow. CSRF inherits from the surrounding
+   wizard step form's hx-headers. _wizard_token routes staging to the modal session. #}
+<c-layout-flow gap="lg">
+    <c-card outline="true" padding="md" background-color="grijs-050">
+        <c-layout-flow gap="sm">
+            <c-heading type="h3" label="Bijlagen in dit project"/>
+            <div id="wiz-att-list"
+                 hx-get="/forms/wizard/create-project/attachments/list"
+                 hx-trigger="load"
+                 hx-vals='{"_wizard_token": "{{ _wizard_token | default('', true) }}"}'
+                 hx-target="this"
+                 hx-swap="innerHTML"
+                 hx-disabled-elt="this">
+                {% include "wizard/partials/attachments_list.html.j2" %}
+            </div>
+        </c-layout-flow>
+    </c-card>
+
+    <c-card outline="true" padding="md" background-color="grijs-050">
+        <c-layout-flow gap="sm">
+            <c-heading type="h3" label="Nieuwe bijlage uploaden"/>
+            <p class="rvo-text--sm rvo-text--subtle">Max 256 KB (bijvoorbeeld een certificaat). Koppelen doe je per component.</p>
+            <input type="hidden" id="wiz-att-token" name="_wizard_token" value="{{ _wizard_token | default('', true) }}">
+            {# On-change identifier validation lives on this wrapper, NOT on the #wiz-att-id
+               input itself: htmx omits a request-source input from another element's
+               hx-include, so an htmx-controlled id input would drop attachment_id from the
+               upload below. The change event bubbles from the plain input to this wrapper. #}
+            <div id="wiz-att-id-field"
+                 hx-post="/forms/wizard/create-project/attachments/validate-id"
+                 hx-ext="ignore:json-enc"
+                 hx-trigger="change from:#wiz-att-id"
+                 hx-include="#wiz-att-id, #wiz-att-token"
+                 hx-target="this"
+                 hx-swap="innerHTML">
+                {% include "wizard/partials/attachments_id_field.html.j2" %}
+            </div>
+            <label class="utrecht-form-label attachment-upload__label" for="wiz-att-file">Bestand</label>
+            <input type="file" id="wiz-att-file" name="file" class="rvo-file-input">
+            <div class="attachment-upload__row">
+                <c-button type="button" size="sm" label="Uploaden"/>
+                <span id="wiz-att-feedback"></span>
+            </div>
+        </c-layout-flow>
+    </c-card>
+</c-layout-flow>

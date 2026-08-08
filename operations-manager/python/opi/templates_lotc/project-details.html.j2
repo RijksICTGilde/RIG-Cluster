@@ -1,0 +1,1057 @@
+{% extends "base_lotc.html.j2" %}
+
+{#
+  Project Details Page - Self Service Portal
+
+  Comprehensive project details page showing all project information
+  including services, components, deployments, and configuration.
+
+  Sections are split into separate include files under project-details/.
+#}
+
+{% block page_title %}{{ project.display_name }} - Project Details{% endblock %}
+
+{% block content %}
+<c-layout-flow gap="xl">
+
+    {% include "project-details/section-header.html.j2" %}
+
+    {# Above the tabs on purpose: drift is about the whole project, and it must be
+       visible without first picking the right tab. #}
+    {% include "project-details/section-pending-rollout.html.j2" %}
+
+    {# Tab Navigation #}
+    <c-tabs>
+        <c-tab label="Project" href="#" @/>
+        <c-tab label="Deployments" href="#" @/>
+        <c-tab label="Taken" href="#" @/>
+    </c-tabs>
+
+    {# De drie tabbladen. switchTab() in dit bestand wisselt ze via .is-hidden. #}
+    {% include "project-details/tab-project.html.j2" %}
+
+    {% include "project-details/tab-deployments.html.j2" %}
+
+    {% include "project-details/tab-taken.html.j2" %}
+
+</c-layout-flow>
+
+{% include "project-details/modals.html.j2" %}
+{% endblock %}
+
+{% block additional_styles %}
+<link rel="stylesheet" href="{{ static_url('css/wizard.css') }}">
+<link rel="stylesheet" href="{{ static_url('css/modal.css') }}">
+<link rel="stylesheet" href="{{ static_url('css/project-details.css') }}">
+
+<script src="{{ static_url('js/codemirror-bundle.js') }}"></script>
+<script src="{{ static_url('js/codemirror-kv.js') }}"></script>
+<script src="{{ static_url('js/wizard.js') }}"></script>
+<script>
+    /**
+     * Switch between tabs (Project / Deployments)
+     */
+    function switchTab(tabName, event) {
+        if (event) event.preventDefault();
+
+        // Hide all tab content
+        document.getElementById('tab-project').classList.add('is-hidden');
+        document.getElementById('tab-deployments').classList.add('is-hidden');
+        document.getElementById('tab-taken').classList.add('is-hidden');
+
+        // Show selected tab
+        document.getElementById('tab-' + tabName).classList.remove('is-hidden');
+
+        // Load the Taken list (it then polls itself via htmx) only while its tab is open;
+        // clearing it on any other tab removes the poller so htmx stops polling.
+        var t = document.getElementById('tasks-content');
+        if (t) {
+            if (tabName === 'taken') htmx.ajax('GET', t.dataset.tasksUrl, { target: '#tasks-content', swap: 'innerHTML' });
+            else t.innerHTML = '';
+        }
+
+        // Update URL hash to preserve tab state across reloads
+        if (tabName === 'deployments') {
+            var gs = document.getElementById('global-deployment-selector');
+            var depName = gs ? gs.value : '';
+            location.hash = depName ? 'deployments/' + depName : 'deployments';
+        } else {
+            location.hash = tabName;
+        }
+
+        // Update rendered tab active state (c-tab-item renders as <li> with <a> inside)
+        var tabsList = document.querySelector('[data-roos-component="tabs"]') ||
+                       document.querySelector('.rvo-tabs');
+        if (tabsList) {
+            tabsList.querySelectorAll('.rvo-tabs__item-link').forEach(function(link) {
+                link.classList.remove('rvo-tabs__item-link--active');
+                link.setAttribute('aria-selected', 'false');
+            });
+        }
+        // Activate the clicked tab link - find by tab name when restoring from hash
+        if (event && event.target) {
+            var link = event.target.closest('.rvo-tabs__item-link') || event.target;
+            link.classList.add('rvo-tabs__item-link--active');
+            link.setAttribute('aria-selected', 'true');
+        } else if (tabsList) {
+            var links = tabsList.querySelectorAll('.rvo-tabs__item-link');
+            var tabIndex = tabName === 'deployments' ? 1 : 0;
+            if (links[tabIndex]) {
+                links[tabIndex].classList.add('rvo-tabs__item-link--active');
+                links[tabIndex].setAttribute('aria-selected', 'true');
+            }
+        }
+    }
+
+    /**
+     * Switch between deployment sections across all panels
+     */
+    function switchDeployment(deploymentName) {
+        // A hash can point at a deployment that no longer exists -- e.g. after deleting
+        // it and reloading with '#deployments/<name>' still in the URL. Without this
+        // guard the code below hides every section and fires a metrics request for a
+        // deployment that is not there, producing a page for something that is gone.
+        // Fall back to the first available deployment, or the overview when there is none.
+        if (!document.getElementById('deployment-' + deploymentName)) {
+            var gsel = document.getElementById('global-deployment-selector');
+            var alt = gsel && gsel.options.length ? gsel.options[0].value : null;
+            if (alt && alt !== deploymentName) {
+                deploymentName = alt;
+            } else {
+                location.hash = 'deployments';
+                return;
+            }
+        }
+        // Hide all deployment sections
+        document.querySelectorAll('.deployment-section').forEach(section => {
+            section.classList.add('is-hidden');
+        });
+        // Show sections matching this deployment
+        ['deployment-actions-', 'deployment-', 'argocd-'].forEach(prefix => {
+            const el = document.getElementById(prefix + deploymentName);
+            if (el) el.classList.remove('is-hidden');
+        });
+        // Service-owned blocks (RC-24) say which deployment they belong to instead of
+        // encoding it in an id prefix this list has to know about.
+        document.querySelectorAll('.deployment-section[data-deployment="' + deploymentName + '"]')
+            .forEach(el => { el.classList.remove('is-hidden'); });
+
+        // Sync global selector and URL hash
+        const gs = document.getElementById('global-deployment-selector');
+        if (gs) gs.value = deploymentName;
+        location.hash = 'deployments/' + deploymentName;
+    }
+
+    /**
+     * Toggle ArgoCD error details visibility
+     */
+    function toggleArgoErrors(deploymentName) {
+        const content = document.getElementById('argocd-errors-' + deploymentName);
+        const button = content.previousElementSibling;
+
+        // Gaat via een klasse en niet via element.style, zodat de dichtgeklapte
+        // begintoestand in project-details.css kan staan in plaats van in de markup.
+        const opened = content.classList.toggle('argo-errors__panel--open');
+        button.setAttribute('aria-expanded', opened ? 'true' : 'false');
+    }
+
+    /**
+     * Log Viewer WebSocket Client
+     */
+    (function() {
+        // Log viewer state
+        let logSocket = null;
+        let logPaused = false;
+        let currentProject = null;
+        let currentDeployment = null;
+        let currentComponent = null;
+        let components = [];
+        let logLines = [];
+        const MAX_LOG_LINES = 10000;
+
+        // DOM elements
+        const backdrop = document.getElementById('log-viewer-backdrop');
+        const panel = document.getElementById('log-viewer-panel');
+        const heading = document.getElementById('log-viewer-heading');
+        const deploymentLabel = document.getElementById('log-viewer-deployment');
+        const componentSelector = document.getElementById('log-component-selector');
+        const statusIndicator = document.getElementById('log-status-indicator');
+        const statusText = document.getElementById('log-status-text');
+        const lineCount = document.getElementById('log-line-count');
+        const content = document.getElementById('log-viewer-content');
+        const emptyState = document.getElementById('log-empty-state');
+        const pauseBtn = document.getElementById('log-pause-btn');
+
+        // Filter elements
+        const searchInput = document.getElementById('log-search-input');
+        const searchCount = document.getElementById('log-search-count');
+        const searchClear = document.getElementById('log-search-clear');
+        const filterError = document.getElementById('filter-error');
+        const filterWarn = document.getElementById('filter-warn');
+        const filterInfo = document.getElementById('filter-info');
+        const filterDebug = document.getElementById('filter-debug');
+        const wordWrapToggle = document.getElementById('log-word-wrap');
+
+        /**
+         * Open the log viewer panel
+         */
+        window.openLogViewer = function(project, deployment, component, comps) {
+            currentProject = project;
+            currentDeployment = deployment;
+            currentComponent = component;
+            components = comps || [];
+
+            // Update UI
+            heading.textContent = `Logs - ${deployment}`;
+            deploymentLabel.textContent = deployment;
+
+            // Populate component selector
+            componentSelector.innerHTML = '';
+            components.forEach(comp => {
+                const option = document.createElement('option');
+                option.value = comp.reference;
+                option.textContent = comp.reference;
+                if (comp.reference === component) {
+                    option.selected = true;
+                }
+                componentSelector.appendChild(option);
+            });
+
+            // Clear previous logs
+            clearLogs();
+
+            // Show panel
+            backdrop.classList.add('is-open');
+            panel.classList.add('is-open');
+            document.body.style.overflow = 'hidden';
+
+            // Connect WebSocket
+            connectLogWebSocket();
+        };
+
+        /**
+         * Close the log viewer panel
+         */
+        window.closeLogViewer = function() {
+            // Disconnect WebSocket
+            if (logSocket) {
+                logSocket.close();
+                logSocket = null;
+            }
+
+            // Hide panel
+            backdrop.classList.remove('is-open');
+            panel.classList.remove('is-open');
+            document.body.style.overflow = '';
+
+            // Reset state
+            logPaused = false;
+            pauseBtn.classList.remove('is-active');
+        };
+
+        /**
+         * Connect to the WebSocket log stream
+         */
+        function connectLogWebSocket() {
+            updateStatus('connecting', 'Connecting...');
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/api/logs/stream/${currentProject}?deployment=${encodeURIComponent(currentDeployment)}&component=${encodeURIComponent(currentComponent)}&lines=250`;
+
+            logSocket = new WebSocket(wsUrl);
+
+            logSocket.onopen = function() {
+                updateStatus('connecting', 'Connected, waiting for logs...');
+            };
+
+            logSocket.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleLogMessage(data);
+                } catch (e) {
+                    console.error('Failed to parse log message:', e);
+                }
+            };
+
+            logSocket.onclose = function(event) {
+                if (event.code === 1000) {
+                    updateStatus('paused', 'Connection closed');
+                } else {
+                    updateStatus('error', `Disconnected (code: ${event.code})`);
+                }
+            };
+
+            logSocket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                updateStatus('error', 'Connection error');
+            };
+        }
+
+        /**
+         * Handle incoming log messages
+         */
+        function handleLogMessage(data) {
+            switch (data.type) {
+                case 'log':
+                    appendLogLine(data);
+                    break;
+                case 'status':
+                    if (data.status === 'streaming') {
+                        updateStatus('streaming', data.message || 'Streaming logs...');
+                    } else if (data.status === 'paused') {
+                        updateStatus('paused', data.message || 'Paused');
+                    } else if (data.status === 'connected') {
+                        updateStatus('connecting', data.message || 'Connected');
+                    } else if (data.status === 'switching') {
+                        updateStatus('connecting', data.message || 'Switching...');
+                    }
+                    if (data.component) {
+                        currentComponent = data.component;
+                        componentSelector.value = data.component;
+                    }
+                    break;
+                case 'error':
+                    updateStatus('error', data.message || 'Error');
+                    break;
+            }
+        }
+
+        /**
+         * Detect log level from line content
+         */
+        function detectLogLevel(line) {
+            if (/\berror\b|\bERROR\b|\bfatal\b|\bFATAL\b|\bpanic\b|\bPANIC\b|\[STDERR\]/i.test(line)) {
+                return 'error';
+            } else if (/\bwarn\b|\bWARN\b|\bwarning\b|\bWARNING\b/i.test(line)) {
+                return 'warn';
+            } else if (/\binfo\b|\bINFO\b/i.test(line)) {
+                return 'info';
+            } else if (/\bdebug\b|\bDEBUG\b|\btrace\b|\bTRACE\b/i.test(line)) {
+                return 'debug';
+            }
+            return 'other';
+        }
+
+        /**
+         * Check if a log line should be visible based on current filters
+         */
+        function shouldShowLine(logData) {
+            const level = logData.level || 'other';
+
+            // Check level filters
+            if (level === 'error' && !filterError.checked) return false;
+            if (level === 'warn' && !filterWarn.checked) return false;
+            if (level === 'info' && !filterInfo.checked) return false;
+            if (level === 'debug' && !filterDebug.checked) return false;
+
+            // Check search filter
+            const searchTerm = searchInput.value.toLowerCase().trim();
+            if (searchTerm && !logData.line.toLowerCase().includes(searchTerm)) {
+                return false;
+            }
+
+            return true;
+        }
+
+        /**
+         * Create a log line DOM element
+         */
+        function createLogLineElement(data, searchTerm) {
+            const lineEl = document.createElement('div');
+            lineEl.className = 'log-line';
+
+            const level = data.level || 'other';
+            if (level === 'error') lineEl.classList.add('log-error');
+            else if (level === 'warn') lineEl.classList.add('log-warn');
+            else if (level === 'info') lineEl.classList.add('log-info');
+            else if (level === 'debug') lineEl.classList.add('log-debug');
+
+            // Apply search highlighting if there's a search term
+            if (searchTerm) {
+                const line = data.line || '';
+                const lowerLine = line.toLowerCase();
+                const lowerSearch = searchTerm.toLowerCase();
+                let result = '';
+                let lastIndex = 0;
+                let index = lowerLine.indexOf(lowerSearch);
+
+                while (index !== -1) {
+                    // Add text before match
+                    result += escapeHtml(line.substring(lastIndex, index));
+                    // Add highlighted match
+                    result += `<span class="search-highlight">${escapeHtml(line.substring(index, index + searchTerm.length))}</span>`;
+                    lastIndex = index + searchTerm.length;
+                    index = lowerLine.indexOf(lowerSearch, lastIndex);
+                }
+                // Add remaining text
+                result += escapeHtml(line.substring(lastIndex));
+                lineEl.innerHTML = result;
+            } else {
+                lineEl.textContent = data.line || '';
+            }
+
+            // Check if should be hidden
+            if (!shouldShowLine(data)) {
+                lineEl.classList.add('is-hidden');
+            }
+
+            return lineEl;
+        }
+
+        /**
+         * Escape HTML for safe insertion
+         */
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        /**
+         * Append a log line to the viewer
+         */
+        function appendLogLine(data) {
+            // Hide empty state on first log
+            if (logLines.length === 0) {
+                emptyState.classList.add('is-hidden');
+            }
+
+            // Detect and store log level with the data
+            const line = data.line || '';
+            data.level = detectLogLevel(line);
+
+            // Store log line
+            logLines.push(data);
+
+            // Remove old lines if over limit
+            if (logLines.length > MAX_LOG_LINES) {
+                logLines.shift();
+                const firstLine = content.querySelector('.log-line');
+                if (firstLine) {
+                    firstLine.remove();
+                }
+            }
+
+            // Create log line element
+            const searchTerm = searchInput.value.trim();
+            const lineEl = createLogLineElement(data, searchTerm);
+
+            // Append and auto-scroll
+            content.appendChild(lineEl);
+            if (!logPaused && shouldShowLine(data)) {
+                content.scrollTop = content.scrollHeight;
+            }
+
+            // Update line count
+            updateLineCount();
+        }
+
+        /**
+         * Update the visible/total line count display
+         */
+        function updateLineCount() {
+            const visibleCount = content.querySelectorAll('.log-line:not(.is-hidden)').length;
+            const totalCount = logLines.length;
+            if (visibleCount === totalCount) {
+                lineCount.textContent = `${totalCount} lines`;
+            } else {
+                lineCount.textContent = `${visibleCount} / ${totalCount} lines`;
+            }
+        }
+
+        /**
+         * Update the status indicator
+         */
+        function updateStatus(status, message) {
+            statusIndicator.className = 'log-status-indicator';
+            if (status === 'streaming') {
+                statusIndicator.classList.add('is-streaming');
+            } else if (status === 'paused') {
+                statusIndicator.classList.add('is-paused');
+            } else if (status === 'error') {
+                statusIndicator.classList.add('is-error');
+            } else if (status === 'connecting') {
+                statusIndicator.classList.add('is-connecting');
+            }
+            statusText.textContent = message;
+        }
+
+        /**
+         * Filter logs based on search term and level filters
+         */
+        window.filterLogs = function() {
+            const searchTerm = searchInput.value.trim();
+            const logLineEls = content.querySelectorAll('.log-line');
+            let matchCount = 0;
+
+            // Show/hide clear button
+            if (searchTerm) {
+                searchClear.classList.add('is-visible');
+            } else {
+                searchClear.classList.remove('is-visible');
+            }
+
+            // Re-render all log lines to apply/remove highlighting and filters
+            logLineEls.forEach((el, index) => {
+                if (index < logLines.length) {
+                    const data = logLines[index];
+                    const shouldShow = shouldShowLine(data);
+
+                    if (shouldShow) {
+                        el.classList.remove('is-hidden');
+                        matchCount++;
+
+                        // Update highlighting
+                        if (searchTerm) {
+                            const line = data.line || '';
+                            const lowerLine = line.toLowerCase();
+                            const lowerSearch = searchTerm.toLowerCase();
+                            let result = '';
+                            let lastIndex = 0;
+                            let idx = lowerLine.indexOf(lowerSearch);
+
+                            while (idx !== -1) {
+                                result += escapeHtml(line.substring(lastIndex, idx));
+                                result += `<span class="search-highlight">${escapeHtml(line.substring(idx, idx + searchTerm.length))}</span>`;
+                                lastIndex = idx + searchTerm.length;
+                                idx = lowerLine.indexOf(lowerSearch, lastIndex);
+                            }
+                            result += escapeHtml(line.substring(lastIndex));
+                            el.innerHTML = result;
+                        } else {
+                            el.textContent = data.line || '';
+                        }
+                    } else {
+                        el.classList.add('is-hidden');
+                    }
+                }
+            });
+
+            // Update search count
+            if (searchTerm) {
+                searchCount.textContent = `${matchCount} match${matchCount !== 1 ? 'es' : ''}`;
+            } else {
+                searchCount.textContent = '';
+            }
+
+            // Update line count
+            updateLineCount();
+        };
+
+        /**
+         * Clear search input
+         */
+        window.clearSearch = function() {
+            searchInput.value = '';
+            filterLogs();
+            searchInput.focus();
+        };
+
+        /**
+         * Toggle word wrap
+         */
+        window.toggleWordWrap = function() {
+            if (wordWrapToggle.checked) {
+                content.classList.add('word-wrap');
+            } else {
+                content.classList.remove('word-wrap');
+            }
+        };
+
+        /**
+         * Toggle log pause/resume
+         */
+        window.toggleLogPause = function() {
+            logPaused = !logPaused;
+
+            if (logSocket && logSocket.readyState === WebSocket.OPEN) {
+                logSocket.send(JSON.stringify({
+                    action: logPaused ? 'pause' : 'resume'
+                }));
+            }
+
+            if (logPaused) {
+                pauseBtn.classList.add('is-active');
+                updateStatus('paused', 'Paused');
+            } else {
+                pauseBtn.classList.remove('is-active');
+                updateStatus('streaming', 'Streaming logs...');
+                // Scroll to bottom when resuming
+                content.scrollTop = content.scrollHeight;
+            }
+        };
+
+        /**
+         * Clear all logs
+         */
+        window.clearLogs = function() {
+            logLines = [];
+            content.innerHTML = '';
+            content.appendChild(emptyState);
+            emptyState.classList.remove('is-hidden');
+            emptyState.querySelector('p').textContent = 'No logs yet...';
+            lineCount.textContent = '';
+
+            // Reset search
+            searchInput.value = '';
+            searchCount.textContent = '';
+            searchClear.classList.remove('is-visible');
+        };
+
+        /**
+         * Copy logs to clipboard
+         */
+        window.copyLogs = function() {
+            const text = logLines.map(l => l.line).join('\n');
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = statusText.textContent;
+                statusText.textContent = 'Copied to clipboard!';
+                setTimeout(() => {
+                    statusText.textContent = originalText;
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+            });
+        };
+
+        /**
+         * Download logs as file
+         */
+        window.downloadLogs = function() {
+            const text = logLines.map(l => l.line).join('\n');
+            const blob = new Blob([text], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `logs-${currentDeployment}-${currentComponent}-${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        };
+
+        /**
+         * Switch to a different component
+         */
+        window.switchLogComponent = function(component) {
+            if (component === currentComponent) return;
+
+            // Clear current logs
+            clearLogs();
+            emptyState.querySelector('p').textContent = 'Switching component...';
+
+            // Send switch command via WebSocket
+            if (logSocket && logSocket.readyState === WebSocket.OPEN) {
+                logSocket.send(JSON.stringify({
+                    action: 'switch',
+                    component: component
+                }));
+                currentComponent = component;
+                updateStatus('connecting', `Switching to ${component}...`);
+            } else {
+                // Reconnect with new component
+                currentComponent = component;
+                connectLogWebSocket();
+            }
+        };
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(e) {
+            if (!panel.classList.contains('is-open')) return;
+
+            // Close on Escape (or clear search if search is active)
+            if (e.key === 'Escape') {
+                if (document.activeElement === searchInput && searchInput.value) {
+                    clearSearch();
+                } else {
+                    closeLogViewer();
+                }
+            }
+
+            // Focus search on Ctrl/Cmd + F
+            if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+                e.preventDefault();
+                searchInput.focus();
+                searchInput.select();
+            }
+        });
+    })();
+
+    /* ---------------------------------------------------------------
+     * Edit Section Modal - server-driven wizard via HTMX
+     *
+     * The submit-in-flight flag lives on ``window`` in
+     * /static/js/edit_modal.js so the shared close helpers can read it.
+     * --------------------------------------------------------------- */
+
+    function openEditModal(flowId, title, params) {
+        window.isEditSubmitting = false;
+
+        // Set title text (icon is already in the DOM via Jinja preprocessing)
+        document.getElementById('edit-section-title-text').textContent = title;
+
+        // Hide error
+        var errorEl = document.getElementById('edit-section-error');
+        errorEl.classList.add('is-hidden');
+
+        // Show loading state
+        var innerEl = document.getElementById('edit-section-inner');
+        innerEl.innerHTML =
+            '<div class="edit-section-content">' +
+                '<div class="edit-section-loading"><p>Laden...</p></div>' +
+            '</div>';
+
+        // Show modal
+        document.getElementById('edit-section-backdrop').classList.add('is-open');
+        document.getElementById('edit-section-modal').classList.add('is-open');
+        document.body.style.overflow = 'hidden';
+
+        // Fetch first step from server-driven modal wizard.
+        // When the caller needs to scope the flow to a specific deployment (e.g. backup),
+        // they pass that via `params` — no URL-hash sniffing, no global lookups.
+        let url = '/projects/{{ project.name }}/modal-wizard/' + flowId;
+        if (params && Object.keys(params).length > 0) {
+            url += '?' + new URLSearchParams(params).toString();
+        }
+        fetch(url, {
+            credentials: 'same-origin',
+        })
+        .then(function(response) {
+            if (!response.ok) throw new Error('Fout bij het laden van het formulier');
+            return response.text();
+        })
+        .then(function(html) {
+            innerEl.innerHTML = html;
+            // Activate HTMX on the new server-rendered content
+            if (typeof htmx !== 'undefined') htmx.process(innerEl);
+            // Initialize wizard widgets (service cards, KV editors) in the new content
+            if (typeof initWizardWidgets === 'function') initWizardWidgets(innerEl);
+        })
+        .catch(function(err) {
+            innerEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';
+        });
+    }
+
+    /* Service-contributed modal (RC-24): reuse the edit-modal shell and load the body
+       from the service's own fragment URL. The body drives itself via HTMX (start, poll
+       status, stop). One function for every such modal -- the database console and the
+       job runner used to have a hand-copied opener each. */
+    function openServiceModal(endpoint, title) {
+        document.getElementById('edit-section-title-text').textContent = title;
+        var errorEl = document.getElementById('edit-section-error');
+        if (errorEl) errorEl.classList.add('is-hidden');
+        var innerEl = document.getElementById('edit-section-inner');
+        innerEl.innerHTML =
+            '<div class="edit-section-content">' +
+                '<div class="edit-section-loading"><p>Laden...</p></div>' +
+            '</div>';
+        document.getElementById('edit-section-backdrop').classList.add('is-open');
+        document.getElementById('edit-section-modal').classList.add('is-open');
+        document.body.style.overflow = 'hidden';
+
+        fetch(endpoint, { credentials: 'same-origin' })
+        .then(function(response) {
+            if (!response.ok) throw new Error('Fout bij het laden van ' + title);
+            return response.text();
+        })
+        .then(function(html) {
+            innerEl.innerHTML = html;
+            if (typeof htmx !== 'undefined') htmx.process(innerEl);
+        })
+        .catch(function(err) {
+            innerEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';
+        });
+    }
+
+    /* Failure of a confirmed action (project-details/action-confirm.html.j2, which marks
+       itself with data-confirm-action). A successful POST answers with the shared task
+       progress fragment and htmx swaps it into the dialog, so success needs nothing here;
+       only a refusal or an error has no fragment to show, and is reported inside the
+       modal itself -- window.confirm/window.alert are gone. */
+    document.addEventListener('htmx:afterRequest', function(evt) {
+        var trigger = evt.detail.elt;
+        if (!trigger || !trigger.closest || !trigger.closest('[data-confirm-action]')) return;
+        var status = evt.detail.xhr ? evt.detail.xhr.status : 0;
+        if (status >= 200 && status < 300) return;
+        var errorEl = document.getElementById('confirm-action-error');
+        if (!errorEl) return;
+        errorEl.textContent = status ? 'Actie mislukt (' + status + ')' : 'Actie mislukt';
+        errorEl.classList.remove('is-hidden');
+    });
+
+    /* closeEditModal / closeEditModalAndReload / handleEditBackdropClick, the global
+       ``isEditSubmitting`` flag, the htmx hook that raises it while a progress view is
+       in the modal, and the Escape handler that respects it all live in
+       /static/js/edit_modal.js. They belong to the shared modal, not to this page:
+       every page that opens it gets the same rule, without wiring it up again. */
+
+    // Initialize KV editors after settle (DOM fully ready, attributes processed)
+    document.addEventListener('htmx:afterSettle', function(evt) {
+        if (typeof initKvEditors === 'function') initKvEditors(evt.detail.target);
+    });
+
+    /**
+     * Copy value to clipboard
+     */
+    function copyToClipboard(valueSelector, event, containerSelector) {
+        var container = event.target.closest(containerSelector);
+        if (!container) return;
+        var codeEl = container.querySelector(valueSelector);
+        if (!codeEl) return;
+
+        navigator.clipboard.writeText(codeEl.textContent.trim()).then(function() {
+            var btn = event.target.closest('.copy-btn');
+            if (btn) {
+                btn.setAttribute('label', 'Gekopieerd!');
+                btn.classList.add('is-copied');
+                setTimeout(function() {
+                    btn.setAttribute('label', 'Kopieer');
+                    btn.classList.remove('is-copied');
+                }, 2000);
+            }
+        });
+    }
+
+    // Restore tab and deployment state from URL hash on page load
+    (function() {
+        var hash = location.hash.replace('#', '');
+        if (hash.startsWith('deployments')) {
+            switchTab('deployments');
+            var parts = hash.split('/');
+            if (parts.length > 1) {
+                switchDeployment(parts[1]);
+            }
+        } else if (hash === 'taken') {
+            switchTab('taken');
+        }
+    })();
+</script>
+{% endblock %}
+
+{% block additional_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation"></script>
+<script>
+    /**
+     * Convert Unix timestamps to local time labels (HH:MM format)
+     */
+    function timestampsToLocalLabels(timestamps) {
+        return timestamps.map(ts => {
+            const date = new Date(ts * 1000);  // Convert seconds to milliseconds
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+        });
+    }
+
+    /**
+     * Initialize all line charts for metrics with limit annotations
+     */
+    function initMetricsCharts() {
+        document.querySelectorAll('.metrics-chart').forEach(canvas => {
+            const timestamps = JSON.parse(canvas.dataset.timestamps || '[]');
+            const labels = timestampsToLocalLabels(timestamps);
+            const values = JSON.parse(canvas.dataset.values || '[]');
+            const color = canvas.dataset.color || '#39870c';
+            const limitStr = canvas.dataset.limit;
+            const limit = (limitStr && limitStr !== 'null' && limitStr !== 'None') ? parseFloat(limitStr) : null;
+            const requestStr = canvas.dataset.request;
+            const request = (requestStr && requestStr !== 'null' && requestStr !== 'None') ? parseFloat(requestStr) : null;
+
+            // Parse warning and critical thresholds for PVC storage charts
+            const warningStr = canvas.dataset.warning;
+            const criticalStr = canvas.dataset.critical;
+            const warning = (warningStr && warningStr !== 'null' && warningStr !== 'None') ? parseFloat(warningStr) : null;
+            const critical = (criticalStr && criticalStr !== 'null' && criticalStr !== 'None') ? parseFloat(criticalStr) : null;
+            const isPvcChart = canvas.classList.contains('pvc-storage-chart');
+
+            if (timestamps.length === 0 || values.length === 0) {
+                // Draw "no data" message
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#999';
+                ctx.font = '12px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('No data available', canvas.width / 2, canvas.height / 2);
+                return;
+            }
+
+            // Build annotation config for limit line
+            const annotations = {};
+
+            // For PVC storage charts, add warning and critical threshold lines
+            if (isPvcChart) {
+                if (warning !== null) {
+                    annotations.warningLine = {
+                        type: 'line',
+                        yMin: warning,
+                        yMax: warning,
+                        borderColor: '#e17000',
+                        borderWidth: 2,
+                        borderDash: [4, 4],
+                        label: {
+                            display: true,
+                            content: '80%',
+                            position: 'start',
+                            backgroundColor: '#e17000',
+                            color: '#fff',
+                            font: { size: 9 }
+                        }
+                    };
+                }
+                if (critical !== null) {
+                    annotations.criticalLine = {
+                        type: 'line',
+                        yMin: critical,
+                        yMax: critical,
+                        borderColor: '#d52b1e',
+                        borderWidth: 2,
+                        borderDash: [4, 4],
+                        label: {
+                            display: true,
+                            content: '90%',
+                            position: 'start',
+                            backgroundColor: '#d52b1e',
+                            color: '#fff',
+                            font: { size: 9 }
+                        }
+                    };
+                }
+                if (limit !== null) {
+                    annotations.capacityLine = {
+                        type: 'line',
+                        yMin: limit,
+                        yMax: limit,
+                        borderColor: '#154273',
+                        borderWidth: 2,
+                        borderDash: [6, 4],
+                        label: {
+                            display: true,
+                            content: 'Capacity',
+                            position: 'end',
+                            backgroundColor: '#154273',
+                            color: '#fff',
+                            font: { size: 9 }
+                        }
+                    };
+                }
+            } else {
+                if (limit !== null) {
+                    annotations.limitLine = {
+                        type: 'line',
+                        yMin: limit,
+                        yMax: limit,
+                        borderColor: '#d52b1e',
+                        borderWidth: 2,
+                        borderDash: [6, 4],
+                        label: {
+                            display: true,
+                            content: 'Limit',
+                            position: 'end',
+                            backgroundColor: '#d52b1e',
+                            color: '#fff',
+                            font: { size: 10 }
+                        }
+                    };
+                }
+                // Show the request line only when it differs from the limit
+                // (the tuner adjusts requests, so request often sits below limit)
+                if (request !== null && request !== limit) {
+                    annotations.requestLine = {
+                        type: 'line',
+                        yMin: request,
+                        yMax: request,
+                        borderColor: '#007bc7',
+                        borderWidth: 2,
+                        borderDash: [3, 3],
+                        label: {
+                            display: true,
+                            content: 'Request',
+                            position: 'start',
+                            backgroundColor: '#007bc7',
+                            color: '#fff',
+                            font: { size: 10 }
+                        }
+                    };
+                }
+            }
+
+            // Calculate y-axis max to include limit/request if present
+            const maxValue = Math.max(...values);
+            const refMax = Math.max(limit || 0, request || 0);
+            const yMax = refMax ? Math.max(maxValue * 1.1, refMax * 1.1) : maxValue * 1.1;
+
+            new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: values,
+                        borderColor: color,
+                        backgroundColor: color + '20',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 2,
+                        pointHoverRadius: 4,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.parsed.y.toFixed(isPvcChart ? 2 : 1);
+                                    if (isPvcChart) {
+                                        label += ' GB';
+                                    }
+                                    if (limit) {
+                                        const pct = ((context.parsed.y / limit) * 100).toFixed(0);
+                                        label += ` (${pct}% of ${isPvcChart ? 'capacity' : 'limit'})`;
+                                    }
+                                    return label;
+                                }
+                            }
+                        },
+                        annotation: {
+                            annotations: annotations
+                        }
+                    },
+                    scales: {
+                        x: {
+                            display: true,
+                            grid: {
+                                display: false
+                            },
+                            ticks: {
+                                font: {
+                                    size: 10
+                                },
+                                maxRotation: 0
+                            }
+                        },
+                        y: {
+                            display: true,
+                            beginAtZero: true,
+                            max: yMax,
+                            grid: {
+                                color: '#e5e5e5'
+                            },
+                            ticks: {
+                                font: {
+                                    size: 10
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    // Initialize charts when DOM is loaded
+    document.addEventListener('DOMContentLoaded', initMetricsCharts);
+</script>
+{% endblock %}

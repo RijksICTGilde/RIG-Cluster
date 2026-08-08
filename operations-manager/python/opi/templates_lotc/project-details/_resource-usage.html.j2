@@ -1,0 +1,55 @@
+{# Compact project-wide CPU and memory totals, filled by the lazy loader in
+   section-resource-usage.html.j2. Deliberately smaller than the dashboard's gauge
+   version: two thin bars, one line each, no canvas. #}
+{% macro cores(v) %}{% if v < 1 %}{{ (v * 1000) | round | int }}m{% else %}{{ '%.1f' | format(v) }}{% endif %}{% endmacro %}
+{% macro gib(v) %}{% if (v / 1073741824) < 0.1 %}{{ (v / 1048576) | round | int }} MiB{% else %}{{ '%.1f' | format(v / 1073741824) }} GiB{% endif %}{% endmacro %}
+
+{% if usage_error %}
+<p class="rvo-text--sm rvo-text--subtle">
+    <c-icon icon="info" size="sm" color="grijs-500"/>
+    Resourcegebruik niet beschikbaar: {{ usage_error }}
+</p>
+{% elif usage %}
+<c-layout-flow gap="sm">
+    <c-layout-flow row="true" gap="md" align-items="center" justify-content="space-between">
+        <span class="rvo-text--sm rvo-text--subtle">
+            {{ usage.deployments }} deployment(s), {{ usage.pods }} pod(s) op dit cluster
+        </span>
+    </c-layout-flow>
+
+    {# CPU #}
+    <div>
+        <c-layout-flow row="true" gap="sm" align-items="center" justify-content="space-between">
+            <span class="rvo-text--sm"><c-icon icon="server" size="sm" color="donkerblauw"/> CPU</span>
+            <span class="rvo-text--sm rvo-text--subtle">
+                <strong>{{ cores(usage.cpu_used) }}</strong>{% if usage.cpu_limit > 0 %} / {{ cores(usage.cpu_limit) }} cores ({{ usage.cpu_pct }}%){% else %} cores{% endif %}
+            </span>
+        </c-layout-flow>
+        {% if usage.cpu_limit > 0 %}
+        <div class="usage-bar">
+            <div class="usage-bar__fill usage-bar__fill--cpu" style="width: {{ usage.cpu_pct }}%"></div>
+        </div>
+        {% endif %}
+    </div>
+
+    {# Memory (working set = actually in use) #}
+    <div>
+        <c-layout-flow row="true" gap="sm" align-items="center" justify-content="space-between">
+            <span class="rvo-text--sm"><c-icon icon="database" size="sm" color="groen"/> Geheugen (in gebruik)</span>
+            <span class="rvo-text--sm rvo-text--subtle">
+                <strong>{{ gib(usage.mem_used) }}</strong>{% if usage.mem_limit > 0 %} / {{ gib(usage.mem_limit) }} ({{ usage.mem_pct }}%){% endif %}
+            </span>
+        </c-layout-flow>
+        {% if usage.mem_limit > 0 %}
+        <div class="usage-bar">
+            <div class="usage-bar__fill usage-bar__fill--memory" style="width: {{ usage.mem_pct }}%"></div>
+        </div>
+        {% endif %}
+    </div>
+</c-layout-flow>
+{% else %}
+<p class="rvo-text--sm rvo-text--subtle">
+    <c-icon icon="info" size="sm" color="grijs-500"/>
+    Geen resourcegegevens voor dit project
+</p>
+{% endif %}

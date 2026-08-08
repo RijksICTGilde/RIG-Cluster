@@ -1,0 +1,28 @@
+{# Danger Zone Section #}
+{% if user_role in ["admin", "owner"] %}
+<c-card outline="true" padding="xl" background-color="wit">
+    <c-layout-flow gap="lg">
+        <c-heading type="h2" class="section-heading section-heading--danger"><c-icon icon="waarschuwing" size="xl" color="rood"/>Danger zone</c-heading>
+
+        <c-card padding="md" background-color="grijs-050" outline="true">
+            <div class="danger-action-row">
+                <div>
+                    <strong>Project herverwerken</strong>
+                    <p class="rvo-text--subtle rvo-text--sm text-flush">Herverwerkt het projectbestand vanuit Git. Detecteert wijzigingen en synchroniseert deployments, services en manifesten. Verwijderde deployments worden opgeruimd, nieuwe worden aangemaakt.</p>
+                </div>
+                <c-button size="sm" label="Project herverwerken" show-icon="before" icon="refresh" @/>
+            </div>
+        </c-card>
+
+        <c-card padding="md" background-color="grijs-050" outline="true">
+            <div class="danger-action-row">
+                <div>
+                    <strong class="danger-action-title">Project "{{ project.display_name or project.name }}" verwijderen</strong>
+                    <p class="rvo-text--subtle rvo-text--sm text-flush">Verwijdert het volledige project inclusief alle deployments, services en configuratie. Dit kan niet ongedaan worden gemaakt.</p>
+                </div>
+                <c-button size="sm" label="Project verwijderen" show-icon="before" icon="verwijderen" @/>
+            </div>
+        </c-card>
+    </c-layout-flow>
+</c-card>
+{% endif %}

@@ -1,0 +1,56 @@
+<c-page title="Project Aanmaken - ROOS" lang="nl">
+    <c-layout-flow gap="xl">
+        <!-- Header -->
+        <c-card background-color="hemelblauw" padding="lg">
+            <h1 class="utrecht-heading-1 roos-form-header__title">Project Aanmaken - ROOS</h1>
+            <p class="roos-form-header__subtitle">Simple ROOS component demonstration</p>
+        </c-card>
+
+        <!-- Form -->
+        <c-card outline="true" padding="lg">
+            <form method="POST" action="/api/projects/create-basic" autocomplete="off">
+                <c-layout-flow gap="lg">
+
+                    <!-- Project Name -->
+                    <div>
+                        <label for="project-name" class="utrecht-form-label">Projectnaam</label>
+                        <c-text-input name="project-name" type="text" placeholder="mijn-project" required="true"/>
+                    </div>
+
+                    <!-- Cluster Selection -->
+                    <div>
+                        <label for="cluster" class="utrecht-form-label">Doelcluster</label>
+                        <c-select name="cluster" required="true"/>
+                    </div>
+
+                    <!-- Image URL -->
+                    <div>
+                        <label for="image-url" class="utrecht-form-label">Container Image</label>
+                        <c-text-input name="image-url" type="text" placeholder="nginxdemos/hello" required="true"/>
+                    </div>
+
+                    <!-- Some checkboxes -->
+                    <c-layout-flow gap="md">
+                        <c-checkbox name="expose-web" label="Publiceren op web"/>
+
+                        <c-checkbox name="sso-rijk" label="SSO-Rijk integratie"/>
+                    </c-layout-flow>
+
+                    <!-- Form Actions -->
+                    <c-layout-flow gap="md" row="true">
+                        <c-button type="submit" label="Project Aanmaken"/>
+                        <c-button type="button" label="Annuleren"/>
+                    </c-layout-flow>
+
+                </c-layout-flow>
+            </form>
+        </c-card>
+
+        <!-- Simple info card -->
+        <c-card title="Information" outline="true" padding="md">
+            <p>This is a simple demonstration of ROOS components in the operations-manager.</p>
+        </c-card>
+
+    </c-layout-flow>
+
+</c-page>

@@ -1,0 +1,15 @@
+{# Het formulier om op maand en project te filteren. #}
+<c-card outline="true" padding="md" background-color="wit">
+    <form method="get" action="/admin/usage">
+        <c-layout-flow gap="md">
+            <c-grid columns="four">
+                <c-select-field id="namespace" name="namespace" label="Namespace" value="{{ selected_namespace }}"/>
+                <c-text-input-field id="price" name="price" label="Prijs per GiB (&euro;)" type="number" value="{{ price_per_gib }}"/>
+                <c-text-input-field id="year" name="year" label="Jaar" type="number" value="{{ year }}"/>
+                <div class="usage-filter-row">
+                    <c-button label="Toepassen" size="md" type="submit"/>
+                </div>
+            </c-grid>
+        </c-layout-flow>
+    </form>
+</c-card>

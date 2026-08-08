@@ -1,0 +1,19 @@
+{# Het venster waarin een aanvraag wordt beoordeeld. #}
+{# De achtergrond gaat langs de gedeelde afhandeling, niet rechtstreeks langs sluiten:
+   die negeert de klik zolang er een taak loopt en waarschuwt bij niet-opgeslagen werk. #}
+<div id="approval-backdrop" class="edit-section-backdrop" onclick="handleEditBackdropClick()"></div>
+<div id="approval-modal" class="edit-section-modal" role="dialog" aria-modal="true">
+    <div class="edit-section-header">
+        <c-heading type="h2">
+            <c-icon icon="vinkje" size="lg" color="donkerblauw"/>
+            <span id="approval-title-text">Domeingoedkeuring</span>
+        </c-heading>
+        <c-button size="sm" label="Sluiten" show-icon="before" icon="kruis" class="edit-modal-close-btn" @/>
+    </div>
+    <div id="approval-error" class="edit-section-error is-hidden"></div>
+    <div id="edit-section-inner">
+        <div class="edit-section-content">
+            <div class="edit-section-loading"><p>Laden...</p></div>
+        </div>
+    </div>
+</div>
