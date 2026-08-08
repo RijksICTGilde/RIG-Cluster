@@ -112,7 +112,9 @@
            ArgoCD-aanroep. #}
         {% if argocd_available and project.deployments %}
             {% call panel("Deployment Status", "arrow-up-arrow-down", info_text="ArgoCD synchronisatie en health status per deployment") %}
-                <c-auto-grid min="260px" gap="md">
+                {# Het id staat er zoals op de bestaande pagina: wie vanaf elders naar
+                   #deployment-status linkt komt hier uit. #}
+                <c-auto-grid id="deployment-status" min="260px" gap="md">
                     {% for deployment in project.deployments | sort(attribute='name') %}
                         <div id="deployment-status-{{ deployment.name }}"
                              hx-get="/projects/details/{{ project.name }}/argocd-status/{{ deployment.name }}?prefix={{ deployment.name }}"
@@ -339,6 +341,20 @@
                                         {% for svc in component.services %}
                                             {% set definition = svc | service_definition %}
                                             <c-chip>{{ definition.name if definition else svc | service_name }}</c-chip>
+                                            {# Het vraagteken opent de uitleg van die dienst, net als op de
+                                               bestaande pagina. Dezelfde functie uit static/js/wizard.js en
+                                               dezelfde dialoog; die staat in bg/_modals.html.j2, onderaan deze
+                                               pagina. stopPropagation staat erbij omdat de kaart eronder zelf
+                                               ook een klik afhandelt. #}
+                                            {% if definition and definition.help_template %}
+                                                {% set uitleg_js %}event.stopPropagation(); openServiceHelp('{{ definition.help_template | e }}'){% endset %}
+                                                <c-icon-button
+                                                    icon="question-circle"
+                                                    accessible-label="Uitleg over {{ definition.name }}"
+                                                    variant="neutral-transparent"
+                                                    size="sm"
+                                                    :attrs="{'onclick': uitleg_js}" />
+                                            {% endif %}
                                         {% endfor %}
                                     </c-cluster>
                                 {% endif %}
