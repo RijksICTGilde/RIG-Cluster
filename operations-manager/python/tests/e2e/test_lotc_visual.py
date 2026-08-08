@@ -112,9 +112,12 @@ def test_lotc_shell_screenshot(app_server: str, page: Page) -> None:
     # een animatie en wijkt het beeld af zonder dat er iets veranderd is.
     page.screenshot(path=f"{SCREENSHOT_DIR}/shell-lotc-nldd.png", full_page=True, animations="disabled")
 
+    # Het roos-origineel ernaast, maar bewust NIET full_page: die pagina is duizenden
+    # pixels lang en levert een bestand van megabytes op. De vergelijking gaat over de
+    # schil - header, navigatie, de bovenkant van de inhoud - en die past in het beeld.
     page.goto(f"{app_server}/architecture")
     page.wait_for_load_state("networkidle")
-    page.screenshot(path=f"{SCREENSHOT_DIR}/shell-roos.png", full_page=True, animations="disabled")
+    page.screenshot(path=f"{SCREENSHOT_DIR}/shell-roos.png", animations="disabled")
 
 
 # Omgezette pagina's die zonder paginadata compleet renderen. Ze zijn met opzet
