@@ -1,0 +1,84 @@
+{# De tabel met projecten. #}
+<c-card outline="true" padding="none" background-color="wit">
+    <div class="table-container">
+        <table class="projects-table">
+            <thead>
+                <tr>
+                    <th class="col-project">Project</th>
+                    <th class="col-environment">Omgeving</th>
+                    <th class="col-team">Team</th>
+                    <th class="col-services">Services</th>
+                    <th class="col-actions">Acties</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if projects %}
+                    {% for project in projects %}
+                    <tr class="project-row">
+                        <td class="col-project">
+                            <div class="project-info">
+                                <div class="project-name">
+                                    <a href="/projects/details/{{ project.name }}" class="project-name-link">{{ project.display_name or project.name }}</a>
+                                </div>
+                                <div class="project-id">{{ project.name }}</div>
+                                <div class="project-description">{{ project.description or "Geen beschrijving beschikbaar" }}</div>
+                            </div>
+                        </td>
+                        <td class="col-environment">
+                            {% if project.clusters %}
+                                {% set cluster = project.clusters[0] %}
+                                {% if cluster == 'production' %}
+                                    <span class="environment-badge env-production">Production</span>
+                                {% elif cluster == 'staging' %}
+                                    <span class="environment-badge env-staging">Staging</span>
+                                {% else %}
+                                    <span class="environment-badge env-development">{{ cluster|title }}</span>
+                                {% endif %}
+                            {% else %}
+                                <span class="environment-badge env-development">Unknown</span>
+                            {% endif %}
+                        </td>
+                        <td class="col-team">
+                            <div class="team-info">
+                                <div class="team-count">{{ project.users|length }} {% if project.users|length == 1 %}lid{% else %}leden{% endif %}</div>
+                                <div class="team-avatars">
+                                    {% for user in (project.users | sort(attribute='email'))[:3] %}
+                                        <span class="avatar">{{ user.email[:2]|upper }}</span>
+                                    {% endfor %}
+                                    {% if project.users|length > 3 %}
+                                        <span class="avatar">+{{ project.users|length - 3 }}</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </td>
+                        <td class="col-services">
+                            <div class="services-list">
+                                {% for service in project.services[:4] %}
+                                    <span class="service-tag">{{ service|service_name|replace('-', ' ')|title }}</span>
+                                {% endfor %}
+                                {% if project.services|length > 4 %}
+                                    <span class="service-tag">+{{ project.services|length - 4 }}</span>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td class="col-actions">
+                            <div class="actions">
+                                <a href="/projects/details/{{ project.name }}" class="details-link">Details</a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr class="project-row">
+                        <td colspan="5" class="table-empty-cell">
+                            <div class="empty-state-text">
+                                <c-icon icon="info" size="lg"/>
+                                <div>Geen projecten gevonden waar u toegang toe heeft.</div>
+                            </div>
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</c-card>

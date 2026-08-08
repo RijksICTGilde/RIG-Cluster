@@ -1,0 +1,96 @@
+{#
+  Invite Landing Page Template
+
+  Displays the invite landing page with authentication options (SSO and/or local registration).
+#}
+
+{% set title_nl = "Uitnodiging - " ~ display_name %}
+{% set title_en = "Invitation - " ~ display_name %}
+{% set page_title = title_nl if language == 'nl' else title_en %}
+
+{# Pre-compute language-specific strings #}
+{% set heading_text = "Kies hoe u wilt inloggen" if language == 'nl' else "Choose how to sign in" %}
+{% set intro_text = "Selecteer een van de onderstaande opties om toegang te krijgen tot " ~ display_name ~ "." if language == 'nl' else "Select one of the options below to get access to " ~ display_name ~ "." %}
+{% set sso_heading = "Single Sign-On" %}
+{% set sso_description = "Login met uw organisatie account." if language == 'nl' else "Sign in with your organization account." %}
+{% set local_heading = "Lokaal Account" if language == 'nl' else "Local Account" %}
+{% set local_description = "Maak een nieuw account aan met een e-mailadres en wachtwoord." if language == 'nl' else "Create a new account with an email address and password." %}
+{% set local_button_label = "Account aanmaken" if language == 'nl' else "Create Account" %}
+{% set register_url = "/invite/" ~ invite_key ~ "/register" %}
+{% set help_heading = "Hulp nodig?" if language == 'nl' else "Need help?" %}
+{% set no_auth_heading = "Geen authenticatiemethoden beschikbaar" if language == 'nl' else "No authentication methods available" %}
+{% set no_auth_content = "Er zijn geen authenticatiemethoden geconfigureerd voor deze uitnodiging." if language == 'nl' else "No authentication methods are configured for this invitation." %}
+
+<c-page title="{{ page_title }}" lang="{{ language }}" body-class="rvo-theme rvo-responsive">
+    {# Header #}
+    <c-header text="RIG Cluster" subtitle="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie" link="/"/>
+
+    <c-layout-flow gap="xl" size="lg">
+        <main>
+            <c-layout-flow gap="xl">
+                {# Auth Options Card #}
+                <c-card outline="true" padding="lg">
+                    <c-layout-flow gap="lg">
+                        <c-heading type="h1" label="{{ display_name }}"/>
+
+                        {% if message %}
+                        <p class="rvo-paragraph rvo-paragraph--lg">{{ message }}</p>
+                        {% endif %}
+
+                        <c-heading type="h2" label="{{ heading_text }}"/>
+
+                        <p class="rvo-paragraph">{{ intro_text }}</p>
+
+                        <c-layout-flow gap="md">
+                            {% if allow_sso and identity_providers %}
+                            <c-card outline="true" padding="md">
+                                <c-layout-flow gap="sm">
+                                    <c-heading type="h3" label="{{ sso_heading }}"/>
+                                    <p class="rvo-paragraph">{{ sso_description }}</p>
+                                    <c-layout-flow gap="sm">
+                                        {% for idp in identity_providers %}
+                                        {% set idp_url = "/invite/" ~ invite_key ~ "/idp/" ~ idp.alias %}
+                                        {% set idp_label = ("Inloggen met " if language == 'nl' else "Sign in with ") ~ idp.displayName %}
+                                        <c-button label="{{ idp_label }}" show-icon="after" icon="pijl-naar-rechts" @/>
+                                        {% endfor %}
+                                    </c-layout-flow>
+                                </c-layout-flow>
+                            </c-card>
+                            {% endif %}
+
+                            {% if allow_local %}
+                            <c-card outline="true" padding="md">
+                                <c-layout-flow gap="sm">
+                                    <c-heading type="h3" label="{{ local_heading }}"/>
+                                    <p class="rvo-paragraph">{{ local_description }}</p>
+                                    <c-button label="{{ local_button_label }}" show-icon="after" icon="pijl-naar-rechts" @/>
+                                </c-layout-flow>
+                            </c-card>
+                            {% endif %}
+
+                            {% if not allow_sso and not allow_local %}
+                            <c-alert heading="{{ no_auth_heading }}"/>
+                            {% endif %}
+                        </c-layout-flow>
+                    </c-layout-flow>
+                </c-card>
+
+                {# Help Section #}
+                {% if contact_email %}
+                <c-card outline="true" padding="md">
+                    <c-layout-flow gap="sm">
+                        <c-heading type="h3" label="{{ help_heading }}"/>
+                        <p class="rvo-paragraph">
+                            {% if language == 'nl' %}
+                            Neem contact op via <a href="mailto:{{ contact_email }}">{{ contact_email }}</a> als u problemen ondervindt.
+                            {% else %}
+                            Contact <a href="mailto:{{ contact_email }}">{{ contact_email }}</a> if you experience any issues.
+                            {% endif %}
+                        </p>
+                    </c-layout-flow>
+                </c-card>
+                {% endif %}
+            </c-layout-flow>
+        </main>
+    </c-layout-flow>
+</c-page>

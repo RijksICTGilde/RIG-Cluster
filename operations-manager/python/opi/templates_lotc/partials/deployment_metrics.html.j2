@@ -1,0 +1,277 @@
+{# Fragment: deployment metrics for a single deployment (no extends) #}
+{% set active_duration = duration | default(60) %}
+{% set durations = [(60, "1 uur"), (120, "2 uur"), (360, "6 uur"), (720, "12 uur"), (1440, "24 uur")] %}
+<div class="metrics-toolbar">
+    {% for value, label in durations %}
+    <c-button size="xs">{{ label }}</c-button>
+    {% endfor %}
+</div>
+{% if deployment.components %}
+<div class="metrics-grid">
+    {% for component in deployment.components | sort(attribute='reference') %}
+    {% set component_name = component.reference %}
+    {% set m = metrics.get(component_name, {}) %}
+    <c-card class="metrics-component-card" padding="lg" background-color="grijs-050" outline="true">
+        <c-layout-flow gap="md">
+            <div class="metrics-component-header">
+                <c-icon icon="puzzel" size="md" color="donkerblauw"/>
+                <c-heading type="h4" label="{{ component_name }}"/>
+            </div>
+
+            <div class="charts-container">
+                {# CPU Chart #}
+                <div class="chart-item">
+                    <div class="chart-label">CPU (millicores){% if m.cpu_limit %} - Limit: {{ m.cpu_limit|int }}m{% endif %}</div>
+                    <div class="chart-wrapper">
+                        <canvas id="cpu-chart-{{ deployment.name }}-{{ component_name }}"
+                                class="metrics-chart"
+                                data-timestamps='{{ m.cpu_timestamps | default([]) | tojson }}'
+                                data-values='{{ m.cpu | default([]) | map(attribute="value") | list | tojson }}'
+                                data-limit='{{ m.cpu_limit | default("null") }}'
+                                data-color="#39870c"></canvas>
+                    </div>
+                    {% if m.cpu %}
+                    <div class="chart-current">Current: {{ "%.1f"|format(m.cpu[-1].value) }}m{% if m.cpu_limit %} / {{ m.cpu_limit|int }}m ({{ "%.0f"|format(m.cpu[-1].value / m.cpu_limit * 100) }}%){% endif %}</div>
+                    {% else %}
+                    <div class="chart-current no-data">No data</div>
+                    {% endif %}
+                </div>
+
+                {# Memory Chart #}
+                <div class="chart-item">
+                    <div class="chart-label">Memory (MB){% if m.memory_limit %} - Limit: {{ m.memory_limit|int }} MB{% endif %}</div>
+                    <div class="chart-wrapper">
+                        <canvas id="mem-chart-{{ deployment.name }}-{{ component_name }}"
+                                class="metrics-chart"
+                                data-timestamps='{{ m.memory_timestamps | default([]) | tojson }}'
+                                data-values='{{ m.memory | default([]) | map(attribute="value") | list | tojson }}'
+                                data-limit='{{ m.memory_limit | default("null") }}'
+                                data-request='{{ m.memory_request | default("null") }}'
+                                data-color="#007bc7"></canvas>
+                    </div>
+                    {% if m.memory %}
+                    <div class="chart-current">Current: {{ "%.0f"|format(m.memory[-1].value) }} MB{% if m.memory_limit %} / {{ m.memory_limit|int }} MB ({{ "%.0f"|format(m.memory[-1].value / m.memory_limit * 100) }}%){% endif %}{% if m.memory_request and m.memory_request != m.memory_limit %} - Request: {{ m.memory_request|int }} MB{% endif %}</div>
+                    {% else %}
+                    <div class="chart-current no-data">No data</div>
+                    {% endif %}
+                </div>
+
+                {# Network In Chart #}
+                <div class="chart-item">
+                    <div class="chart-label">Network In (KB/s)</div>
+                    <div class="chart-wrapper">
+                        <canvas id="net-in-chart-{{ deployment.name }}-{{ component_name }}"
+                                class="metrics-chart"
+                                data-timestamps='{{ m.network_timestamps | default([]) | tojson }}'
+                                data-values='{{ m.network_in | default([]) | map(attribute="value") | list | tojson }}'
+                                data-limit='null'
+                                data-color="#154273"></canvas>
+                    </div>
+                    {% if m.network_in %}
+                    <div class="chart-current">Current: {{ "%.2f"|format(m.network_in[-1].value) }} KB/s</div>
+                    {% else %}
+                    <div class="chart-current no-data">No data</div>
+                    {% endif %}
+                </div>
+
+                {# Network Out Chart #}
+                <div class="chart-item">
+                    <div class="chart-label">Network Out (KB/s)</div>
+                    <div class="chart-wrapper">
+                        <canvas id="net-out-chart-{{ deployment.name }}-{{ component_name }}"
+                                class="metrics-chart"
+                                data-timestamps='{{ m.network_timestamps | default([]) | tojson }}'
+                                data-values='{{ m.network_out | default([]) | map(attribute="value") | list | tojson }}'
+                                data-limit='null'
+                                data-color="#8fcae7"></canvas>
+                    </div>
+                    {% if m.network_out %}
+                    <div class="chart-current">Current: {{ "%.2f"|format(m.network_out[-1].value) }} KB/s</div>
+                    {% else %}
+                    <div class="chart-current no-data">No data</div>
+                    {% endif %}
+                </div>
+
+                {# Disk Read Chart #}
+                <div class="chart-item">
+                    <div class="chart-label">Disk Read (KB/s)</div>
+                    <div class="chart-wrapper">
+                        <canvas id="disk-read-chart-{{ deployment.name }}-{{ component_name }}"
+                                class="metrics-chart"
+                                data-timestamps='{{ m.disk_timestamps | default([]) | tojson }}'
+                                data-values='{{ m.disk_read | default([]) | map(attribute="value") | list | tojson }}'
+                                data-limit='null'
+                                data-color="#673327"></canvas>
+                    </div>
+                    {% if m.disk_read %}
+                    <div class="chart-current">Current: {{ "%.2f"|format(m.disk_read[-1].value) }} KB/s</div>
+                    {% else %}
+                    <div class="chart-current no-data">No data</div>
+                    {% endif %}
+                </div>
+
+                {# Disk Write Chart #}
+                <div class="chart-item">
+                    <div class="chart-label">Disk Write (KB/s)</div>
+                    <div class="chart-wrapper">
+                        <canvas id="disk-write-chart-{{ deployment.name }}-{{ component_name }}"
+                                class="metrics-chart"
+                                data-timestamps='{{ m.disk_timestamps | default([]) | tojson }}'
+                                data-values='{{ m.disk_write | default([]) | map(attribute="value") | list | tojson }}'
+                                data-limit='null'
+                                data-color="#c9742f"></canvas>
+                    </div>
+                    {% if m.disk_write %}
+                    <div class="chart-current">Current: {{ "%.2f"|format(m.disk_write[-1].value) }} KB/s</div>
+                    {% else %}
+                    <div class="chart-current no-data">No data</div>
+                    {% endif %}
+                </div>
+            </div>
+        </c-layout-flow>
+    </c-card>
+    {% endfor %}
+</div>
+{% elif discovered_workloads %}
+{# Helm-based deployment: show discovered workloads #}
+<div class="metrics-grid">
+    {% for workload in discovered_workloads %}
+    {% set workload_name = workload.name %}
+    {% set m = metrics.get(workload_name, {}) %}
+    <c-card class="metrics-component-card" padding="lg" background-color="grijs-050" outline="true">
+        <c-layout-flow gap="md">
+            <div class="metrics-component-header">
+                <c-icon icon="applicatie" size="md" color="donkerblauw"/>
+                <c-heading type="h4" label="{{ workload_name }}"/>
+                <span class="pod-count-chip">{{ workload.pod_count }} pod{% if workload.pod_count != 1 %}s{% endif %}</span>
+            </div>
+
+            <div class="charts-container">
+                {# CPU Chart #}
+                <div class="chart-item">
+                    <div class="chart-label">CPU (millicores){% if m.cpu_limit %} - Limit: {{ m.cpu_limit|int }}m{% endif %}</div>
+                    <div class="chart-wrapper">
+                        <canvas id="cpu-chart-{{ deployment.name }}-{{ workload_name | replace('.', '-') | replace(':', '-') }}"
+                                class="metrics-chart"
+                                data-timestamps='{{ m.cpu_timestamps | default([]) | tojson }}'
+                                data-values='{{ m.cpu | default([]) | map(attribute="value") | list | tojson }}'
+                                data-limit='{{ m.cpu_limit | default("null") }}'
+                                data-color="#39870c"></canvas>
+                    </div>
+                    {% if m.cpu %}
+                    <div class="chart-current">Current: {{ "%.1f"|format(m.cpu[-1].value) }}m{% if m.cpu_limit %} / {{ m.cpu_limit|int }}m ({{ "%.0f"|format(m.cpu[-1].value / m.cpu_limit * 100) }}%){% endif %}</div>
+                    {% else %}
+                    <div class="chart-current no-data">No data</div>
+                    {% endif %}
+                </div>
+
+                {# Memory Chart #}
+                <div class="chart-item">
+                    <div class="chart-label">Memory (MB){% if m.memory_limit %} - Limit: {{ m.memory_limit|int }} MB{% endif %}</div>
+                    <div class="chart-wrapper">
+                        <canvas id="mem-chart-{{ deployment.name }}-{{ workload_name | replace('.', '-') | replace(':', '-') }}"
+                                class="metrics-chart"
+                                data-timestamps='{{ m.memory_timestamps | default([]) | tojson }}'
+                                data-values='{{ m.memory | default([]) | map(attribute="value") | list | tojson }}'
+                                data-limit='{{ m.memory_limit | default("null") }}'
+                                data-color="#007bc7"></canvas>
+                    </div>
+                    {% if m.memory %}
+                    <div class="chart-current">Current: {{ "%.0f"|format(m.memory[-1].value) }} MB{% if m.memory_limit %} / {{ m.memory_limit|int }} MB ({{ "%.0f"|format(m.memory[-1].value / m.memory_limit * 100) }}%){% endif %}</div>
+                    {% else %}
+                    <div class="chart-current no-data">No data</div>
+                    {% endif %}
+                </div>
+
+                {# Network In Chart #}
+                <div class="chart-item">
+                    <div class="chart-label">Network In (KB/s)</div>
+                    <div class="chart-wrapper">
+                        <canvas id="net-in-chart-{{ deployment.name }}-{{ workload_name | replace('.', '-') | replace(':', '-') }}"
+                                class="metrics-chart"
+                                data-timestamps='{{ m.network_timestamps | default([]) | tojson }}'
+                                data-values='{{ m.network_in | default([]) | map(attribute="value") | list | tojson }}'
+                                data-limit='null'
+                                data-color="#154273"></canvas>
+                    </div>
+                    {% if m.network_in %}
+                    <div class="chart-current">Current: {{ "%.2f"|format(m.network_in[-1].value) }} KB/s</div>
+                    {% else %}
+                    <div class="chart-current no-data">No data</div>
+                    {% endif %}
+                </div>
+
+                {# Network Out Chart #}
+                <div class="chart-item">
+                    <div class="chart-label">Network Out (KB/s)</div>
+                    <div class="chart-wrapper">
+                        <canvas id="net-out-chart-{{ deployment.name }}-{{ workload_name | replace('.', '-') | replace(':', '-') }}"
+                                class="metrics-chart"
+                                data-timestamps='{{ m.network_timestamps | default([]) | tojson }}'
+                                data-values='{{ m.network_out | default([]) | map(attribute="value") | list | tojson }}'
+                                data-limit='null'
+                                data-color="#01689b"></canvas>
+                    </div>
+                    {% if m.network_out %}
+                    <div class="chart-current">Current: {{ "%.2f"|format(m.network_out[-1].value) }} KB/s</div>
+                    {% else %}
+                    <div class="chart-current no-data">No data</div>
+                    {% endif %}
+                </div>
+            </div>
+        </c-layout-flow>
+    </c-card>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <c-icon icon="info" size="lg" color="grijs-050"/>
+    <p class="rvo-text--md">Geen components in deze deployment</p>
+</div>
+{% endif %}
+
+{# PVC Storage Section #}
+{% if pvc_storage %}
+<div class="pvc-storage-section">
+    <div class="pvc-storage-header">
+        <c-heading type="h4"><c-icon icon="database" size="md" color="donkerblauw"/>Persistent Storage</c-heading>
+        <p class="rvo-text--subtle rvo-text--sm">PVC disk usage</p>
+    </div>
+    <div class="metrics-grid">
+        {% for pvc_name, pvc_data in pvc_storage.items() %}
+        <c-card class="metrics-component-card" padding="lg" background-color="grijs-050" outline="true">
+            <c-layout-flow gap="md">
+                <div class="metrics-component-header">
+                    <c-icon icon="database" size="md" color="donkerblauw"/>
+                    <c-heading type="h5" label="{{ pvc_name }}"/>
+                </div>
+                <div class="chart-item">
+                    <div class="chart-label">Storage Usage (GB) - Capacity: {{ "%.1f"|format(pvc_data.capacity_gb) }} GB</div>
+                    <div class="chart-wrapper">
+                        <canvas id="pvc-chart-{{ deployment.name }}-{{ pvc_name | replace('.', '-') | replace(':', '-') }}"
+                                class="metrics-chart pvc-storage-chart"
+                                data-timestamps='{{ pvc_data["timestamps"] | default([]) | tojson }}'
+                                data-values='{{ pvc_data["values"] | default([]) | map(attribute="value") | list | tojson }}'
+                                data-limit='{{ pvc_data.capacity_gb | default("null") }}'
+                                data-warning='{{ pvc_data.warning_threshold_gb | default("null") }}'
+                                data-critical='{{ pvc_data.critical_threshold_gb | default("null") }}'
+                                data-color="#6a1b9a"></canvas>
+                    </div>
+                    {% if pvc_data["values"] %}
+                    {% set current_used = pvc_data["values"][-1].value %}
+                    {% set usage_percent = (current_used / pvc_data.capacity_gb * 100) if pvc_data.capacity_gb else 0 %}
+                    <div class="chart-current {% if usage_percent >= 90 %}critical{% elif usage_percent >= 80 %}warning{% endif %}">
+                        Current: {{ "%.2f"|format(current_used) }} GB / {{ "%.1f"|format(pvc_data.capacity_gb) }} GB ({{ "%.0f"|format(usage_percent) }}%)
+                    </div>
+                    {% else %}
+                    <div class="chart-current no-data">No PVC data</div>
+                    {% endif %}
+                </div>
+            </c-layout-flow>
+        </c-card>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<script>if (typeof initMetricsCharts === 'function') initMetricsCharts();</script>

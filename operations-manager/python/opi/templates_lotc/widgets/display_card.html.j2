@@ -1,0 +1,22 @@
+{% from "widgets/_macros.html.j2" import helper_text %}
+{% set icon = field.attributes.get('icon', 'sleutel') %}
+{% set icon_color = field.attributes.get('icon_color', 'hemelblauw') %}
+{% set val = field.value|string if field.value else '' %}
+<c-card padding="md" outline>
+    <c-layout-flow gap="xs">
+        <div class="rvo-display-field__header">
+            <c-icon icon="{{ icon|e }}" size="md" color="{{ icon_color|e }}"/>
+            <span class="utrecht-form-label rvo-form-field__label-text">{{ field.label|e }}</span>
+        </div>
+        {% if val %}
+            {% if val in ['Versleuteld opgeslagen', 'Geconfigureerd'] %}
+        <c-tag type="success"/>
+            {% elif val == 'Niet geconfigureerd' %}
+        <c-tag type="warning"/>
+            {% else %}
+        <span class="rvo-text--sm rvo-text--subtle">{{ val|e }}</span>
+            {% endif %}
+        {% endif %}
+        {{ helper_text(field) }}
+    </c-layout-flow>
+</c-card>

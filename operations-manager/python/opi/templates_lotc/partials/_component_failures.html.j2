@@ -1,0 +1,25 @@
+{#
+  Shared component failure rendering.
+
+  Renders user-friendly c-alert blocks for each component failure.
+  Messages come from the event_interpreter (Python), not from this template.
+
+  Required context:
+    - component_failures: list of dicts with keys:
+        component, deployment, failure_type, title, suggestion
+  Optional:
+    - project_name: str (for log viewer link)
+    - error: str (fallback error message when no component_failures)
+#}
+{% if component_failures is defined and component_failures %}
+{% for failure in component_failures %}
+<c-alert heading="{{ failure.title }}">
+    <c-paragraph/>
+    {% if failure.failure_type != "image_pull" and project_name is defined and project_name and failure.deployment %}
+    <c-link href="#" @/>
+    {% endif %}
+</c-alert>
+{% endfor %}
+{% else %}
+<p class="edit-progress-step edit-progress-error">Verwerking mislukt: {{ error or "Onbekende fout" }}</p>
+{% endif %}

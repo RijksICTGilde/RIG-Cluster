@@ -1,0 +1,13 @@
+{# De organisatiegegevens die van de gebruiker bekend zijn. #}
+{% if user and user.organization %}
+    <c-heading type="h3" label="Je Organisatie Informatie"/>
+    <c-list>
+        <c-list-item><strong>Organisatie:</strong> {{ user.organization.name }}</c-list-item>
+        {% if user.organization.number %}
+            <c-list-item><strong>Organisatie Nummer:</strong> {{ user.organization.number }}</c-list-item>
+        {% endif %}
+        {% if user.organization.role %}
+            <c-list-item><strong>Rol:</strong> {{ user.organization.role }}</c-list-item>
+        {% endif %}
+    </c-list>
+{% endif %}

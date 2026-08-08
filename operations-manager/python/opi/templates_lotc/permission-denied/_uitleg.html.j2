@@ -1,0 +1,30 @@
+{# Waarom er geen toegang is, en wat eraan te doen. #}
+{% if reason == 'email-not-verified' %}
+<c-heading type="h1" label="Geen Toegang: e-mailadres niet geverifieerd"/>
+
+<c-heading type="h2" label="Wat betekent dit?"/>
+
+<p>Je bent ingelogd, maar je e-mailadres is niet geverifieerd. Om
+    veiligheidsredenen krijg je alleen toegang met een geverifieerd
+    e-mailadres.</p>
+
+<c-heading type="h3" label="Hoe krijg ik toegang?"/>
+
+<c-list>
+    <c-list-item>Zorg dat je e-mailadres geverifieerd is</c-list-item>
+    <c-list-item>Denk je dat dit onterecht is? Neem contact op met de <c-link href="mailto:robbert.uittenbroek@rijksoverheid.nl"/></c-list-item>
+</c-list>
+{% else %}
+<c-heading type="h1" label="Geen Toegang tot ZAD"/>
+
+<c-heading type="h2" label="Wat betekent dit?"/>
+
+<p>Je bent succesvol ingelogd, maar je e-mailadres staat niet op de lijst van
+    geautoriseerde gebruikers voor dit platform.</p>
+
+<c-heading type="h3" label="Hoe krijg ik toegang?"/>
+
+<c-list>
+    <c-list-item>Neem contact op met een collega die al een project in ZAD heeft of de <c-link href="mailto:robbert.uittenbroek@rijksoverheid.nl" show-icon="before" icon="info"/></c-list-item>
+</c-list>
+{% endif %}

@@ -1,0 +1,40 @@
+{#
+  Volledige voortgangspagina na het aanmaken van een project.
+
+  De pagina is niet meer dan een omhulsel: de voortgang zelf komt van de server via
+  het gedeelde ``partials/task_progress_fragment.html.j2``, precies zoals in de modals.
+  Het fragment vervangt zichzelf elke twee seconden via htmx; deze pagina bevat daarom
+  geen JavaScript en maakt geen datums op in de browser.
+
+  Verwachte context: alles wat het fragment nodig heeft (task_id, progress_url,
+  progress, current_step, status, tasks, on_complete, on_complete_label) plus
+  project_name voor de kop.
+#}
+{% extends "base_lotc.html.j2" %}
+
+{% block title %}Project Voortgang - {{ project_name }}{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ static_url('css/modal.css') }}">
+<c-page>
+    <c-layout-flow gap="xl">
+        {# Header #}
+        <c-layout-flow gap="md">
+            <c-heading type="h1" label="Project Voortgang"/>
+            <p>Project: <strong>{{ project_name }}</strong></p>
+        </c-layout-flow>
+
+        {# De voortgang zelf: server-gerenderd, htmx ververst hem #}
+        <c-card outline="true" padding="md">
+            <c-layout-flow gap="md">
+                <c-heading type="h3" label="Voortgang"/>
+                {% include "partials/task_progress_fragment.html.j2" %}
+            </c-layout-flow>
+        </c-card>
+
+        <div>
+            <c-button label="Terug naar Dashboard" size="md" show-icon="before" icon="home" @/>
+        </div>
+    </c-layout-flow>
+</c-page>
+{% endblock %}

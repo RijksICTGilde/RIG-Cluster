@@ -1,0 +1,2 @@
+{% from "widgets/_macros.html.j2" import html_attributes %}
+<c-button type="submit" size="{{ submit.size|e }}" label="{{ submit.label|e }}" {% if submit.icon %}show-icon="{{ submit.icon_position|e }}" icon="{{ submit.icon|e }}"{% endif %} {% if submit.css_class %}class="{{ submit.css_class|e }}"{% endif %} {{ html_attributes(submit.attributes) }}/>

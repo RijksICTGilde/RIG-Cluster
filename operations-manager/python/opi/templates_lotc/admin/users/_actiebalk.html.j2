@@ -1,0 +1,9 @@
+{# De knop om een gebruiker toe te voegen. #}
+<div class="page-header-row">
+    <div>
+        <c-button label="Gebruiker toevoegen" size="md" show-icon="before" icon="plus" @/>
+    </div>
+    <div>
+        <span class="rvo-text--sm rvo-text--subtle">Totaal: <strong>{{ users|length }} gebruiker{% if users|length != 1 %}s{% endif %}</strong></span>
+    </div>
+</div>

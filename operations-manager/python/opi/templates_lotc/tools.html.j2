@@ -1,0 +1,167 @@
+<c-page title="ZAD Tools" lang="nl">
+    {# additionalCss verwacht een URL en maakt er een link-element van in de head, na de
+       ROOS-stylesheets: dezelfde plek in de cascade als het style-blok dat halverwege deze
+       pagina stond. Deze pagina bouwt zijn eigen c-page en erft base.html.j2 dus niet.
+
+       Let op bij het aanpassen van dit commentaar: schrijf hier nooit een letterlijke
+       style- of script-openingstag. De componentverwerking leest de bron als HTML voordat
+       Jinja het commentaar weghaalt, en zo'n tag begint een blok ruwe tekst dat pas bij de
+       sluittag eindigt. Staat die sluittag er niet, dan is de rest van het bestand tekst,
+       wordt c-page niet meer herkend en komt de pagina onverwerkt in de uitvoer. #}
+    <c-header text="AGE Encryption Tools" subtitle="Encrypt and decrypt text using AGE public and private keys" link="/"/>
+    <c-menu type="bar" size="md"/>
+
+    <c-layout-flow gap="md" size="lg">
+        <c-card padding="md">
+            <c-heading type="h2">Configuration</c-heading>
+
+            <form id="age-tool-form" autocomplete="off">
+                <c-layout-flow gap="md">
+                    <c-text-input-field id="public_key" name="public_key" label="AGE Public Key" placeholder="age1..."/>
+
+                    <c-text-input-field id="private_key" name="private_key" label="AGE Private Key" placeholder="AGE-SECRET-KEY-1..."/>
+
+                    <div class="rvo-form-field">
+                        <label class="rvo-label" for="operation">Operation</label>
+                        <select id="operation" name="operation" class="rvo-select">
+                            <option value="encrypt">Encrypt</option>
+                            <option value="decrypt">Decrypt</option>
+                        </select>
+                        <p class="rvo-text--sm rvo-text--subtle">Select whether to encrypt or decrypt</p>
+                    </div>
+
+                    <c-textarea-field id="input_text" name="input_text" label="Input Text" rows="8" placeholder="Enter text here..."/>
+
+                    <c-button label="Process" @/>
+                </c-layout-flow>
+            </form>
+        </c-card>
+
+        <c-card padding="md" class="is-hidden">
+            <c-heading type="h2">Output</c-heading>
+            <div id="error-message" class="rvo-alert rvo-alert--error tool-error-message is-hidden">
+                <span id="error-text"></span>
+            </div>
+            <div id="success-message">
+                <p class="rvo-text--sm tool-result-label">Result (click to copy):</p>
+                <pre id="output-text" class="output-code-block"></pre>
+            </div>
+        </c-card>
+    </c-layout-flow>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.getElementById('age-tool-form');
+            const submitBtn = document.getElementById('submit-btn');
+            const outputCard = document.getElementById('output-card');
+            const outputText = document.getElementById('output-text');
+            const errorMessage = document.getElementById('error-message');
+            const errorText = document.getElementById('error-text');
+            const successMessage = document.getElementById('success-message');
+            const operationSelect = document.querySelector('[name="operation"]');
+
+            function cleanupText(text) {
+                let lines = text.split('\n').map(line => line.trim());
+                while (lines.length > 0 && lines[0] === '') { lines.shift(); }
+                while (lines.length > 0 && lines[lines.length - 1] === '') { lines.pop(); }
+                return lines.join('\n');
+            }
+
+            const publicKeyInput = document.querySelector('[name="public_key"]');
+            const privateKeyInput = document.querySelector('[name="private_key"]');
+            const inputTextArea = document.querySelector('[name="input_text"]');
+
+            publicKeyInput.addEventListener('paste', function(e) {
+                e.preventDefault();
+                const pastedText = (e.clipboardData || window.clipboardData).getData('text');
+                publicKeyInput.value = cleanupText(pastedText);
+            });
+
+            privateKeyInput.addEventListener('paste', function(e) {
+                e.preventDefault();
+                const pastedText = (e.clipboardData || window.clipboardData).getData('text');
+                privateKeyInput.value = cleanupText(pastedText);
+            });
+
+            inputTextArea.addEventListener('paste', function(e) {
+                e.preventDefault();
+                const pastedText = (e.clipboardData || window.clipboardData).getData('text');
+                inputTextArea.value = cleanupText(pastedText);
+            });
+
+            publicKeyInput.addEventListener('blur', function() {
+                if (publicKeyInput.value) { publicKeyInput.value = cleanupText(publicKeyInput.value); }
+            });
+
+            privateKeyInput.addEventListener('blur', function() {
+                if (privateKeyInput.value) { privateKeyInput.value = cleanupText(privateKeyInput.value); }
+            });
+
+            inputTextArea.addEventListener('blur', function() {
+                if (inputTextArea.value) { inputTextArea.value = cleanupText(inputTextArea.value); }
+            });
+
+            window.handleSubmit = async function(e) {
+                e.preventDefault();
+
+                const operation = operationSelect.value;
+                const publicKey = publicKeyInput.value.trim();
+                const privateKey = privateKeyInput.value.trim();
+                const inputText = inputTextArea.value.trim();
+
+                if (!inputText) { showError('Input text is required'); return; }
+                if (operation === 'encrypt' && !publicKey) { showError('Public key is required for encryption'); return; }
+                if (operation === 'decrypt' && !privateKey) { showError('Private key is required for decryption'); return; }
+
+                const formData = new FormData();
+                formData.append('input_text', inputText);
+                if (operation === 'encrypt') { formData.append('public_key', publicKey); }
+                else { formData.append('private_key', privateKey); }
+
+                const btnLabel = submitBtn.querySelector('.rvo-button__label') || submitBtn;
+                btnLabel.textContent = 'Processing...';
+                submitBtn.disabled = true;
+
+                try {
+                    const endpoint = operation === 'encrypt' ? '/tools/encrypt' : '/tools/decrypt';
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        body: formData,
+                        headers: { 'X-CSRF-Token': "{{ request.state.csrf_token }}" },
+                    });
+                    const data = await response.json();
+                    if (data.success) { showSuccess(data.result); }
+                    else { showError(data.error || 'Operation failed'); }
+                } catch (error) {
+                    showError('Network error: ' + error.message);
+                } finally {
+                    btnLabel.textContent = 'Process';
+                    submitBtn.disabled = false;
+                }
+            };
+
+            outputText.addEventListener('click', function() {
+                const text = outputText.textContent;
+                navigator.clipboard.writeText(text).then(function() {
+                    const originalText = outputText.textContent;
+                    outputText.textContent = 'Copied to clipboard!';
+                    setTimeout(function() { outputText.textContent = originalText; }, 1000);
+                });
+            });
+
+            function showSuccess(result) {
+                outputCard.classList.remove('is-hidden');
+                errorMessage.classList.add('is-hidden');
+                successMessage.classList.remove('is-hidden');
+                outputText.textContent = result;
+            }
+
+            function showError(message) {
+                outputCard.classList.remove('is-hidden');
+                successMessage.classList.add('is-hidden');
+                errorMessage.classList.remove('is-hidden');
+                errorText.textContent = message;
+            }
+        });
+    </script>
+</c-page>

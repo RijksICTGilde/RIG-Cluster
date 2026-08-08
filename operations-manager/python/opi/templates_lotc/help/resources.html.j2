@@ -1,0 +1,59 @@
+<c-heading type="h2">
+    <c-icon icon="weegschaal" size="xl" color="hemelblauw"/>
+    Resource-aanbevelingen
+</c-heading>
+
+<c-paragraph>
+    ZAD bewaakt het geheugengebruik van je applicatie en doet aanbevelingen wanneer
+    er structureel minder geheugen wordt gebruikt dan is toegewezen. Zo houden we
+    het platform gezond en beschikbaar voor iedereen.
+</c-paragraph>
+
+<c-heading type="h3">Hoe wordt dit berekend?</c-heading>
+
+<c-layout-flow gap="md">
+    <c-paragraph>
+        We kijken naar het werkelijke geheugengebruik van de afgelopen
+        <c-b>24 uur</c-b> via Prometheus. Op basis van het
+        <c-b>maximale</c-b> en <c-b>gemiddelde</c-b>
+        gebruik berekenen we een aanbeveling:
+    </c-paragraph>
+
+    <c-list>
+        <c-list-item>Het limiet wordt bepaald op basis van het piekgebruik
+            plus een buffer van 25%</c-list-item>
+        <c-list-item>De request wordt bepaald op basis van het gemiddelde
+            gebruik plus dezelfde buffer</c-list-item>
+        <c-list-item>Bij applicaties die meer dan 100Mi gebruiken wordt er nog 25Mi extra
+            ruimte gereserveerd voor piekbelasting</c-list-item>
+        <c-list-item>Een aanbeveling wordt alleen getoond als het verschil meer dan 20% is
+            ten opzichte van de huidige instelling</c-list-item>
+    </c-list>
+</c-layout-flow>
+
+<c-heading type="h3">Wat als mijn applicatie crasht (OOM Kill)?</c-heading>
+
+<c-layout-flow gap="md">
+    <c-paragraph>
+        Als je applicatie is gestopt vanwege geheugengebrek (OOM Kill), dan wordt de
+        limiet automatisch verhoogd naar minimaal 1,5x de vorige waarde.
+        Het systeem onthoudt dit en zal nooit een aanbeveling doen die lager is dan
+        wat na een OOM Kill is ingesteld.
+    </c-paragraph>
+</c-layout-flow>
+
+<c-heading type="h3">Fair use</c-heading>
+
+<c-layout-flow gap="md">
+    <c-paragraph>
+        Het platform is een gedeelde voorziening. Geheugen dat aan jouw applicatie
+        is toegewezen, is niet beschikbaar voor anderen, ook als het niet daadwerkelijk
+        wordt gebruikt. Vraag daarom alleen aan wat je nodig hebt.
+    </c-paragraph>
+
+    <c-paragraph>
+        <c-b>Vuistregel:</c-b> gebruik wat je nodig hebt, niet wat je denkt
+        nodig te hebben. De aanbevelingen zijn gebaseerd op je werkelijke gebruik en
+        bevatten al voldoende buffer voor normale pieken.
+    </c-paragraph>
+</c-layout-flow>
