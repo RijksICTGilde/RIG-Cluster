@@ -29,9 +29,28 @@ e2e (sandbox)         42 tests   <- alleen deze draaien tegen het cluster
 
 Die 42 sandbox-gemarkeerde tests zijn de kern van deze run; de andere twee sets zijn de nulmeting die moet blijven kloppen.
 
-**3. De 47 productiebestanden als steekproef.** Op 6 augustus haalden er 22 de rauwe schemavalidatie niet en 0 na migratie (`features/project-schema-versions.md`). Diezelfde meting hoort opnieuw gedaan te worden tegen deze versie, want de schemapoort van RC-44 is nieuw en de vraag is of hij hetzelfde oordeelt. Een bestand dat vandaag geweigerd wordt terwijl het gisteren verwerkt werd, is een regressie die je alleen zo vindt.
+**3. De projectbestanden staan al klaar, geconverteerd.** Je hoeft ze niet zelf te maken en dat kan ook niet: er is de productiesleutel voor nodig om de geheimen te hersleutelen.
 
-**4. De sandbox-sleutel, niet de productiesleutel.** `security/sandbox-key.txt`, en de context `kind-rig-sandbox`. Dat laatste is sinds `31d9a8cd` vastgepind in de taken, maar controleer het, want het is een keer misgegaan.
+```
+git.claude.robbertuittenbroek.nl/robbert/rig-cluster-projects-sandbox
+  projects/   47 bestanden
+```
+
+Wat er al mee gedaan is: cluster naar `sandboxed-local`, domeinen naar `sandbox.rijksapp.dev`, repository-urls naar de sandbox-Forgejo, een sandbox-beheerder, elk component op de probe-image (`ghcr.io/minbzk/base-images/e2e-allservices:latest`) met het probe-resourceprofiel (32Mi/10m, limiet 128Mi/200m), de tuner-historie eruit, de waarden van user-env-vars vervangen door een placeholder (26 projecten), en de AGE-geheimen hersleuteld naar de publieke sleutel van het sandbox-cluster op de server.
+
+**Controleer voor je begint dat je de goede set hebt.** De eerste poging draaide op een foute set:
+
+```bash
+grep -rhE "^ *image:" projects | sort | uniq -c | sort -rn | head -3
+```
+
+Vrijwel alles hoort de probe-image te zijn. Zie je daar een projectnaam of een productie-image staan, dan heb je de oude set. De hele weg staat in `docs/productiebestanden-naar-een-sandbox.md`.
+
+**Doe ze een voor een, niet in een batch.** Het is een kind-cluster: 47 tegelijk laten verwerken loopt vast op capaciteit en dan meet je de sandbox in plaats van de code. En bij een fout wil je weten welk project hem veroorzaakte.
+
+**4. De schemapoort op de ONGECONVERTEERDE originelen.** Op 6 augustus haalden er 22 de rauwe schemavalidatie niet en 0 na migratie (`features/project-schema-versions.md`). Diezelfde meting hoort opnieuw gedaan te worden tegen deze versie, want de schemapoort van RC-44 is nieuw en de vraag is of hij hetzelfde oordeelt. Een bestand dat vandaag geweigerd wordt terwijl het gisteren verwerkt werd, is een regressie die je alleen zo vindt.
+
+**5. De sandbox-sleutel, niet de productiesleutel.** `security/sandbox-key.txt`, en de context `kind-rig-sandbox`. Dat laatste is sinds `31d9a8cd` vastgepind in de taken, maar controleer het, want het is een keer misgegaan.
 
 ## Hoe de uitkomst gemeld moet worden
 
