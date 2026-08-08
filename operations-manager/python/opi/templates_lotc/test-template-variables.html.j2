@@ -12,7 +12,7 @@
     {% set project = {'name': 'test-project', 'display_name': 'Test Project'} %}
 
     <h2>The exact button from the issue:</h2>
-    <c-button label="Verwijderen" size="sm" show-icon="before" icon="verwijderen" @/>
+    {% set lotc_onclick_1 %}showDeleteConfirmation('{{ project.name }}', '{{ project.display_name or project.name }}'){% endset %}<c-button label="Verwijderen" size="sm" show-icon="before" icon="verwijderen"/>
 
     <p>Expected @click to resolve to: <code>showDeleteConfirmation('test-project', 'Test Project')</code></p>
     <p>Check browser inspector to see actual @click value</p>

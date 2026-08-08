@@ -49,7 +49,7 @@
                                 {# Form Actions #}
                                 <c-layout-flow gap="md" row="true">
                                     <c-button type="submit" :label="('Account Aanmaken') if (language == 'nl') else ('Create Account')"/>
-                                    <c-button type="button" :label="('Annuleren') if (language == 'nl') else ('Cancel')" @/>
+                                    {% set lotc_onclick_1 %}window.location.href='/invite/{{ invite_key }}'{% endset %}<c-button type="button" :label="('Annuleren') if (language == 'nl') else ('Cancel')"/>
                                 </c-layout-flow>
                             </c-layout-flow>
                         </form>

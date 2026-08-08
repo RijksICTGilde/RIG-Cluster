@@ -27,10 +27,10 @@
         <div class="wizard-step__header">
             <c-heading type="h2">
                 <c-icon icon="vinkje" size="md"/>
-                Controleer uw wijzigingen
+                Controleer je wijzigingen
             </c-heading>
             <p class="wizard-step__description">
-                Controleer de wijzigingen hieronder voordat u verdergaat.
+                Controleer de wijzigingen hieronder voordat je verdergaat.
             </p>
         </div>
 
@@ -93,7 +93,7 @@
     </c-layout-flow>
 
     <div class="wizard-step__actions rvo-layout-margin-vertical--xl">
-        <c-button label="Annuleren" @/>
+        {% set lotc_onclick_1 %}closeEditModal(){% endset %}<c-button label="Annuleren"/>
 
         <div class="wizard-step__actions-right">
             <c-button label="Vorige" show-icon="before" icon="delta-naar-links"/>

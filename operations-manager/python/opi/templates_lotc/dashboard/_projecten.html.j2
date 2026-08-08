@@ -2,7 +2,7 @@
 <c-layout-flow gap="lg">
     <div class="page-header-row">
         <c-heading type="h2" label="Mijn Projecten"/>
-        <c-button label="Nieuw Project" size="md" show-icon="before" icon="plus" @/>
+        {% set lotc_onclick_1 %}window.location.href='/projects/new'{% endset %}<c-button label="Nieuw Project" size="md" show-icon="before" icon="plus"/>
     </div>
 
     {% if projects %}

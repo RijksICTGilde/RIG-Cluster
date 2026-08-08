@@ -35,7 +35,7 @@
                             <span class="rvo-text--sm text-strong">Helm Values (Base)</span>
                             <span class="env-vars-count-badge">{{ helm_chart['helm-values']|length }} waarde{% if helm_chart['helm-values']|length != 1 %}n{% endif %}</span>
                         </div>
-                        <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) }}" value-type="json"/>
+                        <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) }}" value-type="json" content-width="lg"/>
                     </div>
                     {% endif %}
                 </c-layout-flow>

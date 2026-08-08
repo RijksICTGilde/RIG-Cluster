@@ -1,8 +1,8 @@
 {# Zoeken, filteren en de knop voor een nieuw project. #}
 <div class="page-header-row">
     <div class="page-header-actions">
-        <c-button label="Nieuw Project" size="md" show-icon="before" icon="plus" @/>
-        <c-button label="Vernieuwen" size="md" show-icon="before" icon="refresh" @/>
+        {% set lotc_onclick_1 %}window.location.href='/projects/new'{% endset %}<c-button label="Nieuw Project" size="md" show-icon="before" icon="plus"/>
+        {% set lotc_onclick_2 %}window.location.href='/projects?refresh=true'{% endset %}<c-button label="Vernieuwen" size="md" show-icon="before" icon="refresh"/>
     </div>
 
     <div class="filter-row">
