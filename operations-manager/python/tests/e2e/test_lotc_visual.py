@@ -115,3 +115,40 @@ def test_lotc_shell_screenshot(app_server: str, page: Page) -> None:
     page.goto(f"{app_server}/architecture")
     page.wait_for_load_state("networkidle")
     page.screenshot(path=f"{SCREENSHOT_DIR}/shell-roos.png", full_page=True, animations="disabled")
+
+
+# Omgezette pagina's die zonder paginadata compleet renderen. Ze zijn met opzet
+# verschillend van aard: een overzicht, een lijst met kaarten, een tabelpagina en een
+# wizardstap - zo dekt de reeks de vormen die in de applicatie terugkomen.
+PREVIEW_PAGES = [
+    "dashboard",
+    "projects-overview",
+    "services-overview",
+    "admin/users",
+    "wizard/wizard_start",
+]
+
+
+@pytest.mark.parametrize("slug", PREVIEW_PAGES)
+def test_converted_page_screenshot(app_server: str, page: Page, slug: str) -> None:
+    """Leg elke omgezette pagina vast en toets dat er niets onvertaald in staat.
+
+    De screenshot is om naar te kijken; de assertie is de harde helft. Een component
+    dat het thema niet implementeert rendert namelijk als een zichtbare placeholder in
+    plaats van als een fout, en dat is precies het soort ding dat je op een volle
+    pagina over het hoofd ziet.
+    """
+    page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
+    response = page.goto(f"{app_server}/lotc/pagina/{slug}")
+    assert response is not None
+    assert response.ok, f"{slug} gaf {response.status}"
+
+    _wait_for_nldd(page)
+    unimplemented = page.locator(".lotc-unimplemented")
+    assert unimplemented.count() == 0, (
+        f"{slug} bevat niet-geimplementeerde componenten: "
+        f"{unimplemented.evaluate_all('els => els.map(e => e.dataset.lotcComponent)')}"
+    )
+
+    name = slug.replace("/", "-")
+    page.screenshot(path=f"{SCREENSHOT_DIR}/pagina-{name}.png", full_page=True, animations="disabled")
