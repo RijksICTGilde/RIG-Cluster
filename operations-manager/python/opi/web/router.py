@@ -111,15 +111,19 @@ async def permission_denied(request: Request) -> HTMLResponse:
     user_email = user.get("email", "unknown") if user else "anonymous"
     logger.warning(f"Permission denied page accessed by: {user_email}")
 
-    # Render the permission denied template
-    templates = get_templates()
-    return templates.TemplateResponse(
-        "permission-denied.html.j2",
-        {
+    from opi.web.lotc_switch import render
+    from opi.web.navigation_lotc import get_navigation
+
+    return render(
+        request,
+        roos="permission-denied.html.j2",
+        lotc="bg/permission-denied.html.j2",
+        context={
             "request": request,
             "user": user,
             "reason": denied_reason,
             "menu_items": get_menu_items(user),  # Same menu as other pages
+            "navigation": get_navigation(user, current_path="/permission-denied"),
         },
     )
 
@@ -176,14 +180,20 @@ async def project_progress_page(request: Request, task_id: str):
         user = get_current_user(request)
         templates = get_templates()
 
+        from opi.web.lotc_switch import render
+        from opi.web.navigation_lotc import get_navigation
+
         if not task:
-            return templates.TemplateResponse(
-                "project-progress-done.html.j2",
-                {
+            return render(
+                request,
+                roos="project-progress-done.html.j2",
+                lotc="bg/project-progress-done.html.j2",
+                context={
                     "request": request,
                     "title": "Taak niet beschikbaar",
                     "menu_items": get_menu_items(user),
                     "task_id": task_id,
+                    "navigation": get_navigation(user, current_path="/projects"),
                 },
             )
 
@@ -197,7 +207,13 @@ async def project_progress_page(request: Request, task_id: str):
                 "menu_items": get_menu_items(user),
             }
         )
-        return templates.TemplateResponse("project-progress.html.j2", context)
+        context["navigation"] = get_navigation(user, current_path="/projects")
+        return render(
+            request,
+            roos="project-progress.html.j2",
+            lotc="bg/project-progress.html.j2",
+            context=context,
+        )
 
     except HTTPException:
         raise
@@ -226,7 +242,17 @@ async def project_progress_page_fragment(request: Request, task_id: str) -> HTML
 
     # Rendered once on purpose -- see render_progress_fragment for why a second pass
     # over the rendered HTML would execute task text as Jinja.
-    return HTMLResponse(content=render_progress_fragment(_progress_page_context(task, task_id)))
+    #
+    # Het fragment volgt dezelfde keuze als de pagina eromheen. Zonder dat zou de pagina
+    # in de nieuwe vormgeving staan en er na de eerste poll roos-markup in verschijnen.
+    from opi.web.lotc_switch import wants_lotc
+
+    context = _progress_page_context(task, task_id)
+    if wants_lotc(request):
+        from opi.core.templates_lotc import templates_lotc
+
+        return HTMLResponse(content=templates_lotc.env.get_template("bg/_task-progress.html.j2").render(context))
+    return HTMLResponse(content=render_progress_fragment(context))
 
 
 @web_router.get("/projects/roos", response_class=HTMLResponse)
@@ -2957,7 +2983,19 @@ async def about_platform(request: Request):
     try:
         templates = get_templates()
         user = get_current_user(request)
-        return templates.TemplateResponse("about.html.j2", {"request": request, "menu_items": get_menu_items(user)})
+        from opi.web.lotc_switch import render
+        from opi.web.navigation_lotc import get_navigation
+
+        return render(
+            request,
+            roos="about.html.j2",
+            lotc="bg/about.html.j2",
+            context={
+                "request": request,
+                "menu_items": get_menu_items(user),
+                "navigation": get_navigation(user, current_path="/about"),
+            },
+        )
     except Exception as e:
         logger.error(f"Error serving about page: {e!s}")
         raise HTTPException(status_code=500, detail=str(e))

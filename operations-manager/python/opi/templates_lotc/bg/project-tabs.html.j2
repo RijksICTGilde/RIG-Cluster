@@ -28,6 +28,7 @@
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head, info, explainer %}
+{% from "bg/_section-deployments.html.j2" import deployment_panel %}
 
 {% block page_title %}{{ project.display_name }} - {{ tabs[active_tab].label }}{% endblock %}
 
@@ -112,23 +113,31 @@
         {% endcall %}
 
     {% elif active_tab == 'deployments' %}
-        {% call panel("Deployments", "arrow-up-arrow-down", info_text="Een deployment brengt je componenten naar een cluster, met een eigen namespace en een eigen image per component.") %}
-            <c-stack gap="sm">
-                {% for deployment in project.deployments %}
-                    <c-layer
-                        icon="arrow-up-arrow-down"
-                        title="{{ deployment.name }}"
-                        count="{{ deployment.components | length }} componenten"
-                        sub="{{ deployment.cluster }} / {{ deployment.namespace }}">
-                        {% for entry in deployment.components %}
-                            <c-chip>{{ entry.reference }}</c-chip>
-                        {% endfor %}
-                    </c-layer>
-                {% else %}
-                    <c-paragraph>Dit project heeft nog geen deployments.</c-paragraph>
-                {% endfor %}
-            </c-stack>
-        {% endcall %}
+        {# Per deployment het paneel uit _section-deployments, en daaronder de
+           ArgoCD-statuskaart die zichzelf inlaadt. Dat inladen is LETTERLIJK overgenomen
+           van project-details/section-deployment-argocd.html.j2: dezelfde URL, dezelfde
+           prefix (dep-<naam>, die de id's van de foutenlijst uniek houdt zodat twee
+           deployments elkaar niet overschrijven), hx-trigger="intersect once" en
+           hx-swap="innerHTML". Intersect once en niet load: er kunnen tien deployments
+           staan en elke kaart kost een ArgoCD-aanroep, dus ze worden opgehaald zodra je
+           ze in beeld krijgt en daarna niet meer.
+
+           De statuskaart komt alleen als ArgoCD er is; de bestaande pagina zet er om
+           dezelfde reden argocd_available omheen. #}
+        <c-stack gap="md">
+            {% for deployment in project.deployments | sort(attribute='name') %}
+                {{ deployment_panel(deployment, project, approval_notices | default({}), user_role | default('')) }}
+                {% if argocd_available | default(false) %}
+                    <div hx-get="/projects/details/{{ project.name }}/argocd-status/{{ deployment.name }}?prefix=dep-{{ deployment.name }}"
+                         hx-trigger="intersect once"
+                         hx-swap="innerHTML">
+                        {% include "bg/_argocd-status-skeleton.html.j2" %}
+                    </div>
+                {% endif %}
+            {% else %}
+                <c-alert type="info" heading="Geen deployments geconfigureerd" />
+            {% endfor %}
+        </c-stack>
 
     {% elif active_tab == 'metrics' %}
         {% if project.name is defined and usage is not defined %}
@@ -171,11 +180,10 @@
         {% endif %}
 
     {% elif active_tab == 'taken' %}
-        {% call panel("Taken", "timer", info_text="Werk dat op de achtergrond loopt: uitrollen, back-ups en herstelacties. Hier zie je of het gelukt is.") %}
-            <c-paragraph>
-                Taken worden tijdens het gebruik bijgewerkt en zijn nog niet aangesloten op
-                deze weergave.
-            </c-paragraph>
-        {% endcall %}
+        {# Zelfde aanpak als de bestaande pagina: het fragment haalt zichzelf op en ververst
+           zichzelf elke vijf seconden zolang deze tab open staat. #}
+        <div hx-get="/projects/{{ project.name }}/tasks" hx-trigger="load" hx-swap="innerHTML">
+            <c-paragraph>Taken worden opgehaald...</c-paragraph>
+        </div>
     {% endif %}
 {% endblock %}
