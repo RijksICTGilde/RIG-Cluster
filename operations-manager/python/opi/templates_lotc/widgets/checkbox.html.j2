@@ -1,26 +1,31 @@
 {#
   Aanvinkvakje voor de LOTC-bouwlijn.
 
-  c-checkbox-field draagt het label, de hulptekst en de foutmelding als een geheel, en
-  bedraadt ze aan het invoerveld. In de roos-versie stonden die er los omheen, met een
-  eigen rvo-form-group eromheen; die valt hier dus weg.
+  Bewust c-checkbox en niet c-checkbox-field. Dat laatste hoort het veld met label,
+  hulptekst en foutmelding als geheel te leveren, maar rendert onder NLDD een leeg
+  <div> zonder invoerelement - er is geen manier om de aangevinkte stand mee te geven,
+  want checked staat niet in zijn attributen. Gemeld bij het LOTC-project. Het
+  primitieve c-checkbox draagt label EN checked en rendert wel goed, dus dat is hier de
+  juiste keuze; hulptekst en foutmelding staan er los omheen, net als in de roos-versie.
 
   Het verborgen veld blijft: een uitgeschakeld aanvinkvakje verstuurt zijn waarde niet,
   en zonder dit veld zou opslaan de aangevinkte stand wissen.
 #}
-{% from "widgets/_macros.html.j2" import combined_helper, render_examples %}
-<c-checkbox-field
-    id="{{ field.path|e }}"
-    name="{{ field.path|e }}"
-    label="{{ field.label|e }}"
-    :help="combined_helper(field)|trim or none"
-    :error="(field.errors[0] if field.errors else none)"
-    :attrs="dict(field_attrs(field), **{
-        'checked': 'checked' if field.value else none,
-        'disabled': 'disabled' if field.readonly else none,
-    })"
-/>
-{% if field.readonly and field.value %}
-<input type="hidden" name="{{ field.path|e }}" value="true" />
-{% endif %}
-{{ render_examples(field) }}
+{% from "widgets/_macros.html.j2" import combined_helper, render_examples, render_errors %}
+<c-layout-flow gap="sm">
+    <c-checkbox
+        name="{{ field.path|e }}"
+        label="{{ field.label|e }}"
+        :checked="field.value"
+        :disabled="field.readonly"
+        :attrs="field_attrs(field)"
+    />
+    {% if field.readonly and field.value %}
+        <input type="hidden" name="{{ field.path|e }}" value="true" />
+    {% endif %}
+    {% if combined_helper(field)|trim %}
+        <c-paragraph size="sm">{{ combined_helper(field)|trim }}</c-paragraph>
+    {% endif %}
+    {{ render_examples(field) }}
+    {{ render_errors(field.errors) }}
+</c-layout-flow>
