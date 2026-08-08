@@ -3,11 +3,11 @@
     PostgreSQL Database
 </c-heading>
 
-<c-p>
+<c-paragraph>
     Een PostgreSQL-database voor je project. Standaard krijg je een eigen database op de
     gedeelde databaseserver van het platform, inclusief gebruiker, wachtwoord en backups.
     Je hoeft zelf niets te installeren of te beheren.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Wanneer gebruik je dit?</c-heading>
 
@@ -19,7 +19,7 @@
 
 <c-heading type="h3">Gedeeld of een eigen cluster?</c-heading>
 
-<c-p>
+<c-paragraph>
     In de configuratie kies je bij
     <c-strong>scope</c-strong>
     tussen
@@ -31,12 +31,12 @@
     van andere projecten. Dat is hetzelfde resultaat als de aparte service
     <c-strong>Namespace PostgreSQL Database</c-strong>.
     In alle andere gevallen is gedeeld eenvoudiger en zuiniger.
-</c-p>
+</c-paragraph>
 
 <c-heading type="h3">Wat wordt er ingesteld?</c-heading>
 
 <c-layout-flow gap="md">
-    <c-p>
+    <c-paragraph>
         Er worden een database, een gebruiker en een wachtwoord aangemaakt. Je component
         krijgt onder meer
         <c-strong>DATABASE_SERVER_HOST</c-strong>,
@@ -48,11 +48,11 @@
         Er is ook een meelezende gebruiker
         (<c-strong>DATABASE_SERVER_USER_RO</c-strong>)
         voor rapportages of analyses.
-    </c-p>
+    </c-paragraph>
 
-    <c-p>
+    <c-paragraph>
         Je kunt extra schema's binnen dezelfde database laten aanmaken. Bij het
         verwijderen van deze service wordt de database gemarkeerd voor uitgestelde
         verwijdering, zodat gegevens niet meteen weg zijn.
-    </c-p>
+    </c-paragraph>
 </c-layout-flow>
