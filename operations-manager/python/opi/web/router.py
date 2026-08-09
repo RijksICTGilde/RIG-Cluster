@@ -2974,6 +2974,35 @@ async def projects_overview(request: Request):
         raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
 
 
+@web_router.get("/account", response_class=HTMLResponse)
+@requires_sso
+async def account_pagina(request: Request):
+    """Je eigen account: wat er in de sessie staat, en verder niets.
+
+    De naam rechtsboven linkte naar /account en die route bestond niet - een 404 op een
+    link die in elke schil staat. ZAD houdt zelf geen profiel bij; naam en e-mailadres
+    komen uit de inlogdienst, dus er valt hier niets in te stellen.
+    """
+    user = get_current_user(request)
+    from opi.web.navigation_lotc import get_navigation
+
+    return render(
+        request,
+        roos="account.html.j2",
+        lotc="bg/account.html.j2",
+        context={
+            "request": request,
+            "menu_items": get_menu_items(user),
+            "navigation": get_navigation(user, current_path="/account"),
+            "account": {
+                "name": user.get("name") or user.get("display_name") or user.get("email", "Onbekend"),
+                "email": user.get("email", ""),
+                "organisatie": user.get("organization") or user.get("organisation") or "",
+            },
+        },
+    )
+
+
 @web_router.get("/weergave")
 async def kies_weergave(request: Request, scheme: str = "", terug: str = "/"):
     """Onthoud de weergavekeuze (systeem, licht, donker) en ga terug waar je vandaan kwam.

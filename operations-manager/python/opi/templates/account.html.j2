@@ -1,0 +1,26 @@
+{# Je eigen account, in de bestaande vormgeving. Zie bg/account.html.j2 voor waarom deze
+   pagina bewust kaal is: ZAD houdt zelf geen profiel bij. #}
+{% extends "base.html.j2" %}
+
+{% block page_title %}Account - Self Service Portal{% endblock %}
+
+{% block content %}
+<c-layout-flow gap="xl">
+    <div>
+        <c-heading type="h1" textContent="Account" />
+        <p class="rvo-text--lg">De gegevens waarmee je bent ingelogd.</p>
+    </div>
+
+    <c-card outline="true" padding="lg">
+        <c-layout-flow gap="md">
+            <c-heading type="h2" textContent="Wie je bent" />
+            <p><strong>Naam:</strong> {{ account.name }}</p>
+            {% if account.email %}<p><strong>E-mailadres:</strong> {{ account.email }}</p>{% endif %}
+            {% if account.organisatie %}<p><strong>Organisatie:</strong> {{ account.organisatie }}</p>{% endif %}
+            <p class="rvo-text--sm rvo-text--subtle">
+                Deze gegevens komen uit je inlogsessie en worden door ZAD niet zelf bijgehouden.
+            </p>
+        </c-layout-flow>
+    </c-card>
+</c-layout-flow>
+{% endblock %}
