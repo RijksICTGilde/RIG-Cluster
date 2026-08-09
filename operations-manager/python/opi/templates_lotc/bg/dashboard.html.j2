@@ -30,7 +30,7 @@
 {% block page_title %}Dashboard - Self Service Portal{% endblock %}
 
 {% block content %}
-    {{ page_head("Dashboard", "Een overzicht van je projecten, deployments en resourcegebruik.") }}
+    {{ page_head("Dashboard", "Hier vind je een overzicht van al je projecten, deployments en resourcegebruik.") }}
 
     {# De gezondheidsmelding. Dezelfde volgorde als de bestaande pagina: problemen gaan
        voor bijwerken, en bijwerken voor "niets aan de hand". #}
@@ -58,7 +58,7 @@
 
     {# De vier kerncijfers, met dezelfde bijschriften als de bestaande pagina. #}
     <c-auto-grid min="200px" gap="md">
-        <c-metric icon="rectangle-stack" value="{{ active_projects }}" label="Actieve projecten" sub="{{ total_deployments }} deployments" href="/projects" />
+        <c-metric icon="rectangle-stack" value="{{ active_projects }}" label="Actieve Projecten" sub="{{ total_deployments }} deployments" href="/projects" />
         <c-metric icon="arrow-up-arrow-down" value="{{ total_deployments }}" label="Deployments" />
         <c-metric icon="person-2" value="{{ total_users }}" label="Gebruikers" />
         <c-metric icon="cylinder-split" value="{{ pod_count }}" label="Pods" />
@@ -72,14 +72,21 @@
         <c-paragraph>Resourcegebruik wordt opgehaald...</c-paragraph>
     </div>
 
-    {% set nieuw_project %}<c-button type="primary" size="sm" label="Nieuw project" icon="plus" show-icon="before" href="/forms/wizard/restart" />{% endset %}
-    {% call panel("Mijn projecten", "rectangle-stack", aside=nieuw_project) %}
+    {% set nieuw_project %}<c-button type="primary" size="sm" label="Nieuw Project" icon="plus" show-icon="before" href="/forms/wizard/restart" />{% endset %}
+    {% call panel("Mijn Projecten", "rectangle-stack", aside=nieuw_project) %}
         <c-stack gap="sm">
             {% for project in projects %}
+                {# De bestaande kaart toont TWEE tellers naast elkaar: deployments en
+                   gebruikers (dashboard/_projecten.html.j2, .project-metrics). De tweede
+                   was hier weggevallen. Ze staan samen in count, want c-layer heeft er
+                   maar een plek voor - de informatie is daarmee compleet en de vorm blijft
+                   die van het thema. #}
+                {% set aantal_deployments = project.deployment_count | default(0) %}
+                {% set aantal_gebruikers = project.user_count | default(0) %}
                 <c-layer
                     icon="rectangle-stack"
                     title="{{ project.display_name }}"
-                    count="{{ project.deployment_count | default(0) }} deployment{{ 's' if project.deployment_count | default(0) != 1 else '' }}"
+                    count="{{ aantal_deployments }} deployment{{ 's' if aantal_deployments != 1 else '' }} - {{ aantal_gebruikers }} gebruiker{{ 's' if aantal_gebruikers != 1 else '' }}"
                     sub="{{ project.description }}"
                     href="/projects/details/{{ project.name }}">
                     {# De gezondheid stond op de bestaande kaart als een gekleurde rand;
