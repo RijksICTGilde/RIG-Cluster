@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from tests.e2e.helpers.tabs import open_tab
+from tests.e2e.helpers.tekst import toon_tekst
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -30,9 +31,8 @@ def test_detail_page_renders(app_server: str, auth_page: Page) -> None:
     assert "details/test-project-detail" in auth_page.url
 
     # Check project name/description appear
-    body = auth_page.text_content("body") or ""
-    assert "Detail Test Project" in body
-    assert "Uitgebreid testproject" in body
+    toon_tekst(auth_page, "Detail Test Project")
+    toon_tekst(auth_page, "Uitgebreid testproject")
 
 
 def test_detail_page_shows_components(app_server: str, auth_page: Page) -> None:
@@ -40,9 +40,8 @@ def test_detail_page_shows_components(app_server: str, auth_page: Page) -> None:
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
 
-    body = auth_page.text_content("body") or ""
-    assert "web-app" in body
-    assert "worker" in body
+    toon_tekst(auth_page, "web-app")
+    toon_tekst(auth_page, "worker")
 
 
 def test_detail_page_shows_team(app_server: str, auth_page: Page) -> None:
@@ -50,9 +49,8 @@ def test_detail_page_shows_team(app_server: str, auth_page: Page) -> None:
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
 
-    body = auth_page.text_content("body") or ""
-    assert "test@example.com" in body
-    assert "developer@example.com" in body
+    toon_tekst(auth_page, "test@example.com")
+    toon_tekst(auth_page, "developer@example.com")
 
 
 def test_detail_page_shows_services(app_server: str, auth_page: Page) -> None:
@@ -66,13 +64,18 @@ def test_detail_page_shows_services(app_server: str, auth_page: Page) -> None:
 
 
 def test_detail_page_shows_deployments(app_server: str, auth_page: Page) -> None:
-    """Verify deployment section shows deployment info."""
+    """Verify deployment section shows deployment info.
+
+    Het tabblad Deployments wordt eerst geopend. Op de bestaande pagina staan alle
+    tabbladen in EEN document en is dat overbodig; op de nieuwe heeft elk tabblad een
+    eigen URL en staan de deployments er pas als je erheen gaat. open_tab() dekt beide.
+    """
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
+    open_tab(auth_page, "deployments")
 
-    body = auth_page.text_content("body") or ""
-    assert "default" in body  # deployment name
-    assert "local" in body  # cluster name
+    toon_tekst(auth_page, "default")
+    toon_tekst(auth_page, "local")
 
 
 def test_service_contributed_blocks_render(app_server: str, auth_page: Page) -> None:
@@ -86,13 +89,13 @@ def test_service_contributed_blocks_render(app_server: str, auth_page: Page) -> 
     """
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
-    assert "Keycloak" in (auth_page.text_content("#tab-project") or "")
+    toon_tekst(auth_page.locator("#tab-project"), "Keycloak")
 
     open_tab(auth_page, "deployments")
     auth_page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
-    deployments_tab = auth_page.text_content("#tab-deployments") or ""
-    assert "Databaseconsole" in deployments_tab
-    assert "Job uitvoeren" in deployments_tab
+    tabblad = auth_page.locator("#tab-deployments")
+    toon_tekst(tabblad, "Databaseconsole")
+    toon_tekst(tabblad, "Job uitvoeren")
     # The buttons call the shared opener; without it they would render but do nothing.
     assert auth_page.evaluate("typeof openServiceModal") == "function"
 
