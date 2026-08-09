@@ -30,6 +30,7 @@ DEFERRABLE_TASK_TYPES = frozenset(
         "add_service",
         "configure_service",
         "configure_service_values",
+        "manage_database_schemas",
         "update_image",
         "upsert_deployment",
     }
