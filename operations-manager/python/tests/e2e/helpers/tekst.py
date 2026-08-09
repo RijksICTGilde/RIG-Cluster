@@ -49,3 +49,29 @@ def kop(waar: Page | Locator, tekst: str) -> Locator:
     telt is dat de kop er staat - dus toetst dit op de rol en niet op de tag.
     """
     return waar.get_by_role("heading", name=tekst)
+
+
+#: De tags waarin een formulierveld echt zijn waarde draagt.
+INVOERTAGS = ("input", "textarea", "select")
+
+
+def veld(waar: Page | Locator, naam: str) -> Locator:
+    """Het invoerveld met dit name-attribuut, en niet het component eromheen.
+
+    Onder het nieuwe thema draagt de WIKKEL hetzelfde name-attribuut als het veld erin:
+
+        <nldd-text-field name="display-name">
+            <input name="display-name" class="text-field__input">
+
+    Een selector op [name='display-name'] vindt er dus twee, en Playwright weigert dat
+    ("strict mode violation"). Dit richt op de tags die de waarde echt dragen, zodat
+    fill() en input_value() doen wat je bedoelt in BEIDE vormgevingen.
+    """
+    # Twee vormen, want de componenten zijn niet consistent:
+    #   <nldd-text-field name="x"><input name="x">        -> beide dragen name
+    #   <nldd-multi-line-text-field name="x"><textarea>   -> alleen de wikkel draagt name
+    # Vandaar ook de afdaling vanuit de wikkel. Playwright's selectors kijken door open
+    # schaduwbomen heen, dus dit vindt de textarea ook als hij daarin zit.
+    keuzes = [f"{tag}[name='{naam}']" for tag in INVOERTAGS]
+    keuzes += [f"[name='{naam}'] {tag}" for tag in INVOERTAGS]
+    return waar.locator(", ".join(keuzes)).first

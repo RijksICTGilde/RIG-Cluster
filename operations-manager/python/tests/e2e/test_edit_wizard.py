@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from tests.e2e.helpers.edit_modal import EditModalHelper
+from tests.e2e.helpers.tekst import veld
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -38,7 +39,7 @@ class TestEditIdentity:
         body = modal.get_body_text()
         assert (
             "Detail Test Project" in body
-            or modal.page.locator("[name='display-name']").input_value() == "Detail Test Project"
+            or veld(modal.page, "display-name").input_value() == "Detail Test Project"
         )
 
     def test_validation_short_display_name(self, modal: EditModalHelper, screenshot_dir: Path) -> None:
@@ -63,7 +64,7 @@ class TestEditIdentity:
         # files that read this project, and the app is session-scoped: a saved
         # description stays saved. So remember what was there and put it back, instead
         # of leaving a project whose description depends on whether this test ran.
-        original_description = modal.page.locator("[name='description']").input_value()
+        original_description = veld(modal.page, "description").input_value()
 
         new_description = "Updated description via E2E test"
         modal.fill_field("description", new_description)
@@ -110,7 +111,12 @@ class TestEditTeam:
         modal.open_edit_modal("modal-edit-team", "Projectleden beheren")
 
         # Emails are in input field values, not text content
-        inputs = modal.page.locator("#edit-section-inner input[type='email'], #edit-section-inner [name*='email']")
+        # Op de INVOERtags en niet op [name*=...]: onder het nieuwe thema draagt de wikkel
+        # hetzelfde name-attribuut als het veld erin, en dan is input_value() zinloos
+        # ("Node is not an <input>").
+        inputs = modal.page.locator(
+            "#edit-section-inner input[type='email'], #edit-section-inner input[name*='email']"
+        )
         values = [inputs.nth(i).input_value() for i in range(inputs.count())]
         assert "test@example.com" in values
         assert "developer@example.com" in values

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from tests.e2e.helpers.tekst import veld
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -51,13 +53,11 @@ class EditModalHelper:
 
     def fill_field(self, name: str, value: str) -> None:
         """Fill a text input or textarea by name attribute."""
-        field = self.page.locator(f"[name='{name}']")
-        field.fill(value)
+        veld(self.page, name).fill(value)
 
     def clear_field(self, name: str) -> None:
         """Clear a text input or textarea by name attribute."""
-        field = self.page.locator(f"[name='{name}']")
-        field.fill("")
+        veld(self.page, name).fill("")
 
     def submit_step(self, timeout: float | None = None) -> None:
         """Click the submit button and wait for the step response to come back.
@@ -176,8 +176,17 @@ class EditModalHelper:
 
     def get_step_labels(self) -> list[str]:
         """Return the visible step labels from the wizard step indicator."""
-        labels = self.page.locator("#modal-wizard-steps .wizard-steps__label")
-        return [labels.nth(i).text_content() or "" for i in range(labels.count())]
+        # Twee vormen. De bestaande wizard tekent zijn stappen zelf en zet het opschrift
+        # in .wizard-steps__label; het nieuwe thema gebruikt <nldd-step-indicator-item>,
+        # dat zijn opschrift in het attribuut text draagt. Een selector op de eerste vindt
+        # de tweede niet, en dan komt hier een LEGE lijst terug - waarna een test meldt dat
+        # een stap ontbreekt terwijl hij gewoon op het scherm staat.
+        oud = self.page.locator("#modal-wizard-steps .wizard-steps__label")
+        if oud.count():
+            return [oud.nth(i).text_content() or "" for i in range(oud.count())]
+
+        nieuw = self.page.locator("#modal-wizard-steps nldd-step-indicator-item")
+        return [nieuw.nth(i).get_attribute("text") or "" for i in range(nieuw.count())]
 
     def select_with_rerender(self, select_locator, value: str, timeout: float = 10000) -> None:
         """Select an option on a data-rerender field and wait for the HTMX swap.
