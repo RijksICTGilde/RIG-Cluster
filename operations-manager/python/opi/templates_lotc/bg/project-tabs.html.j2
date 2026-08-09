@@ -322,7 +322,12 @@
                         {% set original_index = project.components.index(component) %}
                         {% set component_bewerken = "openEditModal('modal-edit-component-" ~ original_index ~ "', 'Component bewerken - " ~ component.name ~ "')" %}
                         {% set component_verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-component/confirm?target=" ~ (component.name | urlencode) ~ "', 'Component verwijderen')" %}
-                        <c-card outline padding="md">
+                        {# De klasse component-card is die van section-components.html.j2 en
+                           wordt LETTERLIJK overgenomen: hij bakent een kaart af zodat je de
+                           knop van DIT component te pakken krijgt en niet die van het
+                           volgende. Zonder die afbakening meet een test de verkeerde knop -
+                           en dat is precies het soort fout dat er stil doorheen glipt. #}
+                        <c-card outline padding="md" class="component-card">
                             <c-stack gap="sm">
                                 <c-cluster gap="sm" align="center" justify="between">
                                     <c-stack gap="xs">
@@ -583,7 +588,11 @@
                eromheen is die van de bestaande pagina, want switchDeployment() zoekt op
                id="deployment-<naam>" - ook om te bepalen of een deployment nog bestaat. #}
             {% for deployment in project.deployments | sort(attribute='name') %}
-                <div class="deployment-section{% if not loop.first %} is-hidden{% endif %}" id="deployment-{{ deployment.name }}">
+                {# deployment-card staat erbij omdat section-deployments.html.j2 die klasse draagt:
+                   hij bakent EEN deployment af, zodat je de knop van deze te pakken krijgt
+                   en niet die van de volgende. Letterlijk overgenomen, net als de id die
+                   switchDeployment() gebruikt. #}
+                <div class="deployment-section deployment-card{% if not loop.first %} is-hidden{% endif %}" id="deployment-{{ deployment.name }}">
                     {{ deployment_panel(deployment, project, approval_notices | default({}), user_role | default('')) }}
                 </div>
             {% else %}

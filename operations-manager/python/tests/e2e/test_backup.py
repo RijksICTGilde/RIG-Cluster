@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 from tests.e2e.helpers.edit_modal import EditModalHelper
 from tests.e2e.helpers.tabs import open_tab
+from tests.e2e.helpers.tekst import kop, toon_tekst
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -76,7 +77,7 @@ class TestBackupSection:
     def test_backup_section_visible(self, modal: EditModalHelper) -> None:
         """The backup section should be visible on the Deployments tab."""
         _switch_to_deployments_tab(modal.page)
-        heading = modal.page.locator("#tab-deployments h2:has-text('Backups')")
+        heading = kop(modal.page.locator("#tab-deployments"), "Backups")
         heading.first.wait_for(state="visible", timeout=5000)
         assert heading.first.is_visible()
 
@@ -98,9 +99,10 @@ class TestBackupSection:
         modal.open_detail_page()
         _switch_to_deployments_tab(modal.page)
         tab = modal.page.locator("#tab-deployments")
-        section_text = tab.text_content() or ""
-        assert "Backups ingeschakeld" in section_text, f"Expected schedule status, got: {section_text[:200]}"
-        assert "Dagelijks rond 02:00" in section_text, f"Expected RRULE display, got: {section_text[:200]}"
+        # Via locators en niet via text_content(): onder het nieuwe thema staat deze
+        # tekst in de schaduwboom van een component, en dan geeft text_content() leegte.
+        toon_tekst(tab, "Backups ingeschakeld")
+        toon_tekst(tab, "Dagelijks rond 02:00")
 
     def test_screenshot_backup_section(self, modal: EditModalHelper, screenshot_dir: Path) -> None:
         """Screenshot the backup section on the Deployments tab."""
