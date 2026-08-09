@@ -1,0 +1,55 @@
+{#
+  De projectenlijst, plus de telling erboven.
+
+  Een APART bestand omdat dit het stuk is dat htmx vervangt als je zoekt of sorteert: de
+  pagina eromheen (kop, knoppen, het zoekveld) blijft staan, alleen dit blok komt opnieuw
+  van de server. Vandaar de id: #projects-lijst is het doel.
+
+  KAARTEN, EN WAT ER OP EEN KAART STAAT
+
+  Het origineel is een tabel met vijf kolommen: project, omgeving, team, services en een
+  link Details. Die tabel heeft hier een tijd gestaan, precies zo overgezet. Op verzoek
+  van de gebruiker is het weer een kaartenoverzicht, en dan met opzet KAAL: alleen de
+  naam en de omschrijving.
+
+  Dat is een bewuste afwijking van het origineel, geen omissie. De redenering: wat je
+  hier komt doen is een project zoeken en openen. Omgeving, teamgrootte en de lijst
+  services helpen daar niet bij - die staan op de projectpagina zelf, en die is een klik
+  weg. Het zoekveld erboven vervangt het naar-beneden-scannen waar die kolommen voor
+  bedoeld waren.
+
+  De totalen ONDER de lijst (projecten, teamleden, services, je rol) blijven wel staan:
+  die vatten samen en dringen zich niet op.
+
+  c-layer en geen c-catalog-card: die laatste heeft open-label nodig om zijn href te
+  gebruiken, en dan staat er een losse "Openen"-link in de kaart. Een layer is in zijn
+  geheel klikbaar en toont dat met een pijl.
+#}
+
+<c-paragraph size="sm" color="grijs-500">
+    Totaal: {{ projects | length }} project{{ 'en' if projects | length != 1 else '' }}
+    {%- if project_query %} van {{ projects_all | length }}{% endif %}
+</c-paragraph>
+
+{% if projects %}
+    <c-stack gap="sm">
+        {% for project in projects %}
+            <c-layer
+                icon="rectangle-stack"
+                title="{{ project.display_name or project.name }}"
+                sub="{{ project.description or 'Geen beschrijving beschikbaar' }}"
+                href="/projects/details/{{ project.name }}" />
+        {% endfor %}
+    </c-stack>
+{% else %}
+    <c-cluster gap="sm" align="center">
+        <c-icon icon="info" size="lg" />
+        <c-paragraph>
+            {%- if project_query -%}
+                Geen projecten gevonden voor "{{ project_query }}".
+            {%- else -%}
+                Geen projecten gevonden waar je toegang toe hebt.
+            {%- endif -%}
+        </c-paragraph>
+    </c-cluster>
+{% endif %}
