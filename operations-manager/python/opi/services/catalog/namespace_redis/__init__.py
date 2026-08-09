@@ -13,7 +13,7 @@ class NamespaceRedisService(Service):
     definition = ServiceDefinition(
         name="Namespace Redis Cache",
         description="Dedicated Redis instance per namespace voor caching en Celery task queues",
-        help_template="namespace_redis/help.html.j2",
+        help_template="namespace_redis/help.md",
         icon="zandloper",
         color="rood",
         binding=ServiceBinding.DEPLOYMENT,

@@ -23,6 +23,7 @@ import opi
 import pytest
 from opi.core.templates import get_templates
 from opi.services import ServiceType
+from opi.services.help_text import render_service_help
 from opi.services.services import ServiceAdapter
 
 _TEMPLATE_ROOT = pathlib.Path(opi.__file__).parent / "templates"
@@ -91,10 +92,10 @@ def test_service_block_users_do_not_render_their_own_service_icon(template_name:
 def test_the_macro_only_shows_the_help_button_when_there_is_help() -> None:
     macro = get_templates().get_template("widgets/_macros.html.j2").module.service_block  # type: ignore[attr-defined]
 
-    with_help = str(macro("Naam", "Omschrijving", "sleutel", "groen", "keycloak.html.j2"))
+    with_help = str(macro("Naam", "Omschrijving", "sleutel", "groen", "keycloak/help.md"))
     without_help = str(macro("Naam", "Omschrijving", "sleutel", "groen", None))
 
-    assert "openServiceHelp('keycloak.html.j2')" in with_help
+    assert "openServiceHelp('keycloak/help.md')" in with_help
     assert "service-card__help-btn" in with_help
     assert "service-card__help-btn" not in without_help
     for rendered in (with_help, without_help):
@@ -113,7 +114,7 @@ def test_every_service_has_a_help_template(service: ServiceType) -> None:
     definition = ServiceAdapter.get_service_definition(service)
     assert definition.help_template, (
         f"service {service.value!r} has no help_template, so it shows no explanation and no "
-        f"question mark -- add a help.html.j2 to its package and point at it"
+        f"question mark -- add a help.md to its package and point at it"
     )
 
 
@@ -129,10 +130,10 @@ def test_the_help_template_of_every_service_exists(service: ServiceType) -> None
 
 @pytest.mark.parametrize("service", sorted(ServiceType, key=lambda s: s.value), ids=lambda s: s.value)
 def test_the_help_template_of_every_service_renders(service: ServiceType) -> None:
-    """The modal fetches the template at click time, so a broken one is only seen there."""
+    """The modal fetches the help at click time, so a broken one is only seen there."""
     help_template = ServiceAdapter.get_service_definition(service).help_template
     assert help_template is not None
-    rendered = get_templates().get_template(help_template).render()
+    rendered = render_service_help(help_template)
     assert rendered.strip(), f"{help_template} renders empty"
     assert "<c-" not in rendered, (
         f"{help_template} still contains an unprocessed ROOS component; check the component name"
@@ -141,10 +142,14 @@ def test_the_help_template_of_every_service_renders(service: ServiceType) -> Non
 
 @pytest.mark.parametrize("service", sorted(ServiceType, key=lambda s: s.value), ids=lambda s: s.value)
 def test_the_help_template_uses_the_icon_of_its_service(service: ServiceType) -> None:
-    """The card and the modal should look like they belong together."""
+    """The card and the modal should look like they belong together.
+
+    Not a matter of the prose remembering to say so any more: the icon is taken from the
+    definition when the markdown is rendered, so the two cannot come apart.
+    """
     definition = ServiceAdapter.get_service_definition(service)
     assert definition.help_template is not None
-    rendered = get_templates().get_template(definition.help_template).render()
+    rendered = render_service_help(definition.help_template)
     assert f"rvo-icon-{definition.icon}" in rendered, (
         f"{definition.help_template} does not show the service icon {definition.icon!r}"
     )

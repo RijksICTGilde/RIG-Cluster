@@ -146,8 +146,8 @@ def test_the_shared_help_folder_holds_no_service_explanation() -> None:
     service_help_files = {
         (_CATALOG_ROOT / d.help_template).name for d in ServiceAdapter.SERVICE_DEFINITIONS.values() if d.help_template
     }
-    leftovers = sorted(path.name for path in _SHARED_HELP_DIR.glob("*.html.j2"))
+    leftovers = sorted(path.name for path in _SHARED_HELP_DIR.glob("*"))
 
-    assert service_help_files == {"help.html.j2"}
+    assert service_help_files == {"help.md"}
     for name in leftovers:
-        assert name != "help.html.j2", f"{name} looks like a service explanation left behind in templates/help"
+        assert name != "help.md", f"{name} looks like a service explanation left behind in templates/help"

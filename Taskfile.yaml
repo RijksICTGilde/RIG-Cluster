@@ -1987,6 +1987,24 @@ tasks:
       - uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
     silent: false
 
+  test-e2e-random:
+    desc: "Run the local E2E suite in a shuffled order (the isolation check that counts)"
+    dir: operations-manager/python
+    cmds:
+      - uv run playwright install chromium --with-deps
+      # The plan's own acceptance criterion: order-independence is only proven by
+      # actually changing the order. A reversed file order is not enough -- it still
+      # keeps every file's tests together and in sequence, which is exactly the
+      # assumption a leaking test makes. pytest-randomly shuffles files AND the tests
+      # inside them.
+      # SEED=<n> reproduces a specific shuffle; without it every run picks a new one,
+      # which is the point: repeated runs sample different orders.
+      # No -q: the addopts are already at verbosity 0 (-v -q), so an extra -q lands on
+      # -1 and pytest drops the report header -- the line where pytest-randomly prints
+      # `Using --randomly-seed=<n>`. Without it the shuffle cannot be replayed.
+      - uv run pytest tests/e2e/ -m "e2e and not sandbox" -p randomly {{if .SEED}}--randomly-seed={{.SEED}}{{end}} --timeout=300
+    silent: false
+
   test-e2e-sandbox:
     desc: "Run E2E browser tests against running sandbox cluster"
     dir: operations-manager/python
@@ -3127,6 +3145,22 @@ tasks:
     dir: operations-manager/python
     cmds:
       - while true; do uv run python scripts/write_version_file.py; sleep 5; done
+
+  sandbox:forward:
+    desc: "Stuur lokaal 80/443 door naar de sandbox op de server (on|off|status)"
+    summary: |
+      Alle sandboxdomeinen resolven hier al naar 127.0.0.1, dus deze forward maakt ze in
+      een klap bruikbaar tegen de sandbox op de server in plaats van een lokaal cluster.
+
+        task sandbox:forward -- on       aanzetten (vraagt sudo, 80/443 zijn root-poorten)
+        task sandbox:forward -- status   staat hij aan, en antwoordt hij
+        task sandbox:forward -- off      uitzetten
+
+      Draait je LOKALE kind-sandbox, dan houdt die 80/443 al bezet en kan de forward niet
+      binden; het script meldt dat in plaats van half te starten.
+    cmds:
+      - scripts/sandbox-forward.sh {{.CLI_ARGS | default "status"}}
+    silent: true
 
   sandbox:skaffold-dev:
     desc: "Start Skaffold with hot-reload for sandbox development"

@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from playwright.sync_api import expect
 from tests.e2e.helpers.wizard import WizardHelper, _unique_project_name
 
 if TYPE_CHECKING:
@@ -128,11 +129,11 @@ def test_preset_stays_applied(app_server: str, auth_page: Page, captured_yaml: l
     assert auth_page.locator(f"{_PRESET_CARD}.service-card--selected").count() == 0, "preset should start unapplied"
     auth_page.locator(_PRESET_CARD).first.click()
     auth_page.wait_for_load_state("networkidle")
-    auth_page.wait_for_timeout(500)
 
-    assert auth_page.locator(f"{_PRESET_CARD}.service-card--selected").count() == 1, (
-        "preset card should render as selected after applying it"
-    )
+    # Wait for the swapped-in card instead of for a fixed 500ms: applying a preset
+    # re-renders the step server-side, and on a busy machine that takes longer than
+    # any number picked here. A fixed pause turns a slow render into a failing test.
+    expect(auth_page.locator(f"{_PRESET_CARD}.service-card--selected")).to_have_count(1, timeout=10000)
 
     wizard.click_next()
     _finish_wizard(wizard, auth_page)

@@ -2,6 +2,26 @@
 
 - Removing a key from a Kubernetes Secret does not trigger an ArgoCD sync. Related: https://github.com/argoproj/argo-cd/issues/24882
 
+## Het standaardschema kapt stil af (niet gerepareerd)
+
+Genoteerd bij RC-59, bewust niet daar gerepareerd.
+
+`generate_database_schema` maakt de naam van het standaardschema als
+`{project}_{deployment}` en kapt die met een kale `name[:63]` af, zonder hash of andere
+onderscheidende staart. Twee deployments in hetzelfde project met lange namen die pas na
+teken 63 uit elkaar lopen, krijgen dus **hetzelfde standaardschema** en zitten ongemerkt in
+elkaars data.
+
+RC-17 heeft dit voor *extra* schema's juist voorkomen: `generate_extra_database_schema`
+gooit een `ValueError` in plaats van af te kappen, en sinds RC-59 wordt die controle bij
+elke opslag gedraaid, dus ook als er een deployment bijkomt. De standaardweg is daar nooit
+in meegenomen.
+
+Waarom het hier blijft staan: een naamgevingsregel wijzigen raakt **bestaande databases**.
+Elke oplossing (hard falen, een hash toevoegen, de deploymentnaam begrenzen) is een migratie
+met een eigen vraag over wat er met de al aangemaakte schema's gebeurt. Dat hoort een eigen
+taak te zijn, niet een bijvangst van een API-uitbreiding.
+
 ## Sandbox Setup
 
 ### Forgejo pod restart causing sandbox:sync failure (fixed)
