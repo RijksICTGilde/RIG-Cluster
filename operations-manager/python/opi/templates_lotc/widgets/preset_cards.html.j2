@@ -21,11 +21,16 @@
          hx-target="#wizard-step-content"
          hx-swap="innerHTML"
          {% endif %}>
-        <c-checkbox
+        {# Een gewoon <input>, om dezelfde reden als bij de servicekaarten: <c-checkbox>
+           zet zijn invoerveld onder NLDD in de schaduwboom, en zowel wizard.js als het
+           formulier kijken daar niet. De kaart is bovendien onze eigen markup met onze
+           eigen CSS. #}
+        <input
+            type="checkbox"
             id="preset-{{ preset.id|e }}"
             name="_preset_{{ preset.id|e }}"
-            :checked="applied"
-            :disabled="locked"
+            {% if applied %}checked{% endif %}
+            {% if locked %}disabled{% endif %}
         />
         <div class="service-card__content">
             <div class="service-card__header">

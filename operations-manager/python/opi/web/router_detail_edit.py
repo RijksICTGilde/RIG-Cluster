@@ -52,6 +52,8 @@ from opi.services.project_authorization import (
 )
 from opi.services.project_store import get_project_store
 from opi.utils.csrf import reject_misfired_form_get
+from opi.web.lotc_switch import render_fragment, wants_lotc
+from opi.web.navigation_lotc import to_nldd_icon
 from opi.web.project_edit_security import require_project_edit_access
 from opi.web.router_wizard import (
     _empty_sequence_item,
@@ -113,10 +115,42 @@ detail_edit_router = APIRouter(prefix="/projects", tags=["detail-edit"])
 # ---------------------------------------------------------------------------
 
 
-def _create_renderer() -> FormRenderer:
+def _create_renderer(lotc: bool = False) -> FormRenderer:
+    """De formulierrenderer voor dit verzoek.
+
+    De VOORBEREIDING per veldtype is gedeeld - welke opties, welke waarde, hoe een reeks
+    wordt opgebouwd is bedrijfslogica en verandert niet mee met het componentensysteem.
+    Alleen de adapter wisselt, en daarmee welke sjablonen het veld renderen. Precies zoals
+    in ``opi/web/router_wizard.py``; een dialoog uit twee componentsystemen rendert niet.
+    """
+    if lotc:
+        from opi.forms.widgets.lotc import LOTCWidgetAdapter
+
+        return FormRenderer(
+            widget_adapter=LOTCWidgetAdapter(),
+            translator=get_default_nl_translator(),
+        )
     return FormRenderer(
         widget_adapter=ROOSWidgetAdapter(),
         translator=get_default_nl_translator(),
+    )
+
+
+def _progress_fragment(request: Request, context: dict[str, Any]) -> str:
+    """Het voortgangsfragment van de dialoog, in de weergave die dit verzoek koos.
+
+    EEN render, aan beide kanten. Er gaat met opzet geen ``process_components`` overheen:
+    het fragment is een sjabloonbestand, dus zijn componenttags zijn al bij het compileren
+    vervangen. Een tweede slag zou de gerenderde HTML nog eens als Jinja lezen, en een
+    stapnaam of subtaaknaam met ``{{ ... }}`` erin zou dan uitgevoerd worden in plaats van
+    getoond. Zie ``render_progress_fragment`` in ``opi/web/task_progress.py``.
+    """
+    return render_fragment(
+        request,
+        roos="wizard/modal_wizard_progress_fragment.html.j2",
+        lotc="bg/_modal-wizard-progress-fragment.html.j2",
+        context=context,
+        process_roos=False,
     )
 
 
@@ -133,6 +167,7 @@ def _render_section_html(
     yaml_data: dict[str, Any],
     errors: dict[str, list[str]] | None = None,
     locked_services: list[str] | None = None,
+    lotc: bool = False,
 ) -> str:
     """Render form fields for a section.
 
@@ -143,12 +178,25 @@ def _render_section_html(
         locked_services: Service names that should be visually marked as existing.
             Passed via ``_locked_services`` key in yaml_data so ``render_service_cards`` can
             indicate them. No longer prevents unchecking.
+        lotc: uit welk componentensysteem de velden komen. Dezelfde editables, dezelfde
+            waarden, dezelfde foutmeldingen; alleen de widgets verschillen.
+
+    Het verschil zit niet alleen in de widgets maar ook in het AANTAL renderslagen. De
+    roos-widgets leveren een string met ``<c-*>``-tags op, die daarna alsnog door
+    ``process_components`` moet. De LOTC-adapter rendert meteen af, dus die string mag
+    NIET nog een keer door een sjabloonrender: hij draagt wat iemand in het formulier
+    heeft getypt, en dat hoort geen Jinja te worden. Zie ``opi/web/router_user_admin.py``,
+    waar dezelfde keuze staat.
     """
     # Check guard before rendering fields
     if section.guard is not None and not section.guard(yaml_data):
+        if lotc:
+            from opi.core.templates_lotc import templates_lotc
+
+            return templates_lotc.env.get_template("bg/_modal-guard.html.j2").render({"message": section.guard_message})
         return f'<c-alert kind="info">{section.guard_message}</c-alert>'
 
-    renderer = _create_renderer()
+    renderer = _create_renderer(lotc=lotc)
     if not section.layout:
         return ""
     if locked_services is not None:
@@ -162,6 +210,8 @@ def _render_section_html(
         # module takes ``project_name`` from the path, so the base always exists.
         edit_mode=True,
     )
+    if lotc:
+        return html
     templates = get_templates()
     process_components_filter = templates.env.filters.get("process_components")
     if process_components_filter is not None:
@@ -372,7 +422,6 @@ def _render_modal_step(
     # Flatten the per-field warnings into a plain message list for the banner.
     warning_messages = [msg for msgs in (warnings or {}).values() for msg in msgs]
 
-    templates = get_templates()
     context = {
         "request": request,
         "steps": steps,
@@ -388,12 +437,16 @@ def _render_modal_step(
         "step_target": "#edit-section-inner",
         "step_push_url": False,
         "step_query_params": "",
+        # Onze secties dragen Nederlandse ROOS-iconnamen; de LOTC-sjablonen hebben de
+        # NLDD-woordenschat nodig. Het roos-sjabloon raakt dit niet aan.
+        "nldd_icon": to_nldd_icon,
     }
-    rendered = templates.get_template("wizard/modal_wizard_step.html.j2").render(context)
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
-    return rendered
+    return render_fragment(
+        request,
+        roos="wizard/modal_wizard_step.html.j2",
+        lotc="bg/_modal-wizard-step.html.j2",
+        context=context,
+    )
 
 
 def _targeted_deployment_name(flow: FormFlow, project_data: dict[str, Any]) -> str | None:
@@ -496,7 +549,7 @@ async def sequence_action(request: Request, project_name: str, section_id: str) 
 
     smart_set_value(yaml_data, seq_path, items)
 
-    fields_html = _render_section_html(section, yaml_data)
+    fields_html = _render_section_html(section, yaml_data, lotc=wants_lotc(request))
     return HTMLResponse(content=fields_html)
 
 
@@ -675,7 +728,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     section = _get_section_from_flow(flow, first_step)
     yaml_data = state.get_merged_data()
 
-    step_html = _render_section_html(section, yaml_data, locked_services=None)
+    step_html = _render_section_html(section, yaml_data, locked_services=None, lotc=wants_lotc(request))
 
     rendered = _render_modal_step(request, wizard_token, state, flow_id, section, step_html, project_name)
     return HTMLResponse(content=rendered)
@@ -701,7 +754,7 @@ async def modal_wizard_load_step(request: Request, project_name: str, flow_id: s
 
     yaml_data = state.get_merged_data()
 
-    step_html = _render_section_html(section, yaml_data, locked_services=None)
+    step_html = _render_section_html(section, yaml_data, locked_services=None, lotc=wants_lotc(request))
 
     rendered = _render_modal_step(request, wizard_token, state, flow_id, section, step_html, project_name)
     return HTMLResponse(content=rendered)
@@ -774,7 +827,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
                 items.pop(remove_index)
 
         smart_set_value(merged, str(data_path), items)
-        step_html = _render_section_html(section, merged, locked_services=None)
+        step_html = _render_section_html(section, merged, locked_services=None, lotc=wants_lotc(request))
         rendered = _render_modal_step(request, wizard_token, state, flow_id, section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
@@ -800,7 +853,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         # what the create wizard does in ``router_wizard.submit_step``.
         processor.clear_hidden_depends_on(section.editables, submitted_yaml)
         save_modal_state_by_token(wizard_token, state)
-        step_html = _render_section_html(section, submitted_yaml, locked_services=None)
+        step_html = _render_section_html(section, submitted_yaml, locked_services=None, lotc=wants_lotc(request))
         rendered = _render_modal_step(request, wizard_token, state, flow_id, section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
@@ -866,7 +919,9 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
                 section_global_errors,
                 section_warnings,
             )
-            step_html = _render_section_html(section, submitted_yaml, errors=errors, locked_services=None)
+            step_html = _render_section_html(
+                section, submitted_yaml, errors=errors, locked_services=None, lotc=wants_lotc(request)
+            )
             rendered = _render_modal_step(
                 request,
                 wizard_token,
@@ -929,7 +984,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
 
         yaml_data = state.get_merged_data()
 
-        step_html = _render_section_html(next_section, yaml_data, locked_services=None)
+        step_html = _render_section_html(next_section, yaml_data, locked_services=None, lotc=wants_lotc(request))
         rendered = _render_modal_step(request, wizard_token, state, flow_id, next_section, step_html, project_name)
         return HTMLResponse(content=rendered)
 
@@ -1001,7 +1056,7 @@ async def backup_select_deployment(request: Request, project_name: str) -> HTMLR
     flow = get_flow("modal-backup")
     section = _get_section_from_flow(flow, "backup-select")
     yaml_data = state.get_merged_data()
-    step_html = _render_section_html(section, yaml_data, locked_services=None)
+    step_html = _render_section_html(section, yaml_data, locked_services=None, lotc=wants_lotc(request))
 
     rendered = _render_modal_step(request, wizard_token, state, "modal-backup", section, step_html, project_name)
     return HTMLResponse(content=rendered)
@@ -1031,7 +1086,7 @@ async def restore_select_mode(request: Request, project_name: str) -> HTMLRespon
     flow = get_flow("modal-restore")
     section = _get_section_from_flow(flow, "restore-target")
     yaml_data = state.get_merged_data()
-    step_html = _render_section_html(section, yaml_data, locked_services=None)
+    step_html = _render_section_html(section, yaml_data, locked_services=None, lotc=wants_lotc(request))
 
     rendered = _render_modal_step(request, wizard_token, state, "modal-restore", section, step_html, project_name)
     return HTMLResponse(content=rendered)
@@ -1116,9 +1171,11 @@ def _render_modal_review(
                 "en andere resources worden gemarkeerd voor verwijdering."
             )
 
-    templates = get_templates()
-    rendered = templates.get_template("wizard/modal_wizard_review.html.j2").render(
-        {
+    rendered = render_fragment(
+        request,
+        roos="wizard/modal_wizard_review.html.j2",
+        lotc="bg/_modal-wizard-review.html.j2",
+        context={
             "request": request,
             "steps": steps,
             "flow_id": flow_id,
@@ -1128,11 +1185,9 @@ def _render_modal_review(
             "action_label": "Bevestigen en verwerken",
             "warnings": warnings,
             "global_errors": global_errors or [],
-        }
+            "nldd_icon": to_nldd_icon,
+        },
     )
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
     return HTMLResponse(content=rendered)
 
 
@@ -1162,13 +1217,10 @@ async def _modal_do_submit(
 
     # Determine post-save action
     action = _determine_flow_action(flow, active_sections)
-    templates = get_templates()
 
     # Backup/restore flows skip project file modification
     if action in ("trigger_backup", "trigger_restore"):
-        return await _handle_backup_restore_submit(
-            request, wizard_token, project_name, flow_id, action, state, templates
-        )
+        return await _handle_backup_restore_submit(request, wizard_token, project_name, flow_id, action, state)
 
     # Merge all step data. Keep CLEARED_FIELD tombstones (strip_cleared=False)
     # so the merge into the stored project (which cannot express a deleted key
@@ -1227,22 +1279,24 @@ async def _modal_do_submit(
         else:
             logger.info("Starting full project processing for %s (task=%s, flow=%s)", project_name, task_id, flow_id)
 
-        rendered = templates.get_template("wizard/modal_wizard_progress.html.j2").render(
-            {"task_id": task_id, "project_name": project_name}
+        rendered = render_fragment(
+            request,
+            roos="wizard/modal_wizard_progress.html.j2",
+            lotc="bg/_modal-wizard-progress.html.j2",
+            context={"task_id": task_id, "project_name": project_name},
         )
-        process_components = templates.env.filters.get("process_components")
-        if process_components:
-            rendered = str(process_components(rendered))
 
         clear_modal_state_by_token(wizard_token)
         return HTMLResponse(content=rendered)
 
     # save_only
     clear_modal_state_by_token(wizard_token)
-    rendered = templates.get_template("wizard/modal_wizard_success.html.j2").render({})
-    process_components = templates.env.filters.get("process_components")
-    if process_components:
-        rendered = str(process_components(rendered))
+    rendered = render_fragment(
+        request,
+        roos="wizard/modal_wizard_success.html.j2",
+        lotc="bg/_modal-wizard-success.html.j2",
+        context={},
+    )
 
     # Run after_save hooks (fire-and-forget)
     for section in active_sections:
@@ -1316,7 +1370,6 @@ async def _handle_backup_restore_submit(
     flow_id: str,
     action: str,
     state,
-    templates,
 ) -> HTMLResponse:
     """Handle backup/restore wizard submission via the async task queue."""
     from opi.core.async_task_service import TaskType
@@ -1412,8 +1465,12 @@ async def _handle_backup_restore_submit(
         )
 
     # Rendered once on purpose -- see render_progress_fragment in opi/web/task_progress.py.
-    rendered = templates.get_template("wizard/modal_wizard_progress.html.j2").render(
-        {"task_id": task_id, "project_name": project_name}
+    rendered = render_fragment(
+        request,
+        roos="wizard/modal_wizard_progress.html.j2",
+        lotc="bg/_modal-wizard-progress.html.j2",
+        context={"task_id": task_id, "project_name": project_name},
+        process_roos=False,
     )
 
     clear_modal_state_by_token(wizard_token)
@@ -1430,7 +1487,6 @@ async def modal_wizard_progress_html(request: Request, project_name: str, task_i
     from opi.core.task_helpers import get_task_service
     from opi.web.router import _v2_task_to_template_context
 
-    templates = get_templates()
     task_service = get_task_service(request)
     task = await task_service.get_task(task_id)
 
@@ -1444,9 +1500,7 @@ async def modal_wizard_progress_html(request: Request, project_name: str, task_i
             "status": "failed",
             "error": "Taak niet gevonden",
         }
-        return HTMLResponse(
-            content=templates.get_template("wizard/modal_wizard_progress_fragment.html.j2").render(context)
-        )
+        return HTMLResponse(content=_progress_fragment(request, context))
 
     context = _v2_task_to_template_context(task, project_name)
     context["task_id"] = task_id
@@ -1456,7 +1510,7 @@ async def modal_wizard_progress_html(request: Request, project_name: str, task_i
     # ``process_components`` would parse the rendered HTML as a Jinja template again,
     # and a step or deployment name carrying ``{{ ... }}`` would be executed instead of
     # shown. Same reason as render_progress_fragment in opi/web/task_progress.py.
-    return HTMLResponse(content=templates.get_template("wizard/modal_wizard_progress_fragment.html.j2").render(context))
+    return HTMLResponse(content=_progress_fragment(request, context))
 
 
 async def _build_backup_restore_context_async(

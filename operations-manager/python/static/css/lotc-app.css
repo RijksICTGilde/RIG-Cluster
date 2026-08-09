@@ -1,0 +1,53 @@
+/*
+ * Kleine aanvullingen op het thema, voor de nieuwe vormgeving.
+ *
+ * Dit bestand hoort KLEIN te blijven. Alles wat het thema zelf levert hoort niet hier;
+ * wat hier staat is wat wij nodig hebben en wat een design system niet voor ons kan
+ * bedenken. Groeit dit bestand, dan is dat een signaal dat er iets nagebouwd wordt wat
+ * bij het thema of bij een component thuishoort.
+ */
+
+/*
+ * Een aanvinkvakje met zijn label ernaast.
+ *
+ * Waarom dit hier staat en niet uit het thema komt: <c-checkbox> wordt onder NLDD een
+ * webcomponent die zijn invoerveld in de schaduwboom zet. Alles wat het vakje moet
+ * kunnen vinden kijkt daar niet - de JavaScript van de wizard zoekt met
+ * querySelector('input[type="checkbox"]'), en het formulier serialiseert de lichte boom.
+ * Gemeten gevolg: aanvinken deed niets en het formulier stuurde de verkeerde waarden.
+ *
+ * Dus staat er een gewoon <input>, en dan hoort daar deze paar regels opmaak bij. Zodra
+ * het componentensysteem een native-stand voor het aanvinkvakje heeft (zoals de
+ * keuzelijst die inmiddels heeft) kan dit weg.
+ */
+.lotc-checkbox-regel {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    cursor: pointer;
+}
+
+.lotc-checkbox-regel input[type="checkbox"] {
+    /* Uitlijnen op de eerste tekstregel in plaats van op het midden van het blok: bij een
+       label van twee regels zakt een gecentreerd vakje anders naar beneden weg. */
+    margin-top: 0.2em;
+    width: 1.15em;
+    height: 1.15em;
+    flex-shrink: 0;
+}
+
+/*
+ * Lucht tussen de pagina-inhoud en de voettekst.
+ *
+ * Zonder dit plakt de voettekst tegen het laatste element - op de wizard tegen de knoppen
+ * "Vorige" en "Volgende", wat leest alsof de links in de voettekst bij die knoppen horen.
+ * De bestaande pagina heeft die scheiding wel.
+ */
+.lotc-app-shell__main > *:last-child {
+    margin-bottom: 0;
+}
+
+nldd-page-footer {
+    display: block;
+    margin-top: 3rem;
+}

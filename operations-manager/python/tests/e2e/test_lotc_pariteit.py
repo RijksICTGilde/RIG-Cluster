@@ -1,6 +1,6 @@
-"""Drie stukken gedrag die bij het omzetten naar de nieuwe vormgeving verdwenen waren.
+"""Stukken gedrag die bij het omzetten naar de nieuwe vormgeving verdwenen waren.
 
-Alle drie zijn ze op een screenshot onzichtbaar: de pagina staat er, hij ziet er zelfs
+Ze zijn allemaal op een screenshot onzichtbaar: de pagina staat er, hij ziet er zelfs
 beter uit, en pas als je hem GEBRUIKT merk je dat er iets weg is. Vandaar dat hier echt
 geklikt en echt getypt wordt.
 
@@ -10,6 +10,11 @@ geklikt en echt getypt wordt.
        balkjes. Terug naar de meters, zonder het lazy laden op te geven.
     3. /admin/usage verloor de velden `price` en `year`; het filter zag er nog uit als
        een filter maar veranderde niets meer.
+    4. Het metingenblok van een deployment tekende het verloop over de tijd op canvassen
+       en kreeg balkjes met alleen de huidige waarde. Terug naar de grafieken, met
+       dezelfde tekencode als de bestaande pagina.
+    5. De snapshotlijst van de backups kwam midden in de hertekende pagina binnen in de
+       oude vormgeving, met de herstelknop erin.
 
 ?layout=nldd staat overal in de URL: die wint van het koekje, dus deze tests staan los
 van wat de browser onthoudt.
@@ -245,3 +250,206 @@ def test_het_kostenfilter_heeft_zijn_velden_terug_en_rekent_opnieuw(app_server: 
     assert auth_page.input_value("#year") == "2024"
     assert "2024" in auth_page.locator("nldd-table").inner_text()
     auth_page.locator("text=Geheugengebruik en kosten 2024").first.wait_for(timeout=5000)
+
+
+# ------------------------------------------------------- metingen per deployment
+
+# Vierde stuk gedrag dat bij het omzetten verdween: het metingenblok van een deployment
+# tekende zijn verloop op canvassen en kreeg balkjes met alleen de huidige waarde. Terug
+# naar de grafieken - en net als bij het dashboard is een canvas met het juiste id waarop
+# NIETS staat de storing die je niet ziet. Daarom pixels.
+#
+# Het fragment wordt hier als document geserveerd in plaats van in de projectpagina
+# geladen: de testserver heeft geen Prometheus, dus het blok dat het normaal opneemt
+# (metrics-content-<naam>) staat er niet. Dat is geen verlies voor deze meting - juist het
+# fragment moet zijn eigen stijl en tekencode meebrengen, want de hertekende projectpagina
+# laadt ze niet.
+
+PROJECT = "test-project-detail"
+
+REEKS = [{"value": 1.0}, {"value": 3.0}, {"value": 2.0}]
+METRICS_CONTEXT = {
+    "project_name": PROJECT,
+    "duration": 60,
+    "metrics": {
+        "web": {
+            "cpu": REEKS,
+            "cpu_timestamps": [1735689600, 1735689900, 1735690200],
+            "cpu_limit": 100,
+            "memory": REEKS,
+            "memory_timestamps": [1735689600, 1735689900, 1735690200],
+            "memory_limit": 512,
+            "memory_request": 256,
+            "network_in": REEKS,
+            "network_out": REEKS,
+            "network_timestamps": [1735689600, 1735689900, 1735690200],
+            "disk_read": REEKS,
+            "disk_write": REEKS,
+            "disk_timestamps": [1735689600, 1735689900, 1735690200],
+        }
+    },
+    "discovered_workloads": [],
+    "pvc_storage": {},
+}
+
+CANVAS_HEEFT_INKT = """
+    id => {
+        const c = document.getElementById(id);
+        if (!c || !c.width) return false;
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        for (let i = 3; i < d.length; i += 4) { if (d[i] !== 0) return true; }
+        return false;
+    }
+"""
+
+
+def _metrics_fragment() -> str:
+    from opi.core.templates_lotc import templates_lotc
+
+    class _Deployment:
+        def __init__(self) -> None:
+            self.name = "dep1"
+            self.components = [type("C", (), {"reference": "web"})()]
+
+    return templates_lotc.env.get_template("bg/_deployment-metrics.html.j2").render(
+        deployment=_Deployment(), **METRICS_CONTEXT
+    )
+
+
+def _serveer(page: Page, patroon: str, html: str) -> None:
+    def handler(route: Route) -> None:
+        route.fulfill(status=200, content_type="text/html; charset=utf-8", body=html)
+
+    page.route(patroon, handler)
+
+
+def test_de_grafieken_van_een_deployment_worden_echt_getekend(app_server: str, auth_page: Page) -> None:
+    """Zes canvassen met de id's van de bestaande pagina, en er staat inkt op.
+
+    Het fragment brengt zijn eigen Chart.js, annotatie-plugin, tekencode en maten mee. Gaat
+    daar iets mis - een verkeerde volgorde, een vergeten bestand - dan staat de pagina er
+    nog steeds, met zes lege vlakken. Vandaar dat hier op pixels getoetst wordt.
+    """
+    _serveer(auth_page, "**/metrics/dep1*", _metrics_fragment())
+    auth_page.goto(f"{app_server}/projects/details/{PROJECT}/metrics/dep1?layout=nldd")
+
+    canvassen = [
+        "cpu-chart-dep1-web",
+        "mem-chart-dep1-web",
+        "net-in-chart-dep1-web",
+        "net-out-chart-dep1-web",
+        "disk-read-chart-dep1-web",
+        "disk-write-chart-dep1-web",
+    ]
+    for canvas_id in canvassen:
+        auth_page.locator(f"#{canvas_id}").wait_for(state="attached", timeout=10000)
+
+    # De tekencode is van ons en komt van deze server: haalt het fragment hem niet op, dan
+    # is dat een regressie en geen omgeving. Vandaar een harde eis en geen skip.
+    auth_page.wait_for_function("() => typeof initMetricsCharts === 'function'", timeout=15000)
+
+    # De maten komen uit de eigen stylesheet van het fragment. Zonder die is de wikkel nul
+    # pixels hoog en tekent Chart.js in het niets - een canvas dat er staat en leeg blijft.
+    hoogte = auth_page.evaluate("() => getComputedStyle(document.querySelector('.chart-wrapper')).height")
+    assert hoogte == "100px", f"de wikkel is {hoogte} hoog; de stijl van het fragment is niet geladen"
+
+    # Chart.js komt van een CDN. Is die niet bereikbaar, dan zegt deze test dat met zoveel
+    # woorden in plaats van te falen op iets wat niet over de omzetting gaat.
+    try:
+        auth_page.wait_for_function("() => typeof Chart !== 'undefined'", timeout=15000)
+    except Exception:
+        pytest.skip("Chart.js (CDN) niet bereikbaar in deze omgeving")
+
+    for canvas_id in canvassen:
+        auth_page.wait_for_function(CANVAS_HEEFT_INKT, arg=canvas_id, timeout=15000)
+
+
+def test_de_tijdvakknoppen_halen_hetzelfde_blok_opnieuw_op(app_server: str, auth_page: Page) -> None:
+    """De knop mikt op het blok van DEZE deployment, en dat is het id dat bestaat."""
+    _serveer(auth_page, "**/metrics/dep1*", _metrics_fragment())
+    auth_page.goto(f"{app_server}/projects/details/{PROJECT}/metrics/dep1?layout=nldd")
+
+    doelen = auth_page.eval_on_selector_all(
+        "[hx-target]", "els => Array.from(new Set(els.map(e => e.getAttribute('hx-target'))))"
+    )
+    assert doelen == ["#metrics-content-dep1"], doelen
+
+
+# --------------------------------------------------------------- backups per deployment
+
+# Het vijfde stuk: de snapshotlijst kwam midden in de hertekende pagina binnen in de oude
+# vormgeving. Hier wordt het ECHTE blok van de projectpagina gevuld met een onderschept
+# antwoord, en daarna wordt de herstelknop geklikt - want een knop die er staat en niets
+# aanroept ziet er precies zo uit als een knop die werkt.
+
+SNAPSHOT = {
+    "snapshot_id": "abc123",
+    "pvc_name": "pvc-a",
+    "timestamp": "2026-01-02T03:04:05",
+    "size_bytes": 5 * 1048576,
+    "component_name": "web",
+    "storage_name": "data",
+    "generation": 2,
+    "backup_run_id": "run-2",
+    "resource_type": "pvc",
+    "tags": {"a": "b"},
+    "trigger": "manual",
+}
+
+
+def _backups_fragment(deployment: str) -> str:
+    from opi.core.templates_lotc import templates_lotc
+
+    return templates_lotc.env.get_template("bg/_backup-snapshots.html.j2").render(
+        deployments=[{"name": deployment}],
+        backups_by_deployment={deployment: [dict(SNAPSHOT, deployment_name=deployment)]},
+        backups_error=None,
+    )
+
+
+def test_de_snapshotlijst_komt_in_de_nieuwe_vormgeving_binnen(app_server: str, auth_page: Page) -> None:
+    """Het blok wordt buiten de band gevuld, en wat er komt draagt geen rvo-markup meer."""
+    _serveer(auth_page, "**/backups", _backups_fragment("default"))
+
+    auth_page.goto(f"{app_server}/projects/details/{PROJECT}?tab=deployments&layout=nldd")
+    auth_page.wait_for_load_state("networkidle")
+
+    blok = auth_page.locator("#backups-snapshots-default")
+    blok.locator("nldd-table").wait_for(state="attached", timeout=10000)
+
+    assert "abc123" in blok.inner_text()
+    assert blok.locator("[class*='rvo-']").count() == 0, "er staat nog rvo-markup in de snapshotlijst"
+
+
+def test_de_herstelknop_opent_de_gedeelde_dialoog(app_server: str, auth_page: Page) -> None:
+    """Klikken, en het adres onderscheppen: dezelfde flow-id en dezelfde deployment.
+
+    Onder ROOS schrijft ``@click`` de aanroep, onder LOTC gaat hij via de :attrs-spread.
+    Dat verschil is aan de markup niet te zien, dus wordt hier echt geklikt en wordt
+    afgelezen waarmee openEditModal() geroepen wordt.
+    """
+    _serveer(auth_page, "**/backups", _backups_fragment("default"))
+
+    auth_page.goto(f"{app_server}/projects/details/{PROJECT}?tab=deployments&layout=nldd")
+    auth_page.wait_for_load_state("networkidle")
+
+    auth_page.locator("#restore-btn-default nldd-button").wait_for(state="attached", timeout=10000)
+    auth_page.evaluate("() => { window.__aanroep = null; window.openEditModal = (...a) => { window.__aanroep = a; }; }")
+    auth_page.eval_on_selector("#restore-btn-default nldd-button", "el => el.click()")
+
+    aanroep = auth_page.evaluate("() => window.__aanroep")
+    assert aanroep == ["modal-restore", "Backup herstellen", {"deployment": "default"}], aanroep
+
+
+def test_de_bestaande_pagina_laadt_dezelfde_tekencode(app_server: str, auth_page: Page) -> None:
+    """De verhuizing mag de OUDE pagina niet stilzwijgend zijn grafieken kosten.
+
+    De tekencode stond daar inline en staat nu in static/js/metrics_charts.js. Staat dat
+    script niet meer in de pagina, of is het pad fout, dan merkt niemand dat: de pagina
+    laadt, en pas het metingenblok - dat zijn eigen verzoek doet - blijft leeg.
+    """
+    auth_page.goto(f"{app_server}/projects/details/{PROJECT}?layout=roos")
+    auth_page.wait_for_load_state("networkidle")
+
+    assert auth_page.evaluate("() => typeof initMetricsCharts") == "function"
+    assert auth_page.evaluate("() => typeof timestampsToLocalLabels") == "function"

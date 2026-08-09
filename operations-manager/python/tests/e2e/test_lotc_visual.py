@@ -332,7 +332,9 @@ def test_unknown_tab_falls_back(app_server: str, page: Page) -> None:
     response = page.goto(f"{app_server}/lotc/bg/project-tabs?tab=bestaatniet")
     assert response is not None
     assert response.ok
-    expect(page.get_by_text("Diensten").first).to_be_visible()
+    # "Services", niet "Diensten": zo heet het in de bestaande applicatie, en een
+    # omzetting hoort de woorden niet te veranderen.
+    expect(page.get_by_text("Services").first).to_be_visible()
 
 
 # De echte routes die hun pagina al door LOTC kunnen laten renderen. Deze lijst groeit
