@@ -22,7 +22,7 @@ class PersistentStorageService(BackupsPageMixin, Service):
     definition = ServiceDefinition(
         name="Permanente opslag",
         description="Gegevens blijven bewaard tijdens de levenscyclus van de applicatie",
-        help_template="persistent_storage/help.html.j2",
+        help_template="persistent_storage/help.md",
         icon="server",
         color="grijs-600",
         binding=ServiceBinding.COMPONENT,

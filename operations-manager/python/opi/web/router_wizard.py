@@ -30,6 +30,7 @@ from opi.forms.wizard.session import (
 )
 from opi.forms.wizard.state import CLEARED_FIELD
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
+from opi.services.help_text import is_markdown_help, render_service_help
 from opi.services.schema_migration import normalize_service_entries
 from opi.utils.csrf import reject_misfired_form_get
 from opi.web.menu import get_menu_items
@@ -1111,22 +1112,32 @@ def _list_contains_item(items: list[Any], candidate: Any) -> bool:
 @wizard_router.get("/help/{template_name:path}", response_model=None)
 @requires_sso
 async def service_help(request: Request, template_name: str) -> HTMLResponse:
-    """Render a help template inside a modal-friendly HTML fragment.
+    """Render a help text inside a modal-friendly HTML fragment.
 
-    Two shapes are accepted, both resolved by the same Jinja loader:
+    Three shapes are accepted:
 
-    * ``<service-package>/help.html.j2`` -- a service's own explanation, which lives
-      in that service's package next to its other templates (RC-36).
+    * ``<service-package>/help.md`` -- a service's own explanation. It is markdown, and
+      it is the same file ``GET /api/v2/services/{name}`` returns, so the portal and an
+      API client read one source (RC-59). It is turned into the ROOS components the
+      modal always showed, with the icon taken from the service definition.
+    * ``<service-package>/help.html.j2`` -- the older Jinja form, still resolved by the
+      Jinja loader for any help that has not been converted.
     * ``<name>.html.j2`` -- a help text that belongs to no single service (the
       container-image note), still under ``templates/help/``.
 
-    The directory segment deliberately disallows ``.``, so no combination of the two
-    can walk out of the search path.
+    The directory segment deliberately disallows ``.``, so no combination of these can
+    walk out of the search path.
     """
     import re
 
-    if not re.fullmatch(r"(?:[a-zA-Z0-9_-]+/)?[a-zA-Z0-9._-]+\.html\.j2", template_name):
+    if not re.fullmatch(r"(?:[a-zA-Z0-9_-]+/)?[a-zA-Z0-9._-]+\.(?:html\.j2|md)", template_name):
         raise HTTPException(status_code=400, detail="Invalid template name")
+
+    if is_markdown_help(template_name):
+        try:
+            return HTMLResponse(render_service_help(template_name))
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Help template not found") from None
 
     template_path = template_name if "/" in template_name else f"help/{template_name}"
     templates = get_templates()

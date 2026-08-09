@@ -23,7 +23,7 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
     definition = ServiceDefinition(
         name="Namespace PostgreSQL Database",
         description="Dedicated PostgreSQL database cluster voor project",
-        help_template="namespace_postgres/help.html.j2",
+        help_template="namespace_postgres/help.md",
         icon="database",
         color="donkerblauw",
         binding=ServiceBinding.DEPLOYMENT,
