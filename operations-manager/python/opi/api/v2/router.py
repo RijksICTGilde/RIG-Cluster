@@ -77,7 +77,7 @@ from opi.services.catalog.actions import (
     ServiceAction,
     UploadedFile,
 )
-from opi.services.catalog.base import ConfigLayer, ValueStorage
+from opi.services.catalog.base import ConfigLayer, ConfigRole, ValueStorage, config_path
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.component_values import VALUES_LAYERS, ComponentValuesError, ValuesOperation
 from opi.services.component_values import locate as locate_values_node
@@ -93,7 +93,7 @@ from opi.services.project_authorization import (
 from opi.services.project_store import get_project_store
 from opi.services.registry import SERVICES, get_service
 from opi.services.services import ServiceAdapter, service_entry_config, service_entry_name
-from opi.services.services_enums import ServiceType
+from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceKind, ServiceType
 from opi.utils.naming import (
     HostnameFormat,
     generate_argocd_application_name,
@@ -1466,12 +1466,62 @@ class ServiceCatalogEntry(BaseModel):
             "instead of finding out from a 404."
         ),
     )
+    kind: ServiceKind = Field(
+        ...,
+        description=(
+            "`user` when a project chooses this service and it appears in the project file's "
+            "`services:` list, `system` when the platform always runs it and it is never in the "
+            "file. A client can only select a `user` service."
+        ),
+    )
+    binding: ServiceBinding = Field(
+        ...,
+        description=(
+            "Whether an individual component ticks this service (`component`) or the whole "
+            "deployment gets it at once (`deployment`). This is about selection, not about where "
+            "the config lives: that is `targets`, and the two genuinely differ (keycloak binds "
+            "per component while its config is one realm for the whole project)."
+        ),
+    )
+    hidden: bool = Field(
+        ...,
+        description=(
+            "Whether the service is kept out of the service picker. A hidden service is a variant "
+            "the platform selects itself, so a client should not offer it as a choice either."
+        ),
+    )
+    requires: list[str] = Field(
+        default_factory=list,
+        description=(
+            "What must be present in the project before this service can be used, as yaml paths "
+            "(`services/keycloak`, `services/keycloak/config/restrict-access`). Empty when the "
+            "service depends on nothing."
+        ),
+    )
 
 
 class ServiceCatalogResponse(BaseModel):
     """The full service catalog."""
 
     services: list[ServiceCatalogEntry] = Field(..., description="Every platform service, sorted by name")
+
+
+def _catalog_entry(service_type: ServiceType, service: Any) -> ServiceCatalogEntry:
+    """One catalog row, entirely out of what the service and its definition declare."""
+    targets = _supported_targets(service)
+    definition = ServiceAdapter.SERVICE_DEFINITIONS[service_type]
+    return ServiceCatalogEntry(
+        name=service_type.value,
+        description=definition.description,
+        config_schema_version=service.config_schema_version,
+        targets=[ConfigLayer(t) for t in targets],
+        value_targets=_values_targets(service),
+        configurable=bool(targets),
+        kind=definition.kind,
+        binding=definition.binding,
+        hidden=definition.hidden,
+        requires=list(definition.requires),
+    )
 
 
 @v2_router.get("/services", tags=["services"], response_model=ServiceCatalogResponse)
@@ -1486,23 +1536,222 @@ async def list_configurable_services_v2() -> ServiceCatalogResponse:
     exist and what can I configure", and an untyped response left ``schema: {}`` in the
     OpenAPI document, so a generated client learned nothing here while the per-service
     config endpoints did carry their schema.
+
+    Carries `kind`, `binding`, `hidden` and `requires` as well, so this list alone is
+    enough to *choose* a service -- which one a project may pick, which one the platform
+    runs regardless, and what a service needs before it can be used. Applying it then
+    only needs `GET /api/v2/services/{service_name}`.
     """
-    services = []
-    for service_type, service in SERVICES.items():
-        targets = _supported_targets(service)
-        definition = ServiceAdapter.SERVICE_DEFINITIONS.get(service_type)
-        services.append(
-            ServiceCatalogEntry(
-                name=service_type.value,
-                description=definition.description if definition else "",
-                config_schema_version=service.config_schema_version,
-                targets=[ConfigLayer(t) for t in targets],
-                value_targets=_values_targets(service),
-                configurable=bool(targets),
-            )
-        )
+    services = [_catalog_entry(service_type, service) for service_type, service in SERVICES.items()]
     services.sort(key=lambda item: item.name)
     return ServiceCatalogResponse(services=services)
+
+
+# --- describe one service (RC-59) --------------------------------------------
+# The catalog says which services exist; this says what one of them *is*, so a client
+# that has never seen the portal can apply it. Every field is a projection of something
+# the service already declares -- definition, config model, variables, layers. Nothing
+# here is prose written for the API alone: a second documentation system drifts from the
+# behaviour, and a wrong answer is worse than no answer. When something cannot be
+# derived, the declaration is missing that fact and it belongs there.
+
+
+class ServiceVariableInfo(BaseModel):
+    """One environment variable a service hands to the components that use it."""
+
+    name: str = Field(..., description="The variable name as it reaches the container")
+    description: str = Field("", description="What the value is, in Dutch, from the service's own declaration")
+    source: str = Field(
+        ...,
+        description=(
+            "`secret` when the value comes out of a generated Kubernetes secret, `direct` when the "
+            "platform sets it on the pod itself. Both arrive as a plain environment variable."
+        ),
+    )
+    aliases: list[str] = Field(
+        default_factory=list,
+        description="Extra names the same value is also exposed under; empty when there are none",
+    )
+    secret_key: str | None = Field(
+        None,
+        description="The field of the secret this variable is filled from; null when `source` is `direct`",
+    )
+
+
+class ServiceLayerInfo(BaseModel):
+    """One layer of the project file where this service takes config."""
+
+    target: ConfigLayer = Field(..., description="The layer, as used in the config endpoint paths")
+    yaml_path: str = Field(
+        ...,
+        description=(
+            "Where the config block lands in the project file, as a path with `[*]` for a list "
+            "and `{service}` for the entry naming this service."
+        ),
+    )
+    roles: list[ConfigRole] = Field(
+        default_factory=list,
+        description=(
+            "What the config at this layer is: `define` (put something in the project that is not "
+            "used by itself), `use` (this component/deployment uses it) or `bind` (how it reaches "
+            "the workload)."
+        ),
+    )
+    config_endpoint: str | None = Field(
+        None,
+        description=(
+            "The endpoint that writes this layer's config, method and path. The request body IS "
+            "the service's config schema, so the schema itself is read from that operation in the "
+            "OpenAPI document rather than copied here. Null for a layer that carries config but "
+            "has no write route."
+        ),
+    )
+    has_form: bool = Field(
+        ...,
+        description="Whether the portal offers a form for this layer; false does not mean the API refuses it",
+    )
+    form_exempt_reason: str | None = Field(
+        None,
+        description=(
+            "Why this layer deliberately has no form while still accepting config -- which is "
+            "exactly the case an API client wants to know about. Null when there is a form, or "
+            "when no such decision was recorded."
+        ),
+    )
+
+
+class ServiceDescription(BaseModel):
+    """Everything a client needs to apply one service, from the service's own declarations."""
+
+    name: str = Field(..., description="Service identifier, as used in the endpoint paths")
+    description: str = Field("", description="What the service does, in one Dutch sentence")
+    kind: ServiceKind = Field(..., description="`user` when a project chooses it, `system` when the platform runs it")
+    binding: ServiceBinding = Field(
+        ..., description="Whether a component ticks this service or the whole deployment gets it"
+    )
+    hidden: bool = Field(..., description="Whether the service is kept out of the service picker")
+    configurable: bool = Field(..., description="Whether the service accepts user config at any layer")
+    layers: list[ServiceLayerInfo] = Field(
+        default_factory=list,
+        description="Every layer this service takes config on, and how to write it there",
+    )
+    config_schema_version: str | None = Field(
+        None, description="Version of the service's config schema; null when it takes no config"
+    )
+    value_targets: list[ConfigLayer] = Field(
+        default_factory=list,
+        description="Layers where this service owns a key/value map managed entry by entry under `/values/...`",
+    )
+    variables: list[ServiceVariableInfo] = Field(
+        default_factory=list,
+        description=(
+            "The environment variables this service hands to a component that uses it. Always "
+            "present; an empty list means the service exposes none. Note that this covers only "
+            "what the *platform* provides: values a project sets itself travel through the "
+            "`user-env-vars` and `aliases` services, so a client reading variables of the other "
+            "services sees half of what ends up in a container."
+        ),
+    )
+    requires: list[str] = Field(
+        default_factory=list,
+        description="What must be present in the project before this service can be used, as yaml paths",
+    )
+    cleanup_strategy: CleanupStrategy = Field(
+        ...,
+        description=(
+            "What happens to the server-side resources when the service is removed: `none` (there "
+            "are none), `immediate` (deleted right away) or `deferred` (marked for deferred "
+            "deletion, so the data is still recoverable)."
+        ),
+    )
+    backup_label: str | None = Field(
+        None,
+        description=(
+            "The resource type this service is backed up and restored as; null when it is not "
+            "backupable. Several services can share one label."
+        ),
+    )
+
+
+def _layer_info(service: Any, service_type: ServiceType, layer: ConfigLayer) -> ServiceLayerInfo:
+    """One layer of a service, out of what the service declares about that layer."""
+    endpoint = None
+    if _accepts_config_at(service, layer) and layer in _CONFIG_WRITE_LAYERS:
+        suffix, _ = _config_write_route(layer)
+        endpoint = f"PUT /api/v2/projects/{{project_name}}/services/{service_type.value}{suffix}"
+    exempt_reason = service.form_exempt_layers.get(layer)
+    return ServiceLayerInfo(
+        target=layer,
+        yaml_path=config_path(layer, service_type),
+        roles=list(service.config_roles(layer)),
+        config_endpoint=endpoint,
+        has_form=service.config_form_section(layer) is not None,
+        form_exempt_reason=exempt_reason,
+    )
+
+
+@v2_router.get(
+    "/services/{service_name}",
+    tags=["services"],
+    response_model=ServiceDescription,
+    summary="Describe one platform service",
+)
+async def describe_service_v2(service_name: str) -> ServiceDescription:
+    """Everything about one service: what it is, where you apply it, how you configure it,
+    which environment variables it hands your component, what it needs, and what happens to
+    its data when it goes.
+
+    Descriptions are in Dutch, like the rest of the platform's user-facing text.
+
+    Public and project-independent, exactly like the catalog it details. It returns no
+    project data and no secrets -- only the names of the variables a service exposes and
+    which layers it takes config on -- and putting a key on the detail while the list next
+    to it is open would protect nothing. Whoever wants this closed has to close the list
+    too; the two belong together.
+
+    An unknown name is a 404 that names the services that do exist, because a client
+    guessing an identifier needs the list more than it needs the refusal.
+    """
+    try:
+        service_type = ServiceType(service_name)
+    except ValueError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown service '{service_name}'. Known services: {sorted(s.value for s in SERVICES)}",
+        ) from None
+    service = get_service(service_type)
+    definition = ServiceAdapter.SERVICE_DEFINITIONS[service_type]
+
+    layers = sorted(
+        set(service.config_layers())
+        | set(service.form_exempt_layers)
+        | {ConfigLayer(t) for t in _supported_targets(service)},
+        key=list(ConfigLayer).index,
+    )
+    return ServiceDescription(
+        name=service_type.value,
+        description=definition.description,
+        kind=definition.kind,
+        binding=definition.binding,
+        hidden=definition.hidden,
+        configurable=bool(_supported_targets(service)),
+        layers=[_layer_info(service, service_type, layer) for layer in layers],
+        config_schema_version=service.config_schema_version,
+        value_targets=_values_targets(service),
+        variables=[
+            ServiceVariableInfo(
+                name=variable.name,
+                description=variable.description,
+                source=variable.source,
+                aliases=list(variable.aliases),
+                secret_key=variable.secret_key,
+            )
+            for variable in definition.variables
+        ],
+        requires=list(definition.requires),
+        cleanup_strategy=definition.cleanup_strategy,
+        backup_label=definition.backup_label,
+    )
 
 
 def _collect_service_config(project_data: dict[str, Any], service_name: str, target_filter: str | None) -> list[dict]:
