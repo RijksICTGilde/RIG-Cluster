@@ -141,15 +141,6 @@ def render_fragment(
     return rendered
 
 
-# Hoe een dienst gebonden is, in gewone taal. De registry noemt dit "binding", en dat
-# zegt een gebruiker niets.
-BINDING_LABELS = {
-    "component": "per component",
-    "deployment": "per deployment",
-    "project": "per project",
-}
-
-
 def build_lotc_services(
     request: Request,
     services_info: list[dict[str, Any]],
@@ -169,63 +160,43 @@ def build_lotc_services(
 
     from opi.web.navigation_lotc import get_navigation, to_nldd_icon
 
-    services: list[dict[str, Any]] = []
-    for entry in services_info:
-        definition = entry["definition"]
-        if getattr(definition, "hidden", False):
-            continue
-
-        binding = getattr(definition.binding, "value", str(definition.binding))
-        is_platform = definition.kind.value == "system"
-
-        chips = [BINDING_LABELS.get(binding, binding)]
-        if entry["variables"]:
-            chips.append(f"{len(entry['variables'])} variabelen")
-        if getattr(definition, "requires", None):
-            chips.append(f"vereist {len(definition.requires)}")
-
-        services.append(
-            {
-                "name": entry["service"].value,
-                "label": definition.name,
-                "summary": definition.description,
-                "icon": to_nldd_icon(definition.icon),
-                "color": definition.color,
-                "chips": chips,
-                "kind_label": "altijd aan" if is_platform else "",
-                "kind_type": "info",
-                "help_template": getattr(definition, "help_template", None),
-                # De omgevingsvariabelen die deze service levert, met hun aliassen en hun
-                # uitleg. De bestaande pagina toont die per kaart; ze stonden hier alleen
-                # geTELD op een chip ("3 variabelen"), en dat is precies het soort
-                # samenvatting waar niemand iets aan heeft: je komt op deze pagina om te
-                # zien HOE de variabele heet die je in je applicatie moet uitlezen.
-                "variables": entry["variables"],
-            }
-        )
+    # Elke dienst die de route aanlevert komt op de pagina, ook de dienst met
+    # ``hidden=True``. Die vlag betekent "niet aanbieden in de WIZARD"
+    # (namespace-postgresql-database en namespace-redis worden via de API toegekend); de
+    # bestaande overzichtspagina toont ze wel, want ze leveren omgevingsvariabelen die je
+    # moet kunnen opzoeken. Hier werden ze overgeslagen, en dat kostte twee van de
+    # eenentwintig kaarten - zonder dat iets erover klaagde.
+    services: list[dict[str, Any]] = [
+        {
+            "name": entry["service"].value,
+            "label": definition.name,
+            "summary": definition.description,
+            "icon": to_nldd_icon(definition.icon),
+            "color": definition.color,
+            "help_template": getattr(definition, "help_template", None),
+            # De omgevingsvariabelen die deze service levert, met hun aliassen en hun
+            # uitleg. De bestaande pagina toont die per kaart; ze stonden hier alleen
+            # geTELD op een chip ("3 variabelen"), en dat is precies het soort
+            # samenvatting waar niemand iets aan heeft: je komt op deze pagina om te
+            # zien HOE de variabele heet die je in je applicatie moet uitlezen.
+            "variables": entry["variables"],
+        }
+        for entry in services_info
+        for definition in (entry["definition"],)
+    ]
 
     # De uitleg van een dienst gaat NIET via de server. De bestaande pagina opent hem in
     # een dialoog (openServiceHelp() in static/js/wizard.js, dat de tekst bij
     # /forms/wizard/help/<template> ophaalt), en dat is wat de gebruiker kent. Een
     # ?help=-parameter die de uitleg inline op de pagina zet was hier zelf bedacht; hij is
     # weg, want twee wegen naar dezelfde uitleg lopen vroeg of laat uiteen.
-    chosen = request.query_params.get("kind", "")
-    if chosen == "system":
-        shown = [service for service in services if service["kind_label"]]
-    elif chosen == "user":
-        shown = [service for service in services if not service["kind_label"]]
-    else:
-        shown = services
-
+    #
+    # Hier stond ook een filterbalk (Alle / Zelf te kiezen / Altijd aan) en een chip per
+    # kaart met de binding en het aantal variabelen. Allebei zelf bedacht: het origineel
+    # heeft geen filter en geen chips. Weg, om dezelfde reden.
     return {
         "navigation": get_navigation(user, current_path="/services"),
-        "services": shown,
-        "service_filter": chosen,
-        "service_filters": [
-            ("", "Alle", len(services)),
-            ("user", "Zelf te kiezen", sum(1 for s in services if not s["kind_label"])),
-            ("system", "Altijd aan", sum(1 for s in services if s["kind_label"])),
-        ],
+        "services": services,
     }
 
 

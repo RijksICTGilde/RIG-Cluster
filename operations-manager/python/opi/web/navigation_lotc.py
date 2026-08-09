@@ -39,6 +39,11 @@ ROOS_TO_NLDD_ICONS = {
     "kalender": "calendar",
     "computercode": "chevron-left-forward-slash-chevron-right",
     "database": "database",
+    # De delta's zijn driehoekjes; caret is de NLDD-driehoek.
+    "delta-naar-links": "caret-left",
+    "delta-naar-rechts": "caret-right",
+    "delta-omlaag": "caret-down",
+    "downloaden": "square-and-arrow-down",
     "document-blanco": "file-text",
     "externe-link": "link",
     "foutmelding": "exclamation-triangle",
@@ -49,15 +54,25 @@ ROOS_TO_NLDD_ICONS = {
     # verbinding draagt.
     "netwerk": "link",
     "klok": "timer",
+    "kruis": "dismiss",
     "map": "folder-stack",
     "pijl-naar-rechts": "chevron-right",
     "publicatie": "file-text",
     "puzzel": "puzzle-piece",
+    "refresh": "arrow-2-counter-clockwise",
     "schild-met-vinkje-erop": "shield-check-mark",
     "server": "cylinder-split",
     "sleutel": "lock-closed",
+    # NLDD heeft geen stethoscoop. Het hart is hier geen versiering maar dezelfde
+    # betekenis: deze twee diensten (health-check, deployment-health) gaan over de
+    # gezondheid van een deployment. Zonder afbeelding bleef de kaart leeg, en dat is
+    # zichtbaar minder dan wat het origineel toont.
+    "stethoscoop": "heart",
+    "terug": "arrow-u-turn-backward",
     "user": "person",
+    "verwijderen": "trash",
     "vinkje": "check-mark-circle",
+    "vraagteken": "question-mark-circle",
     "wachtend-persoon": "person",
     "waarschuwing": "exclamation-triangle",
     "wereldbol": "globe",
