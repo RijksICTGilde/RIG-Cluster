@@ -136,4 +136,10 @@ def get_navigation(user: dict[str, Any] | None, current_path: str = "") -> dict[
         if in_group:
             sidebar.append((label, in_group))
 
-    return {"utility": utility, "sidebar": sidebar}
+    # De beheeritems ook los, voor het gebruikersmenu rechtsboven. Ze blijven in de
+    # zijkolom staan: dit is een tweede WEG naar dezelfde pagina's, niet een verhuizing.
+    # Wie ze uit de zijkolom wil halen moet dat apart besluiten.
+    beheer_links = dict(GROUPS)["Beheer"]
+    beheer = [item for item in main if item["link"] in beheer_links]
+
+    return {"utility": utility, "sidebar": sidebar, "beheer": beheer}

@@ -2974,6 +2974,32 @@ async def projects_overview(request: Request):
         raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
 
 
+@web_router.get("/weergave")
+async def kies_weergave(request: Request, scheme: str = "", terug: str = "/"):
+    """Onthoud de weergavekeuze (systeem, licht, donker) en ga terug waar je vandaan kwam.
+
+    Server-side en niet in localStorage, om dezelfde reden als de layoutschakelaar: dan
+    rendert de server de pagina meteen in de goede stand en flitst er niets. NLDD leest
+    ``data-scheme`` op ``<html>``; de schil zet dat uit dit koekje.
+
+    ``terug`` komt uit de URL en wordt daarom streng gehouden: alleen een pad op deze
+    site. Een waarde die met ``//`` begint is geen relatief pad maar een ander domein, en
+    dat zou van deze route een open doorverwijzing maken.
+    """
+    from opi.web.lotc_switch import SCHEME_COOKIE, SCHEMES
+
+    bestemming = terug if terug.startswith("/") and not terug.startswith("//") else "/"
+    antwoord = RedirectResponse(url=bestemming, status_code=303)
+    antwoord.set_cookie(
+        SCHEME_COOKIE,
+        scheme if scheme in SCHEMES else "",
+        max_age=60 * 60 * 24 * 365,
+        samesite="lax",
+        httponly=False,
+    )
+    return antwoord
+
+
 @web_router.get("/about", response_class=HTMLResponse)
 async def about_platform(request: Request):
     """Serve the 'About the platform' page."""
