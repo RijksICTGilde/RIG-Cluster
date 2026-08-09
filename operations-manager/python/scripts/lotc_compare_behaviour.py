@@ -52,6 +52,20 @@ ROUTES = [
     "/forms/wizard/start",
 ]
 
+# De fragmenten die pas na een klik of via htmx in beeld komen. Ze staan hier apart omdat
+# ze geen pagina zijn: ze worden IN een pagina of IN de gedeelde dialoog gezet. Juist
+# daar glipt een omzetting langs de aandacht - het venster opent, en pas als je erin kijkt
+# staat er de oude vormgeving. Wat er in staat moet net zo goed kloppen als een pagina:
+# elk hx-post, elke veldnaam en elk id draagt hier het OPSLAAN.
+FRAGMENTEN = [
+    "/projects/details/{project}/backups",
+    "/projects/{project}/tasks",
+    "/projects/{project}/modal-wizard/modal-edit-identity",
+    "/projects/{project}/modal-wizard/modal-edit-team",
+    "/projects/{project}/modal-wizard/modal-edit-services",
+    "/projects/{project}/actions/refresh-project/confirm",
+]
+
 # De projectpagina is een geval apart. De oude pagina zet alle tabbladen in EEN document
 # en wisselt ze in de browser; de nieuwe geeft elk tabblad een eigen URL. Een tab los
 # vergelijken met de hele oude pagina meldt dus alles van de andere tabs als verdwenen.
@@ -60,6 +74,18 @@ TABPAGINA = "/projects/details/{project}"
 TABBLADEN = ("project", "deployments", "metrics", "taken")
 
 HX_ATTRS = ("hx-get", "hx-post", "hx-delete", "hx-put", "hx-patch")
+
+# Waarden die per verzoek verschillen en dus niets zeggen over gedrag: het wizard-token,
+# CSRF, cache-brekers. Zonder dit meldt elke vergelijking van een dialoog een verschil dat
+# er niet is - en een meetlat die altijd piept, houdt niemand in de gaten.
+VLUCHTIG = re.compile(r"((?:_wizard_token|csrf|csrf_token|nonce|_ts|v)=)[^&\s\"']+", re.IGNORECASE)
+
+
+def stabiel(waarde: str) -> str:
+    """Vervang wat per verzoek verschilt door een vaste tekst."""
+    return VLUCHTIG.sub(r"\1<wisselend>", waarde)
+
+
 JS_ATTRS = ("onclick", "@click", "onchange", "oninput", "onsubmit")
 
 # Aanroepen die alleen over vormgeving gaan en dus mogen verschillen.
@@ -145,11 +171,11 @@ class Oppervlak(HTMLParser):
                 continue
             # Een anker of een javascript:-link is navigatie binnen de pagina, geen bestemming.
             if waarde and not waarde.startswith(("#", "javascript:")) and not is_ruis(waarde):
-                self.bestemmingen.add(waarde)
+                self.bestemmingen.add(stabiel(waarde))
 
         for sleutel in HX_ATTRS:
             if d.get(sleutel):
-                self.htmx.add(f"{sleutel}={d[sleutel]}")
+                self.htmx.add(f"{sleutel}={stabiel(d[sleutel])}")
 
         for sleutel in JS_ATTRS:
             for naam in re.findall(r"([A-Za-z_$][\w$]*)\s*\(", d.get(sleutel, "")):
@@ -289,6 +315,25 @@ def main() -> int:
             print(r)
         print()
 
+    for route in FRAGMENTEN:
+        pad = route.format(project=project)
+        if args.only and args.only not in pad:
+            continue
+        try:
+            oud = meet_met_fragmenten(client, args.base, pad, "roos")
+            nieuw = meet_met_fragmenten(client, args.base, pad, "nldd")
+        except httpx.HTTPError as e:
+            print(f"{pad}\n  FOUT bij ophalen: {e}\n")
+            continue
+
+        regels = vergelijk(oud, nieuw)
+        weg = [r for r in regels if r.startswith("  WEG")]
+        totaal += len(weg)
+        print(f"{pad}  (fragment; {len(weg)} weg, {len(regels) - len(weg)} nieuw)")
+        for r in regels:
+            print(r)
+        print()
+
     pad = TABPAGINA.format(project=project)
     if not args.only or args.only in pad:
         oud = meet_met_fragmenten(client, args.base, pad, "roos")
@@ -302,7 +347,36 @@ def main() -> int:
         print()
 
     print(f"TOTAAL VERDWENEN GEDRAG: {totaal}")
-    return 1 if totaal else 0
+
+    # Tweede meting, en die is er omdat de eerste hem NIET kan doen. De vergelijking
+    # hierboven vindt gedrag dat VERDWENEN is. Een pagina die nog helemaal niet omgezet
+    # is, rendert in beide weergaven hetzelfde en komt daar dus als schoon uit - terwijl
+    # hij juist nog moet gebeuren. Dat is precies hoe je de indruk krijgt dat je klaar
+    # bent terwijl de helft van de dialogen nog de oude vormgeving toont.
+    #
+    # Dit telt daarom simpelweg hoeveel elementen van elk systeem er in de nieuwe
+    # weergave staan. Staat er nog roos in, dan is dat blok nog niet om.
+    print()
+    print("NOG NIET OMGEZET (nieuwe weergave bevat nog markup van het oude systeem):")
+    achterstand = 0
+    alles = [*ROUTES, *FRAGMENTEN, TABPAGINA]
+    for route in alles:
+        pad = route.format(project=project)
+        if args.only and args.only not in pad:
+            continue
+        try:
+            html = haal_op(client, args.base, pad, "nldd")
+        except httpx.HTTPError:
+            continue
+        nldd = html.count("<nldd-")
+        roos = html.count("rvo-")
+        if roos > nldd:
+            achterstand += 1
+            print(f"  {pad:58s} nldd={nldd:4d}  oud={roos:4d}")
+    if not achterstand:
+        print("  (niets)")
+
+    return 1 if totaal or achterstand else 0
 
 
 if __name__ == "__main__":
