@@ -628,6 +628,34 @@
         </c-stack>
 
     {% elif active_tab == 'metrics' %}
+        {# ---- Per deployment: CPU, geheugen, netwerk en disk over de tijd ---------
+
+           Deze grafieken hingen aan de metrics-scraper-DIENST
+           (bg/_service-section-metrics.html.j2), waardoor een project zonder die dienst
+           op dit tabblad alleen een teller zag. CPU- en geheugengebruik zijn geen
+           dienst-extraatje maar de basisvraag die je op een tabblad Metrics komt stellen,
+           dus staan ze hier voor ELK project met deployments.
+
+           Het fragment en zijn id zijn dezelfde als die de dienst gebruikt
+           (metrics-content-<naam>), dus er komt geen tweede weg naar dezelfde gegevens
+           bij. Levert Prometheus niets, dan toont het fragment zelf "No data".
+
+           intersect once, net als bij de dienst: elk blok is een reeks queries, en die
+           doe je pas als iemand kijkt. #}
+        {% if project.deployments %}
+            {% for deployment in project.deployments | sort(attribute='name') %}
+                {% call panel("Metingen - " ~ deployment.name, "chart-x-y-axis-line",
+                              info_text="Verbruik per component over de tijd.") %}
+                    <div id="metrics-content-{{ deployment.name }}"
+                         hx-get="/projects/details/{{ project.name }}/metrics/{{ deployment.name }}"
+                         hx-trigger="intersect once"
+                         hx-swap="innerHTML">
+                        <c-paragraph>Metingen worden opgehaald...</c-paragraph>
+                    </div>
+                {% endcall %}
+            {% endfor %}
+        {% endif %}
+
         {% if project.name is defined and usage is not defined %}
             {# Zelfde aanpak als de bestaande pagina: apart laden, zodat een trage of
                afwezige Prometheus deze pagina niet ophoudt. Het fragment volgt dezelfde
