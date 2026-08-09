@@ -51,3 +51,61 @@ nldd-page-footer {
     display: block;
     margin-top: 3rem;
 }
+
+/*
+ * De ontwerpvariabelen die ONZE eigen stylesheets gebruiken.
+ *
+ * Dit is de belangrijkste regel in dit bestand, en de reden verdient uitleg.
+ *
+ * Onze eigen CSS (modal.css, wizard.css, project-details.css, dashboard.css, ...) is
+ * geschreven tegen de variabelen van het OUDE thema: kleuren, afstanden, hoekstralen.
+ * Die variabelen komen uit de stylesheet van dat thema, en die laadt de nieuwe vormgeving
+ * niet. Gevolg: 368 plekken in onze CSS verwezen naar iets wat niet bestaat, en een
+ * eigenschap met een lege waarde wordt door de browser genegeerd.
+ *
+ * Zichtbaar werd dat als "half werk": de gedeelde dialoog had geen achtergrond en was
+ * dus DOORZICHTIG, blokken verloren hun witruimte, randen verdwenen. Stuk voor stuk
+ * onvindbaar met een gedragsmeting - de HTML klopt, de klasse staat er, alleen de waarde
+ * erachter is leeg.
+ *
+ * Hieronder staan alleen de variabelen die in het oude thema ECHT bestonden, met hun
+ * eigen waarde. Namen die daar ook al niet bestonden staan er bewust NIET bij: die deden
+ * in de oude weergave ook niets, en ze alsnog invullen zou de nieuwe weergave anders maken
+ * dan het origineel - precies wat deze omzetting niet mag.
+ *
+ * Dit hoort te KRIMPEN: elke keer dat een van onze stylesheets vervangen wordt door wat
+ * het thema zelf levert, kan hier een regel weg.
+ */
+:root {
+    --rvo-alert-gap: calc(var(--rvo-space-2xs) + var(--rvo-space-xs));
+    --rvo-color-donkerblauw: #01689b;
+    --rvo-color-grijs-050: #F8FAFC;
+    --rvo-color-grijs-100: #F1F5F9;
+    --rvo-color-grijs-200: #E2E8F0;
+    --rvo-color-grijs-300: #CBD5E1;
+    --rvo-color-grijs-400: #94A3B8;
+    --rvo-color-grijs-500: #64748B;
+    --rvo-color-grijs-600: #475569;
+    --rvo-color-grijs-700: #334155;
+    --rvo-color-grijs-800: #1E293B;
+    --rvo-color-grijs-900: #0F172A;
+    --rvo-color-groen: #39870C;
+    --rvo-color-groen-150: #E2EDDB;
+    --rvo-color-groen-750: #6BA549;
+    --rvo-color-hemelblauw: #007BC7;
+    --rvo-color-hemelblauw-150: #D9EBF7;
+    --rvo-color-hemelblauw-750: #409CD5;
+    --rvo-color-oranje: #E17000;
+    --rvo-color-rood: #D51B1E;
+    --rvo-color-rood-150: #F9DFDD;
+    --rvo-color-rood-300: #F3C0BC;
+    --rvo-color-rood-600: #E68078;
+    --rvo-color-rood-750: #E06056;
+    --rvo-color-wit: #FFFFFF;
+    --rvo-color-zwart: #000000;
+    --rvo-space-lg: 18px;
+    --rvo-space-md: 16px;
+    --rvo-space-sm: 12px;
+    --rvo-space-xl: 24px;
+    --rvo-space-xs: 8px;
+}
