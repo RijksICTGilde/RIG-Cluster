@@ -33,6 +33,7 @@ import re
 from typing import TYPE_CHECKING
 
 import opi
+from opi.core.templates import get_templates
 from opi.services.services import ServiceAdapter
 
 if TYPE_CHECKING:
@@ -180,8 +181,6 @@ def render_service_help(help_template: str) -> str:
     route that knows only which help was asked for, and a help document that belongs to no
     service (the container-image note) simply renders without an icon.
     """
-    from opi.core.templates import get_templates
-
     definition = next(
         (d for d in ServiceAdapter.SERVICE_DEFINITIONS.values() if d.help_template == help_template),
         None,
