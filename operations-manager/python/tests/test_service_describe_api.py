@@ -27,6 +27,7 @@ import pytest
 from fastapi import HTTPException
 from opi.api.v2.router import describe_service_v2, list_configurable_services_v2
 from opi.services.catalog.base import ConfigLayer
+from opi.services.help_text import service_help_markdown
 from opi.services.registry import SERVICES, get_service
 from opi.services.services import ServiceAdapter
 from opi.services.services_enums import ServiceType
@@ -95,6 +96,10 @@ def test_every_service_has_a_describe_without_empty_mandatory_fields(service: Se
 
     assert described.name == service.value
     assert described.description.strip(), f"{service.value} has no description"
+    assert described.explanation.strip(), f"{service.value} returns no explanation"
+    assert described.explanation == service_help_markdown(service), (
+        "the explanation is the service's own help document, not a second text written for the API"
+    )
     assert described.kind is not None
     assert described.binding is not None
     assert isinstance(described.variables, list)

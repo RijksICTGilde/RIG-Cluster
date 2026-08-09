@@ -43,7 +43,7 @@ class DeploymentHealthService(Service):
             "daarbij mee wat andere diensten over die deployment melden. Draait altijd, "
             "is niet kiesbaar."
         ),
-        help_template="deployment_health/help.html.j2",
+        help_template="deployment_health/help.md",
         icon="stethoscoop",
         color="grijs-600",
         binding=ServiceBinding.DEPLOYMENT,

@@ -32,7 +32,7 @@ class AuthorizationWallService(Service):
         icon="schild-met-vinkje-erop",
         color="groen",
         binding=ServiceBinding.COMPONENT,
-        help_template="authorization_wall/help.html.j2",
+        help_template="authorization_wall/help.md",
         variables=[],
         requires=[
             "services/publish-on-web",
