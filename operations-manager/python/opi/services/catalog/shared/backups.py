@@ -150,10 +150,10 @@ async def backups_fragment(request: Request, project_name: str) -> HTMLResponse:
     from opi.core.auth_decorators import get_current_user
     from opi.core.cluster_config import get_prefixed_namespace
     from opi.core.config import settings
-    from opi.core.templates import get_templates
     from opi.manager.backup import BackupManager
     from opi.services.project_authorization import is_user_authorized_for_project
     from opi.services.project_store import get_project_store
+    from opi.web.lotc_switch import render
 
     user = get_current_user(request) or {}
     user_email = user.get("email", "").lower()
@@ -201,9 +201,13 @@ async def backups_fragment(request: Request, project_name: str) -> HTMLResponse:
             _snapshot_to_dict(s) for s in per_namespace.get(k8s_namespace, []) if s.deployment_name == name
         ]
 
-    return get_templates().TemplateResponse(
-        request=request,
-        name="shared/_backup-snapshots.html.j2",
+    # Hetzelfde blok in twee vormgevingen. Het antwoord komt met hx-swap-oob binnen op een
+    # pagina die of roos of NLDD is; kwam het altijd in roos-componenten terug, dan stond er
+    # midden in een hertekende pagina een tabel in de oude vormgeving.
+    return render(
+        request,
+        roos="shared/_backup-snapshots.html.j2",
+        lotc="bg/_backup-snapshots.html.j2",
         context={
             "deployments": deployments,
             "backups_by_deployment": backups_by_deployment,

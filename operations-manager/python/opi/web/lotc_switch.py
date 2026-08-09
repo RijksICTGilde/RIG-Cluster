@@ -96,6 +96,51 @@ def render(
     return remember_layout(request, setup_templates().TemplateResponse(request, roos, context))
 
 
+def render_fragment(
+    request: Request,
+    *,
+    roos: str,
+    lotc: str,
+    context: dict[str, Any],
+    process_roos: bool = True,
+) -> str:
+    """Render een FRAGMENT als HTML-string, in de weergave die dit verzoek gekozen heeft.
+
+    De tegenhanger van :func:`render` voor stukken die geen ``TemplateResponse`` worden
+    maar een string die de route zelf in een ``HTMLResponse`` zet - de inhoud van de
+    gedeelde dialoog, bijvoorbeeld. Zelfde keuze, zelfde gegevens, ander sjabloon.
+
+    Args:
+        request: het binnenkomende verzoek; bepaalt de keuze.
+        roos: het bestaande sjabloon, in ``opi/templates/``.
+        lotc: het LOTC-sjabloon, in ``opi/templates_lotc/``.
+        context: de gegevens, identiek voor beide.
+        process_roos: of de roos-uitvoer nog door ``process_components`` moet. Dat is
+            daar nodig zolang er onvertaalde ``<c-*>``-tekst in kan zitten, maar niet
+            overal: de voortgangsfragmenten renderen met opzet EEN keer.
+
+    Onder LOTC gaat er NOOIT een tweede slag overheen. De sjablonen hier zijn bestanden,
+    dus hun componenttags zijn al bij het compileren vervangen, en de formulier-HTML die
+    erin komt is door de LOTC-adapter al afgerenderd. Een tweede Jinja-render zou de
+    ingevulde waarden alsnog als sjabloon uitvoeren; dat is in deze codebase eerder een
+    lek geweest.
+    """
+    if wants_lotc(request):
+        from opi.core.templates_lotc import templates_lotc
+
+        return templates_lotc.env.get_template(lotc).render(context)
+
+    from opi.core.templates import get_templates
+
+    templates = get_templates()
+    rendered = templates.get_template(roos).render(context)
+    if process_roos:
+        process_components = templates.env.filters.get("process_components")
+        if process_components:
+            rendered = str(process_components(rendered))
+    return rendered
+
+
 # Hoe een dienst gebonden is, in gewone taal. De registry noemt dit "binding", en dat
 # zegt een gebruiker niets.
 BINDING_LABELS = {

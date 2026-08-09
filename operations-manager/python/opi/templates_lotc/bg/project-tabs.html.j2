@@ -86,7 +86,7 @@
         <c-auto-grid min="200px" gap="md">
             <c-metric icon="rectangle-stack" value="{{ project.components | length }}" label="Componenten" />
             <c-metric icon="arrow-up-arrow-down" value="{{ project.deployments | length }}" label="Deployments" href="?tab=deployments" />
-            <c-metric icon="cylinder-split" value="{{ project.services | length }}" label="Diensten" />
+            <c-metric icon="cylinder-split" value="{{ project.services | length }}" label="Services" />
             <c-metric icon="person-2" value="{{ project.users | length }}" label="Teamleden" />
         </c-auto-grid>
 
@@ -228,7 +228,7 @@
         {% endfor %}
 
         {# ---- Services & Integraties (section-services.html.j2) --------------- #}
-        {% call panel("Diensten", "cylinder-split", info_text="Diensten worden door het platform geleverd en beheerd. Je hoeft ze niet zelf te installeren of bij te werken.") %}
+        {% call panel("Services & Integraties", "cylinder-split", info_text="Services worden door het platform geleverd en beheerd. Je hoeft ze niet zelf te installeren of bij te werken.") %}
             {% if user_role in ["admin", "owner"] %}
                 {% set diensten_bewerken = "openEditModal('modal-edit-services', 'Services beheren')" %}
                 <c-action-group align="start">

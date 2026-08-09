@@ -28,12 +28,15 @@
        @-attribuut als kale tekst, dus {{ ... }} komt er letterlijk uit en de knop doet
        stilletjes niets. Via de :attrs-spread wordt het wel een expressie, en geescapet. #}
         {% set toevoegen_js = "sequenceAdd('" ~ field.path ~ "')" %}
+        {# De tekst gaat via label= en NIET als kind: <c-button> wordt een <nldd-button>,
+           en dat element heeft geen standaard-slot, dus kinderen worden stilzwijgend
+           weggegooid. Gevolg was een knop met alleen een plusje - je kon nog wel raden
+           wat hij deed, maar "Item toevoegen" stond er niet meer. #}
         <c-button type="tertiary" size="sm"
+                  label="{{ add_label|e }}"
                   show-icon="before" icon="plus"
                   :attrs="{'onclick': toevoegen_js}"
-                  :disabled="add_disabled">
-            {{ add_label|e }}
-        </c-button>
+                  :disabled="add_disabled" />
     </div>
     {% endif %}
     {{ render_errors(field.errors) }}
