@@ -3061,10 +3061,22 @@ async def architecture_overview(request: Request):
         HTML response with comprehensive platform architecture documentation
     """
     try:
-        templates = get_templates()
         user = get_current_user(request)
-        return templates.TemplateResponse(
-            "architecture-overview.html.j2", {"request": request, "menu_items": get_menu_items(user)}
+        from opi.web.navigation_lotc import get_navigation
+
+        # De architectuurpagina langs de schakelaar, net als de rest. Het LOTC-sjabloon
+        # bestond al maar werd door niemand gerenderd, dus de nieuwe weergave toonde hier
+        # nog de oude pagina - en dat viel niet op, want hij ziet er in beide gevallen uit
+        # zoals hij hoort.
+        return render(
+            request,
+            roos="architecture-overview.html.j2",
+            lotc="architecture-overview.html.j2",
+            context={
+                "request": request,
+                "menu_items": get_menu_items(user),
+                "navigation": get_navigation(user, current_path="/architecture"),
+            },
         )
 
     except Exception as e:
