@@ -16,15 +16,32 @@
     <div class="service-cards-grid" id="{{ field.path|e }}-grid">
         {% for card in cards %}
         <div class="service-card{% if card.checked %} service-card--selected{% endif %}{% if card.is_locked %} service-card--locked-checked{% endif %}" data-service="{{ card.value|e }}"{% if card.data_requires %} data-requires='{{ card.data_requires }}'{% endif %}{% if card.server_locked %} data-locked="true"{% endif %}>
-            {# Vergrendeld is aria-disabled, niet disabled: de waarde moet mee de POST in,
-                   alleen aanpassen mag niet. Server-side gezet zodat het klopt vanaf het
-                   eerste beeld; wizard.js houdt het bij zodra een keuze het slot verplaatst. #}
-            <c-checkbox
+            {# EEN GEWOON <input>, EN DAT IS HIER GEEN LUIHEID.
+
+               Onder NLDD wordt <c-checkbox> een <nldd-checkbox-field>, en die zet zijn
+               invoerveld in de SCHADUWBOOM. static/js/wizard.js zoekt het besturingselement
+               met card.querySelector('input[type="checkbox"]') - een gewone zoekopdracht,
+               die niet door een schaduwboom heen kijkt. Gevolg, in de browser gemeten: een
+               klik op een kaart vinkte NIETS aan, en het formulier verstuurde vervolgens
+               ALLE veertien diensten in plaats van geen enkele. Precies omgekeerd aan wat
+               de gebruiker aanwees, en volkomen onzichtbaar in de HTML.
+
+               De kaart is bovendien ons eigen onderdeel met onze eigen CSS
+               (static/css/wizard.css, .service-card): het vakje wordt daar opgemaakt, niet
+               door het thema. Een component eromheen voegt hier dus niets toe en neemt het
+               enige weg wat telt - een besturingselement dat JavaScript kan vinden en dat
+               met het formulier meegaat.
+
+               Vergrendeld is aria-disabled, niet disabled: de waarde moet mee de POST in,
+               alleen aanpassen mag niet. Server-side gezet zodat het klopt vanaf het eerste
+               beeld; wizard.js houdt het bij zodra een keuze het slot verplaatst. #}
+            <input
+                type="checkbox"
                 id="{{ field.path|e }}-{{ card.value|e }}"
                 name="{{ field.path|e }}[]"
                 value="{{ card.value|e }}"
-                :checked="card.checked"
-                :disabled="card.disabled"
+                {% if card.checked %}checked{% endif %}
+                {% if card.disabled %}disabled{% endif %}
                 aria-disabled="{{ 'true' if card.is_locked else 'false' }}"
             />
             <div class="service-card__content">

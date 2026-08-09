@@ -1,0 +1,120 @@
+/* De maten van het metingenfragment in de nieuwe vormgeving.
+
+   De grafieken zijn <canvas>-elementen en die hebben een afmeting nodig: Chart.js draait
+   hier met maintainAspectRatio:false en vult zijn wikkel, dus zonder hoogte staat er een
+   canvas van nul pixels en zie je niets - precies de stille storing die deze omzetting
+   moet uitsluiten.
+
+   De regels komen uit static/css/project-details.css (het blok .metrics-grid t/m
+   .chart-current), met dezelfde maten. Wat NIET overgenomen is, zijn de rvo-variabelen:
+   die bestaan in het NLDD-thema niet, en een var() zonder waarde valt terug op niets. Dus
+   staan de afstanden hier als vaste maten en de kleuren als themavariabele met de kleur
+   uit het origineel als terugval - dezelfde aanpak als het filterformulier van
+   /admin/usage.
+
+   Alleen dit fragment. Het is met opzet geen kopie van project-details.css: die brengt
+   honderden regels mee die op deze pagina aan niets hangen, of erger, aan iets anders. */
+
+.metrics-toolbar {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.metrics-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.metrics-component-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.charts-container {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+}
+
+@media (max-width: 1024px) {
+    .charts-container {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 640px) {
+    .charts-container {
+        grid-template-columns: 1fr;
+    }
+}
+
+.chart-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+}
+
+.chart-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--nldd-color-text-subtle, #535353);
+    text-transform: uppercase;
+}
+
+.chart-wrapper {
+    width: 100%;
+    height: 100px;
+    position: relative;
+}
+
+.metrics-chart {
+    width: 100%;
+    height: 100%;
+}
+
+.chart-current {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--nldd-color-text, #1a1a1a);
+    text-align: right;
+}
+
+.chart-current.no-data {
+    color: var(--nldd-color-text-subtle, #a0a0a0);
+    font-style: italic;
+}
+
+.chart-current.warning {
+    color: #e17000;
+    background-color: #fff3e0;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.chart-current.critical {
+    color: #d52b1e;
+    background-color: #ffebee;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.pod-count-chip {
+    background: var(--nldd-color-surface-alt, #e6e6e6);
+    color: var(--nldd-color-text, #1a1a1a);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    margin-left: 8px;
+}
+
+.pvc-storage-section {
+    margin-top: 24px;
+}
+
+.pvc-storage-header {
+    margin-bottom: 16px;
+}

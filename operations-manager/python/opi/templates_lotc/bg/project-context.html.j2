@@ -41,7 +41,7 @@
         <c-sidenav-item icon="house" label="Overzicht" href="#" :active="true" />
         <c-sidenav-item icon="chart-x-y-axis-line" label="Statistieken" href="#" />
         <c-sidenav-item icon="rectangle-stack" label="Componenten" href="#" />
-        <c-sidenav-item icon="cylinder-split" label="Diensten" href="#" />
+        <c-sidenav-item icon="cylinder-split" label="Services" href="#" />
         <c-sidenav-item icon="arrow-up-arrow-down" label="Deployments" href="#" />
         <c-sidenav-group label="Beheer" />
         <c-sidenav-item icon="person-2" label="Team" href="#" />
@@ -63,13 +63,13 @@
         <c-metric icon="rectangle-stack" value="{{ project.components | length }}" label="Componenten" />
         <c-metric icon="arrow-up-arrow-down" value="{{ project.deployments | length }}" label="Deployments" />
         <c-metric icon="person-2" value="{{ project.users | length }}" label="Teamleden" />
-        <c-metric icon="cylinder-split" value="{{ project.services | length }}" label="Diensten" />
+        <c-metric icon="cylinder-split" value="{{ project.services | length }}" label="Services" />
     </c-auto-grid>
 
     {% call panel("Overzicht", "house") %}
         <c-detail-list>
             <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
-            <c-detail-item label="Diensten" value="{{ project.services | map(attribute='value') | join(', ') }}" />
+            <c-detail-item label="Services" value="{{ project.services | map(attribute='value') | join(', ') }}" />
             <c-detail-item label="Repositories" value="{{ project.repositories | length }}" />
         </c-detail-list>
         <c-paragraph size="sm">
