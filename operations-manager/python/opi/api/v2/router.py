@@ -35,6 +35,7 @@ from opi.api.task_models import (
     ConfigureServiceResult,
     ConfigureServiceValuesResult,
     DeleteDeploymentResult,
+    ManageDatabaseSchemasResult,
     RefreshDeploymentResult,
     RefreshProjectResult,
     TaskResponse,
@@ -79,12 +80,14 @@ from opi.services.catalog.actions import (
 )
 from opi.services.catalog.base import ConfigLayer, ConfigRole, ValueStorage, config_path
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
+from opi.services.catalog.postgresql_database.config_model import schema_description_field, schema_postfix_field
 from opi.services.component_values import VALUES_LAYERS, ComponentValuesError, ValuesOperation
 from opi.services.component_values import locate as locate_values_node
 from opi.services.component_values import validate_key as validate_values_key
 from opi.services.component_values import validate_value as validate_values_value
 from opi.services.component_values import validate_value_for_storage as validate_values_value_for_storage
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
+from opi.services.postgres_scope import get_postgres_schemas
 from opi.services.project_authorization import (
     PROJECT_EDIT_ROLES,
     get_user_role_for_project,
@@ -97,7 +100,9 @@ from opi.services.services_enums import CleanupStrategy, ServiceBinding, Service
 from opi.utils.naming import (
     HostnameFormat,
     generate_argocd_application_name,
+    generate_extra_database_schema,
     generate_public_url,
+    generate_schema_variable_name,
     get_component_ingress_map,
     sanitize_kubernetes_name,
 )
@@ -2037,6 +2042,289 @@ def _register_service_config_routes(router: APIRouter) -> None:
 _CONFIG_WRITE_LAYERS = (ConfigLayer.PROJECT, ConfigLayer.COMPONENT, ConfigLayer.DEPLOYMENT)
 
 _register_service_config_routes(v2_router)
+
+
+# --- extra database schemas as their own sub-resource (RC-59) ----------------
+# The extra schemas of `postgresql-database` (RC-17) are the one part of a service
+# config where "read it, change one entry, write the whole block back" is unsafe.
+# RC-17 decided that a schema leaving the list must NOT take its data with it:
+# removing it marks it, the schema and its contents stay, and only the variable stops
+# being offered. But marking is a field a user ticks in the form -- not a consequence
+# of dropping a line. A client that rewrites the config with one schema fewer loses
+# that protection without ever being told it existed, and an agent that knows only
+# the request schema cannot know the intention behind it.
+#
+# So the schemas get their own routes: one entry is addressed at a time, adding or
+# removing never touches the rest of the config, and removing marks by default.
+# Everything else about a database is still configured through the generic config
+# route -- this is not a second way to configure the service.
+
+_SCHEMAS_SERVICE = ServiceType.POSTGRESQL_DATABASE.value
+_SCHEMAS_PATH = f"/projects/{{project_name}}/services/{_SCHEMAS_SERVICE}/schemas"
+
+
+class DatabaseSchemaDeployment(BaseModel):
+    """The name one extra schema has in one deployment's database."""
+
+    deployment: str = Field(..., description="Name of the deployment")
+    schema_name: str | None = Field(
+        None,
+        description=(
+            "The full schema name in that deployment's database, `{project}_{deployment}_{postfix}`. "
+            "Null when that name would exceed PostgreSQL's 63-character limit, which is refused when "
+            "a schema is added but can be reached by adding a deployment with a long name afterwards."
+        ),
+    )
+
+
+class DatabaseSchemaInfo(BaseModel):
+    """One extra schema, with the facts a caller cannot work out for itself."""
+
+    postfix: str = Field(..., description="The short name as it stands in the project file")
+    description: str = Field("", description="What this schema is for, from the project file")
+    marked_for_deletion: bool = Field(
+        ...,
+        description=(
+            "Whether the schema is on its way out: it and its data are still there, the platform "
+            "no longer manages it and its variable is no longer offered to components."
+        ),
+    )
+    variable_name: str = Field(
+        ...,
+        description="The environment variable that carries this schema's name, `DATABASE_SCHEMA_{POSTFIX}`",
+    )
+    deployments: list[DatabaseSchemaDeployment] = Field(
+        default_factory=list,
+        description=(
+            "The full schema name per deployment. Schemas are project-wide, so the same postfix "
+            "applies to every deployment while the actual name differs per deployment."
+        ),
+    )
+
+
+class DatabaseSchemaListResponse(BaseModel):
+    """Every extra schema of a project, including the ones marked for deletion."""
+
+    project: str = Field(..., description="The project these schemas belong to")
+    schemas: list[DatabaseSchemaInfo] = Field(
+        default_factory=list, description="The schemas, in the order they stand in the project file"
+    )
+
+
+class AddDatabaseSchemaRequest(BaseModel):
+    """The schema to add: a postfix and what it is for."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    postfix: str = schema_postfix_field()
+    description: str = schema_description_field()
+
+
+_SCHEMAS_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {"model": TaskResponse[ManageDatabaseSchemasResult], "description": "Task completed (when polled)"},
+    202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+}
+
+
+@v2_router.get(
+    _SCHEMAS_PATH,
+    tags=[_SCHEMAS_SERVICE],
+    response_model=DatabaseSchemaListResponse,
+    summary="List the extra database schemas of a project",
+)
+@validate_api_token
+async def list_database_schemas_v2(request: Request, project_name: ProjectNamePath) -> DatabaseSchemaListResponse:
+    """The project's extra database schemas, with the names that follow from them.
+
+    Not the same answer as reading the service config: this also gives the full schema
+    name per deployment and the environment variable each schema produces. Those follow
+    from naming rules a caller cannot apply without knowing them, and they are the whole
+    reason to ask -- the postfix on its own is already in the config.
+
+    Schemas marked for deletion are listed as well, with `marked_for_deletion: true`.
+    They still exist with their data; leaving them out would read as "gone".
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    project = get_project_store().get(project_name)
+    if not project or not project.data:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+
+    entries = get_postgres_schemas(project.data, include_marked=True)
+    deployment_names = [
+        name for deployment in (project.data.get("deployments") or []) if (name := deployment.get("name"))
+    ]
+
+    schemas = []
+    for entry in entries:
+        postfix = entry["postfix"]
+        deployments = []
+        for deployment_name in deployment_names:
+            try:
+                schema_name = generate_extra_database_schema(project_name, deployment_name, postfix)
+            except ValueError:
+                schema_name = None
+            deployments.append(DatabaseSchemaDeployment(deployment=deployment_name, schema_name=schema_name))
+        schemas.append(
+            DatabaseSchemaInfo(
+                postfix=postfix,
+                description=entry.get("description", ""),
+                marked_for_deletion=bool(entry.get("marked_for_deletion")),
+                variable_name=generate_schema_variable_name(postfix),
+                deployments=deployments,
+            )
+        )
+    return DatabaseSchemaListResponse(project=project_name, schemas=schemas)
+
+
+async def _enqueue_schema_write(
+    request: Request,
+    project_name: str,
+    operation: str,
+    postfix: str,
+    *,
+    description: str = "",
+    forget: bool = False,
+    rollout: bool = True,
+) -> JSONResponse:
+    """Check what can be checked now, then enqueue the schema write.
+
+    Only the project itself is checked here. Whether the postfix is free, whether the
+    full name fits and whether its variable collides with one the database service
+    already exposes are decided at save time, by the same chokepoint the wizard hits --
+    re-deciding them here would put those rules in two places, and the second copy is
+    the one that goes stale.
+    """
+    if not validate_project_name(project_name):
+        raise HTTPException(status_code=400, detail="Invalid project name format.")
+    project = get_project_store().get(project_name)
+    if not project or not project.data:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+
+    task = await create_async_task(
+        request=request,
+        task_type="manage_database_schemas",
+        project_name=project_name,
+        payload={
+            "project_name": project_name,
+            "operation": operation,
+            "postfix": postfix,
+            "description": description,
+            "forget": forget,
+            "rollout": rollout,
+        },
+    )
+    return _accepted_response(task, "manage_database_schemas")
+
+
+@v2_router.post(
+    _SCHEMAS_PATH,
+    tags=[_SCHEMAS_SERVICE],
+    responses=_SCHEMAS_RESPONSES,
+    summary="Add an extra database schema",
+    description=(
+        "Add one extra schema to the project's database, without resending the rest of the "
+        "service config.\n"
+        "\n"
+        "The schema is created in every deployment's database as "
+        "`{project}_{deployment}_{postfix}` and its name is offered to components as "
+        "`DATABASE_SCHEMA_{POSTFIX}`.\n"
+        "\n"
+        "A postfix that is already in use is refused with 409 when it is active. A postfix that "
+        "is there but marked for deletion comes back instead: its data was never removed, which "
+        "is exactly what marking rather than dropping is for.\n"
+        "\n"
+        "Refused with 422 when the postfix is not a safe identifier, when the full name would "
+        "exceed PostgreSQL's 63-character limit for any deployment, or when its variable would "
+        "collide with one the database service already exposes. Those are the checks the save "
+        "path runs; this endpoint passes them on rather than repeating them.\n"
+        "\n"
+        "Asynchronous: the response is 202 with a task id. Poll `/api/tasks/{task_id}` for the "
+        "result; the write and the rollout both happen inside that task."
+    ),
+)
+@validate_api_token
+async def add_database_schema_v2(
+    request: Request,
+    project_name: ProjectNamePath,
+    body: AddDatabaseSchemaRequest,
+    rollout: RolloutQuery = True,
+) -> JSONResponse:
+    """Add one extra database schema.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    return await _enqueue_schema_write(
+        request,
+        project_name,
+        "add",
+        body.postfix,
+        description=body.description,
+        rollout=rollout,
+    )
+
+
+@v2_router.delete(
+    f"{_SCHEMAS_PATH}/{{postfix}}",
+    tags=[_SCHEMAS_SERVICE],
+    responses=_SCHEMAS_RESPONSES,
+    summary="Remove an extra database schema",
+    description=(
+        "Mark one extra schema as no longer wanted. **The schema and its data stay in "
+        "PostgreSQL.** The platform stops managing it and stops offering its "
+        "`DATABASE_SCHEMA_{POSTFIX}` variable to components; the entry stays in the project "
+        "file, recording that the schema exists, and adding the same postfix again brings it "
+        "back with its data.\n"
+        "\n"
+        "That is the safe default, and it is the default here rather than a rule the caller has "
+        "to know: rewriting the service config with one schema fewer would drop the entry "
+        "instead, and nothing in the request would have said so.\n"
+        "\n"
+        "With `forget=true` the entry is taken out of the project file entirely. The data is "
+        "still not deleted -- nothing in this API drops a schema from the database -- but the "
+        "project no longer records that the schema is there, so it can no longer be brought back "
+        "through the API and nothing documents what is still sitting in the database. Set it "
+        "when that is what you mean.\n"
+        "\n"
+        "Removing a schema that is already marked changes nothing: no commit, no rollout, and "
+        "still a success (`changed: false` in the task result).\n"
+        "\n"
+        "Asynchronous: the response is 202 with a task id. Poll `/api/tasks/{task_id}` for the "
+        "result."
+    ),
+)
+@validate_api_token
+async def remove_database_schema_v2(
+    request: Request,
+    project_name: ProjectNamePath,
+    postfix: Annotated[str, FastAPIPath(description="The postfix of the schema to remove.")],
+    forget: Annotated[
+        bool,
+        Query(
+            description=(
+                "Take the entry out of the project file instead of marking it. The schema and its "
+                "data stay in PostgreSQL either way, but a forgotten schema is no longer recorded "
+                "anywhere and cannot be restored through the API. Off by default."
+            )
+        ),
+    ] = False,
+    rollout: RolloutQuery = True,
+) -> JSONResponse:
+    """Mark one extra database schema as no longer wanted, or forget it entirely.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    return await _enqueue_schema_write(
+        request,
+        project_name,
+        "remove",
+        postfix,
+        forget=forget,
+        rollout=rollout,
+    )
 
 
 # --- declared per-service actions (RC-38) ------------------------------------
