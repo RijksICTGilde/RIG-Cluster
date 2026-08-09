@@ -453,3 +453,51 @@ def test_de_bestaande_pagina_laadt_dezelfde_tekencode(app_server: str, auth_page
 
     assert auth_page.evaluate("() => typeof initMetricsCharts") == "function"
     assert auth_page.evaluate("() => typeof timestampsToLocalLabels") == "function"
+
+
+def test_de_projectkop_heeft_de_knop_naar_de_bewerkdialoog(app_server: str, auth_page: Page) -> None:
+    """De knop "Bewerken" naast de projectnaam is de ENIGE weg naar modal-edit-identity.
+
+    Bij het omzetten was hij verdwenen, en daarmee de mogelijkheid om naam en
+    omschrijving van een project te wijzigen. Niets sloeg daarop aan: de pagina rendert,
+    de dialoog bestaat nog in de HTML, alleen roept niemand hem meer aan.
+
+    Daarom wordt hier geklikt en wordt AFGELEZEN waarmee openEditModal() geroepen wordt -
+    naam en titel moeten die van project-details/section-header.html.j2 zijn. Toetsen dat
+    er "een knop Bewerken" staat zou niets bewijzen: op deze pagina staan er vijf.
+    """
+    auth_page.goto(f"{app_server}/projects/details/{PROJECT}?tab=project&layout=nldd")
+    auth_page.wait_for_load_state("networkidle")
+
+    kop = auth_page.locator("nldd-title:has-text('Detail Test Project')").first
+    kop.wait_for(state="attached", timeout=10000)
+
+    auth_page.evaluate("() => { window.__aanroep = null; window.openEditModal = (...a) => { window.__aanroep = a; }; }")
+    # De knop in de KOP, niet een van de vier in de secties eronder: de eerste
+    # nldd-button die op de projectnaam volgt.
+    auth_page.eval_on_selector(
+        "nldd-button[text='Bewerken']",
+        "el => el.click()",
+    )
+
+    aanroep = auth_page.evaluate("() => window.__aanroep")
+    assert aanroep == ["modal-edit-identity", "Projectgegevens bewerken"], aanroep
+
+
+def test_de_projectpagina_laat_geen_sluitknop_zweven(app_server: str, auth_page: Page) -> None:
+    """De hulpdialoog van een dienst moet verborgen zijn, ook op deze pagina.
+
+    bg/_modals.html.j2 neemt hem mee zoals de bestaande pagina dat doet, maar zijn
+    display:none staat in wizard.css. Werd die stylesheet niet geladen, dan hing er een
+    los kruisje onderaan de pagina - zichtbaar op een screenshot, onzichtbaar voor elke
+    markupcontrole, want de HTML klopte.
+    """
+    auth_page.goto(f"{app_server}/projects/details/{PROJECT}?tab=project&layout=nldd")
+    auth_page.wait_for_load_state("networkidle")
+
+    dialoog = auth_page.locator("#service-help-modal")
+    assert dialoog.count() == 1, "de hulpdialoog staat niet meer in de pagina"
+    assert not dialoog.is_visible(), "de hulpdialoog staat open zonder dat iemand hem opende"
+    assert not auth_page.locator(".service-help-modal__close").first.is_visible(), (
+        "de sluitknop van de hulpdialoog zweeft los in de pagina (wizard.css niet geladen?)"
+    )

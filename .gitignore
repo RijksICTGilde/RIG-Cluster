@@ -58,6 +58,10 @@ secrets-overview-*.yaml
 # resultaat waar de omzetting op beoordeeld wordt. Ze horen bij de PR, en zonder ze in
 # de repo kan niemand zien wat er gebouwd is zonder eerst de tests te draaien.
 !/operations-manager/python/tests/e2e/screenshots/lotc/
+# Om dezelfde reden de vergelijking oud-naast-nieuw uit scripts/lotc_shots.py: daar
+# staat het contactvel bij (index.html), en dat is bedoeld om over de schouder mee te
+# kijken zonder eerst iets te hoeven draaien.
+!/operations-manager/python/tests/e2e/screenshots/vergelijk/
 /operations-manager/docs/
 /operations-manager/python/tests/e2e/artifacts/
 /.env
