@@ -22,7 +22,7 @@ class MinioStorageService(BackupsPageMixin, Service):
     definition = ServiceDefinition(
         name="MinIO Object Storage",
         description="S3-compatible object storage voor documenten, afbeeldingen en grote bestanden",
-        help_template="minio/help.html.j2",
+        help_template="minio/help.md",
         icon="map",
         color="rood",
         binding=ServiceBinding.DEPLOYMENT,

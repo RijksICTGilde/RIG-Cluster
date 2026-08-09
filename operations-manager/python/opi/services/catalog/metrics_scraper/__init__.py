@@ -30,7 +30,7 @@ class MetricsScraperService(Service):
     definition = ServiceDefinition(
         name="Prometheus Metrics Scraper",
         description="Zorgt dat prometheus scraping op het component wordt ingeschakeld",
-        help_template="metrics_scraper/help.html.j2",
+        help_template="metrics_scraper/help.md",
         icon="grafiek",
         color="hemelblauw",
         binding=ServiceBinding.COMPONENT,
