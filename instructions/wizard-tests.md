@@ -83,6 +83,19 @@ uv run pytest tests/e2e/ -m "e2e and not sandbox" -q                    # niveau
 Niveau 5 vraagt eenmalig `uv run playwright install chromium`. In een container ook
 `uv run playwright install-deps chromium`.
 
+Schrijf een niveau-5-test die niet leunt op wat ervoor draaide: `task test-e2e-random`
+schudt de bestanden en de tests daarbinnen door elkaar, en CI draait die vorm. Een test die
+zijn beginstaat van een vorige test krijgt, valt daar om -- terecht. Zie
+`features/e2e-in-ci.md`.
+
+Twee regels die daaruit volgen:
+- **Wacht op wat er moet gebeuren, niet op de klok.** `expect(...)` en `wait_for(...)`
+  wachten door tot de toestand klopt; `wait_for_timeout(300)` gokt en gokt op een belaste
+  machine mis. Een bewaker met tanden faalt nog steeds, alleen later.
+- **Wijzig je gedeelde staat, zet hem terug in een `finally` die ook de schrijfactie zelf
+  omsluit.** Loopt het opslaan vast nadat de server het al deed, dan moet het herstel toch
+  draaien -- anders betaalt een andere test de rekening.
+
 ## Dekking vandaag
 
 Gemeten 6 augustus 2026 over de dienstpakketten: 2x niveau 1, 4x niveau 2, 3x niveau 3,

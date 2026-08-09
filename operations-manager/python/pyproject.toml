@@ -75,6 +75,7 @@ test = [
     "vcrpy>=7.0.0",
     "pytest-minio-mock>=0.4.17",
     "pytest-timeout>=2.3.1",
+    "pytest-randomly>=3.16.0",
     "testcontainers[postgres]>=4.0.0",
 ]
 dev = [
@@ -203,7 +204,11 @@ title = "opi"
 testpaths = [
     "tests"
 ]
-addopts = "--strict-markers -v -q -m 'not requires_infra and not e2e'"
+# -p no:randomly: pytest-randomly is installed to *check* order-independence, not to
+# impose it. Once installed it shuffles by default, which would reorder the ~6300 unit
+# tests on every run as a side effect of a change that is about the E2E layer. So it is
+# off here and switched on deliberately by `task test-e2e-random`.
+addopts = "--strict-markers -v -q -p no:randomly -m 'not requires_infra and not e2e'"
 asyncio_mode = "auto"
 filterwarnings = [
     "ignore::UserWarning"

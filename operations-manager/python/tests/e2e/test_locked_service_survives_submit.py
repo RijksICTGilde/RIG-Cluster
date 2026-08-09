@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from playwright.sync_api import expect
 from tests.e2e.helpers.wizard import WizardHelper
 
 if TYPE_CHECKING:
@@ -53,12 +54,14 @@ def test_a_service_locked_by_another_still_gets_submitted(app_server: str, auth_
 
     auth_page.locator(f'.service-card[data-service="{REQUIRER}"]').wait_for(state="visible")
     auth_page.locator(f'.service-card[data-service="{REQUIRER}"] input[type="checkbox"]').first.check()
-    auth_page.wait_for_timeout(400)
 
+    # Wachten op het slot zelf in plaats van op een vaste tijd: dat is precies wat hier
+    # moet gebeuren, dus een trage machine wacht langer en een slot dat nooit komt faalt
+    # nog steeds -- met de melding hieronder in plaats van een verlopen klok.
     kaart = auth_page.locator(f'.service-card[data-service="{LOCKED}"]')
     checkbox = kaart.locator("input[type='checkbox']").first
-    assert checkbox.is_checked(), f"{REQUIRER} hoort {LOCKED} automatisch aan te zetten"
-    assert checkbox.is_disabled(), f"{LOCKED} hoort vergrendeld te zijn zolang {REQUIRER} hem vereist"
+    expect(checkbox, f"{REQUIRER} hoort {LOCKED} automatisch aan te zetten").to_be_checked()
+    expect(checkbox, f"{LOCKED} hoort vergrendeld te zijn zolang {REQUIRER} hem vereist").to_be_disabled()
 
     verstuurd = _submitted_values(auth_page)
     assert LOCKED in verstuurd, (
@@ -78,15 +81,18 @@ def test_unlocking_it_again_leaves_no_stray_value(app_server: str, auth_page: Pa
 
     auth_page.locator(f'.service-card[data-service="{REQUIRER}"]').wait_for(state="visible")
     requirer_box = auth_page.locator(f'.service-card[data-service="{REQUIRER}"] input[type="checkbox"]').first
-    requirer_box.check()
-    auth_page.wait_for_timeout(400)
-    requirer_box.uncheck()
-    auth_page.wait_for_timeout(400)
-
     locked_box = auth_page.locator(f'.service-card[data-service="{LOCKED}"] input[type="checkbox"]').first
+
+    # Elke stap wacht op zijn eigen gevolg -- het slot dat komt, en het slot dat weer weg
+    # is -- in plaats van op een vaste tijd die op een belaste machine te kort is.
+    requirer_box.check()
+    expect(locked_box).to_be_disabled()
+    requirer_box.uncheck()
+    expect(locked_box).to_be_enabled()
+
     if locked_box.is_checked():
         locked_box.uncheck()
-        auth_page.wait_for_timeout(400)
+        expect(locked_box).not_to_be_checked()
 
     verstuurd = _submitted_values(auth_page)
     assert LOCKED not in verstuurd, (
