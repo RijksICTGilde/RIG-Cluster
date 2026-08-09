@@ -34,6 +34,13 @@
 
 {% set page_title_value %}{% block page_title %}Self Service Portal{% endblock %}{% endset %}
 
+{# Wat het gebruikersmenu rechtsboven nodig heeft. Uit het verzoek en niet uit een extra
+   contextsleutel, zodat elke route die deze schil gebruikt hem meteen goed heeft - ook
+   de routes die hun context zelf samenstellen. #}
+{% set gebruikersnaam = (navigation.utility | selectattr('link', 'equalto', '/account') | map(attribute='label') | first) | default('Account', true) %}
+{% set gekozen_weergave = request.cookies.get('zad_scheme', '') %}
+{% set huidig_pad = request.url.path ~ ('?' ~ request.url.query if request.url.query else '') %}
+
 {# htmx komt niet vanzelf mee. setup_components(htmx=True) zet alleen de validatie van
    hx-attributen aan; het script moet je zelf laden. Zonder blijft elk blok dat de pagina
    lazy inlaadt op zijn plaatshouder staan - zichtbaar op het scherm, stil in de tests.
@@ -44,7 +51,15 @@
 {# Een pagina die de gedeelde dialoog gebruikt zet hier zijn eigen stylesheet en scripts
    bij, via {% block head_extra %}. Ze staan bewust NIET standaard in de schil: de meeste
    pagina's openen geen dialoog, en dan is het drie bestanden voor niets. #}
-{% set lotc_head %}<script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"></script><link rel="stylesheet" href="{{ static_url('css/lotc-app.css') }}">{% block head_extra %}{% endblock %}{% endset %}
+{# NLDD leest de licht/donker-stand van `data-scheme` op <html>, en <c-page> laat geen
+   attribuut op die tag toe (gemeten: theme= en :attrs verdwijnen allebei). Deze regel zet
+   hem alsnog, vóór de eerste weergave, uit de waarde die de SERVER al kent - dus zonder
+   dat de pagina eerst licht opkomt en dan omslaat. Bij "systeem" gebeurt er niets en
+   volgt NLDD de voorkeur van het besturingssysteem.
+
+   Zodra <c-page> een attribuut doorlaat kan dit weg; gemeld aan het LOTC-project. #}
+{% set scheme_script %}{% if gekozen_weergave %}<script>document.documentElement.setAttribute('data-scheme','{{ gekozen_weergave }}')</script>{% endif %}{% endset %}
+{% set lotc_head %}<script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"></script><link rel="stylesheet" href="{{ static_url('css/lotc-app.css') }}">{{ scheme_script }}{% block head_extra %}{% endblock %}{% endset %}
 
 <c-page title="{{ page_title_value }}" lang="nl" head="{{ lotc_head }}">
 
@@ -60,17 +75,63 @@
                 {# De balk in de header is hier GEEN hoofdnavigatie meer maar een
                    hulpbalk (account, in- en uitloggen), net als bij bg. De
                    hoofdnavigatie staat in de zijkolom hieronder. #}
-                <c-menu type="bar" slot="utility" aria-label="Hulplinks">
-                    {% for item in navigation.utility %}
-                        {# Geen {% if %} binnen een componenttag: de voorbewerker leest
-                           dat als een tweede attribuut. Een voorwaarde hoort in de
-                           expressie. #}
-                        <c-menu-item
-                            label="{{ item.label }}"
-                            href="{{ item.link }}"
-                            icon="{{ item.icon | default('', true) }}" />
-                    {% endfor %}
-                </c-menu>
+                {# HET GEBRUIKERSMENU. Hier stonden de hulplinks los naast elkaar; nu
+                   hangen ze onder een uitklapper met de naam van de gebruiker, met de
+                   weergavekeuze en het beheer erbij.
+
+                   De uitklapper is nldd-markup en geen component, om dezelfde reden als
+                   op de projectenpagina: <c-menu> rendert altijd een menuBALK, en een
+                   balk in een balk is niet wat hier hoort. De items in een uitklapmenu
+                   navigeren bovendien NIET op hun href - dat doet alleen een
+                   menu-BAR-item - dus ze dragen hun bestemming in een onclick. Dat is
+                   geen nieuw gereedschap: de bestaande pagina doet het met
+                   @click="window.location.href=..." precies zo. #}
+                {# Een nldd-BUTTON met een popup-menu, en niet een menu-bar-item met een
+                   popup. Gemeten: op een <nldd-menu-bar-item> gaat de popup niet open -
+                   de items staan wel in de DOM maar blijven onzichtbaar. Op een
+                   <nldd-button expandable popup-type="menu"> werkt hij wel, en dat is ook
+                   de vorm die de gebruiker aanleverde. #}
+                <div slot="utility">
+                    <nldd-button variant="tertiary" expandable popup-type="menu"
+                                 start-icon="person" text="{{ gebruikersnaam }}" type="button" size="md">
+                        {# De items dragen hun bestemming twee keer: href zodat hij in de
+                           markup staat en zichtbaar is waar hij heen gaat, en onclick omdat
+                           een <nldd-menu-item> NIET uit zichzelf op zijn href navigeert.
+                           Gemeten: het menu ging open, het item was zichtbaar en klikbaar,
+                           en de pagina bleef staan. Een menu-BAR-item doet dat wel - die
+                           twee lijken op elkaar en gedragen zich anders.
+
+                           location.href is hier geen nieuw gereedschap: de bestaande pagina
+                           navigeert met @click="window.location.href=..." op precies deze
+                           manier. #}
+                        <nldd-menu slot="popup" placement="bottom-end">
+                            <nldd-menu-item text="Profiel" href="/account" onclick="location.href='/account'"></nldd-menu-item>
+
+                            <nldd-menu-divider></nldd-menu-divider>
+                            <nldd-menu-group text="Weergave">
+                                {% for waarde, weergave_label in [("", "Systeem"), ("light", "Licht"), ("dark", "Donker")] %}
+                                    <nldd-menu-item type="radio" text="{{ weergave_label }}"
+                                                    href="/weergave?scheme={{ waarde }}&terug={{ huidig_pad | urlencode }}"
+                                                    onclick="location.href='/weergave?scheme={{ waarde }}&terug={{ huidig_pad | urlencode }}'"
+                                                    {% if waarde == gekozen_weergave %}selected{% endif %}></nldd-menu-item>
+                                {% endfor %}
+                            </nldd-menu-group>
+
+                            {% if navigation.beheer %}
+                                <nldd-menu-divider></nldd-menu-divider>
+                                <nldd-menu-group text="Beheer">
+                                    {% for item in navigation.beheer %}
+                                        <nldd-menu-item text="{{ item.label }}" href="{{ item.link }}" onclick="location.href='{{ item.link }}'"></nldd-menu-item>
+                                    {% endfor %}
+                                </nldd-menu-group>
+                            {% endif %}
+
+                            <nldd-menu-divider></nldd-menu-divider>
+                            <nldd-menu-item text="Uitloggen" href="/auth/logout" onclick="location.href='/auth/logout'"></nldd-menu-item>
+                        </nldd-menu>
+                    </nldd-button>
+                </div>
+
             </c-header>
         </template>
 
@@ -137,15 +198,17 @@
            De voettekst heeft drie slots: breadcrumbs, de hoofdinhoud, en een legal-bar
            onderaan. De links horen in de hoofdinhoud, de versievermelding erbij.
 
-           Hier stonden twee <c-menu>'s, en dat gaf twee problemen tegelijk. Een c-menu
-           rendert ALTIJD een <nldd-menu-bar>, en dat is een navigatiebalk die zichzelf
-           opmeet en er een overloopknop onder hangt als hij denkt dat de inhoud niet past
-           - op elke pagina een los blokje onder de voettekst. En een <nldd-menu-item>
-           navigeert niet uit zichzelf op zijn href, dus de vier bestemmingen waren
-           bovendien niet aanklikbaar.
+           Hier stonden twee <c-menu>'s. Een c-menu rendert ALTIJD een <nldd-menu-bar>, en
+           dat is een horizontale navigatiebalk: hij meet zichzelf op en hangt er een
+           overloopknop ("Meer opties") aan als hij denkt dat de inhoud niet past. Voor
+           een rijtje voetteksmenu-items is dat het verkeerde gereedschap, en de kop
+           "Platform" die base.html.j2 wel heeft (als label van de primaryMenu) kan er
+           helemaal niet in.
 
-           Vandaar gewone links, met de kop "Platform" erboven die base.html.j2 ook heeft
-           (daar als label van de primaryMenu). #}
+           LET OP, want dit is een val waar deze omzetting al twee keer in trapte: een
+           <nldd-menu-BAR-item> navigeert WEL gewoon op zijn href. Het is de
+           <nldd-menu-item> in een uitklapmenu die dat niet doet (zie bg/projects.html.j2).
+           Die twee lijken op elkaar en gedragen zich anders. #}
         <c-footer>
             <c-stack gap="xs">
                 <c-heading type="h2" size="6" label="Platform" />
