@@ -45,7 +45,7 @@ def delete_project_via_ui(
     page.locator("button:has-text('Project verwijderen')").first.click()
     page.locator("#edit-section-modal.is-open").wait_for(state="visible", timeout=start_timeout)
 
-    confirm = page.locator("#edit-section-inner [data-confirm-action] button.confirm-action-submit").first
+    confirm = page.locator("#edit-section-inner [data-confirm-action] .confirm-action-submit").first
     confirm.wait_for(state="visible", timeout=start_timeout)
     confirm.click()
 
