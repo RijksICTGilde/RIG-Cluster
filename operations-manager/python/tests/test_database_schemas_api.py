@@ -24,11 +24,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import pathlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.api.task_models import TASK_RESULT_MODELS
 from opi.api.v2.router import v2_router
-from opi.core.project_schema import ProjectIntegrityError
+from opi.core.async_task_service import TaskType
+from opi.core.project_schema import ProjectIntegrityError, validate_project_schema
+from opi.core.task_rollout import DEFERRABLE_TASK_TYPES
+from opi.manager.project_validation import validate_service_configs
 from opi.services.postgres_scope import get_postgres_schemas, schema_is_marked
 from opi.services.project import Project
 from opi.services.services_enums import ServiceType
@@ -395,3 +400,53 @@ def test_adding_a_schema_answers_with_the_names_it_will_carry() -> None:
     assert body["schema"]["deployments"] == [
         {"deployment": "deployment-1", "schema_name": "demo_deployment_1_rapportage"}
     ]
+
+
+# ---------------------------------------------------------------------------
+# What the write leaves behind, and whether anything runs it
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("operation", "kwargs"),
+    [("add", {"description": "R"}), ("remove", {}), ("remove", {"forget": True})],
+    ids=["add", "mark", "forget"],
+)
+def test_the_project_file_a_write_leaves_behind_is_valid(operation: str, kwargs: dict) -> None:
+    """The plan's own check: adding a schema and taking it away again leaves a valid file.
+
+    ``save_and_commit_project`` is mocked in these tests, so the validation it runs is not
+    exercised by them. Here the produced project data goes through those same two
+    chokepoints for real -- the JSON schema and the per-service config models -- so a write
+    that would be refused on save cannot pass unnoticed here.
+    """
+    manager, save = _wire(_project([{"postfix": "rapportage", "description": "Rapportage"}]))
+
+    result = _run(manager, operation, "rapportage" if operation == "remove" else "analyse", **kwargs)
+
+    assert result["success"]
+    saved = save.await_args.args[0]
+    validate_project_schema(saved)
+    validate_service_configs(saved)
+
+
+def test_the_schema_task_type_is_wired_to_a_handler_everywhere_it_runs() -> None:
+    """A task nobody handles is accepted with a 202 and then sits in the queue forever.
+
+    Two processes run tasks -- the API server in combined mode and the standalone worker --
+    and each registers its own handlers. Registering in one and forgetting the other is a
+    failure that only shows on whichever deployment happens to run the other one.
+    """
+    assert TaskType.MANAGE_DATABASE_SCHEMAS in TASK_RESULT_MODELS
+
+    for module in ("opi/server.py", "opi/worker_main.py"):
+        source = pathlib.Path(module).read_text(encoding="utf-8")
+        assert "handle_manage_database_schemas" in source, f"{module} does not import the handler"
+        assert "TaskType.MANAGE_DATABASE_SCHEMAS, handle_manage_database_schemas" in source, (
+            f"{module} imports the handler but never registers it"
+        )
+
+
+def test_a_schema_write_may_be_saved_without_rolling_out() -> None:
+    """It only writes to the project file, so a later refresh reconciles it faithfully."""
+    assert "manage_database_schemas" in DEFERRABLE_TASK_TYPES
