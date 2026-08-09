@@ -1,0 +1,40 @@
+{#
+  Je eigen account.
+
+  De naam van de gebruiker rechtsboven linkte naar /account, en die pagina bestond niet:
+  je kreeg een 404 op een link die in elke schil staat. Deze pagina vult dat gat.
+
+  Bewust KAAL. ZAD houdt zelf geen profiel bij - naam, e-mailadres en rollen komen uit de
+  sessie, die op zijn beurt uit de inlogdienst komt. Er valt dus niets in te stellen, en
+  een pagina met lege velden zou suggereren van wel. Wat er staat is wat we weten, met de
+  vermelding waar het vandaan komt.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}Account - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head("Account", "De gegevens waarmee je bent ingelogd.") }}
+
+    {% call panel("Wie je bent", "person") %}
+        <c-detail-list>
+            <c-detail-item label="Naam" value="{{ account.name }}" />
+            {% if account.email %}
+                <c-detail-item label="E-mailadres" value="{{ account.email }}" />
+            {% endif %}
+            {% if account.organisatie %}
+                <c-detail-item label="Organisatie" value="{{ account.organisatie }}" />
+            {% endif %}
+        </c-detail-list>
+
+        <c-paragraph size="sm" color="grijs-500">
+            Deze gegevens komen uit je inlogsessie en worden door ZAD niet zelf bijgehouden.
+            Kloppen ze niet, dan zijn ze bij de inlogdienst aan te passen.
+        </c-paragraph>
+    {% endcall %}
+
+    <c-cluster gap="sm">
+        <c-button type="secondary" label="Uitloggen" href="/auth/logout" />
+    </c-cluster>
+{% endblock %}
