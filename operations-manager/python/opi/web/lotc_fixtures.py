@@ -169,6 +169,18 @@ def page_data(slug: str) -> dict[str, Any]:
     """
     projects = all_projects()
 
+    if slug == "account":
+        # De accountpagina toont wat er in de sessie staat. In deze proefopstelling is er
+        # geen inlogdienst, dus staat hier een voorbeeldgebruiker - zodat de pagina laat
+        # zien wat hij toont en niet leeg blijft.
+        return {
+            "account": {
+                "name": "Voorbeeld Gebruiker",
+                "email": "voorbeeld@rijksapp.dev",
+                "organisatie": "Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie",
+            }
+        }
+
     if slug == "dashboard":
         return {
             "tiles": [
