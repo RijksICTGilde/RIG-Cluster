@@ -236,32 +236,102 @@ def build_lotc_admin(request: Request, *, user: dict[str, Any] | None, current_p
     return {"navigation": get_navigation(user, current_path=current_path)}
 
 
+#: Waarop de projectenlijst gesorteerd kan worden. De sleutel staat in de URL
+#: (``?sort=naam-af``), het label in het menu, en de derde waarde is de sorteersleutel.
+#: Als lijst en niet als dict, omdat de VOLGORDE de volgorde in het menu is.
+PROJECT_SORTERINGEN: list[tuple[str, str, Any]] = [
+    ("naam", "Naam (A-Z)", lambda p: (p["display_name"] or p["name"]).lower()),
+    ("naam-af", "Naam (Z-A)", lambda p: (p["display_name"] or p["name"]).lower()),
+    ("deployments", "Meeste deployments", lambda p: -p["deployment_count"]),
+    ("teamleden", "Meeste teamleden", lambda p: -len(p["users"])),
+]
+
+
 def build_lotc_projects(
     request: Request,
     *,
     user: dict[str, Any] | None,
     projects: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """De ECHTE projectenlijst, in de vorm die de hertekende catalogus leest."""
+    """De ECHTE projectenlijst, in de vorm die de hertekende pagina leest.
+
+    Hier stond een uitgeklede vorm: alleen naam, omschrijving en het aantal deployments.
+    De bestaande pagina toont per project ook de OMGEVING, het TEAM (aantal plus
+    initialen) en de SERVICES, en heeft daaronder vier totalen staan. Die vielen
+    daardoor weg - niet omdat er een besluit over genomen was, maar omdat deze functie
+    ze niet doorgaf. Alles wat de pagina toont komt nu uit deze ene vorm.
+
+    Zoeken en sorteren gebeuren HIER en niet in de browser: dan werkt het ook zonder
+    JavaScript, is een gefilterde lijst deelbaar als URL, en blijft de telling onder de
+    tabel kloppen met wat er staat.
+    """
     if not wants_lotc(request):
         return {}
 
     from opi.web.navigation_lotc import get_navigation
 
-    # Tellen op de LIJSTEN die deze route levert, niet op een deployment_count-sleutel.
-    # Die bestaat wel op het dashboard maar niet hier, en het gevolg was een overzicht
-    # waarin alles nul was terwijl er projecten met deployments stonden.
     return {
         "navigation": get_navigation(user, current_path="/projects"),
-        "projects": [
-            {
-                "name": project["name"],
-                "display_name": project.get("display_name") or project["name"],
-                "description": project.get("description", ""),
-                "deployment_count": len(project.get("deployments") or []),
-            }
+        **filter_lotc_projects(request, lotc_project_rows(projects)),
+    }
+
+
+def lotc_project_rows(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """De projectgegevens in de vorm die de tabel leest.
+
+    Tellen op de LIJSTEN die de route levert, niet op een ``deployment_count``-sleutel.
+    Die bestaat wel op het dashboard maar niet hier, en het gevolg was een overzicht
+    waarin alles nul was terwijl er projecten met deployments stonden.
+    """
+    return [
+        {
+            "name": project["name"],
+            "display_name": project.get("display_name") or project["name"],
+            "description": project.get("description", ""),
+            "users": project.get("users") or [],
+            "services": project.get("services") or [],
+            "clusters": project.get("clusters") or [],
+            "deployment_count": len(project.get("deployments") or []),
+        }
+        for project in projects
+    ]
+
+
+def filter_lotc_projects(request: Request, projects: list[dict[str, Any]]) -> dict[str, Any]:
+    """Pas ``?q=`` en ``?sort=`` toe, en lever alles wat de lijst en zijn balk nodig hebben.
+
+    Apart van :func:`build_lotc_projects` omdat de htmx-route die alleen de TABEL
+    teruggeeft precies dit stuk nodig heeft en niet de navigatie eromheen.
+    """
+    zoekterm = (request.query_params.get("q") or "").strip()
+    if zoekterm:
+        naald = zoekterm.lower()
+        gevonden = [
+            project
             for project in projects
-        ],
+            if naald in project["name"].lower()
+            or naald in project["display_name"].lower()
+            or naald in project["description"].lower()
+        ]
+    else:
+        gevonden = list(projects)
+
+    gekozen = request.query_params.get("sort") or PROJECT_SORTERINGEN[0][0]
+    sleutel = next((s for k, _, s in PROJECT_SORTERINGEN if k == gekozen), PROJECT_SORTERINGEN[0][2])
+    gevonden.sort(key=sleutel)
+    if gekozen == "naam-af":
+        gevonden.reverse()
+
+    return {
+        "projects": gevonden,
+        # De totalen onderaan tellen over ALLE projecten van deze gebruiker, niet over
+        # wat het zoekveld overlaat: "Je projecten" hoort niet te dalen omdat je iets
+        # intypt. Alleen "Totaal" boven de tabel volgt de zoekterm, want die hoort bij
+        # wat je ziet.
+        "projects_all": projects,
+        "project_query": zoekterm,
+        "project_sort": gekozen,
+        "project_sorteringen": [(sleutel, label) for sleutel, label, _ in PROJECT_SORTERINGEN],
     }
 
 

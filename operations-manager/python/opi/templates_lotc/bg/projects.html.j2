@@ -1,22 +1,27 @@
 {#
   Projectenoverzicht.
 
-  Bewust sober. Wat iemand hier komt doen is een project vinden en openen, en alles wat
-  daar niet bij helpt maakt dat moeilijker in plaats van makkelijker. Dus: naam,
-  omschrijving, het aantal deployments, en klikken.
+  MAATSTAF: projects-overview.html.j2 met zijn vier onderdelen - kop, actiebalk, tabel,
+  samenvatting. Alle vier staan hier, in dezelfde volgorde en met dezelfde inhoud.
 
-  Wat er BEWUST NIET staat:
-    - de diensten. Die horen op de projectpagina zelf, niet in een lijst waar je aan het
-      zoeken bent.
-    - het aantal componenten en het cluster. Interessant als je een project al gekozen
-      hebt, ruis als je nog aan het kiezen bent.
-    - een filterbalk. Er stond er een, maar hij deed niets: hij was overgenomen uit de
-      vorm van bg zonder dat er iets achter zat. Een zoekveld dat niet zoekt is erger dan
-      geen zoekveld. Komt hij terug, dan server-side met een eigen URL, net als de tabs.
+  Hier stond eerder iets anders: een sobere lijst met alleen naam, omschrijving en het
+  aantal deployments, met in de toelichting dat de rest "ruis" was. Dat is een
+  herontwerp, en het kostte drie kolommen (omgeving, team, services), de knop
+  Vernieuwen, de telling en de vier totalen. Ze zijn allemaal terug.
 
-  c-layer en geen c-catalog-card: die laatste heeft open-label nodig om zijn href te
-  gebruiken, en dan staat er een losse "Openen"-link in de kaart. Een layer is in zijn
-  geheel klikbaar en toont dat met een pijl.
+  NIEUW zijn het zoekveld en de sorteerknop. Die zijn gevraagd, en ze werken
+  SERVER-SIDE via htmx: het zoekveld haalt bg/_projects-table.html.j2 opnieuw op en zet
+  dat in #projects-lijst. Zo werkt het ook zonder JavaScript (het is een gewoon
+  formulier met GET), is een gefilterde lijst deelbaar als URL, en kan de telling niet
+  uit de pas lopen met wat er staat.
+
+  Het zoekveld MAG hier een component zijn, en dat is niet vanzelfsprekend: elders in dit
+  project staan gewone <input>-elementen omdat een webcomponent zijn invoerveld in de
+  schaduwboom zet en onze JavaScript daar niet bij kan. Voor een FORMULIER geldt dat niet
+  - nldd-search-field is form-associated (gemeten: customElements.get('nldd-search-field')
+  .formAssociated is true), dus hij doet gewoon mee in de serialisatie van het formulier.
+  Die grens loopt dus niet langs "component of niet" maar langs "leest onze eigen
+  JavaScript het uit, of het formulier".
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
@@ -24,24 +29,76 @@
 {% block page_title %}Projecten - Self Service Portal{% endblock %}
 
 {% block content %}
-    {{ page_head("Projecten", "De projecten waar je toegang toe hebt.") }}
+    {{ page_head(
+        "Projecten Overzicht",
+        "Overzicht van alle actieve projecten in het platform met hun status, team en geactiveerde services."
+    ) }}
 
-    <c-cluster gap="sm">
-        <c-button type="primary" label="Nieuw project" icon="plus" show-icon="before" href="/forms/wizard/restart" />
+    {# ---- Actiebalk (projects-overview/_actiebalk.html.j2) ------------------- #}
+    <c-cluster gap="sm" align="center">
+        <c-button type="primary" label="Nieuw Project" icon="plus" show-icon="before" href="/forms/wizard/restart" />
+        <c-button type="tertiary" label="Vernieuwen" icon="refresh" show-icon="before" href="/projects?refresh=true" />
     </c-cluster>
 
-    {% call panel("Mijn projecten", "rectangle-stack") %}
-        <c-stack gap="sm">
-            {% for project in projects %}
-                <c-layer
-                    icon="rectangle-stack"
-                    title="{{ project.display_name }}"
-                    count="{{ project.deployment_count }} deployment{{ 's' if project.deployment_count != 1 else '' }}"
-                    sub="{{ project.description }}"
-                    href="/projects/details/{{ project.name }}" />
-            {% else %}
-                <c-paragraph>Je hebt nog geen projecten.</c-paragraph>
-            {% endfor %}
-        </c-stack>
-    {% endcall %}
+    {# ---- Zoeken en sorteren -------------------------------------------------
+       Een <form method="get"> eromheen: zonder JavaScript is dit een gewone
+       zoekopdracht die de hele pagina herlaadt, met htmx wordt alleen de tabel
+       vervangen. De sorteerkeuze reist mee in een verborgen veld, zodat zoeken de
+       sortering niet wegvaagt.
+
+       hx-trigger met een vertraging: bij elke toetsaanslag opnieuw ophalen is
+       verspilling, en zonder "changed" doet ook een pijltjestoets een verzoek. #}
+    <form method="get" action="/projects"
+          hx-get="/projects/lijst"
+          hx-target="#projects-lijst"
+          hx-swap="innerHTML"
+          hx-trigger="input changed delay:300ms, submit"
+          hx-push-url="true">
+        <input type="hidden" name="sort" value="{{ project_sort }}">
+        <c-cluster gap="sm" align="center" justify="between">
+            <c-search-field name="q"
+                            value="{{ project_query }}"
+                            placeholder="Zoek op naam of omschrijving"
+                            accessible-label="Zoek een project"
+                            show-search-button
+                            width="26rem" />
+
+            <c-menu type="bar" aria-label="Sorteren">
+                <c-menu-item label="Sorteren: {{ project_sorteringen | selectattr('0', 'equalto', project_sort) | map(attribute='1') | first | default('Naam (A-Z)') }}" icon="arrow-up-arrow-down" expandable>
+                    <c-menu>
+                        {% for sleutel, label in project_sorteringen %}
+                            <c-menu-item label="{{ label }}"
+                                         href="/projects?sort={{ sleutel }}{{ '&q=' ~ project_query if project_query else '' }}"
+                                         :active="sleutel == project_sort" />
+                        {% endfor %}
+                    </c-menu>
+                </c-menu-item>
+            </c-menu>
+        </c-cluster>
+    </form>
+
+    {# ---- Tabel (projects-overview/_tabel.html.j2) --------------------------- #}
+    <div id="projects-lijst">
+        {% include "bg/_projects-table.html.j2" %}
+    </div>
+
+    {# ---- Samenvatting (projects-overview/_samenvatting.html.j2) -------------
+       Telt over ALLE projecten van deze gebruiker, niet over wat het zoekveld
+       overlaat: "Je projecten" hoort niet te dalen omdat je iets intypt. #}
+    {% if projects_all %}
+        <c-auto-grid min="200px" gap="md">
+            <c-metric icon="rectangle-stack"
+                      value="{{ projects_all | length }}"
+                      label="Je projecten" sub="Waar je toegang toe hebt" />
+            <c-metric icon="person-2"
+                      value="{{ projects_all | map(attribute='users') | map('length') | sum }}"
+                      label="Teamleden totaal" sub="In al je projecten" />
+            <c-metric icon="cylinder-split"
+                      value="{{ projects_all | map(attribute='services') | map('length') | sum }}"
+                      label="Services actief" sub="In alle projecten" />
+            <c-metric icon="person"
+                      value="{{ user.role | default('User', true) | title }}"
+                      label="Je rol" sub="{{ user.email }}" />
+        </c-auto-grid>
+    {% endif %}
 {% endblock %}
