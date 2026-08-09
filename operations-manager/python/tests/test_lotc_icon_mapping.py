@@ -15,6 +15,7 @@ De test toetst twee dingen:
    vallen daarmee meteen op, in plaats van pas als iemand de pagina bekijkt.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -28,38 +29,39 @@ TEMPLATES_DIR = Path(__file__).parent.parent / "opi" / "templates"
 # en hier weg. Groeit deze lijst, dan is er een icoon bijgekomen zonder dat iemand de
 # afbeelding heeft gelegd.
 KNOWN_GAPS = {
-    # Geen tegenhanger in de NLDD-woordenschat van 60 iconen. De RVO-set die
+    # Geen tegenhanger in de NLDD-woordenschat van 271 iconen. De RVO-set die
     # jinja-roos-components meelevert heeft er 1163; of die als losse module in LOTC kan
     # ligt daar als vraag.
-    "stethoscoop",
-    "delta-naar-links",
-    "delta-naar-rechts",
-    "delta-omlaag",
-    "downloaden",
-    "kruis",
-    "refresh",
-    "terug",
+    #
+    # Deze lijst was lang elf namen langer. Dat kwam niet doordat NLDD ze miste maar
+    # doordat deze test de verkeerde lijst las (zie _nldd_vocabulary): trash,
+    # question-mark-circle, dismiss en de caret-driehoekjes bestaan gewoon.
     "uit-aanknop",
-    "verwijderen",
-    "vraagteken",
     "weegschaal",
 }
 
 
 def _nldd_vocabulary() -> set[str]:
-    """De iconnamen die de NLDD-implementatie kent, uit het pakket zelf.
+    """De iconnamen die NLDD kent, uit de iconenlijst van LOTC zelf.
 
-    Uit de gegenereerde renderers gelezen in plaats van overgeschreven: een
-    handgeschreven kopie zou stilzwijgend verouderen bij een versiebump, en juist
-    daarvoor is deze test bedoeld.
+    Hier stond ``_BUTTON_ICONS_MAP`` uit de NLDD-renderers, en dat was de verkeerde
+    lijst: die tabel bevat de zestig iconen die op een KNOP mogen staan, niet de
+    woordenschat. De echte set staat in ``icons.json`` van lord_of_the_components en
+    telt er 271. Het verschil was niet onschuldig - het maakte van elf iconen die NLDD
+    gewoon levert (trash, question-mark-circle, heart) "bekende gaten", waarna ze in
+    KNOWN_GAPS belandden en niemand ze meer legde.
+
+    Uit het pakket gelezen en niet overgeschreven: een handgeschreven kopie zou
+    stilzwijgend verouderen bij een versiebump, en juist daarvoor is deze test bedoeld.
     """
-    lotc_nldd = pytest.importorskip("lotc_nldd", reason="LOTC-bouwlijn niet geinstalleerd (dependency-group lotc)")
-    source = (Path(lotc_nldd.__file__).parent / "renderers.py").read_text()
-    match = re.search(r"_BUTTON_ICONS_MAP = \{(.*?)\}", source, re.DOTALL)
-    assert match, "kon de iconentabel niet vinden in de NLDD-renderers"
-    keys = set(re.findall(r"'([^']+)':", match.group(1)))
-    values = set(re.findall(r":\s*'([^']+)'", match.group(1)))
-    return keys | values
+    lotc = pytest.importorskip(
+        "lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd (dependency-group lotc)"
+    )
+    icons = json.loads((Path(lotc.__file__).parent / "icons.json").read_text())
+    # De aliassen tellen mee: dat zijn de vriendelijke namen (``database``, ``search``,
+    # ``calendar``) die LOTC zelf naar een icoon uit de set vertaalt. Ze renderen dus
+    # gewoon, en ze staan al jaren in onze templates.
+    return set(icons["sets"]["nldd"]) | set(icons["aliases"])
 
 
 def _icons_used_in_templates() -> set[str]:

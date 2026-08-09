@@ -36,15 +36,16 @@
   niets.
 #}
 {% extends "base_lotc.html.j2" %}
-{% from "bg/_patterns.html.j2" import panel, page_head, info, filter_row %}
+{% from "bg/_patterns.html.j2" import panel, page_head, info %}
 {% from "bg/_service-card.html.j2" import service_card %}
 
-{% block page_title %}Diensten - Self Service Portal{% endblock %}
+{% block page_title %}Services - Self Service Portal{% endblock %}
 
 {% block content %}
-    {{ page_head("Diensten", "Platformdiensten die je project kan afnemen. Het platform levert en beheert ze.") }}
-
-    {{ filter_row("/services", "kind", service_filter, service_filters) }}
+    {{ page_head(
+        "Beschikbare Services",
+        "Wanneer je een service selecteert voor je project, worden alle onderstaande omgevingsvariabelen automatisch beschikbaar gesteld aan het component."
+    ) }}
 
     <c-columns columns="1" lg="2" gap="md">
         {% for service in services %}
