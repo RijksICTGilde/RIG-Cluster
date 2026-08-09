@@ -2974,6 +2974,41 @@ async def projects_overview(request: Request):
         raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
 
 
+@web_router.get("/cli", response_class=HTMLResponse)
+@requires_sso
+async def cli_pagina(request: Request):
+    """De ZAD CLI: wat het is, hoe je hem installeert, wat je ermee doet.
+
+    Een wegwijzer en geen handleiding - de repository houdt zijn eigen documentatie bij,
+    en die loopt vooruit op wat hier zou staan.
+    """
+    return _wegwijzer(request, "cli.html.j2", "bg/cli.html.j2", "/cli")
+
+
+@web_router.get("/actions", response_class=HTMLResponse)
+@requires_sso
+async def actions_pagina(request: Request):
+    """De ZAD Actions: uitrollen vanuit je eigen pijplijn."""
+    return _wegwijzer(request, "actions.html.j2", "bg/actions.html.j2", "/actions")
+
+
+def _wegwijzer(request: Request, roos: str, lotc: str, pad: str):
+    """Een pagina zonder eigen gegevens: alleen de schil en zijn navigatie."""
+    user = get_current_user(request)
+    from opi.web.navigation_lotc import get_navigation
+
+    return render(
+        request,
+        roos=roos,
+        lotc=lotc,
+        context={
+            "request": request,
+            "menu_items": get_menu_items(user),
+            "navigation": get_navigation(user, current_path=pad),
+        },
+    )
+
+
 @web_router.get("/account", response_class=HTMLResponse)
 @requires_sso
 async def account_pagina(request: Request):

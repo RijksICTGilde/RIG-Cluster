@@ -1,0 +1,66 @@
+{#
+  De ZAD CLI.
+
+  Een wegwijzer, geen handleiding: de repository houdt zijn eigen documentatie bij en die
+  loopt vooruit op wat hier zou staan. Wat hier hoort is genoeg om te weten wat het is,
+  wat je ermee doet en wanneer je het pakt - en dan door naar de repository.
+
+  De opdrachten komen letterlijk uit de README, zodat er hier niets staat dat daar niet
+  ook staat.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+
+{% block page_title %}ZAD CLI - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head(
+        "ZAD CLI",
+        "Dezelfde handelingen als in deze interface, maar vanaf de opdrachtregel."
+    ) }}
+
+    {% call panel("Wat het is", "terminal") %}
+        <c-paragraph>
+            Een opdrachtregeltool die met de API van ZAD praat. Alles wat je hier aanklikt -
+            een deployment aanmaken of bijwerken, logs lezen, een backup maken, een taak
+            volgen - kan er ook mee, met je projectsleutel als toegang.
+        </c-paragraph>
+        <c-paragraph>
+            Je pakt hem als je toch al in een terminal zit, als je een handeling vaker doet
+            dan een keer, of als je hem in een script wilt zetten. Voor eenmalig werk is
+            deze interface sneller; voor herhaling is de CLI dat.
+        </c-paragraph>
+    {% endcall %}
+
+    {% call panel("Installeren en instellen", "arrow-down") %}
+        <c-code-viewer language="bash">uv tool install git+https://github.com/RijksICTGilde/zad-cli.git</c-code-viewer>
+
+        <c-paragraph size="sm">
+            Daarna eenmalig instellen. Dit vraagt om je API-sleutel en je project en schrijft
+            ze in een <c-code>.env</c-code>. De sleutel staat op de projectpagina, onder
+            Configuratie &amp; Secrets.
+        </c-paragraph>
+        <c-code-viewer language="bash">zad config init</c-code-viewer>
+
+        <c-paragraph size="sm">
+            Liever zelf zetten? <c-code>ZAD_API_KEY</c-code> en <c-code>ZAD_PROJECT_ID</c-code>
+            als omgevingsvariabelen doen hetzelfde. Een vlag op de opdracht wint van een
+            omgevingsvariabele, en die weer van het configuratiebestand.
+        </c-paragraph>
+    {% endcall %}
+
+    {% call panel("Wat je ermee doet", "play") %}
+        <c-code-viewer language="bash">zad deployment create staging --component web --image ghcr.io/org/app:v1.0
+zad logs production
+zad backup create production</c-code-viewer>
+
+        <c-paragraph size="sm">
+            Opdrachten die iets in gang zetten wachten standaard tot het klaar is. Met
+            <c-code>--no-wait</c-code> krijg je meteen een taak-id terug en volg je hem zelf
+            met <c-code>zad task status &lt;id&gt;</c-code> - handig in een script dat niet
+            wil blijven hangen.
+        </c-paragraph>
+
+        <c-link href="https://github.com/RijksICTGilde/zad-cli" label="Alle opdrachten en instellingen: zad-cli op GitHub" target="_blank" />
+    {% endcall %}
+{% endblock %}

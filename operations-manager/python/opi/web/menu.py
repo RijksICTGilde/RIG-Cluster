@@ -46,6 +46,8 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         # wel - koppen, tekst en alle acht diagrammen - maar het leest als een lange platte
         # lap. Op verzoek uit het menu tot hij iets toevoegt. De pagina zelf blijft
         # bereikbaar via /architecture en via de voettekst, dus er gaat niets verloren.
+        {"label": "CLI", "link": "/cli", "icon": "computercode"},
+        {"label": "Actions", "link": "/actions", "icon": "applicatie"},
         {"label": "API Docs", "link": "/docs", "icon": "computercode"},
     ]
 
