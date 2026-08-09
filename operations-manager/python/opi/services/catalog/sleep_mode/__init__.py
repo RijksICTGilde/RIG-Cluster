@@ -34,7 +34,7 @@ class SleepModeService(Service):
             "Zet bepaalde deployments, op basis van matching, na een deadline in slaapstand "
             "en wek ze op verzoek weer op. De deployment doet een koude start."
         ),
-        help_template="sleep_mode/help.html.j2",
+        help_template="sleep_mode/help.md",
         icon="klok",
         color="donkerblauw",
         binding=ServiceBinding.DEPLOYMENT,

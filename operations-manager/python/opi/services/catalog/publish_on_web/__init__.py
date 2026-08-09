@@ -229,7 +229,7 @@ class PublishOnWebService(Service):
     definition = ServiceDefinition(
         name="Publiceren op het web",
         description="Maak de applicatie toegankelijk via het publieke internet",
-        help_template="publish_on_web/help.html.j2",
+        help_template="publish_on_web/help.md",
         icon="wereldbol",
         color="hemelblauw",
         binding=ServiceBinding.COMPONENT,
