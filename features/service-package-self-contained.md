@@ -13,7 +13,7 @@ opi/services/catalog/keycloak/
 ├── editables.py            zijn velden
 ├── variables.py            de omgevingsvariabelen die hij aan een deployment geeft
 ├── visualizers.py          hoe die velden eruitzien
-├── help.html.j2            de uitleg achter het vraagteken
+├── help.md                 de uitleg achter het vraagteken (markdown, RC-59)
 ├── section-detail.html.j2  zijn blok op de projectpagina
 └── keycloak.v1.0.json      het vastgelegde schemafragment
 ```
@@ -32,7 +32,7 @@ class KeycloakService(Service):
     definition = ServiceDefinition(
         name="Keycloak Authentication",
         description="Inloggen via SSO Rijk en via lokale Keycloak-accounts ...",
-        help_template="keycloak/help.html.j2",
+        help_template="keycloak/help.md",
         icon="sleutel",
         color="groen",
         binding=ServiceBinding.COMPONENT,
@@ -55,8 +55,10 @@ moduleniveau importeren.
 van dezelfde dienst delen er één (`namespace-redis` leest `RedisVariables` uit het
 redis-pakket), zoals ze ook hun manager en hun secret delen.
 
-**De uitleg.** `help.html.j2` in de map van de dienst, aangewezen als
-`help_template="<pakket>/help.html.j2"`. De sjabloonlader heeft de catalogusmap al op
+**De uitleg.** `help.md` in de map van de dienst, aangewezen als
+`help_template="<pakket>/help.md"`. Het is markdown, en die ene bron wordt zowel door de
+popup in het portaal als door `GET /api/v2/services/{name}` gelezen (RC-59). De
+sjabloonlader heeft de catalogusmap al op
 zijn zoekpad staan voor `section-detail.html.j2`, dus dit sluit daarop aan. De route
 `GET /forms/wizard/help/{template_name}` accepteert beide vormen: met mapsegment (een
 dienst) en zonder (de paar uitlegteksten die van geen enkele dienst zijn, zoals
