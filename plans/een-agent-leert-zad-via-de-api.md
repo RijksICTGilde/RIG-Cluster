@@ -119,6 +119,33 @@ Met deze regels:
 4. **Toevoegen is een echte actie, niet een omweg via de config.** `POST` met een postfix en een omschrijving, en de route rekent zelf uit wat de volledige naam en de variabelenaam worden en geeft die terug. Een aanroeper die een schema toevoegt hoort meteen te weten hoe hij er in zijn applicatie bij komt, zonder een tweede aanroep en zonder de naamgevingsregels te kennen.
 5. **De controles bij het opslaan blijven waar ze zijn.** Uniciteit, de 63-tekengrens en botsende variabelenamen worden al bij het opslaan afgedwongen; deze routes horen die fouten door te geven als een nette 422, niet ze over te doen.
 
+### De naamgeving zelf, want die is nu niet dicht
+
+Zodra een API schema's laat toevoegen, komt de postfix niet meer alleen uit een formulier maar ook uit een script dat de regels niet kent. Gemeten staat het er nu zo voor:
+
+| controle | waar | dekt |
+|---|---|---|
+| vorm `^[a-z][a-z0-9_]*$` | `SchemaPostfixValidator` + het configmodel | tekens, niet lengte |
+| **lengte van de postfix zelf** | **nergens** | |
+| uniciteit binnen de lijst | `UniqueSchemaEnforcer`, bij opslaan | |
+| botsing met bestaande variabelenamen | `UniqueSchemaEnforcer` | |
+| volledige naam onder 63 tekens | `UniqueSchemaEnforcer` | alleen tegen de deployments die er **nu** zijn |
+
+Drie gaten, oplopend in ernst:
+
+1. **De postfix heeft geen eigen maximum.** De invite-sleutel vlak ernaast heeft er wel een (3 tot 64); deze niet. Een aanroeper kan dus een postfix van 200 tekens insturen en krijgt pas bij de samengestelde controle een klacht die over iets anders lijkt te gaan.
+
+2. **De samengestelde controle kijkt alleen naar het heden.** Een postfix die vandaag past, past niet meer zodra er een deployment met een langere naam bijkomt. Dan faalt het ofwel bij het aanmaken van die deployment, met een foutmelding die naar een schemaveld wijst, ofwel helemaal niet, en dan gooit `generate_extra_database_schema` bij het uitrollen een `ValueError`. Dit is dezelfde klasse als het al bekende probleem met samengestelde namen (`project_composed_name_length`), nu aan de databasekant.
+
+3. **Het standaardschema kapt stil af.** `_truncate_if_needed` doet een kale `name[:63]`, zonder hash. Twee lange deploymentnamen in hetzelfde project kunnen dus tot hetzelfde standaardschema afkappen en ongemerkt in elkaars data zitten. RC-17 heeft dat voor extra schema's bewust voorkomen door hard te falen; de standaardweg is daarbij nooit meegenomen.
+
+**Voorstel.**
+
+- **Geef de postfix een eigen maximum**, en zet het op één plek waar het model, de formuliervalidator en de API hem allemaal uit lezen. Wees eerlijk over wat dat oplost: een vast maximum haalt de samengestelde controle **niet** weg, want hoeveel ruimte er is hangt af van de project- en deploymentnaam. Het zorgt er alleen voor dat de veelvoorkomende fout vroeg en begrijpelijk faalt in plaats van diep in de naamgeving.
+- **Normaliseer niet stil, weiger.** De vorm is al streng genoeg dat normaliseren neerkomt op iets anders opslaan dan er gevraagd is. Een aanroeper die `Rapportage` instuurt hoort een 422 te krijgen met de reden, niet een schema dat `rapportage` heet zonder dat hij het weet.
+- **Draai de samengestelde controle ook als er een deployment bijkomt**, niet alleen als de schemalijst wijzigt. Dat is het echte gat: nu kan een geldige toestand ongeldig worden zonder dat iemand het merkt.
+- **Het stille afkappen van het standaardschema is een eigen bevinding**, geen onderdeel van dit plan. Noteer hem, repareer hem hier niet: een naamgevingsregel veranderen raakt bestaande databases, en dat hoort een eigen taak met een eigen migratievraag te zijn.
+
 ## Voorstel
 
 1. **`GET /api/v2/services/{name}`**, typed, met dezelfde registry als bron als de lijst. Een onbekende naam geeft 404 met de geldige namen erbij.
