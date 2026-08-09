@@ -102,16 +102,31 @@
                popup-slot van een knop leverde dat een menu op dat leeg bleef. Er is in deze
                versie geen componentvorm die een gewone <nldd-menu> geeft.
 
-               De items zijn LINKS. Daardoor werkt sorteren ook zonder JavaScript en is een
-               gesorteerde lijst een deelbare URL; er komt geen eigen script aan te pas. #}
+               De items dragen hun bestemming TWEE keer, en dat is geen dubbelop:
+
+                 - href, zodat de bestemming in de markup staat en een gesorteerde lijst
+                   een gewone deelbare URL is;
+                 - hx-get, want een <nldd-menu-item> navigeert NIET uit zichzelf op zijn
+                   href. Gemeten op de sandbox: het menu ging open, de optie was
+                   aanklikbaar, en er gebeurde niets. Het NLDD-voorbeeld van de gebruiker
+                   hangt daarom ook een eigen adres aan zijn items.
+
+               Met hx-get doet htmx de navigatie - hetzelfde gereedschap dat de rest van
+               deze pagina al gebruikt, dus geen eigen script erbij. #}
             <nldd-toolbar-item slot="end" size="md">
                 <nldd-button variant="secondary" expandable start-icon="sort"
                              text="Sorteren: {{ huidige_sortering }}" type="button"
                              popup-type="menu" size="md">
                     <nldd-menu slot="popup" placement="bottom-end">
                         {% for sleutel, label in project_sorteringen %}
+                            {% set sorteer_url = "/projects?sort=" ~ sleutel ~ ("&q=" ~ project_query if project_query else "") %}
                             <nldd-menu-item type="radio" text="{{ label }}"
-                                            href="/projects?sort={{ sleutel }}{{ '&q=' ~ project_query if project_query else '' }}"
+                                            href="{{ sorteer_url }}"
+                                            hx-get="{{ sorteer_url }}"
+                                            hx-select="#projects-lijst"
+                                            hx-target="#projects-lijst"
+                                            hx-swap="outerHTML"
+                                            hx-push-url="true"
                                             {% if sleutel == project_sort %}selected{% endif %}></nldd-menu-item>
                         {% endfor %}
                     </nldd-menu>
@@ -122,8 +137,14 @@
                groep is wat daar dan van sorteren te zien is. #}
             <nldd-menu-group slot="overflow" text="Sorteren">
                 {% for sleutel, label in project_sorteringen %}
+                    {% set sorteer_url = "/projects?sort=" ~ sleutel ~ ("&q=" ~ project_query if project_query else "") %}
                     <nldd-menu-item type="radio" text="{{ label }}"
-                                    href="/projects?sort={{ sleutel }}{{ '&q=' ~ project_query if project_query else '' }}"
+                                    href="{{ sorteer_url }}"
+                                    hx-get="{{ sorteer_url }}"
+                                    hx-select="#projects-lijst"
+                                    hx-target="#projects-lijst"
+                                    hx-swap="outerHTML"
+                                    hx-push-url="true"
                                     {% if sleutel == project_sort %}selected{% endif %}></nldd-menu-item>
                 {% endfor %}
             </nldd-menu-group>
