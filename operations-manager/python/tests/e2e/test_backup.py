@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from tests.e2e.helpers.edit_modal import EditModalHelper
+from tests.e2e.helpers.tabs import open_tab
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -30,7 +31,7 @@ def modal(app_server: str, auth_page: Page) -> EditModalHelper:
 
 def _switch_to_deployments_tab(page: Page) -> None:
     """Switch to the Deployments tab on the detail page."""
-    page.evaluate("switchTab('deployments')")
+    open_tab(page, "deployments")
     page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
 
 
