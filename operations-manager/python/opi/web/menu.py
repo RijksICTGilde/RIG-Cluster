@@ -41,7 +41,11 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         {"label": "Nieuw Project", "link": "/forms/wizard/restart", "icon": "plus"},
         {"label": "Services", "link": "/services", "icon": "server"},
         {"label": "Metrics", "link": "/metrics-explorer", "icon": "grafiek"},
-        {"label": "Architecture", "link": "/architecture", "icon": "info"},
+        # De architectuurpagina staat NIET in de navigatie. Hij is 2000 regels lang en
+        # leunde op RVO-opmaakklassen die het nieuwe thema niet kent: de inhoud staat er
+        # wel - koppen, tekst en alle acht diagrammen - maar het leest als een lange platte
+        # lap. Op verzoek uit het menu tot hij iets toevoegt. De pagina zelf blijft
+        # bereikbaar via /architecture en via de voettekst, dus er gaat niets verloren.
         {"label": "API Docs", "link": "/docs", "icon": "computercode"},
     ]
 
