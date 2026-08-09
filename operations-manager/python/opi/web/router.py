@@ -2887,10 +2887,8 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
 def _projects_for_user(user: dict) -> list[dict]:
     """De projecten waar deze gebruiker bij mag, met de gegevens die het overzicht toont.
 
-    Apart van de route omdat /projects en het htmx-fragment /projects/lijst allebei
-    precies deze lijst nodig hebben. Twee kopieen zouden vroeg of laat uiteenlopen, en
-    dan zou het fragment iets anders laten zien dan de pagina eromheen - of, erger, iets
-    dat de toegangscontrole van de pagina niet gezien heeft.
+    Apart van de route zodat de opbouw op een plek staat: /projects levert zowel de hele
+    pagina als - via hx-select - het stuk dat het zoekveld ververst.
     """
     user_email = user.get("email", "").lower()
 
@@ -2974,29 +2972,6 @@ async def projects_overview(request: Request):
                 error_msg += f"\nSource: {lines[line_num].strip()}"
 
         raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
-
-
-@web_router.get("/projects/lijst", response_class=HTMLResponse)
-@requires_sso
-async def projects_lijst_fragment(request: Request):
-    """Alleen de projectentabel, voor het zoekveld en de sorteerknop op /projects.
-
-    htmx haalt dit op en zet het in #projects-lijst. Dezelfde gegevens en dezelfde
-    autorisatiecontrole als /projects - de lijst wordt hier opnieuw opgebouwd en niet uit
-    een sessie gehaald, zodat een zoekopdracht niet aan een oudere momentopname kan gaan
-    hangen en zodat er geen tweede plek is waar bepaald wordt wat je mag zien.
-
-    De pagina eromheen werkt ook zonder dit adres: het formulier is een gewone GET naar
-    /projects, en die past dezelfde ``?q=`` en ``?sort=`` toe.
-    """
-    user = get_current_user(request)
-    projects = _projects_for_user(user)
-
-    from opi.core.templates_lotc import templates_lotc
-    from opi.web.lotc_switch import filter_lotc_projects
-
-    context = {"request": request, "user": user, **filter_lotc_projects(request, projects)}
-    return HTMLResponse(templates_lotc.env.get_template("bg/_projects-lijst.html.j2").render(context))
 
 
 @web_router.get("/about", response_class=HTMLResponse)

@@ -65,17 +65,20 @@ def test_de_sortering_keert_de_volgorde_echt_om(client: httpx.Client) -> None:
     assert aflopend == list(reversed(oplopend)), (oplopend, aflopend)
 
 
-def test_de_htmx_route_geeft_een_fragment_en_geen_pagina(client: httpx.Client) -> None:
-    """/projects/lijst is het doel van het zoekveld; het mag geen hele pagina zijn.
+def test_de_pagina_levert_zelf_het_stuk_dat_het_zoekveld_ververst(client: httpx.Client) -> None:
+    """htmx haalt /projects op en pakt daar #projects-lijst uit; die id moet er dus zijn.
 
-    Kwam er wel een hele pagina terug, dan zou htmx die IN de pagina zetten en stond er
-    een tweede navigatie en een tweede voettekst in de tabel.
+    Er was een apart fragmentadres (/projects/lijst). Dat is weg: hx-push-url zette dat
+    adres in de adresbalk, en wie dan verversde of de link deelde kreeg een kale lijst
+    zonder navigatie of voettekst. Bovendien is een tweede adres met dezelfde gegevens
+    een tweede plek die kan gaan afwijken.
     """
-    antwoord = client.get("/projects/lijst?layout=nldd&q=detail")
-    assert antwoord.status_code == 200
-    assert "<html" not in antwoord.text.lower()
-    assert "<nav" not in antwoord.text.lower()
-    assert _projectnamen(antwoord.text) == ["test-project-detail"]
+    antwoord = client.get("/projects?layout=nldd&q=detail").text
+
+    assert 'id="projects-lijst"' in antwoord, "het doel van hx-select staat niet in de pagina"
+    assert 'hx-select="#projects-lijst"' in antwoord, "het formulier pakt niet het juiste stuk uit het antwoord"
+    assert 'hx-get="/projects"' in antwoord, "het formulier haalt niet de pagina zelf op"
+    assert _projectnamen(antwoord) == ["test-project-detail"]
 
 
 def test_de_totalen_onderaan_volgen_de_zoekterm_niet(client: httpx.Client) -> None:
@@ -135,12 +138,22 @@ def test_zoeken_en_sorteren_staan_in_de_toolbar(client: httpx.Client) -> None:
     assert 'slot="start"' in antwoord, opgeslokt
     assert "nldd-search-field" in antwoord, opgeslokt
     assert 'slot="end"' in antwoord, "de sorteerknop staat niet in de toolbar"
-    assert 'slot="popup"' in antwoord, "het sorteermenu hangt niet aan de knop"
     assert 'slot="overflow"' in antwoord, "de overloopgroep voor smalle schermen ontbreekt"
+
+    # Een UITKLAPMENU en geen menuBALK. <c-menu> rendert altijd nldd-menu-bar, en die
+    # bleef in de popup-slot leeg; daarom staat het menu hier als nldd-markup. Slaat dit
+    # aan, dan is iemand teruggegaan naar het component en is het menu weer leeg.
+    assert '<nldd-menu slot="popup"' in antwoord, "het sorteermenu is geen nldd-menu in de popup-slot"
+    assert "nldd-menu-bar" not in antwoord.split("<nldd-toolbar")[1].split("</nldd-toolbar>")[0], (
+        "er staat een menuBALK in de toolbar; die blijft leeg in een popup"
+    )
 
     # De sorteeropties zijn LINKS: dan werkt sorteren ook zonder JavaScript.
     for sleutel in ("naam", "naam-af", "deployments", "teamleden"):
         assert f"/projects?sort={sleutel}" in antwoord, f"sorteeroptie {sleutel} is geen link"
 
-    # En de gekozen sortering is aangevinkt.
-    assert 'selected="selected"' in antwoord, "geen enkele sorteeroptie is gemarkeerd als gekozen"
+    # En de gekozen sortering is aangevinkt: het item met de huidige sortering draagt
+    # selected, de andere niet.
+    huidige = re.search(r'<nldd-menu-item[^>]*href="/projects\?sort=naam"[^>]*>', antwoord)
+    assert huidige, "de standaardsortering staat niet als menu-item in de pagina"
+    assert "selected" in huidige.group(0), f"de gekozen sortering is niet gemarkeerd: {huidige.group(0)}"
