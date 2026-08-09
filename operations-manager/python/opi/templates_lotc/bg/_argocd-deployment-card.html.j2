@@ -172,7 +172,18 @@
                door de browser als losse attributen gelezen. Het origineel had dat niet:
                daar staat het onclick-attribuut tussen ENKELE aanhalingstekens.
                forceescape escapet ook markup, en dat is precies wat een attribuutwaarde
-               nodig heeft. #}
+               nodig heeft.
+
+               De klasse log-viewer-btn is hier WEG. In het origineel geeft die de kale
+               <button> zijn vorm (blauw vlak, witte tekst, uit project-details.css, en
+               die stylesheet wordt door bg/_modals.html.j2 ook hier geladen). Op een
+               themacomponent landt hij op het omhulsel en schildert een blauw blok
+               achter een knop die zijn vorm al van het thema heeft. Geen enkele
+               JavaScript zoekt op deze klasse - gecontroleerd - dus het is opmaak, en
+               opmaak komt hier uit het thema.
+
+               icon="document" bestond niet in de NLDD-woordenschat en rendeerde als
+               niets; file-text is de naam die er wel is en die het origineel bedoelt. #}
             {% if deployment.components and not expects_no_pods %}
                 {% set logs_js = ('openLogViewer('
                     ~ (project.name | tojson) ~ ', '
@@ -184,8 +195,8 @@
                         type="secondary"
                         size="sm"
                         label="Logs bekijken"
-                        icon="document"
-                        :attrs="{'onclick': logs_js, 'class': 'log-viewer-btn', 'title': 'Bekijk live logs voor deze deployment'}" />
+                        icon="file-text"
+                        :attrs="{'onclick': logs_js, 'title': 'Bekijk live logs voor deze deployment'}" />
                 </c-action-group>
             {% endif %}
 
