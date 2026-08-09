@@ -68,7 +68,10 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 #}
 {% macro service_block(name, description, icon, color, help_template=None, icon_size="lg") %}
 <div class="service-card__header">
-    <c-icon icon="{{ icon|e }}" color="{{ color|e }}" size="{{ icon_size|e }}"/>
+    {# Door het nldd_icon-filter: de kaartgegevens dragen de ROOS-naam, want dezelfde
+       gegevens voeden ook de oude weergave. Zonder vertaling rendert het icoon leeg -
+       zo misten de dienstkaarten in de wizard hun iconen, op PostgreSQL na. #}
+    <c-icon icon="{{ icon|nldd_icon|e }}" color="{{ color|e }}" size="{{ icon_size|e }}"/>
     <span class="service-card__title">{{ name|e }}</span>
     {% if help_template %}
     {# De vraagtekenknop opent de hulpdialoog van deze dienst. De aanroep gaat via een

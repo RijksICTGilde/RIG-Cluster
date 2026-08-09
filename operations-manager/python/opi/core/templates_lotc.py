@@ -40,6 +40,17 @@ from opi.forms.widgets.roos import _attr_escape as attr_escape
 
 logger = logging.getLogger(__name__)
 
+
+def _to_nldd_icon(naam: str) -> str:
+    """Vertaal een ROOS-iconnaam naar de NLDD-woordenschat.
+
+    De import staat binnenin om dezelfde kringloop te vermijden als elders in dit bestand:
+    navigation_lotc leunt op de menu-opbouw, en die komt via de routes hier langs.
+    """
+    from opi.web.navigation_lotc import to_nldd_icon
+
+    return to_nldd_icon(naam)
+
 # lotc-forms hoort achteraan; zie de moduledocstring.
 DESIGN_SYSTEMS = ["lotc-layout", "nldd", "lotc-forms"]
 
@@ -130,6 +141,12 @@ templates_lotc.env.globals["render_roos"] = render_roos
 # staan. Zonder valt de formulierlaag om op elk veld dat de macro's gebruikt.
 templates_lotc.env.filters["attr_escape"] = attr_escape
 
+# Onze ROOS-iconnamen naar de NLDD-woordenschat. Als FILTER en niet vooraf in de data,
+# omdat dezelfde gegevens ook de oude weergave voeden: die verwacht juist de ROOS-naam.
+# Zonder deze vertaling rendert een icoon leeg - stil, want een onbekende naam levert geen
+# fout op. Zo misten de dienstkaarten in de wizard hun iconen, op PostgreSQL na: "database"
+# heet toevallig in beide woordenschatten hetzelfde.
+templates_lotc.env.filters["nldd_icon"] = _to_nldd_icon
 templates_lotc.env.filters["service_name"] = get_service_name
 templates_lotc.env.filters["service_definition"] = get_service_definition_for_entry
 templates_lotc.env.filters["dutch_date"] = format_dutch_date
