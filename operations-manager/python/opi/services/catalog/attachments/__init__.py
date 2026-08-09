@@ -38,7 +38,7 @@ class AttachmentsService(Service):
     definition = ServiceDefinition(
         name="Bijlagen",
         description="Geuploade bestanden (bijv. certificaten) gekoppeld als bestand of env-var aan een component",
-        help_template="attachments/help.html.j2",
+        help_template="attachments/help.md",
         icon="map",
         color="grijs-600",
         binding=ServiceBinding.COMPONENT,

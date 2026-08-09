@@ -18,9 +18,11 @@ Run: uv run pytest tests/e2e/test_service_config_sequence_add.py -m "e2e and not
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING
 
 import pytest
+from playwright.sync_api import expect
 from tests.e2e.helpers.wizard import WizardHelper
 
 if TYPE_CHECKING:
@@ -58,10 +60,17 @@ def test_adding_a_rule_adds_fields_instead_of_hiding_the_block(app_server: str, 
     add_buttons = auth_page.locator("button:has-text('Item toevoegen')")
     assert add_buttons.count() >= 1, "the config step offers no way to add a rule"
 
-    before = auth_page.locator("select, input:visible").count()
+    velden = auth_page.locator("select, input:visible")
+    before = velden.count()
     add_buttons.first.click()
-    auth_page.wait_for_timeout(900)
-    after = auth_page.locator("select, input:visible").count()
+
+    # Wait for the row, not for the clock. The bug this guards is "the block disappears
+    # instead of gaining a row": the count then changes downward or not at all, and the
+    # assertion below still catches both -- after waiting out a slow render rather than
+    # failing on it. Hence a wait for "no longer the old count", not for a target count.
+    with contextlib.suppress(AssertionError):
+        expect(velden).not_to_have_count(before, timeout=10000)
+    after = velden.count()
 
     assert after > before, (
         f"clicking 'Item toevoegen' produced no fields ({before} -> {after}); "

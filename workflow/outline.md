@@ -272,7 +272,7 @@ uv run python functional_tests/run_all.py                      # integration (ne
 - `tests/e2e/` — 17 Playwright browser tests (16 local + 1 live-sandbox lifecycle)
 - `tests/conftest.py` — 20+ fixtures mocking connectors, services, settings
 - `tests/e2e/conftest.py` — Playwright fixtures: local test server (`app_server`) and live-sandbox (`sandbox_page`) modes, session-cookie signing
-- `tests/e2e/helpers/` — `WizardHelper`, `EditModalHelper`, `ForgejoClient`, `ProjectCleanup`, sandbox API helpers
+- `tests/e2e/helpers/` — `WizardHelper`, `EditModalHelper`, `ForgejoClient`, sandbox API helpers
 
 ### API endpoint surface
 The REST API is large and evolving, so **do not maintain a hand-written endpoint list**. The authoritative, always-current surface is the OpenAPI spec served by a running instance:

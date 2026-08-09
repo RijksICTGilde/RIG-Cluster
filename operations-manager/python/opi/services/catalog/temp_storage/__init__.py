@@ -21,7 +21,7 @@ class TempStorageService(Service):
     definition = ServiceDefinition(
         name="Tijdelijke schijfruimte",
         description="Gegevens worden niet bewaard tijdens de levenscyclus van de applicatie",
-        help_template="temp_storage/help.html.j2",
+        help_template="temp_storage/help.md",
         icon="klok",
         color="oranje",
         binding=ServiceBinding.COMPONENT,

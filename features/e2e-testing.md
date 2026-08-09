@@ -60,7 +60,6 @@ tests/e2e/
   test_wizard_create.py      # Full wizard walkthrough (sandbox required)
   helpers/
     wizard.py                # WizardHelper page object
-    cleanup.py               # Test project cleanup tracker
 ```
 
 ## Key Fixtures
