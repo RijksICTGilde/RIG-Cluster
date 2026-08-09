@@ -25,9 +25,11 @@ from __future__ import annotations
 import asyncio
 import json
 import pathlib
+import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from opi.api.task_models import TASK_RESULT_MODELS
 from opi.api.v2.router import AddDatabaseSchemaRequest, v2_router
 from opi.core.async_task_service import TaskType
@@ -340,6 +342,72 @@ def test_a_project_without_extra_schemas_still_lists_the_default() -> None:
 
     assert len(listed.schemas) == 1
     assert listed.schemas[0].is_default is True
+
+
+def test_a_project_without_the_database_service_has_no_schemas_at_all() -> None:
+    """No database means no schemas -- not even the derived default one.
+
+    The default row is computed from project and deployment name, so it comes out looking
+    real for any project at all. Returning it here would invent a schema name, a variable
+    and a description for a database that does not exist, and would contradict the write
+    routes on the same sub-resource, which answer ``not_found`` for the same project.
+
+    404 rather than an empty list: an empty list reads as "this database has no extra
+    schemas", and there is no database.
+    """
+    with pytest.raises(HTTPException) as excinfo:
+        _list(_project(uses_database=False))
+
+    assert excinfo.value.status_code == 404
+    assert _SERVICE in str(excinfo.value.detail)
+
+
+# ---------------------------------------------------------------------------
+# What the spec promises is what the routes do
+# ---------------------------------------------------------------------------
+
+
+def _schema_operations() -> dict[str, dict]:
+    from opi.server import app
+
+    paths = app.openapi()["paths"]
+    base = f"/api/v2/projects/{{project_name}}/services/{_SERVICE}/schemas"
+    return {
+        "get": paths[base]["get"],
+        "post": paths[base]["post"],
+        "delete": paths[f"{base}/{{postfix}}"]["delete"],
+    }
+
+
+@pytest.mark.parametrize("method", ["get", "post", "delete"])
+def test_a_status_code_named_in_the_description_is_one_the_route_can_actually_return(method: str) -> None:
+    """A promised status code that never comes is worse than no promise at all.
+
+    These routes are written for a caller that branches on the answer. If the description
+    says a duplicate postfix is refused with 409 while the route only ever accepts the
+    request and puts the refusal in the task result, that caller branches on a 409 it will
+    never see and never reads the result that holds the actual refusal.
+    """
+    operation = _schema_operations()[method]
+    declared = set(operation["responses"])
+    promised = set(re.findall(r"\b[45]\d\d\b", operation["description"]))
+
+    assert promised <= declared, f"{method} promises {sorted(promised - declared)} but declares {sorted(declared)}"
+
+
+def test_the_add_description_points_at_the_task_result_for_every_asynchronous_refusal() -> None:
+    """The refusals live at save time, so the endpoint cannot answer them with a status code.
+
+    That is a deliberate choice -- uniqueness, the 63-character limit and colliding
+    variable names have one home, the save path -- but it means a 202 does not mean the
+    schema exists. The description has to say which `error_type` values come back, or the
+    caller has no way to tell the three outcomes apart.
+    """
+    description = _schema_operations()["post"]["description"]
+
+    for error_type in ("conflict", "not_found", "validation_error"):
+        assert error_type in description
+    assert "/api/tasks/{task_id}" in description
 
 
 def test_the_default_schema_cannot_be_addressed_for_removal() -> None:
