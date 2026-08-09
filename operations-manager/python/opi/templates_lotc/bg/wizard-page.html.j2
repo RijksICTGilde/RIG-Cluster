@@ -12,9 +12,14 @@
   #wizard-step-content blijft de naam van het doelgebied: elk htmx-attribuut in de
   stappen en in de stappenbalk wijst erop.
 
-  Het formulier staat in een <c-center max="46rem">. Een formulier over de volle breedte
-  is onleesbaar - het oog verliest de koppeling tussen label en veld. De stappenbalk en
-  het kruimelpad staan er binnen, zodat de kolom over de hele pagina dezelfde is.
+  GEEN kolom om het formulier. Er stond hier een <c-center max="46rem"> met als reden dat
+  een formulier over de volle breedte onleesbaar zou zijn. Dat is een ontwerpkeuze, en die
+  is hier niet aan ons: de bestaande wizard gebruikt de volle breedte (gemeten: 1216px bij
+  een venster van 1440), en deze omzetting hoort hetzelfde te doen en er alleen anders uit
+  te zien. Met die wikkel bleef er 720px over - de helft - en dat viel meteen op.
+
+  Wil je die kolom alsnog, dan is dat een besluit over het FORMULIER en hoort het in beide
+  weergaven te gebeuren, niet alleen in de nieuwe.
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import page_head %}
@@ -22,7 +27,6 @@
 {% block page_title %}{{ flow_title }}{% endblock %}
 
 {% block content %}
-<c-center max="46rem">
     <c-stack gap="lg">
         <c-breadcrumbs aria-label="Kruimelpad">
             <c-breadcrumbs-item label="Projecten" href="/projects" />
@@ -47,7 +51,7 @@
             {% with embedded=True %}{% include "bg/_wizard-step.html.j2" %}{% endwith %}
         </div>
     </c-stack>
-</c-center>
+
 
 {% include "widgets/service_help_modal.html.j2" %}
 {% endblock %}
