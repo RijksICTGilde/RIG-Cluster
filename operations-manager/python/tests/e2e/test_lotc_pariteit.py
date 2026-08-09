@@ -504,3 +504,34 @@ def test_de_projectpagina_laat_geen_sluitknop_zweven(app_server: str, auth_page:
     assert not auth_page.locator(".service-help-modal__close").first.is_visible(), (
         "de sluitknop van de hulpdialoog zweeft los in de pagina (wizard.css niet geladen?)"
     )
+
+
+def test_de_voettekst_heeft_zijn_kop_links_en_versieregel(app_server: str, auth_page: Page) -> None:
+    """Vier bestemmingen plus een kop, op elke pagina.
+
+    De voettekst is hier twee keer stukgegaan op dezelfde manier: met <c-menu>. Dat
+    rendert altijd een <nldd-menu-bar> - een navigatiebalk - en een <nldd-menu-item>
+    daarin navigeert niet op zijn href. De links stonden er dus wel en deden niets.
+    Daarom klikt deze test er ook echt op.
+    """
+    auth_page.goto(f"{app_server}/projects?layout=nldd")
+    auth_page.wait_for_load_state("networkidle")
+
+    voet = auth_page.locator("nldd-page-footer")
+    assert voet.count() == 1, "er staat geen voettekst op de pagina"
+
+    # Via locators en niet via inner_text(): de tekst van deze links staat in de
+    # schaduwboom van het component, en inner_text() ziet daar niets van. Playwright's
+    # tekstselectors kijken er wel doorheen - precies het verschil dat elders in dit
+    # project al twee keer een meting waardeloos maakte.
+    assert voet.get_by_text("Platform", exact=True).count() >= 1, "de kop 'Platform' boven de links ontbreekt"
+    for bestemming in ("Over het platform", "Architectuur", "API Referentie"):
+        assert voet.get_by_text(bestemming, exact=True).count() >= 1, (
+            f"de link '{bestemming}' staat niet in de voettekst"
+        )
+    assert voet.get_by_text("ZAD ").count() >= 1, "de versievermelding staat niet in de voettekst"
+
+    # En hij werkt: de eerste link brengt je naar /about.
+    auth_page.locator("nldd-page-footer a").first.click()
+    auth_page.wait_for_load_state("networkidle")
+    assert auth_page.url.endswith("/about"), f"de eerste footerlink navigeert niet: {auth_page.url}"
