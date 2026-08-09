@@ -43,7 +43,7 @@ def test_the_help_button_opens_the_explanation(app_server: str, auth_page: Page)
 
 def test_the_explanation_of_every_service_loads(app_server: str, auth_page: Page) -> None:
     """Each service's explanation now lives in its own package and is addressed as
-    ``<package>/help.html.j2`` (RC-36), so the fetched URL carries a path segment. That
+    ``<package>/help.md`` (RC-36 + RC-59), so the fetched URL carries a path segment. That
     only works if the route, the loader and the JS encoding agree -- and a mismatch is
     silent: the button opens a modal that says the text could not be loaded.
     """
