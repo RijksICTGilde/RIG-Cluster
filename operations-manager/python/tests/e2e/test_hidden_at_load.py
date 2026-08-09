@@ -14,6 +14,7 @@ enige plek waar de cascade zichtbaar is.
 from typing import TYPE_CHECKING
 
 import pytest
+from tests.e2e.helpers.tabs import open_tab
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -59,7 +60,7 @@ def test_only_the_first_deployment_is_visible(app_server: str, auth_page: Page) 
     """
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
-    auth_page.evaluate("switchTab('deployments')")
+    open_tab(auth_page, "deployments")
     auth_page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
 
     visible = auth_page.evaluate(
