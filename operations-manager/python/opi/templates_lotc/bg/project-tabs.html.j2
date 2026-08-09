@@ -445,7 +445,7 @@
                                         <b>Helm Values (Base)</b>
                                         <c-chip>{{ helm_chart['helm-values'] | length }} waarde{{ 'n' if helm_chart['helm-values'] | length != 1 else '' }}</c-chip>
                                     </c-cluster>
-                                    <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) }}" show-copy="true" />
+                                    <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) | forceescape }}" show-copy="true" />
                                 {% endif %}
                             </c-stack>
                         </c-card>
@@ -479,7 +479,7 @@
                                         <b>Helm Values (Base)</b>
                                         <c-chip>{{ helmfile['helm-values'] | length }} waarde{{ 'n' if helmfile['helm-values'] | length != 1 else '' }}</c-chip>
                                     </c-cluster>
-                                    <c-secret-field value="{{ helmfile['helm-values'] | tojson(indent=2) }}" show-copy="true" />
+                                    <c-secret-field value="{{ helmfile['helm-values'] | tojson(indent=2) | forceescape }}" show-copy="true" />
                                 {% endif %}
                             </c-stack>
                         </c-card>
