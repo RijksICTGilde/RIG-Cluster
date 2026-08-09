@@ -87,7 +87,7 @@
                                 <c-paragraph size="sm">Helm Values</c-paragraph>
                                 <c-tag type="default" label="{{ waarden }} waarde{{ 'n' if waarden != 1 else '' }}" />
                             </c-cluster>
-                            <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) }}" value-type="json" />
+                            <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) | forceescape }}" value-type="json" />
                         {% endif %}
                     </c-stack>
                 </c-card>
@@ -113,7 +113,7 @@
                                 <c-tag type="default" label="{{ waarden }} waarde{{ 'n' if waarden != 1 else '' }}" />
                             </c-cluster>
                             <c-secret-field
-                                value="{{ helmfile['helm-values'] | tojson(indent=2) }}"
+                                value="{{ helmfile['helm-values'] | tojson(indent=2) | forceescape }}"
                                 value-type="json"
                                 content-width="lg" />
                         {% endif %}
