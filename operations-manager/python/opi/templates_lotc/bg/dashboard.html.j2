@@ -10,11 +10,11 @@
     _kerncijfers         -> c-metric in plaats van vier kaarten met een eigen stat-grid
     _resourcegebruik     -> dezelfde canvas-meters, in een apart opgehaald blok
     _resourceverdeling   -> c-progress-bar met segmenten in plaats van een eigen balk
-    _projecten           -> c-layer met de gezondheid als label
 
-  Wat er dus NIET gebeurt: blokken weglaten omdat ze lastig zijn. De gezondheidsbanner,
-  de verdeling over projecten en de gezondheid per project stonden er, dus staan ze er
-  weer.
+  EEN BLOK IS ER OP VERZOEK UIT: de lijst met projecten. Die staat op /projects, en twee
+  plekken met dezelfde lijst lopen vroeg of laat uiteen. Wat het dashboard hoort te doen is
+  samenvatten - de kerncijfers en het resourcegebruik - met een ingang naar de lijst zelf.
+  De gezondheidsmelding bovenaan blijft wel: die vat samen en somt niet op.
 
   DE METERS
 
@@ -52,7 +52,22 @@
                 </c-stack>
             </c-alert>
         {% elif health_banner %}
-            <c-alert type="info" heading="{{ health_banner }}" />
+            {# health_banner is een DICT met kind, heading en lines - zie
+               _dashboard_health_banner in router.py. Hier stond {{ health_banner }} in het
+               heading-attribuut, en dan drukt Jinja de hele dict af: de gebruiker kreeg
+               letterlijk {'kind': 'info', 'heading': ...} op zijn scherm te zien.
+
+               De woordkeuze wordt in Python bepaald en niet hier: "Alle N projecten zijn
+               gezond" hield op waar te zijn zodra er een met opzet niets draaide (RC-31). #}
+            <c-alert type="{{ health_banner.kind | default('info', true) }}" heading="{{ health_banner.heading }}">
+                {% if health_banner.lines %}
+                    <c-stack gap="xs">
+                        {% for line in health_banner.lines %}
+                            <c-paragraph size="sm">{{ line }}</c-paragraph>
+                        {% endfor %}
+                    </c-stack>
+                {% endif %}
+            </c-alert>
         {% endif %}
     {% endif %}
 
@@ -72,36 +87,15 @@
         <c-paragraph>Resourcegebruik wordt opgehaald...</c-paragraph>
     </div>
 
-    {% set nieuw_project %}<c-button type="primary" size="sm" label="Nieuw Project" icon="plus" show-icon="before" href="/forms/wizard/restart" />{% endset %}
-    {% call panel("Mijn Projecten", "rectangle-stack", aside=nieuw_project) %}
-        <c-stack gap="sm">
-            {% for project in projects %}
-                {# De bestaande kaart toont TWEE tellers naast elkaar: deployments en
-                   gebruikers (dashboard/_projecten.html.j2, .project-metrics). De tweede
-                   was hier weggevallen. Ze staan samen in count, want c-layer heeft er
-                   maar een plek voor - de informatie is daarmee compleet en de vorm blijft
-                   die van het thema. #}
-                {% set aantal_deployments = project.deployment_count | default(0) %}
-                {% set aantal_gebruikers = project.user_count | default(0) %}
-                <c-layer
-                    icon="rectangle-stack"
-                    title="{{ project.display_name }}"
-                    count="{{ aantal_deployments }} deployment{{ 's' if aantal_deployments != 1 else '' }} - {{ aantal_gebruikers }} gebruiker{{ 's' if aantal_gebruikers != 1 else '' }}"
-                    sub="{{ project.description }}"
-                    href="/projects/details/{{ project.name }}">
-                    {# De gezondheid stond op de bestaande kaart als een gekleurde rand;
-                       hier als label, want een kleur alleen is geen informatie voor wie
-                       hem niet ziet. #}
-                    {% set health = project.health | default('Unknown') %}
-                    <c-tag
-                        label="{{ health }}"
-                        type="{{ 'error' if health == 'Degraded' else 'warning' if health == 'Progressing' else 'success' if health == 'Healthy' else 'default' }}" />
-                </c-layer>
-            {% else %}
-                <c-paragraph>Je hebt nog geen projecten.</c-paragraph>
-            {% endfor %}
-        </c-stack>
-    {% endcall %}
+    {# De LIJST met projecten stond hier ook, en die is eruit: hij staat op /projects, en
+       twee plekken met dezelfde lijst lopen vroeg of laat uiteen. Wat het dashboard hoort
+       te doen is samenvatten - de kerncijfers hierboven en het resourcegebruik - met een
+       ingang naar de lijst zelf. #}
+    <c-cluster gap="sm">
+        <c-button type="primary" size="sm" label="Nieuw Project" icon="plus" show-icon="before" href="/forms/wizard/restart" />
+        <c-button type="secondary" size="sm" label="Alle projecten" icon="rectangle-stack" show-icon="before" href="/projects" />
+    </c-cluster>
+
 {% endblock %}
 
 {% block additional_styles %}
