@@ -76,8 +76,12 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
        aanhalingsteken binnen :attrs leest de voorbewerker als het einde van het attribuut.
        stopPropagation staat er omdat de kaart eronder zelf ook een klik afhandelt. #}
     {% set hulp_js %}event.stopPropagation(); openServiceHelp('{{ help_template|e }}'){% endset %}
+    {# question-MARK-circle: zo heet hij in de NLDD-woordenschat. Hier stond
+       "question-circle", en die naam bestaat daar niet - dan rendert de knop wel maar
+       blijft hij leeg. Precies het stille gat waar de servicekaarten op het overzicht
+       eerder ook in vielen. #}
     <c-icon-button
-        icon="question-circle"
+        icon="question-mark-circle"
         accessible-label="Uitleg over deze dienst"
         variant="neutral-transparent"
         size="sm"

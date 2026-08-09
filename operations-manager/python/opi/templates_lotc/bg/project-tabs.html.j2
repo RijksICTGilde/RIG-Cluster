@@ -395,7 +395,7 @@
                                             {% if definition and definition.help_template %}
                                                 {% set uitleg_js %}event.stopPropagation(); openServiceHelp('{{ definition.help_template | e }}'){% endset %}
                                                 <c-icon-button
-                                                    icon="question-circle"
+                                                    icon="question-mark-circle"
                                                     accessible-label="Uitleg over {{ definition.name }}"
                                                     variant="neutral-transparent"
                                                     size="sm"
