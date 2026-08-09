@@ -1987,6 +1987,24 @@ tasks:
       - uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
     silent: false
 
+  test-e2e-random:
+    desc: "Run the local E2E suite in a shuffled order (the isolation check that counts)"
+    dir: operations-manager/python
+    cmds:
+      - uv run playwright install chromium --with-deps
+      # The plan's own acceptance criterion: order-independence is only proven by
+      # actually changing the order. A reversed file order is not enough -- it still
+      # keeps every file's tests together and in sequence, which is exactly the
+      # assumption a leaking test makes. pytest-randomly shuffles files AND the tests
+      # inside them.
+      # SEED=<n> reproduces a specific shuffle; without it every run picks a new one,
+      # which is the point: repeated runs sample different orders.
+      # No -q: the addopts are already at verbosity 0 (-v -q), so an extra -q lands on
+      # -1 and pytest drops the report header -- the line where pytest-randomly prints
+      # `Using --randomly-seed=<n>`. Without it the shuffle cannot be replayed.
+      - uv run pytest tests/e2e/ -m "e2e and not sandbox" -p randomly {{if .SEED}}--randomly-seed={{.SEED}}{{end}} --timeout=300
+    silent: false
+
   test-e2e-sandbox:
     desc: "Run E2E browser tests against running sandbox cluster"
     dir: operations-manager/python

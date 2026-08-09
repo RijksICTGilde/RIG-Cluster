@@ -44,6 +44,39 @@ jobs:
       - name: Coverage report
         run: uv run coverage report --fail-under=21
 
+  e2e:
+    # The E2E layer is excluded from the test job above (-m "not e2e"), so without its
+    # own job it only ever runs when someone asks for it by hand - which is how a break
+    # in it can stay unnoticed for weeks. It catches things the unit tests structurally
+    # cannot: what the rendered page actually does.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: operations-manager/python
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Install dependencies
+        run: uv sync --all-groups
+      - name: Install Playwright browser
+        run: uv run playwright install --with-deps chromium
+      # Shuffled, not in file order. A suite that only passes in the order its files
+      # happen to be named is not isolated, it is lucky - and running it in one fixed
+      # order forever is how that stays hidden. Every run picks a new seed, so the job
+      # samples a different order each time; the seed is printed in the header, so a
+      # failure is reproducible with `task test-e2e-random SEED=<n>`.
+      # No `-q` here: the addopts already sit at verbosity 0 (`-v -q`), so one more
+      # `-q` drops it to -1 and pytest then omits the report header - which is exactly
+      # where pytest-randomly prints `Using --randomly-seed=<n>`. Without that line the
+      # seed is unknowable and a red run cannot be replayed.
+      - name: Run local E2E suite (shuffled order)
+        run: uv run pytest tests/e2e/ -m "e2e and not sandbox" -p randomly --timeout=300
+
   license-check:
     runs-on: ubuntu-latest
     defaults:
