@@ -116,6 +116,34 @@ De controles bij het opslaan -- uniciteit, de 63-tekengrens, botsende variabelen
 blijven waar ze zijn: bij het opslaan, hetzelfde punt dat de wizard raakt. Deze routes
 geven die fouten door als 422 in plaats van ze over te doen.
 
+### De naamgeving van een postfix
+
+Zodra een API schema's laat toevoegen komt de postfix niet meer alleen uit een formulier,
+maar ook uit een script dat de regels niet kent. Drie dingen zijn daarvoor dichtgezet:
+
+- **Eén definitie.** `SCHEMA_POSTFIX_PATTERN` en `SCHEMA_POSTFIX_MAX_LENGTH` staan in
+  `opi/utils/naming.py`, naast de functies die de samengestelde naam bouwen, en het
+  configmodel, `SchemaPostfixValidator` en het API-verzoekmodel lezen ze daar alle drie
+  uit. Het maximum (32) **vervangt de samengestelde 63-controle niet** en kan dat ook
+  niet: hoeveel ruimte er is hangt af van de project- en deploymentnaam. Het zorgt er
+  alleen voor dat een postfix van 200 tekens faalt op zijn lengte, in plaats van als een
+  klacht over een naam die de aanroeper nooit geschreven heeft.
+- **Weigeren, niet normaliseren.** `Rapportage` geeft een 422 met de reden. Stil
+  omzetten naar `rapportage` zou iets anders opslaan dan er gevraagd is, en de aanroeper
+  zou dat pas merken aan de schemanaam in zijn database.
+- **De samengestelde controle draait ook als er een deployment bijkomt.** Die stond in
+  `UniqueSchemaEnforcer` en keek alleen naar de deployments die er op dat moment waren,
+  dus een postfix die vandaag past werd stil ongeldig zodra er een langere deploymentnaam
+  bijkwam -- en dat bleek dan pas bij het uitrollen. `validate_database_schema_names`
+  draait hem nu in `validate_project_structure`, waar elke opslag langskomt, dus het
+  toevoegen van die deployment wordt geweigerd met een melding die zowel de deployment als
+  de postfix noemt. Een gemarkeerd schema telt niet mee: dat is op weg naar buiten.
+
+Wat **niet** in deze taak is opgelost: het standaardschema kapt stil af op 63 tekens
+zonder hash, dus twee lange deploymentnamen kunnen tot dezelfde schemanaam afkappen. Zie
+`docs/KNOWN-ISSUES.md`; een naamgevingsregel wijzigen raakt bestaande databases en vraagt
+een eigen migratie.
+
 `POST` en `DELETE` zijn asynchroon (202 met een task-id) en nemen `rollout=false`, net als
 de andere schrijfroutes.
 

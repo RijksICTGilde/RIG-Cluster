@@ -536,6 +536,26 @@ def generate_database_schema(project_name: str, deployment_name: str) -> str:
     return _truncate_if_needed(schema, 63)  # PostgreSQL schema limit
 
 
+#: The character shape of an extra-schema postfix (RC-17): lowercase letters, digits and
+#: underscores, starting with a letter. It becomes part of a PostgreSQL schema name and,
+#: uppercased, part of an environment-variable name, so both have to accept it. Declared
+#: here, next to the functions that build those names, because the config model, the form
+#: validator and the API all have to apply the SAME rule and there is no other module all
+#: three already depend on.
+SCHEMA_POSTFIX_PATTERN = r"^[a-z][a-z0-9_]*$"
+
+#: The most characters a postfix may have on its own.
+#:
+#: This does NOT replace the composed check (``{project}_{deployment}_{postfix}`` under 63
+#: characters), and cannot: how much room is left depends on the project and deployment
+#: names, so no fixed number can promise a fit. What it does is make the ordinary mistake
+#: fail early and legibly -- a 200-character postfix is refused for being 200 characters,
+#: rather than being reported as a problem with a composed name the caller never wrote.
+#: 32 is well above every real postfix (`rapportage` is 10) and well below anything that
+#: could plausibly fit.
+SCHEMA_POSTFIX_MAX_LENGTH = 32
+
+
 def generate_extra_database_schema(project_name: str, deployment_name: str, postfix: str) -> str:
     """Generate the full name of an extra schema (RC-17).
 
