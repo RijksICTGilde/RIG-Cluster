@@ -397,7 +397,7 @@ function openServiceHelp(templateName) {
     modal.classList.add('is-open');
     document.body.style.overflow = 'hidden';
 
-    /* A service's help template is addressed as "<service-package>/help.html.j2", so
+    /* A service's help text is addressed as "<service-package>/help.md", so
        encode per path segment -- encodeURIComponent would escape the separator. */
     var encoded = templateName.split('/').map(encodeURIComponent).join('/');
     fetch('/forms/wizard/help/' + encoded)

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from pydantic import TypeAdapter, ValidationError
 
 from opi.forms.editables.converters import command_line_has_unbalanced_quote, split_command_line
+from opi.utils.naming import SCHEMA_POSTFIX_MAX_LENGTH, SCHEMA_POSTFIX_PATTERN
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -204,22 +205,34 @@ class AttachmentIdValidator:
 
 class SchemaPostfixValidator:
     """Validates an extra-schema postfix (RC-17): lowercase letters, digits and
-    underscores, starting with a letter.
+    underscores, starting with a letter, and not longer than
+    ``SCHEMA_POSTFIX_MAX_LENGTH``.
 
     The postfix becomes part of a PostgreSQL schema name
     (``{project}_{deployment}_{postfix}``) and, uppercased, an env-variable name
-    (``DATABASE_SCHEMA_{POSTFIX}``), so both must be valid. This is the per-field format
-    check; uniqueness, the 63-char full-name limit and variable-name collisions are the
-    section enforcer's job (they need the project and deployment names).
+    (``DATABASE_SCHEMA_{POSTFIX}``), so both must be valid. Shape and length come from
+    ``opi/utils/naming.py``, the same place the config model and the API read them, so a
+    postfix cannot be accepted by one road in and refused by another.
+
+    The length here does not replace the composed 63-character check: uniqueness, that
+    limit and variable-name collisions are the section enforcer's job (they need the
+    project and deployment names). It only makes an obviously-too-long postfix fail as
+    what it is.
+
+    Never normalised. The shape is strict enough that lowercasing ``Rapportage`` would
+    mean storing something other than what was asked for, and the caller would find out
+    from the schema name in their database rather than from the response.
     """
 
     def validate(self, value: Any) -> list[str]:
         if not value:
             return ["Postfix is verplicht"]
-        if not re.match(r"^[a-z][a-z0-9_]*$", str(value)):
+        if not re.match(SCHEMA_POSTFIX_PATTERN, str(value)):
             return [
                 "Gebruik alleen kleine letters, cijfers en underscores, beginnend met een letter (bijv. 'rapportage')"
             ]
+        if len(str(value)) > SCHEMA_POSTFIX_MAX_LENGTH:
+            return [f"Een postfix mag hoogstens {SCHEMA_POSTFIX_MAX_LENGTH} tekens lang zijn"]
         return []
 
 

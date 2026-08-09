@@ -39,7 +39,7 @@ class UserEnvVarsService(Service):
             "en per deployment-component. Draait altijd, is niet kiesbaar - elk component "
             "heeft ze. De waarden worden versleuteld opgeslagen."
         ),
-        help_template="user_env_vars/help.html.j2",
+        help_template="user_env_vars/help.md",
         icon="instellingen",
         color="grijs-600",
         binding=ServiceBinding.COMPONENT,
