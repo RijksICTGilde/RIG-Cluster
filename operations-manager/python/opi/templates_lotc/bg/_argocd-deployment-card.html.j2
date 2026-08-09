@@ -162,13 +162,23 @@
                De aanroep wordt boven de tag opgebouwd: een genest aanhalingsteken binnen
                :attrs leest de voorbewerker als het einde van het attribuut. De argumenten
                gaan door tojson, precies zoals in het origineel - een componentnaam belandt
-               zo als GEGEVEN in de aanroep en niet als code. #}
+               zo als GEGEVEN in de aanroep en niet als code.
+
+               En dan de forceescape, die hier het verschil maakt tussen een knop die werkt
+               en een die zwijgt. tojson levert MARKUP op ("dit is al veilig"), en het
+               gewone escapefilter dat LOTC op :attrs-waarden loslaat slaat markup over.
+               De dubbele aanhalingstekens uit de JSON kwamen daardoor rauw in het
+               onclick-attribuut, dat sloot bij de eerste, en de rest van de aanroep werd
+               door de browser als losse attributen gelezen. Het origineel had dat niet:
+               daar staat het onclick-attribuut tussen ENKELE aanhalingstekens.
+               forceescape escapet ook markup, en dat is precies wat een attribuutwaarde
+               nodig heeft. #}
             {% if deployment.components and not expects_no_pods %}
-                {% set logs_js = 'openLogViewer('
+                {% set logs_js = ('openLogViewer('
                     ~ (project.name | tojson) ~ ', '
                     ~ (deployment.name | tojson) ~ ', '
                     ~ (deployment.components[0].reference | tojson) ~ ', '
-                    ~ (deployment.components | tojson) ~ ')' %}
+                    ~ (deployment.components | tojson) ~ ')') | forceescape %}
                 <c-action-group align="start">
                     <c-button
                         type="secondary"
