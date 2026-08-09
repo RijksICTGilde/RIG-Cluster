@@ -172,7 +172,7 @@ def authenticated_context(app_server: str, browser: BrowserContext) -> Generator
             # in plaats van dat een van de twee stilletjes onbewaakt raakt.
             {
                 "name": "zad_layout",
-                "value": "roos",
+                "value": __import__("os").environ.get("E2E_LAYOUT", "roos"),
                 "domain": domein,
                 "path": "/",
             },
