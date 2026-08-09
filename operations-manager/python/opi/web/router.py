@@ -2884,6 +2884,44 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
         )
 
 
+def _projects_for_user(user: dict) -> list[dict]:
+    """De projecten waar deze gebruiker bij mag, met de gegevens die het overzicht toont.
+
+    Apart van de route omdat /projects en het htmx-fragment /projects/lijst allebei
+    precies deze lijst nodig hebben. Twee kopieen zouden vroeg of laat uiteenlopen, en
+    dan zou het fragment iets anders laten zien dan de pagina eromheen - of, erger, iets
+    dat de toegangscontrole van de pagina niet gezien heeft.
+    """
+    user_email = user.get("email", "").lower()
+
+    user_projects: list[dict] = []
+    for project in get_project_store().get_all():
+        project_name = project.name
+        if not is_user_authorized_for_project(project_name, user_email):
+            continue
+        try:
+            project_data = project.data or {}
+            user_projects.append(
+                {
+                    "name": project_name,
+                    "display_name": project_data.get("display-name", project_name),
+                    "description": project_data.get("description", ""),
+                    "users": project.users or [],
+                    "user_role": get_user_role_for_project(project_name, user_email),
+                    "services": project_data.get("services", []),
+                    "clusters": project_data.get("clusters", []),
+                    "components": project_data.get("components", []),
+                    "deployments": project_data.get("deployments", []),
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load project data for {project_name}: {e}")
+            continue
+
+    user_projects.sort(key=lambda p: p["display_name"] or p["name"])
+    return user_projects
+
+
 @web_router.get("/projects", response_class=HTMLResponse)
 @requires_sso
 async def projects_overview(request: Request):
@@ -2902,49 +2940,7 @@ async def projects_overview(request: Request):
     try:
         templates = get_templates()
         user = get_current_user(request)
-        user_email = user.get("email", "").lower()
-
-        # Ensure project data is fresh (refreshes from Git if stale)
-
-        # Get project service to filter by user access
-
-        # Get all projects and filter by user access
-        user_projects = []
-        all_projects = get_project_store().get_all()
-
-        for project in all_projects:
-            project_name = project.name
-            # Check if user has access to this project
-            if is_user_authorized_for_project(project_name, user_email):
-                try:
-                    # Get user's role for this project
-                    user_role = get_user_role_for_project(project_name, user_email)
-
-                    # Use project data from memory if available
-                    project_data = project.data or {}
-
-                    # Get description, filtering out the generic fallback text
-                    description = project_data.get("description", "")
-
-                    user_projects.append(
-                        {
-                            "name": project_name,
-                            "display_name": project_data.get("display-name", project_name),
-                            "description": description,
-                            "users": project.users or [],
-                            "user_role": user_role,
-                            "services": project_data.get("services", []),
-                            "clusters": project_data.get("clusters", []),
-                            "components": project_data.get("components", []),
-                            "deployments": project_data.get("deployments", []),
-                        }
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to load project data for {project_name}: {e}")
-                    continue
-
-        # Sort projects by name
-        user_projects.sort(key=lambda p: p["display_name"] or p["name"])
+        user_projects = _projects_for_user(user)
 
         return render(
             request,
@@ -2978,6 +2974,29 @@ async def projects_overview(request: Request):
                 error_msg += f"\nSource: {lines[line_num].strip()}"
 
         raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+
+
+@web_router.get("/projects/lijst", response_class=HTMLResponse)
+@requires_sso
+async def projects_lijst_fragment(request: Request):
+    """Alleen de projectentabel, voor het zoekveld en de sorteerknop op /projects.
+
+    htmx haalt dit op en zet het in #projects-lijst. Dezelfde gegevens en dezelfde
+    autorisatiecontrole als /projects - de lijst wordt hier opnieuw opgebouwd en niet uit
+    een sessie gehaald, zodat een zoekopdracht niet aan een oudere momentopname kan gaan
+    hangen en zodat er geen tweede plek is waar bepaald wordt wat je mag zien.
+
+    De pagina eromheen werkt ook zonder dit adres: het formulier is een gewone GET naar
+    /projects, en die past dezelfde ``?q=`` en ``?sort=`` toe.
+    """
+    user = get_current_user(request)
+    projects = _projects_for_user(user)
+
+    from opi.core.templates_lotc import templates_lotc
+    from opi.web.lotc_switch import filter_lotc_projects
+
+    context = {"request": request, "user": user, **filter_lotc_projects(request, projects)}
+    return HTMLResponse(templates_lotc.env.get_template("bg/_projects-table.html.j2").render(context))
 
 
 @web_router.get("/about", response_class=HTMLResponse)
