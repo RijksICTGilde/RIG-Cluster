@@ -20,10 +20,10 @@
   verdwenen en niemand heeft gevraagd ze weg te doen.
 
   NIEUW zijn het zoekveld en de sorteerknop. Die zijn gevraagd, en ze werken
-  SERVER-SIDE via htmx: het zoekveld haalt bg/_projects-lijst.html.j2 opnieuw op en zet
-  dat in #projects-lijst. Zo werkt het ook zonder JavaScript (het is een gewoon
-  formulier met GET), is een gefilterde lijst deelbaar als URL, en kan de telling niet
-  uit de pas lopen met wat er staat.
+  SERVER-SIDE via htmx: het formulier haalt /projects opnieuw op en vervangt daarmee
+  alleen #projects-lijst. Zo werkt het ook zonder JavaScript (het is een gewoon formulier
+  met GET), is een gefilterde lijst deelbaar als URL, en kan de telling niet uit de pas
+  lopen met wat eronder staat.
 
   Het zoekveld MAG hier een component zijn, en dat is niet vanzelfsprekend: elders in dit
   project staan gewone <input>-elementen omdat een webcomponent zijn invoerveld in de
@@ -51,18 +51,30 @@
     </c-cluster>
 
     {# ---- Zoeken en sorteren -------------------------------------------------
-       Een <form method="get"> eromheen: zonder JavaScript is dit een gewone
-       zoekopdracht die de hele pagina herlaadt, met htmx wordt alleen de tabel
-       vervangen. De sorteerkeuze reist mee in een verborgen veld, zodat zoeken de
-       sortering niet wegvaagt.
+       Een <form method="get"> eromheen: zonder JavaScript is dit een gewone zoekopdracht
+       die de hele pagina herlaadt, met htmx wordt alleen de lijst vervangen. De
+       sorteerkeuze reist mee in een verborgen veld, zodat zoeken de sortering niet
+       wegvaagt.
 
-       hx-trigger met een vertraging: bij elke toetsaanslag opnieuw ophalen is
-       verspilling, en zonder "changed" doet ook een pijltjestoets een verzoek. #}
+       De vertraging op de trigger scheelt een verzoek per toetsaanslag. Hier stond ook
+       "changed" bij; dat is eruit, want een <form> heeft geen waarde om mee te
+       vergelijken en daardoor werd de voorwaarde nooit waar - er ging simpelweg nooit een
+       verzoek uit. #}
     {% set huidige_sortering = project_sorteringen | selectattr('0', 'equalto', project_sort) | map(attribute='1') | first | default('Naam (A-Z)') %}
+    {# htmx haalt de PAGINA op en pakt daar #projects-lijst uit (hx-select), in plaats van
+       een apart fragmentadres. Twee redenen, allebei uit meten:
+
+       1. Met een eigen fragmentadres zette hx-push-url dat adres in de adresbalk. Wie dan
+          verversde of de link deelde kreeg een kale lijst zonder navigatie of voettekst.
+          Nu staat er /projects?q=... - precies wat je wilt delen.
+       2. Een tweede adres met dezelfde gegevens is een tweede plek die kan gaan afwijken.
+
+       Dit kost een pagina in plaats van een fragment over de lijn; dat is het waard. #}
     <form method="get" action="/projects"
-          hx-get="/projects/lijst"
+          hx-get="/projects"
+          hx-select="#projects-lijst"
           hx-target="#projects-lijst"
-          hx-swap="innerHTML"
+          hx-swap="outerHTML"
           hx-trigger="input delay:300ms, search, submit"
           hx-push-url="true">
         <input type="hidden" name="sort" value="{{ project_sort }}">
@@ -81,24 +93,28 @@
                                 width="26rem" />
             </nldd-toolbar-item>
 
-            {# De sorteerknop met zijn uitklapmenu. Ook hier een kale nldd-button: <c-button>
-               heeft geen standaard-slot, dus het menu in slot="popup" zou weggegooid worden.
-               Het MENU is wel een component, en zijn items zijn gewone LINKS - zo werkt
-               sorteren ook zonder JavaScript en is een gesorteerde lijst een deelbare URL.
-               type="radio" en selected kent c-menu-item niet als eigen attribuut; die gaan
-               daarom via :attrs. #}
+            {# De sorteerknop met zijn uitklapmenu, als kale nldd-markup. <c-button> heeft
+               geen standaard-slot, dus het menu in slot="popup" zou weggegooid worden.
+
+               En ook het MENU staat als nldd-markup, en ook dat is gemeten: <c-menu> rendert
+               altijd een <nldd-menu-bar> en <c-menu-item> een <nldd-menu-bar-item>. Een
+               menubalk is een horizontale navigatiebalk, geen uitklapmenu - in de
+               popup-slot van een knop leverde dat een menu op dat leeg bleef. Er is in deze
+               versie geen componentvorm die een gewone <nldd-menu> geeft.
+
+               De items zijn LINKS. Daardoor werkt sorteren ook zonder JavaScript en is een
+               gesorteerde lijst een deelbare URL; er komt geen eigen script aan te pas. #}
             <nldd-toolbar-item slot="end" size="md">
                 <nldd-button variant="secondary" expandable start-icon="sort"
                              text="Sorteren: {{ huidige_sortering }}" type="button"
                              popup-type="menu" size="md">
-                    <c-menu slot="popup" :attrs="{'placement': 'bottom-end'}">
+                    <nldd-menu slot="popup" placement="bottom-end">
                         {% for sleutel, label in project_sorteringen %}
-                            {% set radio = {'type': 'radio', 'selected': 'selected' if sleutel == project_sort else none} %}
-                            <c-menu-item label="{{ label }}"
-                                         href="/projects?sort={{ sleutel }}{{ '&q=' ~ project_query if project_query else '' }}"
-                                         :attrs="radio" />
+                            <nldd-menu-item type="radio" text="{{ label }}"
+                                            href="/projects?sort={{ sleutel }}{{ '&q=' ~ project_query if project_query else '' }}"
+                                            {% if sleutel == project_sort %}selected{% endif %}></nldd-menu-item>
                         {% endfor %}
-                    </c-menu>
+                    </nldd-menu>
                 </nldd-button>
             </nldd-toolbar-item>
 
@@ -106,16 +122,15 @@
                groep is wat daar dan van sorteren te zien is. #}
             <nldd-menu-group slot="overflow" text="Sorteren">
                 {% for sleutel, label in project_sorteringen %}
-                    {% set radio_overflow = {'type': 'radio', 'selected': 'selected' if sleutel == project_sort else none} %}
-                    <c-menu-item label="{{ label }}"
-                                 href="/projects?sort={{ sleutel }}{{ '&q=' ~ project_query if project_query else '' }}"
-                                 :attrs="radio_overflow" />
+                    <nldd-menu-item type="radio" text="{{ label }}"
+                                    href="/projects?sort={{ sleutel }}{{ '&q=' ~ project_query if project_query else '' }}"
+                                    {% if sleutel == project_sort %}selected{% endif %}></nldd-menu-item>
                 {% endfor %}
             </nldd-menu-group>
         </nldd-toolbar>
     </form>
 
-    {# ---- Tabel (projects-overview/_tabel.html.j2) --------------------------- #}
+    {# ---- De lijst (projects-overview/_tabel.html.j2) ------------------------ #}
     <div id="projects-lijst">
         {% include "bg/_projects-lijst.html.j2" %}
     </div>
