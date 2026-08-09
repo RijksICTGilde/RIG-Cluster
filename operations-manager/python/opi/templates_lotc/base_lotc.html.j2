@@ -127,21 +127,45 @@
             + (' *' if vi.dirty else '')
             + (' (' + vi.build_date + ')' if vi.build_date else '') %}
         {% set commit_ref = vi.commit if vi.commit else (vi.version if vi.version != '0.1.0' else '') %}
+        {# HET BLAUWE BLOKJE onderaan de voettekst is NIET van ons, en het is ook geen fout.
+           Het is `.page-footer::after` in de schaduwboom van nldd-page-footer: een
+           decoratief vlakje van 48 bij 24 in rgb(21, 66, 115). Het staat op elke pagina en
+           het is drie keer aangezien voor een kapot element - onvindbaar met elke
+           DOM-controle, want een pseudo-element komt in geen enkele querySelector voor.
+           Wie het weg wil, moet dat bij het thema aankaarten.
+
+           De voettekst heeft drie slots: breadcrumbs, de hoofdinhoud, en een legal-bar
+           onderaan. De links horen in de hoofdinhoud, de versievermelding erbij.
+
+           Hier stonden twee <c-menu>'s, en dat gaf twee problemen tegelijk. Een c-menu
+           rendert ALTIJD een <nldd-menu-bar>, en dat is een navigatiebalk die zichzelf
+           opmeet en er een overloopknop onder hangt als hij denkt dat de inhoud niet past
+           - op elke pagina een los blokje onder de voettekst. En een <nldd-menu-item>
+           navigeert niet uit zichzelf op zijn href, dus de vier bestemmingen waren
+           bovendien niet aanklikbaar.
+
+           Vandaar gewone links, met de kop "Platform" erboven die base.html.j2 ook heeft
+           (daar als label van de primaryMenu). #}
         <c-footer>
-            <c-menu aria-label="Over het platform">
-                <c-menu-item label="Over het platform" href="/about" />
-                <c-menu-item label="Architectuur" href="/architecture" />
-                <c-menu-item label="API Referentie" href="/api" />
-            </c-menu>
-            <c-menu aria-label="Versie">
+            <c-stack gap="xs">
+                <c-heading type="h2" size="6" label="Platform" />
+                <c-link href="/about" label="Over het platform" />
+                <c-link href="/architecture" label="Architectuur" />
+                <c-link href="/api" label="API Referentie" />
+            </c-stack>
+
+                {# De versievermelding staat BIJ de links en niet in de legal-bar-slot.
+                   Die slot leek de aangewezen plek, maar een
+                   <nldd-page-footer-legal-bar-item> toont zijn text= niet: wat er
+                   overbleef was een leeg donkerblauw blokje onder een scheidingslijn,
+                   op elke pagina. Dat blokje was er al voordat ik hieraan begon en het
+                   is precies dit. #}
                 {% if commit_ref %}
-                    <c-menu-item
-                        label="{{ version_label }}"
-                        href="https://github.com/RijksICTGilde/RIG-Cluster/commit/{{ commit_ref }}" />
+                    <c-link href="https://github.com/RijksICTGilde/RIG-Cluster/commit/{{ commit_ref }}"
+                            label="{{ version_label }}" />
                 {% else %}
-                    <c-menu-item label="{{ version_label }}" />
+                    <c-paragraph size="sm">{{ version_label }}</c-paragraph>
                 {% endif %}
-            </c-menu>
         </c-footer>
 
         {% block additional_styles %}{% endblock %}
