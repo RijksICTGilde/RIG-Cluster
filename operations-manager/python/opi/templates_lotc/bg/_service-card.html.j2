@@ -1,34 +1,53 @@
 {#
-  Een dienstkaart met de INFOKNOP zoals de bestaande pagina hem heeft.
+  Een dienstkaart op het serviceoverzicht.
 
-  Waarom hier en niet in bg/_patterns.html.j2: de macro daar maakte van de infoknop een
-  LINK naar ?help=<dienst>, die de uitleg inline op de pagina zette. Dat was hier zelf
-  bedacht. De bestaande pagina opent een DIALOOG - widgets/_macros.html.j2 hangt
-  openServiceHelp() aan het vraagteken, static/js/wizard.js haalt de tekst op bij
-  /forms/wizard/help/<template> en zet hem in #service-help-content.
+  MAATSTAF: services-overview/_diensten.html.j2. Die kaart toont vier dingen, en alle
+  vier horen hier ook te staan:
 
-  Dat gedrag is hier onveranderd overgenomen. De functienaam, de klasse
-  service-card__help-btn en de id's van de dialoog zijn LETTERLIJK dezelfde, want daar
-  hangt de JavaScript aan; alleen de vorm van de knop komt uit het thema.
+    1. icoon + naam + de infoknop
+    2. de omschrijving van de dienst
+    3. "API naam: <code>publish-on-web</code>"
+    4. het blok Omgevingsvariabelen: per variabele de naam, zijn aliassen en zijn uitleg
 
-  De aanroep wordt met {% set %} BOVEN de tag opgebouwd en via :attrs meegegeven: een
+  Hier stonden in plaats van 2, 3 en 4 drie CHIPS ("per component", "3 variabelen",
+  "vereist 1"). Dat is een samenvatting van gegevens die het origineel voluit toont, en
+  precies de reden dat je deze pagina opent: je komt kijken HOE de variabele heet die je
+  in je applicatie moet uitlezen. Een telling beantwoordt die vraag niet. De chips zijn
+  daarom weg; er is niets voor in de plaats bedacht.
+
+  Weg is ook het blok "gebruikt door" achter een scheidingslijn: dat stond niet in het
+  origineel, en ``used_by`` werd nergens gevuld - het rendeerde dus nooit.
+
+  De variabelen staan in kolommen (verzoek van de gebruiker). Het origineel zet ze onder
+  elkaar, en dat maakt van een dienst met negen variabelen een halve meter kaart.
+
+  Het is bewust c-auto-grid en geen c-columns met een vast aantal: de kaarten staan zelf
+  al in twee kolommen, dus een harde ``lg="3"`` levert kolommen van negentig pixels op en
+  daarin breekt DATABASE_SERVER_HOST middenin een woord af. Gemeten op een screenshot, en
+  onleesbaar. Met een MINIMUMbreedte krijgt de pagina er zoveel kolommen bij als er
+  passen - drie waar het kan, minder waar het moet.
+
+  DE INFOKNOP is gedrag en geen vormgeving, dus die is LETTERLIJK overgenomen uit
+  widgets/_macros.html.j2: dezelfde functienaam openServiceHelp(), dezelfde klasse
+  service-card__help-btn, dezelfde stopPropagation (waar de kaart zelf klikbaar is - de
+  dienstenkiezer in de wizard - mag het vraagteken de kaart niet meeselecteren).
+  static/js/wizard.js haalt de tekst op bij /forms/wizard/help/<template> en zet hem in
+  #service-help-content.
+
+  De aanroep wordt met {% raw %}{% set %}{% endraw %} BOVEN de tag opgebouwd en via :attrs meegegeven: een
   componenttag verdraagt geen Jinja binnenin, en class/onclick zijn geen eigen attributen
   van c-icon-button.
-
-  De rest van de opbouw is die van bg: icoon, naam, soort, sleutel-in-mono, kenmerken, en
-  achter een scheidingslijn waar de dienst gebruikt wordt.
 #}
 {% macro service_card(service) %}
-<c-card outline padding="md">
-    <c-stack gap="sm">
-        <c-cluster gap="sm" align="center" justify="between">
+<c-card outline padding="lg">
+    <c-stack gap="md">
+
+        {# 1 + 2 + 3: kop, omschrijving, API-naam - samen een blok, net als in het origineel #}
+        <c-stack gap="xs">
             <c-cluster gap="sm" align="center">
                 <c-icon icon="{{ service.icon }}" color="{{ service.color }}" size="lg" />
                 <c-heading type="h3" size="5" label="{{ service.label }}" />
                 {% if service.help_template %}
-                    {# Letterlijk de aanroep uit widgets/_macros.html.j2, inclusief de
-                       stopPropagation: waar de kaart zelf klikbaar is (de dienstenkiezer
-                       in de wizard) mag het vraagteken de kaart niet meeselecteren. #}
                     {% set help_js = "event.stopPropagation(); openServiceHelp('" ~ service.help_template ~ "')" %}
                     <c-icon-button
                         icon="question-mark-circle"
@@ -38,28 +57,36 @@
                         :attrs="{'onclick': help_js, 'class': 'service-card__help-btn'}" />
                 {% endif %}
             </c-cluster>
-            {% if service.kind_label %}
-                <c-tag type="{{ service.kind_type }}" label="{{ service.kind_label }}" />
+
+            {% if service.summary %}
+                <c-paragraph size="sm">{{ service.summary }}</c-paragraph>
             {% endif %}
-        </c-cluster>
 
-        <c-code>{{ service.name }}</c-code>
+            <c-paragraph size="sm" color="grijs-500">API naam: <c-code>{{ service.name }}</c-code></c-paragraph>
+        </c-stack>
 
-        <c-cluster gap="sm">
-            {% for chip in service.chips %}
-                <c-chip>{{ chip }}</c-chip>
-            {% endfor %}
-        </c-cluster>
-
-        {% if service.used_by %}
-            <c-divider />
-            <c-cluster gap="sm" align="center">
-                <c-icon icon="rectangle-stack" size="sm" />
-                {% for project in service.used_by %}
-                    <c-chip>{{ project }}</c-chip>
-                {% endfor %}
-            </c-cluster>
+        {# 4: de omgevingsvariabelen #}
+        {% if service.variables %}
+            <c-stack gap="sm">
+                <c-heading type="h4" size="6" label="Omgevingsvariabelen" />
+                <c-auto-grid min="13rem" gap="md">
+                    {% for variable in service.variables %}
+                        <c-stack gap="xs">
+                            <c-code>{{ variable.name }}</c-code>
+                            {% if variable.aliases %}
+                                {# Aliassen als code, net als in het origineel: het zijn namen die je
+                                   letterlijk overtypt, en dan helpt vaste breedte. #}
+                                <c-paragraph size="sm" color="grijs-500">Aliassen:
+                                    {% for alias in variable.aliases %}<c-code>{{ alias }}</c-code>{% if not loop.last %}, {% endif %}{% endfor %}
+                                </c-paragraph>
+                            {% endif %}
+                            <c-paragraph size="sm" color="grijs-500">{{ variable.description }}</c-paragraph>
+                        </c-stack>
+                    {% endfor %}
+                </c-auto-grid>
+            </c-stack>
         {% endif %}
+
     </c-stack>
 </c-card>
 {% endmacro %}
