@@ -72,7 +72,16 @@
                 <c-auto-grid min="13rem" gap="md">
                     {% for variable in service.variables %}
                         <c-stack gap="xs">
-                            <c-code>{{ variable.name }}</c-code>
+                            {# De NAAM van de variabele is waar je voor komt: die zet je in
+                               je applicatie. De aliassen zijn de bijvangst.
+
+                               Hij stond in een kale c-code, en die rendert op 13px terwijl
+                               de aliassen in hun alinea op 15,3px uitkwamen - gemeten. De
+                               belangrijkste regel was dus de kleinste. In een alinea van
+                               normale grootte erft de code die maat, en strong maakt het
+                               verschil met de aliassen eronder ook zonder op de grootte te
+                               hoeven letten. #}
+                            <c-paragraph><strong><c-code>{{ variable.name }}</c-code></strong></c-paragraph>
                             {% if variable.aliases %}
                                 {# Aliassen als code, net als in het origineel: het zijn namen die je
                                    letterlijk overtypt, en dan helpt vaste breedte. #}

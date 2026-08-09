@@ -71,7 +71,14 @@ class WizardHelper:
     #: treffers - het custom element en de <button> in zijn shadow root - vandaar .first
     #: bij het klikken: dat is het element in de gewone DOM, en het dient het formulier
     #: netjes in (nldd-button is form-associated en roept requestSubmit() aan).
-    SUBMIT_BUTTON = "#wizard-step-form [type='submit'], .wizard-step__actions button[type='submit']"
+    # De knoppenbalk heet in de bestaande wizard .wizard-step__actions en in de nieuwe
+    # .lotc-action-group (c-action-group). Beide vormen staan erin, zodat een test niet
+    # hoeft te weten welke weergave hij meet.
+    SUBMIT_BUTTON = (
+        "#wizard-step-form [type='submit'], "
+        ".wizard-step__actions button[type='submit'], "
+        ".lotc-action-group button[type='submit']"
+    )
 
     #: Foutmeldingen bij een veld, in beide vormgevingen. De LOTC-weergave zet ze in een
     #: <nldd-form-field-error-text>; de roos-weergave in een eigen klasse.
