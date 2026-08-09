@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 from opi.services.catalog.shared.postgres import DedicatedPostgresFields
 from opi.services.catalog.shared.revisions import CloneState
+from opi.utils.naming import SCHEMA_POSTFIX_MAX_LENGTH, SCHEMA_POSTFIX_PATTERN
 
 
 class PostgresqlDatabaseConfig(CloneState):
@@ -47,13 +48,19 @@ def schema_postfix_field() -> Any:
     stay one definition, or the endpoint and the stored model drift into two rules. A
     factory rather than a shared ``FieldInfo`` instance: each model gets its own.
     """
-    # Lowercase, digits, underscore, starting with a letter -- a safe identifier and
-    # (uppercased) a safe env-variable suffix.
+    # Shape and length both come from opi/utils/naming.py, where the functions that build
+    # the composed name live: the model, the form validator and the API endpoint have to
+    # apply one rule, not three that agree today.
     return Field(
-        pattern=r"^[a-z][a-z0-9_]*$",
+        pattern=SCHEMA_POSTFIX_PATTERN,
+        max_length=SCHEMA_POSTFIX_MAX_LENGTH,
         description=(
-            "Short name of the extra schema. The full name becomes {project}_{deployment}_{postfix} and its "
-            "connection details are exposed as DATABASE_SCHEMA_{POSTFIX}."
+            "Short name of the extra schema, at most "
+            f"{SCHEMA_POSTFIX_MAX_LENGTH} characters. The full name becomes "
+            "{project}_{deployment}_{postfix} and its connection details are exposed as "
+            "DATABASE_SCHEMA_{POSTFIX}. The full name must also stay under PostgreSQL's 63-character "
+            "limit for every deployment, which depends on the project and deployment names and is "
+            "therefore checked when the change is saved."
         ),
     )
 
