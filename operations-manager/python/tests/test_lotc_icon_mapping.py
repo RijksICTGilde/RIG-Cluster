@@ -108,3 +108,46 @@ def test_unknown_icon_passes_through_unchanged() -> None:
     """Een onbekende naam gaat ongewijzigd door, in plaats van naar een willekeurig icoon."""
     assert to_nldd_icon("bestaat-niet") == "bestaat-niet"
     assert to_nldd_icon("sleutel") == "lock-closed"
+
+
+# --------------------------------------------------------------- de andere kant op
+
+TEMPLATES_LOTC_DIR = Path(__file__).parent.parent / "opi" / "templates_lotc"
+
+def _iconen_in_lotc_templates() -> dict[str, set[str]]:
+    """Elke letterlijke ``icon="..."`` in de LOTC-sjablonen, met de bestanden erbij.
+
+    Alleen letterlijke waarden: een ``icon="{{ ... }}"`` komt uit de gegevens en kan hier
+    niet beoordeeld worden.
+    """
+    gevonden: dict[str, set[str]] = {}
+    for template in TEMPLATES_LOTC_DIR.rglob("*.j2"):
+        # (?<![-\w]) zodat show-icon="before" en start-icon="sort" NIET meetellen: dat zijn
+        # andere attributen met een eigen woordenschat.
+        for naam in re.findall(r'(?<![-\w])icon="([a-z0-9-]+)"', template.read_text()):
+            gevonden.setdefault(naam, set()).add(template.name)
+    return gevonden
+
+
+def test_elke_iconnaam_in_een_lotc_sjabloon_bestaat_in_nldd() -> None:
+    """Een naam die NLDD niet kent rendert LEEG, zonder enige foutmelding.
+
+    De test hierboven kijkt de andere kant op: welke ROOS-namen wij gebruiken en of daar
+    een afbeelding voor is. Die vangt niet wat er in de LOTC-sjablonen zelf staat, want
+    daar schrijven we NLDD-namen rechtstreeks - en een tikfout daarin is onzichtbaar.
+
+    Dit gat kostte vier keer een icoon voordat iemand het op een screenshot zag:
+    "stethoscoop" op de servicekaarten, "document" op de logsknop en in het logpaneel,
+    "question-circle" op de infoknop van de wizardkaarten (het heet question-mark-circle),
+    en de hele set dienstkaarten in de wizard, waar ROOS-namen ongwijzigd doorliepen.
+    """
+    vocabulaire = _nldd_vocabulary()
+    onbekend = {
+        naam: sorted(bestanden)
+        for naam, bestanden in _iconen_in_lotc_templates().items()
+        if naam not in vocabulaire and naam not in ROOS_TO_NLDD_ICONS and naam not in KNOWN_GAPS
+    }
+    assert not onbekend, (
+        "iconnamen die NLDD niet kent (ze renderen leeg, zonder foutmelding):\n"
+        + "\n".join(f"  {naam}: {', '.join(bestanden)}" for naam, bestanden in sorted(onbekend.items()))
+    )
