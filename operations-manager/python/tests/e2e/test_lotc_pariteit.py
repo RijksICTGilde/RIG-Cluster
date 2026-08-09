@@ -70,7 +70,10 @@ def test_de_infoknop_opent_een_dialoog_met_de_uitleg_van_die_dienst(app_server: 
     # de dienst publish-on-web heet, vandaar het streepje.
     onclick = knop.get_attribute("onclick") or ""
     sjabloon = onclick.split("openServiceHelp('", 1)[1].split("'", 1)[0]
-    assert sjabloon.endswith("help.html.j2"), onclick
+    # Beide vormen zijn goed: sinds RC-59 is de uitleg van een dienst markdown (help.md),
+    # en de helproute leest allebei. Wat hier telt is dat de knop naar de uitleg van DEZE
+    # dienst wijst, niet in welk formaat die staat.
+    assert sjabloon.endswith(("help.html.j2", "help.md")), onclick
     assert dienst.replace("-", "_") in sjabloon, f"knop van {dienst} wijst naar {sjabloon}"
     assert opgehaald[0].endswith(f"/forms/wizard/help/{sjabloon}"), opgehaald[0]
 
