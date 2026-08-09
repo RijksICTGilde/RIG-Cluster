@@ -8,6 +8,7 @@ showing components, team members, services, and deployments.
 from typing import TYPE_CHECKING
 
 import pytest
+from tests.e2e.helpers.tabs import open_tab
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -87,7 +88,7 @@ def test_service_contributed_blocks_render(app_server: str, auth_page: Page) -> 
     auth_page.wait_for_load_state("networkidle")
     assert "Keycloak" in (auth_page.text_content("#tab-project") or "")
 
-    auth_page.evaluate("switchTab('deployments')")
+    open_tab(auth_page, "deployments")
     auth_page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
     deployments_tab = auth_page.text_content("#tab-deployments") or ""
     assert "Databaseconsole" in deployments_tab
