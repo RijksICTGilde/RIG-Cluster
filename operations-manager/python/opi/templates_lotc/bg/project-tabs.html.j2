@@ -56,6 +56,14 @@
        inline op de bestaande pagina; sinds deze omzetting in een eigen bestand omdat
        beide pagina's en de dienstblokken hem aanroepen. #}
     <script src="{{ static_url('js/copy_to_clipboard.js') }}"></script>
+    {# De key-value editors (omgevingsvariabelen, aliassen) in de bewerkdialoog. De
+       bestaande pagina laadt deze twee ook; hier ontbraken ze, en dan blijft er in de
+       dialoog een kale textarea staan die zich niet gedraagt als de rest van het
+       formulier. De haak die ze na een htmx-swap opzet staat in kv_editor_hook.js -
+       nodig omdat de wizardstap pas NA het openen van de dialoog binnenkomt. #}
+    <script src="{{ static_url('js/codemirror-bundle.js') }}"></script>
+    <script src="{{ static_url('js/codemirror-kv.js') }}"></script>
+    <script src="{{ static_url('js/kv_editor_hook.js') }}"></script>
 {% endblock %}
 
 {% block page_title %}{{ project.display_name }} - {{ tabs[active_tab].label }}{% endblock %}
@@ -534,14 +542,31 @@
            allemaal - en staat daarom buiten het wisselen, precies als in het origineel. #}
 
         {% if project.deployments | length > 1 %}
-        <div class="deployment-global-selector">
-            <label for="global-deployment-selector"><strong>Deployment:</strong></label>
-            <select id="global-deployment-selector" class="deployment-select" onchange="switchDeployment(this.value)">
+            {# De kiezer als THEMAveld met een ECHTE <select> erin (native="true").
+
+               Hij stond hier als kale <select> met een los <label><strong> ervoor: dat
+               werkte wel maar stond er onopgemaakt bij, en de afstand tot het blok eronder
+               kwam van niets. c-select-field zet er de vormgeving en de label-opmaak van
+               het thema omheen en geeft nog steeds een echte <select> - nodig, want
+               switchDeployment() leest this.value en het is een gewone keuzelijst.
+
+               De OPTIES staan er als kale <option>. Dat is geen slordigheid: <c-option>
+               rendert binnen een native select een <nldd-menu-item>, en daar maakt een
+               <select> niets van - de lijst blijft dan leeg. Gemeten.
+
+               Geen class in :attrs: het component zet er zelf al een op, en twee
+               class-attributen op een tag betekent dat de browser de tweede negeert. #}
+            {% set kiezer_gedrag = {'onchange': 'switchDeployment(this.value)'} %}
+            <c-select-field
+                native="true"
+                id="global-deployment-selector"
+                name="global-deployment-selector"
+                label="Deployment"
+                :attrs="kiezer_gedrag">
                 {% for deployment in project.deployments | sort(attribute='name') %}
-                <option value="{{ deployment.name }}">{{ deployment.name }} ({{ deployment.cluster }})</option>
+                    <option value="{{ deployment.name }}">{{ deployment.name }} ({{ deployment.cluster }})</option>
                 {% endfor %}
-            </select>
-        </div>
+            </c-select-field>
         {% endif %}
 
         <c-stack gap="md">
