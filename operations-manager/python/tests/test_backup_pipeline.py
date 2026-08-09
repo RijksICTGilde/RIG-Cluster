@@ -803,14 +803,26 @@ class TestSchedulerToHandlerPipeline:
         )
 
         projects_dict = {"test-project": project}
-        with patch("opi.core.backup_scheduler.get_project_store") as mock_get:
+        with freeze_time(_FROZEN_TIME), patch("opi.core.backup_scheduler.get_project_store") as mock_get:
             mock_get.return_value.get_all.return_value = list(projects_dict.values())
             _run(scheduler._check_and_schedule())
 
         scheduler._task_service.create_task.assert_not_called()
 
     def test_schedule_changed_uses_new_frequency(self) -> None:
-        """After changing schedule from DAILY to WEEKLY, the new interval applies."""
+        """After changing schedule from DAILY to WEEKLY, the new interval applies.
+
+        Time is frozen on a WEDNESDAY, and that is the whole point of this test. The
+        scheduler decides on the DAY OF THE WEEK: a WEEKLY rule without BYDAY falls back
+        to Sunday. Zonder een vast moment slaagde deze test dus zes dagen per week omdat
+        het toevallig geen zondag was, en faalde hij op zondag - een test die zijn
+        uitkomst uit de kalender haalt in plaats van uit de code.
+
+        Dat maakte hem bovendien misleidend: de naam suggereert dat "twee dagen geleden"
+        te recent is voor een weekschema, maar zo rekent de scheduler niet. Wat hij hier
+        echt bewijst is dat de gewijzigde frequentie aanslaat - woensdag is een dag voor
+        DAILY en niet voor WEEKLY, dus er hoort niets te gebeuren.
+        """
         scheduler = _make_scheduler()
         # Last backup was 2 days ago — due for daily, not for weekly
         two_days_ago = datetime.now(tz=UTC) - timedelta(days=2)
@@ -830,7 +842,7 @@ class TestSchedulerToHandlerPipeline:
         )
 
         projects_dict = {"test-project": project}
-        with patch("opi.core.backup_scheduler.get_project_store") as mock_get:
+        with freeze_time(_FROZEN_TIME), patch("opi.core.backup_scheduler.get_project_store") as mock_get:
             mock_get.return_value.get_all.return_value = list(projects_dict.values())
             _run(scheduler._check_and_schedule())
 
