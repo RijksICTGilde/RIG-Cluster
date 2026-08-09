@@ -109,10 +109,15 @@ DELETE /api/v2/projects/{p}/services/postgresql-database/schemas/{postfix}
 
 Met deze regels:
 
-1. **De lijst geeft ook de afgeleide feiten.** Niet alleen de postfix, maar ook de volledige schemanaam per deployment en de variabelenaam die eruit volgt. Dat is precies wat een aanroeper zelf niet kan uitrekenen zonder de naamgevingsregels te kennen, en het is de reden om hier een eigen route voor te maken in plaats van naar de config te verwijzen.
+1. **De lijst geeft ook de afgeleide feiten, en begint bij het standaardschema.** Elke database krijgt sowieso een standaardschema, en dat is het schema waar de meeste gebruikers het over hebben. Het staat **niet in het projectbestand**: het wordt afgeleid als `{project}_{deployment}` en aangeboden als `DATABASE_SCHEMA` (alias `APP_DATABASE_SCHEMA`). Een lijst die alleen de `schemas:` uit het projectbestand teruggeeft, laat dus juist het belangrijkste weg. Het hoort er als eerste regel in te staan, herkenbaar als standaard en niet verwijderbaar.
+
+   Per regel: de postfix (leeg voor de standaard), de volledige schemanaam per deployment, de variabelenaam, de omschrijving en of hij gemarkeerd is.
+
+   **Reken de naam uit, vertel de formule niet na.** De twee soorten gedragen zich verschillend bij de 63-tekengrens van PostgreSQL: het standaardschema wordt stil afgekapt (`generate_database_schema`), een extra schema faalt juist hard (`generate_extra_database_schema` gooit een `ValueError`). Wie de naam zelf samenstelt uit project en deployment krijgt bij lange namen dus een schemanaam die niet bestaat. Gebruik de bestaande functies in `opi/utils/naming.py`; dat is precies waarom deze lijst een eigen route verdient in plaats van een verwijzing naar de config.
 2. **Verwijderen markeert, en gooit niet weg.** Dat is het bestaande gedrag, nu afgedwongen aan de API-kant in plaats van overgelaten aan de goede bedoelingen van de aanroeper. Het antwoord hoort te zeggen dat de data blijft staan.
 3. **Werkelijk laten vallen is een tweede, expliciete handeling.** Dezelfde vorm als bij het verwijderen van een bijlage (RC-52): standaard het veilige gedrag, en het onomkeerbare alleen met een vlag die zegt dat je weet wat je weggooit. Naam en reden vastleggen zoals daar.
-4. **De controles bij het opslaan blijven waar ze zijn.** Uniciteit, de 63-tekengrens en botsende variabelenamen worden al bij het opslaan afgedwongen; deze routes horen die fouten door te geven als een nette 422, niet ze over te doen.
+4. **Toevoegen is een echte actie, niet een omweg via de config.** `POST` met een postfix en een omschrijving, en de route rekent zelf uit wat de volledige naam en de variabelenaam worden en geeft die terug. Een aanroeper die een schema toevoegt hoort meteen te weten hoe hij er in zijn applicatie bij komt, zonder een tweede aanroep en zonder de naamgevingsregels te kennen.
+5. **De controles bij het opslaan blijven waar ze zijn.** Uniciteit, de 63-tekengrens en botsende variabelenamen worden al bij het opslaan afgedwongen; deze routes horen die fouten door te geven als een nette 422, niet ze over te doen.
 
 ## Voorstel
 
