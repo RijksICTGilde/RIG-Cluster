@@ -731,3 +731,32 @@ c-fieldset c-fieldset {
 .wizard-modal-success__actions {
     margin-top: 1rem;
 }
+
+/*
+ * Het aanvinkvakje van een servicekaart.
+ *
+ * Dit is een KAAL <input type="checkbox"> en dat blijft het ook: static/js/wizard.js
+ * zoekt het op met card.querySelector('input[type="checkbox"]'), leest .checked en zet
+ * hem. Het NLDD-component heeft helemaal geen input - het gebruikt ElementInternals -
+ * dus een selector zou hem nooit vinden. Toen dit hier ooit wel een component was,
+ * vinkte klikken niets aan en verstuurde het formulier ALLE diensten.
+ *
+ * Wat er ontbrak was niet het component maar de OPMAAK: er stond nergens een regel voor,
+ * dus tekende de browser zijn standaardvakje van 13 bij 13 midden in een kaart die verder
+ * helemaal van het thema is. Gemeten: appearance auto, accent-color auto.
+ *
+ * accent-color is precies genoeg. De browser tekent het vakje dan in onze kleur, met alle
+ * toestanden (aangevinkt, focus, uitgeschakeld) die hij zelf al kent - geen nagebouwd
+ * vakje van pseudo-elementen dat bij de volgende themawissel weer scheef staat.
+ */
+.service-card input[type="checkbox"] {
+    width: 1.15rem;
+    height: 1.15rem;
+    accent-color: var(--rvo-color-hemelblauw, #007bc7);
+    cursor: pointer;
+    flex: none;
+}
+
+.service-card input[type="checkbox"][aria-disabled="true"] {
+    cursor: not-allowed;
+}
