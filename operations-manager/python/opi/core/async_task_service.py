@@ -66,6 +66,7 @@ class TaskType(StrEnum):
     ADD_SERVICE = "add_service"
     CONFIGURE_SERVICE = "configure_service"
     CONFIGURE_SERVICE_VALUES = "configure_service_values"
+    MANAGE_DATABASE_SCHEMAS = "manage_database_schemas"
     BACKUP = "backup"
     RESTORE = "restore"
 

@@ -64,7 +64,7 @@ class InviteService(Service):
             "De link is de enige toegangsdrempel: wie hem heeft kan een account aanmaken. "
             "Vereist de Keycloak-service."
         ),
-        help_template="invite/help.html.j2",
+        help_template="invite/help.md",
         icon="envelop",
         color="lichtblauw",
         # Niet per component en niet per deployment: een uitnodiging geldt voor het

@@ -246,6 +246,29 @@ class ConfigureServiceValuesResult(BaseModel):
     error_type: str | None = None
 
 
+class ManageDatabaseSchemasResult(BaseModel):
+    """Result of a manage_database_schemas task (RC-59).
+
+    ``changed`` is False when the request found nothing to write -- removing a schema
+    that was already marked. The remaining flags say which of the three outcomes
+    happened, because "removed" alone would not distinguish marking (the schema and its
+    data stay, and it can come back) from forgetting the entry.
+    """
+
+    status: str
+    postfix: str | None = None
+    operation: str | None = None
+    changed: bool | None = None
+    created: bool | None = None
+    restored: bool | None = None
+    marked: bool | None = None
+    forgotten: bool | None = None
+    processing: ProcessingStatus | None = None
+    # Failure fields
+    error: str | None = None
+    error_type: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Registry: TaskType -> result model class
 # ---------------------------------------------------------------------------
@@ -265,6 +288,7 @@ TASK_RESULT_MODELS: dict[TaskType, type[BaseModel]] = {
     TaskType.ADD_SERVICE: AddServiceResult,
     TaskType.CONFIGURE_SERVICE: ConfigureServiceResult,
     TaskType.CONFIGURE_SERVICE_VALUES: ConfigureServiceValuesResult,
+    TaskType.MANAGE_DATABASE_SCHEMAS: ManageDatabaseSchemasResult,
 }
 
 

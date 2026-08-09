@@ -38,7 +38,7 @@ opi/services/catalog/keycloak/
 ├── editables.py           Editable definitions (yaml paths, validators, converters)
 ├── variables.py           the env variables it hands to a deployment
 ├── visualizers.py         EditableVisualizer definitions (widgets, labels, help texts)
-├── help.html.j2           the long explanation behind the question mark
+├── help.md                the long explanation behind the question mark (markdown)
 ├── section-detail.html.j2 its block on the project page
 └── keycloak.v1.0.json     generated JSON-schema fragment, committed and drift-locked
 ```
@@ -241,10 +241,13 @@ services overview page (`services-overview.html.j2`) renders the same macro, so 
 show the same thing. Do not build a second service block; `tests/test_service_help.py`
 fails if either template starts rendering its own.
 
-Every definition carries a `help_template`: `"<package>/help.html.j2"`, the Jinja2 file in
+Every definition carries a `help_template`: `"<package>/help.md"`, the markdown file in
 the service's own package with the long explanation shown when the user clicks the question
-mark. (`opi/templates/help/` still holds the few explanations that belong to no single
-service, such as the container-image note.) The one-line `description` is
+mark. It is markdown, and it is the ONE source: the portal renders it into ROOS components
+and `GET /api/v2/services/{name}` returns it as-is in `explanation`, so an API client and a
+user read the same text (RC-59; `opi/services/help_text.py`). Do not add a `help.html.j2`
+next to it. (`opi/templates/help/` still holds the few explanations that belong to no single
+service, such as the container-image note; those are still Jinja templates.) The one-line `description` is
 too short to choose on, so the long text is where a user actually decides. The same test
 fails when a service has no `help_template` or points at a file that does not exist - both of
 which fail silently in the UI (no button, or an error inside the modal).
@@ -813,12 +816,14 @@ record a revocation on a domain that is already in use. Enforcement happens at p
      service (automatic), or a `FormSection` + `config_section_id` plus the four wiring steps
      for a project-level one. A user-selectable service without a config screen only works if
      it genuinely has nothing to configure.
-5. **Write the explanation.** Add `catalog/<name>/help.html.j2` and point `help_template` at
-   `"<name>/help.html.j2"`. Follow the shape of the existing ones: one paragraph *what is it*
+5. **Write the explanation.** Add `catalog/<name>/help.md` and point `help_template` at
+   `"<name>/help.md"`. Follow the shape of the existing ones: one paragraph *what is it*
    in plain language, *Wanneer gebruik je dit?* as a list of recognisable situations, and
    *Wat wordt er ingesteld?* with what happens technically and which other services come
    along. A system service has no "when do you use this" - explain instead that it always
-   runs and what it does for the user. Use the service's own icon and colour.
+   runs and what it does for the user. The icon and colour come from the definition, not
+   from the text. The markdown supported is `#`, `##`, paragraphs, `- ` bullets and
+   `**bold**`, and nothing else.
 6. Provisions resources? Override `provision`, set `provision_order`, delegate to a manager.
 7. Server-side resources to clean up? Set `cleanup_manager_key`.
 8. Manifest contribution? `manifest_secret_class` for the simple case, otherwise override

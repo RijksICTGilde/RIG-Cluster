@@ -13,7 +13,7 @@ class PlatformService(Service):
     definition = ServiceDefinition(
         name="Platform",
         description="Automatisch beschikbare platform variabelen",
-        help_template="platform/help.html.j2",
+        help_template="platform/help.md",
         icon="info",
         color="grijs-600",
         binding=ServiceBinding.COMPONENT,
