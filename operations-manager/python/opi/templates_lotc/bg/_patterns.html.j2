@@ -30,7 +30,13 @@
 <c-card outline padding="lg">
     <c-stack gap="{{ gap }}">
         {% if title %}
-            <c-section-head title="{{ title }}" :icon="icon or none">{{ aside }}</c-section-head>
+            {# GEEN kopicoon als er een knop in de kopregel staat. c-section-head zet
+               kinderen en icoon in dezelfde hoek, met het icoon ACHTER de knop; dat las
+               op een screenshot als een los koffertje naast "Nieuw Project", buiten de
+               knop en buiten de kaart. Het icoon is versiering - het herhaalt wat de
+               titel al zegt - en de knop is dat niet, dus die wint. #}
+            {% set kop_icoon = none if aside else (icon or none) %}
+            <c-section-head title="{{ title }}" :icon="kop_icoon">{{ aside }}</c-section-head>
         {%- if info_text %}
             {{ info(info_text) }}
         {%- endif %}

@@ -27,6 +27,11 @@
 #}
 {% from "bg/_patterns.html.j2" import panel %}
 
+{# De kop stond in dashboard/_resourcegebruik.html.j2 en hoort ook hier boven het
+   blok, in BEIDE standen: ook als Prometheus niets levert zegt de kop waar de
+   melding over gaat. #}
+<c-heading type="h2" size="4" label="Resource Usage" />
+
 {% if prometheus_available and metrics %}
     <div class="metrics-grid">
         {% call panel("CPU Usage", "chart-x-y-axis-line") %}
