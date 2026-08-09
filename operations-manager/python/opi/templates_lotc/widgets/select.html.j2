@@ -15,7 +15,15 @@
 
    En let op: een Jinja-commentaar hoort BOVEN de tag, niet erin. De voorbewerker leest
    de woorden binnen een componenttag als attribuutnamen. #}
+{# native="true" geeft een ECHTE <select> met de opmaak van het thema eromheen. Zonder
+   dat wordt het een <nldd-combo-box>, en dan bestaat er geen <select> meer: elke test die
+   select_option() doet en elke JavaScript die .value leest of de lijst vult, vindt niets.
+
+   En let op de OPTIES hieronder: die staan er als kale <option>. <c-option> rendert
+   binnen een native select een <nldd-menu-item>, en daar maakt een <select> niets van -
+   de lijst blijft dan leeg. Dat is waarom native="true" eerder niets leek op te lossen. #}
 <c-select-field
+    native="true"
     id="{{ field.path|e }}"
     name="{{ field.path|e }}"
     label="{{ field.label|e }}"
@@ -26,9 +34,6 @@
     :attrs="dict(field_attrs(field), **{'value': value_str or none})"
 >
     {% for option in field.options or [] %}
-        <c-option
-            value="{{ option.value|e }}"
-            label="{{ option.label|e }}"
-            :selected="option.value|string == value_str" />
+        <option value="{{ option.value|e }}"{% if option.value|string == value_str %} selected{% endif %}>{{ option.label|e }}</option>
     {% endfor %}
 </c-select-field>{{ render_examples(field) }}
