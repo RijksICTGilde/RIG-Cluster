@@ -36,7 +36,7 @@ class AliasesService(Service):
             "kiesbaar. Een onbekende verwijzing is hier een harde fout, anders dan bij "
             "een eigen omgevingsvariabele."
         ),
-        help_template="aliases/help.html.j2",
+        help_template="aliases/help.md",
         icon="instellingen",
         color="grijs-600",
         binding=ServiceBinding.COMPONENT,

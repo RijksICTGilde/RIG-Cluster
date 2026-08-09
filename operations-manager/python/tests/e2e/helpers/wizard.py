@@ -22,6 +22,10 @@ if TYPE_CHECKING:
     from playwright.sync_api import Locator, Page
 
 
+# Hoe vaak een veld opnieuw gevuld mag worden als een late render het weer leegmaakt.
+_FILL_ATTEMPTS = 5
+
+
 def _unique_project_name(prefix: str = "e2e") -> str:
     """Generate a unique project name: e2e-{timestamp}-{random}."""
     ts = int(time.time()) % 100000
@@ -183,7 +187,25 @@ class WizardHelper:
         """
         comp_name = self.field("components[0]/name")
         comp_name.wait_for(state="visible", timeout=15000)
-        comp_name.fill(name)
+
+        # Typen en dan controleren dat het bleef staan, want een zichtbaar veld is nog
+        # geen veld dat klaar is. De componentenstap kan een htmx-swap onderweg hebben
+        # die de rij vervangt; landt die na het typen, dan is het veld weer leeg, gaat
+        # de stap zonder naam de deur uit en komt hij terug met 'Dit veld is verplicht'.
+        # Dat leest als een productfout en is een wedloop: gemeten wist de swap de zojuist
+        # getypte 'web' binnen 400ms weer uit.
+        # Eerst laten uitrazen, en daarna nog controleren dat het bleef staan: het wachten
+        # dekt de swap die al hing, de controle dekt wat er alsnog achteraan komt.
+        for _ in range(_FILL_ATTEMPTS):
+            self.wait_for_htmx_quiet()
+            comp_name.fill(name)
+            if comp_name.input_value() == name:
+                break
+        else:
+            raise AssertionError(
+                f"component name did not stick after {_FILL_ATTEMPTS} attempts; "
+                "something keeps re-rendering the components step"
+            )
 
         comp_image = self.field("components[0]/image").first
         if comp_image.count() > 0:
@@ -373,12 +395,41 @@ class WizardHelper:
             timeout=timeout,
         )
 
+    def wait_for_htmx_quiet(self, quiet_ms: int = 400) -> None:
+        """Wait until no HTMX swap has settled for *quiet_ms*.
+
+        Een stap kan bij binnenkomst nog een swap in de lucht hebben. Wie daar
+        doorheen typt raakt zijn invoer kwijt (het veld wordt vervangen), en wie
+        daar doorheen klikt raakt zijn klik kwijt (de knop wordt vervangen, er
+        vertrekt geen verzoek en het wachten op de volgende stap verloopt). Beide
+        zijn gemeten op de componentenstap na het toepassen van een preset.
+        """
+        self.page.evaluate(
+            """(quietMs) => new Promise(resolve => {
+                let timer = setTimeout(done, quietMs);
+                function done() {
+                    document.removeEventListener('htmx:afterSettle', bump);
+                    resolve(true);
+                }
+                function bump() {
+                    clearTimeout(timer);
+                    timer = setTimeout(done, quietMs);
+                }
+                document.addEventListener('htmx:afterSettle', bump);
+            })""",
+            quiet_ms,
+        )
+
     def _click_and_wait_for_step_change(self, locator, timeout: float = 10000) -> None:
         """Click a button and wait for the HTMX swap to complete.
 
         Uses HTMX request tracking to detect when the swap is done, rather than
         DOM mutation detection which can race with other page updates.
         """
+        # Eerst laten uitrazen wat er al hangt, anders vervangt die swap de knop
+        # onder onze klik vandaan en vertrekt er niets om op te wachten.
+        self.wait_for_htmx_quiet()
+
         # Install a one-shot listener that sets a flag when HTMX finishes settling
         self.page.evaluate("""() => {
             window.__htmxSettled = false;

@@ -66,7 +66,11 @@ All in `tests/e2e/conftest.py` (fixtures) and `tests/e2e/helpers/` (page objects
 - `sandbox_api.py` - `read_api_key` (scrapes the per-project key from the details page),
   `add_component` (calls the v2 endpoint + polls the task, surfacing real failures),
   `delete_project_via_api` (force teardown / cleanup safety net).
-- `cleanup.py::ProjectCleanup` - registers projects for teardown.
+
+There is deliberately no separate cleanup registry: a suite that creates projects owns
+their teardown in a module fixture's `finally`, calling `delete_project_via_api`. That
+keeps the cleanup next to the thing that created it, and it runs even when the test
+fails halfway.
 
 ## Do / Don't
 

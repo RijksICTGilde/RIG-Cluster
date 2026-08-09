@@ -30,7 +30,7 @@ class HealthCheckService(Service):
             "TCP-niveau op de eerste inbound-poort. Kies deze service om een HTTP(S)-probe op een "
             "aparte poort en paden te richten, of om probes uit te zetten met scheme: none."
         ),
-        help_template="health_check/help.html.j2",
+        help_template="health_check/help.md",
         icon="stethoscoop",
         color="rood",
         binding=ServiceBinding.COMPONENT,

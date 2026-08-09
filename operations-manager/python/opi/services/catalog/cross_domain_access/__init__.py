@@ -89,7 +89,7 @@ class CrossDomainAccessService(Service):
             "expliciet benoemde poort. Dit gaat over netwerktoegang tussen projecten, "
             "niet over DNS-domeinen."
         ),
-        help_template="cross_domain_access/help.html.j2",
+        help_template="cross_domain_access/help.md",
         icon="netwerk",
         color="donkerblauw",
         # The rules apply per deployment (each gets its own NetworkPolicy); the effect
