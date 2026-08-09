@@ -21,7 +21,7 @@ uses it.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
@@ -39,6 +39,30 @@ class PostgresqlDatabaseConfig(CloneState):
     """
 
 
+def schema_postfix_field() -> Any:
+    """The ``postfix`` field, as a factory so the API can carry the same definition.
+
+    ``POST .../schemas`` takes a postfix and a description and nothing else, so it cannot
+    simply reuse ``SchemaEntry`` as its body -- but what a valid postfix looks like has to
+    stay one definition, or the endpoint and the stored model drift into two rules. A
+    factory rather than a shared ``FieldInfo`` instance: each model gets its own.
+    """
+    # Lowercase, digits, underscore, starting with a letter -- a safe identifier and
+    # (uppercased) a safe env-variable suffix.
+    return Field(
+        pattern=r"^[a-z][a-z0-9_]*$",
+        description=(
+            "Short name of the extra schema. The full name becomes {project}_{deployment}_{postfix} and its "
+            "connection details are exposed as DATABASE_SCHEMA_{POSTFIX}."
+        ),
+    )
+
+
+def schema_description_field() -> Any:
+    """The ``description`` field, shared with the API for the same reason."""
+    return Field(default="", description="What this schema is for, for whoever reads the project file.")
+
+
 class SchemaEntry(BaseModel):
     """One extra schema, project-wide (RC-17 decision 10.5).
 
@@ -52,16 +76,8 @@ class SchemaEntry(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    # Lowercase, digits, underscore, starting with a letter -- a safe identifier and
-    # (uppercased) a safe env-variable suffix.
-    postfix: str = Field(
-        pattern=r"^[a-z][a-z0-9_]*$",
-        description=(
-            "Short name of the extra schema. The full name becomes {project}_{deployment}_{postfix} and its "
-            "connection details are exposed as DATABASE_SCHEMA_{POSTFIX}."
-        ),
-    )
-    description: str = Field(default="", description="What this schema is for, for whoever reads the project file.")
+    postfix: str = schema_postfix_field()
+    description: str = schema_description_field()
     # Removing a schema from the list marks it rather than dropping it, so a schema (and
     # its data) is never silently discarded on a routine save (RC-17 section 6). The
     # provisioner leaves a marked schema in place and stops exposing its variable.
