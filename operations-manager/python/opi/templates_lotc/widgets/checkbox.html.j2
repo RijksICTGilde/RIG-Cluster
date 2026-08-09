@@ -5,34 +5,35 @@
   bedraadt ze aan het invoerveld. Dat is precies de omlijsting die bij een themawissel
   anders achterblijft, en de reden dat lotc-forms bestaat.
 
-  Het verborgen veld blijft: een uitgeschakeld aanvinkvakje verstuurt zijn waarde niet,
-  en zonder dit veld zou opslaan de aangevinkte stand wissen.
+  HIER STOND EEN KAAL <input>, met als reden: "nldd-checkbox-field zet het invoerveld in
+  de schaduwboom, dus formulierserialisatie krijgt het niet mee". Dat is opnieuw gemeten
+  en het klopt niet (meer):
+
+      <form><c-checkbox-field name="toegang" value="true" /></form>
+      voor de klik : FormData is leeg
+      na de klik   : [['toegang', 'true']]
+
+  Het element is form-associated - het gebruikt ElementInternals in plaats van een
+  verborgen <input> - en doet dus gewoon mee. Er IS zelfs helemaal geen input, ook niet in
+  de schaduwboom; een selector op input[type=checkbox] zal hem daarom nooit vinden. Dat is
+  waar de oude conclusie vandaan kwam: static/js/wizard.js zoekt zo naar het vakje van een
+  SERVICEKAART. Die kaart is een eigen widget en staat los van dit veld; hij houdt zijn
+  kale input.
+
+  Het verborgen veld blijft: een uitgeschakeld aanvinkvakje verstuurt zijn waarde niet, en
+  zonder dit veld zou opslaan de aangevinkte stand wissen.
 #}
 {% from "widgets/_macros.html.j2" import combined_helper, render_examples %}
-{# Een gewoon <input> met zijn label ernaast.
-
-   c-checkbox-field wikkelt een <nldd-checkbox-field>, en die zet het invoerveld in de
-   SCHADUWBOOM. Formulierserialisatie en de JavaScript van de wizard kijken daar niet, dus
-   aanvinken kwam niet aan. Gemeten op de Keycloak-stap: "Toegang beperken" liet zich wel
-   aanklikken maar veranderde niets aan wat er verstuurd werd.
-
-   De opmaak staat in static/css/lotc-app.css. Zodra het componentensysteem een
-   native-stand voor het aanvinkvakje heeft - de keuzelijst heeft die al - hoort dit weer
-   een component te worden. #}
-<label class="lotc-checkbox-regel">
-    <input
-        type="checkbox"
-        id="{{ field.path|e }}"
-        name="{{ field.path|e }}"
-        {% if field.value %}checked{% endif %}
-        {% if field.readonly %}disabled{% endif %}
-        :attrs="field_attrs(field)"
-    />
-    <span>{{ field.label|e }}</span>
-</label>
-{% set hulp = combined_helper(field)|trim %}
-{% if hulp %}<c-paragraph size="sm">{{ hulp }}</c-paragraph>{% endif %}
-{% if field.errors %}<c-alert type="error" heading="{{ field.errors[0] }}" />{% endif %}
+<c-checkbox-field
+    id="{{ field.path|e }}"
+    name="{{ field.path|e }}"
+    label="{{ field.label|e }}"
+    value="true"
+    :checked="field.value"
+    :help="combined_helper(field)|trim or none"
+    :required="field.required"
+    :error="(field.errors[0] if field.errors else none)"
+    :attrs="field_attrs(field)" />
 {% if field.readonly and field.value %}
 <input type="hidden" name="{{ field.path|e }}" value="true" />
 {% endif %}
