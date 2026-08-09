@@ -15,17 +15,36 @@ Run: uv run pytest tests/e2e/test_service_config_hint_survives_toggle.py -m "e2e
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import pytest
+from playwright.sync_api import expect
 from tests.e2e.helpers.wizard import WizardHelper
 
 if TYPE_CHECKING:
-    from playwright.sync_api import Page
+    from playwright.sync_api import Locator, Page
 
 pytestmark = [pytest.mark.e2e]
 
 HINT = "Geen projectbrede instellingen"
+
+SELECTED = "service-card--selected"
+
+
+def _wait_until_toggled(card: Locator, *, selected: bool) -> None:
+    """Wait until a card's own visuals have caught up with the click on its checkbox.
+
+    wizard.js repaints every card from the change handler, so the moment this card
+    carries (or lost) the selected class is the moment the repaint is done. Waiting on
+    that instead of on a fixed number of milliseconds is what makes the assertions that
+    follow independent of how loaded the machine is: a slow repaint waits longer, and a
+    repaint that never happens still fails.
+    """
+    if selected:
+        expect(card).to_have_class(re.compile(rf"\b{SELECTED}\b"))
+    else:
+        expect(card).not_to_have_class(re.compile(rf"\b{SELECTED}\b"))
 
 
 def _visible_hints(page: Page) -> list[str]:
@@ -49,7 +68,7 @@ def test_the_config_line_survives_ticking_another_service(app_server: str, auth_
 
     # Ticking health-check must reveal its own line: it has no project-wide settings.
     kaart.locator("input[type='checkbox']").first.check()
-    auth_page.wait_for_timeout(200)
+    _wait_until_toggled(kaart, selected=True)
     na_aanvinken = _visible_hints(auth_page)
     assert "health-check" in na_aanvinken, (
         f"ticking a component-scoped service showed no config line (visible: {na_aanvinken})"
@@ -57,16 +76,17 @@ def test_the_config_line_survives_ticking_another_service(app_server: str, auth_
 
     # Ticking a SECOND, unrelated service must not touch the first card's line. This is the
     # reported symptom: one toggle wipes the line on every card.
-    auth_page.locator('.service-card[data-service="publish-on-web"] input[type="checkbox"]').first.check()
-    auth_page.wait_for_timeout(200)
+    tweede_kaart = auth_page.locator('.service-card[data-service="publish-on-web"]')
+    tweede_kaart.locator('input[type="checkbox"]').first.check()
+    _wait_until_toggled(tweede_kaart, selected=True)
     na_tweede = _visible_hints(auth_page)
     assert "health-check" in na_tweede, (
         f"ticking another service removed the config line from health-check (visible: {na_tweede})"
     )
 
     # And unticking that second service must not take it down either.
-    auth_page.locator('.service-card[data-service="publish-on-web"] input[type="checkbox"]').first.uncheck()
-    auth_page.wait_for_timeout(200)
+    tweede_kaart.locator('input[type="checkbox"]').first.uncheck()
+    _wait_until_toggled(tweede_kaart, selected=False)
     na_uitvinken = _visible_hints(auth_page)
     assert "health-check" in na_uitvinken, (
         f"unticking another service removed the config line from health-check (visible: {na_uitvinken})"

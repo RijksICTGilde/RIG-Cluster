@@ -13,11 +13,13 @@ the part a rendered-HTML assertion cannot see.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import pytest
 from opi.services.config_location import project_step_config_hint
 from opi.services.services_enums import ServiceType
+from playwright.sync_api import expect
 from tests.e2e.helpers.wizard import WizardHelper, _unique_project_name
 
 if TYPE_CHECKING:
@@ -45,11 +47,15 @@ def _tick(page: Page, service: ServiceType, *, expect_selected: bool) -> None:
     """
     card = page.locator(f"[data-service='{service.value}']").first
     card.locator(".service-card__content").click()
-    page.wait_for_timeout(200)
-    classes = card.get_attribute("class") or ""
-    assert ("service-card--selected" in classes) is expect_selected, (
-        f"card for {service.value} should {'be' if expect_selected else 'not be'} selected after the click"
-    )
+
+    # Wait for the resulting state instead of a fixed pause: the repaint runs in the
+    # change handler, and on a loaded machine that lands later than any number we pick.
+    selected = re.compile(r"\bservice-card--selected\b")
+    melding = f"card for {service.value} should {'be' if expect_selected else 'not be'} selected after the click"
+    if expect_selected:
+        expect(card, melding).to_have_class(selected)
+    else:
+        expect(card, melding).not_to_have_class(selected)
 
 
 def _open_services_step(page: Page, app_server: str) -> WizardHelper:
