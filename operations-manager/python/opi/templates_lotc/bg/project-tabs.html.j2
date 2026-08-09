@@ -36,6 +36,12 @@
        niet-opgeslagen werk). json-enc.js bedraadt de formulieren erin, net als op de
        bestaande pagina. #}
     <link rel="stylesheet" href="{{ static_url('css/modal.css') }}">
+    {# wizard.css om de hulpdialoog van een dienst, die bg/_modals.html.j2 hieronder
+       meeneemt net als de bestaande pagina dat doet. Zonder deze stylesheet heeft
+       .service-help-modal geen display:none en hangt zijn SLUITKNOP los onderaan de
+       pagina - een zwevend kruisje boven de voettekst. Precies het soort fout waar geen
+       enkele markupcontrole op aanslaat: de HTML klopte, alleen de opmaak ontbrak. #}
+    <link rel="stylesheet" href="{{ static_url('css/wizard.css') }}">
     {# base.css om EEN klasse: .is-hidden (display:none !important). Het tabblad
        Deployments toont een deployment tegelijk en switchDeployment() wisselt dat met
        precies die klasse; zonder deze stylesheet staat alles tegelijk in beeld. De rest
@@ -62,7 +68,27 @@
         <c-breadcrumbs-item label="{{ tabs[active_tab].label }}" />
     </c-breadcrumbs>
 
-    {{ page_head(project.display_name, project.description) }}
+    {# De kop met de bewerkknop ERNAAST, zoals project-details/section-header.html.j2 hem
+       heeft. page_head() kan dat niet en dat is hier geen bezwaar: dit is de enige plek
+       met een knop in de kop.
+
+       Deze knop was bij het omzetten verdwenen, en daarmee de ENIGE weg naar
+       modal-edit-identity: nergens anders op de pagina staat een verwijzing naar die
+       dialoog. Naam en omschrijving van een project waren dus niet meer te wijzigen.
+       Rol, functienaam en titel zijn letterlijk die van het origineel. #}
+    <c-stack gap="xs">
+        <c-cluster gap="sm" align="center">
+            <c-heading type="h1" size="3" label="{{ project.display_name }}" />
+            {% if user_role in ["admin", "owner"] %}
+                {% set identiteit_bewerken = "openEditModal('modal-edit-identity', 'Projectgegevens bewerken')" %}
+                <c-button type="secondary" size="sm" label="Bewerken" icon="bewerken" show-icon="before"
+                          :attrs="{'onclick': identiteit_bewerken}" />
+            {% endif %}
+        </c-cluster>
+        {% if project.description %}
+            <c-paragraph>{{ project.description }}</c-paragraph>
+        {% endif %}
+    </c-stack>
 
     <c-tabs aria-label="Aanzichten van dit project">
         {% for key, tab in tabs.items() %}
