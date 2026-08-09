@@ -19,9 +19,19 @@
      data-min-items="{{ min_items }}" data-max-items="{{ max_items|default('', true) }}" data-current-count="{{ current_count }}">
     <span class="utrecht-form-label rvo-form-field__label-text">{{ field.label|e }}</span>
     {{ helper_text(field) }}
-    <div class="rvo-sequence__items" id="{{ field.path|e }}-items">
+    {# De items in een c-stack, zodat de tussenruimte van het COMPONENT komt en niet uit
+       een eigen CSS-regel. Hier stond een kale div, en die heeft geen gap: de kaarten van
+       een reeks - de componenten in de wizard bijvoorbeeld - stonden daardoor pal tegen
+       elkaar geplakt. Gemeten: 0px tussen alle zeven.
+
+       De klasse rvo-sequence__items blijft staan: wizard.js hangt zijn toevoegen en
+       verwijderen daaraan op, net als aan de id. #}
+    {# De id BOVEN de tag samenstellen: een ~ binnen :attrs laat de uitdrukkingslezer
+       struikelen ("Invalid expression in ':attrs'"). #}
+    {% set items_id = field.path ~ "-items" %}
+    <c-stack gap="lg" class="rvo-sequence__items" :attrs="{'id': items_id}">
         {% for item in items_html %}{{ item }}{% endfor %}
-    </div>
+    </c-stack>
     {% if not fixed_size and field.add_remove %}
     <div class="rvo-sequence__actions">
         {# @click met Jinja erin werkt niet: de voorbewerker leest de waarde van een
