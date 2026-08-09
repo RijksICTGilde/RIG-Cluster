@@ -205,6 +205,7 @@ def test_form_layer_screenshot(app_server: str, page: Page) -> None:
 # de test hieronder controleert dat ook, zodat een nieuwe pagina niet stil ongetoetst
 # blijft.
 REDESIGNED_PAGES = [
+    "account",
     "dashboard",
     "projects",
     "services",
