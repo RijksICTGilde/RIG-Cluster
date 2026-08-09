@@ -225,6 +225,30 @@ Gevolg: zo'n blok draagt rvo-klassen en ziet er anders uit dan de rest van de pa
 totdat de dienst zelf meegaat. **Zichtbaar onaf is beter dan ongemerkt weg.** Waar wel een
 LOTC-tegenhanger geschreven is (backups, metrics per deployment) gaat die voor.
 
+### En de fragmenten die zo'n blok NALAADT
+
+Een omgezet blok is niet af zolang wat het met htmx ophaalt nog uit de oude omgeving komt:
+het blok staat er in de nieuwe vormgeving, en na een scroll of een klik komt er een tabel
+in de oude in. Twee daarvan waren zo:
+
+- **De snapshotlijst** (`GET /projects/details/<project>/backups`). De route rendert nu via
+  `render()` uit `opi/web/lotc_switch.py`, met `bg/_backup-snapshots.html.j2` +
+  `bg/_backup-snapshots-one.html.j2` als tegenhanger. De id's met `hx-swap-oob` zijn
+  letterlijk gelijk gebleven - het verzoek staat op `hx-swap="none"`, dus alles zonder die
+  markering wordt weggegooid, en een stylesheet of script kan er daarom niet omheen.
+- **De metingen per deployment** (`GET /projects/details/<project>/metrics/<deployment>`).
+  Hier stonden voortgangsbalken met alleen de huidige waarde; het VERLOOP over de tijd was
+  eruit. Terug naar dezelfde canvassen met dezelfde id's, en de tekencode staat sinds deze
+  omzetting in `static/js/metrics_charts.js` - dezelfde verhuizing als
+  `dashboard_gauges.js`, zodat beide vormgevingen er een kopie van gebruiken. Het fragment
+  haalt Chart.js, de annotatie-plugin, die tekencode en zijn maten
+  (`static/css/metrics-charts.css`) zelf op, precies een keer per document: de hertekende
+  projectpagina laadt ze niet, want die weet niet dat dit blok bestaat.
+
+Beide zijn gemeten in `tests/test_lotc_fragmenten.py` (gedragsoppervlak, sjabloon tegen
+sjabloon) en in `tests/e2e/test_lotc_pariteit.py` (pixels op de canvassen, en de
+herstelknop echt geklikt).
+
 ## Testen in twee vormgevingen
 
 De bestaande e2e-tests zijn op de roos-markup geschreven. Toen nldd de standaard werd,
