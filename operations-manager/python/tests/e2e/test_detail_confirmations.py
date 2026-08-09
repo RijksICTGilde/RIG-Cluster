@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from tests.e2e.helpers.tabs import open_tab
+from tests.e2e.helpers.tekst import knop
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page, Request, Route
@@ -72,7 +73,7 @@ def _open_confirmation(page: Page, app_server: str, trigger: str, *, tab: str | 
 
 
 def _confirm(page: Page) -> None:
-    page.locator("#edit-section-inner [data-confirm-action] button.confirm-action-submit").first.click()
+    page.locator("#edit-section-inner [data-confirm-action] .confirm-action-submit").first.click()
 
 
 @pytest.mark.parametrize(
@@ -104,7 +105,7 @@ def test_component_delete_posts_the_right_component(app_server: str, auth_page: 
     auth_page.wait_for_load_state("networkidle")
 
     card = auth_page.locator(".component-card", has_text="web-app").first
-    card.locator("button:has-text('Verwijderen')").first.click()
+    knop(card, "Verwijderen").first.click()
     auth_page.locator("#edit-section-modal.is-open").wait_for(state="visible", timeout=10000)
     auth_page.locator("#edit-section-inner [data-confirm-action]").wait_for(state="visible", timeout=10000)
 
@@ -125,7 +126,7 @@ def test_deployment_delete_posts_the_right_deployment(app_server: str, auth_page
     auth_page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
 
     card = auth_page.locator("#tab-deployments .deployment-card").first
-    card.locator("button:has-text('Verwijderen')").first.click()
+    knop(card, "Verwijderen").first.click()
     auth_page.locator("#edit-section-modal.is-open").wait_for(state="visible", timeout=10000)
     auth_page.locator("#edit-section-inner [data-confirm-action]").wait_for(state="visible", timeout=10000)
 
