@@ -29,15 +29,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.api.task_models import TASK_RESULT_MODELS
-from opi.api.v2.router import v2_router
+from opi.api.v2.router import AddDatabaseSchemaRequest, v2_router
 from opi.core.async_task_service import TaskType
 from opi.core.project_schema import ProjectIntegrityError, validate_project_schema
 from opi.core.task_rollout import DEFERRABLE_TASK_TYPES
-from opi.manager.project_validation import validate_service_configs
+from opi.forms.editables.validators import SchemaPostfixValidator
+from opi.manager.project_validation import validate_project_structure, validate_service_configs
 from opi.services.postgres_scope import get_postgres_schemas, schema_is_marked
 from opi.services.project import Project
 from opi.services.services_enums import ServiceType
-from opi.utils.naming import generate_database_schema
+from opi.utils.naming import SCHEMA_POSTFIX_MAX_LENGTH, SCHEMA_POSTFIX_PATTERN, generate_database_schema
 from pydantic import ValidationError
 
 _SERVICE = ServiceType.POSTGRESQL_DATABASE.value
@@ -450,3 +451,80 @@ def test_the_schema_task_type_is_wired_to_a_handler_everywhere_it_runs() -> None
 def test_a_schema_write_may_be_saved_without_rolling_out() -> None:
     """It only writes to the project file, so a later refresh reconciles it faithfully."""
     assert "manage_database_schemas" in DEFERRABLE_TASK_TYPES
+
+
+# ---------------------------------------------------------------------------
+# The naming rule itself (RC-59 feedback)
+# ---------------------------------------------------------------------------
+
+
+def test_the_postfix_rule_has_one_definition_that_all_three_roads_read() -> None:
+    """The model, the form validator and the API endpoint apply the same rule.
+
+    Three roads lead to a postfix now that an API can add one: the wizard, the config
+    model and `POST .../schemas`. Three copies of "what a valid postfix looks like" agree
+    on the day they are written and not much longer.
+    """
+    from opi.api.v2.router import AddDatabaseSchemaRequest
+    from opi.services.catalog.postgresql_database.config_model import SchemaEntry
+
+    for model in (SchemaEntry, AddDatabaseSchemaRequest):
+        metadata = repr(model.model_fields["postfix"].metadata)
+        assert SCHEMA_POSTFIX_PATTERN in metadata, f"{model.__name__} does not carry the shared pattern"
+        assert str(SCHEMA_POSTFIX_MAX_LENGTH) in metadata, f"{model.__name__} does not carry the shared max length"
+
+
+def test_a_postfix_that_is_far_too_long_fails_as_what_it_is() -> None:
+    """It fails for its length, not as a complaint about a composed name nobody wrote.
+
+    The composed check stays: how much room a postfix has depends on the project and
+    deployment names, so no fixed maximum can promise a fit. This only makes the ordinary
+    mistake legible.
+    """
+    long_postfix = "r" * (SCHEMA_POSTFIX_MAX_LENGTH + 1)
+
+    assert SchemaPostfixValidator().validate(long_postfix) == [
+        f"Een postfix mag hoogstens {SCHEMA_POSTFIX_MAX_LENGTH} tekens lang zijn"
+    ]
+    with pytest.raises(ValidationError, match="at most"):
+        AddDatabaseSchemaRequest(postfix=long_postfix)
+
+
+def test_an_uppercase_postfix_is_refused_and_never_quietly_lowercased() -> None:
+    """`Rapportage` is a 422, not a schema that silently ends up called `rapportage`.
+
+    Normalising would store something other than what was asked for, and the caller would
+    find out from the schema name in their database rather than from the response.
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        AddDatabaseSchemaRequest(postfix="Rapportage")
+
+    assert SCHEMA_POSTFIX_PATTERN in str(excinfo.value), "the reason names the rule that was broken"
+    assert SchemaPostfixValidator().validate("Rapportage"), "the form road refuses it too"
+
+
+def test_adding_a_deployment_is_refused_when_it_breaks_an_existing_schema_name() -> None:
+    """The real hole: a postfix that fits today stops fitting when a deployment arrives.
+
+    The enforcer that owns this rule only ran when the schema LIST was being saved, and
+    only against the deployments that existed then. Nothing on the add-a-deployment road
+    looked at schemas, so the failure surfaced at rollout instead -- as a ValueError deep
+    in name generation, long after the change that caused it.
+    """
+    data = _project([{"postfix": "rapportage"}])
+    data["deployments"].append({"name": "d" * 55, "cluster": "local", "namespace": "demo", "components": []})
+
+    with pytest.raises(ProjectIntegrityError, match="rapportage"):
+        asyncio.run(validate_project_structure(data))
+
+
+def test_a_project_whose_schemas_all_fit_still_validates() -> None:
+    asyncio.run(validate_project_structure(_project([{"postfix": "rapportage"}])))
+
+
+def test_a_schema_on_its_way_out_does_not_block_a_new_deployment() -> None:
+    """A marked schema is going away; refusing a save over it would trap the project."""
+    data = _project([{"postfix": "r" * 30, "marked-for-deletion": True}])
+    data["deployments"].append({"name": "d" * 55, "cluster": "local", "namespace": "demo", "components": []})
+
+    asyncio.run(validate_project_structure(data))

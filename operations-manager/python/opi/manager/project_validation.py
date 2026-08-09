@@ -19,6 +19,7 @@ from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
 from opi.services import ServiceAdapter
 from opi.services.catalog.base import ConfigLayer, Service
+from opi.services.postgres_scope import get_postgres_schemas
 from opi.services.project import Project
 from opi.services.registry import get_service, property_owning_services
 from opi.services.services import (
@@ -28,6 +29,7 @@ from opi.services.services import (
     service_entry_schema_version,
 )
 from opi.services.services_enums import ServiceType
+from opi.utils.naming import generate_extra_database_schema
 from opi.utils.project_utils import ComponentValidationError, validate_component_paths, validate_root_component
 
 logger = logging.getLogger(__name__)
@@ -351,6 +353,51 @@ def _validate_services_listed_once(services: Any, project_name: str, where: str)
         seen.add(name)
 
 
+def validate_database_schema_names(project_data: dict[str, Any]) -> list[str]:
+    """The composed schema names of every extra schema, against every deployment (RC-59).
+
+    ``{project}_{deployment}_{postfix}`` has to fit in PostgreSQL's 63 characters, and how
+    much room the postfix has depends on the project and deployment names -- so this cannot
+    be a field rule and cannot be decided when the postfix is typed.
+
+    ``UniqueSchemaEnforcer`` already ran it, but only when the *schema list* was being
+    saved, and only against the deployments that existed at that moment. That leaves the
+    real hole: a postfix that fits today stops fitting the moment a deployment with a
+    longer name is added, and nothing on that road looks at schemas. The failure then
+    surfaced at rollout, as a ``ValueError`` out of ``generate_extra_database_schema``,
+    long after the change that caused it.
+
+    Running it here, in the structural validation every save passes through, closes that:
+    adding the deployment is refused, with a message that names both the deployment and
+    the postfix that no longer fits.
+
+    Schemas marked for deletion are skipped -- they are on their way out and must not
+    block a save.
+    """
+    errors: list[str] = []
+    project_name = project_data.get("name") or ""
+    deployment_names = [
+        name for d in (project_data.get("deployments") or []) if isinstance(d, dict) and (name := d.get("name"))
+    ]
+    if not deployment_names:
+        return errors
+
+    for entry in get_postgres_schemas(project_data):
+        postfix = entry.get("postfix")
+        if not postfix:
+            continue
+        for deployment_name in deployment_names:
+            try:
+                generate_extra_database_schema(project_name, deployment_name, postfix)
+            except ValueError:
+                errors.append(
+                    f"schema '{postfix}' levert voor deployment '{deployment_name}' een naam op die langer is "
+                    f"dan de 63 tekens die PostgreSQL toestaat. Kies een kortere postfix of een kortere "
+                    f"deploymentnaam."
+                )
+    return errors
+
+
 async def validate_project_structure(project_data: dict[str, Any]) -> None:
     """Validate cross-field structural integrity of a complete project dict.
 
@@ -479,6 +526,13 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
     coupling_errors = validate_attachment_couplings(project_data)
     if coupling_errors:
         raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(coupling_errors)}")
+
+    # Extra database schemas: the composed name has to fit for EVERY deployment, so this
+    # belongs here rather than only on the road that edits the schema list -- adding a
+    # deployment is the other way a valid schema name becomes an impossible one.
+    schema_errors = validate_database_schema_names(project_data)
+    if schema_errors:
+        raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(schema_errors)}")
 
     # Per-service typed config validation (RC-5 A). Runs last: the envelope and
     # cross-field structure are valid by here, so this only judges the config values.
