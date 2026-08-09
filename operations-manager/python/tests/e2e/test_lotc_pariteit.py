@@ -509,10 +509,13 @@ def test_de_projectpagina_laat_geen_sluitknop_zweven(app_server: str, auth_page:
 def test_de_voettekst_heeft_zijn_kop_links_en_versieregel(app_server: str, auth_page: Page) -> None:
     """Vier bestemmingen plus een kop, op elke pagina.
 
-    De voettekst is hier twee keer stukgegaan op dezelfde manier: met <c-menu>. Dat
-    rendert altijd een <nldd-menu-bar> - een navigatiebalk - en een <nldd-menu-item>
-    daarin navigeert niet op zijn href. De links stonden er dus wel en deden niets.
-    Daarom klikt deze test er ook echt op.
+    De voettekst stond hier als <c-menu>, en dat rendert altijd een <nldd-menu-bar>: een
+    horizontale navigatiebalk met een overloopknop, waar de kop "Platform" niet in kan.
+
+    Er wordt echt geklikt, en niet omdat de links het niet deden - een menu-BAR-item
+    navigeert gewoon - maar omdat dat de enige toets is die ook standhoudt als iemand
+    hier ooit weer een uitklapmenu van maakt. Daar navigeert een item namelijk NIET op
+    zijn href.
     """
     auth_page.goto(f"{app_server}/projects?layout=nldd")
     auth_page.wait_for_load_state("networkidle")
@@ -535,3 +538,52 @@ def test_de_voettekst_heeft_zijn_kop_links_en_versieregel(app_server: str, auth_
     auth_page.locator("nldd-page-footer a").first.click()
     auth_page.wait_for_load_state("networkidle")
     assert auth_page.url.endswith("/about"), f"de eerste footerlink navigeert niet: {auth_page.url}"
+
+
+def test_het_gebruikersmenu_bevat_alles_en_zet_de_weergave_echt_om(app_server: str, auth_page: Page) -> None:
+    """Uitklappen, alles erin, en donker kiezen verandert de pagina ook echt.
+
+    Drie vormen zijn hier geprobeerd voordat deze werkte, en elke keer zag het er in de
+    HTML goed uit:
+
+      - <c-menu type="bar"> met een geneste <c-menu>: de geneste items verdwijnen, want
+        het component heeft geen standaard-slot.
+      - <nldd-menu-bar-item expandable> met een popup: de items STAAN in de DOM maar de
+        popup gaat niet open.
+      - <nldd-button expandable popup-type="menu">: die werkt.
+
+    Vandaar dat deze test uitklapt, kijkt of het item ZICHTBAAR is, erop klikt, en daarna
+    meet of `data-scheme` op <html> staat. Elk van die stappen ving een van de drie.
+    """
+    auth_page.goto(f"{app_server}/dashboard?layout=nldd")
+    auth_page.wait_for_load_state("networkidle")
+
+    knop = auth_page.locator("[slot=utility] nldd-button[expandable]").first
+    assert knop.count() == 1, "de uitklapper met de gebruikersnaam staat niet in de header"
+
+    knop.click()
+    auth_page.wait_for_timeout(500)
+
+    items = auth_page.locator("[slot=utility] nldd-menu[slot=popup] nldd-menu-item")
+    labels = [items.nth(i).get_attribute("text") for i in range(items.count())]
+    for verwacht in ("Profiel", "Systeem", "Licht", "Donker", "Uitloggen"):
+        assert verwacht in labels, f"'{verwacht}' staat niet in het gebruikersmenu: {labels}"
+
+    donker = auth_page.locator("[slot=utility] nldd-menu-item[text='Donker']").first
+    assert donker.is_visible(), "het menu gaat niet open - de items staan er wel maar zijn onzichtbaar"
+
+    donker.click()
+    auth_page.wait_for_load_state("networkidle")
+    auth_page.wait_for_timeout(500)
+
+    assert auth_page.evaluate("() => document.documentElement.getAttribute('data-scheme')") == "dark", (
+        "de donkere weergave is niet aangezet; NLDD leest data-scheme op <html>"
+    )
+
+
+def test_de_weergaveroute_verwijst_niet_naar_een_ander_domein(app_server: str, auth_page: Page) -> None:
+    """``terug`` komt uit de URL, dus /weergave mag er geen open doorverwijzing van maken."""
+    auth_page.goto(f"{app_server}/weergave?scheme=dark&terug=//example.com/kwaad")
+    auth_page.wait_for_load_state("networkidle")
+
+    assert auth_page.url.startswith(app_server), f"doorverwezen naar buiten: {auth_page.url}"

@@ -394,3 +394,22 @@ def remember_layout(request: Request, response: Response) -> Response:
             samesite="lax",
         )
     return response
+
+
+#: Het koekje waarin de weergavekeuze (licht/donker) bewaard blijft.
+#:
+#: Zelfde patroon als de layoutschakelaar hierboven, en om dezelfde reden: de keuze hoort
+#: bij de gebruiker en niet bij een pagina. Server-side onthouden in plaats van in
+#: localStorage scheelt bovendien de flits die je krijgt als JavaScript het thema pas na
+#: de eerste weergave zet.
+SCHEME_COOKIE = "zad_scheme"
+
+#: De drie standen. "" is systeem: dan zet de pagina geen data-scheme en volgt NLDD de
+#: voorkeur van het besturingssysteem.
+SCHEMES = ("", "light", "dark")
+
+
+def chosen_scheme(request: Request) -> str:
+    """De weergave die deze gebruiker koos: ``light``, ``dark``, of leeg voor systeem."""
+    stored = request.cookies.get(SCHEME_COOKIE, "")
+    return stored if stored in SCHEMES else ""
