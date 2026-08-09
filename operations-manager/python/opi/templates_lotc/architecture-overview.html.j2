@@ -6,18 +6,18 @@
 <div class="rvo-layout-column rvo-layout-gap--3xl">
 
     {# Hero Section #}
-    <section class="rvo-hero rvo-hero--lg rvo-hero--with-image" data-roos-component="hero" data-roos-size="lg">
-        <div class="rvo-hero__image-container">
-            <img src="{{ static_url('cloud.jpg') }}" alt="Cloud architecture and modern development" class="rvo-hero__image" />
-        </div>
-        <div class="rvo-hero__content">
-            <h1 class="utrecht-heading-1 rvo-hero__title">Built for Developers, By Developers</h1>
-            <p class="rvo-hero__subtitle rvo-text--lg">The platform that makes deployment effortless</p>
-            <div class="rvo-hero__text">
-                <p class="rvo-text--lg">Here's how we built a platform where the complexity is hidden, but the power remains accessible.</p>
-            </div>
-        </div>
-    </section>
+    {# De hero als COMPONENT. Hij stond hier als rvo-hero-markup, en die opmaak bestaat in
+       het nieuwe thema niet: de afbeelding kreeg daardoor geen maximum en rende op 1536px
+       breed, waarmee de hele pagina 1864px werd op een venster van 1440 - de hoofdkolom
+       van de schil kan niet krimpen onder zijn inhoud. Gemeten met scrollWidth. #}
+    <c-hero
+        size="lg"
+        title="Built for Developers, By Developers"
+        subtitle="The platform that makes deployment effortless"
+        image="{{ static_url('cloud.jpg') }}"
+        image-alt="Cloud architecture and modern development">
+        <c-paragraph size="lg">Here's how we built a platform where the complexity is hidden, but the power remains accessible.</c-paragraph>
+    </c-hero>
 
     {# Promo Video #}
     <section style="display: flex; justify-content: center;">
@@ -48,7 +48,7 @@
             <div class="rvo-layout-grid rvo-layout-gap--md"
                  style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
 
-                <c-card padding="lg" background-color="wit" :outline="true">
+                <c-card padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <c-heading type="h3">
                             <c-icon icon="database" size="lg" color="oranje"/>
@@ -67,7 +67,7 @@
                     </c-layout-flow>
                 </c-card>
 
-                <c-card padding="lg" background-color="wit" :outline="true">
+                <c-card padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <c-heading type="h3">
                             <c-icon icon="server" size="lg" color="hemelblauw"/>
@@ -86,7 +86,7 @@
                 </c-card>
             </div>
 
-            <c-card padding="xl" background-color="hemelblauw-150" :outline="true">
+            <c-card padding="xl" :outline="true">
                 <c-layout-flow gap="lg">
                     <div style="text-align: center;">
                         <c-heading type="h3" label="'Één Loket' Solution"/>
@@ -110,22 +110,22 @@
                          style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-top: var(--rvo-space-lg);">
 
                         <div style="text-align: center; padding: var(--rvo-space-md);">
-                            <c-icon icon="applicatie" size="xl" color="groen"/>
+                            <c-icon icon="applicatie" size="xl" color="groen" style="margin-bottom: var(--rvo-space-sm);"/>
                             <p class="rvo-text--sm"><strong>Application Info</strong><br/>Provide your details</p>
                         </div>
 
                         <div style="text-align: center; padding: var(--rvo-space-md);">
-                            <c-icon icon="database" size="xl" color="groen"/>
+                            <c-icon icon="database" size="xl" color="groen" style="margin-bottom: var(--rvo-space-sm);"/>
                             <p class="rvo-text--sm"><strong>Database</strong><br/>One click setup</p>
                         </div>
 
                         <div style="text-align: center; padding: var(--rvo-space-md);">
-                            <c-icon icon="sleutel" size="xl" color="groen"/>
+                            <c-icon icon="sleutel" size="xl" color="groen" style="margin-bottom: var(--rvo-space-sm);"/>
                             <p class="rvo-text--sm"><strong>SSO Rijk</strong><br/>Instant integration</p>
                         </div>
 
                         <div style="text-align: center; padding: var(--rvo-space-md);">
-                            <c-icon icon="informatie-op-internet" size="xl" color="groen"/>
+                            <c-icon icon="informatie-op-internet" size="xl" color="groen" style="margin-bottom: var(--rvo-space-sm);"/>
                             <p class="rvo-text--sm"><strong>Deploy to Internet</strong><br/>Automatic routing</p>
                         </div>
 
@@ -133,7 +133,7 @@
                 </c-layout-flow>
             </c-card>
 
-            <c-card padding="lg" background-color="oranje-150" :outline="true">
+            <c-card padding="lg" :outline="true">
                 <c-layout-flow gap="md">
                     <c-heading type="h3">
                         <c-icon icon="waarschuwing" size="lg" color="oranje"/>
@@ -154,7 +154,7 @@
                 </c-layout-flow>
             </c-card>
 
-            <c-card padding="lg" background-color="groen-150" :outline="true">
+            <c-card padding="lg" :outline="true">
                 <c-layout-flow gap="md">
                     <c-heading type="h3">
                         <c-icon icon="vinkje" size="lg" color="groen"/>
@@ -188,7 +188,7 @@
                 </p>
             </div>
 
-            <c-card padding="xl" background-color="wit" :outline="true">
+            <c-card padding="xl" :outline="true">
                 <div id="bootstrap-diagram" class="diagram-container">
                     <!-- Bootstrap architecture diagram will be rendered here -->
                 </div>
@@ -197,7 +197,7 @@
             <div class="rvo-layout-grid rvo-layout-gap--md"
                  style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
 
-                <c-card class="bootstrap-card" padding="lg" background-color="hemelblauw-150" :outline="true">
+                <c-card class="bootstrap-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <c-heading type="h3">
                             <c-icon icon="server" size="xl" color="donkerblauw"/>
@@ -207,11 +207,16 @@
                             <strong>Haven Implementation</strong> or <strong>ODC Noord OpenShift</strong> provides
                             the foundational Kubernetes cluster with basic networking, storage, and compute resources.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Container runtime and orchestration</li>
+        <li>Network policies and ingress</li>
+        <li>Storage classes and persistent volumes</li>
+        <li>Basic RBAC and security policies</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="bootstrap-card" padding="lg" background-color="groen-150" :outline="true">
+                <c-card class="bootstrap-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <c-heading type="h3">
                             <c-icon icon="applicatie" size="xl" color="groen"/>
@@ -221,11 +226,16 @@
                             <strong>GitOps Engine</strong> - Continuously monitors Git repositories and automatically
                             deploys changes to the Kubernetes cluster.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Automated deployment from Git</li>
+        <li>Application lifecycle management</li>
+        <li>Health monitoring and sync status</li>
+        <li>Multi-environment support</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="bootstrap-card" padding="lg" background-color="oranje-150" :outline="true">
+                <c-card class="bootstrap-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <c-heading type="h3">
                             <c-icon icon="sleutel" size="xl" color="oranje"/>
@@ -235,11 +245,16 @@
                             <strong>Identity & Access Management</strong> - Provides SSO integration with
                             Rijksoverheid and manages authentication for all applications.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Rijksoverheid SSO integration</li>
+        <li>Client and user management</li>
+        <li>Role-based access control</li>
+        <li>API authentication tokens</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="bootstrap-card" padding="lg" background-color="lichtblauw-150" :outline="true">
+                <c-card class="bootstrap-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <c-heading type="h3">
                             <c-icon icon="database" size="xl" color="hemelblauw"/>
@@ -249,11 +264,16 @@
                             <strong>PostgreSQL Cluster</strong> - High-availability database service where
                             each project gets its own schema and dedicated user.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Automated schema provisioning</li>
+        <li>Per-project database users</li>
+        <li>Connection string management</li>
+        <li>Backup and recovery</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="bootstrap-card" padding="lg" background-color="donkerblauw-150" :outline="true">
+                <c-card class="bootstrap-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <c-heading type="h3">
                             <c-icon icon="map" size="xl" color="donkerblauw"/>
@@ -263,11 +283,16 @@
                             <strong>S3-Compatible Storage</strong> - Object storage service providing
                             isolated buckets and access credentials for each project.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>S3-compatible API</li>
+        <li>Per-project bucket isolation</li>
+        <li>Access key management</li>
+        <li>Storage policies and quotas</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="bootstrap-card" padding="lg" background-color="lichtblauw-150" :outline="true">
+                <c-card class="bootstrap-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <c-heading type="h3">
                             <c-icon icon="sleutel" size="xl" color="donkerblauw"/>
@@ -277,7 +302,12 @@
                             <strong>Data Protection</strong> - Automated backup and restore capabilities for
                             databases and persistent storage when deployments require it.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Database backup automation</li>
+        <li>Persistent storage snapshots</li>
+        <li>Point-in-time recovery</li>
+        <li>Disaster recovery workflows</li>
+    </ul>
                         <div class="rvo-alert rvo-alert--warning rvo-alert--compact">
                             <c-icon icon="waarschuwing" size="sm"/>
                             <div>
@@ -288,7 +318,7 @@
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="bootstrap-card featured" padding="lg" background-color="rood-150" :outline="true">
+                <c-card class="bootstrap-card featured" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <c-heading type="h3">
                             <c-icon icon="informatie-op-internet" size="xl" color="rood"/>
@@ -298,7 +328,12 @@
                             <strong>The Orchestrator</strong> - FastAPI service that connects to all platform
                             components and provides the self-service portal for project creation.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Self-service web interface</li>
+        <li>Multi-system orchestration</li>
+        <li>Project lifecycle management</li>
+        <li>Template-based deployments</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
             </div>
@@ -307,10 +342,10 @@
                 <c-icon icon="info" size="md"/>
                 <div class="rvo-alert__content">
                     <p><strong>Bootstrap Creates Two Key Projects:</strong></p>
-                    <c-list>
-                        <c-list-item><strong>local-infrastructure</strong> - Manages the platform services themselves (ArgoCD, Keycloak, PostgreSQL, MinIO, Operations Manager)</c-list-item>
-                        <c-list-item><strong>user-applications</strong> - Contains all user-created projects and their configurations</c-list-item>
-                    </c-list>
+                    <ul class="lotc-bullets">
+                        <li><strong>local-infrastructure</strong> - Manages the platform services themselves (ArgoCD, Keycloak, PostgreSQL, MinIO, Operations Manager)</li>
+                        <li><strong>user-applications</strong> - Contains all user-created projects and their configurations</li>
+                    </ul>
                 </div>
             </div>
         </c-layout-flow>
@@ -330,7 +365,7 @@
 
             <c-grid columns="four" gap="lg">
 
-                <c-card padding="lg" background-color="wit" :outline="true">
+                <c-card padding="lg" :outline="true" style="text-align: center;">
                     <c-layout-flow gap="md">
                         <img src="{{ static_url('LSS_S_MR-1_resized.jpg') }}" alt="Less is More - Smart Resource Sharing Visualization"/>
                         <p class="rvo-text--xs" style="font-style: italic; color: var(--rvo-color-grijs-700);">
@@ -339,7 +374,7 @@
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="philosophy-card" padding="lg" background-color="groen-150" :outline="true">
+                <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <c-heading type="h3">
                             <c-icon icon="database" size="xl" color="groen"/>
@@ -350,11 +385,16 @@
                             <strong>One MinIO instance</strong> provides buckets for everyone.
                             <strong>One Keycloak</strong> handles authentication for all applications.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Lower operational overhead</li>
+        <li>Centralized backup and monitoring</li>
+        <li>Consistent security policies</li>
+        <li>Reduced resource consumption</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="philosophy-card" padding="lg" background-color="hemelblauw-150" :outline="true">
+                <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <c-heading type="h3">
                             <c-icon icon="informatie-op-internet" size="xl" color="hemelblauw"/>
@@ -364,11 +404,16 @@
                             Some projects have special requirements: <strong>dedicated databases</strong> for performance,
                             <strong>isolated storage</strong> for compliance, or <strong>custom authentication</strong> for integration needs.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Performance-critical workloads</li>
+        <li>Strict compliance requirements</li>
+        <li>Legacy system integration</li>
+        <li>Development vs production isolation</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="philosophy-card" padding="lg" background-color="oranje-150" :outline="true">
+                <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <c-heading type="h3">
                             <c-icon icon="applicatie" size="xl" color="oranje"/>
@@ -379,7 +424,12 @@
                             <strong>production environments</strong> get dedicated resources,
                             and <strong>testing environments</strong> can use lightweight alternatives.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Environment-specific scaling</li>
+        <li>Cost optimization by environment</li>
+        <li>Risk isolation for production</li>
+        <li>Fast provisioning for testing</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
             </c-grid>
@@ -399,23 +449,33 @@
                     <div class="rvo-layout-grid rvo-layout-gap--md"
                          style="grid-template-columns: 1fr 1fr;">
 
-                        <c-card padding="md" background-color="rood-150" :outline="true">
+                        <c-card padding="md" :outline="true">
                             <c-layout-flow gap="sm">
                                 <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                                     <c-icon icon="waarschuwing" size="md" color="rood"/>
                                     <strong>Traditional Approach</strong>
                                 </div>
-                                <c-list class="rvo-text--xs"/>
+                                <ul class="lotc-bullets">
+        <li>50 projects × 3 services = 150 instances</li>
+        <li>150 databases to backup and monitor</li>
+        <li>150 security configurations to maintain</li>
+        <li>Massive resource waste and complexity</li>
+    </ul>
                             </c-layout-flow>
                         </c-card>
 
-                        <c-card padding="md" background-color="groen-150" :outline="true">
+                        <c-card padding="md" :outline="true">
                             <c-layout-flow gap="sm">
                                 <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                                     <c-icon icon="vinkje" size="md" color="groen"/>
                                     <strong>RIG Cluster Approach</strong>
                                 </div>
-                                <c-list class="rvo-text--xs"/>
+                                <ul class="lotc-bullets">
+        <li>50 projects sharing 3 service clusters</li>
+        <li>3 database systems with 50 schemas</li>
+        <li>Centralized security and monitoring</li>
+        <li>Efficient scaling and cost optimization</li>
+    </ul>
                             </c-layout-flow>
                         </c-card>
                     </div>
@@ -436,7 +496,7 @@
                 </p>
             </div>
 
-            <c-card padding="xl" background-color="wit" :outline="true">
+            <c-card padding="xl" :outline="true">
                 <div id="variants-diagram" class="diagram-container">
                     <!-- Application variants diagram will be rendered here -->
                 </div>
@@ -445,7 +505,7 @@
             <div class="rvo-layout-grid rvo-layout-gap--lg"
                  style="grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));">
 
-                <c-card class="philosophy-card" padding="lg" background-color="hemelblauw-150" :outline="true">
+                <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="database" size="xl" color="hemelblauw"/>
@@ -456,11 +516,16 @@
                             <strong>Clone from Staging</strong> - Use curated test datasets.
                             <strong>Clone from Another Feature</strong> - Build on previous work.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Full schema + data replication</li>
+        <li>Automatic anonymization options</li>
+        <li>Size-optimized partial clones</li>
+        <li>Independent schema evolution</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="philosophy-card" padding="lg" background-color="groen-150" :outline="true">
+                <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="map" size="xl" color="groen"/>
@@ -470,11 +535,16 @@
                             <strong>MinIO Bucket Cloning</strong> - Copy files, images, and documents from parent environments.
                             Maintains folder structure and permissions while creating completely isolated storage.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>S3-compatible bucket duplication</li>
+        <li>Selective file copying patterns</li>
+        <li>Independent access credentials</li>
+        <li>Automatic cleanup on branch merge</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="philosophy-card" padding="lg" background-color="oranje-150" :outline="true">
+                <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="informatie-op-internet" size="xl" color="oranje"/>
@@ -514,7 +584,7 @@
             <div class="rvo-layout-grid rvo-layout-gap--lg"
                  style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
 
-                <c-card class="philosophy-card" padding="lg" background-color="groen-150" :outline="true">
+                <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="pijl-naar-rechts" size="xl" color="groen"/>
@@ -525,11 +595,17 @@
                             spring into existence: namespaces, databases, storage, authentication, networking,
                             and monitoring. Everything connected and configured automatically.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Kubernetes namespace creation</li>
+        <li>Database schema &amp; user provisioning</li>
+        <li>S3 bucket &amp; access key generation</li>
+        <li>Keycloak client &amp; role configuration</li>
+        <li>Network policies &amp; ingress setup</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="philosophy-card" padding="lg" background-color="rood-150" :outline="true">
+                <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="waarschuwing" size="xl" color="rood"/>
@@ -540,7 +616,13 @@
                             Databases are dropped, storage is deleted, authentication clients are removed,
                             and resources are freed up. Complete cleanup, zero manual intervention.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Kubernetes resource deletion</li>
+        <li>Database schema &amp; user removal</li>
+        <li>S3 bucket &amp; data purging</li>
+        <li>Keycloak client deregistration</li>
+        <li>Network policy cleanup</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
             </div>
@@ -571,7 +653,7 @@
             <div class="rvo-layout-grid rvo-layout-gap--lg"
                  style="grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));">
 
-                <c-card class="philosophy-card" padding="lg" background-color="hemelblauw-150" :outline="true">
+                <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="informatie-op-internet" size="xl" color="hemelblauw"/>
@@ -582,11 +664,17 @@
                             Project health, deployment status, resource usage, errors, and performance metrics.
                             No need to jump between multiple tools and interfaces.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Project status overview</li>
+        <li>Deployment health indicators</li>
+        <li>Resource usage metrics</li>
+        <li>Recent activity timeline</li>
+        <li>Error alerts and warnings</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="philosophy-card" padding="lg" background-color="groen-150" :outline="true">
+                <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="zoek" size="xl" color="groen"/>
@@ -597,11 +685,17 @@
                             dozens of metrics from Kubernetes, ArgoCD, databases, and monitoring tools.
                             You see only what you need to know, when you need to know it.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Kubernetes pod health summaries</li>
+        <li>ArgoCD sync status simplified</li>
+        <li>Database performance insights</li>
+        <li>Storage usage trends</li>
+        <li>Security status indicators</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="philosophy-card" padding="lg" background-color="oranje-150" :outline="true">
+                <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="grafiek" size="xl" color="oranje"/>
@@ -612,7 +706,13 @@
                             it provides context and recommendations. Know what's wrong, why it's wrong,
                             and what you can do about it.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Contextual error explanations</li>
+        <li>Performance optimization hints</li>
+        <li>Capacity planning suggestions</li>
+        <li>Security best practice alerts</li>
+        <li>Troubleshooting guidance</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
             </div>
@@ -624,7 +724,7 @@
                     <div class="rvo-layout-grid rvo-layout-gap--md"
                          style="grid-template-columns: 1fr 1fr;">
 
-                        <c-card padding="md" background-color="rood-150" :outline="true">
+                        <c-card padding="md" :outline="true">
                             <c-layout-flow gap="sm">
                                 <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                                     <c-icon icon="waarschuwing" size="md" color="rood"/>
@@ -635,11 +735,17 @@
                                     Open Grafana for metrics. Check Prometheus for alerts. Look at database admin panel.
                                     Juggle between 5+ different tools to understand one application.
                                 </p>
-                                <c-list class="rvo-text--xs"/>
+                                <ul class="lotc-bullets">
+        <li>Multiple logins and interfaces</li>
+        <li>Context switching overhead</li>
+        <li>Tool-specific knowledge required</li>
+        <li>Information scattered everywhere</li>
+        <li>Complex troubleshooting process</li>
+    </ul>
                             </c-layout-flow>
                         </c-card>
 
-                        <c-card padding="md" background-color="groen-150" :outline="true">
+                        <c-card padding="md" :outline="true">
                             <c-layout-flow gap="sm">
                                 <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                                     <c-icon icon="vinkje" size="md" color="groen"/>
@@ -650,7 +756,13 @@
                                     Get intelligent insights and recommendations. Click through for details
                                     only when needed. Everything in context, everything connected.
                                 </p>
-                                <c-list class="rvo-text--xs"/>
+                                <ul class="lotc-bullets">
+        <li>Single sign-on, one interface</li>
+        <li>All information in context</li>
+        <li>No specialized tool knowledge needed</li>
+        <li>Intelligent data correlation</li>
+        <li>Guided troubleshooting workflow</li>
+    </ul>
                             </c-layout-flow>
                         </c-card>
                     </div>
@@ -664,7 +776,7 @@
                     <div class="rvo-layout-grid rvo-layout-gap--sm"
                          style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
 
-                        <c-card class="scenario-card" padding="sm" background-color="grijs-200" :outline="true">
+                        <c-card class="scenario-card" padding="sm" :outline="true">
                             <c-layout-flow gap="xs">
                                 <div style="display: flex; align-items: center; gap: var(--rvo-space-xs);">
                                     <c-icon icon="server" size="sm" color="hemelblauw"/>
@@ -674,7 +786,7 @@
                             </c-layout-flow>
                         </c-card>
 
-                        <c-card class="scenario-card" padding="sm" background-color="grijs-200" :outline="true">
+                        <c-card class="scenario-card" padding="sm" :outline="true">
                             <c-layout-flow gap="xs">
                                 <div style="display: flex; align-items: center; gap: var(--rvo-space-xs);">
                                     <c-icon icon="applicatie" size="sm" color="groen"/>
@@ -684,7 +796,7 @@
                             </c-layout-flow>
                         </c-card>
 
-                        <c-card class="scenario-card" padding="sm" background-color="grijs-200" :outline="true">
+                        <c-card class="scenario-card" padding="sm" :outline="true">
                             <c-layout-flow gap="xs">
                                 <div style="display: flex; align-items: center; gap: var(--rvo-space-xs);">
                                     <c-icon icon="grafiek" size="sm" color="rood"/>
@@ -694,7 +806,7 @@
                             </c-layout-flow>
                         </c-card>
 
-                        <c-card class="scenario-card" padding="sm" background-color="grijs-200" :outline="true">
+                        <c-card class="scenario-card" padding="sm" :outline="true">
                             <c-layout-flow gap="xs">
                                 <div style="display: flex; align-items: center; gap: var(--rvo-space-xs);">
                                     <c-icon icon="grafiek" size="sm" color="oranje"/>
@@ -704,7 +816,7 @@
                             </c-layout-flow>
                         </c-card>
 
-                        <c-card class="scenario-card" padding="sm" background-color="grijs-200" :outline="true">
+                        <c-card class="scenario-card" padding="sm" :outline="true">
                             <c-layout-flow gap="xs">
                                 <div style="display: flex; align-items: center; gap: var(--rvo-space-xs);">
                                     <c-icon icon="database" size="sm" color="groen"/>
@@ -714,7 +826,7 @@
                             </c-layout-flow>
                         </c-card>
 
-                        <c-card class="scenario-card" padding="sm" background-color="grijs-200" :outline="true">
+                        <c-card class="scenario-card" padding="sm" :outline="true">
                             <c-layout-flow gap="xs">
                                 <div style="display: flex; align-items: center; gap: var(--rvo-space-xs);">
                                     <c-icon icon="sleutel" size="sm" color="oranje"/>
@@ -753,7 +865,7 @@
             <div class="rvo-layout-grid rvo-layout-gap--lg"
                  style="grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));">
 
-                <c-card class="philosophy-card" padding="lg" background-color="hemelblauw-150" :outline="true">
+                <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="informatie-op-internet" size="xl" color="hemelblauw"/>
@@ -764,11 +876,17 @@
                             and monitor status through an intuitive web interface. No command-line expertise required.
                             Point, click, deploy.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Project creation wizard</li>
+        <li>Application deployment forms</li>
+        <li>Real-time status monitoring</li>
+        <li>Resource usage dashboards</li>
+        <li>User management interface</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="philosophy-card" padding="lg" background-color="groen-150" :outline="true">
+                <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="applicatie" size="xl" color="groen"/>
@@ -779,11 +897,17 @@
                             Perfect for CI/CD pipelines, infrastructure automation, and custom integrations.
                             Every UI action has an API equivalent.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Project lifecycle management</li>
+        <li>Deployment image updates</li>
+        <li>Configuration management</li>
+        <li>User and permission control</li>
+        <li>Status monitoring and metrics</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="philosophy-card" padding="lg" background-color="oranje-150" :outline="true">
+                <c-card class="philosophy-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="sleutel" size="xl" color="oranje"/>
@@ -793,7 +917,13 @@
                             <strong>Token-based authentication</strong> - Secure API access with fine-grained permissions.
                             Different tokens for different purposes. Full audit logging for compliance and security.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>API token management</li>
+        <li>Role-based permissions</li>
+        <li>Request rate limiting</li>
+        <li>Comprehensive audit logs</li>
+        <li>IP address restrictions</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
             </div>
@@ -805,7 +935,7 @@
                     <div class="rvo-layout-grid rvo-layout-gap--md"
                          style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
 
-                        <c-card class="scenario-card" padding="md" background-color="groen-150" :outline="true">
+                        <c-card class="scenario-card" padding="md" :outline="true">
                             <c-layout-flow gap="sm">
                                 <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                                     <c-icon icon="pijl-naar-rechts" size="md" color="groen"/>
@@ -822,7 +952,7 @@
                             </c-layout-flow>
                         </c-card>
 
-                        <c-card class="scenario-card" padding="md" background-color="hemelblauw-150" :outline="true">
+                        <c-card class="scenario-card" padding="md" :outline="true">
                             <c-layout-flow gap="sm">
                                 <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                                     <c-icon icon="applicatie" size="md" color="hemelblauw"/>
@@ -838,7 +968,7 @@
                             </c-layout-flow>
                         </c-card>
 
-                        <c-card class="scenario-card" padding="md" background-color="oranje-150" :outline="true">
+                        <c-card class="scenario-card" padding="md" :outline="true">
                             <c-layout-flow gap="sm">
                                 <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                                     <c-icon icon="grafiek" size="md" color="oranje"/>
@@ -854,7 +984,7 @@
                             </c-layout-flow>
                         </c-card>
 
-                        <c-card class="scenario-card" padding="md" background-color="rood-150" :outline="true">
+                        <c-card class="scenario-card" padding="md" :outline="true">
                             <c-layout-flow gap="sm">
                                 <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                                     <c-icon icon="waarschuwing" size="md" color="rood"/>
@@ -882,25 +1012,37 @@
                     <div class="rvo-layout-grid rvo-layout-gap--md"
                          style="grid-template-columns: 1fr 1fr;">
 
-                        <c-card padding="md" background-color="hemelblauw-150" :outline="true">
+                        <c-card padding="md" :outline="true">
                             <c-layout-flow gap="sm">
                                 <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                                     <c-icon icon="informatie-op-internet" size="md" color="hemelblauw"/>
                                     <strong>Web Interface</strong>
                                 </div>
                                 <p class="rvo-text--xs">Perfect for interactive use, exploration, and one-off tasks</p>
-                                <c-list class="rvo-text--xs"/>
+                                <ul class="lotc-bullets">
+        <li>Visual project creation wizard</li>
+        <li>Real-time monitoring dashboards</li>
+        <li>Interactive troubleshooting guides</li>
+        <li>User-friendly error messages</li>
+        <li>Guided configuration workflows</li>
+    </ul>
                             </c-layout-flow>
                         </c-card>
 
-                        <c-card padding="md" background-color="groen-150" :outline="true">
+                        <c-card padding="md" :outline="true">
                             <c-layout-flow gap="sm">
                                 <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                                     <c-icon icon="applicatie" size="md" color="groen"/>
                                     <strong>REST API</strong>
                                 </div>
                                 <p class="rvo-text--xs">Perfect for automation, CI/CD integration, and programmatic control</p>
-                                <c-list class="rvo-text--xs"/>
+                                <ul class="lotc-bullets">
+        <li>Scriptable operations</li>
+        <li>CI/CD pipeline integration</li>
+        <li>Batch operations and scheduling</li>
+        <li>Custom tooling and extensions</li>
+        <li>Infrastructure as Code workflows</li>
+    </ul>
                             </c-layout-flow>
                         </c-card>
                     </div>
@@ -929,7 +1071,7 @@
                 </p>
             </div>
 
-            <c-card padding="xl" background-color="wit" :outline="true">
+            <c-card padding="xl" :outline="true">
                 <div id="container-diagram" class="diagram-container">
                     <!-- Container diagram will be rendered here -->
                 </div>
@@ -952,7 +1094,7 @@
             <div class="rvo-layout-grid rvo-layout-gap--md"
                  style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
 
-                <c-card padding="lg" background-color="wit" :outline="true">
+                <c-card padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="database" size="lg" color="donkerblauw"/>
@@ -962,11 +1104,16 @@
                             Automated scheduled backups of PostgreSQL databases with configurable retention policies.
                             Point-in-time recovery capabilities for critical data restoration.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Scheduled automated backups</li>
+        <li>Configurable retention policies</li>
+        <li>Point-in-time recovery</li>
+        <li>Cross-cluster backup storage</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card padding="lg" background-color="wit" :outline="true">
+                <c-card padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="map" size="lg" color="donkerblauw"/>
@@ -976,11 +1123,16 @@
                             Persistent volume snapshots for application data and user uploads.
                             Fast recovery from storage corruption or accidental data deletion.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Persistent volume snapshots</li>
+        <li>Application data protection</li>
+        <li>File-level restoration</li>
+        <li>Incremental backup optimization</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card padding="lg" background-color="wit" :outline="true">
+                <c-card padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="pijl-naar-rechts" size="lg" color="donkerblauw"/>
@@ -990,11 +1142,16 @@
                             Automated restore deployments that can quickly spin up a recovered version
                             of your application from any backup point.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>One-click restore deployments</li>
+        <li>Selective data recovery</li>
+        <li>Testing restore integrity</li>
+        <li>Rollback capabilities</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card padding="lg" background-color="wit" :outline="true">
+                <c-card padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="waarschuwing" size="lg" color="donkerblauw"/>
@@ -1004,7 +1161,12 @@
                             Complete disaster recovery scenarios including cluster failures,
                             data center outages, and comprehensive system restoration procedures.
                         </p>
-                        <c-list class="rvo-text--xs"/>
+                        <ul class="lotc-bullets">
+        <li>Cross-region backup replication</li>
+        <li>Full cluster recovery</li>
+        <li>Recovery time objectives (RTO)</li>
+        <li>Automated failover procedures</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
             </div>
@@ -1035,7 +1197,7 @@
                 </p>
             </div>
 
-            <c-card padding="xl" background-color="wit" :outline="true">
+            <c-card padding="xl" :outline="true">
                 <div id="hexagonal-diagram" class="diagram-container">
                     <!-- Hexagonal architecture diagram -->
                 </div>
@@ -1044,7 +1206,7 @@
             <div class="rvo-layout-grid rvo-layout-gap--md"
                  style="grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));">
 
-                <c-card class="connector-card" padding="md" background-color="grijs-200" :outline="true">
+                <c-card class="connector-card" padding="md" :outline="true">
                     <c-layout-flow gap="sm">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                             <c-icon icon="informatie-op-internet" size="lg" color="donkerblauw"/>
@@ -1054,7 +1216,7 @@
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="connector-card" padding="md" background-color="grijs-200" :outline="true">
+                <c-card class="connector-card" padding="md" :outline="true">
                     <c-layout-flow gap="sm">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                             <c-icon icon="server" size="lg" color="hemelblauw"/>
@@ -1064,7 +1226,7 @@
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="connector-card" padding="md" background-color="grijs-200" :outline="true">
+                <c-card class="connector-card" padding="md" :outline="true">
                     <c-layout-flow gap="sm">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                             <c-icon icon="database" size="lg" color="groen"/>
@@ -1074,7 +1236,7 @@
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="connector-card" padding="md" background-color="grijs-200" :outline="true">
+                <c-card class="connector-card" padding="md" :outline="true">
                     <c-layout-flow gap="sm">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                             <c-icon icon="map" size="lg" color="rood"/>
@@ -1084,7 +1246,7 @@
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="connector-card" padding="md" background-color="grijs-200" :outline="true">
+                <c-card class="connector-card" padding="md" :outline="true">
                     <c-layout-flow gap="sm">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                             <c-icon icon="sleutel" size="lg" color="oranje"/>
@@ -1094,7 +1256,7 @@
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="connector-card" padding="md" background-color="grijs-200" :outline="true">
+                <c-card class="connector-card" padding="md" :outline="true">
                     <c-layout-flow gap="sm">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-sm);">
                             <c-icon icon="applicatie" size="lg" color="rood"/>
@@ -1126,7 +1288,7 @@
                 </p>
             </div>
 
-            <c-card padding="xl" background-color="wit" :outline="true">
+            <c-card padding="xl" :outline="true">
                 <div id="workflow-diagram" class="diagram-container">
                     <!-- Project creation workflow -->
                 </div>
@@ -1141,7 +1303,7 @@
                             <div class="step-number">
                                 <div class="step-circle">1</div>
                             </div>
-                            <c-stack>
+                            <c-stack style="flex: 1;">
                                 <c-heading type="h3" label="Describe What You Want"/>
                                 <p class="rvo-text--base">
                                     Fill out a form. That's it. Tell us about your project, which services you need,
@@ -1156,7 +1318,7 @@
                             <div class="step-number">
                                 <div class="step-circle">2</div>
                             </div>
-                            <c-stack>
+                            <c-stack style="flex: 1;">
                                 <c-heading type="h3" label="Infrastructure Comes Alive"/>
                                 <p class="rvo-text--base">
                                     Behind the scenes, the Operations Manager choreographs a beautiful dance:
@@ -1172,7 +1334,7 @@
                             <div class="step-number">
                                 <div class="step-circle">3</div>
                             </div>
-                            <c-stack>
+                            <c-stack style="flex: 1;">
                                 <c-heading type="h3" label="GitOps Takes Over"/>
                                 <p class="rvo-text--base">
                                     Your project configuration becomes code, stored in Git, encrypted with AGE,
@@ -1187,7 +1349,7 @@
                             <div class="step-number">
                                 <div class="step-circle">4</div>
                             </div>
-                            <c-stack>
+                            <c-stack style="flex: 1;">
                                 <c-heading type="h3" label="Your Application Runs"/>
                                 <p class="rvo-text--base">
                                     Your container starts up with all the right environment variables,
@@ -1216,43 +1378,68 @@
             <div class="rvo-layout-grid rvo-layout-gap--lg"
                  style="grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));">
 
-                <c-card class="result-card" padding="lg" background-color="wit" :outline="true">
+                <c-card class="result-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="server" size="xl" color="hemelblauw"/>
                             <c-heading type="h3" label="Kubernetes Resources"/>
                         </div>
-                        <c-list/>
+                        <ul class="lotc-bullets">
+        <li>Dedicated namespace with your project name</li>
+        <li>Deployment manifest for your container</li>
+        <li>Service for internal communication</li>
+        <li>Ingress for external access (if requested)</li>
+        <li>ConfigMaps and Secrets for configuration</li>
+        <li>Network policies for security</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="result-card" padding="lg" background-color="wit" :outline="true">
+                <c-card class="result-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="informatie-op-internet" size="xl" color="donkerblauw"/>
                             <c-heading type="h3" label="Git Repository"/>
                         </div>
-                        <c-list/>
+                        <ul class="lotc-bullets">
+        <li>Project configuration file (encrypted)</li>
+        <li>Generated Kubernetes manifests</li>
+        <li>ArgoCD application definition</li>
+        <li>Kustomization for environment overlays</li>
+        <li>SOPS configuration for secret management</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="result-card" padding="lg" background-color="wit" :outline="true">
+                <c-card class="result-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="sleutel" size="xl" color="oranje"/>
                             <c-heading type="h3" label="Authentication Setup"/>
                         </div>
-                        <c-list/>
+                        <ul class="lotc-bullets">
+        <li>Keycloak client for your application</li>
+        <li>SSO integration with Rijksoverheid</li>
+        <li>Role-based access control</li>
+        <li>User management interface</li>
+        <li>API keys for programmatic access</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="result-card" padding="lg" background-color="wit" :outline="true">
+                <c-card class="result-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="database" size="xl" color="groen"/>
                             <c-heading type="h3" label="Data Services"/>
                         </div>
-                        <c-list/>
+                        <ul class="lotc-bullets">
+        <li>PostgreSQL database schema</li>
+        <li>Database user with appropriate permissions</li>
+        <li>Connection strings as environment variables</li>
+        <li>MinIO bucket for object storage</li>
+        <li>S3-compatible access credentials</li>
+    </ul>
                     </c-layout-flow>
                 </c-card>
             </div>
@@ -1281,7 +1468,7 @@
             <div class="rvo-layout-grid rvo-layout-gap--lg"
                  style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
 
-                <c-card class="future-card" padding="lg" background-color="grijs-200" :outline="true">
+                <c-card class="future-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="grafiek" size="xl" color="groen"/>
@@ -1294,7 +1481,7 @@
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="future-card" padding="lg" background-color="grijs-200" :outline="true">
+                <c-card class="future-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="zoek" size="xl" color="hemelblauw"/>
@@ -1307,7 +1494,7 @@
                     </c-layout-flow>
                 </c-card>
 
-                <c-card class="future-card" padding="lg" background-color="grijs-200" :outline="true">
+                <c-card class="future-card" padding="lg" :outline="true">
                     <c-layout-flow gap="md">
                         <div style="display: flex; align-items: center; gap: var(--rvo-space-md);">
                             <c-icon icon="pijl-naar-rechts" size="xl" color="rood"/>
