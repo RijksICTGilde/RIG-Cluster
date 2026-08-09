@@ -195,9 +195,12 @@ def build_lotc_services(
                 "kind_label": "altijd aan" if is_platform else "",
                 "kind_type": "info",
                 "help_template": getattr(definition, "help_template", None),
-                # Welke projecten een dienst afnemen weet deze route niet; dat vergt de
-                # projectenlijst en die haalt hij niet op. Liever leeg dan verzonnen.
-                "used_by": [],
+                # De omgevingsvariabelen die deze service levert, met hun aliassen en hun
+                # uitleg. De bestaande pagina toont die per kaart; ze stonden hier alleen
+                # geTELD op een chip ("3 variabelen"), en dat is precies het soort
+                # samenvatting waar niemand iets aan heeft: je komt op deze pagina om te
+                # zien HOE de variabele heet die je in je applicatie moet uitlezen.
+                "variables": entry["variables"],
             }
         )
 
