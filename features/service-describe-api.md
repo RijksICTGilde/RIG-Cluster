@@ -101,10 +101,16 @@ schema faalt daar juist hard (`generate_extra_database_schema` gooit een `ValueE
 dan is `schema_name` `null`). Wie de naam zelf samenplakt krijgt bij lange namen een schema
 dat niet bestaat. Dat verschil is de reden dat deze lijst een eigen route verdient.
 
+**Een project dat de dienst niet gebruikt, krijgt op alle drie de routes hetzelfde
+antwoord: bestaat niet.** `GET` geeft dan 404, en niet een lege lijst: een lege lijst leest
+als "deze database heeft geen extra schema's", terwijl er geen database is -- en het
+standaardschema, dat de lijst als eerste regel afleidt, bestaat dan evenmin. De
+schrijfroutes zeggen hetzelfde, als `not_found` in het taakresultaat.
+
 | handeling | wat er gebeurt |
 |---|---|
 | `POST` | schema erbij; het 202-antwoord draagt meteen de volledige naam per deployment en de variabelenaam |
-| `POST` met een bestaande actieve postfix | 409 |
+| `POST` met een bestaande actieve postfix | 202, en `error_type: conflict` in het taakresultaat |
 | `POST` met een gemarkeerde postfix | komt terug, met zijn data |
 | `DELETE` | markeert; schema en data blijven, de variabele wordt niet meer aangeboden |
 | `DELETE?forget=true` | haalt de regel uit het bestand; de data blijft ook dan staan, maar niets legt nog vast dat het schema er is |
@@ -112,9 +118,16 @@ dat niet bestaat. Dat verschil is de reden dat deze lijst een eigen route verdie
 
 Niets in deze API laat ooit een schema in de database vallen.
 
-De controles bij het opslaan -- uniciteit, de 63-tekengrens, botsende variabelenamen --
-blijven waar ze zijn: bij het opslaan, hetzelfde punt dat de wizard raakt. Deze routes
-geven die fouten door als 422 in plaats van ze over te doen.
+**Alleen de vorm van de postfix is een synchrone 422.** Dat is een regel van het
+verzoekmodel zelf. De controles bij het opslaan -- uniciteit, de 63-tekengrens, botsende
+variabelenamen -- blijven waar ze zijn: bij het opslaan, hetzelfde punt dat de wizard
+raakt, zodat die regels één plek houden. Het gevolg is dat deze routes ze niet vóór de taak
+kunnen beantwoorden: ook een verzoek dat straks geweigerd wordt, krijgt eerst 202. De
+weigering staat in het taakresultaat, met `success: false` en een `error_type`
+(`conflict`, `not_found` of `validation_error`). Een 202 betekent hier dus "aangenomen",
+niet "aangemaakt", en dat staat ook zo in de OpenAPI-beschrijving van de route -- een agent
+die op een statuscode vertakt en het taakresultaat niet leest, is precies de aanroeper die
+deze API moet bedienen.
 
 ### De naamgeving van een postfix
 

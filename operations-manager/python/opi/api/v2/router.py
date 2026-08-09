@@ -90,6 +90,7 @@ from opi.services.component_values import validate_value_for_storage as validate
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
 from opi.services.help_text import service_help_markdown
 from opi.services.postgres_scope import get_postgres_schemas
+from opi.services.project import Project
 from opi.services.project_authorization import (
     PROJECT_EDIT_ROLES,
     get_user_role_for_project,
@@ -2180,7 +2181,12 @@ class AddDatabaseSchemaAcceptedResponse(BaseModel):
     schema_info: DatabaseSchemaInfo = Field(
         ...,
         alias="schema",
-        description="The schema as it will exist once the task completes: its full name per deployment and its variable",
+        description=(
+            "The schema as it will exist once the task succeeds: its full name per deployment and "
+            "its variable. The names follow from the postfix and the project, so they are known "
+            "the moment the request is accepted -- but acceptance is not creation: whether the "
+            "schema is added is decided by the task, so check its result."
+        ),
     )
 
     model_config = ConfigDict(populate_by_name=True)
@@ -2252,6 +2258,7 @@ def _schema_row(
     _SCHEMAS_PATH,
     tags=[_SCHEMAS_SERVICE],
     response_model=DatabaseSchemaListResponse,
+    responses={404: {"description": "No such project, or the project does not use postgresql-database"}},
     summary="List the database schemas of a project",
 )
 @validate_api_token
@@ -2275,12 +2282,23 @@ async def list_database_schemas_v2(request: Request, project_name: ProjectNamePa
     Schemas marked for deletion are listed as well, with `marked_for_deletion: true`. They
     still exist with their data; leaving them out would read as "gone".
 
+    A project that does not use `postgresql-database` has no schemas at all, not even the
+    default one, and gets a 404. An empty list would be the wrong answer here: it reads as
+    "this database has no extra schemas", while there is no database. It is also the answer
+    the write routes give for the same project, so the sub-resource says one thing.
+
     Headers:
         X-API-Key: The API key for the project (required)
     """
     project = get_project_store().get(project_name)
     if not project or not project.data:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+
+    if not Project(project.data).uses_service(_SCHEMAS_SERVICE):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Project '{project_name}' gebruikt de dienst '{_SCHEMAS_SERVICE}' niet",
+        )
 
     deployment_names = _deployment_names(project.data)
     schemas = [
@@ -2366,14 +2384,28 @@ async def _enqueue_schema_write(
         "they are exactly what a caller should not reconstruct itself. No second call, and no "
         "need to know the naming rules.\n"
         "\n"
-        "A postfix that is already in use is refused with 409 when it is active. A postfix that "
-        "is there but marked for deletion comes back instead: its data was never removed, which "
-        "is exactly what marking rather than dropping is for.\n"
+        "A postfix that is not a safe identifier, or that is longer than the maximum in the field "
+        "description below, is refused synchronously with 422: that is a rule of the request body "
+        "itself.\n"
         "\n"
-        "Refused with 422 when the postfix is not a safe identifier, when the full name would "
-        "exceed PostgreSQL's 63-character limit for any deployment, or when its variable would "
-        "collide with one the database service already exposes. Those are the checks the save "
-        "path runs; this endpoint passes them on rather than repeating them.\n"
+        "**Every other refusal arrives in the task result, not as a status code.** The postfix is "
+        "checked against the project, and the full name and its variable are checked, at save "
+        "time -- by the same chokepoint the wizard hits, so those rules have one home. This "
+        "endpoint does not re-decide them, so it cannot answer them before the task runs: a "
+        "request that will be refused still gets a 202. What comes back from "
+        "`/api/tasks/{task_id}` is `success: false` with an `error_type`:\n"
+        "\n"
+        "* `conflict` -- the postfix is already in use and active.\n"
+        "* `not_found` -- the project does not use `postgresql-database` at all.\n"
+        "* `validation_error` -- the full name would exceed PostgreSQL's 63-character limit for "
+        "some deployment, or its variable would collide with one the database service already "
+        "exposes.\n"
+        "\n"
+        "So: a 202 means the request was accepted, not that the schema was created. Read the task "
+        "result before assuming it exists.\n"
+        "\n"
+        "A postfix that is there but marked for deletion is not a conflict -- it comes back, with "
+        "its data, which is exactly what marking rather than dropping is for.\n"
         "\n"
         "Asynchronous: the response is 202 with a task id. Poll `/api/tasks/{task_id}` for the "
         "result; the write and the rollout both happen inside that task."
