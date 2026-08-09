@@ -206,6 +206,8 @@ def test_form_layer_screenshot(app_server: str, page: Page) -> None:
 # blijft.
 REDESIGNED_PAGES = [
     "account",
+    "actions",
+    "cli",
     "dashboard",
     "projects",
     "services",
