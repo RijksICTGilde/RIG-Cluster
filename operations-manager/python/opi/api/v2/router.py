@@ -2154,7 +2154,11 @@ class DatabaseSchemaListResponse(BaseModel):
 class AddDatabaseSchemaRequest(BaseModel):
     """The schema to add: a postfix and what it is for."""
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+        json_schema_extra={"example": {"postfix": "rapportage", "description": "Waar de rapportagetool bij mag"}},
+    )
 
     postfix: str = schema_postfix_field()
     description: str = schema_description_field()
