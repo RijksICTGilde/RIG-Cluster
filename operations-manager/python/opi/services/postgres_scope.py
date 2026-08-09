@@ -49,6 +49,16 @@ def project_uses_dedicated_postgres(project_data: dict[str, Any]) -> bool:
     return postgres_scope(project_data) == "project"
 
 
+def schema_is_marked(entry: dict[str, Any]) -> bool:
+    """Whether a raw schema entry is marked for deletion.
+
+    Reads the entry as it stands in the project file, where the key is the alias
+    ``marked-for-deletion``; the field name ``marked_for_deletion`` is accepted too
+    because ``SchemaEntry`` accepts both and a file may carry either.
+    """
+    return bool(entry.get("marked-for-deletion") or entry.get("marked_for_deletion"))
+
+
 def get_postgres_schemas(project_data: dict[str, Any], include_marked: bool = False) -> list[dict[str, Any]]:
     """The project-wide extra schemas ({postfix, description, ...}) for postgresql-database.
 

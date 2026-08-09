@@ -38,6 +38,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from playwright.sync_api import expect
 from tests.e2e.helpers.wizard import WizardHelper
 
 if TYPE_CHECKING:
@@ -70,10 +71,11 @@ def test_health_check_config_is_wired_through_the_wizard(app_server: str, auth_p
         "health-check not offered on the component step (was it selected on the services step?)"
     )
     hc_checkbox.check()
-    auth_page.wait_for_timeout(300)  # let the config fieldset reveal
 
-    # Its config fieldset must have rendered inline.
-    assert auth_page.locator(f'select[name="{_CFG}/scheme"]').count() == 1, "health-check scheme select did not render"
+    # Its config fieldset must have rendered inline. Waiting for the select itself, not
+    # for a fixed reveal time: the same assertion, but it survives a slow machine.
+    scheme_select = auth_page.locator(f'select[name="{_CFG}/scheme"]')
+    expect(scheme_select, "health-check scheme select did not render").to_have_count(1)
 
     # Configure the probe.
     auth_page.select_option(f'select[name="{_CFG}/scheme"]', "http")

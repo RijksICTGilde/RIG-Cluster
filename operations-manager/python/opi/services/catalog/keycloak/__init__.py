@@ -31,7 +31,7 @@ class KeycloakService(Service):
     definition = ServiceDefinition(
         name="Keycloak Authentication",
         description="Inloggen via SSO Rijk en via lokale Keycloak-accounts in een eigen realm voor dit project",
-        help_template="keycloak/help.html.j2",
+        help_template="keycloak/help.md",
         icon="sleutel",
         color="groen",
         binding=ServiceBinding.COMPONENT,

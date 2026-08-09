@@ -32,9 +32,11 @@ Run: uv run pytest tests/e2e/test_wizard_locked_service.py -m "e2e and not sandb
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import pytest
+from playwright.sync_api import expect
 from tests.e2e.helpers.wizard import WizardHelper
 
 if TYPE_CHECKING:
@@ -58,14 +60,16 @@ def test_a_locked_service_is_not_disabled_and_is_posted(app_server: str, auth_pa
 
     # Selecting the requiring service auto-selects its dependency and locks it.
     wizard.fill_services([REQUIRING])
-    auth_page.wait_for_timeout(300)
 
+    # Wait for the lock itself rather than for a fixed number of milliseconds: that is
+    # the effect being asserted, so a slow machine waits longer and a lock that never
+    # arrives still fails - on the assertion, not on an expired clock.
     card = auth_page.locator(_LOCKED_CARD).first
     checkbox = auth_page.locator(_LOCKED_CHECKBOX).first
     assert card.count() == 1, f"{LOCKED} card not rendered"
-    assert checkbox.is_checked(), f"{LOCKED} should have been auto-selected by {REQUIRING}"
-    assert "service-card--locked-checked" in (card.get_attribute("class") or ""), (
-        f"{LOCKED} should be locked while {REQUIRING} requires it"
+    expect(checkbox, f"{LOCKED} should have been auto-selected by {REQUIRING}").to_be_checked()
+    expect(card, f"{LOCKED} should be locked while {REQUIRING} requires it").to_have_class(
+        re.compile(r"\bservice-card--locked-checked\b")
     )
 
     # The point of the whole exercise: locked, but still able to speak for itself.
@@ -101,15 +105,15 @@ def test_a_locked_service_cannot_be_unticked(app_server: str, auth_page: Page) -
     wizard.click_next()
 
     wizard.fill_services([REQUIRING])
-    auth_page.wait_for_timeout(300)
 
     checkbox = auth_page.locator(_LOCKED_CHECKBOX).first
-    assert checkbox.is_checked()
+    expect(checkbox).to_be_checked()
 
     # ``force``: the checkbox is only aria-disabled, and a browser lets a real user click
     # it anyway. That is precisely the attempt this test is about.
     auth_page.on("dialog", lambda dialog: dialog.accept())
     checkbox.click(force=True)
-    auth_page.wait_for_timeout(300)
 
-    assert checkbox.is_checked(), f"{LOCKED} is required by {REQUIRING} and must stay selected"
+    # Polling instead of a fixed pause: if the revert is late the assertion waits for it,
+    # and if the revert never comes it still fails.
+    expect(checkbox, f"{LOCKED} is required by {REQUIRING} and must stay selected").to_be_checked()

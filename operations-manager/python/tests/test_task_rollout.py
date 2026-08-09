@@ -57,7 +57,7 @@ class TestRolloutFlag:
         assert processing["reason"] == SKIPPED_REASON
 
     def test_every_task_type_is_classified_exactly_once(self):
-        """Each of the fourteen v2 task types either may defer or says why it may not.
+        """Each of the fifteen v2 task types either may defer or says why it may not.
 
         A new task type that is neither is a task type whose ``rollout=false`` would be
         silently ignored, which is the thing this feature must not do.
@@ -77,6 +77,7 @@ class TestRolloutFlag:
             "add_service",
             "configure_service",
             "configure_service_values",
+            "manage_database_schemas",
         }
         classified = DEFERRABLE_TASK_TYPES | set(NON_DEFERRABLE_REASONS)
         assert classified == task_types

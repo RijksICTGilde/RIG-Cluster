@@ -199,6 +199,39 @@ def _seed_projects(projects: list[dict]) -> None:
     logger.info("Seeded %d fixture projects", len(projects))
 
 
+def _preinitialize_kubectl_without_probing() -> None:
+    """Mark the kubectl singleton as initialised so nothing ever probes a cluster.
+
+    ``KubectlConnector.__init__`` runs a BLOCKING
+    ``subprocess.run(["kubectl", "auth", "whoami"], timeout=10)`` on whatever thread
+    first constructs it -- here the uvicorn event loop that serves every request. There
+    is no cluster in a local E2E run, so on a machine that HAS a kubectl binary (a dev
+    box with kind, and the shared dev server) the probe does not fail fast: it hangs for
+    the full 10 seconds, and every request in flight waits behind it.
+
+    That is what makes this suite look order-dependent when it is not. The connector is
+    a process-wide singleton, so the stall happens exactly once per run, on whichever
+    test happens to touch a page that constructs it -- a different test in every shuffle,
+    and the neighbouring test's own 10s wait expires with it. Measured: run with seed 404
+    lost ``test_saves_description_change`` (its step POST timed out at exactly 10s, with
+    ``Error testing kubectl connection ... timed out after 10 seconds`` alongside it) and
+    then ``test_detail_page_renders``, which reads the project that test no longer got to
+    restore. Three other seeds, where the probe never ran, were green.
+
+    Pre-building the singleton here skips the probe and the retry task it schedules.
+    ``isConnected`` stays False, which is what the probe concluded anyway -- so no route
+    behaves differently, there is just no 10-second hole in the event loop.
+    """
+    from opi.connectors.kubectl import KubectlConnector
+
+    connector = KubectlConnector.__new__(KubectlConnector)
+    connector.env = os.environ.copy()
+    connector._initialized = True
+    KubectlConnector._instance = connector
+    KubectlConnector.isConnected = False
+    KubectlConnector._retry_task = None
+
+
 def create_test_app():
     """Create the FastAPI app with mocked externals and seeded test data.
 
@@ -252,6 +285,8 @@ def create_test_app():
                 ),
             ),
         ):
+            _preinitialize_kubectl_without_probing()
+
             # Mark all readiness services as ready
             import opi.core.readiness as readiness_module
 

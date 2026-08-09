@@ -35,7 +35,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
     definition = ServiceDefinition(
         name="PostgreSQL Database",
         description="Database service voor applicaties",
-        help_template="postgresql_database/help.html.j2",
+        help_template="postgresql_database/help.md",
         icon="database",
         color="donkerblauw",
         binding=ServiceBinding.DEPLOYMENT,
