@@ -150,12 +150,19 @@ cmd_status() {
     fi
     echo "Aan (pid ${pid}) naar ${SERVER}."
     # Een levende poort zegt nog niet dat de ingress antwoordt, dus even echt vragen.
+    #
+    # Met --resolve en niet met -H "Host:". Een Host-kop komt pas ná de TLS-handshake, en
+    # die handshake gebruikt de naam uit de URL als SNI. Vroeg dit dus https://127.0.0.1
+    # met een Host-kop, dan was de SNI het IP, wees niemand aan de andere kant een site
+    # aan en faalde de verbinding -- waarna dit "antwoordt niet" meldde terwijl de forward
+    # gewoon stond en alle domeinen het deden.
+    local host="argo.sandbox.rijksapp.dev"
     local code
     code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 \
-        -H "Host: argo.sandbox.rijksapp.dev" https://127.0.0.1/ 2>/dev/null) || code=""
+        --resolve "${host}:443:127.0.0.1" "https://${host}/" 2>/dev/null) || code=""
     case "$code" in
-        "" | 000) echo "  https://127.0.0.1 antwoordt niet; staat de forward echt en draait de ingress?" ;;
-        *) echo "  https://127.0.0.1 met Host argo.sandbox.rijksapp.dev -> ${code}" ;;
+        "" | 000) echo "  ${host} antwoordt niet; staat de forward echt en draait de ingress?" ;;
+        *) echo "  ${host} -> ${code}" ;;
     esac
 }
 

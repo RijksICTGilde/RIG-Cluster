@@ -3128,6 +3128,22 @@ tasks:
     cmds:
       - while true; do uv run python scripts/write_version_file.py; sleep 5; done
 
+  sandbox:forward:
+    desc: "Stuur lokaal 80/443 door naar de sandbox op de server (on|off|status)"
+    summary: |
+      Alle sandboxdomeinen resolven hier al naar 127.0.0.1, dus deze forward maakt ze in
+      een klap bruikbaar tegen de sandbox op de server in plaats van een lokaal cluster.
+
+        task sandbox:forward -- on       aanzetten (vraagt sudo, 80/443 zijn root-poorten)
+        task sandbox:forward -- status   staat hij aan, en antwoordt hij
+        task sandbox:forward -- off      uitzetten
+
+      Draait je LOKALE kind-sandbox, dan houdt die 80/443 al bezet en kan de forward niet
+      binden; het script meldt dat in plaats van half te starten.
+    cmds:
+      - scripts/sandbox-forward.sh {{.CLI_ARGS | default "status"}}
+    silent: true
+
   sandbox:skaffold-dev:
     desc: "Start Skaffold with hot-reload for sandbox development"
     cmds:
