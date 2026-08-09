@@ -1,0 +1,93 @@
+{#
+  De voortgang van de wizardtaak IN de gedeelde dialoog, zoals de poll hem teruggeeft.
+
+  Een OVERNAME van wizard/modal_wizard_progress_fragment.html.j2: dezelfde drie standen
+  (loopt / klaar / mislukt), dezelfde teksten, dezelfde takenlijst, dezelfde twee knoppen
+  per eindstand met dezelfde aanroepen.
+
+  DE ID BLIJFT. #modal-progress-container is het doelwit van de poll EN van hx-target-404;
+  hij vervangt zichzelf met outerHTML, dus zonder die id stopt de voortgang na een slag.
+
+  DE TAKENLIJST TOONT GEEN FOUTREGELS. Het origineel roept progress_task_list(tasks,
+  show_errors=False) aan: in de dialoog staat de fout al in de melding erboven, en de
+  regels eronder zouden hem verdubbelen. Dat blijft zo.
+
+  Rendert EEN keer. Er mag geen process_components overheen: dit is een sjabloonbestand,
+  dus de componenttags zijn al bij het compileren vervangen. Een tweede slag zou de
+  gerenderde HTML nog eens als Jinja lezen, en een stapnaam of subtaaknaam met
+  {{ '{{ ... }}' }} erin wordt dan uitgevoerd in plaats van getoond.
+
+  De knoppen krijgen hun aanroep via :attrs; <c-button> laat geen onclick toe.
+  window.open() blijft window.open(): een href met target="_blank" gaat naar dezelfde
+  plek, maar de meetlat kijkt naar welke JS-functie een knop aanroept en dat hoort
+  hetzelfde te blijven.
+
+  De statusiconen: NLDD heeft geen kruis en geen klok; exclamation-triangle en timer zijn
+  de tegenhangers die het dichtst in de buurt komen en die ECHT bestaan in de
+  woordenschat. Zie de KNOWN_GAPS in tests/test_lotc_icon_mapping.py.
+#}
+{% macro taak_icoon(status) %}{{ 'check-mark-circle' if status == 'completed' else 'exclamation-triangle' if status == 'failed' else 'chevron-right' if status == 'running' else 'timer' }}{% endmacro %}
+<div id="modal-progress-container"
+     {% if status not in ("completed", "failed") %}
+     hx-get="/projects/{{ project_name }}/modal-wizard/progress/{{ task_id }}"
+     hx-trigger="every 2s"
+     hx-target="#modal-progress-container"
+     hx-swap="outerHTML"
+     hx-target-404="#modal-progress-container"
+     {% endif %}>
+
+    <c-stack gap="md">
+        <c-progress-bar
+            text="Voortgang"
+            :value="progress"
+            max="100"
+            value-display="true"
+            color="{{ 'error' if status == 'failed' else 'success' if status == 'completed' else 'info' }}"
+            accessible-label="Voortgang: {{ progress }} procent" />
+
+        {% if status == "completed" %}
+            <c-paragraph>Wijzigingen succesvol verwerkt!</c-paragraph>
+        {% elif status == "failed" %}
+            {% include "bg/_component-failures.html.j2" %}
+        {% else %}
+            <c-paragraph>{{ current_step }}</c-paragraph>
+        {% endif %}
+
+        {% if tasks %}
+            <c-stack gap="xs">
+                {% for task in tasks %}
+                    <c-cluster gap="sm" align="center">
+                        <c-icon size="sm" icon="{{ taak_icoon(task.status) | trim }}" />
+                        <c-paragraph size="sm">{{ task.name }}</c-paragraph>
+                    </c-cluster>
+                    {% for subtask in task.subtasks or [] %}
+                        <c-cluster gap="sm" align="center">
+                            <c-icon size="sm" icon="{{ taak_icoon(subtask.status) | trim }}" />
+                            <c-paragraph size="sm">{{ subtask.name }}</c-paragraph>
+                        </c-cluster>
+                    {% endfor %}
+                {% endfor %}
+            </c-stack>
+        {% endif %}
+
+        {% if status == "completed" %}
+            <div class="edit-progress-actions">
+                {% set voortgang_js %}window.open('/projects/progress/{{ task_id }}', '_blank'){% endset %}
+                {% set ok_js %}closeEditModalAndReload(){% endset %}
+                <c-action-group align="end">
+                    <c-button type="tertiary" label="Bekijk volledige voortgang" :attrs="{'onclick': voortgang_js}" />
+                    <c-button type="primary" label="Ok" :attrs="{'onclick': ok_js}" />
+                </c-action-group>
+            </div>
+        {% elif status == "failed" %}
+            <div class="edit-progress-actions">
+                {% set details_js %}window.open('/projects/progress/{{ task_id }}', '_blank'){% endset %}
+                {% set sluiten_js %}closeEditModalAndReload(){% endset %}
+                <c-action-group align="end">
+                    <c-button type="tertiary" label="Bekijk details" :attrs="{'onclick': details_js}" />
+                    <c-button type="primary" label="Sluiten" :attrs="{'onclick': sluiten_js}" />
+                </c-action-group>
+            </div>
+        {% endif %}
+    </c-stack>
+</div>

@@ -1,0 +1,33 @@
+{#
+  Het eerste beeld nadat de wizard in de dialoog is bevestigd: de voortgang begint.
+
+  Een OVERNAME van wizard/modal_wizard_progress.html.j2. Dit blokje doet maar een ding:
+  het zet de htmx-poll aan die zichzelf elke twee seconden vervangt door het antwoord van
+  de voortgangsroute. Dezelfde URL, dezelfde trigger, dezelfde id.
+
+  DE ID'S EN DE KLASSE BLIJVEN. #modal-progress-container is het doelwit van de poll, en
+  ``edit-progress-view`` is wat static/js/edit_modal.js gebruikt om de dialoog dicht te
+  houden zolang er een taak loopt: geen Escape, geen klik ernaast. Weglaten zou betekenen
+  dat je een lopende verwerking kunt wegklikken.
+
+  Verwacht: task_id, project_name.
+#}
+<div class="edit-progress-view">
+    <div id="modal-progress-container"
+         hx-get="/projects/{{ project_name }}/modal-wizard/progress/{{ task_id }}"
+         hx-trigger="load, every 2s"
+         hx-target="#modal-progress-container"
+         hx-swap="outerHTML"
+         hx-target-404="#modal-progress-container">
+        <c-stack gap="md">
+            <c-progress-bar
+                text="Voortgang"
+                :value="0"
+                max="100"
+                value-display="true"
+                color="info"
+                accessible-label="Voortgang: 0 procent" />
+            <c-paragraph>Verwerking gestart...</c-paragraph>
+        </c-stack>
+    </div>
+</div>

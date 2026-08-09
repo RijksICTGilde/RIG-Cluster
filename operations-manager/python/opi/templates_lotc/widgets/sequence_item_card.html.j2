@@ -19,12 +19,10 @@
        @-attribuut als kale tekst, dus {{ ... }} komt er letterlijk uit en de knop doet
        stilletjes niets. Via de :attrs-spread wordt het wel een expressie, en geescapet. #}
         {% set verwijder_js = "sequenceRemove('" ~ field.path ~ "', " ~ index|string ~ ")" %}
-        <c-button type="warning-subtle" size="sm"
+        <c-button label="{{ remove_label|e }}" type="warning-subtle" size="sm"
                   show-icon="before" icon="verwijderen"
                   :attrs="{'onclick': verwijder_js}"
-                  :disabled="remove_disabled">
-            {{ remove_label|e }}
-        </c-button>
+                  :disabled="remove_disabled" />
     </div>
     {% endif %}
     <div class="rvo-sequence__item-content">

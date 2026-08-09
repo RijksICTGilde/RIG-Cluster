@@ -9,15 +9,30 @@
   en zonder dit veld zou opslaan de aangevinkte stand wissen.
 #}
 {% from "widgets/_macros.html.j2" import combined_helper, render_examples %}
-<c-checkbox-field
-    id="{{ field.path|e }}"
-    name="{{ field.path|e }}"
-    label="{{ field.label|e }}"
-    :checked="field.value"
-    :help="combined_helper(field)|trim or none"
-    :error="(field.errors[0] if field.errors else none)"
-    :attrs="dict(field_attrs(field), **{'disabled': 'disabled' if field.readonly else none})"
-/>
+{# Een gewoon <input> met zijn label ernaast.
+
+   c-checkbox-field wikkelt een <nldd-checkbox-field>, en die zet het invoerveld in de
+   SCHADUWBOOM. Formulierserialisatie en de JavaScript van de wizard kijken daar niet, dus
+   aanvinken kwam niet aan. Gemeten op de Keycloak-stap: "Toegang beperken" liet zich wel
+   aanklikken maar veranderde niets aan wat er verstuurd werd.
+
+   De opmaak staat in static/css/lotc-app.css. Zodra het componentensysteem een
+   native-stand voor het aanvinkvakje heeft - de keuzelijst heeft die al - hoort dit weer
+   een component te worden. #}
+<label class="lotc-checkbox-regel">
+    <input
+        type="checkbox"
+        id="{{ field.path|e }}"
+        name="{{ field.path|e }}"
+        {% if field.value %}checked{% endif %}
+        {% if field.readonly %}disabled{% endif %}
+        :attrs="field_attrs(field)"
+    />
+    <span>{{ field.label|e }}</span>
+</label>
+{% set hulp = combined_helper(field)|trim %}
+{% if hulp %}<c-paragraph size="sm">{{ hulp }}</c-paragraph>{% endif %}
+{% if field.errors %}<c-alert type="error" heading="{{ field.errors[0] }}" />{% endif %}
 {% if field.readonly and field.value %}
 <input type="hidden" name="{{ field.path|e }}" value="true" />
 {% endif %}

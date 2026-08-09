@@ -3,10 +3,15 @@
 {% set durations = [(60, "1 uur"), (120, "2 uur"), (360, "6 uur"), (720, "12 uur"), (1440, "24 uur")] %}
 <div class="metrics-toolbar">
     {% for value, label in durations %}
+    {# Het doel is het blok van DEZE deployment: metrics-content-<naam>, zoals
+       metrics_scraper/section-deployment.html.j2 het neerzet. Hier stond
+       #metrics-content, en dat id bestaat nergens - de tijdvakknoppen deden dus niets.
+       Dezelfde fout stond in de hertekende versie en is daar op dezelfde manier
+       gerepareerd. #}
     <c-button size="xs"
               kind="{% if value == active_duration %}primary{% else %}secondary{% endif %}"
               hx-get="/projects/details/{{ project_name }}/metrics/{{ deployment.name }}?duration={{ value }}"
-              hx-target="#metrics-content"
+              hx-target="#metrics-content-{{ deployment.name }}"
               hx-swap="innerHTML">{{ label }}</c-button>
     {% endfor %}
 </div>
