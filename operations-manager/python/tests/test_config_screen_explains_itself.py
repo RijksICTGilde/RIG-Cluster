@@ -21,7 +21,7 @@ from opi.services.services import ServiceAdapter
 
 _STEP = pathlib.Path(opi.__file__).parent / "templates/wizard/modal_wizard_step.html.j2"
 # A help_template resolves against the template root, the service catalog (a service's
-# own help.html.j2 lives in its package, RC-36), or templates/help for the few
+# own help.md lives in its package, RC-36), or templates/help for the few
 # explanations that belong to no single service.
 _HELP_ROOTS = (
     pathlib.Path(opi.__file__).parent / "templates",
