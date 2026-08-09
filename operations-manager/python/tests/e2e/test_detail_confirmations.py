@@ -15,6 +15,7 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+from tests.e2e.helpers.tabs import open_tab
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page, Request, Route
@@ -62,7 +63,7 @@ def _open_confirmation(page: Page, app_server: str, trigger: str, *, tab: str | 
     page.goto(f"{app_server}{DETAIL_URL}")
     page.wait_for_load_state("networkidle")
     if tab:
-        page.evaluate(f"switchTab('{tab}')")
+        open_tab(page, tab)
         page.locator(f"#tab-{tab}").wait_for(state="visible", timeout=5000)
 
     page.locator(f"button:has-text('{trigger}')").first.click()
@@ -120,7 +121,7 @@ def test_deployment_delete_posts_the_right_deployment(app_server: str, auth_page
     """The deployment list's delete confirmation carries that deployment's name."""
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
-    auth_page.evaluate("switchTab('deployments')")
+    open_tab(auth_page, "deployments")
     auth_page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
 
     card = auth_page.locator("#tab-deployments .deployment-card").first
