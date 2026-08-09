@@ -81,12 +81,14 @@ from opi.services.catalog.actions import (
 from opi.services.catalog.base import ConfigLayer, ConfigRole, ValueStorage, config_path
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.catalog.postgresql_database.config_model import schema_description_field, schema_postfix_field
+from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.component_values import VALUES_LAYERS, ComponentValuesError, ValuesOperation
 from opi.services.component_values import locate as locate_values_node
 from opi.services.component_values import validate_key as validate_values_key
 from opi.services.component_values import validate_value as validate_values_value
 from opi.services.component_values import validate_value_for_storage as validate_values_value_for_storage
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors
+from opi.services.help_text import service_help_markdown
 from opi.services.postgres_scope import get_postgres_schemas
 from opi.services.project_authorization import (
     PROJECT_EDIT_ROLES,
@@ -100,6 +102,7 @@ from opi.services.services_enums import CleanupStrategy, ServiceBinding, Service
 from opi.utils.naming import (
     HostnameFormat,
     generate_argocd_application_name,
+    generate_database_schema,
     generate_extra_database_schema,
     generate_public_url,
     generate_schema_variable_name,
@@ -1635,6 +1638,15 @@ class ServiceDescription(BaseModel):
         ..., description="Whether a component ticks this service or the whole deployment gets it"
     )
     hidden: bool = Field(..., description="Whether the service is kept out of the service picker")
+    explanation: str = Field(
+        "",
+        description=(
+            "The full explanation of the service, in Dutch, as markdown: what it is, when you "
+            "would use it, what it sets up and what to watch out for. This is the same text the "
+            "portal shows in its help popup -- one source, two renderings -- so it can never say "
+            "something the portal does not."
+        ),
+    )
     configurable: bool = Field(..., description="Whether the service accepts user config at any layer")
     layers: list[ServiceLayerInfo] = Field(
         default_factory=list,
@@ -1739,6 +1751,7 @@ async def describe_service_v2(service_name: str) -> ServiceDescription:
         kind=definition.kind,
         binding=definition.binding,
         hidden=definition.hidden,
+        explanation=service_help_markdown(service_type),
         configurable=bool(_supported_targets(service)),
         layers=[_layer_info(service, service_type, layer) for layer in layers],
         config_schema_version=service.config_schema_version,
@@ -2064,34 +2077,57 @@ _SCHEMAS_PATH = f"/projects/{{project_name}}/services/{_SCHEMAS_SERVICE}/schemas
 
 
 class DatabaseSchemaDeployment(BaseModel):
-    """The name one extra schema has in one deployment's database."""
+    """The name one schema has in one deployment's database."""
 
     deployment: str = Field(..., description="Name of the deployment")
     schema_name: str | None = Field(
         None,
         description=(
-            "The full schema name in that deployment's database, `{project}_{deployment}_{postfix}`. "
-            "Null when that name would exceed PostgreSQL's 63-character limit, which is refused when "
-            "a schema is added but can be reached by adding a deployment with a long name afterwards."
+            "The full schema name in that deployment's database: `{project}_{deployment}` for the "
+            "default schema, `{project}_{deployment}_{postfix}` for an extra one. Computed with the "
+            "platform's own naming functions rather than by pasting the parts together, because the "
+            "two behave differently at PostgreSQL's 63-character limit: the default is silently "
+            "truncated, an extra schema fails. Null when the name for an extra schema would not fit, "
+            "which is refused when it is added but can be reached by adding a deployment with a long "
+            "name afterwards."
         ),
     )
 
 
 class DatabaseSchemaInfo(BaseModel):
-    """One extra schema, with the facts a caller cannot work out for itself."""
+    """One schema of the project's database, with the facts a caller cannot work out itself."""
 
-    postfix: str = Field(..., description="The short name as it stands in the project file")
+    postfix: str = Field(
+        ...,
+        description="The short name as it stands in the project file; empty for the default schema",
+    )
+    is_default: bool = Field(
+        ...,
+        description=(
+            "Whether this is the schema every database gets. It is not in the project file at all -- "
+            "it follows from the project and deployment name -- so it cannot be removed and does not "
+            "have to be added. It is the schema most callers mean when they say 'the schema'."
+        ),
+    )
     description: str = Field("", description="What this schema is for, from the project file")
     marked_for_deletion: bool = Field(
         ...,
         description=(
             "Whether the schema is on its way out: it and its data are still there, the platform "
-            "no longer manages it and its variable is no longer offered to components."
+            "no longer manages it and its variable is no longer offered to components. Always false "
+            "for the default schema."
         ),
     )
     variable_name: str = Field(
         ...,
-        description="The environment variable that carries this schema's name, `DATABASE_SCHEMA_{POSTFIX}`",
+        description=(
+            "The environment variable that carries this schema's name: `DATABASE_SCHEMA` for the "
+            "default, `DATABASE_SCHEMA_{POSTFIX}` for an extra one."
+        ),
+    )
+    aliases: list[str] = Field(
+        default_factory=list,
+        description="Extra names the same value is exposed under, e.g. the `APP_` prefixed one",
     )
     deployments: list[DatabaseSchemaDeployment] = Field(
         default_factory=list,
@@ -2103,11 +2139,15 @@ class DatabaseSchemaInfo(BaseModel):
 
 
 class DatabaseSchemaListResponse(BaseModel):
-    """Every extra schema of a project, including the ones marked for deletion."""
+    """Every schema of a project's database: the default one first, then the extra ones."""
 
     project: str = Field(..., description="The project these schemas belong to")
     schemas: list[DatabaseSchemaInfo] = Field(
-        default_factory=list, description="The schemas, in the order they stand in the project file"
+        default_factory=list,
+        description=(
+            "The default schema first, then the extra ones in the order they stand in the project "
+            "file, including the ones marked for deletion."
+        ),
     )
 
 
@@ -2120,29 +2160,116 @@ class AddDatabaseSchemaRequest(BaseModel):
     description: str = schema_description_field()
 
 
+class AddDatabaseSchemaAcceptedResponse(BaseModel):
+    """202 Accepted for adding a schema, with the names the schema will carry.
+
+    The names follow from the postfix and the project's deployments, so they are known
+    the moment the request is accepted. Returning them here saves a caller a second call
+    and, more to the point, saves it from reconstructing them itself -- which is exactly
+    what it cannot do safely.
+    """
+
+    status: str = Field(default="accepted", description="Always 'accepted' for async operations")
+    task_id: str = Field(..., description="Unique task identifier (UUID)")
+    task_type: str = Field(default="manage_database_schemas", description="Type of operation being performed")
+    poll_url: str = Field(..., description="URL to poll for task status, e.g. /api/tasks/{task_id}")
+    schema_info: DatabaseSchemaInfo = Field(
+        ...,
+        alias="schema",
+        description="The schema as it will exist once the task completes: its full name per deployment and its variable",
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 _SCHEMAS_RESPONSES: dict[int | str, dict[str, Any]] = {
     200: {"model": TaskResponse[ManageDatabaseSchemasResult], "description": "Task completed (when polled)"},
     202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
 }
+
+#: What the default schema is, for the one row in the list that has no project-file entry
+#: to take a description from. A label for a derived row, not documentation of behaviour.
+_DEFAULT_SCHEMA_DESCRIPTION = (
+    "Het standaardschema van dit project. Elke database krijgt er een; hij is niet te verwijderen."
+)
+
+
+def _deployment_names(project_data: dict[str, Any]) -> list[str]:
+    return [name for deployment in (project_data.get("deployments") or []) if (name := deployment.get("name"))]
+
+
+def _schema_row(
+    project_name: str,
+    deployment_names: list[str],
+    *,
+    postfix: str,
+    description: str,
+    marked: bool,
+) -> DatabaseSchemaInfo:
+    """One row of the schema list, with every derived name computed rather than spelled out.
+
+    ``postfix`` empty means the default schema. Both names go through
+    ``opi/utils/naming.py``: the two kinds differ at the 63-character limit (the default is
+    truncated, an extra schema raises), so a caller that pastes project and deployment
+    together gets a schema name that does not exist for exactly the long names where it
+    matters. That difference is the reason this list exists.
+    """
+    deployments = []
+    for deployment_name in deployment_names:
+        if postfix:
+            try:
+                schema_name = generate_extra_database_schema(project_name, deployment_name, postfix)
+            except ValueError:
+                schema_name = None
+        else:
+            schema_name = generate_database_schema(project_name, deployment_name)
+        deployments.append(DatabaseSchemaDeployment(deployment=deployment_name, schema_name=schema_name))
+
+    if postfix:
+        variable_name = generate_schema_variable_name(postfix)
+        aliases = [f"APP_{variable_name}"]
+    else:
+        # The default schema's variable is declared by the service, like every other one.
+        variable_name = DatabaseVariables.SCHEMA.value.name
+        aliases = list(DatabaseVariables.SCHEMA.value.aliases)
+
+    return DatabaseSchemaInfo(
+        postfix=postfix,
+        is_default=not postfix,
+        description=description,
+        marked_for_deletion=marked,
+        variable_name=variable_name,
+        aliases=aliases,
+        deployments=deployments,
+    )
 
 
 @v2_router.get(
     _SCHEMAS_PATH,
     tags=[_SCHEMAS_SERVICE],
     response_model=DatabaseSchemaListResponse,
-    summary="List the extra database schemas of a project",
+    summary="List the database schemas of a project",
 )
 @validate_api_token
 async def list_database_schemas_v2(request: Request, project_name: ProjectNamePath) -> DatabaseSchemaListResponse:
-    """The project's extra database schemas, with the names that follow from them.
+    """The project's database schemas, with the names that follow from them.
 
-    Not the same answer as reading the service config: this also gives the full schema
-    name per deployment and the environment variable each schema produces. Those follow
-    from naming rules a caller cannot apply without knowing them, and they are the whole
-    reason to ask -- the postfix on its own is already in the config.
+    **The default schema comes first.** Every database gets one, and it is the schema most
+    people mean when they say "the schema" -- but it is nowhere in the project file: it is
+    derived from the project and deployment name and offered as `DATABASE_SCHEMA`. A list
+    that returned only the `schemas:` block would leave out the very thing a caller is
+    most likely looking for. It carries an empty postfix, `is_default: true`, and it cannot
+    be removed.
 
-    Schemas marked for deletion are listed as well, with `marked_for_deletion: true`.
-    They still exist with their data; leaving them out would read as "gone".
+    Not the same answer as reading the service config either way: this gives the full
+    schema name per deployment and the environment variable each schema produces, computed
+    with the platform's own naming functions. That is what a caller cannot do for itself,
+    and it is not a formula worth retelling: the default is silently truncated at 63
+    characters while an extra schema fails there, so a hand-built name is wrong exactly
+    when the names are long.
+
+    Schemas marked for deletion are listed as well, with `marked_for_deletion: true`. They
+    still exist with their data; leaving them out would read as "gone".
 
     Headers:
         X-API-Key: The API key for the project (required)
@@ -2151,30 +2278,26 @@ async def list_database_schemas_v2(request: Request, project_name: ProjectNamePa
     if not project or not project.data:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 
-    entries = get_postgres_schemas(project.data, include_marked=True)
-    deployment_names = [
-        name for deployment in (project.data.get("deployments") or []) if (name := deployment.get("name"))
-    ]
-
-    schemas = []
-    for entry in entries:
-        postfix = entry["postfix"]
-        deployments = []
-        for deployment_name in deployment_names:
-            try:
-                schema_name = generate_extra_database_schema(project_name, deployment_name, postfix)
-            except ValueError:
-                schema_name = None
-            deployments.append(DatabaseSchemaDeployment(deployment=deployment_name, schema_name=schema_name))
-        schemas.append(
-            DatabaseSchemaInfo(
-                postfix=postfix,
-                description=entry.get("description", ""),
-                marked_for_deletion=bool(entry.get("marked_for_deletion")),
-                variable_name=generate_schema_variable_name(postfix),
-                deployments=deployments,
-            )
+    deployment_names = _deployment_names(project.data)
+    schemas = [
+        _schema_row(
+            project_name,
+            deployment_names,
+            postfix="",
+            description=_DEFAULT_SCHEMA_DESCRIPTION,
+            marked=False,
         )
+    ]
+    schemas += [
+        _schema_row(
+            project_name,
+            deployment_names,
+            postfix=entry["postfix"],
+            description=entry.get("description", ""),
+            marked=bool(entry.get("marked_for_deletion")),
+        )
+        for entry in get_postgres_schemas(project.data, include_marked=True)
+    ]
     return DatabaseSchemaListResponse(project=project_name, schemas=schemas)
 
 
@@ -2187,8 +2310,11 @@ async def _enqueue_schema_write(
     description: str = "",
     forget: bool = False,
     rollout: bool = True,
-) -> JSONResponse:
+) -> tuple[dict, dict[str, Any]]:
     """Check what can be checked now, then enqueue the schema write.
+
+    Returns the created task and the project data, so the caller can answer with the names
+    the schema will carry without reading the project a second time.
 
     Only the project itself is checked here. Whether the postfix is free, whether the
     full name fits and whether its variable collides with one the database service
@@ -2215,21 +2341,26 @@ async def _enqueue_schema_write(
             "rollout": rollout,
         },
     )
-    return _accepted_response(task, "manage_database_schemas")
+    return task, project.data
 
 
 @v2_router.post(
     _SCHEMAS_PATH,
     tags=[_SCHEMAS_SERVICE],
-    responses=_SCHEMAS_RESPONSES,
+    responses={
+        **_SCHEMAS_RESPONSES,
+        202: {"model": AddDatabaseSchemaAcceptedResponse, "description": "Task accepted"},
+    },
     summary="Add an extra database schema",
     description=(
         "Add one extra schema to the project's database, without resending the rest of the "
-        "service config.\n"
+        "service config. A real action, not a detour through the config route.\n"
         "\n"
-        "The schema is created in every deployment's database as "
-        "`{project}_{deployment}_{postfix}` and its name is offered to components as "
-        "`DATABASE_SCHEMA_{POSTFIX}`.\n"
+        "The 202 carries the schema as it will exist: **its full name in every deployment's "
+        "database and the environment variable it is offered under**. Both follow from the "
+        "postfix and the project, so they are known the moment the request is accepted -- and "
+        "they are exactly what a caller should not reconstruct itself. No second call, and no "
+        "need to know the naming rules.\n"
         "\n"
         "A postfix that is already in use is refused with 409 when it is active. A postfix that "
         "is there but marked for deletion comes back instead: its data was never removed, which "
@@ -2251,18 +2382,35 @@ async def add_database_schema_v2(
     body: AddDatabaseSchemaRequest,
     rollout: RolloutQuery = True,
 ) -> JSONResponse:
-    """Add one extra database schema.
+    """Add one extra database schema, and answer with the names it will carry.
 
     Headers:
         X-API-Key: The API key for the project (required)
     """
-    return await _enqueue_schema_write(
+    task, project_data = await _enqueue_schema_write(
         request,
         project_name,
         "add",
         body.postfix,
         description=body.description,
         rollout=rollout,
+    )
+    added = _schema_row(
+        project_name,
+        _deployment_names(project_data),
+        postfix=body.postfix,
+        description=body.description,
+        marked=False,
+    )
+    task_id = str(task["task_id"])
+    return JSONResponse(
+        content=AddDatabaseSchemaAcceptedResponse(
+            task_id=task_id,
+            poll_url=f"/api/tasks/{task_id}",
+            schema=added,
+        ).model_dump(by_alias=True),
+        status_code=202,
+        headers={"Location": f"/api/tasks/{task_id}"},
     )
 
 
@@ -2291,6 +2439,9 @@ async def add_database_schema_v2(
         "Removing a schema that is already marked changes nothing: no commit, no rollout, and "
         "still a success (`changed: false` in the task result).\n"
         "\n"
+        "The default schema of the database has no postfix and is not in the project file, so it "
+        "cannot be addressed here and cannot be removed.\n"
+        "\n"
         "Asynchronous: the response is 202 with a task id. Poll `/api/tasks/{task_id}` for the "
         "result."
     ),
@@ -2317,7 +2468,7 @@ async def remove_database_schema_v2(
     Headers:
         X-API-Key: The API key for the project (required)
     """
-    return await _enqueue_schema_write(
+    task, _ = await _enqueue_schema_write(
         request,
         project_name,
         "remove",
@@ -2325,6 +2476,7 @@ async def remove_database_schema_v2(
         forget=forget,
         rollout=rollout,
     )
+    return _accepted_response(task, "manage_database_schemas")
 
 
 # --- declared per-service actions (RC-38) ------------------------------------

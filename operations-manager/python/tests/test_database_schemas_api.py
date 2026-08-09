@@ -23,13 +23,16 @@ them.
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.api.v2.router import v2_router
 from opi.core.project_schema import ProjectIntegrityError
 from opi.services.postgres_scope import get_postgres_schemas, schema_is_marked
 from opi.services.project import Project
 from opi.services.services_enums import ServiceType
+from opi.utils.naming import generate_database_schema
 from pydantic import ValidationError
 
 _SERVICE = ServiceType.POSTGRESQL_DATABASE.value
@@ -259,6 +262,25 @@ def _list(project_data: dict):
         return asyncio.run(endpoint(MagicMock(), "demo"))
 
 
+def test_the_list_begins_with_the_default_schema() -> None:
+    """The schema most callers mean, and the one a naive list leaves out.
+
+    It is nowhere in the project file -- it follows from the project and deployment name --
+    so a list built from the `schemas:` block alone omits exactly the entry a caller is
+    most likely looking for.
+    """
+    listed = _list(_project([{"postfix": "rapportage"}]))
+
+    default = listed.schemas[0]
+    assert default.is_default is True
+    assert default.postfix == ""
+    assert default.variable_name == "DATABASE_SCHEMA"
+    assert default.aliases == ["APP_DATABASE_SCHEMA"]
+    assert default.deployments[0].schema_name == "demo_deployment_1"
+    assert default.marked_for_deletion is False
+    assert default.description, "the default row says what it is"
+
+
 def test_the_list_gives_the_full_name_per_deployment_and_the_variable() -> None:
     """The reason this is a route instead of a pointer at the config.
 
@@ -269,23 +291,65 @@ def test_the_list_gives_the_full_name_per_deployment_and_the_variable() -> None:
     listed = _list(_project([{"postfix": "rapportage"}]))
 
     assert listed.project == "demo"
-    entry = listed.schemas[0]
+    entry = listed.schemas[1]
     assert entry.postfix == "rapportage"
+    assert entry.is_default is False
     assert entry.variable_name == "DATABASE_SCHEMA_RAPPORTAGE"
+    assert entry.aliases == ["APP_DATABASE_SCHEMA_RAPPORTAGE"]
     assert [d.deployment for d in entry.deployments] == ["deployment-1"]
     assert entry.deployments[0].schema_name == "demo_deployment_1_rapportage"
+
+
+def test_the_names_are_computed_by_the_platform_not_pasted_together() -> None:
+    """The two kinds part company at PostgreSQL's 63-character limit, and that is the point.
+
+    A caller that joins project, deployment and postfix with underscores gets a name that
+    does not exist for exactly the long names where it matters: the default is silently
+    truncated there, an extra schema does not get created at all.
+    """
+    long_deployment = "d" * 60
+    data = _project([{"postfix": "rapportage"}])
+    data["deployments"] = [{"name": long_deployment, "cluster": "local", "namespace": "demo", "components": []}]
+
+    listed = _list(data)
+
+    default_name = listed.schemas[0].deployments[0].schema_name
+    assert default_name == generate_database_schema("demo", long_deployment)
+    assert len(default_name) == 63, "the default is truncated rather than refused"
+    assert listed.schemas[1].deployments[0].schema_name is None, (
+        "an extra schema that does not fit has no name, and saying one anyway would be a lie"
+    )
 
 
 def test_the_list_shows_a_marked_schema_as_marked_instead_of_hiding_it() -> None:
     """Leaving it out would read as "gone", and it is not gone: the data is still there."""
     listed = _list(_project([{"postfix": "rapportage", "marked-for-deletion": True}]))
 
-    assert [entry.postfix for entry in listed.schemas] == ["rapportage"]
-    assert listed.schemas[0].marked_for_deletion is True
+    assert [entry.postfix for entry in listed.schemas] == ["", "rapportage"]
+    assert listed.schemas[1].marked_for_deletion is True
 
 
-def test_a_project_without_schemas_lists_none() -> None:
-    assert _list(_project()).schemas == []
+def test_a_project_without_extra_schemas_still_lists_the_default() -> None:
+    listed = _list(_project())
+
+    assert len(listed.schemas) == 1
+    assert listed.schemas[0].is_default is True
+
+
+def test_the_default_schema_cannot_be_addressed_for_removal() -> None:
+    """It has no postfix, so there is no path that names it -- and none that removes it."""
+    routes = {
+        route.path
+        for route in v2_router.routes
+        if "schemas" in getattr(route, "path", "") and "DELETE" in getattr(route, "methods", set())
+    }
+    assert routes == {"/api/v2/projects/{project_name}/services/postgresql-database/schemas/{postfix}"}
+
+    manager, save = _wire(_project([{"postfix": "rapportage"}]))
+    result = _run(manager, "remove", "")
+
+    assert not result["success"], "an empty postfix addresses nothing"
+    save.assert_not_awaited()
 
 
 def test_the_request_model_carries_the_same_postfix_rule_as_the_stored_model() -> None:
@@ -300,3 +364,34 @@ def test_the_request_model_carries_the_same_postfix_rule_as_the_stored_model() -
         AddDatabaseSchemaRequest(postfix="Rapportage")
     with pytest.raises(ValidationError, match="postfix"):
         AddDatabaseSchemaRequest(postfix="1e-schema")
+
+
+def test_adding_a_schema_answers_with_the_names_it_will_carry() -> None:
+    """Adding is a real action, and a caller should not have to ask twice.
+
+    The full name and the variable follow from the postfix and the project, so they are
+    known the moment the request is accepted. Handing them back is what saves a caller
+    from reconstructing them -- which is exactly the thing it cannot do safely.
+    """
+    from opi.api.v2.router import AddDatabaseSchemaRequest, add_database_schema_v2
+
+    data = _project()
+    store = MagicMock()
+    store.get.return_value = MagicMock(data=data)
+    with (
+        patch("opi.api.v2.router.get_project_store", return_value=store),
+        patch("opi.api.v2.router.create_async_task", new=AsyncMock(return_value={"task_id": "abc"})),
+    ):
+        endpoint = add_database_schema_v2.__wrapped__
+        response = asyncio.run(
+            endpoint(MagicMock(), "demo", AddDatabaseSchemaRequest(postfix="rapportage", description="R"))
+        )
+
+    body = json.loads(response.body)
+    assert response.status_code == 202
+    assert body["task_id"] == "abc"
+    assert body["schema"]["postfix"] == "rapportage"
+    assert body["schema"]["variable_name"] == "DATABASE_SCHEMA_RAPPORTAGE"
+    assert body["schema"]["deployments"] == [
+        {"deployment": "deployment-1", "schema_name": "demo_deployment_1_rapportage"}
+    ]

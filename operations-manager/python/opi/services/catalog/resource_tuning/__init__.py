@@ -21,7 +21,7 @@ class ResourceTuningService(Service):
             "Systeemdienst: houdt draaiende deployments in de gaten na een sync en hoogt "
             "het geheugen op van een component dat OOM'd. Draait altijd, is niet kiesbaar."
         ),
-        help_template="resource_tuning/help.html.j2",
+        help_template="resource_tuning/help.md",
         icon="grafiek",
         color="grijs-600",
         binding=ServiceBinding.DEPLOYMENT,
