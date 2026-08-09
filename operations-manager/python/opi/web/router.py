@@ -2996,7 +2996,7 @@ async def projects_lijst_fragment(request: Request):
     from opi.web.lotc_switch import filter_lotc_projects
 
     context = {"request": request, "user": user, **filter_lotc_projects(request, projects)}
-    return HTMLResponse(templates_lotc.env.get_template("bg/_projects-table.html.j2").render(context))
+    return HTMLResponse(templates_lotc.env.get_template("bg/_projects-lijst.html.j2").render(context))
 
 
 @web_router.get("/about", response_class=HTMLResponse)

@@ -7,50 +7,79 @@
   inhoud, de zoekbalk, de vier niveaufilters en de regelterugloop. Een andere naam is hier
   geen vormgeving maar een stille storing - de viewer opent dan gewoon en doet niets.
 
-  Wat WEL omgezet is: de iconen en de knoppen. De bedieningsknoppen in de kop dragen hun
-  aanroep via :attrs, want <c-button> en <c-icon-button> laten geen onclick toe.
+  Wat WEL omgezet is: de iconen. De BEDIENING niet, en dat is een besluit.
 
-  De vier niveaufilters en de regelterugloop blijven kale <input type="checkbox">: het
-  script leest ze uit met .checked en zet luisteraars op change. Een aanvinkvak dat onder
-  NLDD een webcomponent wordt, heeft die eigenschap niet op dezelfde plek.
+  Dit paneel is een eigen widget met een eigen donkere schil, en die schil komt volledig
+  uit static/css/project-details.css - er is nog geen themacomponent die zoiets doet.
+  Zolang dat zo is horen zijn knoppen bij die schil. Een <nldd-icon-button> met
+  .log-control-btn erop levert een blauw vierkant van 36 bij 36 met daarin nog eens de
+  knop van het thema, en het icoon verdwijnt in dat vlak; zo stonden er vier lege blauwe
+  vierkantjes in de kop. Bovendien DRAAGT die opmaak hier een toestand:
+  .log-control-btn.is-active is de pauzestand, die log_viewer.js zet.
 
-  De componentkiezer is een ECHTE <select> (c-select-field native="true"): het script vult
-  hem tijdens het gebruik met new Option() en leest this.value.
+  De vier niveaufilters en de regelterugloop blijven om dezelfde reden kale
+  <input type="checkbox">: het script leest ze uit met .checked en zet luisteraars op
+  change. Een aanvinkvak dat onder NLDD een webcomponent wordt, heeft die eigenschap niet
+  op dezelfde plek.
+
+  De componentkiezer is een kale <select>: het script vult hem tijdens het gebruik met
+  new Option() en leest this.value.
 #}
 <div id="log-viewer-backdrop" class="log-viewer-backdrop" onclick="closeLogViewer()"></div>
 <div id="log-viewer-panel" class="log-viewer-panel">
     <div class="log-viewer-header">
         <div class="log-viewer-title">
-            <c-icon icon="document" size="lg" />
+            <c-icon icon="file-text" size="lg" />
             <div>
                 <c-heading type="h3" size="5" id="log-viewer-heading" label="Logs" />
                 <div class="log-viewer-subtitle">
                     <span id="log-viewer-deployment"></span>
-                    <c-select-field
-                        id="log-component-selector"
-                        name="log-component"
-                        label="Component"
-                        native="true"
-                        :attrs="{'class': 'log-component-select', 'onchange': 'switchLogComponent(this.value)'}" />
+                    {# Een KALE select, net als in het origineel. c-select-field zette hier
+                       zijn eigen label ("Component", met "Optioneel" erachter) boven een
+                       veld van eigen breedte, midden in een kopregel die daar geen ruimte
+                       voor heeft: het label zweefde over de titel en de lijst werd
+                       afgeknepen tot twee tekens. Het label hoort hier ook niet - de
+                       deploymentnaam ernaast zegt al waar de lijst over gaat. De id en de
+                       klasse zijn die van het origineel: log_viewer.js vult deze lijst en
+                       .log-component-select geeft hem zijn vorm. #}
+                    <select id="log-component-selector" class="log-component-select"
+                            aria-label="Component" onchange="switchLogComponent(this.value)"></select>
                 </div>
             </div>
         </div>
         <div class="log-viewer-controls">
-            {% set pauzeren = "toggleLogPause()" %}
-            {% set legen = "clearLogs()" %}
-            {% set kopieren = "copyLogs()" %}
-            {% set downloaden = "downloadLogs()" %}
-            {% set sluiten = "closeLogViewer()" %}
-            <c-icon-button icon="pause" accessible-label="Pauzeren of hervatten" variant="neutral-transparent" size="sm"
-                           :attrs="{'id': 'log-pause-btn', 'class': 'log-control-btn', 'onclick': pauzeren}" />
-            <c-icon-button icon="trash" accessible-label="Leegmaken" variant="neutral-transparent" size="sm"
-                           :attrs="{'class': 'log-control-btn', 'onclick': legen}" />
-            <c-icon-button icon="copy" accessible-label="Kopieren" variant="neutral-transparent" size="sm"
-                           :attrs="{'class': 'log-control-btn', 'onclick': kopieren}" />
-            <c-icon-button icon="arrow-down-tray" accessible-label="Downloaden" variant="neutral-transparent" size="sm"
-                           :attrs="{'class': 'log-control-btn', 'onclick': downloaden}" />
-            <c-icon-button icon="dismiss" accessible-label="Sluiten" variant="neutral-transparent" size="sm"
-                           :attrs="{'class': 'log-close-btn', 'onclick': sluiten}" />
+            {# KALE knoppen met een icoon erin, net als in het origineel, en dat is hier
+               geen halfslachtigheid maar de juiste keuze.
+
+               .log-control-btn uit project-details.css tekent een blokje van 36 bij 36 in
+               het donkerblauw van dit paneel. Op een <nldd-icon-button> landt die opmaak
+               op het OMHULSEL: je krijgt een blauw vierkant met daarin nog eens de knop
+               van het thema, en het icoon verdwijnt in dat vlak. Zo zag het eruit op de
+               sandbox: vier lege blauwe vierkantjes.
+
+               De klasse weglaten kan hier niet, anders dan bij de knop "Logs bekijken":
+               log_viewer.js zet .is-active op de pauzeknop, en .log-control-btn.is-active
+               is precies de regel die de pauzestand zichtbaar maakt. De opmaak DRAAGT hier
+               dus een toestand.
+
+               Dit hele paneel is trouwens een eigen widget met een eigen donkere schil uit
+               project-details.css; er is nog geen themacomponent die dat doet. Zolang dat
+               zo is horen zijn knoppen bij die schil en niet bij het thema. #}
+            <button type="button" class="log-control-btn" id="log-pause-btn" onclick="toggleLogPause()" title="Pauzeren of hervatten">
+                <c-icon icon="pause" size="sm" id="log-pause-icon" />
+            </button>
+            <button type="button" class="log-control-btn" onclick="clearLogs()" title="Leegmaken">
+                <c-icon icon="trash" size="sm" />
+            </button>
+            <button type="button" class="log-control-btn" onclick="copyLogs()" title="Kopieren">
+                <c-icon icon="square-on-square" size="sm" />
+            </button>
+            <button type="button" class="log-control-btn" onclick="downloadLogs()" title="Downloaden">
+                <c-icon icon="square-and-arrow-down" size="sm" />
+            </button>
+            <button type="button" class="log-close-btn" onclick="closeLogViewer()" title="Sluiten">
+                <c-icon icon="dismiss" size="md" />
+            </button>
         </div>
     </div>
     <div class="log-viewer-toolbar">
@@ -94,7 +123,7 @@
     </div>
     <div class="log-viewer-content" id="log-viewer-content">
         <div class="log-empty-state" id="log-empty-state">
-            <c-icon icon="document" size="xl" />
+            <c-icon icon="file-text" size="xl" />
             <c-paragraph>Verbinden met de logstroom...</c-paragraph>
         </div>
     </div>

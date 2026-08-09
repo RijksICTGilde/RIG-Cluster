@@ -96,6 +96,13 @@
         {% endfor %}
     </c-tabs>
 
+    {# De inhoud van het tabblad in een wikkel met dezelfde id als op de bestaande pagina
+       (#tab-project, #tab-deployments, #tab-taken). Daar staan alle tabbladen in EEN
+       document en bakent die id ze af; hier is er een per URL, maar de id houdt de twee
+       VERGELIJKBAAR. Zonder wikkel moest een vergelijking de hele body nemen, en dan telt
+       de gedeelde kop - inclusief de knop "Bewerken" - mee als inhoud van het tabblad. #}
+    <div id="tab-{{ active_tab }}">
+
     {% if active_tab == 'project' %}
         {# DE VOLGORDE VAN DIT TABBLAD IS DIE VAN project-details/tab-project.html.j2.
 
@@ -633,6 +640,8 @@
             <c-paragraph>Taken worden opgehaald...</c-paragraph>
         </div>
     {% endif %}
+
+    </div>
 
     {# De gedeelde dialoog hoort onderaan de pagina, buiten de tabs: hij wordt vanuit elke
        tab geopend en mag niet met de inhoud meeverdwijnen. #}
