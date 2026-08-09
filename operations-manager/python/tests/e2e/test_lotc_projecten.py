@@ -93,23 +93,54 @@ def test_de_totalen_onderaan_volgen_de_zoekterm_niet(client: httpx.Client) -> No
     assert tegel.group(1) == "3", f"het totaal onderaan is meegefilterd met de zoekterm: {tegel.group(1)}"
 
 
-def test_de_pagina_toont_nog_alles_wat_de_oude_toonde(client: httpx.Client) -> None:
-    """De kolommen, de knop, de telling en de vier totalen van projects-overview.
+def test_de_pagina_toont_de_kaarten_en_wat_daar_omheen_hoort(client: httpx.Client) -> None:
+    """Kaarten met naam en omschrijving, plus de dingen die WEL terug moesten.
 
-    Elk van deze is hier een keer verdwenen doordat de pagina opnieuw ontworpen werd in
-    plaats van omgezet. Ze staan per stuk genoemd zodat de melding zegt WAT er weg is.
+    Hier stond een toets op de vijf tabelkolommen van het origineel. Die tabel is er op
+    verzoek van de gebruiker weer uit: op deze pagina zoek je een project en open je het,
+    en omgeving/team/services staan op de projectpagina zelf. Dat is een KEUZE op grond
+    van beide beelden, en dus toetst deze test hem nu.
+
+    Wat er wel bij hoort te blijven staan is alles dat bij het omzetten stilletjes wegviel
+    zonder dat iemand daarom vroeg: de knop Vernieuwen, de telling, en de vier totalen.
     """
     antwoord = client.get("/projects?layout=nldd").text
 
-    for kolom in ("Project", "Omgeving", "Team", "Services", "Acties"):
-        assert f">{kolom}<" in antwoord, f"kolom {kolom} staat niet meer in de tabel"
-
     assert "Vernieuwen" in antwoord, "de knop Vernieuwen is weg"
-    assert "Totaal: 3 projecten" in antwoord, "de telling boven de tabel is weg"
-    assert "Details" in antwoord, "de link Details per rij is weg"
-    assert "test-project-detail" in antwoord, "de technische projectnaam onder de titel is weg"
-    assert "2 leden" in antwoord, "het aantal teamleden per project is weg"
-    assert "Local" in antwoord, "de omgeving per project is weg"
+    assert "Totaal: 3 projecten" in antwoord, "de telling boven de lijst is weg"
 
     for totaal in ("Je projecten", "Teamleden totaal", "Services actief", "Je rol"):
         assert totaal in antwoord, f"het totaal '{totaal}' onderaan is weg"
+
+    # Per project een kaart met de naam en de omschrijving, en verder niets.
+    assert "Detail Test Project" in antwoord, "de weergavenaam staat niet op de kaart"
+    assert "Uitgebreid testproject voor de detailpagina E2E tests" in antwoord, "de omschrijving staat niet op de kaart"
+
+    # En de kolommen die de gebruiker er bewust af wilde hebben, staan er ook echt niet.
+    for weg in (">Omgeving<", ">Team<", ">Acties<", "2 leden"):
+        assert weg not in antwoord, f"{weg} staat er nog; de tabelkolommen zijn niet weg"
+
+
+def test_zoeken_en_sorteren_staan_in_de_toolbar(client: httpx.Client) -> None:
+    """De vorm die de gebruiker aanleverde: zoekveld links, sorteerknop met menu rechts.
+
+    Toetst de OPBOUW en niet het uiterlijk, want daar zit de valkuil: <c-toolbar> gooit
+    elk kind weg (het component heeft geen standaard-slot), dus het zoekveld verdween
+    zonder foutmelding. Deze test slaat aan zodra dat weer gebeurt.
+    """
+    antwoord = client.get("/projects?layout=nldd").text
+
+    assert "<nldd-toolbar" in antwoord, "de toolbar staat er niet"
+    opgeslokt = "het zoekveld staat niet in de toolbar - opgeslokt door een component zonder slot?"
+    assert 'slot="start"' in antwoord, opgeslokt
+    assert "nldd-search-field" in antwoord, opgeslokt
+    assert 'slot="end"' in antwoord, "de sorteerknop staat niet in de toolbar"
+    assert 'slot="popup"' in antwoord, "het sorteermenu hangt niet aan de knop"
+    assert 'slot="overflow"' in antwoord, "de overloopgroep voor smalle schermen ontbreekt"
+
+    # De sorteeropties zijn LINKS: dan werkt sorteren ook zonder JavaScript.
+    for sleutel in ("naam", "naam-af", "deployments", "teamleden"):
+        assert f"/projects?sort={sleutel}" in antwoord, f"sorteeroptie {sleutel} is geen link"
+
+    # En de gekozen sortering is aangevinkt.
+    assert 'selected="selected"' in antwoord, "geen enkele sorteeroptie is gemarkeerd als gekozen"

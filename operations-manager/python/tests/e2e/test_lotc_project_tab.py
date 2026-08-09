@@ -129,6 +129,9 @@ def test_geen_enkele_aanroep_van_het_oude_tabblad_is_verdwenen(app_server: str, 
         # De actie bovenaan het tabblad; het cijfer is het aantal deployments, want de
         # wizard opent daarmee een NIEUWE regel achter de bestaande.
         ("Deployment toevoegen", f"/projects/{PROJECT}/modal-wizard/modal-add-deployment-2"),
+        # In de KOP van het tabblad, niet die in de projectkop: sinds de knop
+        # "Projectgegevens bewerken" daar terugstaat zijn er twee met dit opschrift, en
+        # .first pakte de verkeerde. Vandaar de afbakening hieronder.
         ("Bewerken", f"/projects/{PROJECT}/modal-wizard/modal-edit-team"),
         ("Toevoegen", f"/projects/{PROJECT}/modal-wizard/modal-edit-component-2"),
     ],
@@ -143,7 +146,9 @@ def test_een_knop_opent_dezelfde_dialoog_als_op_de_oude_pagina(
     # Op het attribuut en niet op de tekst: <nldd-button> draagt zijn opschrift in
     # text=, en :has-text is een DEELtekst - "Toevoegen" vindt dan ook "Deployment
     # toevoegen", en dan meet de test de verkeerde knop.
-    auth_page.locator(f"nldd-button[text='{knop}']").first.click()
+    # Binnen de tabinhoud zoeken en niet op de hele pagina: de gedeelde projectkop draagt
+    # ook een knop "Bewerken" (naar modal-edit-identity), en die staat als eerste in de DOM.
+    auth_page.locator(f"#tab-project nldd-button[text='{knop}']").first.click()
 
     assert _wait_for(recorded) == f"{app_server}{verwacht}"
 
