@@ -39,9 +39,14 @@ LOTC_URL = f"/projects/details/{PROJECT}?tab=deployments&layout=nldd"
 
 # Op de bestaande pagina staan alle drie de tabbladen in EEN document; alleen wat binnen
 # #tab-deployments staat hoort bij dit tabblad. De hertekende pagina heeft een eigen URL
-# per tabblad, dus daar is de hele inhoud het tabblad.
+# per tabblad, maar draagt dezelfde id om de twee vergelijkbaar te houden.
+#
+# Hier stond aan de nieuwe kant "body". Dat ging goed zolang er buiten de tabinhoud niets
+# klikbaars stond, en dat veranderde toen de knop "Bewerken" in de gedeelde kop terugkwam:
+# die telde dan mee als inhoud van het tabblad en de vergelijking meldde een verschil dat
+# er niet was. Een vergelijking moet aan beide kanten hetzelfde AFBAKENEN.
 ROOS_SCOPE = "#tab-deployments"
-LOTC_SCOPE = "body"
+LOTC_SCOPE = "#tab-deployments"
 
 # De aanroepen die uit de DOM geplukt worden, per scope.
 COLLECT_JS = """
