@@ -20,7 +20,7 @@ class RedisService(Service):
     definition = ServiceDefinition(
         name="Redis Cache",
         description="Shared Redis cache en message broker voor caching en Celery task queues",
-        help_template="redis/help.html.j2",
+        help_template="redis/help.md",
         icon="zandloper",
         color="rood",
         binding=ServiceBinding.DEPLOYMENT,
