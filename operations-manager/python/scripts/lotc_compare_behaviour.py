@@ -112,6 +112,12 @@ AANVAARD: dict[str, str] = {
     "submitEditModal": "riep een functie aan die niet bestaat; nooit zichtbaar geweest",
     "edit-section-submit": "hoort bij die dode knoppenbalk",
     "edit-section-actions": "hoort bij die dode knoppenbalk",
+    # Het dashboard toonde ook de LIJST met projecten, met een link per project. Die staat
+    # op /projects, en twee plekken met dezelfde lijst lopen vroeg of laat uiteen. Op
+    # verzoek van de gebruiker vat het dashboard nu samen - kerncijfers en resourcegebruik -
+    # met een knop "Alle projecten" als ingang. De bestemmingen zelf zijn dus niet
+    # verdwenen, alleen niet meer op deze pagina.
+    "/projects/details/": "de projectenlijst staat op /projects, niet meer op het dashboard",
     # De drie tabbladwikkels van de oude pagina. Die bestaan alleen omdat alle tabs daar in
     # een document staan en switchTab() ze toont en verbergt; met een eigen URL per tab is
     # er niets te tonen of te verbergen.

@@ -30,6 +30,7 @@ import yaml
 from opi.services.catalog.base import DeploymentManifestContext
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
+from tests.e2e.helpers.tekst import veld
 from tests.e2e.helpers.wizard import WizardHelper, _unique_project_name
 
 if TYPE_CHECKING:
@@ -97,9 +98,9 @@ def _fill_inbound_rule(page: Page, name: str) -> None:
     page.locator("button:has-text('Item toevoegen')").first.click()
     # Wait for the row that the click adds, not for a fixed 800 ms: filling a field that
     # is not there yet is the failure this used to produce on a busy machine.
-    page.locator(f"[name='{FIELD}/name']").wait_for(state="visible", timeout=10000)
+    veld(page, f"{FIELD}/name").wait_for(state="visible", timeout=10000)
 
-    page.fill(f"[name='{FIELD}/name']", name)
+    veld(page, f"{FIELD}/name").fill(name)
     # Choosing the peer project is what makes the next two lists exist at all. Every one of
     # these selects re-renders the row server-side, so each pick has to wait for that render
     # to land before the next one -- picking into a select that is about to be replaced loses
@@ -111,7 +112,7 @@ def _fill_inbound_rule(page: Page, name: str) -> None:
     _select_when_offered(page, f"{FIELD}/to/port", OWN_PORT)
 
     filled = {
-        field: page.locator(f"[name='{FIELD}/{field}']").input_value()
+        field: veld(page, f"{FIELD}/{field}").input_value()
         for field in ("name", "from/project", "from/deployment", "from/component", "to/component", "to/port")
     }
     assert all(filled.values()), f"the rule is not completely filled in: {filled}"
@@ -123,13 +124,16 @@ def _select_when_offered(page: Page, field: str, value: str, timeout: int = 1000
     The cascade is server-side (the row's own values decide the list), so the option appears
     only after the re-render triggered by the field before it.
     """
+    # De ECHTE <select> zoeken en niet getElementsByName()[0]: onder het nieuwe thema is
+    # het eerste element met die naam de WIKKEL (<nldd-select-field>), en die heeft geen
+    # .options. Het wachten liep dan af op iets dat nooit waar kon worden.
     page.wait_for_function(
-        "([name, value]) => { const el = document.getElementsByName(name)[0];"
+        "([name, value]) => { const el = document.querySelector(`select[name='${name}']`);"
         " return el && [...el.options].some(o => o.value === value); }",
         arg=[field, value],
         timeout=timeout,
     )
-    page.select_option(f"[name='{field}']", value)
+    veld(page, field).select_option(value)
     page.wait_for_load_state("networkidle")
     # Network-idle only says the XHR is done, not that the re-rendered row is in the
     # DOM -- and the row that comes back is what carries the value. Waiting for the
@@ -138,7 +142,7 @@ def _select_when_offered(page: Page, field: str, value: str, timeout: int = 1000
     # lost. Only shows up when the machine is busy (a loaded CI runner), never when the
     # server answers in a few milliseconds.
     page.wait_for_function(
-        "([name, value]) => { const el = document.getElementsByName(name)[0];"
+        "([name, value]) => { const el = document.querySelector(`select[name='${name}']`);"
         " return el && el.value === value && !el.closest('form')?.classList.contains('htmx-request'); }",
         arg=[field, value],
         timeout=timeout,
