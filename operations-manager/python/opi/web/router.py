@@ -94,12 +94,12 @@ for _service_router in collect_service_routers():
 @web_router.get("/")
 async def root():
     """
-    Root route that redirects to the architecture overview page.
+    Root route that redirects to the dashboard.
 
     Returns:
-        Redirect response to /architecture
+        Redirect response to /dashboard
     """
-    return RedirectResponse(url="/architecture", status_code=302)
+    return RedirectResponse(url="/dashboard", status_code=302)
 
 
 @web_router.get("/permission-denied", response_class=HTMLResponse)
@@ -2925,7 +2925,11 @@ async def projects_overview(request: Request):
     """
     try:
         templates = get_templates()
-        user = get_current_user(request)
+        # `or {}` omdat get_current_user None kan geven. Dat valt hier veilig uit: een lege
+        # gebruiker heeft geen e-mailadres, is_platform_admin weigert een lege string en
+        # geen enkel projectlidmaatschap matcht erop, dus de lijst wordt leeg in plaats van
+        # volledig. Dezelfde vorm als de andere aanroepers van get_current_user.
+        user = get_current_user(request) or {}
         user_projects = _projects_for_user(user)
 
         return render(
@@ -3075,52 +3079,6 @@ async def about_platform(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@web_router.get("/architecture", response_class=HTMLResponse)
-async def architecture_overview(request: Request):
-    """
-    Serve the architecture overview page with C4 models and visual diagrams.
-
-    Returns:
-        HTML response with comprehensive platform architecture documentation
-    """
-    try:
-        user = get_current_user(request)
-        from opi.web.navigation_lotc import get_navigation
-
-        # De architectuurpagina langs de schakelaar, net als de rest. Het LOTC-sjabloon
-        # bestond al maar werd door niemand gerenderd, dus de nieuwe weergave toonde hier
-        # nog de oude pagina - en dat viel niet op, want hij ziet er in beide gevallen uit
-        # zoals hij hoort.
-        return render(
-            request,
-            roos="architecture-overview.html.j2",
-            lotc="architecture-overview.html.j2",
-            context={
-                "request": request,
-                "menu_items": get_menu_items(user),
-                "navigation": get_navigation(user, current_path="/architecture"),
-            },
-        )
-
-    except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        logger.error(f"Error serving architecture overview: {e!s}\n{error_details}")
-
-        # Try to extract line number from Jinja2 error
-        error_msg = str(e)
-        if hasattr(e, "lineno"):
-            error_msg = f"Line {e.lineno}: {error_msg}"
-
-        # Include template source snippet if available
-        if hasattr(e, "source") and hasattr(e, "lineno"):
-            lines = e.source.splitlines()
-            line_num = e.lineno - 1
-            if 0 <= line_num < len(lines):
-                error_msg += f"\nSource: {lines[line_num].strip()}"
-
-        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
 
 
 @web_router.get("/test-template-variables", response_class=HTMLResponse)

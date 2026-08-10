@@ -91,22 +91,55 @@ if [ "$SKIP_MIGRATIONS" = "false" ]; then
     echo -e "${YELLOW}▶${NC} Running Alembic migrations..."
     echo ""
 
-    # Run migrations with detailed output
-    if alembic upgrade head; then
+    # De uitvoer wordt meegelezen, want dit commando kan om twee heel verschillende
+    # redenen falen. `alembic upgrade head` importeert de applicatie, dus alles wat bij
+    # het opstarten misgaat -- een instelling die niet bestaat, een import die stukloopt --
+    # komt hier naar buiten zonder dat de database er iets mee te maken heeft. Dit blok
+    # riep vroeger onvoorwaardelijk "Database migration failed" en wees op DATABASE_HOST,
+    # ook bij een configuratiefout. De echte melding stond er wel boven, maar de conclusie
+    # eronder sprak hem tegen en die conclusie is wat mensen lezen.
+    MIGRATION_LOG="$(mktemp)"
+    EXIT_CODE=0
+    alembic upgrade head 2>&1 | tee "$MIGRATION_LOG" || EXIT_CODE=$?
+
+    if [ "$EXIT_CODE" -eq 0 ]; then
         echo ""
         echo -e "${GREEN}✓ Database migrations completed successfully${NC}"
+        rm -f "$MIGRATION_LOG"
     else
-        EXIT_CODE=$?
         echo ""
-        echo -e "${RED}✗ FATAL: Database migration failed (exit code: $EXIT_CODE)${NC}"
-        echo ""
-        echo "Possible causes:"
-        echo "  - Database is not available or not ready"
-        echo "  - Missing database credentials in environment variables"
-        echo "  - Invalid database configuration"
-        echo "  - Schema conflicts or migration errors"
-        echo ""
-        echo "Debug: Check DATABASE_HOST, DATABASE_NAME, DATABASE_ADMIN_NAME, DATABASE_ADMIN_PASSWORD"
+        if grep -q "extra_forbidden" "$MIGRATION_LOG"; then
+            # Deze image kent een instelling niet die hij wel meekrijgt. In de praktijk
+            # betekent dat: de configuratie is nieuwer dan het image (een oude `latest`
+            # naast een verse checkout). De instellingen zelf noemen, want dat zegt
+            # meteen welke kant het op moet.
+            echo -e "${RED}✗ FATAL: de configuratie past niet bij deze image${NC}"
+            echo ""
+            echo "Deze image kent de volgende instellingen niet:"
+            grep -B1 "extra_forbidden" "$MIGRATION_LOG" | grep -oE "^[a-z][a-z0-9_]*$" | sort -u | sed 's/^/  - /'
+            echo ""
+            echo "Dat wijst er meestal op dat de image ouder is dan de configuratie die"
+            echo "hij meekrijgt. Bouw de image opnieuw uit deze broncode, of haal de"
+            echo "onbekende instellingen uit de ConfigMap."
+        elif grep -qE "ValidationError|pydantic" "$MIGRATION_LOG"; then
+            echo -e "${RED}✗ FATAL: de configuratie is ongeldig${NC}"
+            echo ""
+            echo "De applicatie kwam niet door zijn eigen instellingencontrole. De fout"
+            echo "staat hierboven; de database is hier niet bij betrokken."
+        elif grep -qiE "could not connect|connection refused|password authentication|does not exist|timeout expired" "$MIGRATION_LOG"; then
+            echo -e "${RED}✗ FATAL: de database is niet bereikbaar (afsluitcode: $EXIT_CODE)${NC}"
+            echo ""
+            echo "Controleer DATABASE_HOST, DATABASE_NAME, DATABASE_ADMIN_NAME en"
+            echo "DATABASE_ADMIN_PASSWORD, en of de database al draait."
+        else
+            # Niets herkend, dus ook niets beweren. Een verkeerde oorzaak noemen kost
+            # meer tijd dan er geen noemen.
+            echo -e "${RED}✗ FATAL: migratie mislukt (afsluitcode: $EXIT_CODE)${NC}"
+            echo ""
+            echo "De fout staat hierboven. Geen bekend patroon herkend, dus er wordt"
+            echo "hier geen oorzaak geraden."
+        fi
+        rm -f "$MIGRATION_LOG"
         exit "$EXIT_CODE"
     fi
     echo ""
