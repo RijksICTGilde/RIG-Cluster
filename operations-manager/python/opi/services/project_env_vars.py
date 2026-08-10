@@ -37,12 +37,14 @@ async def read_user_env_vars(
         where: Which component this is, for the log line only.
 
     Returns:
-        The parsed variables, or None when nothing is stored or the value could not be
-        read. None means "unknown", never "empty": a caller must not present it as
-        "this component has no variables".
+        The parsed variables, or None when the stored value could not be read. Nothing
+        stored -- the key is absent, or present but empty -- is an empty mapping: we
+        looked and there are none. None means "unknown", never "empty": a caller must
+        not present it as "this component has no variables".
     """
     if not raw:
-        return None
+        # Nothing stored is an answer, not a failure: we looked, there are none.
+        return {}
     if isinstance(raw, dict):
         return dict(raw)
 
