@@ -263,7 +263,7 @@ async def project_progress_page_fragment(request: Request, task_id: str) -> HTML
         from opi.core.templates_lotc import templates_lotc
 
         return HTMLResponse(content=templates_lotc.env.get_template("bg/_task-progress.html.j2").render(context))
-    return HTMLResponse(content=render_progress_fragment(context))
+    return HTMLResponse(content=render_progress_fragment(request, context))
 
 
 @web_router.get("/projects/roos", response_class=HTMLResponse)
@@ -3373,4 +3373,4 @@ async def task_progress_fragment(request: Request, project_name: str, task_id: s
 
     # Rendered once on purpose -- see render_progress_fragment for why a second pass
     # over the rendered HTML would execute task text as Jinja.
-    return HTMLResponse(content=render_progress_fragment(context))
+    return HTMLResponse(content=render_progress_fragment(request, context))
