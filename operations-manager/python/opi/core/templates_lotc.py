@@ -51,7 +51,6 @@ def _to_nldd_icon(naam: str) -> str:
 
     return to_nldd_icon(naam)
 
-
 # lotc-forms hoort achteraan; zie de moduledocstring.
 DESIGN_SYSTEMS = ["lotc-layout", "nldd", "lotc-forms"]
 
