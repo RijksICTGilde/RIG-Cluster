@@ -184,6 +184,36 @@ def pop_domain_setting(deployment: dict[str, Any], setting: DomainSetting) -> No
     deployment.pop(setting.value, None)
 
 
+def clear_domain_settings(deployment: dict[str, Any]) -> None:
+    """Remove the whole web address from ``deployment``, wherever it is stored.
+
+    For a deployment that must not carry one at all -- a clone, which uses its own
+    (target) domain setup and never the source's hostnames. Excluding the seven root keys
+    from a copy is not enough since they moved: they now travel inside the source's
+    ``services`` block, which is copied as a whole.
+
+    The service entry itself is dropped when the web address was all it held, so a clone
+    does not end up with an empty ``publish-on-web`` record it never asked for.
+    """
+    for setting in DomainSetting:
+        pop_domain_setting(deployment, setting)
+
+    root, entry = _find_entry(deployment)
+    if root is None or entry is None:
+        return
+    body = service_entry_body(entry, _SERVICE)
+    if not isinstance(body, dict):
+        return  # a bare ``- publish-on-web`` string says "enabled", which is not a web address
+    if body.get("config"):
+        return
+    if any(key not in ("name", "reference", "config") for key in body):
+        return  # carries more than the web address (e.g. a schema-version); leave it
+    services = deployment[root]
+    services.remove(entry)
+    if not services:
+        del deployment[root]
+
+
 def relocate_domain_settings(deployment: dict[str, Any]) -> bool:
     """Move any root-level web-address settings of ``deployment`` under the service.
 
