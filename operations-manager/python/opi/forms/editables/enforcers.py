@@ -12,6 +12,7 @@ from opi.connectors.subdomain import (
 )
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_domain_supports_dots
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.services.services import service_entry_name
@@ -217,13 +218,13 @@ class DomainConfigEnforcer:
         dep = deployments[self.deployment_index]
         if not isinstance(dep, dict):
             return value
-        domain_format = dep.get("domain-format")
+        domain_format = get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT)
         if not domain_format:
             return value
 
-        base_domain = dep.get("base-domain")
+        base_domain = get_domain_setting(dep, DomainSetting.BASE_DOMAIN)
         custom_domain = dep.get("base-domain:custom")
-        subdomain = dep.get("subdomain")
+        subdomain = get_domain_setting(dep, DomainSetting.SUBDOMAIN)
 
         cluster = opi_config.settings.CLUSTER_MANAGER
         supported = get_supported_base_domains(cluster)
@@ -339,7 +340,7 @@ class DomainConfigEnforcer:
             )
 
         # Validate bare domain component: only valid with custom domains
-        bare_domain_component = dep.get("expose-component-on-bare-domain")
+        bare_domain_component = get_domain_setting(dep, DomainSetting.BARE_DOMAIN_COMPONENT)
         if bare_domain_component and actual_domain:
             if actual_domain.lower() in supported:
                 raise ValueError("Kaal domein is alleen beschikbaar voor eigen domeinen, niet voor platformdomeinen")
