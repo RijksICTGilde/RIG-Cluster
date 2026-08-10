@@ -35,6 +35,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
+from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.services import service_entry_body, service_entry_name
 from opi.services.services_enums import ServiceType
 
@@ -194,3 +195,22 @@ def relocate_domain_settings(deployment: dict[str, Any]) -> bool:
         return False
     ensure_domain_config(deployment)
     return True
+
+
+def domain_setting_path(setting: DomainSetting, deployment_index: int | None = None) -> str:
+    """The form ``yaml_path`` of one web-address setting, optionally for one deployment.
+
+    The forms counterpart of the accessors above, and it lives here for the same reason:
+    one statement of where a setting is. The resolver map and several
+    ``get_effective_value`` callers key on the exact path an editable declares, and those
+    call sites used to spell ``f"deployments[{i}]/base-domain"`` by hand. A hand-written
+    path that no longer exists fails silently -- the resolver is simply never found and the
+    field falls back to its own default.
+
+    Built from ``config_path``, so the layer prefix comes from ``catalog/base.py`` and this
+    cannot drift from what the editables declare.
+    """
+    path = config_path(ConfigLayer.DEPLOYMENT, ServiceType.PUBLISH_ON_WEB, "config", setting.value)
+    if deployment_index is not None:
+        path = path.replace("deployments[*]", f"deployments[{deployment_index}]")
+    return path
