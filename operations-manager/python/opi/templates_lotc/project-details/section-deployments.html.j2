@@ -41,7 +41,7 @@
                             {% if component.image %}
                             <div class="component-image">{{ component.image }}</div>
                             {% else %}
-                            <div class="component-image rvo-text--subtle rvo-text--sm">Geen container image geconfigureerd - dit component wordt niet gedeployd</div>
+                            <div class="component-image">Geen container image geconfigureerd - dit component wordt niet gedeployd</div>
                             {% endif %}
                         </div>
                     </div>
@@ -66,7 +66,7 @@
                             <div class="helm-values-section">
                                 <c-layout-flow row="true" align-items="center" gap="sm" class="section-subheader">
                                     <c-icon icon="sleutel" size="sm" color="hemelblauw"/>
-                                    <span class="rvo-text--sm text-strong">Helm Values</span>
+                                    <span class="text-strong">Helm Values</span>
                                     <span class="env-vars-count-badge">{{ helm_chart['helm-values']|length }} waarde{% if helm_chart['helm-values']|length != 1 %}n{% endif %}</span>
                                 </c-layout-flow>
                                 <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) }}"/>
@@ -95,7 +95,7 @@
                             <div class="helm-values-section">
                                 <c-layout-flow row="true" align-items="center" gap="sm" class="section-subheader">
                                     <c-icon icon="sleutel" size="sm" color="hemelblauw"/>
-                                    <span class="rvo-text--sm text-strong">Helm Values</span>
+                                    <span class="text-strong">Helm Values</span>
                                     <span class="env-vars-count-badge">{{ helmfile['helm-values']|length }} waarde{% if helmfile['helm-values']|length != 1 %}n{% endif %}</span>
                                 </c-layout-flow>
                                 <c-secret-field value="{{ helmfile['helm-values'] | tojson(indent=2) }}" value-type="json" content-width="lg"/>
@@ -137,7 +137,7 @@
             {% if has_user_vars %}
             <div class="section-divider">
                 <c-heading type="h4"><c-icon icon="user" size="md" color="donkerblauw"/>Gebruikers configuratie</c-heading>
-                <p class="rvo-text--subtle">Gebruiker-specifieke omgevingsvariabelen voor deze deployment</p>
+                <p>Gebruiker-specifieke omgevingsvariabelen voor deze deployment</p>
 
                 <c-layout-flow gap="md">
                     {% for component in deployment_components %}
@@ -156,7 +156,7 @@
                                     <c-layout-flow gap="xs">
                                         <c-layout-flow row="true" align-items="center" gap="sm">
                                             <c-icon icon="sleutel" size="sm" color="grijs-600"/>
-                                            <span class="rvo-text--sm text-strong">{{ key }}</span>
+                                            <span class="text-strong">{{ key }}</span>
                                         </c-layout-flow>
                                         <div class="indent-lg">
                                             <c-secret-field value="{{ value }}"/>

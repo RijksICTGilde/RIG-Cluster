@@ -47,7 +47,7 @@
                             {% if item.history %}
                                 {% set last = item.history[-1] %}
                                 {{ last.date | dutch_date(include_time=False) }}
-                                {% if last.by %}<br><span class="rvo-text--sm rvo-text--subtle">door {{ last.by }}</span>{% endif %}
+                                {% if last.by %}<br><span>door {{ last.by }}</span>{% endif %}
                             {% else %}
                                 -
                             {% endif %}

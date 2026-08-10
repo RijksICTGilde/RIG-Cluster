@@ -4,22 +4,22 @@
         {# Service selector #}
         <div class="metrics-controls__field">
             <label for="service-select"><strong>Service</strong></label>
-            <select id="service-select" class="rvo-select">
+            <select id="service-select" class="lotc-select">
                 <option value="">-- Selecteer een service --</option>
                 {% for service in services %}
                     <option value="{{ service.id }}">{{ service.name }}</option>
                 {% endfor %}
             </select>
-            <span id="service-description" class="rvo-text--sm rvo-text--subtle"></span>
+            <span id="service-description"></span>
         </div>
 
         {# Metric selector #}
         <div class="metrics-controls__field">
             <label for="metric-select"><strong>Metric</strong></label>
-            <select id="metric-select" class="rvo-select" disabled>
+            <select id="metric-select" class="lotc-select" disabled>
                 <option value="">-- Selecteer eerst een service --</option>
             </select>
-            <span id="metric-count" class="rvo-text--sm rvo-text--subtle"></span>
+            <span id="metric-count"></span>
         </div>
 
         {# Show button #}
@@ -30,7 +30,7 @@
 
     {# Metric filter #}
     <div class="metrics-controls__filter is-hidden" id="filter-container">
-        <label for="metric-filter" class="rvo-text--sm"><strong>Filter metrics:</strong></label>
-        <input type="text" id="metric-filter" class="rvo-input" placeholder="Type om te filteren..." oninput="filterMetrics()" />
+        <label for="metric-filter"><strong>Filter metrics:</strong></label>
+        <input type="text" id="metric-filter" class="lotc-input" placeholder="Type om te filteren..." oninput="filterMetrics()" />
     </div>
 </div>
