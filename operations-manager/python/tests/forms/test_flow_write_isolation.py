@@ -25,6 +25,7 @@ from opi.forms.visualizers.flows import get_flow
 from opi.forms.wizard.resolver import resolve_active_sections
 from opi.forms.wizard.save import apply_modal_edit
 from opi.forms.wizard.state import WizardState
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
 from opi.utils.yaml_util import dump_yaml_to_string
 from opi.web.router_detail_edit import _fully_owned_list_keys
 from opi.web.router_wizard import _extract_section_data, _split_data_across_sections
@@ -110,10 +111,18 @@ def build_project() -> dict[str, Any]:
                 "cluster": "sandboxed-local",
                 "namespace": PROJECT_NAME,
                 "repository": "main-repo",
-                "domain-format": "subdomain",
-                "base-domain": "sandbox.rijksapp.dev",
-                "subdomain": "netjes",
-                "issuer": "letsencrypt",
+                # The web address lives under the service that owns it (v2.7, RC-60).
+                "services": [
+                    {
+                        "reference": "publish-on-web",
+                        "config": {
+                            "domain-format": "subdomain",
+                            "base-domain": "sandbox.rijksapp.dev",
+                            "subdomain": "netjes",
+                            "issuer": "letsencrypt",
+                        },
+                    }
+                ],
                 "components": [
                     {"reference": "frontend", "image": "example.invalid/frontend:1.0"},
                     {"reference": "backend", "image": "example.invalid/backend:1.0"},
@@ -124,10 +133,17 @@ def build_project() -> dict[str, Any]:
                 "cluster": "sandboxed-local",
                 "namespace": f"{PROJECT_NAME}-acc",
                 "repository": "main-repo",
-                "domain-format": "subdomain",
-                "base-domain": "sandbox.rijksapp.dev",
-                "subdomain": "netjes-acc",
-                "issuer": "letsencrypt",
+                "services": [
+                    {
+                        "reference": "publish-on-web",
+                        "config": {
+                            "domain-format": "subdomain",
+                            "base-domain": "sandbox.rijksapp.dev",
+                            "subdomain": "netjes-acc",
+                            "issuer": "letsencrypt",
+                        },
+                    }
+                ],
                 "components": [
                     {"reference": "frontend", "image": "example.invalid/frontend:0.9"},
                 ],
@@ -235,8 +251,8 @@ FLOW_EDITS: list[tuple[str, str, Any, dict[str, Any]]] = [
     ),
     ("modal-edit-component-0", "components[0]/resources/limits/memory", "1Gi", {}),
     ("modal-edit-component-1", "components[1]/resources/limits/memory", "1Gi", {}),
-    ("modal-edit-domain-0", "deployments[0]/subdomain", "netjes-nieuw", {}),
-    ("modal-edit-domain-1", "deployments[1]/subdomain", "netjes-acc2", {}),
+    ("modal-edit-domain-0", domain_setting_path(DomainSetting.SUBDOMAIN, 0), "netjes-nieuw", {}),
+    ("modal-edit-domain-1", domain_setting_path(DomainSetting.SUBDOMAIN, 1), "netjes-acc2", {}),
     (
         "modal-edit-deployment-0",
         "deployments[0]/components[0]/image",

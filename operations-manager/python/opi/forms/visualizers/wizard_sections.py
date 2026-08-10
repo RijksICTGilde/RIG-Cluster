@@ -13,13 +13,11 @@ from typing import Any
 from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.editables.enforcers import (
     ComponentServicesEnforcer,
-    DomainConfigEnforcer,
     UniqueDeploymentNameEnforcer,
     UniqueReferencesEnforcer,
     extract_service_names,
 )
-from opi.forms.layout import DisplayBlock, Fieldset, LayoutElement, Sequence, TemplatePartial
-from opi.forms.visualizers.display_blocks import compute_url_preview as _compute_url_preview
+from opi.forms.layout import Fieldset, LayoutElement, Sequence, TemplatePartial
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY, API_KEY
 from opi.forms.visualizers.fields.deployments import (
@@ -40,7 +38,6 @@ from opi.forms.visualizers.fields.deployments import (
     DEPLOYMENTS_SEQUENCE,
 )
 from opi.forms.visualizers.fields.domains import (
-    DOMAIN_CONFIG,
     WIZARD_DEPLOYMENT_NAME,
 )
 from opi.forms.visualizers.fields.identity import CLUSTERS, DESCRIPTION, DISPLAY_NAME
@@ -262,31 +259,10 @@ POSTGRESQL_CONFIG_SECTION = _with_service_help(
     ServiceType.NAMESPACE_POSTGRESQL_DATABASE,
 )
 
-DOMAIN_SECTION = FormSection(
-    section_id="domains",
-    title="Webadres",
-    icon="wereldbol",
-    description="Configureer hoe je applicatie bereikbaar wordt",
-    enforcer=DomainConfigEnforcer(),
-    editables=[DOMAIN_CONFIG],
-    layout=[
-        TemplatePartial(template="wizard/partials/domain_info.html.j2"),
-        "deployments[*]/base-domain",
-        "deployments[*]/_request-domain",
-        "deployments[*]/base-domain:custom",
-        "deployments[*]/domain-format",
-        "deployments[*]/subdomain",
-        "deployments[*]/_request-subdomain",
-        "deployments[*]/root-component",
-        "deployments[*]/expose-component-on-bare-domain",
-        DisplayBlock(
-            display_id="url-preview",
-            compute=_compute_url_preview,
-            template="wizard/partials/url_preview.html.j2",
-            context={"deployment_index": 0},
-        ),
-    ],
-)
+#: The "Webadres" step, built by the service that owns the fields (RC-60). Kept under the
+#: familiar name so flows, EDIT_SECTIONS and tests keep one place to refer to; the wildcard
+#: form (no deployment index) is the layer description.
+DOMAIN_SECTION = get_service(ServiceType.PUBLISH_ON_WEB).deployment_form_section()
 
 WIZARD_DEPLOYMENT_SECTION = FormSection(
     section_id="deployment",
@@ -490,42 +466,13 @@ EDIT_SECTIONS: dict[str, FormSection] = {
 
 
 def build_domain_section(deployment_index: int, *, edit_mode: bool = False) -> FormSection:
-    """Build a domain section targeting a specific deployment.
+    """The "Webadres" section for one deployment.
 
-    Materializes the DOMAIN_SECTION wildcards (``[*]``) to
-    ``[deployment_index]``, so the form reads/writes to the correct
-    deployment in the YAML data.
-
-    In edit mode the section triggers a project reprocess on save;
-    in create mode the wizard handles submission as a whole.
+    Delegates to the service, which owns the fields, their display and the step they sit in
+    (RC-60). In edit mode the section triggers a project reprocess on save; in create mode
+    the wizard handles submission as a whole.
     """
-    from opi.forms.editables.reindex import materialize_wildcard_layout, materialize_wildcard_visualizer
-
-    editables = [materialize_wildcard_visualizer(e, deployment_index) for e in DOMAIN_SECTION.editables]
-    base_layout = DOMAIN_SECTION.layout if isinstance(DOMAIN_SECTION.layout, list) else []
-    layout = materialize_wildcard_layout(list(base_layout), deployment_index)
-
-    if edit_mode:
-        section_id = f"domain-edit-{deployment_index}"
-        title = "Webadres bewerken"
-        description = "Wijzig het webadres voor deze deployment"
-        post_save_action = "process_project"
-    else:
-        section_id = "domains"
-        title = DOMAIN_SECTION.title
-        description = DOMAIN_SECTION.description
-        post_save_action = "save_only"
-
-    return FormSection(
-        section_id=section_id,
-        title=title,
-        icon=DOMAIN_SECTION.icon,
-        description=description,
-        enforcer=DomainConfigEnforcer(deployment_index=deployment_index),
-        editables=editables,
-        layout=layout,
-        post_save_action=post_save_action,
-    )
+    return get_service(ServiceType.PUBLISH_ON_WEB).deployment_form_section(deployment_index, edit_mode=edit_mode)
 
 
 # ---------------------------------------------------------------------------

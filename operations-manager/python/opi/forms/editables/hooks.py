@@ -14,7 +14,12 @@ from opi.core import config as opi_config
 from opi.core.cluster_config import get_ingress_postfix
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.resolvers import get_effective_value
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting, set_domain_setting
+from opi.services.catalog.publish_on_web.domain_config import (
+    DomainSetting,
+    domain_setting_path,
+    get_domain_setting,
+    set_domain_setting,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +46,7 @@ def _resolve_missing_base_domains(yaml_data: dict[str, Any], context: dict[str, 
     cluster_default = get_ingress_postfix(opi_config.settings.CLUSTER_MANAGER).lstrip(".")
     for i, dep in enumerate(yaml_data.get("deployments", [])):
         if isinstance(dep, dict) and not get_domain_setting(dep, DomainSetting.BASE_DOMAIN):
-            resolved = get_effective_value(yaml_data, f"deployments[{i}]/base-domain", resolvers)
+            resolved = get_effective_value(yaml_data, domain_setting_path(DomainSetting.BASE_DOMAIN, i), resolvers)
             if resolved and resolved != cluster_default:
                 set_domain_setting(dep, DomainSetting.BASE_DOMAIN, resolved)
 

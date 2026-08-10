@@ -109,6 +109,24 @@ def _fold_virtual(container: dict[str, Any], real_key: str, virt_data: Any) -> N
             container[real_key] = virt_data
 
 
+def _update_item(target: dict[str, Any], src: dict[str, Any]) -> None:
+    """Overlay one section's version of a list item onto the merged one.
+
+    A plain ``update`` everywhere except the item's own service list: a section stores
+    only the service entries it configures (see ``_extract_section_data``), so replacing
+    the list would drop every other service's deployment config -- clone state, a
+    cross-domain patch -- for a section that never mentioned them. Merged by name, the
+    same rule the project-level services list already follows (RC-60).
+    """
+    import copy
+
+    for key, value in src.items():
+        if key in _SERVICE_LIST_KEYS and isinstance(target.get(key), list) and isinstance(value, list):
+            target[key] = merge_service_lists(target[key], value)
+        else:
+            target[key] = copy.deepcopy(value)
+
+
 def _devirtualize(value: Any, virt_mappings: dict[str, str]) -> None:
     """Fold virtual keys onto their real siblings at every level, then drop them.
 
@@ -388,7 +406,7 @@ class WizardState:
                         for i, src_item in enumerate(value):
                             if i < len(target):
                                 if isinstance(target[i], dict) and isinstance(src_item, dict):
-                                    target[i].update(copy.deepcopy(src_item))
+                                    _update_item(target[i], src_item)
                                 else:
                                     target[i] = copy.deepcopy(src_item)
                             else:
