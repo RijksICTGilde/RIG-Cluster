@@ -24,7 +24,11 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from opi.services.catalog.base import ConfigLayer
+
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from opi.services.catalog.base import Service
 
 #: Fallback location for services not yet migrated to a self-contained package.
@@ -33,6 +37,11 @@ SERVICE_SCHEMA_DIR = Path(__file__).resolve().parent.parent / "schemas" / "servi
 
 def fragment_filename(service_name: str, version: str) -> str:
     return f"{service_name}.v{version}.json"
+
+
+def layer_fragment_filename(service_name: str, layer: ConfigLayer, version: str) -> str:
+    """File name for the schema of ONE layer: ``<service>.<layer>.v<version>.json``."""
+    return f"{service_name}.{layer.value}.v{version}.json"
 
 
 def fragment_dir(provider: Service) -> Path:
@@ -56,6 +65,46 @@ def fragment_path(provider: Service) -> Path:
     return fragment_dir(provider) / fragment_filename(provider.service_type.value, version)
 
 
+def layer_fragment_paths(provider: Service) -> dict[ConfigLayer, Path]:
+    """The committed fragment per layer whose model DIFFERS from ``config_model``.
+
+    "One service, one config shape" holds for most of the catalog, and for those services
+    the single fragment above says everything. It does not hold for a service whose layers
+    answer different questions -- publish-on-web (which domains may I use / how is this
+    address composed / how is TLS terminated), postgresql-database, the storage pair,
+    attachments. There the single fragment documents ONE of the shapes and silently omits
+    the rest, which is how a client discovers a field list that does not apply to the target
+    it is writing to.
+
+    Only the differing layers get a file: for a service where every layer is
+    ``config_model`` the extra files would be identical copies, and a copy that has to be
+    kept in step is the thing this whole mechanism exists to avoid. The API already answers
+    per layer (``config_model_for`` drives the generated request bodies); these files are
+    the committed, reviewable record of the same thing.
+    """
+    version = provider.config_schema_version
+    if version is None:
+        return {}
+    directory = fragment_dir(provider)
+    name = provider.service_type.value
+    paths: dict[ConfigLayer, Path] = {}
+    for layer in ConfigLayer:
+        model = provider.config_model_for(layer)
+        if model is None or model is provider.config_model:
+            continue
+        paths[layer] = directory / layer_fragment_filename(name, layer, version)
+    return paths
+
+
+def render_model_schema(model: type[BaseModel]) -> str:
+    """Render one Pydantic model to deterministic JSON-schema text.
+
+    ``sort_keys`` + fixed indent + trailing newline make the output byte-stable across runs
+    and Pydantic versions, so a committed file only changes when the model actually changes.
+    """
+    return json.dumps(model.model_json_schema(), indent=2, sort_keys=True) + "\n"
+
+
 def render_service_config_schema(provider: Service) -> str:
     """Render a provider's config model to deterministic JSON-schema text.
 
@@ -65,8 +114,7 @@ def render_service_config_schema(provider: Service) -> str:
     """
     if provider.config_model is None:
         raise TypeError(f"Service '{provider.service_type.value}' has no config_model to render")
-    schema = provider.config_model.model_json_schema()
-    return json.dumps(schema, indent=2, sort_keys=True) + "\n"
+    return render_model_schema(provider.config_model)
 
 
 def write_all_service_config_schemas() -> list[Path]:
@@ -82,6 +130,12 @@ def write_all_service_config_schemas() -> list[Path]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(render_service_config_schema(provider), encoding="utf-8")
         written.append(path)
+        for layer, layer_path in layer_fragment_paths(provider).items():
+            model = provider.config_model_for(layer)
+            if model is None:  # unreachable: layer_fragment_paths only yields layers with one
+                continue
+            layer_path.write_text(render_model_schema(model), encoding="utf-8")
+            written.append(layer_path)
     return written
 
 

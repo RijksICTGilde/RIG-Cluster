@@ -1,3 +1,40 @@
 {
-  "$comment": "v2.6 -> v2.7 (RC-60) moved the seven web-address settings from the deployment root to the publish-on-web service config on that deployment. Until v2.7 a file carried them at the deployment root, so the schema of v2.6 re-adds them here. Deployment service config is an open envelope, so a file that already carries them under the service validates at both versions."
+  "$comment": "v2.6 -> v2.7 (RC-60) moved the seven web-address settings of a deployment (base-domain, subdomain, domain-mode, domain-format, issuer, root-component, expose-component-on-bare-domain) from the deployment root to the publish-on-web service config on that deployment. Until v2.7 a file carried them at the root, and $defs/deployment has additionalProperties: false, so the schema of v2.6 re-adds them here. expose-component-on-bare-domain was never declared at all before RC-60 -- the wizard wrote it and the gate rejected it -- so it is declared here too, for the versions that could carry it.",
+  "$defs": {
+    "deployment": {
+      "properties": {
+        "base-domain": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subdomain": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "domain-mode": {
+          "type": "string"
+        },
+        "domain-format": {
+          "type": "string"
+        },
+        "issuer": {
+          "type": "string"
+        },
+        "root-component": {
+          "type": "string"
+        },
+        "expose-component-on-bare-domain": {
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    }
+  }
 }
