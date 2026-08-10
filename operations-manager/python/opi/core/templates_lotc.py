@@ -17,13 +17,11 @@ laatste, na het visuele thema, anders lossen de invoervelden niet op.
 
 import logging
 from pathlib import Path
-from typing import Any
 
 import markupsafe
 from fastapi.templating import Jinja2Templates
 from jinja2 import FileSystemLoader, TemplateNotFound
 from lord_of_the_components import get_static_roots, setup_components
-from markupsafe import Markup
 
 from opi.core.config import BUILD_DATE, VERSION
 from opi.core.templates import (
@@ -96,54 +94,17 @@ templates_lotc.env.globals["static_url"] = static_url
 templates_lotc.env.globals["field_attrs"] = field_attrs
 
 
-def render_roos(name: str, **context: Any) -> Markup:
-    """Render een template uit de ROOS-omgeving en zet het resultaat hier neer.
-
-    De TERUGVAL voor een blok dat een DIENST meelevert en dat nog geen LOTC-tegenhanger
-    heeft. Zo'n sjabloon staat in opi/services/catalog/ en is in roos-componenten
-    geschreven; het rendert niet in deze omgeving, want twee componentsystemen kunnen niet
-    in een Jinja-omgeving - de eerst geregistreerde voorbewerker eist elke <c-*>-tag op.
-
-    Hier stond dat dit de normale weg was, met als verantwoording dat zo'n blok dan
-    "zichtbaar anders" is en dat beter is dan stilletjes weg. De eerste helft klopte niet:
-    de rvo-klassen die zo'n blok draagt worden op een LOTC-pagina door geen enkel
-    stijlblad opgemaakt (lotc_rvo staat niet in DESIGN_SYSTEMS), dus het werd niet
-    zichtbaar anders maar volledig onopgemaakt - kale HTML midden op de pagina. Sinds
-    RC-64 levert elke dienst zijn eigen LOTC-sjabloon; zie :func:`lotc_counterpart`.
-
-    De tweede helft klopt nog steeds, en daarom blijft deze functie bestaan: een blok dat
-    niemand heeft nageschreven mag niet van de pagina VALLEN. Lelijk is de ondergrens,
-    geen bestemming - tests/test_lotc_dienstblokken.py laat het niet bij een ondergrens.
-
-    Een sjabloon dat niet bestaat wordt overgeslagen met een melding in het log, niet met
-    een foutpagina: een dienst die een blok aankondigt dat er niet is, mag de projectpagina
-    niet meenemen in zijn val.
-    """
-    from opi.core.templates import get_templates
-
-    try:
-        template = get_templates().env.get_template(name)
-    except TemplateNotFound:
-        logger.warning("Dienstblok overgeslagen, sjabloon niet gevonden: %s", name)
-        return Markup("")
-
-    # Markup() zegt: dit is HTML, escape het niet nog een keer. Dat is hier veilig en
-    # noodzakelijk, en het is de moeite waard om te zeggen WAAROM, want een verkeerde
-    # Markup() is hoe cross-site scripting binnenkomt.
-    #
-    # De naam komt niet van een gebruiker maar uit de dienstenregistry - een vaste lijst in
-    # de code - en het sjabloon zelf is van ons. De GEGEVENS erin worden door de
-    # roos-omgeving geescaped, want die staat op autoescape: een projectnaam met
-    # <script> erin komt er als tekst uit. Wat hier binnenkomt is dus al veilige HTML, en
-    # zonder Markup() zou je die HTML letterlijk op het scherm zien staan.
-    #
-    # Wat hier NIET mag gebeuren, en de reden dat dit een aparte functie is: gerenderde
-    # HTML nog een keer door een sjabloonmotor halen. Dan wordt {{ }} in een ingevulde
-    # waarde alsnog uitgevoerd, en dat is in deze codebase eerder een lek geweest.
-    return Markup(template.render(**context))  # noqa: S704
-
-
-templates_lotc.env.globals["render_roos"] = render_roos
+# Hier stond render_roos(): een blok van een DIENST dat nog geen LOTC-tegenhanger had werd
+# in de ROOS-omgeving gerenderd en het resultaat werd hier als HTML neergezet. Dat was de
+# ondergrens onder "lelijk is beter dan weg".
+#
+# Weg, en niet omdat die regel niet meer geldt maar omdat er niets meer is om op terug te
+# vallen: de roos-omgeving zelf verdwijnt. Elke dienst levert nu zijn eigen
+# ``-lotc``-sjabloon (zie :func:`lotc_counterpart`), en tests/test_lotc_dienstblokken.py
+# toetst ELK sjabloon in de catalogus daarop - niet alleen de projectblokken, want juist
+# daarbuiten zaten de gaten. De pagina's slaan een blok zonder tegenhanger over in plaats
+# van om te vallen, zodat een dienst die morgen iets aankondigt de projectpagina niet
+# meeneemt in zijn val.
 
 #: Achtervoegsel waarmee een dienst zijn LOTC-sjabloon naast het roos-sjabloon legt:
 #: ``keycloak/section-detail.html.j2`` hoort bij ``keycloak/section-detail-lotc.html.j2``.
@@ -155,11 +116,15 @@ LOTC_TEMPLATE_SUFFIX = "-lotc.html.j2"
 def lotc_counterpart(name: str) -> str | None:
     """De LOTC-tegenhanger van een dienstsjabloon, of None als die er niet is.
 
-    De projectpagina gebruikt dit om te kiezen: is er een tegenhanger, dan rendert het
-    blok helemaal in deze omgeving; is die er niet, dan valt hij terug op ``render_roos``.
-    Die terugval is de ondergrens en geen bestemming - een blok dat niemand naschrijft mag
-    niet van de pagina vallen, want diensten zijn het deel van dit platform dat blijft
-    groeien. ``tests/test_lotc_dienstblokken.py`` laat de tegenhanger niet ontbreken.
+    De projectpagina gebruikt dit om te kiezen: is er een tegenhanger, dan rendert het blok
+    helemaal in deze omgeving. Is die er niet, dan slaat de pagina het blok OVER; hier
+    stond eerder een terugval op ``render_roos``, maar die kan niet blijven bestaan nu de
+    roos-omgeving zelf weggaat.
+
+    Overslaan is de ondergrens en geen bestemming: een blok dat niemand naschrijft mag niet
+    de hele projectpagina meenemen in zijn val, want diensten zijn het deel van dit platform
+    dat blijft groeien. ``tests/test_lotc_dienstblokken.py`` maakt die ondergrens
+    onbereikbaar door ELK sjabloon in de catalogus op zijn tegenhanger te toetsen.
     """
     if not name.endswith(".html.j2"):
         return None
