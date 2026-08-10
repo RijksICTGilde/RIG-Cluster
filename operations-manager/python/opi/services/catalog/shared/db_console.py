@@ -23,7 +23,6 @@ from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import requires_sso
 from opi.core.config import settings
-from opi.core.templates import get_templates
 from opi.manager.db_console_manager import (
     DbConsoleError,
     DbConsoleTool,
@@ -31,6 +30,7 @@ from opi.manager.db_console_manager import (
 )
 from opi.manager.run_support import pending_state, spawn
 from opi.services.runs_service import RunKind, get_runs_service
+from opi.web.lotc_switch import render
 from opi.web.router_detail_edit import _require_project_member_access
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 db_console_router = APIRouter(prefix="/projects", tags=["db-console"])
 
 _MODAL_TEMPLATE = "shared/_db-console-modal.html.j2"
+_MODAL_TEMPLATE_LOTC = "shared/_db-console-modal-lotc.html.j2"
 
 
 async def _render(
@@ -76,10 +77,15 @@ async def _render(
         else:
             state = "none"
 
-    templates = get_templates()
-    return templates.TemplateResponse(
-        _MODAL_TEMPLATE,
-        {
+    # Hetzelfde blok in twee vormgevingen, net als bij de backupsnapshots. Hier stond een
+    # kale TemplateResponse op het roos-sjabloon, dus op een hertekende projectpagina kwam
+    # deze dialoog in de oude vormgeving binnen - onopgemaakt, want lotc_rvo staat niet in
+    # DESIGN_SYSTEMS.
+    return render(
+        request,
+        roos=_MODAL_TEMPLATE,
+        lotc=_MODAL_TEMPLATE_LOTC,
+        context={
             "request": request,
             "project_name": project_name,
             "deployment_name": deployment_name,

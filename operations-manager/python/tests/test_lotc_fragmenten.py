@@ -233,7 +233,7 @@ def test_de_tijdvakknoppen_wijzen_naar_een_id_dat_bestaat() -> None:
 
     Beide fragmenten mikten op ``#metrics-content``, en dat id staat nergens: htmx vindt
     zijn doel dan niet en de knop doet niets. De blokken die het fragment opnemen -
-    metrics_scraper/section-deployment.html.j2 en bg/_service-section-metrics.html.j2 -
+    metrics_scraper/section-deployment.html.j2 en metrics_scraper/section-deployment-lotc.html.j2 -
     zetten allebei ``metrics-content-<deployment>`` neer.
 
     ``hx-target`` wordt hier RECHTSTREEKS uit de HTML gelezen en niet uit het
@@ -272,7 +272,7 @@ def test_de_tijdvakknoppen_wijzen_naar_een_id_dat_bestaat() -> None:
 
 @pytest.mark.parametrize(("naam", "context"), BACKUP_GEVALLEN, ids=[naam for naam, _ in BACKUP_GEVALLEN])
 def test_het_backupblok_doet_in_beide_vormgevingen_hetzelfde(naam: str, context: dict[str, Any]) -> None:
-    oud, nieuw = _render("shared/_backup-snapshots.html.j2", "bg/_backup-snapshots.html.j2", context)
+    oud, nieuw = _render("shared/_backup-snapshots.html.j2", "shared/_backup-snapshots-lotc.html.j2", context)
     weg = _verdwenen(oud, nieuw)
     assert not weg, f"verdwenen gedrag in het backupblok ({naam}):\n  " + "\n  ".join(weg)
 
@@ -292,7 +292,7 @@ def test_de_backupsnapshots_komen_buiten_de_band_binnen() -> None:
 
     context = BACKUP_GEVALLEN[0][1]
     oud = get_templates().env.get_template("shared/_backup-snapshots.html.j2").render(**context)
-    nieuw = templates_lotc.env.get_template("bg/_backup-snapshots.html.j2").render(**context)
+    nieuw = templates_lotc.env.get_template("shared/_backup-snapshots-lotc.html.j2").render(**context)
 
     patroon = re.compile(r'id="([^"]+)"\s+hx-swap-oob="true"')
     assert patroon.findall(oud) == patroon.findall(nieuw)
@@ -306,7 +306,7 @@ def test_de_herstelknop_opent_dezelfde_dialoog() -> None:
     from opi.core.templates_lotc import templates_lotc
 
     met, zonder = (
-        templates_lotc.env.get_template("bg/_backup-snapshots.html.j2").render(**context)
+        templates_lotc.env.get_template("shared/_backup-snapshots-lotc.html.j2").render(**context)
         for _, context in (BACKUP_GEVALLEN[0], BACKUP_GEVALLEN[1])
     )
     aanroep = "openEditModal(&#39;modal-restore&#39;, &#39;Backup herstellen&#39;, {deployment: &#39;dep1&#39;})"
