@@ -86,23 +86,40 @@
         <c-stack gap="md">
             <c-heading type="h5" label="Nieuwe job" />
             <c-paragraph>Voer eenmalig een image + commando uit voor deze deployment (bijv. een migratie). De job krijgt de databaseverbinding van de deployment.</c-paragraph>
-            {# Een ECHTE <form> en niet <c-form>. Die laatste rendert een <nldd-form>, en dat
-               is een web-component en geen formulier: een knop met type="submit" erbinnen
-               heeft niets om in te dienen, htmx hangt zijn hx-post aan het submit-event van
-               een <form>, en het resultaat was een dialoog waarin klikken niets deed. Met
-               een gewone <form> is de bedrading bovendien LETTERLIJK dezelfde als in het
-               roos-sjabloon, dus de gedragsvergelijking blijft sluitend - had hier
-               hx-include op de knop gestaan, dan was dat een verschil geweest.
+            {# GEEN formulier met een verzendknop, maar een div plus een knop die zelf het
+               verzoek doet - precies zoals de consoledialoog hiernaast.
 
-               De JSON staat in enkele aanhalingstekens, zoals in bg/_wizard-step.html.j2:
-               dan hoeven de dubbele er niet als entiteit in. #}
-            <form id="job-form-{{ deployment_name }}"
-                  hx-post="/projects/{{ project_name }}/jobs"
-                  hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
-                  hx-vals='{"deployment": "{{ deployment_name }}"}'
-                  hx-target="#job-modal-body"
-                  hx-swap="outerHTML"
-                  hx-disabled-elt="find button">
+               Dat is niet de eerste keuze geweest. Het roos-sjabloon heeft hier een <form>
+               met hx-post, en dat naschrijven houdt de bedrading letterlijk gelijk. Alleen
+               werkt het niet, en dat is in de browser uitgezocht en niet beredeneerd:
+
+                 1. <c-form> rendert <nldd-form>, een web-component en geen formulier. Een
+                    knop met type=submit heeft daarin niets om in te dienen.
+                 2. Met een ECHTE <form> eromheen bleef het stil: de knop is een
+                    <nldd-button>, en zijn klik bereikt het submit-event van de omliggende
+                    form niet. Ook een rechtstreekse form.requestSubmit() leverde geen enkel
+                    verzoek op, terwijl het formulier geldig was en zijn FormData klopte.
+
+               De knop die het verzoek zelf doet werkt wel - gemeten: er vertrekt een POST en
+               de dialoog gaat naar "Job wordt gestart...". Dat is hier ook de gewone vorm:
+               de databaseconsole doet het al zo, in beide vormgevingen.
+
+               Gevolg voor de meting: er komt een hx-include bij dat het roos-blok niet heeft.
+               Dat staat als AANVAARD verschil in scripts/lotc_compare_behaviour.py, met deze
+               reden erbij - niet weggefilterd, maar opgeschreven.
+
+               ``id="job-form-<deployment>"`` blijft: het is nu het hx-include-doel, dus de
+               velden worden erdoor meegestuurd. #}
+            {% set uitvoeren_attrs = {
+                'hx-post': '/projects/' ~ project_name ~ '/jobs',
+                'hx-headers': '{"X-CSRF-Token": "' ~ request.state.csrf_token ~ '"}',
+                'hx-include': '#job-form-' ~ deployment_name,
+                'hx-vals': '{"deployment": "' ~ deployment_name ~ '"}',
+                'hx-target': '#job-modal-body',
+                'hx-swap': 'outerHTML',
+                'hx-disabled-elt': 'this',
+            } %}
+            <div id="job-form-{{ deployment_name }}">
                 <c-stack gap="md">
                     <c-text-input-field
                         id="job-image-{{ deployment_name }}"
@@ -117,17 +134,9 @@
                         label="Commando"
                         value="{{ form_command | default('', true) }}"
                         help="Optioneel. Leeg laten = het standaardcommando van de image." />
-                    {# html-type en niet type: op c-button is ``type`` de VORMGEVING
-                       (primary/secondary/...) en ``html-type`` het HTML-attribuut, met
-                       "button" als standaard. Hier stond :attrs="{'type': 'submit'}", en
-                       dat verloor het van het type="button" dat de component zelf
-                       schrijft: de knop zag er goed uit, en er vertrok geen enkel verzoek.
-                       Gemeten in de browser - de markupvergelijking zag hier niets van,
-                       want het hx-post staat op het FORMULIER en dat was in beide
-                       vormgevingen gelijk. #}
-                    <c-button type="primary" size="sm" label="Job uitvoeren" html-type="submit" />
+                    <c-button type="primary" size="sm" label="Job uitvoeren" :attrs="uitvoeren_attrs" />
                 </c-stack>
-            </form>
+            </div>
         </c-stack>
     </c-card>
 {% endif %}

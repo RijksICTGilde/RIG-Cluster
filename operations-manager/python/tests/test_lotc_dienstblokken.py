@@ -356,18 +356,23 @@ def test_de_lotc_omgeving_kan_niet_meer_in_de_roos_omgeving_renderen() -> None:
 
 
 @pytest.mark.parametrize(("geval", "naam", "context"), DIALOGEN, ids=[g for g, _, _ in DIALOGEN])
-def test_de_dialoog_houdt_evenveel_verzendknoppen(geval: str, naam: str, context: dict[str, Any]) -> None:
-    """Een formulier dat niet meer verzonden kan worden ziet er precies zo uit als een dat dat wel kan.
+def test_de_dialoog_kan_nog_versturen(geval: str, naam: str, context: dict[str, Any]) -> None:
+    """Kan deze dialoog zijn gegevens nog wegsturen? Een dode knop ziet er precies zo uit als een levende.
 
-    Dit gat kostte de jobdialoog zijn knop. Het formulier draagt het ``hx-post``, en dat was
-    in beide vormgevingen gelijk, dus de gedragsvergelijking meldde niets. Alleen: onder
-    LOTC is ``type`` op ``c-button`` de VORMGEVING (primary/secondary) en heet het
-    HTML-attribuut ``html-type``, met "button" als standaard. De knop stond er, hij zag er
-    goed uit, en er vertrok geen enkel verzoek.
+    Dit gat kostte de jobdialoog zijn knop, twee keer achter elkaar. Eerst omdat op
+    ``c-button`` het attribuut ``type`` de VORMGEVING is en het HTML-attribuut
+    ``html-type`` heet, dus de component schreef zelf ``type="button"``. En daarna omdat
+    een ``<nldd-button>`` met ``html-type="submit"`` het submit-event van de omliggende
+    ``<form>`` niet bereikt - zelfs ``form.requestSubmit()`` leverde geen verzoek op.
 
-    Daarom hier geteld op wat een formulier daadwerkelijk INDIENT: elementen met
-    ``type="submit"``. Dat werkt in beide vormgevingen, want zowel ``<button>`` als
-    ``<nldd-button>`` draagt dat attribuut in de uitvoer.
+    Beide keren meldde de gedragsvergelijking niets: het ``hx-post`` stond op het
+    FORMULIER en dat was in beide vormgevingen gelijk. De knop stond er, hij zag er goed
+    uit, en er vertrok niets.
+
+    Daarom wordt hier niet geteld hoe er verstuurd wordt maar OF dat kan: een element met
+    ``type="submit"``, of een element dat zelf een ``hx-post`` draagt. De vorm mag per
+    vormgeving verschillen - de jobdialoog gebruikt nu een knop met hx-post plus
+    hx-include, net als de consoledialoog ernaast - maar de mogelijkheid niet.
     """
     lotc_naam = lotc_counterpart(naam)
     assert lotc_naam is not None
@@ -375,11 +380,13 @@ def test_de_dialoog_houdt_evenveel_verzendknoppen(geval: str, naam: str, context
     roos_html = get_templates().env.get_template(naam).render(**context)
     lotc_html = templates_lotc.env.get_template(lotc_naam).render(**context)
 
-    oud = len(re.findall(r'type="submit"', roos_html))
-    nieuw = len(re.findall(r'type="submit"', lotc_html))
+    def kan_versturen(html: str) -> bool:
+        return bool(re.search(r'type="submit"', html) or re.search(r"hx-post=", html))
 
-    assert nieuw == oud, (
-        f"{geval}: het roos-blok heeft {oud} verzendknop(pen) en het LOTC-blok {nieuw}. "
-        f"Op c-button is 'type' de vormgeving; gebruik html-type=\"submit\" voor het "
-        f"HTML-attribuut, anders schrijft de component zelf type=\"button\" en doet de knop niets."
+    assert kan_versturen(lotc_html) == kan_versturen(roos_html), (
+        f"{geval}: het roos-blok kan {'wel' if kan_versturen(roos_html) else 'niet'} versturen "
+        f"en het LOTC-blok {'wel' if kan_versturen(lotc_html) else 'niet'}. "
+        f"Let op: op c-button is 'type' de vormgeving, en een <nldd-button> met "
+        f'html-type="submit" dient een omliggende <form> NIET in - geef de knop zelf een '
+        f"hx-post met hx-include, zoals de consoledialoog doet."
     )
