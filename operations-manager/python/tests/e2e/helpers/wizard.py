@@ -27,6 +27,30 @@ if TYPE_CHECKING:
 # Hoe vaak een veld opnieuw gevuld mag worden als een late render het weer leegmaakt.
 _FILL_ATTEMPTS = 5
 
+#: De tags waarin een echte formulierbesturing zit.
+FIELD_TAGS = ("input", "textarea", "select")
+
+
+def veldbesturing(page: Page, naam: str) -> Locator:
+    """De echte formulierbesturing van het veld met dit pad, ongeacht de vormgeving.
+
+    Op het NAME-attribuut zoeken werkt hier niet. In de LOTC-weergave draagt het custom
+    element (``<nldd-text-field>``) een name en de ``<input>`` in zijn shadow root ook, dus
+    ``[name='x']`` vindt er twee en Playwright weigert dat; bij een meerregelig veld draagt
+    juist alleen het custom element een name en de ``<textarea>`` geen.
+
+    Het ID is in beide vormgevingen wel precies een element, en wel de besturing zelf: de
+    roos-widget zet ``id=<pad>`` op de input, en LOTC geeft datzelfde pad als ``input-id``
+    door aan de input in de shadow root. Ids bevatten hier ``/`` en ``[]``, dus ze staan in
+    een attribuutselector en niet achter een ``#``.
+
+    Als losse functie en niet alleen als methode op WizardHelper, omdat ``lifecycle.py``
+    zijn eigen ``[name='...']``-locators had en daar precies op deze val liep: de wizard
+    kwam niet voorbij de team- en componentenstap, met "Node is not an <input>" in plaats
+    van een leeg veld.
+    """
+    return page.locator(", ".join(f"{tag}[id='{naam}']" for tag in FIELD_TAGS))
+
 
 def _unique_project_name(prefix: str = "e2e") -> str:
     """Generate a unique project name: e2e-{timestamp}-{random}."""
@@ -86,22 +110,12 @@ class WizardHelper:
     #: <nldd-form-field-error-text>; de roos-weergave in een eigen klasse.
     FIELD_ERRORS = ".rvo-form-field__error, .field-error, [role='alert'], nldd-form-field-error-text"
 
-    #: De echte formulierbesturing van een veld, ongeacht de vormgeving.
-    #:
-    #: Op het NAME-attribuut zoeken werkt hier niet meer. In de LOTC-weergave draagt het
-    #: custom element (<nldd-text-field>) een name en de <input> in zijn shadow root ook,
-    #: dus [name='x'] vindt er twee en Playwright weigert dat; bij een meerregelig veld
-    #: draagt juist alleen het custom element een name en de <textarea> geen.
-    #:
-    #: Het ID is in beide vormgevingen wel precies een element, en wel de besturing zelf:
-    #: de roos-widget zet id=<pad> op de input, en LOTC geeft datzelfde pad als input-id
-    #: door aan de input in de shadow root. Ids bevatten hier / en [], dus ze staan in een
-    #: attribuutselector en niet achter een #.
-    FIELD_TAGS = ("input", "textarea", "select")
+    #: Zie :func:`veldbesturing` voor waarom dit op het id gaat en niet op de naam.
+    FIELD_TAGS = FIELD_TAGS
 
     def field(self, name: str) -> Locator:
         """De invoerbesturing van het veld met dit pad."""
-        return self.page.locator(", ".join(f"{tag}[id='{name}']" for tag in self.FIELD_TAGS))
+        return veldbesturing(self.page, name)
 
     def open_create_wizard(self) -> None:
         """Navigate to a FRESH create-project wizard, guaranteed to start on step 1.
