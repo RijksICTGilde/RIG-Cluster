@@ -2937,7 +2937,11 @@ async def projects_overview(request: Request):
     """
     try:
         templates = get_templates()
-        user = get_current_user(request)
+        # `or {}` omdat get_current_user None kan geven. Dat valt hier veilig uit: een lege
+        # gebruiker heeft geen e-mailadres, is_platform_admin weigert een lege string en
+        # geen enkel projectlidmaatschap matcht erop, dus de lijst wordt leeg in plaats van
+        # volledig. Dezelfde vorm als de andere aanroepers van get_current_user.
+        user = get_current_user(request) or {}
         user_projects = _projects_for_user(user)
 
         return render(
