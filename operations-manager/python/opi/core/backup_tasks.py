@@ -24,6 +24,12 @@ from opi.handlers.project_file_handler import (
 from opi.manager.backup import create_backup_manager
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services import CloneFromType
+from opi.services.catalog.publish_on_web.domain_config import (
+    DomainSetting,
+    get_domain_setting,
+    has_domain_setting,
+    set_domain_setting,
+)
 from opi.services.project_store import get_project_store
 from opi.utils.naming import generate_pvc_name, generate_storage_name, generate_unique_name
 
@@ -175,11 +181,13 @@ async def _build_and_save_restore_deployment(
     if "components" not in new_deployment and "components" in source_dep:
         new_deployment["components"] = copy.deepcopy(source_dep["components"])
 
-    # Auto-set subdomain: if source subdomain matches source name, use target name
-    if "subdomain" not in new_deployment:
-        source_subdomain = source_dep.get("subdomain", "")
+    # Auto-set subdomain: if source subdomain matches source name, use target name.
+    # Presence, not truth: a subdomain the caller stored explicitly -- even as null -- is a
+    # decision and stays untouched, the same rule as before the fields moved (RC-60).
+    if not has_domain_setting(new_deployment, DomainSetting.SUBDOMAIN):
+        source_subdomain = get_domain_setting(source_dep, DomainSetting.SUBDOMAIN, "")
         if source_subdomain == source_deployment or source_subdomain:
-            new_deployment["subdomain"] = target_deployment
+            set_domain_setting(new_deployment, DomainSetting.SUBDOMAIN, target_deployment)
 
     # Add deployment to project data
     project_data["deployments"].append(new_deployment)

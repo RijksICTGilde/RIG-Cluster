@@ -1,5 +1,12 @@
 # Expose Component on Bare Domain
 
+> **Waar dit wordt opgeslagen (schemaversie 2.7):** de velden hieronder staan in het
+> projectbestand onder `deployments[].services[publish-on-web].config`, niet meer los in de
+> wortel van de deployment. Zie
+> [webadres-onder-de-dienst.md](../../../features/webadres-onder-de-dienst.md). De
+> YAML-fragmenten in dit document tonen de velden zonder dat omhulsel, om over hun betekenis
+> te gaan en niet over hun plek.
+
 ## Overview
 
 Allows a deployment to serve traffic on the bare/apex domain (e.g., `voorbeeld.nl`) alongside the prefixed domain (e.g., `www.voorbeeld.nl`). Only available for custom (own) domains, not platform domains.

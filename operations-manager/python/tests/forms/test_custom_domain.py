@@ -9,6 +9,7 @@ from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.validators import BaseDomainValidator, CustomDomainValidator
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path, get_domain_setting
 
 # ---------------------------------------------------------------------------
 # SentinelValueCondition
@@ -406,7 +407,7 @@ class TestIssuerGenerator:
         for section in flow.sections:
             processor.apply_dependent_generators(section.editables, yaml_data)
 
-        assert yaml_data["deployments"][0].get("issuer") == "letsencrypt"
+        assert get_domain_setting(yaml_data["deployments"][0], DomainSetting.ISSUER) == "letsencrypt"
 
     def test_issuer_removed_for_domain_without_issuer(self, monkeypatch):
         """No issuer key when the domain has no issuer configured."""
@@ -419,9 +420,22 @@ class TestIssuerGenerator:
         )
 
         flow = build_domain_edit_flow(0)
+        # The migrated shape: settings under the service, which is what reaches a form
+        # (migrate_to_latest runs on load). A stale issuer here must be cleared.
         yaml_data = {
             "deployments": [
-                {"base-domain": "sandbox.rijksapp.dev", "domain-format": "component.subdomain.domain", "issuer": "old"}
+                {
+                    "services": [
+                        {
+                            "reference": "publish-on-web",
+                            "config": {
+                                "base-domain": "sandbox.rijksapp.dev",
+                                "domain-format": "component.subdomain.domain",
+                                "issuer": "old",
+                            },
+                        }
+                    ]
+                }
             ],
         }
 
@@ -429,7 +443,7 @@ class TestIssuerGenerator:
         for section in flow.sections:
             processor.apply_dependent_generators(section.editables, yaml_data)
 
-        assert "issuer" not in yaml_data["deployments"][0]
+        assert get_domain_setting(yaml_data["deployments"][0], DomainSetting.ISSUER) is None
 
     def test_issuer_set_for_second_deployment(self, monkeypatch):
         """Issuer works correctly when editing deployment index 1."""
@@ -454,9 +468,9 @@ class TestIssuerGenerator:
             processor.apply_dependent_generators(section.editables, yaml_data)
 
         # Deployment 0 should be untouched
-        assert "issuer" not in yaml_data["deployments"][0]
+        assert get_domain_setting(yaml_data["deployments"][0], DomainSetting.ISSUER) is None
         # Deployment 1 should have issuer
-        assert yaml_data["deployments"][1].get("issuer") == "letsencrypt"
+        assert get_domain_setting(yaml_data["deployments"][1], DomainSetting.ISSUER) == "letsencrypt"
 
 
 # ---------------------------------------------------------------------------
@@ -468,12 +482,14 @@ class TestBareDomainComponentEditable:
     def test_editable_yaml_path(self):
         from opi.forms.editables.fields.domains import DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE
 
-        assert DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE.yaml_path == "deployments[*]/expose-component-on-bare-domain"
+        assert DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE.yaml_path == domain_setting_path(
+            DomainSetting.BARE_DOMAIN_COMPONENT
+        )
 
     def test_editable_depends_on_base_domain(self):
         from opi.forms.editables.fields.domains import DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE
 
-        assert DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE.depends_on == "deployments[*]/base-domain"
+        assert DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE.depends_on == domain_setting_path(DomainSetting.BASE_DOMAIN)
 
     def test_editable_show_when_custom(self):
         from opi.forms.editables.fields.domains import DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE
@@ -498,7 +514,7 @@ class TestRootComponentEditable:
     def test_editable_yaml_path(self):
         from opi.forms.editables.fields.domains import DOMAIN_ROOT_COMPONENT_EDITABLE
 
-        assert DOMAIN_ROOT_COMPONENT_EDITABLE.yaml_path == "deployments[*]/root-component"
+        assert DOMAIN_ROOT_COMPONENT_EDITABLE.yaml_path == domain_setting_path(DomainSetting.ROOT_COMPONENT)
 
     def test_editable_remove_when_none(self):
         from opi.forms.editables.fields.domains import DOMAIN_ROOT_COMPONENT_EDITABLE
@@ -516,11 +532,23 @@ class TestRootComponentEditable:
         )
         processor = EditableFormProcessor()
         # domain-format must be a root-component format so the field renders.
-        data = {"deployments": [{"name": "prod", "domain-format": "component.subdomain", "root-component": ""}]}
+        data = {
+            "deployments": [
+                {
+                    "name": "prod",
+                    "services": [
+                        {
+                            "reference": "publish-on-web",
+                            "config": {"domain-format": "component.subdomain", "root-component": ""},
+                        }
+                    ],
+                }
+            ]
+        }
 
         result, _errors = await processor.process_json_submission(data, [seq_vis], data)
 
-        assert "root-component" not in result["deployments"][0]
+        assert get_domain_setting(result["deployments"][0], DomainSetting.ROOT_COMPONENT) is None
 
 
 class TestBareDomainComponentProvider:
