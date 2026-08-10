@@ -28,6 +28,7 @@ het antwoord daarop en meet drie dingen:
 
 from __future__ import annotations
 
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -328,3 +329,27 @@ def test_de_dialoogroutes_kiezen_de_vormgeving_van_het_verzoek() -> None:
             f"opi.web.lotc_switch.render() zodat het verzoek de vormgeving kiest"
         )
         assert "lotc=_MODAL_TEMPLATE_LOTC" in bron, f"{module}.py geeft geen LOTC-sjabloon mee aan render()"
+
+
+def test_de_lotc_omgeving_kan_niet_meer_in_de_roos_omgeving_renderen() -> None:
+    """``render_roos`` is weg en mag niet terugkomen.
+
+    Die functie rendeerde een dienstblok in de ANDERE componentomgeving en zette het
+    resultaat als HTML op een NLDD-pagina. Zolang hij bestaat is hij een uitnodiging: een
+    dienst die zijn tegenhanger niet schrijft komt er dan alsnog in, ongestileerd, en de
+    poort hierboven wordt vrijblijvend. Er is nu ook niets meer om op terug te vallen - de
+    roos-omgeving zelf gaat weg.
+    """
+    assert "render_roos" not in templates_lotc.env.globals
+
+    # De Jinja-COMMENTAAR eruit voordat we zoeken: verschillende sjablonen leggen in hun kop
+    # uit dat hier render_roos() stond en waarom het weg is. Die uitleg is de bedoeling, en
+    # een test die erop afgaat dwingt je hem te schrappen - dan verliest de volgende lezer
+    # precies de reden waarom het zo werkt.
+    sjablonen = Path(__file__).resolve().parents[1] / "opi" / "templates_lotc"
+    roepen_aan = [
+        pad.name
+        for pad in sjablonen.rglob("*.j2")
+        if "render_roos(" in re.sub(r"\{#.*?#\}", "", pad.read_text(), flags=re.DOTALL)
+    ]
+    assert roepen_aan == [], f"deze LOTC-sjablonen roepen render_roos() nog aan: {roepen_aan}"

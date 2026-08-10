@@ -59,12 +59,23 @@ een dienstsjabloon nooit een bestand in `templates_lotc/` kan overschaduwen.
 
 ```jinja
 {% set lotc_sjabloon = lotc_counterpart(section.template) %}
-{% if lotc_sjabloon %}{% include lotc_sjabloon %}
-{% else %}{{ render_roos(section.template, request=request, section=section) }}{% endif %}
+{% if lotc_sjabloon %}{% include lotc_sjabloon %}{% endif %}
 ```
 
-`render_roos()` blijft dus bestaan, maar als ONDERGRENS: een blok dat niemand heeft
-nageschreven mag niet van de pagina vallen. Lelijk is beter dan weg.
+Hier stond een `{% else %}` die met `render_roos()` op de roos-omgeving terugviel. Die
+terugval is weg (RC-65), en niet omdat de regel erachter vervalt maar omdat er niets meer
+is om op terug te vallen: de roos-omgeving zelf verdwijnt. De regel blijft in twee vormen
+overeind. Ten eerste slaat de pagina een blok zonder tegenhanger OVER in plaats van om te
+vallen - een dienst die morgen iets aankondigt neemt de projectpagina niet mee in zijn val.
+Ten tweede maakt `tests/test_lotc_dienstblokken.py` dat overslaan onbereikbaar: het toetst
+ELK sjabloon in de catalogus op zijn tegenhanger, niet alleen de projectblokken.
+
+Die poort stond eerst alleen op `*/section-detail.html.j2`, en dat was precies te smal: het
+deploymentblok van metrics_scraper, het backupblok en de twee dialogen (job,
+databaseconsole) vielen erbuiten. De twee dialogen kozen hun sjabloon zelfs helemaal niet -
+`jobs.py` en `db_console.py` deden een kale `TemplateResponse` op het roos-sjabloon - dus
+op een NLDD-pagina kwam de dialoog onopgemaakt binnen. Ze gaan nu allebei via
+`opi.web.lotc_switch.render()`.
 
 ### Waarom er niet één gedeeld sjabloon kan zijn
 
