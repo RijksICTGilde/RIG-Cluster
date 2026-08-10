@@ -3,7 +3,7 @@
 <c-card outline="true" padding="xl" background-color="wit">
     <c-layout-flow gap="lg">
         <c-heading type="h2" class="section-heading"><c-icon icon="applicatie" size="xl" color="oranje"/>Helmfile</c-heading>
-        <p class="rvo-text--subtle">Helmfile definities op project niveau</p>
+        <p>Helmfile definities op project niveau</p>
 
         <div class="helmfile-section">
             {% for helmfile in project.helmfile %}
@@ -14,7 +14,7 @@
                         <div>
                             <c-heading type="h3" label="{{ helmfile.name }}"/>
                             {% if helmfile.get('repository') %}
-                            <div class="rvo-text--sm rvo-text--subtle">{{ helmfile.repository }}</div>
+                            <div>{{ helmfile.repository }}</div>
                             {% endif %}
                         </div>
                     </div>
@@ -32,7 +32,7 @@
                     <div class="helm-values-section section-divider">
                         <div class="helm-values-header">
                             <c-icon icon="sleutel" size="sm" color="hemelblauw"/>
-                            <span class="rvo-text--sm text-strong">Helm Values (Base)</span>
+                            <span class="text-strong">Helm Values (Base)</span>
                             <span class="env-vars-count-badge">{{ helmfile['helm-values']|length }} waarde{% if helmfile['helm-values']|length != 1 %}n{% endif %}</span>
                         </div>
                         <c-secret-field value="{{ helmfile['helm-values'] | tojson(indent=2) }}" value-type="json" content-width="lg"/>
