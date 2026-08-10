@@ -25,7 +25,7 @@
                 <c-icon icon="info" size="lg" color="grijs-500"/>
                 <div>
                     <strong>{{ ServiceAdapter.get_service_definition(ServiceAdapter.get_service_by_value(fact.service)).name }}</strong>
-                    <p class="rvo-text--sm rvo-text--subtle">{{ fact.summary }}</p>
+                    <p>{{ fact.summary }}</p>
                 </div>
             </c-cluster>
         </c-card>

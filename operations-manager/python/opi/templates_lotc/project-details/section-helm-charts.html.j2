@@ -3,7 +3,7 @@
 <c-card outline="true" padding="xl" background-color="wit">
     <c-layout-flow gap="lg">
         <c-heading type="h2" class="section-heading"><c-icon icon="applicatie" size="xl" color="groen"/>Helm Charts</c-heading>
-        <p class="rvo-text--subtle">Helm chart definities op project niveau</p>
+        <p>Helm chart definities op project niveau</p>
 
         <div class="helm-charts-section">
             {% for helm_chart in project.helm_charts %}
@@ -14,7 +14,7 @@
                         <div>
                             <c-heading type="h3" label="{{ helm_chart.name }}"/>
                             {% if helm_chart.get('repository') %}
-                            <div class="rvo-text--sm rvo-text--subtle">{{ helm_chart.repository }}</div>
+                            <div>{{ helm_chart.repository }}</div>
                             {% endif %}
                         </div>
                     </div>
@@ -32,7 +32,7 @@
                     <div class="helm-values-section section-divider">
                         <div class="helm-values-header">
                             <c-icon icon="sleutel" size="sm" color="hemelblauw"/>
-                            <span class="rvo-text--sm text-strong">Helm Values (Base)</span>
+                            <span class="text-strong">Helm Values (Base)</span>
                             <span class="env-vars-count-badge">{{ helm_chart['helm-values']|length }} waarde{% if helm_chart['helm-values']|length != 1 %}n{% endif %}</span>
                         </div>
                         <c-secret-field value="{{ helm_chart['helm-values'] | tojson(indent=2) }}" value-type="json" content-width="lg"/>
