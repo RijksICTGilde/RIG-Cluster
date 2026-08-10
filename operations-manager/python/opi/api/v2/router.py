@@ -55,6 +55,12 @@ from opi.api.v2.models import (
     ProjectListResponse,
     StatusError,
 )
+from opi.api.v2.project_read import (
+    ComponentDetail,
+    ProjectServiceUsages,
+    build_component_details,
+    collect_project_services,
+)
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
     ADD_COMPONENT_VALIDATORS,
@@ -100,6 +106,7 @@ from opi.services.project_store import get_project_store
 from opi.services.registry import SERVICES, get_service
 from opi.services.services import ServiceAdapter, service_entry_config, service_entry_name
 from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceKind, ServiceType
+from opi.utils.age import get_decoded_project_private_key
 from opi.utils.naming import (
     HostnameFormat,
     generate_argocd_application_name,
@@ -444,6 +451,31 @@ def _build_deployment_detail(
 # ---------------------------------------------------------------------------
 
 
+def _project_data_or_404(project_name: str) -> dict[str, Any]:
+    """The project file this endpoint reads, or 404."""
+    project = get_project_store().get(project_name)
+    if not project or not project.data:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+    return project.data
+
+
+async def _deployment_details(project_name: str, project_data: dict[str, Any]) -> list[DeploymentDetail]:
+    """The deployments of this project on the current cluster, with their live status.
+
+    The one deployment reader: both ``GET .../deployments`` and the whole-project view
+    go through it, so the two cannot describe the same deployment differently (RC-61).
+    """
+    current_cluster = settings.CLUSTER_MANAGER
+    deployments = [
+        d for d in project_data.get("deployments", []) if d.get("cluster") == current_cluster and d.get("name")
+    ]
+    statuses = await _fetch_live_statuses_lenient(project_name, project_data, deployments)
+    return [
+        _build_deployment_detail(depl, project_name, project_data, statuses.get(depl["name"], _unavailable()))
+        for depl in deployments
+    ]
+
+
 @v2_router.get(
     "/projects/{project_name}/deployments",
     tags=["deployments"],
@@ -461,22 +493,9 @@ async def list_deployments_v2(
     Headers:
         X-API-Key: The API key for the project (required)
     """
-    project = get_project_store().get(project_name)
-    if not project or not project.data:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-
-    project_data: dict[str, Any] = project.data
+    project_data = _project_data_or_404(project_name)
     current_cluster = settings.CLUSTER_MANAGER
-    deployments = [
-        d for d in project_data.get("deployments", []) if d.get("cluster") == current_cluster and d.get("name")
-    ]
-
-    statuses = await _fetch_live_statuses_lenient(project_name, project_data, deployments)
-
-    details = [
-        _build_deployment_detail(depl, project_name, project_data, statuses.get(depl["name"], _unavailable()))
-        for depl in deployments
-    ]
+    details = await _deployment_details(project_name, project_data)
 
     return JSONResponse(
         content=DeploymentListResponse(
@@ -583,6 +602,20 @@ class PendingRolloutResponse(BaseModel):
     )
 
 
+async def _pending_rollout(request: Request, project_name: str) -> PendingRolloutResponse:
+    """How far the project file runs ahead of the cluster.
+
+    Every read endpoint carries this, not just the dedicated one: an answer that
+    describes the project file without saying what is still waiting reads as a
+    description of what runs, and that is exactly what it is not (RC-61).
+    """
+    task_service = getattr(request.app.state, "task_service", None)
+    if task_service is None:
+        raise HTTPException(status_code=503, detail="Task service not available")
+    pending = await task_service.get_deferred_rollouts(project_name)
+    return PendingRolloutResponse(project=project_name, **pending)
+
+
 @v2_router.get(
     "/projects/{project_name}/pending-rollout",
     tags=["projects"],
@@ -601,12 +634,186 @@ async def pending_rollout_v2(request: Request, project_name: ProjectNamePath) ->
     Headers:
         X-API-Key: The API key for the project (required)
     """
-    task_service = getattr(request.app.state, "task_service", None)
-    if task_service is None:
-        raise HTTPException(status_code=503, detail="Task service not available")
+    return JSONResponse(content=(await _pending_rollout(request, project_name)).model_dump())
 
-    pending = await task_service.get_deferred_rollouts(project_name)
-    return JSONResponse(content=PendingRolloutResponse(project=project_name, **pending).model_dump())
+
+# ---------------------------------------------------------------------------
+# Reading a project back (RC-61)
+#
+# Three layers, not three alternatives: the service list and the component list are
+# each useful on their own, and the whole-project view is those two plus the existing
+# deployment reader and pending-rollout, composed here without data logic of its own.
+# One source per fact, so the parts and the whole cannot disagree.
+#
+# All of it reads the project file. The collectors live in ``project_read.py``.
+# ---------------------------------------------------------------------------
+
+#: Where the answer comes from. Stated in every read response, because "what is written
+#: down" and "what is running" part company the moment someone saves with rollout=false.
+PROJECT_FILE_SOURCE = "project-file"
+
+_SOURCE_DESCRIPTION = (
+    "Always 'project-file': this is what the project file says, read from the project "
+    "repository, not what the cluster is currently running. Check 'pending_rollout' to "
+    "see whether the two have drifted apart."
+)
+
+
+class ProjectHeader(BaseModel):
+    """What a project calls itself."""
+
+    name: str = Field(..., description="Technical name of the project, as used in every path.")
+    display_name: str | None = Field(default=None, description="Human-readable name shown in the portal.")
+    description: str | None = Field(default=None, description="Free-text description from the project file.")
+    clusters: list[str] = Field(default_factory=list, description="Clusters this project targets.")
+
+
+class ProjectServicesResponse(BaseModel):
+    """Which platform services a project uses, and where."""
+
+    project: str = Field(..., description="Technical name of the project.")
+    source: str = Field(default=PROJECT_FILE_SOURCE, description=_SOURCE_DESCRIPTION)
+    pending_rollout: PendingRolloutResponse = Field(..., description="Saved changes that are not on the cluster yet.")
+    services: list[ProjectServiceUsages] = Field(
+        ..., description="Every service the project uses, sorted by name, with each place it is used."
+    )
+
+
+class ProjectComponentsResponse(BaseModel):
+    """The component definitions of a project."""
+
+    project: str = Field(..., description="Technical name of the project.")
+    source: str = Field(default=PROJECT_FILE_SOURCE, description=_SOURCE_DESCRIPTION)
+    pending_rollout: PendingRolloutResponse = Field(..., description="Saved changes that are not on the cluster yet.")
+    components: list[ComponentDetail] = Field(..., description="The components as defined in the project file.")
+
+
+class ProjectDetailResponse(BaseModel):
+    """A whole project in one answer: what it is, what it uses, and what it runs."""
+
+    project: ProjectHeader = Field(..., description="Name, display name, description and target clusters.")
+    source: str = Field(default=PROJECT_FILE_SOURCE, description=_SOURCE_DESCRIPTION)
+    cluster: str = Field(..., description="The cluster this instance manages; deployments are filtered to it.")
+    pending_rollout: PendingRolloutResponse = Field(..., description="Saved changes that are not on the cluster yet.")
+    services: list[ProjectServiceUsages] = Field(..., description="Identical to GET /projects/{project_name}/services.")
+    components: list[ComponentDetail] = Field(..., description="Identical to GET /projects/{project_name}/components.")
+    deployments: list[DeploymentDetail] = Field(
+        ..., description="Identical to GET /projects/{project_name}/deployments."
+    )
+
+
+@v2_router.get(
+    "/projects/{project_name}/services",
+    tags=["services"],
+    summary="Which services this project uses",
+    response_model=ProjectServicesResponse,
+)
+@validate_api_token
+async def list_project_services_v2(request: Request, project_name: ProjectNamePath) -> JSONResponse:
+    """List every platform service the project uses, and on which layer.
+
+    One call instead of asking each service in the catalog separately. A service selected
+    without configuration is reported with ``config: null`` -- it is switched on, and that
+    is the answer to "which services does this project use". Stored secrets in a config
+    are replaced by ``***``, and an attachment's file content is never included.
+
+
+    The answer describes the project file, not the cluster: a change saved with
+    ``rollout=false`` is in here without having been deployed, and ``pending_rollout``
+    says so.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    project_data = _project_data_or_404(project_name)
+    return JSONResponse(
+        content=ProjectServicesResponse(
+            project=project_name,
+            pending_rollout=await _pending_rollout(request, project_name),
+            services=collect_project_services(project_data),
+        ).model_dump(mode="json")
+    )
+
+
+@v2_router.get(
+    "/projects/{project_name}/components",
+    tags=["components"],
+    summary="The component definitions of this project",
+    response_model=ProjectComponentsResponse,
+)
+@validate_api_token
+async def list_components_v2(request: Request, project_name: ProjectNamePath) -> JSONResponse:
+    """Read the components a project defines: ports, routing, resources and bindings.
+
+    This returns more than ``POST .../components`` accepts -- ``type``, ``ports`` and the
+    service bindings are written by the portal, and leaving them out would describe a
+    component that does not exist.
+
+    Environment variables come back as **names only**. Their values are stored encrypted
+    and are decrypted here to get at the names; not one of them is returned. An alias
+    value is returned as stored when it is plain text (``$DATABASE_SERVER_HOST`` is the
+    reason to ask) and as ``***`` when it was stored as a secret. Attachments come back as
+    the coupling -- which attachment, mounted where -- never the file content.
+
+
+    The answer describes the project file, not the cluster: a change saved with
+    ``rollout=false`` is in here without having been deployed, and ``pending_rollout``
+    says so.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    project_data = _project_data_or_404(project_name)
+    private_key = await get_decoded_project_private_key(project_data)
+    return JSONResponse(
+        content=ProjectComponentsResponse(
+            project=project_name,
+            pending_rollout=await _pending_rollout(request, project_name),
+            components=await build_component_details(project_data, private_key),
+        ).model_dump(mode="json")
+    )
+
+
+@v2_router.get(
+    "/projects/{project_name}",
+    tags=["projects"],
+    summary="The whole project in one answer",
+    response_model=ProjectDetailResponse,
+)
+@validate_api_token
+async def get_project_v2(request: Request, project_name: ProjectNamePath) -> JSONResponse:
+    """Describe a project as a whole: services, components, deployments and pending changes.
+
+    A composition, not a fourth view: ``services``, ``components`` and ``deployments`` are
+    field for field what the three endpoints of that name return, so there is one source
+    per fact. Use it to render ``zad project describe`` in one round trip; use the parts
+    when only one of them is needed.
+
+
+    The answer describes the project file, not the cluster: a change saved with
+    ``rollout=false`` is in here without having been deployed, and ``pending_rollout``
+    says so.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    project_data = _project_data_or_404(project_name)
+    private_key = await get_decoded_project_private_key(project_data)
+    return JSONResponse(
+        content=ProjectDetailResponse(
+            project=ProjectHeader(
+                name=project_name,
+                display_name=project_data.get("display-name"),
+                description=project_data.get("description"),
+                clusters=list(project_data.get("clusters") or []),
+            ),
+            cluster=settings.CLUSTER_MANAGER,
+            pending_rollout=await _pending_rollout(request, project_name),
+            services=collect_project_services(project_data),
+            components=await build_component_details(project_data, private_key),
+            deployments=await _deployment_details(project_name, project_data),
+        ).model_dump(mode="json")
+    )
 
 
 def _reject_deferred_rollout(rollout: bool, task_type: str) -> None:
