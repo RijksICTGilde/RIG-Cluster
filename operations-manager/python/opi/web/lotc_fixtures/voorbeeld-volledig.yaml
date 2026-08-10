@@ -40,7 +40,11 @@ services:
             realm: voorbeeld-volledig-odcn-production
             username: voorbeeld_admin
             password: VOORBEELDWAARDE-geen-echt-wachtwoord
-            totp_secret: VOORBEELDWAARDE-geen-echte-sleutel
+            # De vlag en niet de sleutel, precies zoals de echte pagina hem doorgeeft: de
+            # detailroute zet ``has_totp`` en wist ``totp_secret``, want een sleutel op de
+            # pagina zou wie hem ziet voor altijd codes laten maken. Met alleen een
+            # sleutel hier zou de knop "Toon code" op de proefopstelling ontbreken.
+            has_totp: true
   - namespace-postgresql-database:
       config:
         instances: 1
