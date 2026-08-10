@@ -16,12 +16,13 @@
    wizard bijvoorbeeld - had daardoor geen kader en geen eigen achtergrond, en de items
    liepen visueel in elkaar over.
 
-   De klasse rvo-sequence__item en data-index blijven staan: wizard.js hangt zijn
-   toevoegen en verwijderen daaraan op, en telt de items ermee. #}
-<div class="rvo-sequence__item" data-index="{{ index }}">
+   De klasse rvo-sequence__item is weg: geen enkele geladen stylesheet maakte hem op en
+   wizard.js zoekt er niet naar - dat doet hij met data-index en de id van de lijst, en
+   die blijven dus staan. #}
+<div data-index="{{ index }}">
 <c-card outline padding="md">
     {% if not fixed_size and field.add_remove %}
-    <div class="rvo-sequence__item-header">
+    <div class="lotc-sequence__item-header">
         <span></span>
         {# @click met Jinja erin werkt niet: de voorbewerker leest de waarde van een
        @-attribuut als kale tekst, dus {{ ... }} komt er letterlijk uit en de knop doet
@@ -35,7 +36,7 @@
     {% endif %}
     {# c-stack en geen c-layout-flow: die laatste wordt een <nldd-container> zonder gap,
        en dan plakken de velden binnen een item aan elkaar. #}
-    <div class="rvo-sequence__item-content">
+    <div>
         <c-stack gap="md">
             {{ item_html }}
         </c-stack>

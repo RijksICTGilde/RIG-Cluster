@@ -18,7 +18,7 @@
 <c-card outline="true" padding="xl" background-color="wit">
     <c-layout-flow gap="lg">
         <c-heading type="h2" class="section-heading"><c-icon icon="sleutel" size="xl" color="hemelblauw"/>Omgevingsvariabelen</c-heading>
-        <p class="rvo-text--subtle">Overzicht van alle gebruiker-gedefinieerde omgevingsvariabelen per scope</p>
+        <p>Overzicht van alle gebruiker-gedefinieerde omgevingsvariabelen per scope</p>
 
         {% if ns.has_any_env_vars %}
         <c-layout-flow gap="xl">
@@ -31,7 +31,7 @@
                         <c-icon icon="puzzel" size="lg" color="donkerblauw"/>
                         <div>
                             <c-heading type="h3" label="Component niveau"/>
-                            <p class="rvo-text--sm rvo-text--subtle">Standaard variabelen per component (gelden voor alle deployments)</p>
+                            <p>Standaard variabelen per component (gelden voor alle deployments)</p>
                         </div>
                     </div>
 
@@ -74,7 +74,7 @@
                         <c-icon icon="server" size="lg" color="oranje"/>
                         <div>
                             <c-heading type="h3" label="Deployment niveau"/>
-                            <p class="rvo-text--sm rvo-text--subtle">Deployment-specifieke variabelen (overschrijven component niveau)</p>
+                            <p>Deployment-specifieke variabelen (overschrijven component niveau)</p>
                         </div>
                     </div>
 
@@ -134,7 +134,7 @@
         {% else %}
         <div class="empty-state">
             <c-icon icon="info" size="lg" color="grijs-050"/>
-            <p class="rvo-text--md">Geen omgevingsvariabelen geconfigureerd</p>
+            <p>Geen omgevingsvariabelen geconfigureerd</p>
         </div>
         {% endif %}
     </c-layout-flow>
