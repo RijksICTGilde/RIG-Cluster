@@ -162,3 +162,25 @@ Drie dingen die stil kapot waren en dit werk blokkeerden:
 - `_extract_section_data` behandelde `services{X}` als een gewoon veld, waardoor een
   formuliersectie de hele dienstenlijst van een deployment verving. Clone-state en een
   cross-domain-patch konden daarmee verdwijnen; die lijst wordt nu per naam samengevoegd.
+
+## Twee gevolgen van de verhuizing die eigen poorten kregen
+
+**Een clone erft het webadres niet.** `upsert_deployment` kopieerde de brondeployment en
+sloot daarbij de vijf wortelsleutels uit (`subdomain`, `base-domain`, `domain-mode`,
+`domain-format`, `issuer`). Zodra die waarden onder de dienst staan is dat een no-op: ze
+reizen mee in het `services`-blok, dat als geheel gekopieerd wordt. Het webadres wordt nu
+**na** de kopie verwijderd, met `clear_domain_settings()` — dezelfde autoriteit over de
+locatie als de lezers en schrijvers — en de door de aanroeper gevraagde instellingen worden
+daarna opnieuw geschreven, want de kopie liep er anders overheen. Een clone landt dus op het
+clusteradres, niet op de hostnamen van de bron. Merk op dat de clone nu ook
+`root-component` en `expose-component-on-bare-domain` laat vallen; die werden voorheen
+geërfd en daarna voorwaardelijk opgeruimd.
+
+**Het kale domein wordt op elke schrijfweg getoetst.** `expose-component-on-bare-domain` is
+sinds deze verhuizing ook via de dienstconfiguratie-PUT te zetten, en die body hoeft geen
+`domain-format` te bevatten. De regel "kaal domein alleen voor eigen domeinen, nooit voor een
+platformdomein" stond in `DomainConfigEnforcer` achter de vroege `if not domain_format:
+return` en was daarmee alleen vanuit de wizard bereikbaar. Hij staat nu vóór die uitstap —
+de regel hangt niet van het formaat af — en wordt bovendien op het publicatiepad afgedwongen,
+vlak voor `register_bare_domain` en voor het renderen van de apex-ingress. Eén regel,
+`validate_bare_domain_allowed()` in `connectors/subdomain.py`, aangeroepen door beide.
