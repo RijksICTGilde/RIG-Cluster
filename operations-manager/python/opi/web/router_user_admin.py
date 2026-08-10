@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.exc import IntegrityError
 from starlette.responses import Response
 
-from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.auth_decorators import require_platform_admin, requires_sso
 from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
@@ -31,17 +31,6 @@ user_admin_router = APIRouter(prefix="/admin/users", tags=["user-admin"])
 
 def _get_service() -> UserAdminService:
     return UserAdminService()
-
-
-def _require_admin(request: Request) -> dict:
-    """Return the current user dict or raise 403 if not an admin."""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Niet ingelogd")
-    email = user.get("email", "").lower()
-    if not get_user_service().is_platform_admin(email):
-        raise HTTPException(status_code=403, detail="Alleen beheerders hebben toegang")
-    return user
 
 
 def _create_renderer() -> FormRenderer:
@@ -135,7 +124,7 @@ def _user_form_response(
 @requires_sso
 async def list_users(request: Request) -> Response:
     """List all platform users."""
-    user = _require_admin(request)
+    user = require_platform_admin(request)
     service = _get_service()
     users = await service.list_users()
 
@@ -165,7 +154,7 @@ async def list_users(request: Request) -> Response:
 @requires_sso
 async def create_user_form(request: Request) -> Response:
     """Show the create user form."""
-    user = _require_admin(request)
+    user = require_platform_admin(request)
     return _user_form_response(
         request,
         user,
@@ -179,7 +168,7 @@ async def create_user_form(request: Request) -> Response:
 @requires_sso
 async def create_user_submit(request: Request) -> Response:
     """Process the create user form."""
-    user = _require_admin(request)
+    user = require_platform_admin(request)
     form_data = await request.form()
     submitted = dict(form_data)
 
@@ -233,7 +222,7 @@ async def create_user_submit(request: Request) -> Response:
 @requires_sso
 async def edit_user_form(request: Request, user_id: str) -> Response:
     """Show the edit user form, pre-filled."""
-    user = _require_admin(request)
+    user = require_platform_admin(request)
     service = _get_service()
     existing = await service.get_user(user_id)
     if not existing:
@@ -253,7 +242,7 @@ async def edit_user_form(request: Request, user_id: str) -> Response:
 @requires_sso
 async def edit_user_submit(request: Request, user_id: str) -> Response:
     """Process the edit user form."""
-    user = _require_admin(request)
+    user = require_platform_admin(request)
     service = _get_service()
     existing = await service.get_user(user_id)
     if not existing:
@@ -320,7 +309,7 @@ async def edit_user_submit(request: Request, user_id: str) -> Response:
 @requires_sso
 async def delete_user(request: Request, user_id: str) -> Response:
     """Delete a user."""
-    _require_admin(request)
+    require_platform_admin(request)
     service = _get_service()
 
     # Get email before deleting so we can remove from allowlist
