@@ -51,7 +51,7 @@
                         {% endif %}
                     </div>
                     {% if project.description %}
-                    <p class="rvo-text--sm">{{ project.description }}</p>
+                    <p>{{ project.description }}</p>
                     {% endif %}
                     <div class="project-metrics">
                         <div class="metric">
@@ -66,7 +66,7 @@
                     {% if project.last_deployed %}
                     <div class="project-deploy-time">
                         <c-icon icon="kalender" size="sm"/>
-                        <span class="rvo-text--sm" data-deploy-time="{{ project.last_deployed }}">
+                        <span data-deploy-time="{{ project.last_deployed }}">
                             {{ project.last_deployed[:16]|replace('T', ' ') }} UTC
                         </span>
                     </div>
@@ -78,7 +78,7 @@
     </div>
     {% else %}
     <c-card outline="true" padding="lg" background-color="wit">
-        <p class="rvo-text--md">Geen projecten gevonden.</p>
+        <p>Geen projecten gevonden.</p>
     </c-card>
     {% endif %}
 </c-layout-flow>

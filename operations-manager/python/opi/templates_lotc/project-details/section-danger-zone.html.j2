@@ -8,7 +8,7 @@
             <div class="danger-action-row">
                 <div>
                     <strong>Project herverwerken</strong>
-                    <p class="rvo-text--subtle rvo-text--sm text-flush">Herverwerkt het projectbestand vanuit Git. Detecteert wijzigingen en synchroniseert deployments, services en manifesten. Verwijderde deployments worden opgeruimd, nieuwe worden aangemaakt.</p>
+                    <p class="text-flush">Herverwerkt het projectbestand vanuit Git. Detecteert wijzigingen en synchroniseert deployments, services en manifesten. Verwijderde deployments worden opgeruimd, nieuwe worden aangemaakt.</p>
                 </div>
                 {% set lotc_onclick_1 %}openServiceModal('/projects/{{ project.name }}/actions/refresh-project/confirm', 'Project herverwerken'){% endset %}<c-button size="sm" label="Project herverwerken" show-icon="before" icon="refresh"/>
             </div>
@@ -18,7 +18,7 @@
             <div class="danger-action-row">
                 <div>
                     <strong class="danger-action-title">Project "{{ project.display_name or project.name }}" verwijderen</strong>
-                    <p class="rvo-text--subtle rvo-text--sm text-flush">Verwijdert het volledige project inclusief alle deployments, services en configuratie. Dit kan niet ongedaan worden gemaakt.</p>
+                    <p class="text-flush">Verwijdert het volledige project inclusief alle deployments, services en configuratie. Dit kan niet ongedaan worden gemaakt.</p>
                 </div>
                 {% set lotc_onclick_2 %}openServiceModal('/projects/{{ project.name }}/actions/delete-project/confirm', 'Project verwijderen'){% endset %}<c-button size="sm" label="Project verwijderen" show-icon="before" icon="verwijderen"/>
             </div>

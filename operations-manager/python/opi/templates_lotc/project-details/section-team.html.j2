@@ -7,7 +7,7 @@
             {% set lotc_onclick_1 %}openEditModal('modal-edit-team', 'Projectleden beheren'){% endset %}<c-button size="sm" label="Bewerken" show-icon="before" icon="bewerken"/>
             {% endif %}
         </c-layout-flow>
-        <p class="rvo-text--subtle">Teamleden met toegang tot dit project</p>
+        <p>Teamleden met toegang tot dit project</p>
 
         <c-grid columns="three" gap="md">
             {% for user in project.users | sort(attribute='email') %}

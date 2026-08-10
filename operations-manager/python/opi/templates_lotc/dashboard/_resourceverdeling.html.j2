@@ -4,7 +4,7 @@
     <c-heading type="h2" label="Resource Verdeling"/>
     <c-card outline="true" padding="lg" background-color="wit">
         <c-layout-flow gap="md">
-            <p class="rvo-text--sm rvo-text--subtle">CPU gebruik per project</p>
+            <p>CPU gebruik per project</p>
             <div class="resource-bar">
                 {% for project in projects %}
                     {% if project.cpu_cores is defined and project.cpu_cores > 0 %}
@@ -20,8 +20,8 @@
                     {% if project.cpu_cores is defined and project.cpu_cores > 0 %}
                     <a href="/projects/details/{{ project.name }}" class="resource-legend-item">
                         <span class="resource-dot resource-color-{{ loop.index0 % 6 }}"></span>
-                        <span class="rvo-text--sm">{{ project.display_name }}</span>
-                        <span class="rvo-text--sm rvo-text--subtle">{{ '%.3f' | format(project.cpu_cores) }} cores ({{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}%)</span>
+                        <span>{{ project.display_name }}</span>
+                        <span>{{ '%.3f' | format(project.cpu_cores) }} cores ({{ (project.cpu_cores / total_cpu_usage * 100) | round(1) }}%)</span>
                     </a>
                     {% endif %}
                 {% endfor %}
