@@ -212,13 +212,19 @@ class TestUpsertDeploymentValidation:
         detail = response.json()["detail"]
         assert "field_errors" in detail
 
-    def test_missing_components_returns_422(self, v2_client: TestClient) -> None:
+    def test_a_deployment_without_components_is_accepted(self, v2_client: TestClient) -> None:
+        """A deployment that runs nothing yet is a valid intermediate state.
+
+        ``components`` used to be required, so a deployment could not exist before the
+        components it would run -- the mirror image of the component restriction, and
+        together they made it impossible to build the two separately and bind them later.
+        """
         response = v2_client.post(
             "/api/v2/projects/test-project/:upsert-deployment",
             headers=HEADERS,
             json={"deploymentName": "main"},
         )
-        assert response.status_code == 422
+        assert response.status_code != 422, response.text
 
     def test_empty_body_returns_422(self, v2_client: TestClient) -> None:
         response = v2_client.post(
@@ -408,21 +414,28 @@ class TestAddComponentValidation:
         assert "field_errors" in detail
         assert "memory_limit" in detail["field_errors"]
 
-    def test_missing_deployment_names_returns_422(self, v2_client: TestClient) -> None:
-        response = v2_client.post(
-            "/api/v2/projects/test-project/components",
-            headers=HEADERS,
-            json={"name": "web", "image": "nginx:latest"},
-        )
-        assert response.status_code == 422
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param({"name": "web", "image": "nginx:latest"}, id="field-omitted"),
+            pytest.param({"name": "web", "image": "nginx:latest", "deployment_names": []}, id="empty-list"),
+        ],
+    )
+    def test_a_component_without_deployments_is_accepted(self, v2_client: TestClient, body: dict) -> None:
+        """A component that no deployment references is a definition, not an error.
 
-    def test_empty_deployment_names_returns_422(self, v2_client: TestClient) -> None:
+        This used to be a 422: ``deployment_names`` was required with ``min_length=1``, so
+        a component could not exist before the deployment that would run it. That blocked
+        building the parts separately and binding them afterwards, while both the schema
+        and the structural validation accept the uncoupled form. Nothing runs from it, and
+        nothing breaks either.
+        """
         response = v2_client.post(
             "/api/v2/projects/test-project/components",
             headers=HEADERS,
-            json={"name": "web", "image": "nginx:latest", "deployment_names": []},
+            json=body,
         )
-        assert response.status_code == 422
+        assert response.status_code != 422, response.text
 
 
 # ---------------------------------------------------------------------------

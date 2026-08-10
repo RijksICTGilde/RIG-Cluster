@@ -394,7 +394,15 @@ class ComponentReference(BaseModel):
 
 class UpsertDeploymentRequest(BaseModel):
     deploymentName: str = Field(..., max_length=63, description="Name of the deployment", examples=["production"])
-    components: list[ComponentReference] = Field(..., description="List of components for this deployment")
+    components: list[ComponentReference] = Field(
+        default_factory=list,
+        description=(
+            "Components this deployment runs. May be empty: a deployment without components is a "
+            "deployment that runs nothing yet, which is what you want while building the parts up "
+            "separately. Attach them afterwards with POST "
+            "/api/projects/{project_name}/deployments/{deployment_name}/components."
+        ),
+    )
     cloneFrom: str | None = Field(
         None, description="Deployment name to clone data from (only on create, or if forceClone is true)"
     )
@@ -904,7 +912,13 @@ class AddComponentRequest(BaseModel):
     )
     root: bool = Field(False, description="Mark as root component for nice-url mode (receives bare subdomain traffic)")
     deployment_names: list[str] = Field(
-        ..., min_length=1, description="Deployments to add this component to (must already exist)"
+        default_factory=list,
+        description=(
+            "Deployments to add this component to (must already exist). Leave it out to define the "
+            "component without attaching it anywhere; couple it later with POST "
+            "/api/projects/{project_name}/deployments/{deployment_name}/components. A component that "
+            "no deployment references is a definition that nothing runs yet, which is a valid state."
+        ),
     )
 
     @model_validator(mode="after")
