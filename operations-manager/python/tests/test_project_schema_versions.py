@@ -20,6 +20,7 @@ These tests hold the new arrangement in place:
 
 import json
 import logging
+import re
 
 import pytest
 from opi.core.git_monitor import file_change_handler
@@ -60,11 +61,14 @@ class TestSchemaSetCompleteness:
         assert known_schema_versions() == tuple(float(v) for v in SCHEMA_VERSIONS)
 
     def test_a_new_migration_without_a_schema_fails_loudly(self) -> None:
-        # The situation this guards: someone adds a v2.6 -> v2.7 migration and
-        # forgets the schema. Files stamped 2.7 would then be rejected by the gate
-        # with nobody noticing; instead startup stops here.
-        with pytest.raises(ProjectSchemaError, match=r"2\.7"):
-            check_schema_versions((*SCHEMA_VERSIONS, 2.7))
+        # The situation this guards: someone adds the next migration and forgets the
+        # schema. Files stamped with that version would then be rejected by the gate with
+        # nobody noticing; instead startup stops here. The version used is deliberately one
+        # past the real chain, so this test does not have to be touched again when a
+        # migration lands (which is exactly what happened when 2.7 became real).
+        next_version = round(float(SCHEMA_VERSIONS[-1]) + 0.1, 1)
+        with pytest.raises(ProjectSchemaError, match=re.escape(str(next_version))):
+            check_schema_versions((*SCHEMA_VERSIONS, next_version))
 
     def test_a_gap_in_the_chain_fails_loudly(self) -> None:
         with pytest.raises(ProjectSchemaError, match=r"2\.15"):

@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 #: patch in ``opi/schemas/project_legacy/``. ``check_schema_versions`` enforces that
 #: at startup, so adding a migration without a schema fails loudly instead of
 #: quietly rejecting files that declare the new version.
-SCHEMA_VERSIONS: tuple[int | float, ...] = (1, 2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6)
+SCHEMA_VERSIONS: tuple[int | float, ...] = (1, 2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7)
 
 LATEST_SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
 
@@ -43,6 +43,12 @@ LATEST_SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
 # (`services/invite/config`), its `settings.default_language` flattened to `default-language`
 # next to `active`, and its keys hyphenated to match the service model. See
 # ``relocate_invites_to_service`` below.
+#
+# v2.6 -> v2.7 (RC-60): the seven web-address settings moved from the deployment root
+# (`base-domain`, `subdomain`, `domain-mode`, `domain-format`, `issuer`, `root-component`,
+# `expose-component-on-bare-domain`) to the publish-on-web service config on that deployment
+# (`deployments[*]/services{publish-on-web}/config`). See ``relocate_domain_settings_to_service``
+# below; the placement itself is decided by ``catalog/publish_on_web/domain_config.py``.
 
 # Storage service types and their corresponding storage type values
 _STORAGE_SERVICE_TO_TYPE = {
@@ -793,6 +799,37 @@ def relocate_invites_to_service(project_data: dict[str, Any]) -> bool:
     return True
 
 
+def relocate_domain_settings_to_service(project_data: dict[str, Any]) -> bool:
+    """Move each deployment's web-address settings under publish-on-web (v2.6 -> v2.7, RC-60).
+
+    The seven fields describe one thing -- how publish-on-web composes this deployment's
+    hostname and with which certificate -- and they were the last part of that service's
+    config still stored outside it. Same shape as ``normalize_domains_location``: the
+    placement is delegated to the service's own authority
+    (``catalog/publish_on_web/domain_config.relocate_domain_settings``), so the migration and
+    the runtime read/write path cannot disagree about where a value lives.
+
+    Idempotent, and deliberately narrow: a deployment with no web-address settings at its
+    root is left exactly as it was, so no deployment grows an empty publish-on-web entry it
+    never had. Readers accept both locations, so a file that has not been migrated yet keeps
+    working and relocates on its next load/save.
+
+    Returns True if any deployment changed.
+    """
+    from opi.services.catalog.publish_on_web.domain_config import relocate_domain_settings
+
+    changed = False
+    for deployment in project_data.get("deployments") or []:
+        if isinstance(deployment, dict) and relocate_domain_settings(deployment):
+            changed = True
+    if changed:
+        logger.info(
+            f"Relocated deployment web-address settings to the publish-on-web service "
+            f"for project '{project_data.get('name', 'unknown')}'"
+        )
+    return changed
+
+
 def _migrate_v2_2_to_v2_3(project_data: dict[str, Any]) -> bool:
     """Relocate the per-cluster Keycloak admin connections from the project-level
     ``config.keycloak`` list to the keycloak service's ``config.realms`` (RC-5 B).
@@ -900,6 +937,7 @@ MIGRATION_STEPS: tuple[tuple[int | float, Callable[[dict[str, Any]], bool]], ...
     (2.4, normalize_service_entries),
     (2.5, normalize_domains_location),
     (2.6, relocate_invites_to_service),
+    (2.7, relocate_domain_settings_to_service),
 )
 
 # The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and

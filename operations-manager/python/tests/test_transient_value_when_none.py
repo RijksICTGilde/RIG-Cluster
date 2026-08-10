@@ -9,6 +9,7 @@ import pytest
 from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.editables.resolvers import build_resolver_map, get_effective_value
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path, get_domain_setting
 
 
 class _StaticResolver:
@@ -129,7 +130,7 @@ class TestConditionWithResolvers:
             [
                 EditableVisualizer(
                     editable=Editable(
-                        yaml_path="deployments[0]/base-domain",
+                        yaml_path=domain_setting_path(DomainSetting.BASE_DOMAIN, 0),
                         transient_value_when_none=_StaticResolver("sandbox.rijksapp.dev"),
                     ),
                     widget=WidgetType.SELECT,
@@ -141,4 +142,4 @@ class TestConditionWithResolvers:
         assert condition.check(yaml_data) is True
 
         # yaml_data was NOT mutated
-        assert yaml_data["deployments"][0].get("base-domain") is None
+        assert get_domain_setting(yaml_data["deployments"][0], DomainSetting.BASE_DOMAIN) is None

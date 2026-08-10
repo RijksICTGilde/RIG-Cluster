@@ -15,6 +15,7 @@ from opi.core.cluster_config import (
     get_ingress_postfix,
     is_domain_subdomain_restricted,
 )
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,47 @@ def ensure_domains_config(project_data: dict[str, Any]) -> dict[str, Any]:
         config["domains"] = domains
     project_data.pop("domains", None)
     return domains
+
+
+#: Why a bare (apex) domain is refused on a platform domain. One constant so the form
+#: enforcer and the publication path refuse for the same reason, in the same words.
+BARE_DOMAIN_PLATFORM_MESSAGE = "Kaal domein is alleen beschikbaar voor eigen domeinen, niet voor platformdomeinen"
+
+
+def bare_domain_not_owned_message(base_domain: str) -> str:
+    """Why a bare (apex) domain is refused on a domain this project does not own."""
+    return (
+        f"Kaal domein is alleen beschikbaar voor een eigen domein: '{base_domain}' is niet "
+        f"goedgekeurd voor dit project."
+    )
+
+
+def validate_bare_domain_allowed(base_domain: str, supported_domains: set[str], project_data: dict[str, Any]) -> None:
+    """Raise when exposing a component on the bare (apex) domain is not permitted.
+
+    A bare-domain ingress claims the apex of ``base_domain`` -- and its Let's Encrypt
+    certificate -- from one tenant namespace. That is only acceptable for a domain the
+    project brought itself. Two ways it can fail to be that:
+
+    - it is a platform domain, where the apex belongs to every tenant on the cluster;
+    - it is somebody else's domain: a domain not approved for THIS project. Its DNS may
+      already point at this cluster because another tenant serves subdomains on it, so
+      claiming the apex from here takes over their domain, certificate included.
+
+    "Not a platform domain" alone is therefore only half the rule. Both halves live in
+    this one function so the form enforcer and both publication call sites (bare-domain
+    registration and the apex ingress) refuse for the same reason, in the same words --
+    the approval check used to sit behind the form's ``domain-format`` early return,
+    where the service-config write path never reached it.
+
+    The supported set is passed in rather than looked up here: the caller already knows
+    which cluster it is deciding for.
+    """
+    if base_domain.lower() in supported_domains:
+        raise ValueError(BARE_DOMAIN_PLATFORM_MESSAGE)
+    is_allowed, _ = is_domain_allowed_for_project(base_domain, project_data)
+    if not is_allowed:
+        raise ValueError(bare_domain_not_owned_message(base_domain))
 
 
 def get_supported_base_domains(cluster: str | None = None) -> set[str]:
@@ -309,9 +351,9 @@ def find_deployments_for_domain_item(project_data: dict[str, Any], item: dict[st
     for dep in project_data.get("deployments", []):
         if not isinstance(dep, dict):
             continue
-        if dep.get("base-domain") != domain:
+        if get_domain_setting(dep, DomainSetting.BASE_DOMAIN) != domain:
             continue
-        if sub_name is not None and dep.get("subdomain") != sub_name:
+        if sub_name is not None and get_domain_setting(dep, DomainSetting.SUBDOMAIN) != sub_name:
             continue
         name = dep.get("name")
         if name:
@@ -445,9 +487,9 @@ def ensure_domain_requests(project_data: dict[str, Any], cluster: str) -> None:
         # Treating that emptiness as "nothing to do" skipped the whole deployment,
         # including the subdomain branch below that is written for exactly this
         # case, so every subdomain request on the cluster domain vanished silently.
-        base_domain = dep.get("base-domain") or cluster_domain
-        subdomain = dep.get("subdomain")
-        domain_format = dep.get("domain-format", "")
+        base_domain = get_domain_setting(dep, DomainSetting.BASE_DOMAIN) or cluster_domain
+        subdomain = get_domain_setting(dep, DomainSetting.SUBDOMAIN)
+        domain_format = get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT, "")
         template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
 
         if base_domain == "__custom__":
