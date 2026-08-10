@@ -10,6 +10,7 @@ Run with: uv run pytest tests/e2e/test_wizard_flows.py -v --timeout=60
 from typing import TYPE_CHECKING
 
 import pytest
+from tests.e2e.helpers.tekst import veld
 from tests.e2e.helpers.wizard import WizardHelper, _unique_project_name
 
 if TYPE_CHECKING:
@@ -300,7 +301,9 @@ class TestWizardNavigation:
 
         # Check that fields still have their values
         auth_page.wait_for_load_state("networkidle")
-        name_input = auth_page.locator("[name='display-name']")
+        # veld() en niet [name=...]: onder het nieuwe thema draagt de wikkel dezelfde naam
+        # als de input erin, en dan weigert Playwright de selector.
+        name_input = veld(auth_page, "display-name")
         if name_input.count() > 0:
             assert name_input.input_value() == name
 
