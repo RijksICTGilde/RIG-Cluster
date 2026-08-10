@@ -1,7 +1,8 @@
 /* Vormgeving van de startpagina van de wizard. Stond als <style>-blok in
    opi/templates/wizard/wizard_start.html.j2. */
 
-.rvo-breadcrumb {
+.rvo-breadcrumb,
+.lotc-breadcrumb {
     display: flex;
     list-style: none;
     padding: 0;
@@ -9,17 +10,20 @@
     gap: 0.5rem;
 }
 
-.rvo-breadcrumb li:not(:last-child)::after {
+.rvo-breadcrumb li:not(:last-child)::after,
+.lotc-breadcrumb li:not(:last-child)::after {
     content: "/";
     margin-left: 0.5rem;
     color: #666;
 }
 
-.rvo-breadcrumb a {
+.rvo-breadcrumb a,
+.lotc-breadcrumb a {
     color: #007BC7;
     text-decoration: none;
 }
 
-.rvo-breadcrumb a:hover {
+.rvo-breadcrumb a:hover,
+.lotc-breadcrumb a:hover {
     text-decoration: underline;
 }

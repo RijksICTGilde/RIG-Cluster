@@ -261,3 +261,24 @@ class TestTheWizardProducesANetworkPolicy:
                 [int(OWN_PORT)],
             )
         ]
+
+
+# --------------------------------------------------------------------- open bevinding
+#
+# Deze twee tests zijn op de NIEUWE vormgeving nog rood, en het is geen selectorprobleem
+# meer. Wat er gemeten is, zodat de volgende niet opnieuw hoeft te zoeken:
+#
+#   - De cascade loopt vast bij de TWEEDE keuzelijst. Na het kiezen van het peer-project
+#     blijft <select name=".../from/deployment"> achter met precies een lege optie.
+#   - Het is niet de selector: de select wordt gevonden, en de project-select ernaast
+#     draagt zijn waarde ('test-project') en zijn data-rerender="true".
+#   - Het formulier heeft zijn hx-post naar de stap, en de herrender-haak in
+#     static/js/wizard.js luistert op document voor 'change' en zoekt met
+#     closest('[data-rerender]'). De select staat in de LICHTE boom, dus closest() zou hem
+#     moeten vinden.
+#
+# Wat dus nog onbeantwoord is: of de herrender wel afgaat en de server de lijst leeg
+# terugstuurt, of dat de haak niet afgaat. Dat vraagt meten AAN DE SERVERKANT (wat komt er
+# binnen op /step/cross-domain-access-config) en niet nog een ronde selectors.
+#
+# Op de oude vormgeving zijn deze twee groen, dus het verschil zit in deze keten.

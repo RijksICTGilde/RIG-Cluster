@@ -25,6 +25,7 @@ from typing import Any
 
 from opi.forms.editables.service_path import smart_get_value
 from opi.forms.visualizers.flows import get_flow
+from opi.forms.visualizers.wizard_sections import build_domain_section
 from opi.forms.wizard.state import WizardState
 from opi.web.router_wizard import _extract_section_data
 
@@ -99,3 +100,46 @@ def test_the_later_step_cannot_revive_an_older_value() -> None:
     )
 
     assert smart_get_value(state.get_merged_data(), "services/keycloak/config/template") == "sso-only"
+
+
+def _deployment_submitted() -> dict[str, Any]:
+    """A deployment as the Webadres step has it: its own service plus everyone else's."""
+    return {
+        "deployments": [
+            {
+                "name": "productie",
+                "services": [
+                    {"reference": "publish-on-web", "config": {"subdomain": "wies"}},
+                    {"reference": "cross-domain-access", "config": {"allow-from": ["ander-project"]}},
+                    "temp-storage",
+                ],
+            }
+        ]
+    }
+
+
+def test_a_deployment_step_stores_only_its_own_service_entries() -> None:
+    """The per-item counterpart: identity decides, not shape.
+
+    A section addressing ``deployments[*]/services{publish-on-web}/config/...`` owns that
+    one entry. Another service's entry is not this section's to carry -- neither its config
+    record nor its bare selection string, which is just as much a statement about a service
+    this step never mentioned (RC-60 review, suggestion 2).
+    """
+    stored = _extract_section_data(build_domain_section(0).editables, _deployment_submitted())
+
+    entries = stored["deployments"][0]["services"]
+    assert [e.get("reference") for e in entries] == ["publish-on-web"]
+
+
+def test_the_other_services_survive_the_merge() -> None:
+    """Dropping them is safe because the merge is additive by name, not a replace."""
+    state = WizardState(flow_id=_FLOW, current_step="domains")
+    state.active_sections = ["domains"]
+    state.base_data = _deployment_submitted()
+    state.store_step_data("domains", _extract_section_data(build_domain_section(0).editables, _deployment_submitted()))
+
+    merged_services = state.get_merged_data()["deployments"][0]["services"]
+
+    names = [e.get("reference") if isinstance(e, dict) else e for e in merged_services]
+    assert names == ["publish-on-web", "cross-domain-access", "temp-storage"]

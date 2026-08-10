@@ -21,6 +21,12 @@ from datetime import UTC
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates import get_templates
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
+from opi.services.catalog.publish_on_web.domain_config import (
+    DomainSetting,
+    get_domain_setting,
+    pop_domain_setting,
+    set_domain_setting,
+)
 from opi.services.config_location import binding_label, project_step_config_hint
 from opi.services.deployment_state import collect_deployment_state
 from opi.services.project import Project
@@ -28,6 +34,7 @@ from opi.services.project_authorization import (
     get_user_role_for_project,
     is_user_authorized_for_project,
 )
+from opi.services.project_env_vars import read_user_env_vars
 from opi.services.project_store import get_project_store
 from opi.services.registry import collect_service_routers, find_deployment_action
 from opi.utils.age import decrypt_password_smart, get_global_private_key
@@ -1348,55 +1355,26 @@ async def project_details(request: Request, project_name: str):
             kc_config["has_totp"] = bool(kc_config.get("totp_secret"))
             kc_config["totp_secret"] = None
 
+        # The same reader the read-only API uses (RC-61): one decrypt-and-parse path, so
+        # the page and the API can never disagree about what a component's variables are.
         for deployment in project_data_decrypted.get("deployments", []):
-            # Decrypt deployment-component-level user-env-vars
             for dep_component in deployment.get("components", []):
                 if dep_component.get("user-env-vars"):
-                    try:
-                        decrypted_yaml = await decrypt_age_content(dep_component["user-env-vars"], project_private_key)
-                        dep_component["user-env-vars"] = load_yaml_from_string(decrypted_yaml)
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to decrypt deployment component user-env-vars for {dep_component.get('reference')}: {e}"
-                        )
-                        dep_component["user-env-vars"] = None
+                    dep_component["user-env-vars"] = await read_user_env_vars(
+                        dep_component["user-env-vars"],
+                        project_private_key,
+                        where=f"deployment component '{dep_component.get('reference')}'",
+                    )
 
         logger.info(f"Processing {len(project_data_decrypted.get('components', []))} components for user-env-vars")
         for component in project_data_decrypted.get("components", []):
             component_name = component.get("name", "unknown")
-
-            raw_user_env_vars = component.get("user-env-vars")
-            logger.info(
-                f"Component '{component_name}': has user-env-vars={raw_user_env_vars is not None}, type={type(raw_user_env_vars).__name__ if raw_user_env_vars else 'None'}"
-            )
-            if raw_user_env_vars:
-                logger.info(f"Processing user-env-vars for component '{component_name}'")
-                try:
-                    decrypted_yaml = await decrypt_age_content(raw_user_env_vars, project_private_key)
-
-                    # Try YAML parsing first
-                    parsed_env_vars = load_yaml_from_string(decrypted_yaml)
-
-                    # If result is a string (not a dict), try parsing as KEY=VALUE format
-                    if isinstance(parsed_env_vars, str) or parsed_env_vars is None:
-                        from opi.utils.env_vars import validate_and_parse_env_vars
-
-                        logger.info(f"YAML returned {type(parsed_env_vars).__name__}, trying KEY=VALUE format")
-                        parsed_env_vars = validate_and_parse_env_vars(decrypted_yaml)
-
-                    # Count only -- not the names and certainly not the values. Which
-                    # variables a component defines is the user's business; that we parsed
-                    # some, and how many, is all this log needs to say.
-                    logger.info(
-                        f"Parsed {len(parsed_env_vars) if isinstance(parsed_env_vars, dict) else 0} "
-                        f"user-env-vars for component '{component_name}'"
-                    )
-                    component["user-env-vars"] = parsed_env_vars
-                except Exception as e:
-                    logger.warning(f"Failed to decrypt component user-env-vars for '{component_name}': {e}")
-                    component["user-env-vars"] = None
-            else:
-                logger.debug(f"No user-env-vars found for component '{component_name}'")
+            if component.get("user-env-vars"):
+                component["user-env-vars"] = await read_user_env_vars(
+                    component["user-env-vars"],
+                    project_private_key,
+                    where=f"component '{component_name}'",
+                )
 
         # Decrypt helm-charts base helm-values
         for helm_chart in project_data_decrypted.get("helm-charts", []):
@@ -1582,10 +1560,12 @@ async def project_details(request: Request, project_name: str):
                             try:
                                 ingress_postfix = get_ingress_postfix(cluster)
                                 use_https = get_ingress_tls_enabled(cluster)
-                                subdomain = deployment.get("subdomain")
-                                base_domain = deployment.get("base-domain")
-                                hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
-                                domain_format = deployment.get("domain-format")
+                                subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
+                                base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+                                hostname_format = HostnameFormat.from_domain_mode(
+                                    get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)
+                                )
+                                domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
 
                                 ingress_map = get_component_ingress_map(
                                     component_name=component_name,
@@ -2257,13 +2237,13 @@ async def get_deployment_domain_settings(request: Request, project_name: str, de
 
         # Extract domain settings from deployment
         cluster = deployment.get("cluster", "")
-        domain_mode = deployment.get("domain-mode")
-        domain_format = deployment.get("domain-format")
-        subdomain = deployment.get("subdomain")
-        base_domain = deployment.get("base-domain")
+        domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)
+        domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
+        subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
+        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
         # Find root component (if any)
-        root_component = deployment.get("root-component")
+        root_component = get_domain_setting(deployment, DomainSetting.ROOT_COMPONENT)
         components_list = []
         for comp in deployment.get("components", []):
             comp_ref = comp.get("reference")
@@ -2437,7 +2417,7 @@ async def _update_keycloak_redirect_uris_for_deployment(
             ingress_postfix=ingress_postfix,
             subdomain=subdomain,
             base_domain=base_domain,
-            domain_format=deployment.get("domain-format"),
+            domain_format=get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT),
             project_data=project_data,
             cluster=cluster,
         )
@@ -2684,36 +2664,33 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
         yaml_deployments = project_yaml.get("deployments", [])
         for yaml_dep in yaml_deployments:
             if yaml_dep.get("name") == deployment_name:
-                # Update domain settings
-                yaml_dep["domain-mode"] = domain_mode
+                # Update domain settings. Every write and every removal goes through the
+                # service's own accessors (RC-60), so the modal cannot leave a value behind
+                # in the deployment root that a later read would resurrect.
+                set_domain_setting(yaml_dep, DomainSetting.DOMAIN_MODE, domain_mode)
 
                 # Handle subdomain and base-domain based on mode
                 if domain_mode == "nice-url":
-                    yaml_dep["subdomain"] = subdomain
-                    yaml_dep["base-domain"] = base_domain
+                    set_domain_setting(yaml_dep, DomainSetting.SUBDOMAIN, subdomain)
+                    set_domain_setting(yaml_dep, DomainSetting.BASE_DOMAIN, base_domain)
                     # Auto-enable Let's Encrypt for nice-url mode (HTTPS by default)
-                    yaml_dep["issuer"] = "letsencrypt"
+                    set_domain_setting(yaml_dep, DomainSetting.ISSUER, "letsencrypt")
                 elif domain_mode == "custom":
-                    yaml_dep["subdomain"] = subdomain
+                    set_domain_setting(yaml_dep, DomainSetting.SUBDOMAIN, subdomain)
                     # Remove base-domain and issuer for custom mode
-                    if "base-domain" in yaml_dep:
-                        del yaml_dep["base-domain"]
-                    if "issuer" in yaml_dep:
-                        del yaml_dep["issuer"]
+                    pop_domain_setting(yaml_dep, DomainSetting.BASE_DOMAIN)
+                    pop_domain_setting(yaml_dep, DomainSetting.ISSUER)
                 else:
                     # Remove subdomain, base-domain, and issuer for other modes
-                    if "subdomain" in yaml_dep:
-                        del yaml_dep["subdomain"]
-                    if "base-domain" in yaml_dep:
-                        del yaml_dep["base-domain"]
-                    if "issuer" in yaml_dep:
-                        del yaml_dep["issuer"]
+                    pop_domain_setting(yaml_dep, DomainSetting.SUBDOMAIN)
+                    pop_domain_setting(yaml_dep, DomainSetting.BASE_DOMAIN)
+                    pop_domain_setting(yaml_dep, DomainSetting.ISSUER)
 
                 # Handle root component — set on deployment level
                 if root_component:
-                    yaml_dep["root-component"] = root_component
-                elif "root-component" in yaml_dep:
-                    del yaml_dep["root-component"]
+                    set_domain_setting(yaml_dep, DomainSetting.ROOT_COMPONENT, root_component)
+                else:
+                    pop_domain_setting(yaml_dep, DomainSetting.ROOT_COMPONENT)
 
                 # Clean up any legacy root flags on components
                 for comp in yaml_dep.get("components", []):

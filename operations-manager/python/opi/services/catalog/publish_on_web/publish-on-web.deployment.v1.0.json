@@ -1,0 +1,102 @@
+{
+  "additionalProperties": false,
+  "description": "Deployment layer: how this deployment's web address is composed (RC-60).\n\nEvery field is optional because a deployment on the platform's own cluster domain\nneeds none of them: the format defaults, the base domain comes from the cluster and the\nissuer from the domain entry. ``domain-mode`` is legacy -- superseded by\n``domain-format`` and read only by ``HostnameFormat.from_domain_mode`` for old files --\nbut it describes the same subject, so it moved along rather than staying behind as a\nsecond place to look.",
+  "properties": {
+    "base-domain": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The domain to publish on; the cluster's own domain when absent.",
+      "title": "Base-Domain"
+    },
+    "domain-format": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Which hostname template composes the address (see DOMAIN_FORMAT_TEMPLATES).",
+      "title": "Domain-Format"
+    },
+    "domain-mode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "LEGACY hostname strategy, superseded by domain-format. Only read for files that predate it.",
+      "title": "Domain-Mode"
+    },
+    "expose-component-on-bare-domain": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Component served on the bare custom domain, or false/absent for none.",
+      "title": "Expose-Component-On-Bare-Domain"
+    },
+    "issuer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Certificate issuer for this deployment's ingress; the platform default when absent.",
+      "title": "Issuer"
+    },
+    "root-component": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The component served on the address without a component segment, for the formats that have one.",
+      "title": "Root-Component"
+    },
+    "subdomain": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The subdomain under the base domain, for the hostname formats that use one.",
+      "title": "Subdomain"
+    }
+  },
+  "title": "PublishOnWebDeploymentConfig",
+  "type": "object"
+}
