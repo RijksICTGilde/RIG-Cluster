@@ -11,11 +11,28 @@ users:
     role: developer
 
 config:
+  # Het AGE-sleutelpaar hoort bij ELK project: opi/web/router.py leest
+  # config['age-private-key'] om de deploymentconfiguratie te ontsleutelen. Zonder die
+  # sleutels geeft /projects/details/<naam> een KeyError en dus een 500 - en dat viel
+  # nergens op, want geen enkele test opende de detailpagina van deze twee fixtures.
+  # tests/e2e/test_lotc_links.py doet dat nu wel, via de links op /projects.
+  age-public-key: "age1drxwupvn5eg8wd9cdf05nrxp6usrpk7tarc09yzk4c3m7jzzaups8757zy"
+  age-private-key: |
+    -----BEGIN AGE ENCRYPTED FILE-----
+    YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB0ZkhrWGhCVEdIT1B5SFEz
+    SVRJSG5zK1RHWFFBTmUvL040RU9LakdqeDE4Cld6c3MwWlJPWDgwYmlETjdEYnFC
+    SUN3U3NMdEFYSEhZZG5veHd3U09Dd2MKLS0tIDg3ZDlMNGZNdWo4WEVRcWRpbE4w
+    Z0x5bi9TT0hOazloWFFUOTJNL1BNYkUKHphHJ9YjoFAsm7M2ylEIRskosRJ4yjDz
+    FHvB2sekCLIoHuLGt0jLowrALzEcAsE0b+rkc1tt7YVswg+t0HvJx0kDdmTSL0X4
+    cXwv+GpqbnY5WLURIHtH8Fq3FubUc91kw532d8NnvC6KwA==
+    -----END AGE ENCRYPTED FILE-----
   api-key: test-api-key-services-67890
 
 services:
   - keycloak
-  - postgresql
+  # postgresql-database en niet postgresql: dat laatste is geen ServiceType, en de
+  # detailpagina viel er met een 500 op om (ValueError uit de enum).
+  - postgresql-database
 
 components:
   - name: backend
@@ -26,7 +43,7 @@ components:
       outbound: [443, 5432]
     uses-services:
       - keycloak
-      - postgresql
+      - postgresql-database
 
 deployments:
   - name: default

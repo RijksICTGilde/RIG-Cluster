@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from playwright.sync_api import expect
 from tests.e2e.helpers import cluster, sandbox_api
+from tests.e2e.helpers import wizard as wizard_helpers
 from tests.e2e.helpers.wizard import WizardHelper
 
 if TYPE_CHECKING:
@@ -188,8 +189,11 @@ def _fill_component_identity(page: Page, component_name: str, image: str) -> Non
     network to settle, then fill and re-fill until both values stick, targeting the
     exact fields (the fuzzy `[name*='name']` selector also matches storage sub-fields).
     """
-    name_field = page.locator("[name='components[0]/name']").first
-    image_field = page.locator("[name='components[0]/image']").first
+    # Via veldbesturing() en niet via [name='...']: onder NLDD pakt een naam-selector de
+    # web-component-WIKKEL, en fill() daarop is een harde fout ("Element is not an
+    # <input>") in plaats van een veld dat niet gevuld raakt.
+    name_field = wizard_helpers.veldbesturing(page, "components[0]/name").first
+    image_field = wizard_helpers.veldbesturing(page, "components[0]/image").first
     next_button = page.locator(
         ".wizard-step__actions button[type='submit'], .lotc-action-group button[type='submit']"
     ).first
@@ -246,7 +250,15 @@ def walk_create_wizard_with_services(
             break
         _fill_service_config_step(page, banner=banner)
         # Fill the team email if this is the team step and it is still empty.
-        email_field = page.locator("[name='users[0]/email']")
+        #
+        # Via wizard.field() en niet via een eigen [name='...']-locator: onder NLDD is een
+        # veld een web-component (<nldd-text-field name="users[0]/email">) met het echte
+        # <input> erbinnen. Een selector op alleen de naam pakt dan de WIKKEL, en
+        # input_value() daarop is geen leeg veld maar een harde fout ("Node is not an
+        # <input>"), waarna de wizard nooit voorbij de teamstap komt. wizard.field() zoekt
+        # de besturing zelf op, en het is dezelfde locator die fill_team() gebruikt - lezen
+        # en schrijven horen naar hetzelfde element te wijzen.
+        email_field = wizard.field("users[0]/email")
         if email_field.count() > 0 and (email_field.first.input_value() or "") == "":
             wizard.fill_team(email=user_email)
         # The components step is a large HTMX-swapped form; its required name/image
