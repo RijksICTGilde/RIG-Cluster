@@ -124,6 +124,28 @@ pop_domain_setting(deployment, DomainSetting.ISSUER)
 Voor het formulier bestaat `domain_setting_path(setting, deployment_index=None)`: dat levert
 het `yaml_path` waarop de editable en de resolvermap allebei sleutelen.
 
+## De deployment-editor gebruikt nu dezelfde velden als de wizard
+
+`fields/domains.py` (wizard) en `fields/deployments.py` (de deployment-editor) definieerden
+allebei een editable voor `subdomain`, `base-domain`, `domain-mode` en `domain-format` — zelfde
+pad, andere providers en validators. Er is er nu een set, eigendom van de dienst, en de
+deployment-editor gebruikt die onder de vertrouwde namen (`DEPLOYMENT_BASE_DOMAIN_EDITABLE =
+DOMAIN_BASE_DOMAIN_EDITABLE`).
+
+Dat maakt het samenvoegen een **gedragsverandering in die flow**, en die is bedoeld:
+
+| Veld | Deployment-editor voorheen | Nu (de wizardvariant) |
+|---|---|---|
+| `base-domain` | `BaseDomainOptionsProvider` — een vaste lijst van drie | `ClusterBaseDomainOptionsProvider` — de domeinen die het gekozen cluster echt ondersteunt |
+| `domain-format` | vrij, geen default | `required=True`, default `component-deployment-project` |
+| `subdomain` | vrij | `required=True`, alleen zichtbaar bij een formaat dat een subdomein gebruikt |
+| `base-domain` leeg | bleef als lege waarde staan | `remove_when_none` + `ClusterDefaultDomain` als getoonde waarde |
+
+Een deployment bewerken vraagt dus om een geldig formaat en biedt alleen domeinen aan die op
+dat cluster bestaan. Wie de oude, ruimere velden terug wil, moet dat expliciet doen — niet
+door hier een tweede definitie naast te zetten, want dat is precies de situatie die deze
+verandering opheft.
+
 ## Migratie
 
 De stap v2.6 → v2.7 (`relocate_domain_settings_to_service`) verplaatst de velden bij het

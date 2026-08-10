@@ -118,6 +118,18 @@ def get_domain_setting(deployment: dict[str, Any], setting: DomainSetting, defau
     return deployment.get(setting.value, default)
 
 
+def has_domain_setting(deployment: dict[str, Any], setting: DomainSetting) -> bool:
+    """Whether the setting is PRESENT in either location, whatever its value.
+
+    Presence is not the same as truth, and neither is it the same as ``is not None``: an
+    explicitly stored ``subdomain: null`` says "configured, deliberately empty". Callers that
+    used to ask ``"subdomain" not in deployment`` mean this, not ``get_domain_setting(...) is
+    None`` -- collapsing the two would let them overwrite a value someone stored on purpose.
+    """
+    config = get_domain_config(deployment)
+    return (config is not None and setting.value in config) or setting.value in deployment
+
+
 def get_domain_settings(deployment: dict[str, Any]) -> dict[str, Any]:
     """All seven settings resolved, keyed by their on-disk name (absent ones as None)."""
     return {setting.value: get_domain_setting(deployment, setting) for setting in DomainSetting}
