@@ -215,7 +215,13 @@
             <c-stack gap="xs">
                 <c-heading type="h2" size="6" label="Platform" />
                 <c-link href="/about" label="Over het platform" />
-                <c-link href="/api" label="API Referentie" />
+                {# /docs en niet /api: dat laatste stond hier en levert een 404. De
+                   bestaande voettekst (base.html.j2) wijst naar /docs, de door FastAPI
+                   geserveerde Swagger-pagina; bij het omzetten is dat /api geworden. Het
+                   staat in base_lotc, dus het was op ELKE pagina fout, en niets sloeg erop
+                   aan: een link controleert niemand tot iemand erop klikt. Sinds RC-65
+                   loopt tests/e2e/test_lotc_links.py elke interne link na. #}
+                <c-link href="/docs" label="API Referentie" />
             </c-stack>
 
                 {# De versievermelding staat BIJ de links en niet in de legal-bar-slot.
