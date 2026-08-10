@@ -11,7 +11,11 @@ processing. These tests prove that:
 from pathlib import Path
 
 import pytest
-from opi.core.project_schema import ProjectSchemaError, validate_project_schema
+from opi.core.project_schema import (
+    ProjectSchemaError,
+    validate_declared_project_schema,
+    validate_project_schema,
+)
 from opi.services.catalog.shared.storage import StorageEntry
 from pydantic import ValidationError
 from ruamel.yaml import YAML
@@ -549,41 +553,131 @@ class TestDeploymentComponentServicesAreGeneric:
 
 
 class TestBareDomainComponentIsDeclared:
-    """``expose-component-on-bare-domain`` must be a declared deployment field (RC-60 phase 0).
+    """``expose-component-on-bare-domain`` must be a declared field (RC-60 phase 0).
 
-    The wizard has written it since PR #38 (``DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE``) and six
-    places read it, but ``$defs/deployment`` never declared it while carrying
+    The wizard has written it since PR #38 (``DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE``) and
+    six places read it, but ``$defs/deployment`` never declared it while carrying
     ``additionalProperties: false``. Every deployment that used it therefore failed schema
     validation -- the same class as the dp-bn7 outage, where a reprocess dies silently on
     ``validate_project_schema`` and the deploy just stops happening.
+
+    Measured at v2.6, the last version that carried it at the deployment root: phase 6
+    moved the whole web-address set under the service, so at the latest version the root
+    form is rejected on purpose (see ``TestWebAddressLeftTheDeploymentRoot``). An OLD file
+    that has the field must still validate, which is the gap this closes.
     """
 
     def _with_bare_domain(self, value) -> dict:
         project = _valid_project()
+        project["schema-version"] = 2.6
         project["deployments"][0]["expose-component-on-bare-domain"] = value
         return project
 
     def test_component_name_is_accepted(self) -> None:
-        validate_project_schema(self._with_bare_domain("frontend"))
+        validate_declared_project_schema(self._with_bare_domain("frontend"))
 
     def test_false_is_accepted(self) -> None:
         # keycloak_manager.py and project_manager.py both read it with a False default,
         # so a stored False is a value the readers expect.
-        validate_project_schema(self._with_bare_domain(False))
+        validate_declared_project_schema(self._with_bare_domain(False))
 
     def test_empty_string_is_accepted(self) -> None:
         # What the form posts when the select is cleared but not removed.
-        validate_project_schema(self._with_bare_domain(""))
+        validate_declared_project_schema(self._with_bare_domain(""))
 
-    def test_the_field_is_declared_in_the_schema(self) -> None:
-        # Fails as long as the field is missing from $defs/deployment: without the
+    def test_the_field_is_declared_for_the_versions_that_carried_it(self) -> None:
+        # Fails as long as the field is missing from the v2.6 deployment shape: without the
         # declaration the additionalProperties gate rejects it and nothing else notices.
-        from opi.core.project_schema import _load_latest_schema
+        import json
 
-        deployment_def = _load_latest_schema()["$defs"]["deployment"]
-        assert "expose-component-on-bare-domain" in deployment_def["properties"]
+        from opi.core.project_schema import LEGACY_PATCH_DIR
+
+        patch = json.loads((LEGACY_PATCH_DIR / "v2.6.json").read_text(encoding="utf-8"))
+        assert "expose-component-on-bare-domain" in patch["$defs"]["deployment"]["properties"]
 
     def test_a_number_is_still_rejected(self) -> None:
         # Declaring the field must not open the deployment up to anything.
         with pytest.raises(ProjectSchemaError):
-            validate_project_schema(self._with_bare_domain(7))
+            validate_declared_project_schema(self._with_bare_domain(7))
+
+
+class TestWebAddressLeftTheDeploymentRoot:
+    """Phase 6 of RC-60: the seven settings are gone from ``$defs/deployment``.
+
+    A migration is only finished when the old form can no longer be written. Until then
+    both shapes validate, so nothing stops a new writer from putting a value back at the
+    root -- where the readers would still find it through the fallback, and the split
+    state the relocation removed would quietly return.
+
+    An OLD file must still validate, which is what the ``v2.6`` legacy patch is for:
+    ``project_v2.json`` describes the LATEST version only, and every earlier version is
+    composed from it plus the patches (RC-32).
+    """
+
+    def _deployment(self, **extra) -> dict:
+        project = _valid_project()
+        project["deployments"][0].update(extra)
+        return project
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("base-domain", "rijksapp.nl"),
+            ("subdomain", "wies"),
+            ("domain-mode", "nice-url"),
+            ("domain-format", "component-deployment-project"),
+            ("issuer", "letsencrypt"),
+            ("root-component", "frontend"),
+            ("expose-component-on-bare-domain", "frontend"),
+        ],
+    )
+    def test_the_root_form_is_rejected_at_the_latest_version(self, field: str, value: str) -> None:
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(self._deployment(**{field: value}))
+
+    def test_the_service_form_is_accepted(self) -> None:
+        validate_project_schema(
+            self._deployment(
+                services=[
+                    {
+                        "reference": "publish-on-web",
+                        "config": {
+                            "base-domain": "rijksapp.nl",
+                            "subdomain": "wies",
+                            "domain-mode": "nice-url",
+                            "domain-format": "component-deployment-project",
+                            "issuer": "letsencrypt",
+                            "root-component": "frontend",
+                            "expose-component-on-bare-domain": "frontend",
+                        },
+                    }
+                ]
+            )
+        )
+
+    def test_an_unmigrated_v2_6_file_still_validates(self) -> None:
+        # 30/47 production files predate even v2.5, so a version that still carried these
+        # at the root must keep validating until it is loaded and migrated.
+        project = self._deployment(
+            **{
+                "base-domain": "rijksapp.nl",
+                "subdomain": "wies",
+                "domain-mode": "nice-url",
+                "domain-format": "component-deployment-project",
+                "issuer": "letsencrypt",
+                "root-component": "frontend",
+                "expose-component-on-bare-domain": "frontend",
+            }
+        )
+        project["schema-version"] = 2.6
+        validate_declared_project_schema(project)
+
+    def test_a_v2_6_file_validates_after_migration(self) -> None:
+        # The dp-bn7 order: migrate first, validate second.
+        from opi.services.schema_migration import migrate_to_latest
+
+        project = self._deployment(**{"base-domain": "rijksapp.nl", "domain-format": "subdomain"})
+        project["schema-version"] = 2.6
+        migrated, was_migrated = migrate_to_latest(project)
+        assert was_migrated is True
+        validate_project_schema(migrated)
