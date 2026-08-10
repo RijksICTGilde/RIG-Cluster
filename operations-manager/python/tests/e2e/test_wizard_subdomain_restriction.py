@@ -115,9 +115,7 @@ class TestSubdomainRestrictionValidation:
         _wait_htmx_settled(auth_page)
 
         # Submit WITHOUT checking the request checkbox
-        auth_page.locator(
-            ".wizard-step__actions button[type='submit'], .lotc-action-group button[type='submit']"
-        ).click()
+        auth_page.locator(".wizard-step__actions button[type='submit'], .lotc-action-group button[type='submit']").click()
 
         # The submit is blocked with a visible validation error and stays on the domain
         # step: the request checkbox is shown (SubdomainNeedsRequestCondition) and required,
