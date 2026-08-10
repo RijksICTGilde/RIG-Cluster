@@ -41,20 +41,29 @@
     {% if status == "completed" %}
     <p class="edit-progress-step">{{ _success_msg }}</p>
     {% elif status == "failed" %}
-    {% include "partials/_component_failures.html.j2" %}
+    {# bg/_component-failures.html.j2 en niet de tegenhanger in deze map: die is de
+       eerste automatische omzetting en toont de suggestie niet en heeft een lege,
+       dode logboeklink. De bg-versie is de nageschreven versie en doet allebei wel. #}
+    {% include "bg/_component-failures.html.j2" %}
     {% else %}
     <p class="edit-progress-step">{{ current_step }} <span class="edit-progress-percentage">{{ progress }}%</span></p>
     {% endif %}
 
     {{ progress_task_list(tasks) }}
 
+    {# De aanroep gaat via :attrs; <c-button> laat geen onclick als los attribuut toe. De
+       vorm hiervoor zette de variabele wel en hing hem nergens aan, dus de knop kwam
+       zonder klikafhandeling op het scherm: de dialoog ging niet dicht en de pagina
+       herlaadde niet. Zelfde vorm als bg/_modal-wizard-progress-fragment.html.j2. #}
     {% if status == "completed" and on_complete is defined and on_complete %}
     <div class="edit-progress-actions">
-        {% set lotc_onclick_1 %}{{ on_complete }}{% endset %}<c-button label="{{ on_complete_label | default('Ok') }}"/>
+        {% set afronden_js %}{{ on_complete }}{% endset %}
+        <c-button type="primary" label="{{ on_complete_label | default('Ok') }}" :attrs="{'onclick': afronden_js}" />
     </div>
     {% elif status == "failed" and on_complete is defined and on_complete %}
     <div class="edit-progress-actions">
-        {% set lotc_onclick_2 %}{{ on_complete }}{% endset %}<c-button label="{{ on_complete_label | default('Sluiten') }}"/>
+        {% set sluiten_js %}{{ on_complete }}{% endset %}
+        <c-button type="primary" label="{{ on_complete_label | default('Sluiten') }}" :attrs="{'onclick': sluiten_js}" />
     </div>
     {% endif %}
 </div>

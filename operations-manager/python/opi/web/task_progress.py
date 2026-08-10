@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from fastapi.responses import HTMLResponse
 
 from opi.core.task_helpers import create_async_task
-from opi.core.templates import get_templates
+from opi.web.lotc_switch import render_fragment
 
 if TYPE_CHECKING:
     from fastapi import Request
@@ -68,10 +68,10 @@ async def create_task_and_render_progress(
         "on_complete": on_complete_for(task_type),
     }
 
-    return HTMLResponse(content=render_progress_fragment(context))
+    return HTMLResponse(content=render_progress_fragment(request, context))
 
 
-def render_progress_fragment(context: dict) -> str:
+def render_progress_fragment(request: Request, context: dict) -> str:
     """Render the shared progress fragment once, and only once.
 
     Do not put the ``process_components`` filter back on the result. The fragment is a
@@ -81,5 +81,17 @@ def render_progress_fragment(context: dict) -> str:
     step name or a subtask name carrying ``{{ ... }}`` would then be executed instead of
     shown -- template injection with code execution in the OPI pod, from any text that
     reaches this context.
+
+    Het fragment volgt de vormgeving van de pagina die het toont, net als de zesendertig
+    andere plekken die door ``lotc_switch`` gaan. Zonder dat renderde deze altijd uit de
+    roos-omgeving en kwam er roos-HTML in een LOTC-dialoog te staan: een knop met
+    rvo-klassen die op een LOTC-pagina door geen enkel stijlblad opgemaakt wordt, want
+    ``lotc_rvo`` staat niet in ``DESIGN_SYSTEMS``.
     """
-    return get_templates().get_template("partials/task_progress_fragment.html.j2").render(context)
+    return render_fragment(
+        request,
+        roos="partials/task_progress_fragment.html.j2",
+        lotc="partials/task_progress_fragment.html.j2",
+        context=context,
+        process_roos=False,
+    )

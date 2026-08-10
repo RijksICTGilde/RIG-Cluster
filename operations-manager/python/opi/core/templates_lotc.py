@@ -27,6 +27,7 @@ from markupsafe import Markup
 
 from opi.core.config import BUILD_DATE, VERSION
 from opi.core.templates import (
+    CATALOG_DIR,
     deployment_action_key,
     format_dutch_date,
     format_rrule_schedule,
@@ -51,6 +52,7 @@ def _to_nldd_icon(naam: str) -> str:
 
     return to_nldd_icon(naam)
 
+
 # lotc-forms hoort achteraan; zie de moduledocstring.
 DESIGN_SYSTEMS = ["lotc-layout", "nldd", "lotc-forms"]
 
@@ -61,6 +63,13 @@ TEMPLATES_LOTC_DIR = Path(__file__).parent.parent / "templates_lotc"
 templates_lotc = Jinja2Templates(directory=str(TEMPLATES_LOTC_DIR))
 if not isinstance(templates_lotc.env.loader, FileSystemLoader):
     raise TypeError("templates_lotc env loader must be a FileSystemLoader for the LOTC search path")
+
+# De catalogusmap erbij, achteraan, net als bij de roos-omgeving. Een dienst draagt alles
+# wat hij is in zijn eigen map (RC-36), dus ook zijn LOTC-sjablonen; zonder dit zoekpad
+# levert "<dienst>/section-detail-lotc.html.j2" hier TemplateNotFound. Achteraan zodat een
+# bestand in templates_lotc/ nooit overschaduwd kan worden door een gelijknamig
+# dienstsjabloon.
+templates_lotc.env.loader.searchpath.append(str(CATALOG_DIR))
 
 # autoescape is verplicht: de renderers escapen propwaarden en behandelen inhoud als
 # al-veilige Markup. Met autoescape uit zou gebruikersdata niet geescaped worden.
@@ -90,20 +99,21 @@ templates_lotc.env.globals["field_attrs"] = field_attrs
 def render_roos(name: str, **context: Any) -> Markup:
     """Render een template uit de ROOS-omgeving en zet het resultaat hier neer.
 
-    Dit is de uitweg voor blokken die een DIENST meelevert: die sjablonen staan in
-    opi/services/catalog/ en zijn in roos-componenten geschreven. Ze renderen niet in deze
-    omgeving - de map staat niet op dit zoekpad, en twee componentsystemen kunnen niet in
-    een Jinja-omgeving, want de eerst geregistreerde voorbewerker eist elke <c-*>-tag op.
+    De TERUGVAL voor een blok dat een DIENST meelevert en dat nog geen LOTC-tegenhanger
+    heeft. Zo'n sjabloon staat in opi/services/catalog/ en is in roos-componenten
+    geschreven; het rendert niet in deze omgeving, want twee componentsystemen kunnen niet
+    in een Jinja-omgeving - de eerst geregistreerde voorbewerker eist elke <c-*>-tag op.
 
-    De afweging: zo'n blok in de nieuwe vormgeving NAmaken betekent een tweede kopie die
-    uit de pas gaat lopen zodra een dienst zijn eigen sjabloon wijzigt - en diensten zijn
-    juist het deel van dit platform dat blijft groeien. Het blok WEGLATEN is erger: dan
-    verdwijnt functionaliteit zonder dat iemand het merkt, en dat is precies wat deze
-    omzetting niet mag doen.
+    Hier stond dat dit de normale weg was, met als verantwoording dat zo'n blok dan
+    "zichtbaar anders" is en dat beter is dan stilletjes weg. De eerste helft klopte niet:
+    de rvo-klassen die zo'n blok draagt worden op een LOTC-pagina door geen enkel
+    stijlblad opgemaakt (lotc_rvo staat niet in DESIGN_SYSTEMS), dus het werd niet
+    zichtbaar anders maar volledig onopgemaakt - kale HTML midden op de pagina. Sinds
+    RC-64 levert elke dienst zijn eigen LOTC-sjabloon; zie :func:`lotc_counterpart`.
 
-    Dus rendert het blok met zijn eigen omgeving en komt het als HTML binnen. Dat is
-    eerlijk zichtbaar: zo'n blok draagt rvo-klassen en ziet er anders uit dan de rest van
-    de pagina, totdat de dienst zelf meegaat. Zichtbaar anders is beter dan stilletjes weg.
+    De tweede helft klopt nog steeds, en daarom blijft deze functie bestaan: een blok dat
+    niemand heeft nageschreven mag niet van de pagina VALLEN. Lelijk is de ondergrens,
+    geen bestemming - tests/test_lotc_dienstblokken.py laat het niet bij een ondergrens.
 
     Een sjabloon dat niet bestaat wordt overgeslagen met een melding in het log, niet met
     een foutpagina: een dienst die een blok aankondigt dat er niet is, mag de projectpagina
@@ -134,6 +144,35 @@ def render_roos(name: str, **context: Any) -> Markup:
 
 
 templates_lotc.env.globals["render_roos"] = render_roos
+
+#: Achtervoegsel waarmee een dienst zijn LOTC-sjabloon naast het roos-sjabloon legt:
+#: ``keycloak/section-detail.html.j2`` hoort bij ``keycloak/section-detail-lotc.html.j2``.
+#: Een afspraak en geen tabel, zodat een nieuwe dienst niets hoeft bij te werken buiten
+#: zijn eigen map.
+LOTC_TEMPLATE_SUFFIX = "-lotc.html.j2"
+
+
+def lotc_counterpart(name: str) -> str | None:
+    """De LOTC-tegenhanger van een dienstsjabloon, of None als die er niet is.
+
+    De projectpagina gebruikt dit om te kiezen: is er een tegenhanger, dan rendert het
+    blok helemaal in deze omgeving; is die er niet, dan valt hij terug op ``render_roos``.
+    Die terugval is de ondergrens en geen bestemming - een blok dat niemand naschrijft mag
+    niet van de pagina vallen, want diensten zijn het deel van dit platform dat blijft
+    groeien. ``tests/test_lotc_dienstblokken.py`` laat de tegenhanger niet ontbreken.
+    """
+    if not name.endswith(".html.j2"):
+        return None
+
+    candidate = name.removesuffix(".html.j2") + LOTC_TEMPLATE_SUFFIX
+    try:
+        templates_lotc.env.get_template(candidate)
+    except TemplateNotFound:
+        return None
+    return candidate
+
+
+templates_lotc.env.globals["lotc_counterpart"] = lotc_counterpart
 
 # De widgettemplates delen macro's die een attribuutwaarde escapen (optional_attr,
 # bool_attr). Dat filter hoort bij de kale widget-omgeving van de roos-adapter; de
