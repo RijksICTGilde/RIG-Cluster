@@ -27,6 +27,7 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+from tests.e2e.helpers.htmx import scroll_backupblok_in_beeld
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page, Request, Route
@@ -149,6 +150,7 @@ def test_het_backupblok_vuurt_zijn_verzoek_af(app_server: str, auth_page: Page) 
 
     auth_page.goto(f"{app_server}{LOTC_URL}")
     auth_page.wait_for_load_state("networkidle")
+    scroll_backupblok_in_beeld(auth_page)
 
     deadline = time.time() + 10
     while time.time() < deadline and not verzoeken:
