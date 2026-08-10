@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zad.rijksapp.dev/schemas/project-v2.json",
-  "title": "ZAD Project File (v2.6)",
+  "title": "ZAD Project File (v2.7)",
   "description": "Schema for ZAD self-service project definition files at the LATEST schema version. Older versions are not described here: they are composed from this file plus the legacy patches in schemas/project_legacy/ (see opi/core/project_schema.py). Anything an existing migration already removes belongs in the patch of the version that still carried it, not here.",
-  "x-zad-schema-version": 2.6,
+  "x-zad-schema-version": 2.7,
   "type": "object",
   "required": ["name"],
   "additionalProperties": false,

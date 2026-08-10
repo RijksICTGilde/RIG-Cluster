@@ -3,12 +3,15 @@
 import copy
 
 from opi.connectors.subdomain import get_domains_config
+from opi.core.project_schema import validate_declared_project_schema, validate_project_schema
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION,
     detect_schema_version,
     migrate_to_latest,
     normalize_domains_location,
     normalize_service_entries,
+    relocate_domain_settings_to_service,
 )
 
 # ---------------------------------------------------------------------------
@@ -530,7 +533,8 @@ class TestMigrateV2ToV2_1:
         assert was_migrated is True
         assert result["schema-version"] == LATEST_SCHEMA_VERSION
         dep = result["deployments"][0]
-        assert dep["root-component"] == "frontend"
+        # v2.7 relocated it under the service, so ask the service (RC-60).
+        assert get_domain_setting(dep, DomainSetting.ROOT_COMPONENT) == "frontend"
         # root: true must be removed from the component
         assert "root" not in dep["components"][0]
         assert "root" not in dep["components"][1]
@@ -558,7 +562,7 @@ class TestMigrateV2ToV2_1:
         assert was_migrated is True
         dep = result["deployments"][0]
         # root-component should remain as "landing" (not overwritten by editor's root: true)
-        assert dep["root-component"] == "landing"
+        assert get_domain_setting(dep, DomainSetting.ROOT_COMPONENT) == "landing"
         assert "root" not in dep["components"][0]
 
     def test_no_root_no_migration(self):
@@ -582,7 +586,7 @@ class TestMigrateV2ToV2_1:
         # No root flags to clean up — nothing to migrate
         assert was_migrated is False
         dep = result["deployments"][0]
-        assert "root-component" not in dep
+        assert get_domain_setting(dep, DomainSetting.ROOT_COMPONENT) is None
 
     def test_root_false_cleaned_up(self):
         """Explicit root: false on components is cleaned up."""
@@ -605,7 +609,7 @@ class TestMigrateV2ToV2_1:
         assert was_migrated is True
         dep = result["deployments"][0]
         assert "root" not in dep["components"][0]
-        assert "root-component" not in dep
+        assert get_domain_setting(dep, DomainSetting.ROOT_COMPONENT) is None
 
     def test_already_v2_1_gets_v2_2_migration(self):
         """Files at v2.1 with string path get v2.2 migration."""
@@ -661,8 +665,8 @@ class TestMigrateV2ToV2_1:
         result, was_migrated = migrate_to_latest(data)
 
         assert was_migrated is True
-        assert result["deployments"][0]["root-component"] == "frontend"
-        assert result["deployments"][1]["root-component"] == "api"
+        assert get_domain_setting(result["deployments"][0], DomainSetting.ROOT_COMPONENT) == "frontend"
+        assert get_domain_setting(result["deployments"][1], DomainSetting.ROOT_COMPONENT) == "api"
         # All root flags removed
         for dep in result["deployments"]:
             for comp in dep["components"]:
@@ -694,7 +698,8 @@ class TestMigrateV2ToV2_1:
         assert was_migrated is True
         assert result["schema-version"] == LATEST_SCHEMA_VERSION
         dep = result["deployments"][0]
-        assert dep["root-component"] == "frontend"
+        # v2.7 relocated it under the service, so ask the service (RC-60).
+        assert get_domain_setting(dep, DomainSetting.ROOT_COMPONENT) == "frontend"
         assert "root" not in dep["components"][0]
 
 
@@ -1202,3 +1207,127 @@ def test_collapse_is_idempotent_and_leaves_clean_files_alone():
 
     assert was_migrated is False
     assert out == clean
+
+
+class TestRelocateDomainSettingsToService:
+    """v2.6 -> v2.7: the web address moves under publish-on-web (RC-60).
+
+    Measured migrate-then-validate, in that order, because that is the order the loader
+    uses and the order dp-bn7 showed matters: a file that migrates into a shape the schema
+    rejects fails silently on the next reprocess and the deploy simply stops happening.
+    """
+
+    def _hwt_nqi_shaped(self) -> dict:
+        """The real split the plan describes: tls under the service, domain-format loose.
+
+        Modelled on ``hwt-nqi.yaml`` -- the file that made this visible -- rather than on a
+        minimal deployment, so the migration is measured against a project that already has
+        half of publish-on-web relocated.
+        """
+        return {
+            "schema-version": 2.6,
+            "name": "hwt-nqi",
+            "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+            "clusters": ["odcn-production"],
+            "services": ["publish-on-web"],
+            "components": [
+                {
+                    "name": "component1",
+                    "type": "deployment",
+                    "ports": {"inbound": [8080], "outbound": [443]},
+                    "services": [{"reference": "publish-on-web", "config": {"tls": "standard"}}],
+                }
+            ],
+            "deployments": [
+                {
+                    "name": "test",
+                    "cluster": "odcn-production",
+                    "namespace": "hwt-nqi",
+                    "domain-format": "component-deployment-project",
+                    "components": [{"reference": "component1", "image": "nginx:latest"}],
+                }
+            ],
+        }
+
+    def test_the_deployment_settings_move_under_the_service(self) -> None:
+        result, was_migrated = migrate_to_latest(self._hwt_nqi_shaped())
+
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        deployment = result["deployments"][0]
+        assert "domain-format" not in deployment
+        assert get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT) == "component-deployment-project"
+
+    def test_the_component_tls_config_is_left_alone(self) -> None:
+        # tls belongs to the COMPONENT layer and stays there; the relocation is about the
+        # deployment layer only.
+        result, _ = migrate_to_latest(self._hwt_nqi_shaped())
+        component_services = result["components"][0]["services"]
+        assert component_services == [{"reference": "publish-on-web", "config": {"tls": "standard"}}]
+
+    def test_the_migrated_file_validates(self) -> None:
+        # Migrate first, validate second: the order the loader uses.
+        result, _ = migrate_to_latest(self._hwt_nqi_shaped())
+        validate_project_schema(result)
+
+    def test_all_seven_settings_move_together(self) -> None:
+        data = self._hwt_nqi_shaped()
+        data["deployments"][0].update(
+            {
+                "base-domain": "rijksapp.nl",
+                "subdomain": "wies",
+                "domain-mode": "nice-url",
+                "issuer": "letsencrypt",
+                "root-component": "component1",
+                "expose-component-on-bare-domain": "component1",
+            }
+        )
+        result, _ = migrate_to_latest(data)
+
+        deployment = result["deployments"][0]
+        config = deployment["services"][0]["config"]
+        assert config == {
+            "base-domain": "rijksapp.nl",
+            "subdomain": "wies",
+            "domain-mode": "nice-url",
+            "domain-format": "component-deployment-project",
+            "issuer": "letsencrypt",
+            "root-component": "component1",
+            "expose-component-on-bare-domain": "component1",
+        }
+        validate_project_schema(result)
+
+    def test_it_is_idempotent(self) -> None:
+        once, _ = migrate_to_latest(self._hwt_nqi_shaped())
+        snapshot = copy.deepcopy(once)
+        assert relocate_domain_settings_to_service(once) is False
+        assert once == snapshot
+
+    def test_a_deployment_without_a_web_address_grows_no_service_entry(self) -> None:
+        # Otherwise every deployment on the platform's own cluster domain would suddenly
+        # list publish-on-web, which reads as "this deployment uses the service".
+        data = self._hwt_nqi_shaped()
+        del data["deployments"][0]["domain-format"]
+        result, _ = migrate_to_latest(data)
+        assert "services" not in result["deployments"][0]
+
+    def test_an_existing_deployment_service_entry_is_reused(self) -> None:
+        # A deployment already carrying clone state must not end up with two publish-on-web
+        # entries, and the clone state must survive untouched.
+        data = self._hwt_nqi_shaped()
+        data["deployments"][0]["services"] = [{"reference": "postgresql-database", "config": {"generation": 1}}]
+        result, _ = migrate_to_latest(data)
+
+        services = result["deployments"][0]["services"]
+        assert len(services) == 2
+        assert services[0] == {"reference": "postgresql-database", "config": {"generation": 1}}
+        assert get_domain_setting(result["deployments"][0], DomainSetting.DOMAIN_FORMAT) == (
+            "component-deployment-project"
+        )
+        validate_project_schema(result)
+
+    def test_an_unmigrated_file_still_validates(self) -> None:
+        # A file stamped 2.6 keeps its settings at the deployment root until it is loaded
+        # again; the schema of THAT version must still accept them.
+        data = self._hwt_nqi_shaped()
+        validate_declared_project_schema(data)
