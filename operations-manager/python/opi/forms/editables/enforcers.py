@@ -9,9 +9,11 @@ from opi.connectors.subdomain import (
     get_supported_base_domains,
     is_domain_allowed_for_project,
     is_subdomain_allowed_for_project,
+    validate_bare_domain_allowed,
 )
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_domain_supports_dots
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path, get_domain_setting
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.services.services import service_entry_name
@@ -217,35 +219,52 @@ class DomainConfigEnforcer:
         dep = deployments[self.deployment_index]
         if not isinstance(dep, dict):
             return value
-        domain_format = dep.get("domain-format")
-        if not domain_format:
-            return value
-
-        base_domain = dep.get("base-domain")
+        base_domain = get_domain_setting(dep, DomainSetting.BASE_DOMAIN)
         custom_domain = dep.get("base-domain:custom")
-        subdomain = dep.get("subdomain")
+        subdomain = get_domain_setting(dep, DomainSetting.SUBDOMAIN)
 
         cluster = opi_config.settings.CLUSTER_MANAGER
         supported = get_supported_base_domains(cluster)
 
+        # The domain this deployment actually asks for. "__custom__" means the wizard's
+        # custom-domain input holds it; an empty base-domain means the cluster-default
+        # URL, which is the platform default and not a user-requested domain, so there
+        # is nothing to validate or approve -- None makes every domain check below skip.
+        # (Previously the empty case picked an arbitrary next(iter(supported)) domain and
+        # ran ITS subdomain restrictions against the deployment, wrongly rejecting
+        # cluster-default PRs with e.g. "subdomein 'pr797' voor 'rijksapp.dev' is op
+        # aanvraag".)
+        actual_domain = custom_domain if base_domain == "__custom__" else base_domain or None
+
+        # Bare domain, BEFORE the domain-format early return: the rule does not depend on
+        # the format, and since the web address moved under the service the field is
+        # writable through PUT .../services/publish-on-web/deployments/{d}/config, which
+        # can set it without ever setting a domain-format. Behind the early return the
+        # rule was reachable from the wizard only.
+        #
+        # ``validate_bare_domain_allowed`` carries the whole rule: not a platform domain,
+        # and approved for THIS project. The one exemption is the same as for the
+        # subdomain checks below -- an approver revoking a domain a deployment already
+        # exposes on the apex must be able to save that verdict. Only an explicit
+        # ``denied`` status qualifies, and only in the save gate; a domain with no entry
+        # or a self-created ``requested`` entry is refused on every path. Publication
+        # refuses the revoked case outright, so no apex is claimed on it.
+        bare_domain_component = get_domain_setting(dep, DomainSetting.BARE_DOMAIN_COMPONENT)
+        if bare_domain_component and actual_domain:
+            bare_config = get_project_allowed_domain_config(value, actual_domain)
+            bare_status = bare_config.get("status") if isinstance(bare_config, dict) else None
+            if self.denied_blocks or bare_status != "denied":
+                validate_bare_domain_allowed(actual_domain, supported, value)
+            await self._check_bare_domain_availability(actual_domain, context)
+
+        domain_format = get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT)
+        if not domain_format:
+            return value
+
         # When base-domain is "__custom__", user selected custom domain input
         # Validate that they actually filled it in
-        if base_domain == "__custom__":
-            if not custom_domain:
-                raise ValueError("Een aangepast domein is geselecteerd maar niet ingevuld")
-            # Use custom domain for further validation
-            actual_domain = custom_domain
-        elif base_domain:
-            actual_domain = base_domain
-        else:
-            # No base-domain chosen = the cluster-default URL. That is the platform
-            # default, not a user-requested domain, so there is nothing to validate
-            # or approve here -- leave actual_domain None so the domain/subdomain
-            # checks below all skip. (Previously this picked an arbitrary
-            # next(iter(supported)) domain and ran ITS subdomain restrictions against
-            # the deployment, wrongly rejecting cluster-default PRs with e.g.
-            # "subdomein 'pr797' voor 'rijksapp.dev' is op aanvraag".)
-            actual_domain = None
+        if base_domain == "__custom__" and not custom_domain:
+            raise ValueError("Een aangepast domein is geselecteerd maar niet ingevuld")
 
         template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
         if "{subdomain}" in template and not subdomain:
@@ -255,7 +274,7 @@ class DomainConfigEnforcer:
             # processed), surface the error against the subdomain input so it
             # is visible — not against the parent group path.
             raise FieldError(
-                f"deployments[{self.deployment_index}]/subdomain",
+                domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index),
                 "Een subdomein is vereist voor het gekozen URL-formaat",
             )
 
@@ -286,7 +305,7 @@ class DomainConfigEnforcer:
             domain_field = (
                 f"deployments[{self.deployment_index}]/base-domain:custom"
                 if base_domain == "__custom__"
-                else f"deployments[{self.deployment_index}]/base-domain"
+                else domain_setting_path(DomainSetting.BASE_DOMAIN, self.deployment_index)
             )
             is_allowed, error_msg = is_domain_allowed_for_project(actual_domain, value)
             if not is_allowed:
@@ -309,7 +328,7 @@ class DomainConfigEnforcer:
 
         # Check subdomain restrictions for restricted domains
         if subdomain and actual_domain and "{subdomain}" in template:
-            subdomain_field = f"deployments[{self.deployment_index}]/subdomain"
+            subdomain_field = domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index)
             is_allowed, error_msg = is_subdomain_allowed_for_project(subdomain, actual_domain, value, cluster)
             if not is_allowed:
                 status = get_subdomain_status(value, actual_domain, subdomain)
@@ -335,15 +354,8 @@ class DomainConfigEnforcer:
                 subdomain,
                 actual_domain,
                 context,
-                field_path=f"deployments[{self.deployment_index}]/subdomain",
+                field_path=domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index),
             )
-
-        # Validate bare domain component: only valid with custom domains
-        bare_domain_component = dep.get("expose-component-on-bare-domain")
-        if bare_domain_component and actual_domain:
-            if actual_domain.lower() in supported:
-                raise ValueError("Kaal domein is alleen beschikbaar voor eigen domeinen, niet voor platformdomeinen")
-            await self._check_bare_domain_availability(actual_domain, context)
 
         return value
 

@@ -8,7 +8,7 @@
             {% set lotc_onclick_1 %}openEditModal('modal-edit-component-{{ project.components|length if project.components else 0 }}', 'Component toevoegen'){% endset %}<c-button size="sm" label="Toevoegen" show-icon="before" icon="plus"/>
             {% endif %}
         </c-layout-flow>
-        <p class="rvo-text--subtle">Applicatie componenten en hun configuratie</p>
+        <p>Applicatie componenten en hun configuratie</p>
 
         {% if project.components %}
         <c-layout-flow gap="lg">
@@ -102,7 +102,7 @@
                     <div class="env-vars-indicator">
                         <c-icon icon="sleutel" size="sm" color="hemelblauw"/>
                         <span>{{ component['user-env-vars']|length }} omgevingsvariabele{% if component['user-env-vars']|length != 1 %}n{% endif %}</span>
-                        <span class="rvo-text--subtle">(zie Omgevingsvariabelen sectie)</span>
+                        <span>(zie Omgevingsvariabelen sectie)</span>
                     </div>
                     {% endif %}
                 </c-layout-flow>

@@ -17,6 +17,7 @@ import pytest
 from opi.core.cluster_config import get_domain_supports_dots, get_nice_url_supported_domains
 from opi.forms.editables.validators import DomainFormatValidator
 from opi.forms.visualizers.providers import DomainFormatOptionsProvider
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
 from opi.utils.naming import (
     DOMAIN_FORMAT_TEMPLATES,
     DOMAIN_MODE_DEFAULT_FORMAT,
@@ -443,7 +444,7 @@ class TestDomainEditablesShowWhen:
         from opi.forms.editables.fields.domains import DOMAIN_SUBDOMAIN_EDITABLE
         from opi.utils.naming import SUBDOMAIN_FORMAT_IDS
 
-        assert DOMAIN_SUBDOMAIN_EDITABLE.depends_on == "deployments[*]/domain-format"
+        assert DOMAIN_SUBDOMAIN_EDITABLE.depends_on == domain_setting_path(DomainSetting.DOMAIN_FORMAT)
         assert DOMAIN_SUBDOMAIN_EDITABLE.show_when == {"value": SUBDOMAIN_FORMAT_IDS}
         # Verify expected formats are included
         assert "component-deployment-subdomain" in SUBDOMAIN_FORMAT_IDS
@@ -463,7 +464,7 @@ class TestDomainEditablesShowWhen:
         from opi.forms.editables.fields.domains import DOMAIN_ROOT_COMPONENT_EDITABLE
         from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
 
-        assert DOMAIN_ROOT_COMPONENT_EDITABLE.depends_on == "deployments[*]/domain-format"
+        assert DOMAIN_ROOT_COMPONENT_EDITABLE.depends_on == domain_setting_path(DomainSetting.DOMAIN_FORMAT)
         assert DOMAIN_ROOT_COMPONENT_EDITABLE.show_when == {"value": ROOT_COMPONENT_FORMAT_IDS}
         # Only dot formats with {component} qualify
         assert "component.deployment.project" in ROOT_COMPONENT_FORMAT_IDS

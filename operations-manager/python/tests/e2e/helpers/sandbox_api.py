@@ -24,15 +24,16 @@ if TYPE_CHECKING:
 def read_api_key(page: Page, base_url: str, project_name: str) -> str:
     """Scrape the decrypted project API key from the project-details page.
 
-    The details page renders the key inside a ROOS `c-secret-field`; the plaintext
-    is present in the DOM as the text of `.roos-secret-field__value` (CSS-hidden by
-    default). We scope to the "API Key" config-item to avoid the AGE-key fields.
+    The details page renders the key in a LOTC secret-field: the element TEXT is a row
+    of bullets and the plaintext sits in its `data-value` attribute, so the attribute is
+    what we read. We scope to the stack carrying the "API Key" heading, otherwise the
+    first match on the page is the project's AGE private key.
     """
     page.goto(f"{base_url.rstrip('/')}/projects/details/{project_name}")
     page.wait_for_load_state("networkidle")
-    value = page.locator(".config-item:has(strong:text-is('API Key')) .roos-secret-field__value").first
+    value = page.locator('.lotc-stack:has(h3:text-is("API Key")) .lotc-secret__value').first
     value.wait_for(state="attached", timeout=10000)
-    api_key = (value.text_content() or "").strip()
+    api_key = (value.get_attribute("data-value") or "").strip()
     if not api_key:
         raise AssertionError(f"Could not read API key for project '{project_name}' from details page")
     return api_key

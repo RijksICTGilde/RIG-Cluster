@@ -1,5 +1,11 @@
 # Domain Restrictions
 
+> **Waar dit wordt opgeslagen (schemaversie 2.7):** de velden hieronder staan in het
+> projectbestand onder `deployments[].services[publish-on-web].config`, niet meer los in de
+> wortel van de deployment. Zie [webadres-onder-de-dienst.md](webadres-onder-de-dienst.md).
+> De YAML-fragmenten in dit document tonen de velden zonder dat omhulsel, om over hun
+> betekenis te gaan en niet over hun plek.
+
 ## Overview
 
 ZAD restricts which subdomains and custom domains can be used in project deployments. This prevents unauthorized subdomain usage on platform domains and ensures custom domains go through an approval process.

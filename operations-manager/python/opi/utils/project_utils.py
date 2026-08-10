@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import HTTPException
 from opi.core.config import settings
 from opi.services import ServiceAdapter
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
 from opi.services.project_service import get_project_service
 from opi.utils.age import encrypt_age_content, is_age_encrypted
 from opi.utils.api_keys import generate_api_key
@@ -31,6 +32,44 @@ class ComponentValidationError(ValueError):
 
 class ProjectApiKeyError(RuntimeError):
     """Raised when a generated project API key cannot be read back in plaintext."""
+
+
+def _apply_web_address_settings(
+    deployment_config: dict[str, Any],
+    project_data: Any,
+    deployment_name: str,
+    root_component: str | None,
+) -> None:
+    """Write the web-address settings of a freshly created deployment (RC-60).
+
+    One function for what used to be two near-identical blocks twenty lines apart -- the
+    kind of duplication where a change lands in one copy and the other keeps writing the
+    old shape. Every write goes through ``set_domain_setting``, so the location is decided
+    in one place (``catalog/publish_on_web/domain_config.py``) and creation cannot disagree
+    with the migration about where a value belongs.
+
+    Only settings the user actually chose are written: an absent setting means "inherit",
+    and writing an empty one would turn that into an explicit empty value.
+    """
+    if project_data.domain_mode == "deployment-name":
+        set_domain_setting(deployment_config, DomainSetting.SUBDOMAIN, deployment_name)
+    elif project_data.domain_mode == "custom" and project_data.subdomain:
+        set_domain_setting(deployment_config, DomainSetting.SUBDOMAIN, project_data.subdomain)
+    elif project_data.domain_mode == "nice-url":
+        set_domain_setting(deployment_config, DomainSetting.DOMAIN_MODE, "nice-url")
+        # For nice-url mode, subdomain is required and globally unique
+        if getattr(project_data, "subdomain", None):
+            set_domain_setting(deployment_config, DomainSetting.SUBDOMAIN, project_data.subdomain)
+    # For "component-specific" mode, don't set a subdomain at all
+
+    for setting, value in (
+        (DomainSetting.BASE_DOMAIN, getattr(project_data, "base_domain", None)),
+        (DomainSetting.DOMAIN_FORMAT, getattr(project_data, "domain_format", None)),
+        (DomainSetting.ISSUER, getattr(project_data, "issuer", None)),
+        (DomainSetting.ROOT_COMPONENT, root_component),
+    ):
+        if value:
+            set_domain_setting(deployment_config, setting, value)
 
 
 def validate_component_paths(component_paths: list[str], domain_mode: str) -> None:
@@ -397,31 +436,10 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
             "components": component_refs,
         }
 
-        # Add subdomain based on domain-mode
-        if project_data.domain_mode == "deployment-name":
-            deployment_config["subdomain"] = deployment_name
-        elif project_data.domain_mode == "custom" and project_data.subdomain:
-            deployment_config["subdomain"] = project_data.subdomain
-        elif project_data.domain_mode == "nice-url":
-            deployment_config["domain-mode"] = "nice-url"
-            # For nice-url mode, subdomain is required and globally unique
-            if hasattr(project_data, "subdomain") and project_data.subdomain:
-                deployment_config["subdomain"] = project_data.subdomain
-        # For "component-specific" mode, don't add subdomain field
-
-        # Add external domain configuration if specified
-        if hasattr(project_data, "base_domain") and project_data.base_domain:
-            deployment_config["base-domain"] = project_data.base_domain
-        if hasattr(project_data, "domain_format") and project_data.domain_format:
-            deployment_config["domain-format"] = project_data.domain_format
-        if hasattr(project_data, "issuer") and project_data.issuer:
-            deployment_config["issuer"] = project_data.issuer
-
-        # Set root-component on deployment if any component is marked as root
-        for idx, comp in enumerate(project_data.components):
-            if comp.root:
-                deployment_config["root-component"] = f"component-{idx + 1}"
-                break
+        root_component = next(
+            (f"component-{idx + 1}" for idx, comp in enumerate(project_data.components) if comp.root), None
+        )
+        _apply_web_address_settings(deployment_config, project_data, deployment_name, root_component)
 
         deployments_list.append(deployment_config)
     else:
@@ -436,25 +454,7 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
             "components": [{"reference": "main", "image": "nginx:latest"}],
         }
 
-        # Add subdomain based on domain-mode
-        if project_data.domain_mode == "deployment-name":
-            deployment_config["subdomain"] = deployment_name
-        elif project_data.domain_mode == "custom" and project_data.subdomain:
-            deployment_config["subdomain"] = project_data.subdomain
-        elif project_data.domain_mode == "nice-url":
-            deployment_config["domain-mode"] = "nice-url"
-            # For nice-url mode, subdomain is required and globally unique
-            if hasattr(project_data, "subdomain") and project_data.subdomain:
-                deployment_config["subdomain"] = project_data.subdomain
-        # For "component-specific" mode, don't add subdomain field
-
-        # Add external domain configuration if specified
-        if hasattr(project_data, "base_domain") and project_data.base_domain:
-            deployment_config["base-domain"] = project_data.base_domain
-        if hasattr(project_data, "domain_format") and project_data.domain_format:
-            deployment_config["domain-format"] = project_data.domain_format
-        if hasattr(project_data, "issuer") and project_data.issuer:
-            deployment_config["issuer"] = project_data.issuer
+        _apply_web_address_settings(deployment_config, project_data, deployment_name, None)
 
         deployments_list.append(deployment_config)
 

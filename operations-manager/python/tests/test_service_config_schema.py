@@ -10,8 +10,14 @@ Covers:
 """
 
 import pytest
+from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.namespace_postgres.config_model import NamespacePostgresConfig
-from opi.services.config_schema import fragment_path, render_service_config_schema
+from opi.services.config_schema import (
+    fragment_path,
+    layer_fragment_paths,
+    render_model_schema,
+    render_service_config_schema,
+)
 from opi.services.registry import SERVICES, get_service
 from opi.services.services_enums import ServiceType
 from pydantic import ValidationError
@@ -38,6 +44,59 @@ class TestSchemaFragmentDriftLock:
             f"Committed schema fragment for '{provider.service_type.value}' is stale. "
             f"Regenerate with `uv run python -m opi.services.config_schema` and review the diff."
         )
+
+
+_LAYERED_PROVIDERS = [p for p in _PROVIDERS_WITH_CONFIG if layer_fragment_paths(p)]
+
+
+class TestLayerFragmentDriftLock:
+    """A service whose layers hold different shapes commits a fragment per layer (RC-60).
+
+    ``config_model`` names one shape, and for most of the catalog that is the whole story.
+    For a service where the layers answer different questions it is not: the single fragment
+    then documents one of them and silently omits the rest, so a client reading it gets a
+    field list that does not apply to the target it is writing to. The API already answers
+    per layer; these files are the committed record of the same thing, under the same drift
+    lock as the main fragment.
+    """
+
+    def test_a_service_with_per_layer_models_is_present(self) -> None:
+        # Guards the parametrized test below from passing on an empty list.
+        names = {p.service_type.value for p in _LAYERED_PROVIDERS}
+        assert "publish-on-web" in names, f"expected publish-on-web to carry per-layer models, got {names}"
+
+    @pytest.mark.parametrize("provider", _LAYERED_PROVIDERS, ids=[p.service_type.value for p in _LAYERED_PROVIDERS])
+    def test_every_layer_fragment_matches_its_model(self, provider) -> None:
+        for layer, path in layer_fragment_paths(provider).items():
+            assert path.exists(), (
+                f"Missing committed layer fragment {path.name}. "
+                f"Regenerate with `uv run python -m opi.services.config_schema`."
+            )
+            model = provider.config_model_for(layer)
+            assert model is not None
+            assert path.read_text(encoding="utf-8") == render_model_schema(model), (
+                f"Committed fragment for '{provider.service_type.value}' at layer '{layer.value}' is stale. "
+                f"Regenerate with `uv run python -m opi.services.config_schema` and review the diff."
+            )
+
+    def test_publish_on_web_keeps_its_layers_apart(self) -> None:
+        # The reason the split exists: one bag of ten optional fields would let `tls` land
+        # on a deployment and `subdomain` on a component, and validate both times.
+        service = get_service(ServiceType.PUBLISH_ON_WEB)
+
+        def fields(layer: ConfigLayer) -> set[str]:
+            model = service.config_model_for(layer)
+            assert model is not None
+            return {f.alias or name for name, f in model.model_fields.items()}
+
+        assert "subdomain" in fields(ConfigLayer.DEPLOYMENT)
+        assert "tls" not in fields(ConfigLayer.DEPLOYMENT)
+        assert "tls" in fields(ConfigLayer.COMPONENT)
+        assert "subdomain" not in fields(ConfigLayer.COMPONENT)
+        assert "domains" in fields(ConfigLayer.PROJECT)
+        # The project layer keeps tls: it is level 3 of the certificate cascade.
+        assert "tls" in fields(ConfigLayer.PROJECT)
+        assert "subdomain" not in fields(ConfigLayer.PROJECT)
 
 
 class TestNamespacePostgresConfigModel:

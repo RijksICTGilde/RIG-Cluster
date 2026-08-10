@@ -27,7 +27,10 @@
 .metrics-controls__filter input {
     max-width: 300px;
 }
-.rvo-select, .rvo-input {
+.rvo-select,
+.lotc-select,
+.rvo-input,
+.lotc-input {
     padding: 0.5rem;
     border: 1px solid var(--rvo-color-grijs-400, #999);
     border-radius: 4px;
