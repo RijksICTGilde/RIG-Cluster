@@ -19,6 +19,7 @@ from opi.connectors.subdomain import (
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_ingress_postfix, is_domain_subdomain_restricted
 from opi.forms.editables.resolvers import get_effective_value
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 
 
 class SentinelValueCondition:
@@ -69,7 +70,7 @@ class SubdomainNeedsRequestCondition:
         if not isinstance(dep, dict):
             return False
 
-        subdomain = dep.get("subdomain")
+        subdomain = get_domain_setting(dep, DomainSetting.SUBDOMAIN)
         base_domain = get_effective_value(value, f"deployments[{self.deployment_index}]/base-domain", self._resolvers)
         if not subdomain or not base_domain or base_domain == "__custom__":
             return False

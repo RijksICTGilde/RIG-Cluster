@@ -25,7 +25,12 @@ from opi.services.catalog.approval import (
     ApproverScope,
 )
 from opi.services.catalog.base import ConfigLayer, Service
-from opi.services.catalog.publish_on_web.config_model import PublishOnWebConfig
+from opi.services.catalog.publish_on_web.config_model import (
+    PublishOnWebComponentConfig,
+    PublishOnWebDeploymentConfig,
+    PublishOnWebProjectConfig,
+)
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.publish_on_web.variables import WebVariables
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import ServiceBinding, ServiceType
@@ -128,10 +133,10 @@ _FALLBACK = "Deze deployment is daarom bereikbaar op het standaard clusteradres.
 
 def _deployment_domain(deployment: dict[str, Any]) -> tuple[str | None, str | None]:
     """The (base domain, subdomain) a deployment publishes on, custom input resolved."""
-    base_domain = deployment.get("base-domain")
+    base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
     if base_domain == "__custom__":
         base_domain = deployment.get("base-domain:custom")
-    return base_domain or None, deployment.get("subdomain") or None
+    return base_domain or None, get_domain_setting(deployment, DomainSetting.SUBDOMAIN) or None
 
 
 def _last_verdict(history: Any) -> dict[str, Any]:
@@ -235,13 +240,28 @@ class PublishOnWebService(Service):
         binding=ServiceBinding.COMPONENT,
         variables=[var.value for var in WebVariables],
     )
-    config_model = PublishOnWebConfig
+    #: The component model: this service is bound at the component layer, and its entries
+    #: are the ones stamped with a ``schema-version``, so that is what the committed
+    #: fragment documents. The other two layers answer through ``config_model_for``.
+    config_model = PublishOnWebComponentConfig
     config_schema_version = "1.0"
     config_component_order = 30
 
-    # One model covers both layers this service carries config on: tls/attachment per
-    # component, and the domains approval block at project level (relocated there by the
-    # v2.5 migration). Every field is optional, so each layer validates on its own.
+    def config_model_for(self, layer: ConfigLayer):
+        """One model per layer -- three questions, three shapes (RC-60).
+
+        Project: which domains may this project publish on. Deployment: how is this
+        deployment's address composed. Component: does this component use the service, and
+        how is TLS terminated. A single model spanning all three would be ten optional
+        fields with nothing to stop ``tls`` from landing on a deployment.
+        """
+        if layer is ConfigLayer.PROJECT:
+            return PublishOnWebProjectConfig
+        if layer is ConfigLayer.DEPLOYMENT:
+            return PublishOnWebDeploymentConfig
+        # Component and deployment-component: the same tls/attachment pair, since the
+        # deployment-component entry exists precisely to override the component's.
+        return PublishOnWebComponentConfig
 
     def config_editables(self, layer: ConfigLayer):
         if layer is not ConfigLayer.COMPONENT:

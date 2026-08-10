@@ -37,10 +37,7 @@ class TestEditIdentity:
         modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
 
         body = modal.get_body_text()
-        assert (
-            "Detail Test Project" in body
-            or veld(modal.page, "display-name").input_value() == "Detail Test Project"
-        )
+        assert "Detail Test Project" in body or veld(modal.page, "display-name").input_value() == "Detail Test Project"
 
     def test_validation_short_display_name(self, modal: EditModalHelper, screenshot_dir: Path) -> None:
         """Fill display-name with too-short value (min 3 chars), submit, verify error."""
@@ -114,9 +111,7 @@ class TestEditTeam:
         # Op de INVOERtags en niet op [name*=...]: onder het nieuwe thema draagt de wikkel
         # hetzelfde name-attribuut als het veld erin, en dan is input_value() zinloos
         # ("Node is not an <input>").
-        inputs = modal.page.locator(
-            "#edit-section-inner input[type='email'], #edit-section-inner input[name*='email']"
-        )
+        inputs = modal.page.locator("#edit-section-inner input[type='email'], #edit-section-inner input[name*='email']")
         values = [inputs.nth(i).input_value() for i in range(inputs.count())]
         assert "test@example.com" in values
         assert "developer@example.com" in values
