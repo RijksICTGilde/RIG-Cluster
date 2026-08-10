@@ -15,12 +15,23 @@ The first fix is what makes it safe; the second keeps made-up names out of the t
 the first place (and gives the user a 404 at the click instead of a task that fails).
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
 PAYLOAD = "{{ 7 * 7 }}"
+
+#: De twee weergaven waarin dit fragment gerenderd wordt. Sinds RC-64 kiest
+#: ``render_progress_fragment`` er zelf tussen, dus elke eigenschap hieronder hoort in
+#: allebei te gelden: het is hetzelfde fragment, alleen een ander sjabloonbestand.
+LAYOUTS = ["nldd", "roos"]
+
+
+def _layout_request(layout: str) -> SimpleNamespace:
+    """Het kleinste dat de schakelaar van een verzoek nodig heeft."""
+    return SimpleNamespace(query_params={"layout": layout}, cookies={})
 
 
 def _context(**overrides) -> dict:
@@ -43,25 +54,28 @@ def _context(**overrides) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_text_in_the_fragment_is_shown_not_executed() -> None:
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_text_in_the_fragment_is_shown_not_executed(layout: str) -> None:
     from opi.web.task_progress import render_progress_fragment
 
-    rendered = render_progress_fragment(_context())
+    rendered = render_progress_fragment(_layout_request(layout), _context())
 
     assert "49" not in rendered
     assert rendered.count("7 * 7") == 3  # step, task name, subtask name
 
 
-def test_a_success_message_is_shown_not_executed() -> None:
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_success_message_is_shown_not_executed(layout: str) -> None:
     from opi.web.task_progress import render_progress_fragment
 
-    rendered = render_progress_fragment(_context(status="completed"))
+    rendered = render_progress_fragment(_layout_request(layout), _context(status="completed"))
 
     assert "49" not in rendered
     assert "7 * 7" in rendered
 
 
-def test_the_single_render_still_resolves_every_component() -> None:
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_the_single_render_still_resolves_every_component(layout: str) -> None:
     """Dropping the second pass may not leave raw ``<c-...>`` tags in the answer.
 
     The extension replaces them when the template file is compiled, which is why the
@@ -70,7 +84,7 @@ def test_the_single_render_still_resolves_every_component() -> None:
     from opi.web.task_progress import render_progress_fragment
 
     for status in ("running", "completed", "failed"):
-        rendered = render_progress_fragment(_context(status=status, current_step="stap"))
+        rendered = render_progress_fragment(_layout_request(layout), _context(status=status, current_step="stap"))
         assert "<c-" not in rendered, f"unresolved component tag with status={status}"
 
 
