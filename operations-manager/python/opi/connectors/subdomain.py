@@ -15,6 +15,7 @@ from opi.core.cluster_config import (
     get_ingress_postfix,
     is_domain_subdomain_restricted,
 )
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
 
 logger = logging.getLogger(__name__)
@@ -309,9 +310,9 @@ def find_deployments_for_domain_item(project_data: dict[str, Any], item: dict[st
     for dep in project_data.get("deployments", []):
         if not isinstance(dep, dict):
             continue
-        if dep.get("base-domain") != domain:
+        if get_domain_setting(dep, DomainSetting.BASE_DOMAIN) != domain:
             continue
-        if sub_name is not None and dep.get("subdomain") != sub_name:
+        if sub_name is not None and get_domain_setting(dep, DomainSetting.SUBDOMAIN) != sub_name:
             continue
         name = dep.get("name")
         if name:
@@ -445,9 +446,9 @@ def ensure_domain_requests(project_data: dict[str, Any], cluster: str) -> None:
         # Treating that emptiness as "nothing to do" skipped the whole deployment,
         # including the subdomain branch below that is written for exactly this
         # case, so every subdomain request on the cluster domain vanished silently.
-        base_domain = dep.get("base-domain") or cluster_domain
-        subdomain = dep.get("subdomain")
-        domain_format = dep.get("domain-format", "")
+        base_domain = get_domain_setting(dep, DomainSetting.BASE_DOMAIN) or cluster_domain
+        subdomain = get_domain_setting(dep, DomainSetting.SUBDOMAIN)
+        domain_format = get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT, "")
         template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
 
         if base_domain == "__custom__":

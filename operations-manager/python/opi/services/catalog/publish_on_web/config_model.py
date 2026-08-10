@@ -1,19 +1,29 @@
-"""Typed config model for the ``publish-on-web`` service.
+"""Typed config models for the ``publish-on-web`` service -- one per layer.
 
-Two layers with different content, and ``config_model`` is one class per service, so both
-live in one model with every field optional:
+The three layers this service carries config on each answer a different question, so each
+gets its own model, selected by ``PublishOnWebService.config_model_for(layer)``:
 
-- component (and per-deployment-component override): ``tls``, plus ``attachment`` when the
-  certificate is supplied by the project. Resolution is deployment > component > root >
-  ``standard``.
-- project: the ``domains`` approval block, which the v2.5 migration relocated here from the
-  project root (``normalize_domains_location``). ``connectors/subdomain.py`` is the single
-  authority on where it lives; this model only says what may be in it.
+- **project** (:class:`PublishOnWebProjectConfig`) -- *which domains is this project allowed
+  to publish on*: the ``domains`` approval block, which the v2.5 migration relocated here
+  from the project root (``normalize_domains_location``). ``connectors/subdomain.py`` is the
+  single authority on where it lives; this model only says what may be in it. It also
+  carries the project-wide ``tls`` default, which is level 3 of the certificate cascade.
+- **deployment** (:class:`PublishOnWebDeploymentConfig`) -- *how this deployment's hostname
+  is composed and with which certificate*: the seven fields the v2.7 migration relocated
+  here from the deployment root (RC-60). ``domain_config.py`` is the single authority on
+  where they live.
+- **component** (and the per-deployment-component override,
+  :class:`PublishOnWebComponentConfig`) -- *this component uses the service, thus*: ``tls``,
+  plus ``attachment`` when the certificate is supplied by the project. Resolution is
+  deployment > component > root > ``standard``.
 
-The shape mirrors ``$defs/publish-on-web-config`` and ``$defs/domains`` in
-``project_v2.json``, which still hold the same knowledge. Those defs are the next thing to
-retire now that the service owns the contract, but they are referenced from three places in
-the global schema, so that is a separate change.
+One model per layer rather than one bag of ten optional fields: with a single model nothing
+stops ``tls`` from landing on a deployment or ``subdomain`` on a component, and "every field
+optional" is exactly what makes such a file validate. ``config_model`` names the component
+model -- the layer this ``ServiceBinding.COMPONENT`` service is actually bound at, and the
+one whose entries carry a stamped ``schema-version`` -- so that is what the committed
+fragment documents; the other two are OPI-written and validated shape-first (see
+``project_validation._validate_one_config``).
 """
 
 from __future__ import annotations
@@ -93,7 +103,57 @@ class DomainsConfig(BaseModel):
     )
 
 
-class PublishOnWebConfig(BaseModel):
+class PublishOnWebDeploymentConfig(BaseModel):
+    """Deployment layer: how this deployment's web address is composed (RC-60).
+
+    Every field is optional because a deployment on the platform's own cluster domain
+    needs none of them: the format defaults, the base domain comes from the cluster and the
+    issuer from the domain entry. ``domain-mode`` is legacy -- superseded by
+    ``domain-format`` and read only by ``HostnameFormat.from_domain_mode`` for old files --
+    but it describes the same subject, so it moved along rather than staying behind as a
+    second place to look.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    base_domain: str | None = Field(
+        default=None,
+        alias="base-domain",
+        description="The domain to publish on; the cluster's own domain when absent.",
+    )
+    subdomain: str | None = Field(
+        default=None,
+        description="The subdomain under the base domain, for the hostname formats that use one.",
+    )
+    domain_mode: str | None = Field(
+        default=None,
+        alias="domain-mode",
+        description="LEGACY hostname strategy, superseded by domain-format. Only read for files that predate it.",
+    )
+    domain_format: str | None = Field(
+        default=None,
+        alias="domain-format",
+        description="Which hostname template composes the address (see DOMAIN_FORMAT_TEMPLATES).",
+    )
+    issuer: str | None = Field(
+        default=None,
+        description="Certificate issuer for this deployment's ingress; the platform default when absent.",
+    )
+    root_component: str | None = Field(
+        default=None,
+        alias="root-component",
+        description="The component served on the address without a component segment, for the formats that have one.",
+    )
+    expose_component_on_bare_domain: str | bool | None = Field(
+        default=None,
+        alias="expose-component-on-bare-domain",
+        description="Component served on the bare custom domain, or false/absent for none.",
+    )
+
+
+class PublishOnWebComponentConfig(BaseModel):
+    """Component layer: this component uses the service, and how TLS is terminated."""
+
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     tls: TlsMode | None = Field(
@@ -108,14 +168,27 @@ class PublishOnWebConfig(BaseModel):
         default=None,
         description="Id of the attachment holding the certificate PEM. Required when tls is 'provided'.",
     )
-    domains: DomainsConfig | None = Field(
-        default=None, description="Project-level domain approvals. Written by the platform's approval flow."
-    )
 
     @model_validator(mode="after")
-    def _provided_needs_an_attachment(self) -> PublishOnWebConfig:
+    def _provided_needs_an_attachment(self) -> PublishOnWebComponentConfig:
         # Mirrors the if/then in $defs/publish-on-web-config: without the PEM there is
         # nothing to terminate with, and the failure would surface at render time.
         if self.tls == "provided" and not self.attachment:
             raise ValueError("tls 'provided' requires an 'attachment' naming the certificate")
         return self
+
+
+class PublishOnWebProjectConfig(PublishOnWebComponentConfig):
+    """Project layer: which domains this project may publish on, plus the TLS default.
+
+    Two things, because the code already holds both there. ``domains`` is the approval
+    block the v2.5 migration relocated here. ``tls`` / ``attachment`` are inherited rather
+    than repeated: level 3 of the cascade in
+    ``project_file_handler._resolve_publish_on_web_config`` is the project-level entry, so
+    a project can set one certificate mode for every component that does not override it.
+    Dropping them here would have made every such project file fail validation.
+    """
+
+    domains: DomainsConfig | None = Field(
+        default=None, description="Project-level domain approvals. Written by the platform's approval flow."
+    )

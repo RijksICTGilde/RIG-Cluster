@@ -19,6 +19,7 @@ from unittest.mock import patch
 from opi.forms.editables.conditions import DomainNeedsRequestCondition
 from opi.forms.editables.hooks import _resolve_missing_base_domains
 from opi.forms.editables.resolvers import ClusterDefaultDomain
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 
 _PROD = "odcn-production"
 _PROD_DEFAULT = "rig.prd1.gn2.quattro.rijksapps.nl"
@@ -61,7 +62,7 @@ class TestResolveMissingBaseDomains:
         resolvers = {"deployments[0]/base-domain": ClusterDefaultDomain()}
         with _prod_settings():
             _resolve_missing_base_domains(data, {"resolvers": resolvers})
-        assert "base-domain" not in data["deployments"][0]
+        assert get_domain_setting(data["deployments"][0], DomainSetting.BASE_DOMAIN) is None
 
     def test_real_resolved_domain_is_materialised(self):
         """A genuine non-default resolver value is still filled in."""
@@ -74,4 +75,4 @@ class TestResolveMissingBaseDomains:
         resolvers = {"deployments[0]/base-domain": _Fixed()}
         with _prod_settings():
             _resolve_missing_base_domains(data, {"resolvers": resolvers})
-        assert data["deployments"][0]["base-domain"] == "klant.example.com"
+        assert get_domain_setting(data["deployments"][0], DomainSetting.BASE_DOMAIN) == "klant.example.com"
