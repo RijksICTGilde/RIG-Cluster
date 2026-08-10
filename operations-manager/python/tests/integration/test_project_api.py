@@ -1025,23 +1025,20 @@ class TestAddComponentEndpoint:
         )
         assert response.status_code == 422
 
-        # Missing deployment_names
-        response = test_client.post(
-            "/api/projects/test-project/components?sync=true",
-            headers={"X-API-Key": "test-api-key-12345"},
-            json={
-                "name": "worker",
-                "image": "nginx:latest",
-            },
-        )
-        assert response.status_code == 422
+        # deployment_names is deliberately NOT in this list: a component may be defined
+        # without being attached to anything, so leaving it out is a valid request.
 
-    def test_add_component_empty_deployment_names(
+    def test_add_component_empty_deployment_names_is_accepted(
         self,
         test_client: TestClient,
         mock_auth_project_service: Any,
     ) -> None:
-        """Test validation rejects empty deployment_names list."""
+        """An empty deployment list defines the component without attaching it.
+
+        This was a 422 while ``deployment_names`` carried ``min_length=1``. Both save
+        gates accept a component that no deployment references, so the restriction lived
+        only in the request model and blocked building the parts up separately.
+        """
         response = test_client.post(
             "/api/projects/test-project/components?sync=true",
             headers={"X-API-Key": "test-api-key-12345"},
@@ -1051,7 +1048,7 @@ class TestAddComponentEndpoint:
                 "deployment_names": [],
             },
         )
-        assert response.status_code == 422
+        assert response.status_code != 422, response.text
 
     def test_add_component_no_api_key(
         self,

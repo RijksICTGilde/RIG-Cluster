@@ -3,21 +3,16 @@
 {% block page_title %}Architecture Overview - RIG Cluster Platform{% endblock %}
 
 {% block content %}
-<div class="rvo-layout-column rvo-layout-gap--3xl">
+<c-layout-flow gap="3xl">
 
-    {# Hero Section #}
-    <section class="rvo-hero rvo-hero--lg rvo-hero--with-image" data-roos-component="hero" data-roos-size="lg">
-        <div class="rvo-hero__image-container">
-            <img src="{{ static_url('cloud.jpg') }}" alt="Cloud architecture and modern development" class="rvo-hero__image" />
-        </div>
-        <div class="rvo-hero__content">
-            <h1 class="utrecht-heading-1 rvo-hero__title">Built for Developers, By Developers</h1>
-            <p class="rvo-hero__subtitle rvo-text--lg">The platform that makes deployment effortless</p>
-            <div class="rvo-hero__text">
-                <p class="rvo-text--lg">Here's how we built a platform where the complexity is hidden, but the power remains accessible.</p>
-            </div>
-        </div>
-    </section>
+    <c-hero
+        size="lg"
+        title="Built for Developers, By Developers"
+        subtitle="The platform that makes deployment effortless"
+        image="{{ static_url('cloud.jpg') }}"
+        image-alt="Cloud architecture and modern development">
+        <c-paragraph>Here's how we built a platform where the complexity is hidden, but the power remains accessible.</c-paragraph>
+    </c-hero>
 
     {# Promo Video #}
     <section style="display: flex; justify-content: center;">
@@ -1510,7 +1505,7 @@
         </c-layout-flow>
     </div>
 
-</div>
+</c-layout-flow>
 {% endblock %}
 
 {% block additional_scripts %}

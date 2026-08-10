@@ -94,8 +94,19 @@ def guard_immutable_paths(write_paths: list[str]) -> None:
 def _system_fields_for_new_deployment(existing_data: dict[str, Any], project_name: str) -> None:
     """Fill in the fields a new deployment needs but no form collects.
 
-    Copies cluster/repository from an existing deployment and defaults the
-    namespace to the project name.
+    Copies cluster/repository from an existing deployment, falls back to the project's
+    own declaration, and defaults the namespace to the project name.
+
+    That fallback is the FIRST deployment of a project. Copying from a sibling works
+    from the second one on, and every project used to be born with one, so the gap did
+    not show. A project created through the API has no deployments at all, and the
+    deployment added to it afterwards then carried neither cluster nor repository -
+    which surfaced much later as "Repository configuration not found: None" when the
+    project was processed, nowhere near the save that caused it.
+
+    Only when the project leaves no choice. With several repositories or clusters,
+    picking one here would be a guess; validation refuses the file instead, and that
+    says more than an arbitrary pick.
     """
     deployments = existing_data.get("deployments", [])
     if not deployments or not isinstance(deployments[-1], dict):
@@ -103,10 +114,29 @@ def _system_fields_for_new_deployment(existing_data: dict[str, Any], project_nam
     new_dep = deployments[-1]
     existing_dep = next((d for d in deployments[:-1] if isinstance(d, dict)), None)
     new_dep.setdefault("namespace", project_name)
-    if existing_dep:
-        for field_name in ("cluster", "repository"):
-            if field_name in existing_dep and field_name not in new_dep:
-                new_dep[field_name] = existing_dep[field_name]
+
+    for field_name in ("cluster", "repository"):
+        if field_name in new_dep:
+            continue
+        if existing_dep and field_name in existing_dep:
+            new_dep[field_name] = existing_dep[field_name]
+            continue
+        fallback = _only_project_choice(existing_data, field_name)
+        if fallback is not None:
+            new_dep[field_name] = fallback
+
+
+def _only_project_choice(project_data: dict[str, Any], field_name: str) -> Any | None:
+    """The project's single cluster or repository, or None when it is not a single one.
+
+    ``clusters`` is a list of names; ``repositories`` a list of blocks with a ``name``.
+    """
+    key = "clusters" if field_name == "cluster" else "repositories"
+    entries = project_data.get(key) or []
+    if len(entries) != 1:
+        return None
+    entry = entries[0]
+    return entry.get("name") if isinstance(entry, dict) else entry
 
 
 def _hook_editables(all_editables: list[Any]) -> list[EditableVisualizer]:
