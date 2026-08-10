@@ -11,7 +11,7 @@ import logging
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.auth_decorators import require_platform_admin, requires_sso
 from opi.core.config import settings
 from opi.web.lotc_switch import render
 from opi.web.menu import get_menu_items
@@ -78,8 +78,13 @@ def _get_prometheus_external_url() -> str:
 @metrics_explorer_router.get("/metrics-explorer", response_class=HTMLResponse)
 @requires_sso
 async def metrics_explorer_page(request: Request):
-    """Serve the metrics explorer page."""
-    user = get_current_user(request)
+    """Serve the metrics explorer page.
+
+    Admins only. The verkenner queries across every project, so it is not a page a
+    project member should reach. Taking it out of the menu hides the door; this closes
+    it, which is the part that counts.
+    """
+    user = require_platform_admin(request)
 
     return render(
         request,
@@ -107,7 +112,12 @@ async def get_service_metrics(request: Request, service_id: str):
 
     Queries Prometheus /api/v1/series with the service's match selector,
     then extracts unique __name__ values.
+
+    Admins only, like the page it feeds. Closing the page and leaving the endpoint that
+    serves its data open would move the door rather than shut it.
     """
+    require_platform_admin(request)
+
     # Find the service definition
     service = next((s for s in MONITORED_SERVICES if s["id"] == service_id), None)
     if not service:
