@@ -546,3 +546,44 @@ class TestDeploymentComponentServicesAreGeneric:
     def test_still_rejects_a_shape_that_is_neither(self):
         with pytest.raises(ProjectSchemaError):
             validate_project_schema(self._with({"publish-on-web": "not-a-record"}))
+
+
+class TestBareDomainComponentIsDeclared:
+    """``expose-component-on-bare-domain`` must be a declared deployment field (RC-60 phase 0).
+
+    The wizard has written it since PR #38 (``DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE``) and six
+    places read it, but ``$defs/deployment`` never declared it while carrying
+    ``additionalProperties: false``. Every deployment that used it therefore failed schema
+    validation -- the same class as the dp-bn7 outage, where a reprocess dies silently on
+    ``validate_project_schema`` and the deploy just stops happening.
+    """
+
+    def _with_bare_domain(self, value) -> dict:
+        project = _valid_project()
+        project["deployments"][0]["expose-component-on-bare-domain"] = value
+        return project
+
+    def test_component_name_is_accepted(self) -> None:
+        validate_project_schema(self._with_bare_domain("frontend"))
+
+    def test_false_is_accepted(self) -> None:
+        # keycloak_manager.py and project_manager.py both read it with a False default,
+        # so a stored False is a value the readers expect.
+        validate_project_schema(self._with_bare_domain(False))
+
+    def test_empty_string_is_accepted(self) -> None:
+        # What the form posts when the select is cleared but not removed.
+        validate_project_schema(self._with_bare_domain(""))
+
+    def test_the_field_is_declared_in_the_schema(self) -> None:
+        # Fails as long as the field is missing from $defs/deployment: without the
+        # declaration the additionalProperties gate rejects it and nothing else notices.
+        from opi.core.project_schema import _load_latest_schema
+
+        deployment_def = _load_latest_schema()["$defs"]["deployment"]
+        assert "expose-component-on-bare-domain" in deployment_def["properties"]
+
+    def test_a_number_is_still_rejected(self) -> None:
+        # Declaring the field must not open the deployment up to anything.
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(self._with_bare_domain(7))
