@@ -262,21 +262,17 @@
            eerst geregistreerde voorbewerker eist alle c-tags op (gemeten in
            docs/lotc-samenleven-met-jinja-roos.md).
 
-           Hier stond render_roos() voor allemaal, met als verantwoording dat zo'n blok dan
-           "zichtbaar anders" is. Dat klopte niet meer: rvo-klassen worden op deze pagina
-           door geen enkel stijlblad opgemaakt (lotc_rvo staat niet in DESIGN_SYSTEMS),
-           dus het werd niet zichtbaar anders maar volledig onopgemaakt - kale HTML midden
-           op de projectpagina.
-
-           De terugval blijft staan voor een dienst die nog geen tegenhanger heeft. Dat is
-           de ondergrens: lelijk is beter dan weg. tests/test_lotc_dienstblokken.py zorgt
-           dat het bij een ondergrens blijft. #}
+           Hier stond render_roos() als terugval voor een dienst zonder tegenhanger, met
+           als verantwoording "lelijk is beter dan weg". Die terugval is weg, en niet omdat
+           de regel erachter niet meer geldt: de roos-omgeving zelf gaat weg, dus er valt
+           niets meer op terug te vallen. Wat ervoor in de plaats komt is de {% raw %}{% if %}{% endraw %}
+           hieronder - een blok zonder tegenhanger blijft leeg in plaats van dat de pagina
+           omvalt - plus tests/test_lotc_dienstblokken.py, dat elk sjabloon in de catalogus
+           op zijn tegenhanger toetst en leeg daarmee onbereikbaar maakt. #}
         {% for section in service_detail_sections | default([]) %}
             {% set lotc_sjabloon = lotc_counterpart(section.template) %}
             {% if lotc_sjabloon %}
                 {% include lotc_sjabloon %}
-            {% else %}
-                {{ render_roos(section.template, request=request, section=section) }}
             {% endif %}
         {% endfor %}
 
