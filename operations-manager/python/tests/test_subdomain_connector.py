@@ -509,6 +509,16 @@ class TestConnectorBareDomain:
         assert await c.delete_bare_domain("voorbeeld.nl") is True
         assert await c.check_availability(BARE_DOMAIN_SUBDOMAIN, "voorbeeld.nl") is True
 
+    async def test_delete_is_scoped_to_the_owning_project(self, orm_db):
+        """The cleanup path passes its own project name: naming another tenant's domain in
+        a project file must not wipe THEIR apex registration."""
+        c = SubdomainConnector()
+        await c.register_bare_domain("voorbeeld.nl", "p1", "d1", _CLUSTER)
+        assert await c.delete_bare_domain("voorbeeld.nl", project_name="p2") is False
+        assert await c.check_availability(BARE_DOMAIN_SUBDOMAIN, "voorbeeld.nl") is False
+        assert await c.delete_bare_domain("voorbeeld.nl", project_name="p1") is True
+        assert await c.check_availability(BARE_DOMAIN_SUBDOMAIN, "voorbeeld.nl") is True
+
 
 class TestConnectorRegisterOrUpdateAtomic:
     async def test_unchanged_returns_existing(self, orm_db):
