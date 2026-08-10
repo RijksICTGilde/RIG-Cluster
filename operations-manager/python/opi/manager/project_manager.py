@@ -5154,8 +5154,10 @@ class ProjectManager:
             # The publication path enforces the bare-domain rule itself, not just the form
             # layer: the setting is also writable through the service config API, which the
             # form enforcer never sees. This is the point of no return -- past it a
-            # registration and an apex certificate exist.
-            validate_bare_domain_allowed(base_domain, get_supported_base_domains(cluster))
+            # registration and an apex certificate exist, on a domain that has to be this
+            # project's own: the rule covers both "not a platform domain" and "approved
+            # for this project".
+            validate_bare_domain_allowed(base_domain, get_supported_base_domains(cluster), project_data)
             if subdomain_connector is None:
                 subdomain_connector = SubdomainConnector()
             await subdomain_connector.register_bare_domain(
@@ -5170,7 +5172,10 @@ class ProjectManager:
             # Bare domain deselected — clean up any existing registration
             if subdomain_connector is None:
                 subdomain_connector = SubdomainConnector()
-            deleted = await subdomain_connector.delete_bare_domain(base_domain)
+            # Scoped to this project: the base-domain is just a string in a project file,
+            # so an unscoped delete lets one project remove another tenant's apex
+            # registration by naming their domain.
+            deleted = await subdomain_connector.delete_bare_domain(base_domain, project_name=project_name)
             if deleted:
                 logger.info(f"Bare domain '{base_domain}' deregistered for project '{project_name}'")
 
@@ -6053,8 +6058,9 @@ class ProjectManager:
                     # expose_on_bare_domain holds the component name that should serve the bare domain.
                     if expose_on_bare_domain and base_domain and component_name == expose_on_bare_domain:
                         # Same rule as at registration: never an apex ingress plus
-                        # certificate on a platform domain from a tenant namespace.
-                        validate_bare_domain_allowed(base_domain, get_supported_base_domains(cluster))
+                        # certificate from a tenant namespace on a platform domain, nor on
+                        # a domain that is not approved for this project.
+                        validate_bare_domain_allowed(base_domain, get_supported_base_domains(cluster), project_data)
                         bare_hostname = generate_bare_domain_hostname(base_domain)
                         bare_ingress_name = f"{deployment_name}-bare-domain"
                         bare_manifest_name = generate_manifest_name(component_name, "ingress-bare-domain")

@@ -206,3 +206,27 @@ return` en was daarmee alleen vanuit de wizard bereikbaar. Hij staat nu vóór d
 de regel hangt niet van het formaat af — en wordt bovendien op het publicatiepad afgedwongen,
 vlak voor `register_bare_domain` en voor het renderen van de apex-ingress. Eén regel,
 `validate_bare_domain_allowed()` in `connectors/subdomain.py`, aangeroepen door beide.
+
+Die regel bestaat uit twee helften, en beide zitten in die ene functie. "Geen
+platformdomein" is de eerste. De tweede is **van wie het domein is**: een domein dat niet
+voor dít project is goedgekeurd, mag ook niet. Het DNS ervan kan al naar dit cluster wijzen
+omdat een andere tenant er zijn subdomeinen op serveert, en dan neemt een apex-claim vanuit
+deze namespace hun domein over, certificaat inbegrepen. Die eigendomstoets
+(`is_domain_allowed_for_project`) stond eerder alleen in de formulierlaag achter dezelfde
+vroege uitstap, en het publicatiepad had er geen tweede poort voor:
+`apply_domain_approval_fallback` draait uitsluitend in de `DOMAIN_FORMAT_TEMPLATES`-tak van
+`get_component_ingress_map`, terwijl `register_bare_domain` en de apex-ingress daarbuiten
+vallen. Nu dragen alle drie de aanroepen de volledige regel.
+
+Eén uitzondering, en alleen in de opslagpoort (`denied_blocks=False`): een beheerder die een
+goedkeuring intrekt op een domein waarvan een deployment de apex al gebruikt, moet dat
+oordeel kunnen opslaan. Alleen een expliciete status `denied` telt daarvoor; een domein
+zonder ingang of met een zelf aangemaakte `requested`-ingang wordt op elke weg geweigerd. Het
+publicatiepad weigert het ingetrokken geval sowieso, dus er wordt niets op geclaimd.
+
+**Een kaal domein afmelden raakt alleen de eigen registratie.** `delete_bare_domain()` deed
+zijn `DELETE` op `(subdomain='@', base_domain)` zonder eigenaarsfilter, terwijl de
+opruimtak in `project_manager` (`base-domain` gezet, kaal domein uitgezet) hem aanriep met
+een base-domain dat gewoon een tekenreeks uit een projectbestand is. Een project dat het
+domein van een ander noemde wiste daarmee diens apex-registratie. De opruimtak geeft nu zijn
+eigen projectnaam mee en de `DELETE` filtert daarop.
