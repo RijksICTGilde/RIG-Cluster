@@ -11,12 +11,24 @@ Run with: uv run pytest tests/e2e/test_wizard_subdomain_restriction.py -v
 from typing import TYPE_CHECKING
 
 import pytest
+from opi.forms.editables.editable import SERVICE_VIRTUALIZE, apply_virtualize
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
 from tests.e2e.helpers.wizard import WizardHelper
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
 
 pytestmark = [pytest.mark.e2e]
+
+
+def _field(setting: DomainSetting) -> str:
+    """The rendered form-field name of a web-address setting on the first deployment.
+
+    Derived, not typed out: the fields moved under the publish-on-web service (RC-60) and
+    the form posts them under the VIRTUAL services key, so a hand-written selector goes
+    stale silently -- the locator just never matches and the step times out.
+    """
+    return apply_virtualize(domain_setting_path(setting, 0), SERVICE_VIRTUALIZE)
 
 
 def _navigate_to_domain_step(wizard: WizardHelper) -> None:
@@ -63,16 +75,16 @@ class TestSubdomainRestrictionValidation:
 
         # Select "subdomain" format — wait for re-render
         _htmx_settle(auth_page)
-        auth_page.locator("select[name='deployments[0]/domain-format']").select_option(value="subdomain")
+        auth_page.locator(f"select[name='{_field(DomainSetting.DOMAIN_FORMAT)}']").select_option(value="subdomain")
         _wait_htmx_settled(auth_page)
 
         # Select base domain "kind" (restricted) — wait for re-render
         _htmx_settle(auth_page)
-        auth_page.locator("select[name='deployments[0]/base-domain']").select_option(value="kind")
+        auth_page.locator(f"select[name='{_field(DomainSetting.BASE_DOMAIN)}']").select_option(value="kind")
         _wait_htmx_settled(auth_page)
 
         # Fill subdomain, Tab to blur, wait for re-render
-        subdomain_input = auth_page.locator("input[name='deployments[0]/subdomain']")
+        subdomain_input = auth_page.locator(f"input[name='{_field(DomainSetting.SUBDOMAIN)}']")
         if subdomain_input.count() == 0:
             subdomain_input = auth_page.locator("input[name*='/subdomain']")
         assert subdomain_input.count() > 0, "Subdomain input should be visible"
@@ -99,14 +111,14 @@ class TestSubdomainRestrictionValidation:
         _navigate_to_domain_step(wizard)
 
         _htmx_settle(auth_page)
-        auth_page.locator("select[name='deployments[0]/domain-format']").select_option(value="subdomain")
+        auth_page.locator(f"select[name='{_field(DomainSetting.DOMAIN_FORMAT)}']").select_option(value="subdomain")
         _wait_htmx_settled(auth_page)
 
         _htmx_settle(auth_page)
-        auth_page.locator("select[name='deployments[0]/base-domain']").select_option(value="kind")
+        auth_page.locator(f"select[name='{_field(DomainSetting.BASE_DOMAIN)}']").select_option(value="kind")
         _wait_htmx_settled(auth_page)
 
-        subdomain_input = auth_page.locator("input[name='deployments[0]/subdomain']")
+        subdomain_input = auth_page.locator(f"input[name='{_field(DomainSetting.SUBDOMAIN)}']")
         if subdomain_input.count() == 0:
             subdomain_input = auth_page.locator("input[name*='/subdomain']")
         _htmx_settle(auth_page)
