@@ -190,7 +190,9 @@ def _fill_component_identity(page: Page, component_name: str, image: str) -> Non
     """
     name_field = page.locator("[name='components[0]/name']").first
     image_field = page.locator("[name='components[0]/image']").first
-    next_button = page.locator(".wizard-step__actions button[type='submit'], .lotc-action-group button[type='submit']").first
+    next_button = page.locator(
+        ".wizard-step__actions button[type='submit'], .lotc-action-group button[type='submit']"
+    ).first
     name_field.wait_for(state="visible", timeout=10000)
     page.wait_for_load_state("networkidle")
     # Loop until BOTH the values stick AND the Next button is enabled. The button is

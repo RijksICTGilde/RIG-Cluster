@@ -85,7 +85,7 @@ ROOS_TO_NLDD_ICONS = {
 # niet stilzwijgend weg maar staat het meteen ergens.
 GROUPS: list[tuple[str, list[str]]] = [
     ("Bouwen & draaien", ["/forms/wizard/restart", "/services", "/metrics-explorer"]),
-    ("Platform", ["/cli", "/actions", "/architecture", "/docs"]),
+    ("Platform", ["/cli", "/actions", "/docs"]),
     ("Beheer", ["/admin/users", "/admin/usage", "/admin/approvals"]),
 ]
 
