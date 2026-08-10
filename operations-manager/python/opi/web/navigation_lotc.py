@@ -43,7 +43,7 @@ ROOS_TO_NLDD_ICONS = {
     "delta-naar-links": "caret-left",
     "delta-naar-rechts": "caret-right",
     "delta-omlaag": "caret-down",
-    "downloaden": "square-and-arrow-down",
+    "downloaden": "square-arrow-down",
     "document-blanco": "file-text",
     "externe-link": "link",
     "foutmelding": "exclamation-triangle",
