@@ -215,15 +215,20 @@ Diensten leveren hun eigen sjablonen (`opi/services/catalog/<dienst>/`). Die zij
 roos-componenten geschreven en renderen niet in de LOTC-omgeving: de map staat niet op dat
 zoekpad, en twee componentsystemen kunnen sowieso niet in een Jinja-omgeving samen.
 
-Er waren drie mogelijkheden, en twee ervan zijn fout. Nabouwen levert een kopie die uit de
-pas loopt zodra een dienst zijn sjabloon wijzigt - en diensten zijn juist het deel van dit
-platform dat blijft groeien. Weglaten laat functionaliteit ongemerkt verdwijnen. Dus
-rendert `render_roos()` (in `opi/core/templates_lotc.py`) zo'n blok met zijn eigen omgeving
-en komt het als HTML binnen.
+Er waren drie mogelijkheden, en twee ervan zijn fout. Weglaten laat functionaliteit
+ongemerkt verdwijnen. In de andere omgeving renderen en de HTML inplakken (`render_roos()`)
+leverde een blok op dat rvo-klassen draagt, en die worden op een LOTC-pagina door niets
+opgemaakt: `lotc_rvo` staat niet in `DESIGN_SYSTEMS`. Het resultaat was dus niet "zichtbaar
+onaf" maar kale, ongestileerde HTML - een derde uitkomst die niemand koos.
 
-Gevolg: zo'n blok draagt rvo-klassen en ziet er anders uit dan de rest van de pagina,
-totdat de dienst zelf meegaat. **Zichtbaar onaf is beter dan ongemerkt weg.** Waar wel een
-LOTC-tegenhanger geschreven is (backups, metrics per deployment) gaat die voor.
+Blijft over: elke dienst schrijft zijn eigen LOTC-sjabloon, naast het roos-sjabloon en in
+dezelfde map. Het bezwaar daartegen is echt - een tweede kopie loopt uit de pas zodra een
+dienst zijn sjabloon wijzigt - en het antwoord daarop is
+`tests/test_lotc_dienstblokken.py`: die toetst per sjabloon dat de tegenhanger BESTAAT en
+dat hij hetzelfde DOET (dezelfde bestemmingen, htmx-adressen, JavaScript-aanroepen en
+id's). De catalogusmap staat sinds RC-64 op het zoekpad van beide omgevingen.
+
+Sinds RC-65 is `render_roos()` weg en heeft elk sjabloon in de catalogus zijn tegenhanger.
 
 ### En de fragmenten die zo'n blok NALAADT
 
