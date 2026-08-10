@@ -1303,6 +1303,24 @@ class TestCreateDeploymentFromSourceYAML:
         assert get_domain_setting(new_dep, DomainSetting.BASE_DOMAIN) == "custom.dev"
         assert get_domain_setting(new_dep, DomainSetting.DOMAIN_FORMAT) == "subdomain-project"
 
+    def test_an_explicit_empty_subdomain_is_a_choice_and_stays(self, yaml_mocks) -> None:
+        """A caller who stores ``subdomain: null`` said something; auto-fill must not undo it.
+
+        The auto-subdomain rule asks whether the field is CONFIGURED, not whether it has a
+        value (``has_domain_setting``). Reading it as "is None" would treat the explicit null
+        as absent and overwrite it with the target name (RC-60 review, suggestion 3).
+        """
+        from opi.core.backup_tasks import _create_deployment_from_source
+
+        _run(
+            _create_deployment_from_source(
+                "test-project", "staging", "production", deployment_config={"subdomain": None}
+            )
+        )
+
+        new_dep = yaml_mocks["project_data"]["deployments"][1]
+        assert get_domain_setting(new_dep, DomainSetting.SUBDOMAIN) is None
+
     def test_preserves_cluster_and_namespace(self, yaml_mocks) -> None:
         """Cluster, namespace, and repository are copied from source."""
         from opi.core.backup_tasks import _create_deployment_from_source

@@ -118,8 +118,6 @@ def _update_item(target: dict[str, Any], src: dict[str, Any]) -> None:
     cross-domain patch -- for a section that never mentioned them. Merged by name, the
     same rule the project-level services list already follows (RC-60).
     """
-    import copy
-
     for key, value in src.items():
         if key in _SERVICE_LIST_KEYS and isinstance(target.get(key), list) and isinstance(value, list):
             target[key] = merge_service_lists(target[key], value)

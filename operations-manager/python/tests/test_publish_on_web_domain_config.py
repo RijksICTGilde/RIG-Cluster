@@ -17,6 +17,7 @@ from opi.services.catalog.publish_on_web.domain_config import (
     get_domain_config,
     get_domain_setting,
     get_domain_settings,
+    has_domain_setting,
     pop_domain_setting,
     relocate_domain_settings,
     set_domain_setting,
@@ -134,6 +135,34 @@ class TestReadingAcceptsBothLocations:
         dep = {"name": "productie", "services": [entry], "subdomain": "root-fallback"}
         expected = "root-fallback" if entry == "publish-on-web" else "wies"
         assert get_domain_setting(dep, DomainSetting.SUBDOMAIN) == expected
+
+
+class TestPresenceIsNotTruth:
+    """``has_domain_setting`` answers "is it configured", not "does it have a value".
+
+    The backup-restore clone only fills in a subdomain when the caller did not configure
+    one. Before the relocation it asked ``"subdomain" not in new_deployment``, so an
+    explicitly stored ``subdomain: null`` counted as configured and was left alone. Asking
+    ``get_domain_setting(...) is None`` instead would silently overwrite that decision, so
+    the presence question got its own accessor (RC-60 review, suggestion 3).
+    """
+
+    def test_an_explicit_null_counts_as_configured(self) -> None:
+        dep = {"name": "productie", "services": [{"reference": "publish-on-web", "config": {"subdomain": None}}]}
+        assert has_domain_setting(dep, DomainSetting.SUBDOMAIN) is True
+        assert get_domain_setting(dep, DomainSetting.SUBDOMAIN) is None
+
+    def test_an_explicit_null_in_the_root_counts_too(self) -> None:
+        dep = {"name": "productie", "subdomain": None}
+        assert has_domain_setting(dep, DomainSetting.SUBDOMAIN) is True
+
+    def test_absent_is_absent(self) -> None:
+        assert has_domain_setting({"name": "productie"}, DomainSetting.SUBDOMAIN) is False
+        assert has_domain_setting(_migrated_deployment(), DomainSetting.DOMAIN_MODE) is False
+
+    def test_a_configured_value_is_present(self) -> None:
+        assert has_domain_setting(_migrated_deployment(), DomainSetting.SUBDOMAIN) is True
+        assert has_domain_setting(_legacy_deployment(), DomainSetting.SUBDOMAIN) is True
 
 
 class TestWritingLandsOnTheServicePath:

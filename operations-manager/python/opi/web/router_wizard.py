@@ -1649,13 +1649,15 @@ def _extract_section_data(
                     for field_name, services in per_item_services.items():
                         # Keep only this section's own service entries, and never tombstone
                         # the list: an item without them simply says nothing about it.
+                        #
+                        # On identity, not on shape: a bare string entry of ANOTHER service
+                        # is that service's selection, which this section has no business
+                        # carrying either. Dropping it is safe because the merge is additive
+                        # by name (``merge_service_lists``), so an entry this section does
+                        # not mention keeps whatever the base data holds.
                         entries = pruned_item.get(field_name)
                         if isinstance(entries, list):
-                            kept = [
-                                entry
-                                for entry in entries
-                                if not isinstance(entry, dict) or service_entry_name(entry) in services
-                            ]
+                            kept = [entry for entry in entries if service_entry_name(entry) in services]
                             pruned_item[field_name] = kept
                         else:
                             pruned_item.pop(field_name, None)
