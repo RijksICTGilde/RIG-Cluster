@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from opi.handlers.bootstrap_api_handler import BootstrapApiHandler
 from opi.services import ServiceType
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.project import Project
 from opi.services.services import service_entry_name
 
@@ -137,8 +138,8 @@ class BootstrapManager:
 
         project_name = await self.project_manager.get_name()
         deployment_name = deployment["name"]
-        subdomain = deployment.get("subdomain")
-        base_domain = deployment.get("base-domain")
+        subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
+        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
         # Build context similar to deployment environment variables.
         # This used to call generate_public_url(deployment_name, project_name,

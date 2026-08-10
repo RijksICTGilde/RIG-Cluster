@@ -7,6 +7,7 @@ from typing import Any
 from opi.connectors.subdomain import is_deployment_domain_approved
 from opi.core import config as opi_config
 from opi.core.cluster_config import CLUSTER_CONFIG
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES, generate_hostname_from_format
 
 
@@ -39,13 +40,13 @@ def compute_url_preview(yaml_data: dict[str, Any], context: dict[str, Any]) -> d
         return {"urls": [], "has_urls": False}
 
     dep = deployments[deployment_index]
-    domain_format = dep.get("domain-format") or "component-deployment-project"
+    domain_format = get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT) or "component-deployment-project"
     if domain_format not in DOMAIN_FORMAT_TEMPLATES:
         return {"urls": [], "has_urls": False}
 
     deployment_name = dep.get("name", "deployment")
-    subdomain = dep.get("subdomain") or ""
-    base_domain = dep.get("base-domain") or ""
+    subdomain = get_domain_setting(dep, DomainSetting.SUBDOMAIN) or ""
+    base_domain = get_domain_setting(dep, DomainSetting.BASE_DOMAIN) or ""
     custom_domain = dep.get("base-domain:custom") or ""
 
     # Resolve the domain: custom when sentinel, selected value, or cluster default.
@@ -124,7 +125,7 @@ def compute_url_preview(yaml_data: dict[str, Any], context: dict[str, Any]) -> d
         urls.append({"component": "(gedeeld)", "url": url})
 
     # Root component short URL
-    root_component = dep.get("root-component")
+    root_component = get_domain_setting(dep, DomainSetting.ROOT_COMPONENT)
     if root_component and has_component_var and "." in domain_format:
         # Generate the short URL (without component prefix)
         short_template = template.replace("{component}.", "")
@@ -137,7 +138,7 @@ def compute_url_preview(yaml_data: dict[str, Any], context: dict[str, Any]) -> d
         urls.append({"component": f"{root_component} (root)", "url": short_url})
 
     # Bare domain URL when a component is selected for expose-on-bare-domain
-    bare_domain_component = dep.get("expose-component-on-bare-domain")
+    bare_domain_component = get_domain_setting(dep, DomainSetting.BARE_DOMAIN_COMPONENT)
     if bare_domain_component and domain:
         urls.append({"component": f"{bare_domain_component} (kaal domein)", "url": domain})
 

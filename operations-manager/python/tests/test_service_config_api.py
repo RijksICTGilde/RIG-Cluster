@@ -374,7 +374,8 @@ EXPECTED_API_TARGETS: dict[str, list[str]] = {
     "persistent-storage": ["component"],
     "platform": [],
     "postgresql-database": ["project"],
-    "publish-on-web": ["component"],
+    # RC-60: the web address is deployment-level config of this service.
+    "publish-on-web": ["component", "deployment"],
     "redis": ["project"],
     "resource-tuning": [],
     "sleep-mode": ["project"],

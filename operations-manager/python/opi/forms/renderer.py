@@ -29,6 +29,7 @@ from opi.forms.layout import (
     Submit,
     TemplatePartial,
 )
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.services import service_entry_name
 
 if TYPE_CHECKING:
@@ -485,7 +486,7 @@ class FormRenderer:
         if isinstance(deployments, list):
             for dep in deployments:
                 if isinstance(dep, dict):
-                    base_domain = dep.get("base-domain")
+                    base_domain = get_domain_setting(dep, DomainSetting.BASE_DOMAIN)
                     custom_domain = dep.get("base-domain:custom")
                     if base_domain:
                         context["base_domain"] = base_domain
