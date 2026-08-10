@@ -395,10 +395,18 @@ SAMPLE_YAML_WITH_DOMAIN = {
     "deployments": [
         {
             **SAMPLE_YAML["deployments"][0],
-            "domain-format": "component-deployment-project",
-            "subdomain": "mijnapp",
-            "base-domain": "rijksapp.nl",
-            "root-component": "frontend",
+            # The migrated shape (v2.7): the web address sits under the service.
+            "services": [
+                {
+                    "reference": "publish-on-web",
+                    "config": {
+                        "domain-format": "component-deployment-project",
+                        "subdomain": "mijnapp",
+                        "base-domain": "rijksapp.nl",
+                        "root-component": "frontend",
+                    },
+                }
+            ],
         },
     ],
 }

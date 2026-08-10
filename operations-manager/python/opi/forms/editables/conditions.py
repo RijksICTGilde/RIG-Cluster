@@ -19,6 +19,27 @@ from opi.connectors.subdomain import (
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_ingress_postfix, is_domain_subdomain_restricted
 from opi.forms.editables.resolvers import get_effective_value
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path, get_domain_setting
+
+
+def _effective_base_domain(
+    yaml_data: dict[str, Any],
+    deployment: dict[str, Any],
+    deployment_index: int,
+    resolvers: dict | None,
+) -> Any:
+    """The base domain a condition should judge by: stored value, else the resolver.
+
+    Asks the service first (``get_domain_setting``), so both storage locations answer --
+    the resolver map is keyed on the editable's yaml_path, which is the service path only,
+    and a deployment that still carries its base domain at the root would otherwise read as
+    "not set" and get the cluster default (RC-60). Falls through to ``get_effective_value``
+    when nothing is stored, which is what makes "cluster default" resolvable at all.
+    """
+    stored = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+    if stored is not None:
+        return stored
+    return get_effective_value(yaml_data, domain_setting_path(DomainSetting.BASE_DOMAIN, deployment_index), resolvers)
 
 
 class SentinelValueCondition:
@@ -69,8 +90,8 @@ class SubdomainNeedsRequestCondition:
         if not isinstance(dep, dict):
             return False
 
-        subdomain = dep.get("subdomain")
-        base_domain = get_effective_value(value, f"deployments[{self.deployment_index}]/base-domain", self._resolvers)
+        subdomain = get_domain_setting(dep, DomainSetting.SUBDOMAIN)
+        base_domain = _effective_base_domain(value, dep, self.deployment_index, self._resolvers)
         if not subdomain or not base_domain or base_domain == "__custom__":
             return False
 
@@ -121,7 +142,7 @@ class DomainNeedsRequestCondition:
         if not isinstance(dep, dict):
             return False
 
-        base_domain = get_effective_value(value, f"deployments[{self.deployment_index}]/base-domain", self._resolvers)
+        base_domain = _effective_base_domain(value, dep, self.deployment_index, self._resolvers)
         if not base_domain or base_domain == "__custom__":
             return False
 

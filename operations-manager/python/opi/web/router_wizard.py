@@ -1582,6 +1582,8 @@ def _extract_section_data(
     section_keys: set[str] = set()
     indexed_fields: dict[str, set[str]] = {}  # top_key -> set of owned field names
     owned_services: dict[str, set[str]] = {}  # top_key -> service names this section configures
+    # top_key -> field name -> service names, for a service list INSIDE an indexed item
+    indexed_services: dict[str, dict[str, set[str]]] = {}
     # real_key -> virtual_key for virtualized editables
     virt_mapping: dict[str, str] = {}
 
@@ -1611,8 +1613,17 @@ def _extract_section_data(
 
             if "[" in top and len(parts) >= 2:
                 # e.g. deployments[0]/base-domain -> owns "base-domain"
-                field_name = parts[1].split("[")[0]
+                field_name = parts[1].split("[")[0].split("{")[0]
                 indexed_fields.setdefault(top_key, set()).add(field_name)
+                # A field addressed through a service filter (deployments[0]/services{X}/...)
+                # is a service LIST inside the item, not a plain field. Recording only
+                # "services" would make the section replace the whole list and take other
+                # services' deployment config (clone state, cross-domain patches) with it,
+                # so remember WHICH service it configures -- the per-item counterpart of
+                # ``owned_services`` (RC-60).
+                if "{" in parts[1]:
+                    service = parts[1].split("{", 1)[1].split("}", 1)[0]
+                    indexed_services.setdefault(top_key, {}).setdefault(field_name, set()).add(service)
 
     _collect_leaf_paths(editables)
 
@@ -1630,11 +1641,29 @@ def _extract_section_data(
             # additive merge in get_merged_data() deletes the old value
             # instead of resurrecting it from the template snapshot.
             owned = indexed_fields[key]
+            per_item_services = indexed_services.get(key, {})
             pruned = []
             for item in value:
                 if isinstance(item, dict):
                     pruned_item = {k: copy.deepcopy(v) for k, v in item.items() if k in owned}
+                    for field_name, services in per_item_services.items():
+                        # Keep only this section's own service entries, and never tombstone
+                        # the list: an item without them simply says nothing about it.
+                        #
+                        # On identity, not on shape: a bare string entry of ANOTHER service
+                        # is that service's selection, which this section has no business
+                        # carrying either. Dropping it is safe because the merge is additive
+                        # by name (``merge_service_lists``), so an entry this section does
+                        # not mention keeps whatever the base data holds.
+                        entries = pruned_item.get(field_name)
+                        if isinstance(entries, list):
+                            kept = [entry for entry in entries if service_entry_name(entry) in services]
+                            pruned_item[field_name] = kept
+                        else:
+                            pruned_item.pop(field_name, None)
                     for owned_field in owned:
+                        if owned_field in per_item_services:
+                            continue
                         if owned_field not in pruned_item:
                             pruned_item[owned_field] = CLEARED_FIELD
                     pruned.append(pruned_item)
