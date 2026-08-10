@@ -46,9 +46,18 @@ def _build_wizard_merged_data() -> dict:
         "deployments": [
             {
                 "name": "productie",
-                "domain-format": "subdomain",
-                "base-domain": "sandbox.rijksapp.dev",
-                "subdomain": "mijn-test",
+                # What the wizard's merged data holds since v2.7: the web address under the
+                # service, the transient request checkbox still on the deployment itself.
+                "services": [
+                    {
+                        "reference": "publish-on-web",
+                        "config": {
+                            "domain-format": "subdomain",
+                            "base-domain": "sandbox.rijksapp.dev",
+                            "subdomain": "mijn-test",
+                        },
+                    }
+                ],
                 "_request-subdomain": True,
             }
         ],

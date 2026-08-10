@@ -264,6 +264,10 @@ class PublishOnWebService(Service):
         return PublishOnWebComponentConfig
 
     def config_editables(self, layer: ConfigLayer):
+        if layer is ConfigLayer.DEPLOYMENT:
+            from opi.services.catalog.publish_on_web.editables import PUBLISH_ON_WEB_DEPLOYMENT_EDITABLES
+
+            return list(PUBLISH_ON_WEB_DEPLOYMENT_EDITABLES)
         if layer is not ConfigLayer.COMPONENT:
             return []
         from opi.services.catalog.publish_on_web.editables import (
@@ -272,6 +276,85 @@ class PublishOnWebService(Service):
         )
 
         return [PUBLISH_ON_WEB_TLS_EDITABLE, PUBLISH_ON_WEB_ATTACHMENT_EDITABLE]
+
+    def config_form_section(self, layer: ConfigLayer):
+        """The "Webadres" step at the deployment layer; the base default elsewhere."""
+        if layer is ConfigLayer.DEPLOYMENT:
+            return self.deployment_form_section()
+        return super().config_form_section(layer)
+
+    def deployment_form_section(self, deployment_index: int | None = None, *, edit_mode: bool = False):
+        """The "Webadres" section, optionally materialized for one deployment (RC-60).
+
+        The wizard step and the edit modal are the same form with a different heading and a
+        different post-save action, which is why one builder answers both. It used to be a
+        hand-authored ``DOMAIN_SECTION`` in ``forms/visualizers/wizard_sections.py``, a file
+        no part of this service could see -- so the fields, their display and their step all
+        lived apart from the values they configure. ``cross_domain_access`` already builds
+        its deployment section this way.
+
+        Without ``deployment_index`` the section describes the LAYER (wildcards intact),
+        which is what ``config_form_section`` answers and ``test_service_config_layers``
+        measures. With one, the wildcards are materialized so the form reads and writes the
+        right deployment.
+        """
+        from opi.forms.editables.editable import SERVICE_VIRTUALIZE, apply_virtualize
+        from opi.forms.editables.enforcers import DomainConfigEnforcer
+        from opi.forms.editables.reindex import materialize_wildcard_layout, materialize_wildcard_visualizer
+        from opi.forms.layout import DisplayBlock, TemplatePartial
+        from opi.forms.visualizers.display_blocks import compute_url_preview
+        from opi.forms.visualizers.sections import FormSection
+        from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
+        from opi.services.catalog.publish_on_web.editables import CUSTOM_BASE_DOMAIN_PATH
+        from opi.services.catalog.publish_on_web.visualizers import DOMAIN_CONFIG
+
+        index = 0 if deployment_index is None else deployment_index
+
+        def field(setting: DomainSetting) -> str:
+            # The renderer keys a virtualized field by its VIRTUAL path, so the layout has
+            # to name it the same way or the field is simply not laid out -- it disappears
+            # from the step without an error anywhere.
+            return apply_virtualize(domain_setting_path(setting), SERVICE_VIRTUALIZE)
+
+        layout = [
+            TemplatePartial(template="wizard/partials/domain_info.html.j2"),
+            field(DomainSetting.BASE_DOMAIN),
+            "deployments[*]/_request-domain",
+            CUSTOM_BASE_DOMAIN_PATH,
+            field(DomainSetting.DOMAIN_FORMAT),
+            field(DomainSetting.SUBDOMAIN),
+            "deployments[*]/_request-subdomain",
+            field(DomainSetting.ROOT_COMPONENT),
+            field(DomainSetting.BARE_DOMAIN_COMPONENT),
+            DisplayBlock(
+                display_id="url-preview",
+                compute=compute_url_preview,
+                template="wizard/partials/url_preview.html.j2",
+                context={"deployment_index": index},
+            ),
+        ]
+
+        if edit_mode:
+            section_id = f"domain-edit-{index}"
+            title = "Webadres bewerken"
+            description = "Wijzig het webadres voor deze deployment"
+            post_save_action = "process_project"
+        else:
+            section_id = "domains"
+            title = "Webadres"
+            description = "Configureer hoe je applicatie bereikbaar wordt"
+            post_save_action = "save_only"
+
+        return FormSection(
+            section_id=section_id,
+            title=title,
+            icon="wereldbol",
+            description=description,
+            enforcer=DomainConfigEnforcer(deployment_index=index),
+            editables=[materialize_wildcard_visualizer(DOMAIN_CONFIG, index)],
+            layout=materialize_wildcard_layout(layout, index),
+            post_save_action=post_save_action,
+        )
 
     def config_component_visualizers(self):
         from opi.services.catalog.publish_on_web.visualizers import PUBLISH_ON_WEB_ATTACHMENT, PUBLISH_ON_WEB_TLS

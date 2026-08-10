@@ -1,12 +1,13 @@
 """Proof that a subdomain field error actually renders at the subdomain input.
 
-Fix A keys the "niet beschikbaar" error to ``deployments[N]/subdomain``. This
+Fix A keys the "niet beschikbaar" error to the subdomain field's own path. This
 verifies the render pipeline surfaces that message in the section HTML, instead
 of silently anchoring it to the invisible deployment-group path.
 """
 
 import pytest
 from opi.forms.visualizers.wizard_sections import build_domain_section
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
 from opi.web.router_detail_edit import _render_section_html
 
 
@@ -18,9 +19,16 @@ async def test_subdomain_field_error_appears_in_rendered_html():
             {"name": "main"},
             {
                 "name": "stable",
-                "base-domain": "rijksapp.dev",
-                "domain-format": "component.subdomain",
-                "subdomain": "moza",
+                "services": [
+                    {
+                        "reference": "publish-on-web",
+                        "config": {
+                            "base-domain": "rijksapp.dev",
+                            "domain-format": "component.subdomain",
+                            "subdomain": "moza",
+                        },
+                    }
+                ],
             },
         ],
     }
@@ -29,7 +37,7 @@ async def test_subdomain_field_error_appears_in_rendered_html():
     html = _render_section_html(
         section,
         yaml_data,
-        errors={"deployments[1]/subdomain": [message]},
+        errors={domain_setting_path(DomainSetting.SUBDOMAIN, 1): [message]},
         locked_services=None,
     )
 
