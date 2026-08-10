@@ -1,0 +1,61 @@
+{# De LOTC-tegenhanger van section-detail.html.j2 (RC-64).
+
+   WAAROM EEN TWEEDE BESTAND EN GEEN GEDEELD SJABLOON
+
+   Twee componentsystemen kunnen niet in een Jinja-omgeving: de eerst geregistreerde
+   voorbewerker eist elke <c-*>-tag op en breekt op de tags die hij niet kent. Gemeten in
+   docs/lotc-samenleven-met-jinja-roos.md. Het buurbestand is in roos-componenten
+   geschreven, dit in LOTC-componenten; ze renderen ieder in hun eigen omgeving.
+
+   Tot RC-64 rendeerde de LOTC-projectpagina dit blok met render_roos(), dus met de
+   roos-omgeving, en zette het resultaat als HTML neer. De rvo-klassen die daaruit kwamen
+   worden op een LOTC-pagina door niets opgemaakt (lotc_rvo staat niet in DESIGN_SYSTEMS),
+   waardoor de sectie Bijlagen daar als kale, ongestileerde HTML stond.
+
+   HET STAAT HIER EN NIET IN templates_lotc/, omdat een dienst alles wat hij is in zijn
+   eigen map draagt (RC-36). tests/test_lotc_dienstblokken.py faalt zodra een dienst een
+   section-detail.html.j2 heeft zonder deze tegenhanger, zodat de kopie zichtbaar is in
+   plaats van stil uit de pas te lopen.
+
+   Dezelfde gegevens uit dezelfde ``section.context``, dezelfde teksten, dezelfde knoppen
+   met dezelfde aanroepen. De klassen config-item / config-code / copy-btn en de id
+   attachments-section blijven letterlijk staan waar ze gedrag dragen. #}
+{% set ctx = section.context %}
+<div id="attachments-section">
+<c-card outline padding="lg">
+    <c-stack gap="md">
+        {% if ctx.can_edit %}
+            {% set bijlagen_bewerken = "openEditModal('modal-edit-attachments', 'Bijlagen')" %}
+            <c-section-head title="Bijlagen">
+                <c-button type="secondary" size="sm" label="Toevoegen" show-icon="before" icon="plus"
+                          :attrs="{'onclick': bijlagen_bewerken}" />
+            </c-section-head>
+        {% else %}
+            <c-section-head title="Bijlagen" icon="folder-stack" />
+        {% endif %}
+        <c-paragraph size="sm">Geuploade bestanden (bijvoorbeeld certificaten) die je per component als bestand of als env-var kunt koppelen.</c-paragraph>
+
+        {% if ctx.attachments %}
+            <c-stack gap="sm">
+                {% for att in ctx.attachments %}
+                    <c-card outline padding="md">
+                        <c-cluster gap="md" align="center" justify="between">
+                            <c-stack gap="xs">
+                                <strong>{{ att.filename }}</strong>
+                                <c-paragraph size="sm">id: {{ att.id }}</c-paragraph>
+                            </c-stack>
+                            {% if ctx.can_edit %}
+                                {% set bijlage_verwijderen = "openServiceModal('/projects/" ~ ctx.project_name ~ "/actions/delete-attachment/confirm?target=" ~ (att.id | urlencode) ~ "', 'Bijlage verwijderen')" %}
+                                <c-button type="secondary" size="sm" label="Verwijderen"
+                                          :attrs="{'onclick': bijlage_verwijderen}" />
+                            {% endif %}
+                        </c-cluster>
+                    </c-card>
+                {% endfor %}
+            </c-stack>
+        {% else %}
+            <c-paragraph size="sm">Nog geen bijlagen geupload.</c-paragraph>
+        {% endif %}
+    </c-stack>
+</c-card>
+</div>

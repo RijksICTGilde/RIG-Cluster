@@ -256,17 +256,28 @@
 
         {# ---- De secties die de DIENSTEN zelf leveren ------------------------- #}
         {# De blokken die de DIENSTEN leveren (de Keycloak-realm, de uitnodigingen, de
-           bijlagen). Ze staan bij hun dienst en zijn in roos-componenten geschreven, en
-           twee componentsystemen kunnen niet in een Jinja-omgeving: de eerst
-           geregistreerde voorbewerker eist alle c-tags op. render_roos() rendert ze
-           daarom met hun eigen omgeving en zet het resultaat hier neer.
+           bijlagen). Ze staan bij hun dienst, en elke dienst levert er twee: een in
+           roos-componenten en een in LOTC-componenten. Dat is geen dubbel werk om het
+           dubbele werk: twee componentsystemen kunnen niet in een Jinja-omgeving, want de
+           eerst geregistreerde voorbewerker eist alle c-tags op (gemeten in
+           docs/lotc-samenleven-met-jinja-roos.md).
 
-           Zo'n blok draagt rvo-klassen en ziet er dus anders uit dan de rest van deze
-           pagina. Dat is zichtbaar onaf, en dat is precies goed: het alternatief was dat
-           de Keycloak-instellingen en de uitnodigingen stilzwijgend van de projectpagina
-           verdwenen. Zichtbaar anders is beter dan ongemerkt weg. #}
+           Hier stond render_roos() voor allemaal, met als verantwoording dat zo'n blok dan
+           "zichtbaar anders" is. Dat klopte niet meer: rvo-klassen worden op deze pagina
+           door geen enkel stijlblad opgemaakt (lotc_rvo staat niet in DESIGN_SYSTEMS),
+           dus het werd niet zichtbaar anders maar volledig onopgemaakt - kale HTML midden
+           op de projectpagina.
+
+           De terugval blijft staan voor een dienst die nog geen tegenhanger heeft. Dat is
+           de ondergrens: lelijk is beter dan weg. tests/test_lotc_dienstblokken.py zorgt
+           dat het bij een ondergrens blijft. #}
         {% for section in service_detail_sections | default([]) %}
-            {{ render_roos(section.template, request=request, section=section) }}
+            {% set lotc_sjabloon = lotc_counterpart(section.template) %}
+            {% if lotc_sjabloon %}
+                {% include lotc_sjabloon %}
+            {% else %}
+                {{ render_roos(section.template, request=request, section=section) }}
+            {% endif %}
         {% endfor %}
 
         {# ---- Danger zone (section-danger-zone.html.j2) ----------------------- #}
