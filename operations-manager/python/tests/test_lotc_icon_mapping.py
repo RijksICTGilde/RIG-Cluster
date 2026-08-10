@@ -114,6 +114,7 @@ def test_unknown_icon_passes_through_unchanged() -> None:
 
 TEMPLATES_LOTC_DIR = Path(__file__).parent.parent / "opi" / "templates_lotc"
 
+
 def _iconen_in_lotc_templates() -> dict[str, set[str]]:
     """Elke letterlijke ``icon="..."`` in de LOTC-sjablonen, met de bestanden erbij.
 
@@ -147,7 +148,6 @@ def test_elke_iconnaam_in_een_lotc_sjabloon_bestaat_in_nldd() -> None:
         for naam, bestanden in _iconen_in_lotc_templates().items()
         if naam not in vocabulaire and naam not in ROOS_TO_NLDD_ICONS and naam not in KNOWN_GAPS
     }
-    assert not onbekend, (
-        "iconnamen die NLDD niet kent (ze renderen leeg, zonder foutmelding):\n"
-        + "\n".join(f"  {naam}: {', '.join(bestanden)}" for naam, bestanden in sorted(onbekend.items()))
+    assert not onbekend, "iconnamen die NLDD niet kent (ze renderen leeg, zonder foutmelding):\n" + "\n".join(
+        f"  {naam}: {', '.join(bestanden)}" for naam, bestanden in sorted(onbekend.items())
     )
