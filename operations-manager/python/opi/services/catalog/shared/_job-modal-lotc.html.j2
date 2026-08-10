@@ -19,9 +19,10 @@
        dat, dan blijft de dialoog op "wordt gestart" hangen tot je hem sluit.
      - ``job-form-<deployment>``, ``job-image-<deployment>`` en ``job-command-<deployment>``
        dragen de deploymentnaam: er staat een dialoog per deployment op dezelfde pagina.
-     - De JSON in hx-headers en hx-vals gaat via :attrs. Een los attribuut met een expressie
-       erin komt ongeescaped naar buiten, en dan sluit het eerste aanhalingsteken in de JSON
-       het attribuut en is de tag stuk.
+     - De JSON in hx-headers en hx-vals gaat op een COMPONENTTAG via :attrs. Een los
+       attribuut met een expressie erin komt daar ongeescaped naar buiten, en dan sluit het
+       eerste aanhalingsteken in de JSON het attribuut en is de tag stuk. Op gewone HTML
+       (de <form> hieronder) speelt dat niet: daar staat de JSON in enkele aanhalingstekens.
 #}
 {% if state in ['starting', 'running'] %}
 <div id="job-modal-body"
@@ -81,19 +82,27 @@
     </c-card>
 
 {% else %}
-    {% set formulier_attrs = {
-        'hx-post': '/projects/' ~ project_name ~ '/jobs',
-        'hx-headers': '{"X-CSRF-Token": "' ~ request.state.csrf_token ~ '"}',
-        'hx-vals': '{"deployment": "' ~ deployment_name ~ '"}',
-        'hx-target': '#job-modal-body',
-        'hx-swap': 'outerHTML',
-        'hx-disabled-elt': 'find button',
-    } %}
     <c-card outline padding="lg">
         <c-stack gap="md">
             <c-heading type="h5" label="Nieuwe job" />
             <c-paragraph>Voer eenmalig een image + commando uit voor deze deployment (bijv. een migratie). De job krijgt de databaseverbinding van de deployment.</c-paragraph>
-            <c-form id="job-form-{{ deployment_name }}" :attrs="formulier_attrs">
+            {# Een ECHTE <form> en niet <c-form>. Die laatste rendert een <nldd-form>, en dat
+               is een web-component en geen formulier: een knop met type="submit" erbinnen
+               heeft niets om in te dienen, htmx hangt zijn hx-post aan het submit-event van
+               een <form>, en het resultaat was een dialoog waarin klikken niets deed. Met
+               een gewone <form> is de bedrading bovendien LETTERLIJK dezelfde als in het
+               roos-sjabloon, dus de gedragsvergelijking blijft sluitend - had hier
+               hx-include op de knop gestaan, dan was dat een verschil geweest.
+
+               De JSON staat in enkele aanhalingstekens, zoals in bg/_wizard-step.html.j2:
+               dan hoeven de dubbele er niet als entiteit in. #}
+            <form id="job-form-{{ deployment_name }}"
+                  hx-post="/projects/{{ project_name }}/jobs"
+                  hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
+                  hx-vals='{"deployment": "{{ deployment_name }}"}'
+                  hx-target="#job-modal-body"
+                  hx-swap="outerHTML"
+                  hx-disabled-elt="find button">
                 <c-stack gap="md">
                     <c-text-input-field
                         id="job-image-{{ deployment_name }}"
@@ -118,7 +127,7 @@
                        vormgevingen gelijk. #}
                     <c-button type="primary" size="sm" label="Job uitvoeren" html-type="submit" />
                 </c-stack>
-            </c-form>
+            </form>
         </c-stack>
     </c-card>
 {% endif %}
