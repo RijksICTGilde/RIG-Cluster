@@ -437,6 +437,29 @@ class TestAddComponentValidation:
         )
         assert response.status_code != 422, response.text
 
+    def test_a_component_definition_needs_no_image(self, v2_client: TestClient) -> None:
+        """The image belongs to the coupling, so a bare definition does not need one.
+
+        ``build_component_config`` never writes an image into the component entry: it is
+        stored on the deployment reference. Requiring one here while attaching to nothing
+        would accept a value that is then thrown away without a word.
+        """
+        response = v2_client.post(
+            "/api/v2/projects/test-project/components",
+            headers=HEADERS,
+            json={"name": "web"},
+        )
+        assert response.status_code != 422, response.text
+
+    def test_attaching_without_an_image_is_refused(self, v2_client: TestClient) -> None:
+        """The other half: as soon as it is attached, the image has somewhere to go."""
+        response = v2_client.post(
+            "/api/v2/projects/test-project/components",
+            headers=HEADERS,
+            json={"name": "web", "deployment_names": ["main"]},
+        )
+        assert response.status_code == 422, response.text
+
 
 # ---------------------------------------------------------------------------
 # Add component to deployment - field validation
