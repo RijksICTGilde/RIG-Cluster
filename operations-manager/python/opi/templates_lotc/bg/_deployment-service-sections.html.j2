@@ -1,41 +1,31 @@
 {#
   De blokken die de DIENSTEN per deployment leveren, in de nieuwe vormgeving.
 
-  WAAROM HIER EEN TABEL STAAT EN GEEN {% include section.template %}
+  Hier stond een TABEL die per dienstsjabloon zijn LOTC-tegenhanger aanwees, met als
+  verantwoording dat die sjablonen bij hun dienst liggen en die map niet op het zoekpad van
+  de LOTC-omgeving stond. Die verantwoording klopt niet meer: opi/core/templates_lotc.py
+  hangt CATALOG_DIR achteraan op de searchpath, precies zoals de roos-omgeving dat doet.
 
-  Op de bestaande pagina doet het tabblad precies dat: het includeert wat de registry
-  aanlevert (``deployment_service_sections``), zonder enige dienstnaam te kennen. Dat kan
-  hier niet, om twee redenen die allebei buiten dit sjabloon liggen:
+  Waarom de tabel weg MOEST en niet alleen mocht: het was handwerk op de verkeerde plek.
+  Een dienst draagt alles wat hij is in zijn eigen map (RC-36), dus ook zijn LOTC-sjabloon.
+  Met een tabel hier moest een nieuwe dienst een bestand BUITEN zijn eigen map bijwerken,
+  en vergat hij dat, dan viel zijn blok stilzwijgend terug op de roos-weergave - kale,
+  onopgemaakte HTML midden op de pagina, want lotc_rvo staat niet in DESIGN_SYSTEMS.
 
-    1. Die sjablonen liggen bij hun dienst (opi/services/catalog/<dienst>/) en die map
-       staat op het zoekpad van de ROOS-omgeving, niet op dat van de LOTC-omgeving. Een
-       include ervan levert hier TemplateNotFound.
-    2. Ze zijn in roos-componenten geschreven. Twee componentsystemen kunnen niet in een
-       Jinja-omgeving samenleven - de eerst geregistreerde voorbewerker eist alle
-       <c-*>-tags op - dus ook met het juiste zoekpad zouden ze hier niet renderen.
+  Nu geldt dezelfde afspraak als op het projecttabblad: naast ``section-x.html.j2`` legt de
+  dienst ``section-x-lotc.html.j2``, en lotc_counterpart() vindt hem. Geen tabel, geen
+  dienstnaam in dit sjabloon.
 
-  Daarom twee wegen, in deze volgorde:
-
-    1. Staat er een LOTC-tegenhanger in de tabel hieronder, dan die. Het blok hoort dan
-       helemaal bij de nieuwe vormgeving.
-    2. Staat die er niet, dan rendert render_roos() het originele sjabloon met de
-       ROOS-omgeving en komt het als HTML binnen. Zo'n blok draagt rvo-klassen en ziet er
-       dus anders uit dan de rest van de pagina - dat is lelijk, en het is beter dan wat
-       het hiervoor deed, namelijk stilzwijgend verdwijnen. Diensten zijn het deel van dit
-       platform dat blijft groeien; een blok dat niemand naschrijft mag daardoor niet van
-       de pagina vallen.
-
-  De tabel is dus een verbetering bovenop een werkende ondergrens, geen voorwaarde.
+  De ``{% if %}`` is de ondergrens die render_roos() hiervoor was. Die terugval kan niet
+  blijven bestaan - de roos-omgeving gaat weg - maar de regel erachter wel: een dienst die
+  een blok aankondigt dat er niet is, mag de projectpagina niet meenemen in zijn val. Het
+  blok blijft dan leeg in plaats van dat de pagina omvalt.
+  tests/test_lotc_dienstblokken.py zorgt dat leeg onbereikbaar is: elk sectiesjabloon in de
+  catalogus moet zijn tegenhanger hebben.
 #}
-{% set lotc_tegenhanger = {
-    "shared/section-backups.html.j2": "bg/_service-section-backups.html.j2",
-    "metrics_scraper/section-deployment.html.j2": "bg/_service-section-metrics.html.j2",
-} %}
-
 {% for section in sections %}
-    {% if lotc_tegenhanger.get(section.template) %}
-        {% include lotc_tegenhanger[section.template] %}
-    {% else %}
-        {{ render_roos(section.template, request=request, section=section) }}
+    {% set lotc_sjabloon = lotc_counterpart(section.template) %}
+    {% if lotc_sjabloon %}
+        {% include lotc_sjabloon %}
     {% endif %}
 {% endfor %}
