@@ -8,6 +8,7 @@ authenticate with afterwards.
 """
 
 import asyncio
+import re
 import time
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,6 +17,7 @@ import pytest
 from authlib.jose import JsonWebKey, jwt
 from opi.api.user_token_auth import get_metadata_cache
 from opi.api.v2 import router as v2_router
+from opi.api.v2.models import CreateProjectRequest
 from opi.core.project_schema import validate_project_schema
 from opi.manager.project_validation import validate_project_structure
 from opi.services import project_service
@@ -100,6 +102,9 @@ def empty_store() -> Any:
     store = MagicMock()
     store.reconcile = AsyncMock(return_value=None)
     store.read_path = AsyncMock(return_value=None)
+    # The endpoint generates the technical name and asks the store which names are
+    # already taken, so an empty store has to answer that question too.
+    store.get_all = MagicMock(return_value=[])
     with patch("opi.api.v2.router.get_project_store", return_value=store):
         yield store
 
@@ -126,7 +131,7 @@ class TestAuthentication:
     """The only endpoint here without a project key in front of it."""
 
     def test_without_a_token_it_is_refused(self, test_client: TestClient) -> None:
-        response = _post(test_client, None, {"name": "cli-test", "description": "Nog een test"})
+        response = _post(test_client, None, {"display_name": "CLI Test", "description": "Nog een test"})
         assert response.status_code == 401
         assert response.headers["WWW-Authenticate"].startswith("Bearer")
 
@@ -137,12 +142,12 @@ class TestAuthentication:
         response = test_client.post(
             "/api/v2/projects",
             headers={"X-API-Key": api_key},
-            json={"name": "cli-test", "description": "Nog een test"},
+            json={"display_name": "CLI Test", "description": "Nog een test"},
         )
         assert response.status_code == 401
 
     def test_a_garbage_token_is_refused(self, test_client: TestClient, bearer_token: Any) -> None:
-        response = _post(test_client, "not.a.token", {"name": "cli-test", "description": "Nog een test"})
+        response = _post(test_client, "not.a.token", {"display_name": "CLI Test", "description": "Nog een test"})
         assert response.status_code == 401
 
     def test_a_user_outside_the_allowlist_is_refused(
@@ -154,7 +159,9 @@ class TestAuthentication:
     ) -> None:
         """A verified identity is not permission to create anything."""
         bearer_token["user_service"].is_email_allowed.return_value = False
-        response = _post(test_client, bearer_token["token"], {"name": "cli-test", "description": "Nog een test"})
+        response = _post(
+            test_client, bearer_token["token"], {"display_name": "CLI Test", "description": "Nog een test"}
+        )
         assert response.status_code == 401
         assert captured_task == []
 
@@ -174,7 +181,7 @@ class TestCreateProject:
         response = _post(
             test_client,
             bearer_token["token"],
-            {"name": "cli-test", "description": "Nog een test", "display_name": "CLI Test"},
+            {"display_name": "CLI Test", "description": "Nog een test"},
         )
         assert response.status_code == 202, response.text
         payload = captured_task[0]["payload"]
@@ -187,10 +194,23 @@ class TestCreateProject:
         }
 
     def test_the_answer_carries_the_name_and_the_key(self, created: Any) -> None:
-        """The whole point: the CLI can set its context from this response."""
-        assert created["response"]["project_name"] == "cli-test"
+        """The whole point: the CLI can set its context from this response.
+
+        The name is asserted by shape, not by value: it is generated, so pinning the
+        exact string would only pin the random suffix.
+        """
+        assert re.fullmatch(r"ct-[a-z0-9]{3}", created["response"]["project_name"])
         assert created["response"]["api_key"]
         assert created["response"]["task_id"] == "task-abc"
+
+    def test_the_caller_does_not_choose_the_technical_name(self, created: Any) -> None:
+        """A supplied name is not honoured, quietly or otherwise.
+
+        The request model has no ``name`` field, so sending one is refused outright
+        rather than silently ignored -- being ignored is the worse failure, because the
+        caller would keep using a name that was never created.
+        """
+        assert "name" not in CreateProjectRequest.model_fields
 
     def test_the_key_is_the_one_stored_in_the_project_file(self, created: Any) -> None:
         """A key the caller cannot authenticate with is worse than no key at all."""
@@ -213,7 +233,9 @@ class TestCreateProject:
 
     def test_the_identity_and_cluster_are_filled_in(self, created: Any) -> None:
         project = created["project"]
-        assert project["name"] == "cli-test"
+        # The file carries the same generated name the response reported; a caller that
+        # trusts the response has to find the project under exactly that name.
+        assert project["name"] == created["response"]["project_name"]
         assert project["display-name"] == "CLI Test"
         assert project["description"] == "Nog een test"
         assert project["clusters"] == ["local"]
@@ -237,7 +259,7 @@ class TestCreateProject:
         assert created["payload"]["is_new_project"] is True
         assert created["payload"]["rollout"] is False
 
-    def test_display_name_defaults_to_the_name(
+    def test_the_technical_name_is_derived_from_the_display_name(
         self,
         test_client: TestClient,
         sops_keys: Any,
@@ -245,46 +267,69 @@ class TestCreateProject:
         empty_store: Any,
         captured_task: Any,
     ) -> None:
-        response = _post(test_client, bearer_token["token"], {"name": "cli-test", "description": "Nog een test"})
-        assert response.status_code == 202
+        """Same rule as the portal: initials of the words, plus a random suffix."""
+        response = _post(
+            test_client, bearer_token["token"], {"display_name": "API Gateway Service", "description": "x"}
+        )
+        assert response.status_code == 202, response.text
         project = load_yaml_from_string(captured_task[0]["payload"]["yaml_content"])
-        assert project["display-name"] == "cli-test"
+        assert re.fullmatch(r"ags-[a-z0-9]{3}", project["name"])
+        assert project["display-name"] == "API Gateway Service"
+
+
+class TestNameCollisions:
+    """Two people may want the same project name; that is ours to solve, not theirs."""
+
+    def test_a_taken_name_is_avoided_instead_of_refused(
+        self,
+        test_client: TestClient,
+        sops_keys: Any,
+        bearer_token: Any,
+        captured_task: Any,
+    ) -> None:
+        """Back when the caller supplied the name this was a 409.
+
+        That asked them to solve a collision they could not see, with a name they should
+        never have been choosing. The generator avoids the names already in the store,
+        so the second project simply gets a different suffix.
+        """
+        taken = MagicMock()
+        taken.name = "ct-aaa"
+        store = MagicMock()
+        store.reconcile = AsyncMock(return_value=None)
+        store.read_path = AsyncMock(return_value=None)
+        store.get_all = MagicMock(return_value=[taken])
+        with patch("opi.api.v2.router.get_project_store", return_value=store):
+            response = _post(test_client, bearer_token["token"], {"display_name": "CLI Test", "description": "x"})
+
+        assert response.status_code == 202, response.text
+        assert response.json()["project_name"] != "ct-aaa"
+        assert re.fullmatch(r"ct-[a-z0-9]{3}", response.json()["project_name"])
 
 
 class TestRefusedRequests:
     """Bad input, refused before anything is created."""
 
-    def test_an_existing_project_gives_409(
-        self,
-        test_client: TestClient,
-        sops_keys: Any,
-        bearer_token: Any,
-        captured_task: Any,
-    ) -> None:
-        store = MagicMock()
-        store.reconcile = AsyncMock(return_value=None)
-        store.read_path = AsyncMock(return_value={"name": "cli-test"})
-        with patch("opi.api.v2.router.get_project_store", return_value=store):
-            response = _post(test_client, bearer_token["token"], {"name": "cli-test", "description": "x"})
-
-        assert response.status_code == 409
-        assert captured_task == []
-
-    @pytest.mark.parametrize(
-        "name",
-        ["Cli-Test", "9lives", "-leading-dash", "with_underscore", "veel-te-lange-projectnaam"],
-    )
-    def test_an_invalid_name_gives_400(
+    @pytest.mark.parametrize("display_name", ["!!!", "***", "   "])
+    def test_a_display_name_with_nothing_usable_gives_400(
         self,
         test_client: TestClient,
         sops_keys: Any,
         bearer_token: Any,
         empty_store: Any,
         captured_task: Any,
-        name: str,
+        display_name: str,
     ) -> None:
-        response = _post(test_client, bearer_token["token"], {"name": name, "description": "x"})
+        """No letters and no digits means there is nothing to build a name out of."""
+        response = _post(test_client, bearer_token["token"], {"display_name": display_name, "description": "x"})
         assert response.status_code in (400, 422)
+        assert captured_task == []
+
+    def test_a_missing_display_name_is_refused(
+        self, test_client: TestClient, bearer_token: Any, empty_store: Any, captured_task: Any
+    ) -> None:
+        response = _post(test_client, bearer_token["token"], {"description": "x"})
+        assert response.status_code == 422
         assert captured_task == []
 
     def test_an_unreadable_key_creates_nothing(
@@ -300,7 +345,7 @@ class TestRefusedRequests:
         _, wrong_private_key = generate_sops_key_pair()
         monkeypatch.setattr(project_service.settings, "SOPS_AGE_PRIVATE_KEY", wrong_private_key, raising=False)
 
-        response = _post(test_client, bearer_token["token"], {"name": "cli-test", "description": "x"})
+        response = _post(test_client, bearer_token["token"], {"display_name": "CLI Test", "description": "x"})
 
         assert response.status_code == 500
         assert captured_task == []
@@ -308,6 +353,6 @@ class TestRefusedRequests:
     def test_a_missing_description_is_refused(
         self, test_client: TestClient, bearer_token: Any, empty_store: Any, captured_task: Any
     ) -> None:
-        response = _post(test_client, bearer_token["token"], {"name": "cli-test"})
+        response = _post(test_client, bearer_token["token"], {"display_name": "CLI Test"})
         assert response.status_code == 422
         assert captured_task == []
