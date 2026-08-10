@@ -9,6 +9,8 @@ import logging
 from functools import wraps
 from typing import TYPE_CHECKING, Any
 
+from fastapi import HTTPException
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -57,4 +59,25 @@ def get_current_user(request) -> dict[str, Any] | None:
         logger.debug(f"Retrieved current user: {user.get('email', 'unknown')}")
     else:
         logger.debug("No current user found in request state")
+    return user
+
+
+def require_platform_admin(request) -> dict[str, Any]:
+    """Return the current user, or refuse the request if they are not a platform admin.
+
+    Lived as a private ``_require_admin`` in three routers, identical in all three. A
+    fourth copy for the metrics explorer would have been the moment it started drifting,
+    so it lives here now, next to ``get_current_user`` it builds on.
+
+    Note what this is for: hiding a link in the menu is presentation, not access control.
+    A page that is only meant for admins says so itself, or the URL is the way in.
+    """
+    from opi.services.user_service import get_user_service
+
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Niet ingelogd")
+    email = str(user.get("email", "")).lower()
+    if not get_user_service().is_platform_admin(email):
+        raise HTTPException(status_code=403, detail="Alleen beheerders hebben toegang")
     return user
