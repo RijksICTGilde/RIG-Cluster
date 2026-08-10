@@ -46,6 +46,7 @@ from opi.web.lotc_switch import (
     build_lotc_project_details,
     build_lotc_projects,
     render,
+    render_fragment,
     wants_lotc,
 )
 from opi.web.menu import get_menu_items
@@ -263,7 +264,7 @@ async def project_progress_page_fragment(request: Request, task_id: str) -> HTML
         from opi.core.templates_lotc import templates_lotc
 
         return HTMLResponse(content=templates_lotc.env.get_template("bg/_task-progress.html.j2").render(context))
-    return HTMLResponse(content=render_progress_fragment(context))
+    return HTMLResponse(content=render_progress_fragment(request, context))
 
 
 @web_router.get("/projects/roos", response_class=HTMLResponse)
@@ -462,10 +463,20 @@ async def keycloak_otp_code_web(request: Request, project_name: str, realm_name:
 
     logger.info(f"OTP code requested for '{project_name}' realm '{realm_name}' by {user_email}")
 
-    return get_templates().TemplateResponse(
-        request,
-        "keycloak/otp-code.html.j2",
-        {"code": code, "project_name": project_name, "realm": realm_name},
+    # Dit fragment komt terug in het Keycloak-blok op de projectdetailpagina, dus het
+    # volgt dezelfde vormgeving als die pagina. Zonder dat stond er na een klik op "Toon
+    # code" roos-HTML in een LOTC-pagina.
+    return HTMLResponse(
+        content=render_fragment(
+            request,
+            roos="keycloak/otp-code.html.j2",
+            lotc="keycloak/otp-code-lotc.html.j2",
+            context={"code": code, "project_name": project_name, "realm": realm_name},
+            # Rendert EEN keer. Het is een sjabloonbestand, dus de componenttags zijn al
+            # bij het compileren vervangen; een tweede slag zou de gerenderde HTML nog
+            # eens als Jinja lezen.
+            process_roos=False,
+        )
     )
 
 
@@ -3331,4 +3342,4 @@ async def task_progress_fragment(request: Request, project_name: str, task_id: s
 
     # Rendered once on purpose -- see render_progress_fragment for why a second pass
     # over the rendered HTML would execute task text as Jinja.
-    return HTMLResponse(content=render_progress_fragment(context))
+    return HTMLResponse(content=render_progress_fragment(request, context))
