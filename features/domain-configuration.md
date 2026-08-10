@@ -1,5 +1,11 @@
 # Domain Configuration
 
+> **Waar dit wordt opgeslagen (schemaversie 2.7):** de velden hieronder staan in het
+> projectbestand onder `deployments[].services[publish-on-web].config`, niet meer los in de
+> wortel van de deployment. Zie [webadres-onder-de-dienst.md](webadres-onder-de-dienst.md).
+> De YAML-fragmenten in dit document tonen de velden zonder dat omhulsel, om over hun
+> betekenis te gaan en niet over hun plek.
+
 ## Overview
 
 Domain configuration controls how project components are accessible via URLs. Configuration is **per-deployment** - each deployment (e.g., production, staging, feature branches) independently defines its URL strategy.

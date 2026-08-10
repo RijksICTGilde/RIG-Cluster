@@ -88,6 +88,7 @@ from opi.services.catalog.base import ConfigLayer, ConfigRole, ValueStorage, con
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.catalog.postgresql_database.config_model import schema_description_field, schema_postfix_field
 from opi.services.catalog.postgresql_database.variables import DatabaseVariables
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.component_values import VALUES_LAYERS, ComponentValuesError, ValuesOperation
 from opi.services.component_values import locate as locate_values_node
 from opi.services.component_values import validate_key as validate_values_key
@@ -165,10 +166,10 @@ def _compute_deployment_urls(
         logger.debug("Could not resolve ingress config for cluster '%s'", cluster)
         return urls
 
-    subdomain = deployment.get("subdomain")
-    base_domain = deployment.get("base-domain")
-    hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
-    domain_format = deployment.get("domain-format")
+    subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
+    base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+    hostname_format = HostnameFormat.from_domain_mode(get_domain_setting(deployment, DomainSetting.DOMAIN_MODE))
+    domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
     deployment_name = deployment["name"]
     project_file_handler = ProjectFileHandler()
 
@@ -436,7 +437,7 @@ def _build_deployment_detail(
         project=project_name,
         cluster=deployment.get("cluster", ""),
         namespace=deployment.get("namespace", ""),
-        subdomain=deployment.get("subdomain"),
+        subdomain=get_domain_setting(deployment, DomainSetting.SUBDOMAIN),
         components=components,
         urls=urls,
         status=live.status,

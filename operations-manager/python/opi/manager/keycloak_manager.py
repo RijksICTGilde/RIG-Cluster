@@ -20,6 +20,7 @@ from opi.core.config import settings
 from opi.core.startup import keycloak_operation_with_retry
 from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name, service_entry_type
 from opi.utils.age import (
@@ -156,11 +157,11 @@ class KeycloakManager:
 
             # Collect all hostnames from all SSO components/helm-charts in this deployment
             ingress_postfix = get_ingress_postfix(cluster)
-            subdomain = deployment.get("subdomain")
-            base_domain = deployment.get("base-domain")
-            domain_mode = deployment.get("domain-mode")
-            domain_format = deployment.get("domain-format")
-            expose_on_bare_domain = deployment.get("expose-component-on-bare-domain", False)
+            subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
+            base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+            domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)
+            domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
+            expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT, False)
 
             if domain_mode == "nice-url":
                 logger.info(
