@@ -30,7 +30,11 @@ from opi.connectors.git import (
     create_git_connector_from_repo_config,
 )
 from opi.connectors.kubectl import KubectlConnector
-from opi.connectors.subdomain import ensure_domain_requests
+from opi.connectors.subdomain import (
+    ensure_domain_requests,
+    get_supported_base_domains,
+    validate_bare_domain_allowed,
+)
 from opi.core.cluster_config import (
     get_argo_namespace,
     get_backup_namespace,
@@ -83,8 +87,8 @@ from opi.services.catalog.base import (
 )
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
+    clear_domain_settings,
     get_domain_setting,
-    pop_domain_setting,
     set_domain_setting,
 )
 from opi.services.deployment_order import order_deployments_by_clone_dependency
@@ -114,7 +118,6 @@ from opi.utils.env_vars import (
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
     DOMAIN_FORMAT_TEMPLATES,
-    ROOT_COMPONENT_FORMAT_IDS,
     HostnameFormat,
     generate_argocd_application_name,
     generate_bare_domain_hostname,
@@ -5148,6 +5151,11 @@ class ProjectManager:
         expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT)
         bare_domain_registered = False
         if expose_on_bare_domain and base_domain:
+            # The publication path enforces the bare-domain rule itself, not just the form
+            # layer: the setting is also writable through the service config API, which the
+            # form enforcer never sees. This is the point of no return -- past it a
+            # registration and an apex certificate exist.
+            validate_bare_domain_allowed(base_domain, get_supported_base_domains(cluster))
             if subdomain_connector is None:
                 subdomain_connector = SubdomainConnector()
             await subdomain_connector.register_bare_domain(
@@ -6044,6 +6052,9 @@ class ProjectManager:
                     # Create bare domain ingress for expose-component-on-bare-domain mode.
                     # expose_on_bare_domain holds the component name that should serve the bare domain.
                     if expose_on_bare_domain and base_domain and component_name == expose_on_bare_domain:
+                        # Same rule as at registration: never an apex ingress plus
+                        # certificate on a platform domain from a tenant namespace.
+                        validate_bare_domain_allowed(base_domain, get_supported_base_domains(cluster))
                         bare_hostname = generate_bare_domain_hostname(base_domain)
                         bare_ingress_name = f"{deployment_name}-bare-domain"
                         bare_manifest_name = generate_manifest_name(component_name, "ingress-bare-domain")
@@ -6948,13 +6959,18 @@ class ProjectManager:
                 # Create new deployment object
                 new_deployment: dict[str, Any] = {"name": deployment_name, "components": []}
 
-                # Apply domain settings if provided
+                # Apply domain settings if provided. Kept as a mapping because the clone
+                # path has to write them a second time: the copy from the source lands on
+                # the same service block these go into.
+                requested_domain_settings: dict[DomainSetting, str] = {}
                 if domain_format:
-                    set_domain_setting(new_deployment, DomainSetting.DOMAIN_FORMAT, domain_format)
+                    requested_domain_settings[DomainSetting.DOMAIN_FORMAT] = domain_format
                 if subdomain:
-                    set_domain_setting(new_deployment, DomainSetting.SUBDOMAIN, subdomain)
+                    requested_domain_settings[DomainSetting.SUBDOMAIN] = subdomain
                 if base_domain:
-                    set_domain_setting(new_deployment, DomainSetting.BASE_DOMAIN, base_domain)
+                    requested_domain_settings[DomainSetting.BASE_DOMAIN] = base_domain
+                for setting, setting_value in requested_domain_settings.items():
+                    set_domain_setting(new_deployment, setting, setting_value)
 
                 # Convert components from router objects to dict format
                 normalized_warnings_create: list[str] = []
@@ -6979,27 +6995,11 @@ class ProjectManager:
                         logger.info(f"Cloning deployment configuration from '{clone_from}'")
 
                         # Clone properties from source, excluding fields that must be
-                        # unique or that tie the deployment to a custom domain setup.
-                        # Custom domains (base-domain, domain-mode, domain-format, issuer)
-                        # are not copied because cloned deployments should use the default
-                        # cluster domain rather than inheriting the source's DNS config.
-                        # domain-format in particular must be dropped: a dot-based format
-                        # (e.g. component.subdomain) inherited without the source's
-                        # base-domain resolves onto the cluster wildcard, producing a
-                        # multi-label host the single-label wildcard cert cannot cover.
-                        # The backup block is not copied either: backups are an explicit
-                        # per-deployment choice, and inheriting the source's schedule made
-                        # every PR preview accumulate nightly snapshots.
-                        clone_exclude_keys = [
-                            "name",
-                            "components",
-                            "subdomain",
-                            "base-domain",
-                            "domain-mode",
-                            "domain-format",
-                            "issuer",
-                            "backup",
-                        ]
+                        # unique per deployment. The backup block is not copied: backups
+                        # are an explicit per-deployment choice, and inheriting the
+                        # source's schedule made every PR preview accumulate nightly
+                        # snapshots.
+                        clone_exclude_keys = ["name", "components", "backup"]
                         new_deployment.update(
                             {
                                 key: copy.deepcopy(value)
@@ -7008,15 +7008,22 @@ class ProjectManager:
                             }
                         )
 
-                        # A clone uses its own (target) domain setup, not the source's.
-                        # Drop an inherited root-component when the target format does not
-                        # expose a root host, so it isn't carried as inert config. Same
-                        # applicability rule as validate_root_component.
-                        if get_domain_setting(new_deployment, DomainSetting.ROOT_COMPONENT):
-                            target_mode = get_domain_setting(new_deployment, DomainSetting.DOMAIN_MODE)
-                            target_format = get_domain_setting(new_deployment, DomainSetting.DOMAIN_FORMAT)
-                            if target_mode != "nice-url" and target_format not in ROOT_COMPONENT_FORMAT_IDS:
-                                pop_domain_setting(new_deployment, DomainSetting.ROOT_COMPONENT)
+                        # A clone uses its own (target) domain setup, never the source's:
+                        # it must land on the default cluster domain rather than inherit
+                        # the source's DNS config, or two deployments claim the same
+                        # hostnames. domain-format in particular must be dropped: a
+                        # dot-based format (e.g. component.subdomain) inherited without
+                        # the source's base-domain resolves onto the cluster wildcard,
+                        # producing a multi-label host the single-label wildcard cert
+                        # cannot cover. The web address now travels inside the source's
+                        # `services` block, so it is removed AFTER the copy -- excluding
+                        # the old root key names would be a silent no-op.
+                        clear_domain_settings(new_deployment)
+
+                        # The caller's own request was written before that copy and got
+                        # overwritten by it. Write it again; it must beat the source.
+                        for setting, setting_value in requested_domain_settings.items():
+                            set_domain_setting(new_deployment, setting, setting_value)
 
                         # When the source's subdomain matches its deployment name, it means
                         # components share a single hostname and use paths to differentiate.
