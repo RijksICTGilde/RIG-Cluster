@@ -31,11 +31,34 @@ services:
         template: standaard
         additional_redirect_uris:
           - http://localhost:8080/*
+        # De realms staan hier en niet meer onder het project-brede ``config.keycloak``:
+        # RC-5 heeft ze verhuisd, en het detailblok van de dienst leest alleen deze plek.
+        # Zonder dit blijft de Keycloak-sectie op de proefopstelling leeg, en dan toont de
+        # rijkste pagina van de applicatie juist het blok niet dat het meest te tonen heeft.
+        realms:
+          - host: https://keycloak.voorbeeld.nl
+            realm: voorbeeld-volledig-odcn-production
+            username: voorbeeld_admin
+            password: VOORBEELDWAARDE-geen-echt-wachtwoord
+            totp_secret: VOORBEELDWAARDE-geen-echte-sleutel
   - namespace-postgresql-database:
       config:
         instances: 1
         storage: 1Gi
   - persistent-storage
+  - invite:
+      config:
+        default_language: nl
+        active:
+          - key: voorbeeldsleutel-geen-echte-uitnodiging
+            realm-roles:
+              - beheerder
+            contact_email: beheerder@voorbeeld.nl
+  - attachments:
+      data:
+        - id: voorbeeldcertificaat
+          filename: certificaat.pem
+          content: VOORBEELDWAARDE-geen-echt-bestand
 
 registries:
   - name: voorbeeld-registry
