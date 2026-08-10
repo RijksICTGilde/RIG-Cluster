@@ -1,30 +1,35 @@
 /* Wizard CSS - extracted from wizard_page.html.j2 and roos.py */
 
 /* Helper text spacing - stack description + help_text vertically */
-.rvo-form-field__helper-group {
+.rvo-form-field__helper-group,
+.lotc-form-field__helper-group {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
 }
 
 /* Breadcrumb */
-.rvo-breadcrumb {
+.rvo-breadcrumb,
+.lotc-breadcrumb {
     display: flex;
     list-style: none;
     padding: 0;
     margin: 0;
     gap: 0.5rem;
 }
-.rvo-breadcrumb li:not(:last-child)::after {
+.rvo-breadcrumb li:not(:last-child)::after,
+.lotc-breadcrumb li:not(:last-child)::after {
     content: "/";
     margin-left: 0.5rem;
     color: #666;
 }
-.rvo-breadcrumb a {
+.rvo-breadcrumb a,
+.lotc-breadcrumb a {
     color: #007BC7;
     text-decoration: none;
 }
-.rvo-breadcrumb a:hover {
+.rvo-breadcrumb a:hover,
+.lotc-breadcrumb a:hover {
     text-decoration: underline;
 }
 
@@ -177,29 +182,35 @@ c-fieldset c-fieldset {
 }
 
 /* Sequence items */
-.rvo-sequence__item--inline {
+.rvo-sequence__item--inline,
+.lotc-sequence__item--inline {
     display: flex;
     align-items: flex-start;
     gap: 0.5rem;
     margin-bottom: 0.25rem;
 }
-.rvo-sequence__item--inline > :first-child {
+.rvo-sequence__item--inline > :first-child,
+.lotc-sequence__item--inline > :first-child {
     flex: 1;
 }
-.rvo-sequence__item--inline c-button {
+.rvo-sequence__item--inline c-button,
+.lotc-sequence__item--inline c-button {
     flex-shrink: 0;
     margin-top: 0.25rem;
 }
-.rvo-sequence__item-header {
+.rvo-sequence__item-header,
+.lotc-sequence__item-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 0.75rem;
 }
-.rvo-sequence__actions {
+.rvo-sequence__actions,
+.lotc-sequence__actions {
     margin-top: 0.5rem;
 }
-.rvo-sequence__items {
+.rvo-sequence__items,
+.lotc-sequence__items {
     margin-bottom: 0.25rem;
 }
 
@@ -358,7 +369,8 @@ c-fieldset c-fieldset {
 }
 
 /* Display field header (for display_card widget) */
-.rvo-display-field__header {
+.rvo-display-field__header,
+.lotc-display-field__header {
     display: flex;
     align-items: center;
     gap: 0.5rem;

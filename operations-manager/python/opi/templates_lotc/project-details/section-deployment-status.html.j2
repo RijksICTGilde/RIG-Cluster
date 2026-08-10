@@ -4,7 +4,7 @@
     <c-layout-flow gap="lg">
         <div>
             <c-heading type="h2" class="section-heading"><c-icon icon="server" size="xl" color="hemelblauw"/>Deployment Status</c-heading>
-            <p class="rvo-text--subtle">ArgoCD synchronisatie en health status per deployment</p>
+            <p>ArgoCD synchronisatie en health status per deployment</p>
         </div>
 
         {% set _dep_count = project.deployments|length %}
@@ -25,7 +25,7 @@
         <c-icon icon="info" size="lg" color="grijs-500"/>
         <div>
             <strong>Deployment status niet beschikbaar</strong>
-            <p class="rvo-text--sm rvo-text--subtle">ArgoCD is niet verbonden. Deployment status wordt getoond wanneer ArgoCD beschikbaar is.</p>
+            <p>ArgoCD is niet verbonden. Deployment status wordt getoond wanneer ArgoCD beschikbaar is.</p>
         </div>
     </c-cluster>
 </c-card>
