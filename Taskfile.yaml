@@ -902,6 +902,9 @@ tasks:
       KEY_FILE: '{{if eq (default "local" .CLUSTER_TYPE) "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
     deps: [generate-env-secrets-for-operations-manager]
     cmds:
+      # Zie sandbox:build-operations-manager-image: zonder dit bakt de build de
+      # version.json in die er toevallig lag, en meldt de pod een andere commit.
+      - task: version:generate
       - |
         echo "Building operations-manager Docker image with BuildKit optimizations..."
         docker buildx build \
@@ -1200,6 +1203,10 @@ tasks:
             echo "    tag you can trace back."
             ;;
         esac
+      # Zie sandbox:build-operations-manager-image. Hier weegt het het zwaarst: dit is de
+      # image die uitgerold wordt, en de CalVer-tag zou dan een andere commit noemen dan
+      # de image over zichzelf meldt.
+      - task: version:generate
       - task: docker-build-and-push
         vars:
           BUILD_CONTEXT: .
@@ -3098,6 +3105,11 @@ tasks:
   sandbox:build-operations-manager-image:
     desc: "Build operations-manager image and load into Kind (no deploy)"
     cmds:
+      # Eerst de versie schrijven, anders bakt de build in wat er toevallig op schijf ligt:
+      # opi/version.json staat in .gitignore en dus niet in `git status`, maar wel in de
+      # buildcontext, en opi/core/version.py laat dat bestand voorgaan op de ingebakken
+      # build-args. Een image kon zo een commit van dagen eerder over zichzelf melden.
+      - task: version:generate
       - |
         echo "Building operations-manager Docker image..."
         docker buildx build \
@@ -3114,6 +3126,9 @@ tasks:
   sandbox:update-operations-manager:
     desc: "Build and deploy the operations-manager to the sandbox cluster"
     cmds:
+      # Zie sandbox:build-operations-manager-image: zonder dit bakt de build de
+      # version.json in die er toevallig lag, en meldt de pod een andere commit.
+      - task: version:generate
       - |
         echo "Building operations-manager Docker image..."
         docker buildx build \
