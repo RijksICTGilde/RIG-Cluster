@@ -9,6 +9,7 @@ from opi.connectors.subdomain import (
     get_supported_base_domains,
     is_domain_allowed_for_project,
     is_subdomain_allowed_for_project,
+    validate_bare_domain_allowed,
 )
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_domain_supports_dots
@@ -218,10 +219,6 @@ class DomainConfigEnforcer:
         dep = deployments[self.deployment_index]
         if not isinstance(dep, dict):
             return value
-        domain_format = get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT)
-        if not domain_format:
-            return value
-
         base_domain = get_domain_setting(dep, DomainSetting.BASE_DOMAIN)
         custom_domain = dep.get("base-domain:custom")
         subdomain = get_domain_setting(dep, DomainSetting.SUBDOMAIN)
@@ -229,24 +226,34 @@ class DomainConfigEnforcer:
         cluster = opi_config.settings.CLUSTER_MANAGER
         supported = get_supported_base_domains(cluster)
 
+        # The domain this deployment actually asks for. "__custom__" means the wizard's
+        # custom-domain input holds it; an empty base-domain means the cluster-default
+        # URL, which is the platform default and not a user-requested domain, so there
+        # is nothing to validate or approve -- None makes every domain check below skip.
+        # (Previously the empty case picked an arbitrary next(iter(supported)) domain and
+        # ran ITS subdomain restrictions against the deployment, wrongly rejecting
+        # cluster-default PRs with e.g. "subdomein 'pr797' voor 'rijksapp.dev' is op
+        # aanvraag".)
+        actual_domain = custom_domain if base_domain == "__custom__" else base_domain or None
+
+        # Bare domain, BEFORE the domain-format early return: the rule does not depend on
+        # the format, and since the web address moved under the service the field is
+        # writable through PUT .../services/publish-on-web/deployments/{d}/config, which
+        # can set it without ever setting a domain-format. Behind the early return the
+        # rule was reachable from the wizard only.
+        bare_domain_component = get_domain_setting(dep, DomainSetting.BARE_DOMAIN_COMPONENT)
+        if bare_domain_component and actual_domain:
+            validate_bare_domain_allowed(actual_domain, supported)
+            await self._check_bare_domain_availability(actual_domain, context)
+
+        domain_format = get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT)
+        if not domain_format:
+            return value
+
         # When base-domain is "__custom__", user selected custom domain input
         # Validate that they actually filled it in
-        if base_domain == "__custom__":
-            if not custom_domain:
-                raise ValueError("Een aangepast domein is geselecteerd maar niet ingevuld")
-            # Use custom domain for further validation
-            actual_domain = custom_domain
-        elif base_domain:
-            actual_domain = base_domain
-        else:
-            # No base-domain chosen = the cluster-default URL. That is the platform
-            # default, not a user-requested domain, so there is nothing to validate
-            # or approve here -- leave actual_domain None so the domain/subdomain
-            # checks below all skip. (Previously this picked an arbitrary
-            # next(iter(supported)) domain and ran ITS subdomain restrictions against
-            # the deployment, wrongly rejecting cluster-default PRs with e.g.
-            # "subdomein 'pr797' voor 'rijksapp.dev' is op aanvraag".)
-            actual_domain = None
+        if base_domain == "__custom__" and not custom_domain:
+            raise ValueError("Een aangepast domein is geselecteerd maar niet ingevuld")
 
         template = DOMAIN_FORMAT_TEMPLATES.get(domain_format, "")
         if "{subdomain}" in template and not subdomain:
@@ -338,13 +345,6 @@ class DomainConfigEnforcer:
                 context,
                 field_path=domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index),
             )
-
-        # Validate bare domain component: only valid with custom domains
-        bare_domain_component = get_domain_setting(dep, DomainSetting.BARE_DOMAIN_COMPONENT)
-        if bare_domain_component and actual_domain:
-            if actual_domain.lower() in supported:
-                raise ValueError("Kaal domein is alleen beschikbaar voor eigen domeinen, niet voor platformdomeinen")
-            await self._check_bare_domain_availability(actual_domain, context)
 
         return value
 

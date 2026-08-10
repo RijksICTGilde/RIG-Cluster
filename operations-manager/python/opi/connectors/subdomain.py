@@ -109,6 +109,27 @@ def ensure_domains_config(project_data: dict[str, Any]) -> dict[str, Any]:
     return domains
 
 
+#: Why a bare (apex) domain is refused on a platform domain. One constant so the form
+#: enforcer and the publication path refuse for the same reason, in the same words.
+BARE_DOMAIN_PLATFORM_MESSAGE = "Kaal domein is alleen beschikbaar voor eigen domeinen, niet voor platformdomeinen"
+
+
+def validate_bare_domain_allowed(base_domain: str, supported_domains: set[str]) -> None:
+    """Raise when exposing a component on the bare (apex) domain is not permitted.
+
+    A bare-domain ingress claims the apex of ``base_domain`` -- and its Let's Encrypt
+    certificate -- from one tenant namespace. That is only acceptable for a domain the
+    project brought itself; on a platform domain it takes the domain away from every
+    other tenant on the cluster.
+
+    Both the form enforcer and the publication path call this, so the rule cannot hold on
+    one write path and not on the other. The supported set is passed in rather than looked
+    up here: the caller already knows which cluster it is deciding for.
+    """
+    if base_domain.lower() in supported_domains:
+        raise ValueError(BARE_DOMAIN_PLATFORM_MESSAGE)
+
+
 def get_supported_base_domains(cluster: str | None = None) -> set[str]:
     """Get all supported base domains for nice URLs.
 
