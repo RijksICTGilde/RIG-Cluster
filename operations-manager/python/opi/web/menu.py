@@ -40,7 +40,6 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         {"label": "Projecten", "link": "/projects", "icon": "applicatie"},
         {"label": "Nieuw Project", "link": "/forms/wizard/restart", "icon": "plus"},
         {"label": "Services", "link": "/services", "icon": "server"},
-        {"label": "Metrics", "link": "/metrics-explorer", "icon": "grafiek"},
         # De architectuurpagina staat NIET in de navigatie. Hij is 2000 regels lang en
         # leunde op RVO-opmaakklassen die het nieuwe thema niet kent: de inhoud staat er
         # wel - koppen, tekst en alle acht diagrammen - maar het leest als een lange platte
@@ -60,6 +59,9 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
             logger.debug("Could not check admin status for menu", exc_info=True)
 
     if is_admin:
+        # Metrics stond in de algemene lijst, maar de verkenner kijkt over projecten heen
+        # en hoort daarmee bij het beheerdersgereedschap, niet bij wat elke gebruiker ziet.
+        menu_items.append({"label": "Metrics", "link": "/metrics-explorer", "icon": "grafiek"})
         menu_items.append({"label": "Gebruikersbeheer", "link": "/admin/users", "icon": "user"})
         menu_items.append({"label": "Gebruik & Kosten", "link": "/admin/usage", "icon": "grafiek"})
         menu_items.append({"label": "Domeinen", "link": "/admin/approvals", "icon": "wereldbol"})

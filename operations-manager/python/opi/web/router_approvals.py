@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
-from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.auth_decorators import require_platform_admin, requires_sso
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.core.templates import get_templates
 from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
@@ -36,7 +36,6 @@ from opi.forms.wizard.session import (
 )
 from opi.services.approvals import collect_approval_items
 from opi.services.project_store import get_project_store
-from opi.services.user_service import get_user_service
 from opi.web.lotc_switch import render_fragment, wants_lotc
 from opi.web.menu import get_menu_items
 from opi.web.navigation_lotc import to_nldd_icon
@@ -52,17 +51,6 @@ FLOW_ID = "admin-approval"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _require_admin(request: Request) -> dict:
-    """Return the current user dict or raise 403 if not an admin."""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Niet ingelogd")
-    email = user.get("email", "").lower()
-    if not get_user_service().is_platform_admin(email):
-        raise HTTPException(status_code=403, detail="Alleen beheerders hebben toegang")
-    return user
 
 
 def _create_renderer(lotc: bool = False) -> FormRenderer:
@@ -186,7 +174,7 @@ def _collect_all_projects_approval_data() -> list[dict[str, Any]]:
 async def list_subdomains(request: Request) -> Response:
     """List all domain/subdomain requests across all projects."""
 
-    user = _require_admin(request)
+    user = require_platform_admin(request)
 
     # Pull the latest project data from git so an entry added externally
     # (manual yaml edit + push, or a request created elsewhere) shows up
@@ -217,7 +205,7 @@ async def list_subdomains(request: Request) -> Response:
 @requires_sso
 async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """Initialize the domain approval modal wizard for a project."""
-    user = _require_admin(request)
+    user = require_platform_admin(request)
 
     if flow_id != FLOW_ID:
         raise HTTPException(status_code=404, detail="Onbekende flow")
@@ -264,7 +252,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 @requires_sso
 async def modal_wizard_submit_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
     """Validate and submit the approval step."""
-    user = _require_admin(request)
+    user = require_platform_admin(request)
 
     if flow_id != FLOW_ID:
         raise HTTPException(status_code=404, detail="Onbekende flow")
