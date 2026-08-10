@@ -81,10 +81,13 @@ def test_dezelfde_bestemmingen_als_het_bestaande_tabblad(app_server: str, auth_p
     oud = _surface(auth_page, app_server, ROOS_URL, ROOS_SCOPE)
     nieuw = _surface(auth_page, app_server, LOTC_URL, LOTC_SCOPE)
 
-    assert set(nieuw["calls"]) == set(oud["calls"]), (
+    # Insluiting en geen gelijkheid: het nieuwe tabblad MAG meer aanbieden. Het draagt
+    # sinds de opdeling zijn eigen knop "Deployment toevoegen" - op het oude tabblad
+    # stond die bij Project, en zonder hem heeft een project zonder deployments hier
+    # geen uitweg. Wat deze test bewaakt is dat er niets VERDWIJNT.
+    assert set(oud["calls"]) <= set(nieuw["calls"]), (
         "de knoppen op het hertekende tabblad wijzen niet naar dezelfde dialogen/acties.\n"
-        f"alleen oud: {sorted(set(oud['calls']) - set(nieuw['calls']))}\n"
-        f"alleen nieuw: {sorted(set(nieuw['calls']) - set(oud['calls']))}"
+        f"alleen oud: {sorted(set(oud['calls']) - set(nieuw['calls']))}"
     )
     assert set(nieuw["hx"]) == set(oud["hx"]), (
         "de blokken die zichzelf inladen halen niet dezelfde adressen op.\n"

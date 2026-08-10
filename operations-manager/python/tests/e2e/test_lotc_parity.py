@@ -61,7 +61,7 @@ ROUTES = [
 # De projectpagina apart: de oude pagina zet alle tabbladen in EEN document en wisselt ze
 # in de browser, de nieuwe geeft elk tabblad een eigen URL. Een tab los vergelijken zou
 # alles van de andere tabs als verdwenen melden.
-TABBLADEN = ("project", "deployments", "metrics", "taken")
+TABBLADEN = ("project", "componenten", "services", "deployments", "metrics", "taken")
 
 # De aanvaarde verschillen staan in de vergelijker zelf, zodat het script en deze poort
 # niet uit elkaar kunnen lopen. Loopt er een uit de pas, dan zegt de een "schoon" en de
