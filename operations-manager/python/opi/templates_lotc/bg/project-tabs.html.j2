@@ -109,6 +109,11 @@
        document en bakent die id ze af; hier is er een per URL, maar de id houdt de twee
        VERGELIJKBAAR. Zonder wikkel moest een vergelijking de hele body nemen, en dan telt
        de gedeelde kop - inclusief de knop "Bewerken" - mee als inhoud van het tabblad. #}
+    {# De flow-id telt de deployments: de modal-wizard opent daarmee een NIEUWE regel
+       achter de bestaande. Hier gezet en niet in een tabblad, omdat zowel Overzicht als
+       Deployments deze knop aanbiedt. #}
+    {% set deployment_toevoegen = "openEditModal('modal-add-deployment-" ~ (project.deployments | length) ~ "', 'Deployment toevoegen')" %}
+
     <c-stack id="tab-{{ active_tab }}" gap="lg">
 
     {% if active_tab == 'project' %}
@@ -133,10 +138,6 @@
 
         {# ---- Acties (project-details/section-actions.html.j2) ---------------- #}
         {% if user_role in ["admin", "owner"] %}
-            {# De flow-id telt de deployments: de modal-wizard opent daarmee een NIEUWE
-               regel achter de bestaande. Letterlijk overgenomen, inclusief de nul bij
-               een project zonder deployments. #}
-            {% set deployment_toevoegen = "openEditModal('modal-add-deployment-" ~ (project.deployments | length) ~ "', 'Deployment toevoegen')" %}
             {% call panel("Acties", "gear") %}
                 <c-action-group align="start">
                     <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" :attrs="{'onclick': deployment_toevoegen}" />
@@ -484,7 +485,7 @@
     {% elif active_tab == 'services' %}
 
         {# ---- Services & Integraties (section-services.html.j2) --------------- #}
-        {% call panel("Services & Integraties", "cylinder-split", info_text="Services worden door het platform geleverd en beheerd. Je hoeft ze niet zelf te installeren of bij te werken.") %}
+        {% call panel("Services & Integraties", "cylinder-split", info_text="Services en features worden door het platform geleverd en beheerd. Je hoeft ze voor gebruik alleen te activeren en eventueel configureren.") %}
             {% if user_role in ["admin", "owner"] %}
                 {% set diensten_bewerken = "openEditModal('modal-edit-services', 'Services beheren')" %}
                 <c-action-group align="start">
@@ -545,6 +546,12 @@
 
            De omgevingsvariabelen horen NIET bij een deployment - dat blok toont ze
            allemaal - en staat daarom buiten het wisselen, precies als in het origineel. #}
+
+        {% if user_role in ["admin", "owner"] %}
+            <c-action-group align="start">
+                <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" :attrs="{'onclick': deployment_toevoegen}" />
+            </c-action-group>
+        {% endif %}
 
         {% if project.deployments | length > 1 %}
             {# De kiezer als THEMAveld met een ECHTE <select> erin (native="true").
@@ -626,7 +633,9 @@
                     {{ deployment_panel(deployment, project, approval_notices | default({}), user_role | default('')) }}
                 </div>
             {% else %}
-                <c-alert type="info" heading="Geen deployments geconfigureerd" />
+                <c-alert type="info" heading="Nog geen deployments">
+                    Een deployment bepaalt waar je componenten draaien en op welk adres. Maak er een met de knop bovenaan.
+                </c-alert>
             {% endfor %}
 
             {% include "bg/_env-vars.html.j2" %}
