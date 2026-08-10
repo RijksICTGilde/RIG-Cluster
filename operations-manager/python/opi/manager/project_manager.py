@@ -81,6 +81,12 @@ from opi.services.catalog.base import (
     ProvisionContext,
     SecretFileSpec,
 )
+from opi.services.catalog.publish_on_web.domain_config import (
+    DomainSetting,
+    get_domain_setting,
+    pop_domain_setting,
+    set_domain_setting,
+)
 from opi.services.deployment_order import order_deployments_by_clone_dependency
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.postgres_scope import project_uses_dedicated_postgres, schema_is_marked
@@ -3769,9 +3775,9 @@ class ProjectManager:
 
         # Add deployment-level variables for hostname, subdomain, base-domain, issuer
         cluster_name = deployment.get("cluster", settings.CLUSTER_MANAGER)
-        subdomain = deployment.get("subdomain")
-        base_domain = deployment.get("base-domain")
-        issuer_config = deployment.get("issuer")
+        subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
+        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+        issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
         use_https = get_ingress_tls_enabled(cluster_name)
 
         # Calculate hostname based on configuration
@@ -4119,8 +4125,8 @@ class ProjectManager:
 
         # Create Let's Encrypt Issuer manifest if configured
         regular_files: list[str] = []
-        issuer_config = deployment.get("issuer")
-        base_domain = deployment.get("base-domain")
+        issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
+        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
         # Only auto-generate issuer if issuer_config is exactly "letsencrypt" or "letsencrypt-staging"
         # If issuer_config already contains a domain suffix, use it as-is (no generation needed)
@@ -4502,8 +4508,8 @@ class ProjectManager:
 
         # Create Let's Encrypt Issuer manifest if configured
         regular_files: list[str] = []
-        issuer_config = deployment.get("issuer")
-        base_domain = deployment.get("base-domain")
+        issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
+        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
         if issuer_config and issuer_config in ("letsencrypt", "letsencrypt-staging") and base_domain:
             project_contact_email = project_data.get("config", {}).get("contact-email")
@@ -5068,15 +5074,15 @@ class ProjectManager:
             return []
 
         # Register subdomain for nice-url mode (with rollback on failure)
-        domain_mode = deployment.get("domain-mode")
-        subdomain = deployment.get("subdomain")
-        base_domain = deployment.get("base-domain")
+        domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)
+        subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
+        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
         subdomain_registered = False  # Track if we registered a new subdomain for rollback
         subdomain_connector = None  # Initialize for use in rollback
 
         # Validate nice-url mode requirements BEFORE subdomain registration
         # This prevents orphaned subdomain entries when validation fails
-        root_component_name = deployment.get("root-component")
+        root_component_name = get_domain_setting(deployment, DomainSetting.ROOT_COMPONENT)
         if domain_mode == "nice-url" and subdomain and base_domain:
             # Validate that all components with publish-on-web have ports configured
             # In nice-url mode, each component gets its own ingress at component.subdomain.base_domain
@@ -5139,7 +5145,7 @@ class ProjectManager:
             logger.info(f"Subdomain '{subdomain}.{base_domain}' registered/updated for project '{project_name}'")
 
         # Register or clean up bare domain in subdomain registry
-        expose_on_bare_domain = deployment.get("expose-component-on-bare-domain")
+        expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT)
         bare_domain_registered = False
         if expose_on_bare_domain and base_domain:
             if subdomain_connector is None:
@@ -5447,12 +5453,12 @@ class ProjectManager:
             # Generate ingress map based on cluster configuration and optional subdomain using centralized utility
             ingress_postfix = get_ingress_postfix(cluster)
             use_https = get_ingress_tls_enabled(cluster)
-            subdomain = deployment.get("subdomain")
-            base_domain = deployment.get("base-domain")
-            issuer_config = deployment.get("issuer")
-            domain_mode = deployment.get("domain-mode")
-            domain_format = deployment.get("domain-format")
-            expose_on_bare_domain = deployment.get("expose-component-on-bare-domain", False)
+            subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
+            base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+            issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
+            domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)
+            domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
+            expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT, False)
             logger.info(
                 f"Extracted subdomain for {component_name}: {subdomain}, base-domain: {base_domain}, "
                 f"issuer: {issuer_config}, domain-mode: {domain_mode}, domain-format: {domain_format}, "
@@ -6024,7 +6030,7 @@ class ProjectManager:
                         # Clean up stale root ingress from previous root component
                         previous_dep = self.get_previous_deployment(deployment_name)
                         if previous_dep:
-                            old_root = previous_dep.get("root-component")
+                            old_root = get_domain_setting(previous_dep, DomainSetting.ROOT_COMPONENT)
                             if old_root and old_root != root_component_name:
                                 old_manifest = f"{generate_manifest_name(old_root, 'ingress-root')}.yaml"
                                 old_manifest_path = os.path.join(full_output_dir, old_manifest)
@@ -6090,7 +6096,7 @@ class ProjectManager:
                         # Clean up stale bare domain ingress from previous component
                         previous_dep = self.get_previous_deployment(deployment_name)
                         if previous_dep:
-                            old_bare = previous_dep.get("expose-component-on-bare-domain")
+                            old_bare = get_domain_setting(previous_dep, DomainSetting.BARE_DOMAIN_COMPONENT)
                             if old_bare and old_bare != expose_on_bare_domain:
                                 old_manifest = f"{generate_manifest_name(old_bare, 'ingress-bare-domain')}.yaml"
                                 old_manifest_path = os.path.join(full_output_dir, old_manifest)
@@ -6860,11 +6866,11 @@ class ProjectManager:
 
                         # Update domain settings if provided
                         if domain_format is not None:
-                            deployment["domain-format"] = domain_format
+                            set_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT, domain_format)
                         if subdomain is not None:
-                            deployment["subdomain"] = subdomain
+                            set_domain_setting(deployment, DomainSetting.SUBDOMAIN, subdomain)
                         if base_domain is not None:
-                            deployment["base-domain"] = base_domain
+                            set_domain_setting(deployment, DomainSetting.BASE_DOMAIN, base_domain)
 
                         # Handle clone_from only if force_clone is true
                         if clone_from and force_clone:
@@ -6944,11 +6950,11 @@ class ProjectManager:
 
                 # Apply domain settings if provided
                 if domain_format:
-                    new_deployment["domain-format"] = domain_format
+                    set_domain_setting(new_deployment, DomainSetting.DOMAIN_FORMAT, domain_format)
                 if subdomain:
-                    new_deployment["subdomain"] = subdomain
+                    set_domain_setting(new_deployment, DomainSetting.SUBDOMAIN, subdomain)
                 if base_domain:
-                    new_deployment["base-domain"] = base_domain
+                    set_domain_setting(new_deployment, DomainSetting.BASE_DOMAIN, base_domain)
 
                 # Convert components from router objects to dict format
                 normalized_warnings_create: list[str] = []
@@ -7006,20 +7012,20 @@ class ProjectManager:
                         # Drop an inherited root-component when the target format does not
                         # expose a root host, so it isn't carried as inert config. Same
                         # applicability rule as validate_root_component.
-                        if new_deployment.get("root-component"):
-                            target_mode = new_deployment.get("domain-mode")
-                            target_format = new_deployment.get("domain-format")
+                        if get_domain_setting(new_deployment, DomainSetting.ROOT_COMPONENT):
+                            target_mode = get_domain_setting(new_deployment, DomainSetting.DOMAIN_MODE)
+                            target_format = get_domain_setting(new_deployment, DomainSetting.DOMAIN_FORMAT)
                             if target_mode != "nice-url" and target_format not in ROOT_COMPONENT_FORMAT_IDS:
-                                new_deployment.pop("root-component", None)
+                                pop_domain_setting(new_deployment, DomainSetting.ROOT_COMPONENT)
 
                         # When the source's subdomain matches its deployment name, it means
                         # components share a single hostname and use paths to differentiate.
                         # Preserve this pattern for the clone by setting subdomain to the
                         # new deployment name.
-                        source_subdomain = source_deployment.get("subdomain")
+                        source_subdomain = get_domain_setting(source_deployment, DomainSetting.SUBDOMAIN)
                         source_name = source_deployment.get("name")
                         if source_subdomain and source_subdomain == source_name:
-                            new_deployment["subdomain"] = deployment_name
+                            set_domain_setting(new_deployment, DomainSetting.SUBDOMAIN, deployment_name)
                             logger.info(
                                 f"Source subdomain '{source_subdomain}' matches source deployment name, "
                                 f"setting cloned subdomain to '{deployment_name}'"
@@ -7180,7 +7186,7 @@ class ProjectManager:
                 dep_name = deployment.get("name")
                 if dep_name not in deployment_names:
                     continue
-                domain_mode = deployment.get("domain-mode", "component-specific")
+                domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE, "component-specific")
 
                 # Collect existing component paths in this deployment
                 existing_paths = []
@@ -7209,7 +7215,10 @@ class ProjectManager:
                     ]
                     try:
                         validate_root_component(
-                            name, [*dep_component_names, name], domain_mode, deployment.get("domain-format")
+                            name,
+                            [*dep_component_names, name],
+                            domain_mode,
+                            get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT),
                         )
                     except ComponentValidationError as e:
                         return {
@@ -7275,7 +7284,7 @@ class ProjectManager:
                         ref: dict[str, Any] = {"reference": name, "image": normalized_image}
                         deployment.setdefault("components", []).append(ref)
                         if root:
-                            deployment["root-component"] = name
+                            set_domain_setting(deployment, DomainSetting.ROOT_COMPONENT, name)
                         deployments_updated.append(dep_name)
 
             # Validate (schema + structural) then save and commit through the single path
@@ -8086,7 +8095,7 @@ class ProjectManager:
                 }
 
             # Validate path uniqueness
-            domain_mode = target_deployment.get("domain-mode", "component-specific")
+            domain_mode = get_domain_setting(target_deployment, DomainSetting.DOMAIN_MODE, "component-specific")
             new_path = component_def.get("path", "/")
 
             existing_paths = []

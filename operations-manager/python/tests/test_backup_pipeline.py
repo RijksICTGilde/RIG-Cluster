@@ -16,6 +16,7 @@ import pytest
 from freezegun import freeze_time
 from opi.core.async_task_service import TaskType
 from opi.core.backup_scheduler import BackupScheduler, parse_rrule
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 
 # 2026-05-20 is a Wednesday during CEST (UTC+2). 00:30 UTC = 02:30 Amsterdam,
 # which is just past today's 02:00 daily target — within the catch-up window
@@ -1269,9 +1270,11 @@ class TestCreateDeploymentFromSourceYAML:
         _run(_create_deployment_from_source("test-project", "staging", "production"))
 
         new_dep = yaml_mocks["project_data"]["deployments"][1]
-        assert "base-domain" not in new_dep
-        assert "domain-mode" not in new_dep
-        assert "issuer" not in new_dep
+        # Asked of the service that owns them (RC-60), so the assertion says "this
+        # deployment has no domain configured" rather than "this key is not in that dict".
+        assert get_domain_setting(new_dep, DomainSetting.BASE_DOMAIN) is None
+        assert get_domain_setting(new_dep, DomainSetting.DOMAIN_MODE) is None
+        assert get_domain_setting(new_dep, DomainSetting.ISSUER) is None
 
     def test_new_deployment_auto_subdomain(self, yaml_mocks) -> None:
         """When source subdomain matches source name, new subdomain = target name."""
@@ -1280,7 +1283,7 @@ class TestCreateDeploymentFromSourceYAML:
         _run(_create_deployment_from_source("test-project", "staging", "production"))
 
         new_dep = yaml_mocks["project_data"]["deployments"][1]
-        assert new_dep["subdomain"] == "staging"
+        assert get_domain_setting(new_dep, DomainSetting.SUBDOMAIN) == "staging"
 
     def test_deployment_config_overrides(self, yaml_mocks) -> None:
         """User-provided deployment_config overrides domain fields."""
@@ -1294,9 +1297,11 @@ class TestCreateDeploymentFromSourceYAML:
         _run(_create_deployment_from_source("test-project", "staging", "production", deployment_config=config))
 
         new_dep = yaml_mocks["project_data"]["deployments"][1]
-        assert new_dep["subdomain"] == "my-staging"
-        assert new_dep["base-domain"] == "custom.dev"
-        assert new_dep["domain-format"] == "subdomain-project"
+        # A caller-supplied deployment_config still lands at the deployment root; the
+        # accessor reads it there, which is the read-both guarantee the relocation rests on.
+        assert get_domain_setting(new_dep, DomainSetting.SUBDOMAIN) == "my-staging"
+        assert get_domain_setting(new_dep, DomainSetting.BASE_DOMAIN) == "custom.dev"
+        assert get_domain_setting(new_dep, DomainSetting.DOMAIN_FORMAT) == "subdomain-project"
 
     def test_preserves_cluster_and_namespace(self, yaml_mocks) -> None:
         """Cluster, namespace, and repository are copied from source."""

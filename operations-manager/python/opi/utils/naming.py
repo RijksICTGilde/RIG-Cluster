@@ -10,6 +10,8 @@ import re
 from enum import Enum
 from typing import Any, Literal, get_args
 
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+
 logger = logging.getLogger(__name__)
 
 
@@ -1786,7 +1788,7 @@ def find_root_component(deployment: dict) -> str | None:
         >>> find_root_component({"name": "prod"})
         None
     """
-    return deployment.get("root-component")
+    return get_domain_setting(deployment, DomainSetting.ROOT_COMPONENT)
 
 
 def apply_domain_approval_fallback(

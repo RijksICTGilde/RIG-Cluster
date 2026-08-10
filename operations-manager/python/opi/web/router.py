@@ -21,6 +21,12 @@ from datetime import UTC
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.templates import get_templates
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
+from opi.services.catalog.publish_on_web.domain_config import (
+    DomainSetting,
+    get_domain_setting,
+    pop_domain_setting,
+    set_domain_setting,
+)
 from opi.services.config_location import binding_label, project_step_config_hint
 from opi.services.deployment_state import collect_deployment_state
 from opi.services.project import Project
@@ -1582,10 +1588,12 @@ async def project_details(request: Request, project_name: str):
                             try:
                                 ingress_postfix = get_ingress_postfix(cluster)
                                 use_https = get_ingress_tls_enabled(cluster)
-                                subdomain = deployment.get("subdomain")
-                                base_domain = deployment.get("base-domain")
-                                hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
-                                domain_format = deployment.get("domain-format")
+                                subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
+                                base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
+                                hostname_format = HostnameFormat.from_domain_mode(
+                                    get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)
+                                )
+                                domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
 
                                 ingress_map = get_component_ingress_map(
                                     component_name=component_name,
@@ -2257,13 +2265,13 @@ async def get_deployment_domain_settings(request: Request, project_name: str, de
 
         # Extract domain settings from deployment
         cluster = deployment.get("cluster", "")
-        domain_mode = deployment.get("domain-mode")
-        domain_format = deployment.get("domain-format")
-        subdomain = deployment.get("subdomain")
-        base_domain = deployment.get("base-domain")
+        domain_mode = get_domain_setting(deployment, DomainSetting.DOMAIN_MODE)
+        domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
+        subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
+        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
         # Find root component (if any)
-        root_component = deployment.get("root-component")
+        root_component = get_domain_setting(deployment, DomainSetting.ROOT_COMPONENT)
         components_list = []
         for comp in deployment.get("components", []):
             comp_ref = comp.get("reference")
@@ -2437,7 +2445,7 @@ async def _update_keycloak_redirect_uris_for_deployment(
             ingress_postfix=ingress_postfix,
             subdomain=subdomain,
             base_domain=base_domain,
-            domain_format=deployment.get("domain-format"),
+            domain_format=get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT),
             project_data=project_data,
             cluster=cluster,
         )
@@ -2684,36 +2692,33 @@ async def update_deployment_domain_settings(request: Request, project_name: str,
         yaml_deployments = project_yaml.get("deployments", [])
         for yaml_dep in yaml_deployments:
             if yaml_dep.get("name") == deployment_name:
-                # Update domain settings
-                yaml_dep["domain-mode"] = domain_mode
+                # Update domain settings. Every write and every removal goes through the
+                # service's own accessors (RC-60), so the modal cannot leave a value behind
+                # in the deployment root that a later read would resurrect.
+                set_domain_setting(yaml_dep, DomainSetting.DOMAIN_MODE, domain_mode)
 
                 # Handle subdomain and base-domain based on mode
                 if domain_mode == "nice-url":
-                    yaml_dep["subdomain"] = subdomain
-                    yaml_dep["base-domain"] = base_domain
+                    set_domain_setting(yaml_dep, DomainSetting.SUBDOMAIN, subdomain)
+                    set_domain_setting(yaml_dep, DomainSetting.BASE_DOMAIN, base_domain)
                     # Auto-enable Let's Encrypt for nice-url mode (HTTPS by default)
-                    yaml_dep["issuer"] = "letsencrypt"
+                    set_domain_setting(yaml_dep, DomainSetting.ISSUER, "letsencrypt")
                 elif domain_mode == "custom":
-                    yaml_dep["subdomain"] = subdomain
+                    set_domain_setting(yaml_dep, DomainSetting.SUBDOMAIN, subdomain)
                     # Remove base-domain and issuer for custom mode
-                    if "base-domain" in yaml_dep:
-                        del yaml_dep["base-domain"]
-                    if "issuer" in yaml_dep:
-                        del yaml_dep["issuer"]
+                    pop_domain_setting(yaml_dep, DomainSetting.BASE_DOMAIN)
+                    pop_domain_setting(yaml_dep, DomainSetting.ISSUER)
                 else:
                     # Remove subdomain, base-domain, and issuer for other modes
-                    if "subdomain" in yaml_dep:
-                        del yaml_dep["subdomain"]
-                    if "base-domain" in yaml_dep:
-                        del yaml_dep["base-domain"]
-                    if "issuer" in yaml_dep:
-                        del yaml_dep["issuer"]
+                    pop_domain_setting(yaml_dep, DomainSetting.SUBDOMAIN)
+                    pop_domain_setting(yaml_dep, DomainSetting.BASE_DOMAIN)
+                    pop_domain_setting(yaml_dep, DomainSetting.ISSUER)
 
                 # Handle root component — set on deployment level
                 if root_component:
-                    yaml_dep["root-component"] = root_component
-                elif "root-component" in yaml_dep:
-                    del yaml_dep["root-component"]
+                    set_domain_setting(yaml_dep, DomainSetting.ROOT_COMPONENT, root_component)
+                else:
+                    pop_domain_setting(yaml_dep, DomainSetting.ROOT_COMPONENT)
 
                 # Clean up any legacy root flags on components
                 for comp in yaml_dep.get("components", []):

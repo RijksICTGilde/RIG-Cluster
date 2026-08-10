@@ -17,6 +17,7 @@ from opi.connectors.subdomain import (
 )
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_domain_issuer
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,7 @@ class IssuerGenerator:
         if not isinstance(dep, dict):
             return None
 
-        base_domain = dep.get("base-domain")
+        base_domain = get_domain_setting(dep, DomainSetting.BASE_DOMAIN)
         if not base_domain:
             return None
 
