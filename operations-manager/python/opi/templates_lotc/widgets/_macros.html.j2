@@ -113,15 +113,21 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 </div>
 {% endmacro %}
 
+{#
+  De statusiconen gaan door ``nldd_icon``. De ROOS-namen (vinkje, kruis) staan niet in de
+  NLDD-woordenschat en renderen daar leeg - stil, want een onbekende naam levert geen
+  fout op. De kleuren zijn weg: dat is de ROOS-woordenschat (groen, hemelblauw) en NLDD
+  doet er niets mee. Zie tests/test_lotc_icon_mapping.py voor de vertaaltabel.
+#}
 {% macro task_status_icon(status) %}
 {%- if status == "completed" -%}
-<c-icon icon="vinkje" size="sm" color="groen"/>
+<c-icon icon="{{ 'vinkje' | nldd_icon }}" size="sm"/>
 {%- elif status == "failed" -%}
-<c-icon icon="kruis" size="sm" color="rood"/>
+<c-icon icon="{{ 'kruis' | nldd_icon }}" size="sm"/>
 {%- elif status == "running" -%}
-<c-icon icon="pijl-naar-rechts" size="sm" color="hemelblauw"/>
+<c-icon icon="{{ 'pijl-naar-rechts' | nldd_icon }}" size="sm"/>
 {%- else -%}
-<c-icon icon="klok" size="sm" color="grijs-600"/>
+<c-icon icon="{{ 'klok' | nldd_icon }}" size="sm"/>
 {%- endif -%}
 {% endmacro %}
 

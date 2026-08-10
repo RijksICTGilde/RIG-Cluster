@@ -22,7 +22,12 @@ REALM = "demo-realm"
 ENCRYPTED_SEED = "AGE-ENCRYPTED-SEED-BLOB"
 RAW_SEED = "12345678901234567890"
 
-_SECTION_TEMPLATE = Path(__file__).parent.parent / "opi/services/catalog/keycloak/section-detail.html.j2"
+#: Beide vormgevingen van het blok dat de knop draagt. De LOTC-tegenhanger kwam er in
+#: RC-64 bij, en een drift-poort die maar een van de twee leest, bewaakt de helft.
+_SECTION_TEMPLATES = [
+    Path(__file__).parent.parent / "opi/services/catalog/keycloak/section-detail.html.j2",
+    Path(__file__).parent.parent / "opi/services/catalog/keycloak/section-detail-lotc.html.j2",
+]
 
 
 def _project_data() -> dict[str, Any]:
@@ -53,15 +58,16 @@ async def _call(role: str = "admin", realm: str = REALM, data: dict[str, Any] | 
 
     Returns the response plus the context handed to the template, which is where
     a leaked seed would show up.
+
+    Het antwoord gaat sinds RC-64 door ``render_fragment``: hetzelfde fragment, in de
+    vormgeving van de pagina die het opvraagt. Beide sjabloonnamen worden hier gevangen,
+    zodat een lek in een van de twee wegen even hard opvalt.
     """
     captured: dict = {}
 
-    def _template_response(request: Any, name: str, context: dict) -> str:
-        captured.update({"template": name, "context": context})
+    def _render_fragment(request: Any, *, roos: str, lotc: str, context: dict, **_: Any) -> str:
+        captured.update({"template": roos, "lotc_template": lotc, "context": context})
         return "<html/>"
-
-    templates = MagicMock()
-    templates.TemplateResponse.side_effect = _template_response
 
     store = MagicMock()
     store.get.return_value = MagicMock(data=_project_data() if data is None else data)
@@ -76,7 +82,7 @@ async def _call(role: str = "admin", realm: str = REALM, data: dict[str, Any] | 
         patch("opi.web.router.get_project_store", return_value=store),
         patch("opi.web.router.get_global_private_key", return_value="GLOBAL-KEY"),
         patch("opi.web.router.decrypt_password_smart", decrypt),
-        patch("opi.web.router.get_templates", return_value=templates),
+        patch("opi.web.router.render_fragment", _render_fragment),
     ):
         response = await keycloak_otp_code_web(MagicMock(), PROJECT, realm)
 
@@ -87,6 +93,7 @@ async def test_returns_a_six_digit_code() -> None:
     _, captured = await _call()
 
     assert captured["template"] == "keycloak/otp-code.html.j2"
+    assert captured["lotc_template"] == "keycloak/otp-code-lotc.html.j2"
     code = captured["context"]["code"]
     assert len(code) == 6, code
     assert code.isdigit(), code
@@ -142,9 +149,10 @@ def test_detail_section_no_longer_renders_the_seed_or_loads_a_cdn_script() -> No
     The seed used to be rendered here, next to a jsdelivr script tag that could
     read it. Both are gone; this fails if either creeps back.
     """
-    source = _SECTION_TEMPLATE.read_text()
+    for template in _SECTION_TEMPLATES:
+        source = template.read_text()
 
-    assert "totp_secret" not in source
-    assert "totp_otpauth_uri" not in source
-    assert "cdn.jsdelivr.net" not in source
-    assert "otp-code" in source, "the on-demand code button should still be here"
+        assert "totp_secret" not in source, template
+        assert "totp_otpauth_uri" not in source, template
+        assert "cdn.jsdelivr.net" not in source, template
+        assert "otp-code" in source, f"{template}: the on-demand code button should still be here"
