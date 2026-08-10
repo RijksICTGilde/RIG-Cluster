@@ -403,7 +403,7 @@ SNAPSHOT = {
 def _backups_fragment(deployment: str) -> str:
     from opi.core.templates_lotc import templates_lotc
 
-    return templates_lotc.env.get_template("bg/_backup-snapshots.html.j2").render(
+    return templates_lotc.env.get_template("shared/_backup-snapshots-lotc.html.j2").render(
         deployments=[{"name": deployment}],
         backups_by_deployment={deployment: [dict(SNAPSHOT, deployment_name=deployment)]},
         backups_error=None,

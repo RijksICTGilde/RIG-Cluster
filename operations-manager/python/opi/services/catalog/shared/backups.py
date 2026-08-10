@@ -207,7 +207,7 @@ async def backups_fragment(request: Request, project_name: str) -> HTMLResponse:
     return render(
         request,
         roos="shared/_backup-snapshots.html.j2",
-        lotc="bg/_backup-snapshots.html.j2",
+        lotc="shared/_backup-snapshots-lotc.html.j2",
         context={
             "deployments": deployments,
             "backups_by_deployment": backups_by_deployment,
