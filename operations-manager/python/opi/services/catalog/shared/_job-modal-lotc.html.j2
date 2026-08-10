@@ -113,7 +113,7 @@
             {% set uitvoeren_attrs = {
                 'hx-post': '/projects/' ~ project_name ~ '/jobs',
                 'hx-headers': '{"X-CSRF-Token": "' ~ request.state.csrf_token ~ '"}',
-                'hx-include': '#job-form-' ~ deployment_name,
+                'hx-include': '#job-form-' ~ deployment_name ~ ' nldd-text-field',
                 'hx-vals': '{"deployment": "' ~ deployment_name ~ '"}',
                 'hx-target': '#job-modal-body',
                 'hx-swap': 'outerHTML',
