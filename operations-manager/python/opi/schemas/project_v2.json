@@ -321,6 +321,10 @@
           "items": { "$ref": "#/$defs/deployment-helmfile" }
         },
         "root-component": { "type": "string" },
+        "expose-component-on-bare-domain": {
+          "comment": "Component served on the bare custom domain, or false/absent for none. Written by DOMAIN_BARE_DOMAIN_COMPONENT_EDITABLE since PR #38 but never declared here, so every deployment using it failed schema validation (RC-60 phase 0). The readers default it to False (keycloak_manager, project_manager), hence the boolean.",
+          "type": ["string", "boolean", "null"]
+        },
         "clone-from": { "$ref": "#/$defs/clone-from" },
         "backup": { "$ref": "#/$defs/deployment-backup" },
         "sleep": { "$ref": "#/$defs/deployment-sleep" }
