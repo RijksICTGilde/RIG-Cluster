@@ -12,7 +12,7 @@ from opi.connectors.subdomain import (
 )
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_domain_supports_dots
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path, get_domain_setting
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.services.services import service_entry_name
@@ -256,7 +256,7 @@ class DomainConfigEnforcer:
             # processed), surface the error against the subdomain input so it
             # is visible — not against the parent group path.
             raise FieldError(
-                f"deployments[{self.deployment_index}]/subdomain",
+                domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index),
                 "Een subdomein is vereist voor het gekozen URL-formaat",
             )
 
@@ -287,7 +287,7 @@ class DomainConfigEnforcer:
             domain_field = (
                 f"deployments[{self.deployment_index}]/base-domain:custom"
                 if base_domain == "__custom__"
-                else f"deployments[{self.deployment_index}]/base-domain"
+                else domain_setting_path(DomainSetting.BASE_DOMAIN, self.deployment_index)
             )
             is_allowed, error_msg = is_domain_allowed_for_project(actual_domain, value)
             if not is_allowed:
@@ -310,7 +310,7 @@ class DomainConfigEnforcer:
 
         # Check subdomain restrictions for restricted domains
         if subdomain and actual_domain and "{subdomain}" in template:
-            subdomain_field = f"deployments[{self.deployment_index}]/subdomain"
+            subdomain_field = domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index)
             is_allowed, error_msg = is_subdomain_allowed_for_project(subdomain, actual_domain, value, cluster)
             if not is_allowed:
                 status = get_subdomain_status(value, actual_domain, subdomain)
@@ -336,7 +336,7 @@ class DomainConfigEnforcer:
                 subdomain,
                 actual_domain,
                 context,
-                field_path=f"deployments[{self.deployment_index}]/subdomain",
+                field_path=domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index),
             )
 
         # Validate bare domain component: only valid with custom domains

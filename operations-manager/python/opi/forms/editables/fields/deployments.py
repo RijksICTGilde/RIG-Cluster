@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from opi.forms.editables.conditions import SentinelValueCondition
 from opi.forms.editables.converters import (
     CloneFromConverter,
-    CustomDomainSelectConverter,
     RRuleDayConverter,
     RRuleFrequencyConverter,
     RRuleMonthDayConverter,
@@ -13,14 +11,17 @@ from opi.forms.editables.converters import (
 )
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.validators import (
-    BaseDomainValidator,
-    CustomDomainValidator,
-    DomainFormatValidator,
     KubernetesNameValidator,
     PathValidator,
-    SubdomainValidator,
 )
-from opi.services.registry import deployment_component_service_editables
+from opi.services.catalog.publish_on_web.editables import (
+    DOMAIN_BASE_DOMAIN_EDITABLE,
+    DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE,
+    DOMAIN_FORMAT_EDITABLE,
+    DOMAIN_MODE_EDITABLE,
+    DOMAIN_SUBDOMAIN_EDITABLE,
+)
+from opi.services.registry import deployment_component_service_editables, deployment_service_editables
 
 # ===========================================================================
 # Pure Editable definitions (data logic only)
@@ -35,28 +36,17 @@ DEPLOYMENT_CLUSTER_EDITABLE = Editable(
 DEPLOYMENT_REPOSITORY_EDITABLE = Editable(
     yaml_path="deployments[*]/repository", values_provider="RepositoryOptionsProvider"
 )
-DEPLOYMENT_SUBDOMAIN_EDITABLE = Editable(yaml_path="deployments[*]/subdomain", validator=SubdomainValidator())
-DEPLOYMENT_BASE_DOMAIN_EDITABLE = Editable(
-    yaml_path="deployments[*]/base-domain",
-    values_provider="BaseDomainOptionsProvider",
-    validator=BaseDomainValidator(),
-    converter=CustomDomainSelectConverter(),
-    defers_to="deployments[*]/base-domain:custom",
-    defer_when=SentinelValueCondition(),
-)
-DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE = Editable(
-    yaml_path="deployments[*]/base-domain:custom",
-    transient=True,
-    validator=CustomDomainValidator(),
-)
-DEPLOYMENT_DOMAIN_MODE_EDITABLE = Editable(
-    yaml_path="deployments[*]/domain-mode", values_provider="DomainModeOptionsProvider"
-)
-DEPLOYMENT_DOMAIN_FORMAT_EDITABLE = Editable(
-    yaml_path="deployments[*]/domain-format",
-    values_provider="DomainFormatOptionsProvider",
-    validator=DomainFormatValidator(),
-)
+# The web-address fields of a deployment are publish-on-web's (RC-60). This module used to
+# define its OWN base-domain / subdomain / domain-mode / domain-format editables, with
+# different providers and validators than the wizard's, for exactly the same yaml_path. Two
+# definitions for one path in two flows is how a conversion ends up half-done: whoever moves
+# one and misses the other leaves a flow writing the old shape. There is one set now, owned
+# by the service, and the deployment sequence uses it under the familiar names.
+DEPLOYMENT_SUBDOMAIN_EDITABLE = DOMAIN_SUBDOMAIN_EDITABLE
+DEPLOYMENT_BASE_DOMAIN_EDITABLE = DOMAIN_BASE_DOMAIN_EDITABLE
+DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE = DOMAIN_CUSTOM_BASE_DOMAIN_EDITABLE
+DEPLOYMENT_DOMAIN_MODE_EDITABLE = DOMAIN_MODE_EDITABLE
+DEPLOYMENT_DOMAIN_FORMAT_EDITABLE = DOMAIN_FORMAT_EDITABLE
 DEPLOYMENT_CLONE_FROM_EDITABLE = Editable(
     yaml_path="deployments[*]/clone-from",
     values_provider="DeploymentCloneFromOptionsProvider",
@@ -240,11 +230,9 @@ DEPLOYMENTS_SEQUENCE_EDITABLE = Editable(
         DEPLOYMENT_NAME_EDITABLE,
         DEPLOYMENT_CLUSTER_EDITABLE,
         DEPLOYMENT_REPOSITORY_EDITABLE,
-        DEPLOYMENT_SUBDOMAIN_EDITABLE,
-        DEPLOYMENT_BASE_DOMAIN_EDITABLE,
-        DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE,
-        DEPLOYMENT_DOMAIN_MODE_EDITABLE,
-        DEPLOYMENT_DOMAIN_FORMAT_EDITABLE,
+        # Per-service deployment fields, gathered from the registry (RC-60): the
+        # web-address set is publish-on-web's, and nothing here names it.
+        *deployment_service_editables(),
         DEPLOYMENT_CLONE_FROM_EDITABLE,
         DEPLOYMENT_BACKUP_SCHEDULE_EDITABLE,
         DEPLOYMENT_BACKUP_SCHEDULE_TIME_EDITABLE,
