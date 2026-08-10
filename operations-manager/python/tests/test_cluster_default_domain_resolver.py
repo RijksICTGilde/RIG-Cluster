@@ -19,6 +19,7 @@ from unittest.mock import patch
 from opi.forms.editables.conditions import DomainNeedsRequestCondition
 from opi.forms.editables.hooks import _resolve_missing_base_domains
 from opi.forms.editables.resolvers import ClusterDefaultDomain
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path, get_domain_setting
 
 _PROD = "odcn-production"
 _PROD_DEFAULT = "rig.prd1.gn2.quattro.rijksapps.nl"
@@ -41,7 +42,7 @@ class TestRequestCheckboxVisibility:
     def test_checkbox_hidden_for_cluster_default(self):
         """Empty base-domain (cluster default) must NOT show the request checkbox."""
         cond = DomainNeedsRequestCondition(deployment_index=0)
-        resolvers = {"deployments[0]/base-domain": ClusterDefaultDomain()}
+        resolvers = {domain_setting_path(DomainSetting.BASE_DOMAIN, 0): ClusterDefaultDomain()}
         cond.set_resolvers(resolvers)
         data = {"deployments": [{"name": "productie"}]}  # no base-domain -> cluster default
         with _prod_settings():
@@ -58,10 +59,10 @@ class TestResolveMissingBaseDomains:
     def test_cluster_default_is_not_materialised(self):
         """The hook must not write the cluster default into the deployment."""
         data = {"deployments": [{"name": "productie"}]}
-        resolvers = {"deployments[0]/base-domain": ClusterDefaultDomain()}
+        resolvers = {domain_setting_path(DomainSetting.BASE_DOMAIN, 0): ClusterDefaultDomain()}
         with _prod_settings():
             _resolve_missing_base_domains(data, {"resolvers": resolvers})
-        assert "base-domain" not in data["deployments"][0]
+        assert get_domain_setting(data["deployments"][0], DomainSetting.BASE_DOMAIN) is None
 
     def test_real_resolved_domain_is_materialised(self):
         """A genuine non-default resolver value is still filled in."""
@@ -71,7 +72,7 @@ class TestResolveMissingBaseDomains:
                 return "klant.example.com"
 
         data = {"deployments": [{"name": "productie"}]}
-        resolvers = {"deployments[0]/base-domain": _Fixed()}
+        resolvers = {domain_setting_path(DomainSetting.BASE_DOMAIN, 0): _Fixed()}
         with _prod_settings():
             _resolve_missing_base_domains(data, {"resolvers": resolvers})
-        assert data["deployments"][0]["base-domain"] == "klant.example.com"
+        assert get_domain_setting(data["deployments"][0], DomainSetting.BASE_DOMAIN) == "klant.example.com"

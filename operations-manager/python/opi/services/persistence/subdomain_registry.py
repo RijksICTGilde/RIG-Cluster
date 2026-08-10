@@ -432,16 +432,37 @@ class SubdomainConnector:
             logger.exception(f"Failed to register bare domain '{base_domain_lower}'")
             raise SubdomainError(f"Bare domain registration failed: {e}") from e
 
-    async def delete_bare_domain(self, base_domain: str) -> bool:
+    async def delete_bare_domain(self, base_domain: str, project_name: str | None = None) -> bool:
         """Delete a bare domain registration.
+
+        The registry is shared across tenants and a base-domain is just a string in a
+        project file, so the cleanup path (a deployment that stopped exposing the apex)
+        must scope its delete to its own project -- otherwise naming another tenant's
+        domain wipes THEIR apex registration.
 
         Args:
             base_domain: The base domain to delete
+            project_name: When given, only delete a registration owned by this project
 
         Returns:
-            True if deleted, False if not found
+            True if deleted, False if not found (or owned by another project)
         """
-        return await self.delete(BARE_DOMAIN_SUBDOMAIN, base_domain)
+        if project_name is None:
+            return await self.delete(BARE_DOMAIN_SUBDOMAIN, base_domain)
+
+        async with session_scope() as session:
+            result = await session.execute(
+                delete(SubdomainRegistry).where(
+                    SubdomainRegistry.subdomain == BARE_DOMAIN_SUBDOMAIN,
+                    SubdomainRegistry.base_domain == base_domain.lower(),
+                    SubdomainRegistry.project_name == project_name,
+                )
+            )
+            deleted = result.rowcount == 1
+            if deleted:
+                logger.info(f"Deleted bare domain registration '{base_domain.lower()}' for project '{project_name}'")
+                audit_logger.info(f"BARE_DOMAIN_DELETED: {base_domain.lower()} project={project_name}")
+            return deleted
 
     async def register_or_update_for_deployment(
         self,

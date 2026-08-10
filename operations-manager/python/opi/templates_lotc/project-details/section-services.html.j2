@@ -7,7 +7,7 @@
             {% set lotc_onclick_1 %}openEditModal('modal-edit-services', 'Services beheren'){% endset %}<c-button size="sm" label="Bewerken" show-icon="before" icon="bewerken"/>
             {% endif %}
         </c-layout-flow>
-        <p class="rvo-text--subtle">Geactiveerde services voor dit project</p>
+        <p>Geactiveerde services voor dit project</p>
 
         {% if project.services %}
         <c-grid columns="three" gap="lg">
@@ -21,10 +21,10 @@
                             <div class="service-scope">{{ service_binding_label(service.enum) }}</div>
                         </div>
                     </div>
-                    <p class="rvo-text--sm">{{ service_def.description }}</p>
+                    <p>{{ service_def.description }}</p>
                     {% set config_hint = service_config_hint(service.enum) %}
                     {% if config_hint %}
-                    <p class="rvo-text--sm rvo-text--subtle">{{ config_hint }}</p>
+                    <p>{{ config_hint }}</p>
                     {% endif %}
                     {% if user_role in ["admin", "owner"] and service.value in service_config_sections %}
                     {% set lotc_onclick_2 %}openEditModal('{{ service_config_sections[service.value] }}', '{{ service_def.name }} configuratie'){% endset %}<c-button label="Configureer" size="sm" icon="bewerken"/>

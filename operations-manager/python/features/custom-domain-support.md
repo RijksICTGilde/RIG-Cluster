@@ -1,5 +1,12 @@
 # Custom Domain Support
 
+> **Waar dit wordt opgeslagen (schemaversie 2.7):** de velden hieronder staan in het
+> projectbestand onder `deployments[].services[publish-on-web].config`, niet meer los in de
+> wortel van de deployment. Zie
+> [webadres-onder-de-dienst.md](../../../features/webadres-onder-de-dienst.md). De
+> YAML-fragmenten in dit document tonen de velden zonder dat omhulsel, om over hun betekenis
+> te gaan en niet over hun plek.
+
 ## What it is
 
 Users can now specify their own custom domain (e.g. `mijnorganisatie.nl`) for deployments instead of being limited to pre-configured cluster domains (e.g. `rijks.app`, `rijksapp.nl`). The user takes responsibility for DNS configuration.

@@ -19,6 +19,7 @@ from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
 from opi.services import ServiceAdapter
 from opi.services.catalog.base import ConfigLayer, Service
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.postgres_scope import get_postgres_schemas
 from opi.services.project import Project
 from opi.services.registry import get_service, property_owning_services
@@ -468,7 +469,7 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
         seen_deployments.add(dep_name)
 
         refs = dep.get("components", []) or []
-        domain_mode = dep.get("domain-mode", "component-specific")
+        domain_mode = get_domain_setting(dep, DomainSetting.DOMAIN_MODE, "component-specific")
 
         # All component references resolve to a defined component
         reference_result = validate_component_references(project_data, refs, "deployment")
@@ -488,11 +489,13 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
             raise ProjectIntegrityError(str(e)) from e
 
         # Root component constraints
-        root_ref = dep.get("root-component")
+        root_ref = get_domain_setting(dep, DomainSetting.ROOT_COMPONENT)
         if root_ref:
             ref_names = [name for r in refs if isinstance(r, dict) and (name := r.get("reference"))]
             try:
-                validate_root_component(root_ref, ref_names, domain_mode, dep.get("domain-format"))
+                validate_root_component(
+                    root_ref, ref_names, domain_mode, get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT)
+                )
             except ComponentValidationError as e:
                 raise ProjectIntegrityError(str(e)) from e
 

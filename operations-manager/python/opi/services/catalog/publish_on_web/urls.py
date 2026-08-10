@@ -17,6 +17,7 @@ import logging
 from typing import Any
 
 from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.utils.naming import HostnameFormat, generate_public_url, get_component_ingress_map
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ def public_urls_for_deployment(
     try:
         ingress_postfix = get_ingress_postfix(cluster)
         use_https = get_ingress_tls_enabled(cluster)
-        hostname_format = HostnameFormat.from_domain_mode(deployment.get("domain-mode"))
+        hostname_format = HostnameFormat.from_domain_mode(get_domain_setting(deployment, DomainSetting.DOMAIN_MODE))
 
         links: list[dict[str, str]] = []
         for component in deployment.get("components", []) or []:
@@ -60,10 +61,10 @@ def public_urls_for_deployment(
                 deployment_name=deployment["name"],
                 project_name=project_name,
                 ingress_postfix=ingress_postfix,
-                subdomain=deployment.get("subdomain"),
-                base_domain=deployment.get("base-domain"),
+                subdomain=get_domain_setting(deployment, DomainSetting.SUBDOMAIN),
+                base_domain=get_domain_setting(deployment, DomainSetting.BASE_DOMAIN),
                 hostname_format=hostname_format,
-                domain_format=deployment.get("domain-format"),
+                domain_format=get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT),
                 project_data=project_data,
                 cluster=cluster,
             )

@@ -1,8 +1,11 @@
 {#
   Herhaalbare reeks voor de LOTC-bouwlijn.
 
-  De rvo-sequence-klassen zijn haken waar wizard.js aan hangt (toevoegen en verwijderen
-  van items), dus die blijven ongewijzigd.
+  De sequence-klassen heten sinds RC-62 lotc-sequence__* in plaats van rvo-sequence__*.
+  Ze zijn geen rvo-rest: static/css/wizard.css maakt ze op, en die stylesheet wordt op
+  deze pagina's geladen. Weghalen zou de tussenruimte en de kop van een item slopen, dus
+  staan ze onder beide namen in wizard.css - de rvo-naam voor de roos-bouwlijn, de
+  lotc-naam hier. Wat wizard.js wel opzoekt is de id en de data-attributen hieronder.
 
   Omgezet uit de roos-versie: bool_attr/optional_attr zijn :prop="expr" geworden en de
   attribuutbundels een enkele :attrs-spread. De roos-macro's schreven attribuut-TEKST
@@ -15,25 +18,25 @@
 {% set current_count = items_html|length %}
 {% set add_disabled = max_items is not none and current_count >= max_items|int %}
 {% set fixed_size = max_items is not none and min_items == max_items|int %}
-<div class="rvo-sequence" id="{{ field.path|e }}-container"
+<div id="{{ field.path|e }}-container"
      data-min-items="{{ min_items }}" data-max-items="{{ max_items|default('', true) }}" data-current-count="{{ current_count }}">
-    <span class="utrecht-form-label rvo-form-field__label-text">{{ field.label|e }}</span>
+    <span class="utrecht-form-label">{{ field.label|e }}</span>
     {{ helper_text(field) }}
     {# De items in een c-stack, zodat de tussenruimte van het COMPONENT komt en niet uit
        een eigen CSS-regel. Hier stond een kale div, en die heeft geen gap: de kaarten van
        een reeks - de componenten in de wizard bijvoorbeeld - stonden daardoor pal tegen
        elkaar geplakt. Gemeten: 0px tussen alle zeven.
 
-       De klasse rvo-sequence__items blijft staan: wizard.js hangt zijn toevoegen en
-       verwijderen daaraan op, net als aan de id. #}
+       De klasse lotc-sequence__items blijft staan: wizard.css geeft de lijst zijn
+       ondermarge. wizard.js vindt de lijst via de id hieronder. #}
     {# De id BOVEN de tag samenstellen: een ~ binnen :attrs laat de uitdrukkingslezer
        struikelen ("Invalid expression in ':attrs'"). #}
     {% set items_id = field.path ~ "-items" %}
-    <c-stack gap="lg" class="rvo-sequence__items" :attrs="{'id': items_id}">
+    <c-stack gap="lg" class="lotc-sequence__items" :attrs="{'id': items_id}">
         {% for item in items_html %}{{ item }}{% endfor %}
     </c-stack>
     {% if not fixed_size and field.add_remove %}
-    <div class="rvo-sequence__actions">
+    <div class="lotc-sequence__actions">
         {# @click met Jinja erin werkt niet: de voorbewerker leest de waarde van een
        @-attribuut als kale tekst, dus {{ ... }} komt er letterlijk uit en de knop doet
        stilletjes niets. Via de :attrs-spread wordt het wel een expressie, en geescapet. #}

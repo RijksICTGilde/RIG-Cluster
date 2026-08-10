@@ -336,6 +336,20 @@ def component_service_visualizers() -> list[EditableVisualizer]:
     return visualizers
 
 
+def deployment_service_editables() -> list[Editable]:
+    """Deployment-level editables every service contributes, in ``config_component_order``.
+
+    The missing sibling of ``component_service_editables`` (RC-60). Until publish-on-web
+    took its web-address fields back there was nothing at this layer for a service to
+    contribute, so the deployment form hand-authored them -- twice, in two flows, for one
+    yaml_path. Services that contribute nothing at the deployment layer add nothing.
+    """
+    editables: list[Editable] = []
+    for service in sorted(SERVICES.values(), key=lambda s: s.config_component_order):
+        editables.extend(service.config_editables(ConfigLayer.DEPLOYMENT))
+    return editables
+
+
 def deployment_component_service_editables() -> list[Editable]:
     """Deployment-component editables every service contributes, in
     ``config_component_order`` (RC-25).

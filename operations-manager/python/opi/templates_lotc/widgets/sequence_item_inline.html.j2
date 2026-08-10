@@ -7,7 +7,7 @@
 #}
 {% set min_items = (field.min_items or field.attributes.get('min_items', 0))|int %}
 {% set remove_disabled = (field.children|length if field.children else 0) <= min_items %}
-<div class="rvo-sequence__item rvo-sequence__item--inline" data-index="{{ index }}">
+<div class="lotc-sequence__item--inline" data-index="{{ index }}">
     {{ item_html }}
     {% if field.add_remove %}
     {# @click met Jinja erin werkt niet: de voorbewerker leest de waarde van een
