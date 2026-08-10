@@ -4,9 +4,9 @@
 {% set val = field.value|string if field.value else '' %}
 <c-card padding="md" outline>
     <c-layout-flow gap="xs">
-        <div class="rvo-display-field__header">
+        <div class="lotc-display-field__header">
             <c-icon icon="{{ icon|e }}" size="md" color="{{ icon_color|e }}"/>
-            <span class="utrecht-form-label rvo-form-field__label-text">{{ field.label|e }}</span>
+            <span class="utrecht-form-label">{{ field.label|e }}</span>
         </div>
         {% if val %}
             {% if val in ['Versleuteld opgeslagen', 'Geconfigureerd'] %}
@@ -14,7 +14,7 @@
             {% elif val == 'Niet geconfigureerd' %}
         <c-tag type="warning"/>
             {% else %}
-        <span class="rvo-text--sm rvo-text--subtle">{{ val|e }}</span>
+        <span>{{ val|e }}</span>
             {% endif %}
         {% endif %}
         {{ helper_text(field) }}

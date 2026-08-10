@@ -15,7 +15,7 @@
                                 service_info.definition.help_template,
                                 icon_size="3xl",
                             ) }}
-                            <p class="rvo-text--sm rvo-text--subtle">
+                            <p>
                                 API naam: <code>{{ service_info.service.value }}</code>
                             </p>
                         </div>
@@ -35,14 +35,14 @@
 
                                                 {% if variable.aliases %}
                                                     <div class="variable-aliases">
-                                                        <span class="rvo-text--xs rvo-text--subtle">Aliassen: </span>
+                                                        <span>Aliassen: </span>
                                                         {% for alias in variable.aliases %}
-                                                            <code class="rvo-text--xs">{{ alias }}</code>{% if not loop.last %}, {% endif %}
+                                                            <code>{{ alias }}</code>{% if not loop.last %}, {% endif %}
                                                         {% endfor %}
                                                     </div>
                                                 {% endif %}
 
-                                                <p class="rvo-text--xs rvo-text--subtle">
+                                                <p>
                                                     {{ variable.description }}
                                                 </p>
                                             </c-layout-flow>

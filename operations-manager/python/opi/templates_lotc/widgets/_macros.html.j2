@@ -29,26 +29,26 @@
 
 {% macro description_text(field) %}
 {%- if field.description and field.help_text -%}
-<span class="rvo-form-field__helper-text">{{ field.description }}<br><br></span>
+<span>{{ field.description }}<br><br></span>
 {%- endif -%}
 {% endmacro %}
 
 {% macro helper_text(field) %}
 {% if field.description and field.help_text %}
-<div class="rvo-form-field__helper-group">
-<span class="rvo-form-field__helper-text">{{ field.description }}</span>
-<span class="rvo-form-field__helper-text">{{ field.help_text }}</span>
+<div class="lotc-form-field__helper-group">
+<span>{{ field.description }}</span>
+<span>{{ field.help_text }}</span>
 </div>
 {% elif field.description %}
-<span class="rvo-form-field__helper-text">{{ field.description }}</span>
+<span>{{ field.description }}</span>
 {% elif field.help_text %}
-<span class="rvo-form-field__helper-text">{{ field.help_text }}</span>
+<span>{{ field.help_text }}</span>
 {% endif %}
 {% endmacro %}
 
 {% macro render_examples(field) %}
 {% if field.examples %}
-<div class="rvo-form-field__examples">
+<div>
 Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
 </div>
 {% endif %}
@@ -158,9 +158,9 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 
 {% macro render_errors(errors) %}
 {% if errors %}
-<div class="rvo-form-field__errors">
+<div>
 {% for error in errors %}
-<span class="rvo-form-field__error-text">{{ error }}</span>
+<span class="lotc-form-field__error-text">{{ error }}</span>
 {% endfor %}
 </div>
 {% endif %}
