@@ -128,6 +128,12 @@ AANVAARD: dict[str, str] = {
     # aanwijst. Het nieuwe tabblad haalt hem bij het laden op - zelfde lijst, zelfde URL,
     # zonder dat er een tweede plek is die weet wanneer het moet.
     "tasks-content": "de takenlijst laadt nu bij het openen van zijn eigen tabblad",
+    # De knop van de jobdialoog doet zijn verzoek zelf, met hx-include, in plaats van een
+    # <form> in te dienen. Niet uit voorkeur: <c-form> rendert een <nldd-form> (een
+    # web-component, geen formulier), en met een echte <form> eromheen bereikte de klik van
+    # de <nldd-button> het submit-event niet - ook form.requestSubmit() leverde geen enkel
+    # verzoek op. De consoledialoog ernaast doet het in BEIDE vormgevingen al zo.
+    "hx-include=#job-form-": "de knop doet het verzoek zelf; een verzendknop in een form deed daar niets",
     # Ongebruikte markup: log_viewer.js noemt log-pause-icon nergens. De pauzeknop zelf
     # (log-pause-btn) staat er wel en werkt.
     "log-pause-icon": "dode markup; het script gebruikt dit id niet",
@@ -294,7 +300,17 @@ def vergelijk(oud: Oppervlak, nieuw: Oppervlak) -> list[str]:
         regels.extend(
             f"  WEG      {label:11s} {weg}" for weg in sorted(a - b) if not any(sleutel in weg for sleutel in AANVAARD)
         )
-        regels.extend(f"  NIEUW    {label:11s} {erbij}" for erbij in sorted(b - a))
+        # AANVAARD geldt beide kanten op. Hij filterde alleen wat WEG was, en dat is de
+        # helft van het verhaal: een omzetting kan ook iets TOEVOEGEN dat we bewust
+        # aanvaarden. De jobdialoog is zo'n geval - zijn knop doet het verzoek zelf, met een
+        # hx-include, omdat een verzendknop in een <form> daar aantoonbaar niets deed. Zonder
+        # deze regel is de enige uitweg de meetlat uitzetten, en dat is precies wat je niet
+        # wilt: een verschil dat je aanvaardt hoort opgeschreven te staan, niet weggeklikt.
+        regels.extend(
+            f"  NIEUW    {label:11s} {erbij}"
+            for erbij in sorted(b - a)
+            if not any(sleutel in erbij for sleutel in AANVAARD)
+        )
     return regels
 
 
