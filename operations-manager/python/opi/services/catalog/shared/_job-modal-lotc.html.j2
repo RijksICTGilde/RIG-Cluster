@@ -108,8 +108,15 @@
                         label="Commando"
                         value="{{ form_command | default('', true) }}"
                         help="Optioneel. Leeg laten = het standaardcommando van de image." />
-                    <c-button type="primary" size="sm" label="Job uitvoeren"
-                              :attrs="{'type': 'submit'}" />
+                    {# html-type en niet type: op c-button is ``type`` de VORMGEVING
+                       (primary/secondary/...) en ``html-type`` het HTML-attribuut, met
+                       "button" als standaard. Hier stond :attrs="{'type': 'submit'}", en
+                       dat verloor het van het type="button" dat de component zelf
+                       schrijft: de knop zag er goed uit, en er vertrok geen enkel verzoek.
+                       Gemeten in de browser - de markupvergelijking zag hier niets van,
+                       want het hx-post staat op het FORMULIER en dat was in beide
+                       vormgevingen gelijk. #}
+                    <c-button type="primary" size="sm" label="Job uitvoeren" html-type="submit" />
                 </c-stack>
             </c-form>
         </c-stack>
