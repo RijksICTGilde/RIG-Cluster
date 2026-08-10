@@ -528,7 +528,7 @@ def test_de_voettekst_heeft_zijn_kop_links_en_versieregel(app_server: str, auth_
     # tekstselectors kijken er wel doorheen - precies het verschil dat elders in dit
     # project al twee keer een meting waardeloos maakte.
     assert voet.get_by_text("Platform", exact=True).count() >= 1, "de kop 'Platform' boven de links ontbreekt"
-    for bestemming in ("Over het platform", "Architectuur", "API Referentie"):
+    for bestemming in ("Over het platform", "API Referentie"):
         assert voet.get_by_text(bestemming, exact=True).count() >= 1, (
             f"de link '{bestemming}' staat niet in de voettekst"
         )

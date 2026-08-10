@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from tests.e2e.helpers.htmx import wait_for_htmx_quiet
 from tests.e2e.helpers.tekst import veld
 
 if TYPE_CHECKING:
@@ -68,6 +69,12 @@ class EditModalHelper:
         ``select_with_rerender``.
         """
         timeout = timeout or self.action_timeout_ms
+        # Eerst laten uitrazen wat er nog hangt. Een dienst aanvinken laat de stap
+        # server-side hertekenen; landt die swap terwijl we klikken, dan wordt de knop
+        # eronder vandaan vervangen, vertrekt er geen verzoek, en verloopt het wachten
+        # hieronder op iets dat nooit komt. In de praktijk zie je dan dat je na het
+        # aanvinken van een dienst niet op zijn configscherm belandt.
+        wait_for_htmx_quiet(self.page)
         submit_btn = self.page.locator("#modal-wizard-form button[type='submit']")
         with self.page.expect_response(lambda r: "/step/" in r.url or "/submit" in r.url, timeout=timeout):
             submit_btn.click()

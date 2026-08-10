@@ -335,11 +335,19 @@ def filter_lotc_projects(request: Request, projects: list[dict[str, Any]]) -> di
     }
 
 
-#: De tabbladen van de projectpagina. Dezelfde drie als de bestaande pagina (Project,
-#: Deployments, Taken), met Metrics erbij: het resourcegebruik zat daar tussen de
-#: tekstblokken terwijl het het enige is dat je periodiek komt bekijken.
+#: De tabbladen van de projectpagina.
+#:
+#: Het eerste tabblad heette "Project" en droeg negen blokken, van de kerncijfers tot de
+#: gevarenzone. Componenten en Services staan nu apart; wat overblijft is de INGANG van
+#: het project (hoe staat het ervoor, wie mag erbij, wat zijn de sleutels, hoe kom je
+#: ervan af), en dat is wat "Overzicht" zegt.
+#:
+#: Helm charts en helmfiles staan bij Componenten en niet bij Overzicht: het zijn net zo
+#: goed draaiende onderdelen die je op projectniveau declareert.
 PROJECT_TABS = {
-    "project": {"label": "Project"},
+    "project": {"label": "Overzicht"},
+    "componenten": {"label": "Componenten"},
+    "services": {"label": "Services"},
     "deployments": {"label": "Deployments"},
     "metrics": {"label": "Metrics"},
     "taken": {"label": "Taken"},

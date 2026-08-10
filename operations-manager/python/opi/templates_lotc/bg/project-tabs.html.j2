@@ -109,7 +109,7 @@
        document en bakent die id ze af; hier is er een per URL, maar de id houdt de twee
        VERGELIJKBAAR. Zonder wikkel moest een vergelijking de hele body nemen, en dan telt
        de gedeelde kop - inclusief de knop "Bewerken" - mee als inhoud van het tabblad. #}
-    <div id="tab-{{ active_tab }}">
+    <c-stack id="tab-{{ active_tab }}" gap="lg">
 
     {% if active_tab == 'project' %}
         {# DE VOLGORDE VAN DIT TABBLAD IS DIE VAN project-details/tab-project.html.j2.
@@ -125,9 +125,9 @@
            De kerncijfers bovenaan zijn nieuw. Ze tonen niets dat er niet al staat: het
            zijn de aantallen van de secties eronder, als ingang. #}
         <c-auto-grid min="200px" gap="md">
-            <c-metric icon="rectangle-stack" value="{{ project.components | length }}" label="Componenten" />
+            <c-metric icon="rectangle-stack" value="{{ project.components | length }}" label="Componenten" href="?tab=componenten" />
             <c-metric icon="arrow-up-arrow-down" value="{{ project.deployments | length }}" label="Deployments" href="?tab=deployments" />
-            <c-metric icon="cylinder-split" value="{{ project.services | length }}" label="Services" />
+            <c-metric icon="cylinder-split" value="{{ project.services | length }}" label="Services" href="?tab=services" />
             <c-metric icon="person-2" value="{{ project.users | length }}" label="Teamleden" />
         </c-auto-grid>
 
@@ -268,50 +268,23 @@
             {{ render_roos(section.template, request=request, section=section) }}
         {% endfor %}
 
-        {# ---- Services & Integraties (section-services.html.j2) --------------- #}
-        {% call panel("Services & Integraties", "cylinder-split", info_text="Services worden door het platform geleverd en beheerd. Je hoeft ze niet zelf te installeren of bij te werken.") %}
-            {% if user_role in ["admin", "owner"] %}
-                {% set diensten_bewerken = "openEditModal('modal-edit-services', 'Services beheren')" %}
+        {# ---- Danger zone (section-danger-zone.html.j2) ----------------------- #}
+        {% if user_role in ["admin", "owner"] %}
+            {% call panel("Gevarenzone", "exclamation-triangle", info_text="Verwijderen kan niet ongedaan worden gemaakt: deployments, database en opslag gaan mee.") %}
+                {# De aanroep wordt hierboven opgebouwd en niet in de tag zelf: een
+                   genest aanhalingsteken binnen :attrs leest de voorbewerker als het einde
+                   van het attribuut. #}
+                {% set herverwerken = "openServiceModal('/projects/" ~ project.name ~ "/actions/refresh-project/confirm', 'Project herverwerken')" %}
+                {% set verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-project/confirm', 'Project verwijderen')" %}
                 <c-action-group align="start">
-                    <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': diensten_bewerken}" />
+                    <c-button type="secondary" label="Project herverwerken" :attrs="{'onclick': herverwerken}" />
+                    <c-button type="warning" label="Project verwijderen" :attrs="{'onclick': verwijderen}" />
                 </c-action-group>
-            {% endif %}
-            {% if project.services %}
-                <c-auto-grid min="280px" gap="md">
-                    {% for service in project.services %}
-                        {% set service_def = ServiceAdapter.get_service_definition(service.enum) %}
-                        {# service_binding_label en service_config_hint zijn FUNCTIES op de
-                           echte route, maar de proefopstelling (/lotc/bg/project-tabs,
-                           opi/web/lotc_fixtures.py) geeft er lege dicts voor door. Ze
-                           zonder meer aanroepen laat die pagina met een 500 omvallen, en
-                           dat is precies de pagina waarop deze secties gescreenshot
-                           worden. Vandaar de callable-toets. #}
-                        {% set binding_label = service_binding_label(service.enum) if service_binding_label is callable else '' %}
-                        {% set config_hint = service_config_hint(service.enum) if service_config_hint is callable else '' %}
-                        <c-card outline padding="md">
-                            <c-stack gap="sm">
-                                <c-heading type="h3" size="5" label="{{ service_def.name }}" />
-                                {% if binding_label %}
-                                    <c-chip>{{ binding_label }}</c-chip>
-                                {% endif %}
-                                <c-paragraph size="sm">{{ service_def.description }}</c-paragraph>
-                                {% if config_hint %}
-                                    <c-paragraph size="sm">{{ config_hint }}</c-paragraph>
-                                {% endif %}
-                                {% if user_role in ["admin", "owner"] and service.value in service_config_sections %}
-                                    {% set configureer = "openEditModal('" ~ service_config_sections[service.value] ~ "', '" ~ service_def.name ~ " configuratie')" %}
-                                    <c-action-group align="start">
-                                        <c-button type="tertiary" size="sm" label="Configureer" icon="gear" show-icon="before" :attrs="{'onclick': configureer}" />
-                                    </c-action-group>
-                                {% endif %}
-                            </c-stack>
-                        </c-card>
-                    {% endfor %}
-                </c-auto-grid>
-            {% else %}
-                <c-alert type="info" heading="Geen services geconfigureerd" />
-            {% endif %}
-        {% endcall %}
+            {% endcall %}
+        {% endif %}
+
+
+    {% elif active_tab == 'componenten' %}
 
         {# ---- Components (section-components.html.j2) ------------------------- #}
         {% call panel("Componenten", "rectangle-stack", info_text="Een component is een draaiend onderdeel van je applicatie. Waar het draait bepaal je bij Deployments.") %}
@@ -508,20 +481,52 @@
             {% endcall %}
         {% endif %}
 
-        {# ---- Danger zone (section-danger-zone.html.j2) ----------------------- #}
-        {% if user_role in ["admin", "owner"] %}
-            {% call panel("Gevarenzone", "exclamation-triangle", info_text="Verwijderen kan niet ongedaan worden gemaakt: deployments, database en opslag gaan mee.") %}
-                {# De aanroep wordt hierboven opgebouwd en niet in de tag zelf: een
-                   genest aanhalingsteken binnen :attrs leest de voorbewerker als het einde
-                   van het attribuut. #}
-                {% set herverwerken = "openServiceModal('/projects/" ~ project.name ~ "/actions/refresh-project/confirm', 'Project herverwerken')" %}
-                {% set verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-project/confirm', 'Project verwijderen')" %}
+    {% elif active_tab == 'services' %}
+
+        {# ---- Services & Integraties (section-services.html.j2) --------------- #}
+        {% call panel("Services & Integraties", "cylinder-split", info_text="Services worden door het platform geleverd en beheerd. Je hoeft ze niet zelf te installeren of bij te werken.") %}
+            {% if user_role in ["admin", "owner"] %}
+                {% set diensten_bewerken = "openEditModal('modal-edit-services', 'Services beheren')" %}
                 <c-action-group align="start">
-                    <c-button type="secondary" label="Project herverwerken" :attrs="{'onclick': herverwerken}" />
-                    <c-button type="warning" label="Project verwijderen" :attrs="{'onclick': verwijderen}" />
+                    <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': diensten_bewerken}" />
                 </c-action-group>
-            {% endcall %}
-        {% endif %}
+            {% endif %}
+            {% if project.services %}
+                <c-auto-grid min="280px" gap="md">
+                    {% for service in project.services %}
+                        {% set service_def = ServiceAdapter.get_service_definition(service.enum) %}
+                        {# service_binding_label en service_config_hint zijn FUNCTIES op de
+                           echte route, maar de proefopstelling (/lotc/bg/project-tabs,
+                           opi/web/lotc_fixtures.py) geeft er lege dicts voor door. Ze
+                           zonder meer aanroepen laat die pagina met een 500 omvallen, en
+                           dat is precies de pagina waarop deze secties gescreenshot
+                           worden. Vandaar de callable-toets. #}
+                        {% set binding_label = service_binding_label(service.enum) if service_binding_label is callable else '' %}
+                        {% set config_hint = service_config_hint(service.enum) if service_config_hint is callable else '' %}
+                        <c-card outline padding="md">
+                            <c-stack gap="sm">
+                                <c-heading type="h3" size="5" label="{{ service_def.name }}" />
+                                {% if binding_label %}
+                                    <c-chip>{{ binding_label }}</c-chip>
+                                {% endif %}
+                                <c-paragraph size="sm">{{ service_def.description }}</c-paragraph>
+                                {% if config_hint %}
+                                    <c-paragraph size="sm">{{ config_hint }}</c-paragraph>
+                                {% endif %}
+                                {% if user_role in ["admin", "owner"] and service.value in service_config_sections %}
+                                    {% set configureer = "openEditModal('" ~ service_config_sections[service.value] ~ "', '" ~ service_def.name ~ " configuratie')" %}
+                                    <c-action-group align="start">
+                                        <c-button type="tertiary" size="sm" label="Configureer" icon="gear" show-icon="before" :attrs="{'onclick': configureer}" />
+                                    </c-action-group>
+                                {% endif %}
+                            </c-stack>
+                        </c-card>
+                    {% endfor %}
+                </c-auto-grid>
+            {% else %}
+                <c-alert type="info" heading="Geen services geconfigureerd" />
+            {% endif %}
+        {% endcall %}
 
     {% elif active_tab == 'deployments' %}
         {# DIT TABBLAD VOLGT project-details/tab-deployments.html.j2, SECTIE VOOR SECTIE.
@@ -703,7 +708,7 @@
         </div>
     {% endif %}
 
-    </div>
+    </c-stack>
 
     {# De gedeelde dialoog hoort onderaan de pagina, buiten de tabs: hij wordt vanuit elke
        tab geopend en mag niet met de inhoud meeverdwijnen. #}
