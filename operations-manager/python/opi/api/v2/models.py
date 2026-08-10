@@ -73,26 +73,33 @@ class AsyncTaskAcceptedResponse(BaseModel):
 class CreateProjectRequest(BaseModel):
     """Everything needed to create a project from outside the browser.
 
-    Name and description are the only required fields; everything else follows
-    the same defaults the self-service portal uses.
+    **The technical name is not an input.** It is derived from the display name,
+    by the same function the portal uses: initials or the first few characters,
+    plus a random suffix. This request used to require it and to make the display
+    name optional, which had the two fields exactly the wrong way around -- the
+    generated one mandatory, the human one an afterthought that defaulted to a
+    technical string.
+
+    Letting a caller choose the technical name costs more than it looks. The
+    random suffix is what makes the name unique by construction; without it,
+    uniqueness becomes first-come-first-served and short names can be squatted.
+    It also makes the two roads produce differently shaped names, so a name no
+    longer tells you it came from ZAD.
+
+    The generated name is in the response, as ``project_name``.
     """
 
-    name: str = Field(
+    display_name: str = Field(
         ...,
-        max_length=20,
-        description=(
-            "Technical project name. Must start with a lowercase letter and may contain "
-            "lowercase letters, digits and hyphens."
-        ),
-        examples=["mijn-project"],
-    )
-    description: str = Field(..., max_length=1024, description="What this project is for", examples=["Nog een test"])
-    display_name: str | None = Field(
-        None,
+        min_length=1,
         max_length=128,
-        description="Human-readable name shown in the portal. Defaults to the technical name.",
+        description=(
+            "Human-readable name of the project, as shown in the portal. The technical name is "
+            "derived from it and returned in the response; it cannot be chosen."
+        ),
         examples=["Mijn Project"],
     )
+    description: str = Field(..., max_length=1024, description="What this project is for", examples=["Nog een test"])
 
 
 class CreateProjectAcceptedResponse(BaseModel):
