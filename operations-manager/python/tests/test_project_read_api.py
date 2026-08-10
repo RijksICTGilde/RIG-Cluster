@@ -325,11 +325,27 @@ class TestProjectComponents:
         backend = next(c for c in components if c["name"] == "backend")
         assert backend["env_var_names"] == ["API_TOKEN", "DATABASE_PASSWORD"]
 
-    def test_component_without_env_vars_reports_null_not_empty(self, client: TestClient) -> None:
+    def test_component_without_env_vars_reports_empty_not_null(self, client: TestClient) -> None:
         components = _get(client, f"/api/v2/projects/{PROJECT}/components")["components"]
         frontend = next(c for c in components if c["name"] == "frontend")
-        # Null is "nothing stored"; an empty list would claim we read it and found none.
-        assert frontend["env_var_names"] is None
+        # We looked and there are none. Null is reserved for "stored but unreadable",
+        # and a component that simply has no variables must not read as broken.
+        assert frontend["env_var_names"] == []
+
+    @pytest.mark.asyncio
+    async def test_component_whose_block_cannot_be_read_still_reports_null(self) -> None:
+        """The distinction only earns its keep if the unreadable case keeps saying null."""
+        from opi.api.v2.project_read import build_component_details
+
+        with patch(
+            "opi.services.project_env_vars.decrypt_age_content",
+            AsyncMock(side_effect=RuntimeError("age: no identity matched")),
+        ):
+            details = await build_component_details(SAMPLE_PROJECT_DATA, PRIVATE_KEY)
+
+        by_name = {detail.name: detail for detail in details}
+        assert by_name["backend"].env_var_names is None
+        assert by_name["frontend"].env_var_names == []
 
     def test_plain_alias_is_shown_and_stored_secret_is_masked(self, client: TestClient) -> None:
         components = _get(client, f"/api/v2/projects/{PROJECT}/components")["components"]
@@ -499,6 +515,38 @@ class TestOneEnvVarReader:
         assert api_read.read_user_env_vars is shared.read_user_env_vars
 
 
+class TestDetailPageIsUnaffected:
+    """The project detail page shares the reader, so it must not change with it.
+
+    ``section-env-vars.html.j2`` shows a block only for a mapping with something in it,
+    so "nothing stored" renders the same whether the reader answers None or ``{}``. That
+    is an assumption about a template, which is exactly the kind you check rather than
+    believe.
+    """
+
+    @staticmethod
+    def _render(stored: Any) -> str:
+        from opi.core.templates import templates
+
+        project = {
+            "name": PROJECT,
+            "components": [{"name": "frontend", "user-env-vars": stored}],
+            "deployments": [{"name": "production", "cluster": "local", "components": []}],
+        }
+        return templates.get_template("project-details/section-env-vars.html.j2").render(project=project)
+
+    def test_empty_mapping_renders_exactly_like_unknown(self) -> None:
+        assert self._render({}) == self._render(None)
+
+    def test_variables_still_render(self) -> None:
+        html = self._render({"API_TOKEN": ENV_VALUE_TWO})
+        assert "API_TOKEN" in html
+        assert "Geen omgevingsvariabelen geconfigureerd" not in html
+
+    def test_nothing_stored_shows_the_empty_state(self) -> None:
+        assert "Geen omgevingsvariabelen geconfigureerd" in self._render({})
+
+
 class TestUserEnvVarsReader:
     """The shared reader itself: the shapes a project file may legally hold."""
 
@@ -533,10 +581,16 @@ class TestUserEnvVarsReader:
         assert await read_user_env_vars({"A": "1"}, PRIVATE_KEY, where="test") == {"A": "1"}
 
     @pytest.mark.asyncio
-    async def test_nothing_stored_is_none(self) -> None:
+    @pytest.mark.parametrize("stored", [None, "", {}], ids=["absent", "empty-text", "empty-mapping"])
+    async def test_nothing_stored_is_empty_not_unknown(self, stored: Any) -> None:
+        """A key that is absent, or there but empty, is an answer: we looked, there are none.
+
+        Returning None here is what made every component without variables read as
+        broken, because None is the API's word for "could not be read".
+        """
         from opi.services.project_env_vars import read_user_env_vars
 
-        assert await read_user_env_vars(None, PRIVATE_KEY, where="test") is None
+        assert await read_user_env_vars(stored, PRIVATE_KEY, where="test") == {}
 
     @pytest.mark.asyncio
     async def test_unreadable_value_is_none_not_a_crash(self) -> None:
@@ -548,3 +602,23 @@ class TestUserEnvVarsReader:
             AsyncMock(side_effect=RuntimeError("age: no identity matched")),
         ):
             assert await read_user_env_vars(AGE_BLOCK, PRIVATE_KEY, where="test") is None
+
+    @pytest.mark.asyncio
+    async def test_failed_read_logs_the_component_and_nothing_else(self, caplog: Any) -> None:
+        """The one warning that survives may say which component, never a name or value."""
+        from opi.services.project_env_vars import read_user_env_vars
+
+        with (
+            patch(
+                "opi.services.project_env_vars.decrypt_age_content",
+                AsyncMock(side_effect=RuntimeError("age: no identity matched")),
+            ),
+            caplog.at_level("WARNING", logger="opi.services.project_env_vars"),
+        ):
+            assert await read_user_env_vars(AGE_BLOCK, PRIVATE_KEY, where="component 'backend'") is None
+
+        warnings = [record.getMessage() for record in caplog.records if record.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "component 'backend'" in warnings[0]
+        for secret in (ENV_VALUE_ONE, ENV_VALUE_TWO, "DATABASE_PASSWORD", "API_TOKEN", PRIVATE_KEY):
+            assert secret not in warnings[0]

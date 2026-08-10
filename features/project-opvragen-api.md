@@ -135,8 +135,11 @@ zonder te ontsleutelen. Dat gebeurt dus, en de waarden gaan daarna nergens heen.
 | dienstconfiguratie met een opgeslagen geheim (AGE-blok, `base64+age:`, `plain:`) | als `"***"` |
 | `config/api-key`, `age-private-key`, `age-public-key` | nooit |
 
-`env_var_names: null` betekent "niet te lezen", niet "geen variabelen". Een leeg lijstje
-zou beweren dat we gekeken hebben en niets vonden.
+`env_var_names: null` betekent "er staat iets opgeslagen dat niet te lezen is", niet
+"geen variabelen". Een leeg lijstje zegt wél dat we gekeken hebben en niets vonden: een
+component zonder `user-env-vars`, of met een lege waarde, krijgt `[]`. Alleen bij een
+mislukte ontsleuteling of een onbegrijpelijke opslagvorm komt `null` terug, en alleen
+daar hoort de waarschuwing bij.
 
 De aliasregel houdt het bruikbaar: een alias die naar `$DATABASE_SERVER_HOST` wijst is de
 hele reden dat je hem opvraagt.
