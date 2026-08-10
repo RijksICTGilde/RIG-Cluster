@@ -881,7 +881,15 @@ class AddComponentRequest(BaseModel):
 
     name: str = Field(..., max_length=63, description="Component name (must be K8s-compliant)")
     type: str = Field("single", max_length=32, description="Component type (e.g. 'single', 'frontend', 'backend')")
-    image: str = Field(..., max_length=512, description="Container image URL")
+    image: str | None = Field(
+        None,
+        max_length=512,
+        description=(
+            "Container image URL. Only needed when the component is attached to a deployment, "
+            "because that is where the image is stored: the component definition itself never "
+            "carries one. Required as soon as 'deployment_names' is non-empty."
+        ),
+    )
     port: int | None = Field(
         None,
         ge=1,
@@ -925,6 +933,18 @@ class AddComponentRequest(BaseModel):
     def _ports_mutually_exclusive(self) -> AddComponentRequest:
         if self.port is not None and self.ports is not None:
             raise ValueError("Provide either 'port' or 'ports', not both")
+        return self
+
+    @model_validator(mode="after")
+    def _image_needed_to_attach(self) -> AddComponentRequest:
+        """An image is required exactly when the component is being attached.
+
+        Checked here rather than made unconditionally required, because the image is
+        written onto the deployment reference and nowhere else. Demanding one while
+        attaching to nothing would accept a value that is then silently discarded.
+        """
+        if self.deployment_names and not self.image:
+            raise ValueError("'image' is required when 'deployment_names' is set: the image is stored per deployment")
         return self
 
 
