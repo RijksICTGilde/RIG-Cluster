@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from tests.e2e.helpers.htmx import scroll_backupblok_in_beeld
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page, Route
@@ -416,6 +417,7 @@ def test_de_snapshotlijst_komt_in_de_nieuwe_vormgeving_binnen(app_server: str, a
 
     auth_page.goto(f"{app_server}/projects/details/{PROJECT}?tab=deployments&layout=nldd")
     auth_page.wait_for_load_state("networkidle")
+    scroll_backupblok_in_beeld(auth_page)
 
     blok = auth_page.locator("#backups-snapshots-default")
     blok.locator("nldd-table").wait_for(state="attached", timeout=10000)
@@ -435,6 +437,7 @@ def test_de_herstelknop_opent_de_gedeelde_dialoog(app_server: str, auth_page: Pa
 
     auth_page.goto(f"{app_server}/projects/details/{PROJECT}?tab=deployments&layout=nldd")
     auth_page.wait_for_load_state("networkidle")
+    scroll_backupblok_in_beeld(auth_page)
 
     auth_page.locator("#restore-btn-default nldd-button").wait_for(state="attached", timeout=10000)
     auth_page.evaluate("() => { window.__aanroep = null; window.openEditModal = (...a) => { window.__aanroep = a; }; }")
