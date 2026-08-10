@@ -7117,7 +7117,7 @@ class ProjectManager:
     async def add_component(
         self,
         name: str,
-        image: str,
+        image: str | None,
         deployment_names: list[str],
         component_type: str = "single",
         port: int | None = None,
@@ -7231,11 +7231,15 @@ class ProjectManager:
                         "error_type": "invalid_services",
                     }
 
-            # Normalize image
-            normalized_image, was_normalized = normalize_container_image(image)
+            # Normalize the image, if there is one. The image lives on the deployment
+            # reference and nowhere else -- build_component_config below does not carry it --
+            # so defining a component without attaching it anywhere needs no image at all.
             warnings: list[str] = []
-            if was_normalized:
-                warnings.append(f"Image was normalized to lowercase: '{image}' -> '{normalized_image}'")
+            normalized_image = ""
+            if image:
+                normalized_image, was_normalized = normalize_container_image(image)
+                if was_normalized:
+                    warnings.append(f"Image was normalized to lowercase: '{image}' -> '{normalized_image}'")
 
             # Build component config using shared function
             public_key = get_project_public_key(project_data)
