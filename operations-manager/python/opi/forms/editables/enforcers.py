@@ -241,9 +241,20 @@ class DomainConfigEnforcer:
         # writable through PUT .../services/publish-on-web/deployments/{d}/config, which
         # can set it without ever setting a domain-format. Behind the early return the
         # rule was reachable from the wizard only.
+        #
+        # ``validate_bare_domain_allowed`` carries the whole rule: not a platform domain,
+        # and approved for THIS project. The one exemption is the same as for the
+        # subdomain checks below -- an approver revoking a domain a deployment already
+        # exposes on the apex must be able to save that verdict. Only an explicit
+        # ``denied`` status qualifies, and only in the save gate; a domain with no entry
+        # or a self-created ``requested`` entry is refused on every path. Publication
+        # refuses the revoked case outright, so no apex is claimed on it.
         bare_domain_component = get_domain_setting(dep, DomainSetting.BARE_DOMAIN_COMPONENT)
         if bare_domain_component and actual_domain:
-            validate_bare_domain_allowed(actual_domain, supported)
+            bare_config = get_project_allowed_domain_config(value, actual_domain)
+            bare_status = bare_config.get("status") if isinstance(bare_config, dict) else None
+            if self.denied_blocks or bare_status != "denied":
+                validate_bare_domain_allowed(actual_domain, supported, value)
             await self._check_bare_domain_availability(actual_domain, context)
 
         domain_format = get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT)

@@ -114,20 +114,40 @@ def ensure_domains_config(project_data: dict[str, Any]) -> dict[str, Any]:
 BARE_DOMAIN_PLATFORM_MESSAGE = "Kaal domein is alleen beschikbaar voor eigen domeinen, niet voor platformdomeinen"
 
 
-def validate_bare_domain_allowed(base_domain: str, supported_domains: set[str]) -> None:
+def bare_domain_not_owned_message(base_domain: str) -> str:
+    """Why a bare (apex) domain is refused on a domain this project does not own."""
+    return (
+        f"Kaal domein is alleen beschikbaar voor een eigen domein: '{base_domain}' is niet "
+        f"goedgekeurd voor dit project."
+    )
+
+
+def validate_bare_domain_allowed(base_domain: str, supported_domains: set[str], project_data: dict[str, Any]) -> None:
     """Raise when exposing a component on the bare (apex) domain is not permitted.
 
     A bare-domain ingress claims the apex of ``base_domain`` -- and its Let's Encrypt
     certificate -- from one tenant namespace. That is only acceptable for a domain the
-    project brought itself; on a platform domain it takes the domain away from every
-    other tenant on the cluster.
+    project brought itself. Two ways it can fail to be that:
 
-    Both the form enforcer and the publication path call this, so the rule cannot hold on
-    one write path and not on the other. The supported set is passed in rather than looked
-    up here: the caller already knows which cluster it is deciding for.
+    - it is a platform domain, where the apex belongs to every tenant on the cluster;
+    - it is somebody else's domain: a domain not approved for THIS project. Its DNS may
+      already point at this cluster because another tenant serves subdomains on it, so
+      claiming the apex from here takes over their domain, certificate included.
+
+    "Not a platform domain" alone is therefore only half the rule. Both halves live in
+    this one function so the form enforcer and both publication call sites (bare-domain
+    registration and the apex ingress) refuse for the same reason, in the same words --
+    the approval check used to sit behind the form's ``domain-format`` early return,
+    where the service-config write path never reached it.
+
+    The supported set is passed in rather than looked up here: the caller already knows
+    which cluster it is deciding for.
     """
     if base_domain.lower() in supported_domains:
         raise ValueError(BARE_DOMAIN_PLATFORM_MESSAGE)
+    is_allowed, _ = is_domain_allowed_for_project(base_domain, project_data)
+    if not is_allowed:
+        raise ValueError(bare_domain_not_owned_message(base_domain))
 
 
 def get_supported_base_domains(cluster: str | None = None) -> set[str]:
