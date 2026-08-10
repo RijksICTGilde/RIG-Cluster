@@ -142,7 +142,8 @@ class ComponentDetail(BaseModel):
         default=None,
         description=(
             "Names of the component's own environment variables, sorted. Values are never returned. "
-            "Null means the stored variables could not be read, which is not the same as having none."
+            "An empty list means the component has none. Null means variables are stored but could "
+            "not be read, which is not the same as having none."
         ),
     )
     aliases: dict[str, str] = Field(

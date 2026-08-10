@@ -29,6 +29,7 @@ from typing import Any
 import yaml
 
 from opi.handlers.project_file_handler import extract_attachment_catalog, extract_attachment_usage
+from opi.services.registry import collect_detail_page_sections
 from opi.services.services import ServiceAdapter
 
 FIXTURES_DIR = Path(__file__).parent / "lotc_fixtures"
@@ -131,7 +132,11 @@ def build_details_context(name: str) -> dict[str, Any] | None:
         "deployment_service_actions": {},
         "deployment_state_facts": {},
         "deployment_service_sections": {},
-        "service_detail_sections": [],
+        # De blokken die de DIENSTEN zelf leveren, uit de echte registry en niet uit een
+        # lijstje hier. Ze stonden leeg, en daardoor toonde de proefopstelling juist de
+        # secties niet die het langst met roos-HTML in de LOTC-pagina stonden (RC-64) -
+        # precies het soort gat dat een screenshot niet verraadt.
+        "service_detail_sections": collect_detail_page_sections(project_data, "admin"),
     }
 
 
