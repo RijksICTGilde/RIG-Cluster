@@ -442,7 +442,7 @@ document.addEventListener('keydown', function(e) {
 function scrollToFirstError(container) {
     container = container || document;
     var el = container.querySelector('[aria-invalid="true"]')
-          || container.querySelector('.rvo-form-field__error-text')
+          || container.querySelector('.rvo-form-field__error-text, .lotc-form-field__error-text')
           || container.querySelector('[data-roos-component="alert"]');
     if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });

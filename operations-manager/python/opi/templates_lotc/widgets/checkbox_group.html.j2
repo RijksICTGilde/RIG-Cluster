@@ -9,8 +9,8 @@
   middenin de tag, en dat leest de LOTC-voorbewerker als een attribuutnaam.
 #}
 {% from "widgets/_macros.html.j2" import helper_text, render_examples, render_errors %}
-<div class="rvo-form-group" :attrs="field_attrs(field)">
-    <span class="utrecht-form-label rvo-form-field__label-text">{{ field.label|e }}</span>
+<div :attrs="field_attrs(field)">
+    <span class="utrecht-form-label">{{ field.label|e }}</span>
     {{ helper_text(field) }}
     {{ render_examples(field) }}
     <c-layout-flow gap="md">
