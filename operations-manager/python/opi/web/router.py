@@ -3079,8 +3079,6 @@ async def about_platform(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-
-
 @web_router.get("/test-template-variables", response_class=HTMLResponse)
 @requires_sso
 async def test_template_variables(request: Request):

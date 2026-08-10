@@ -148,6 +148,32 @@ AANVAARD: dict[str, str] = {
 }
 
 
+#: Achtervoegsels van id's die een design system ZELF bijmaakt om een veld aan zijn label
+#: en zijn hulptekst te knopen (aria-describedby, label for). Ze zijn interne bedrading en
+#: geen gedrag: niemand mikt er een link, een htmx-doel of een JavaScript-aanroep op.
+#:
+#: Ze horen hier en niet in AANVAARD, want dat zijn BESLUITEN over een verschil dat we
+#: accepteren; dit is een verschil dat er niet is. Roos maakt ``<veld>-label``, NLDD maakt
+#: ``<veld>-help`` en ``<veld>-error``, en met beide in de meting meldt elke vergelijking
+#: van een formulier een handvol verschillen die niemand kan wegnemen - waarna je de
+#: meetlat gaat negeren.
+AFGELEIDE_ID_ACHTERVOEGSELS = ("-label", "-help", "-error", "-helper", "-description")
+
+
+def is_afgeleid_id(waarde: str) -> bool:
+    return waarde.endswith(AFGELEIDE_ID_ACHTERVOEGSELS)
+
+
+#: NLDD-web-componenten die een echt formulierveld ZIJN, naast de ``*-field``-familie.
+#: Op "elke nldd-tag met een name" gaat het mis: ``<nldd-icon name="envelope">`` draagt
+#: daar de ICOONNAAM, en dan telt elk icoon als een veld.
+NLDD_BESTURING = {"nldd-select", "nldd-textarea", "nldd-checkbox", "nldd-radio", "nldd-switch", "nldd-combo-box"}
+
+
+def is_nldd_besturing(tag: str) -> bool:
+    return tag in NLDD_BESTURING or (tag.startswith("nldd-") and tag.endswith("-field"))
+
+
 def is_ruis(bestemming: str) -> bool:
     return bestemming.startswith(("/static/roos/", "/static/lotc/", "/static/css/", "/static/js/")) or (
         "unpkg.com" in bestemming
@@ -188,16 +214,25 @@ class Oppervlak(HTMLParser):
                 if naam not in JS_NEGEER:
                     self.functies.add(naam)
 
-        is_besturing = tag in ("input", "select", "textarea") or d.get("data-lotc-component") in (
-            "text-input",
-            "select-field",
-            "textarea",
+        # NLDD levert zijn invoervelden als web-componenten (``<nldd-text-field>``,
+        # ``<nldd-select>``, ...) en niet als een <input>. Die stonden hier niet bij, dus
+        # een LOTC-formulier meette NUL velden en een verdwenen veld kwam er als "gelijk"
+        # uit - precies het valse groen waar deze meetlat tegen bedoeld is. Gemeten op de
+        # jobdialoog: die heeft twee velden (image, command) en de vergelijking meldde ze
+        # als weg terwijl ze er gewoon stonden.
+        is_besturing = (
+            tag in ("input", "select", "textarea")
+            or is_nldd_besturing(tag)
+            or d.get("data-lotc-component") in ("text-input", "select-field", "textarea")
         )
         if is_besturing and d.get("name"):
             self.velden.add(d["name"])
 
-        if d.get("id"):
-            self.ids.add(d["id"])
+        # Het id van zo'n web-component staat op ``input-id``: dat is het id dat het echte
+        # <input> straks draagt, en dus waar een label of een hx-include naar wijst.
+        for sleutel in ("id", "input-id"):
+            if d.get(sleutel) and not is_afgeleid_id(d[sleutel]):
+                self.ids.add(d[sleutel])
 
 
 def haal_op(client: httpx.Client, basis: str, pad: str, layout: str) -> str:
