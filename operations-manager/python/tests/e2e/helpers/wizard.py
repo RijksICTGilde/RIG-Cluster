@@ -16,6 +16,8 @@ import string
 import time
 from typing import TYPE_CHECKING
 
+from tests.e2e.helpers.htmx import wait_for_htmx_quiet
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -403,29 +405,8 @@ class WizardHelper:
         )
 
     def wait_for_htmx_quiet(self, quiet_ms: int = 400) -> None:
-        """Wait until no HTMX swap has settled for *quiet_ms*.
-
-        Een stap kan bij binnenkomst nog een swap in de lucht hebben. Wie daar
-        doorheen typt raakt zijn invoer kwijt (het veld wordt vervangen), en wie
-        daar doorheen klikt raakt zijn klik kwijt (de knop wordt vervangen, er
-        vertrekt geen verzoek en het wachten op de volgende stap verloopt). Beide
-        zijn gemeten op de componentenstap na het toepassen van een preset.
-        """
-        self.page.evaluate(
-            """(quietMs) => new Promise(resolve => {
-                let timer = setTimeout(done, quietMs);
-                function done() {
-                    document.removeEventListener('htmx:afterSettle', bump);
-                    resolve(true);
-                }
-                function bump() {
-                    clearTimeout(timer);
-                    timer = setTimeout(done, quietMs);
-                }
-                document.addEventListener('htmx:afterSettle', bump);
-            })""",
-            quiet_ms,
-        )
+        """Wacht tot er geen htmx-swap meer landt; zie helpers/htmx.py."""
+        wait_for_htmx_quiet(self.page, quiet_ms)
 
     def _click_and_wait_for_step_change(self, locator, timeout: float = 10000) -> None:
         """Click a button and wait for the HTMX swap to complete.

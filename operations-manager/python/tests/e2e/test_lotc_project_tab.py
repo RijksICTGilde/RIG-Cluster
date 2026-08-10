@@ -69,8 +69,13 @@ def klembord_page(authenticated_context: BrowserContext, app_server: str) -> Gen
     page.close()
 
 
-def _open_project_tab(page: Page, app_server: str) -> None:
-    page.goto(f"{app_server}{NLDD_URL}")
+def _open_project_tab(page: Page, app_server: str, tab: str = "project") -> None:
+    """Open een tabblad van de projectpagina in de nieuwe weergave.
+
+    Componenten en Services stonden op het tabblad Project en hebben sinds de opdeling
+    een eigen tabblad; wie hun inhoud meet, moet daar dus naartoe.
+    """
+    page.goto(f"{app_server}/projects/details/{PROJECT}?tab={tab}&layout=nldd")
     page.wait_for_load_state("networkidle")
 
 
@@ -116,31 +121,35 @@ def test_geen_enkele_aanroep_van_het_oude_tabblad_is_verdwenen(app_server: str, 
     auth_page.wait_for_load_state("networkidle")
     oud = _page_handlers(auth_page, "#tab-project")
 
-    _open_project_tab(auth_page, app_server)
-    nieuw = _page_handlers(auth_page, "body")
+    # Over de drie tabbladen samen, want het oude tabblad Project is opgedeeld: wat er
+    # verdwenen zou zijn, is wat op GEEN van de drie meer staat.
+    nieuw: set[str] = set()
+    for tab in ("project", "componenten", "services"):
+        _open_project_tab(auth_page, app_server, tab)
+        nieuw |= _page_handlers(auth_page, "body")
 
     assert oud, "de oude pagina leverde geen enkele aanroep - dan meet deze test niets"
     assert oud <= nieuw, f"verdwenen van het tabblad Project: {sorted(oud - nieuw)}"
 
 
 @pytest.mark.parametrize(
-    ("knop", "verwacht"),
+    ("knop", "verwacht", "tab"),
     [
         # De actie bovenaan het tabblad; het cijfer is het aantal deployments, want de
         # wizard opent daarmee een NIEUWE regel achter de bestaande.
-        ("Deployment toevoegen", f"/projects/{PROJECT}/modal-wizard/modal-add-deployment-2"),
+        ("Deployment toevoegen", f"/projects/{PROJECT}/modal-wizard/modal-add-deployment-2", "project"),
         # In de KOP van het tabblad, niet die in de projectkop: sinds de knop
         # "Projectgegevens bewerken" daar terugstaat zijn er twee met dit opschrift, en
         # .first pakte de verkeerde. Vandaar de afbakening hieronder.
-        ("Bewerken", f"/projects/{PROJECT}/modal-wizard/modal-edit-team"),
-        ("Toevoegen", f"/projects/{PROJECT}/modal-wizard/modal-edit-component-2"),
+        ("Bewerken", f"/projects/{PROJECT}/modal-wizard/modal-edit-team", "project"),
+        ("Toevoegen", f"/projects/{PROJECT}/modal-wizard/modal-edit-component-2", "componenten"),
     ],
 )
 def test_een_knop_opent_dezelfde_dialoog_als_op_de_oude_pagina(
-    app_server: str, auth_page: Page, knop: str, verwacht: str
+    app_server: str, auth_page: Page, knop: str, verwacht: str, tab: str
 ) -> None:
     """Elke knop haalt zijn formulier op bij exact de flow die erbij hoort."""
-    _open_project_tab(auth_page, app_server)
+    _open_project_tab(auth_page, app_server, tab)
     recorded = _record_requests(auth_page)
 
     # Op het attribuut en niet op de tekst: <nldd-button> draagt zijn opschrift in
@@ -148,7 +157,7 @@ def test_een_knop_opent_dezelfde_dialoog_als_op_de_oude_pagina(
     # toevoegen", en dan meet de test de verkeerde knop.
     # Binnen de tabinhoud zoeken en niet op de hele pagina: de gedeelde projectkop draagt
     # ook een knop "Bewerken" (naar modal-edit-identity), en die staat als eerste in de DOM.
-    auth_page.locator(f"#tab-project nldd-button[text='{knop}']").first.click()
+    auth_page.locator(f"#tab-{tab} nldd-button[text='{knop}']").first.click()
 
     assert _wait_for(recorded) == f"{app_server}{verwacht}"
 
@@ -160,7 +169,7 @@ def test_component_bewerken_wijst_naar_het_component_dat_je_aanklikt(app_server:
     is index 1 in het bestand, maar bij een project waar dat niet toevallig samenvalt
     bewerk je zonder deze regel een ander component dan je aanklikt.
     """
-    _open_project_tab(auth_page, app_server)
+    _open_project_tab(auth_page, app_server, "componenten")
     recorded = _record_requests(auth_page)
 
     kaart = _component_kaart(auth_page, "worker")
@@ -171,7 +180,7 @@ def test_component_bewerken_wijst_naar_het_component_dat_je_aanklikt(app_server:
 
 def test_component_verwijderen_bevestigt_voor_het_juiste_component(app_server: str, auth_page: Page) -> None:
     """De verwijderknop opent de bevestiging met het component als doel in de URL."""
-    _open_project_tab(auth_page, app_server)
+    _open_project_tab(auth_page, app_server, "componenten")
     recorded = _record_requests(auth_page)
 
     kaart = _component_kaart(auth_page, "web-app")
@@ -221,11 +230,14 @@ def test_de_teruggebrachte_secties_staan_er_met_echte_gegevens(app_server: str, 
     Een kop zonder inhoud is precies het soort halve overzetting waar dit over gaat, dus
     er wordt per sectie op een WAARDE getoetst en niet op de titel.
     """
-    _open_project_tab(auth_page, app_server)
     # De opschriften van dit thema staan in ATTRIBUTEN (nldd-button text=, nldd-banner
     # heading=) en de inhoud van een custom element zit in een shadow root. inner_text()
-    # ziet die geen van beide, dus er wordt op de opgebouwde HTML gezocht.
-    markup = auth_page.evaluate("() => document.body.innerHTML")
+    # ziet die geen van beide, dus er wordt op de opgebouwde HTML gezocht. Over de drie
+    # tabbladen samen, want de secties zijn erover verdeeld.
+    markup = ""
+    for tab in ("project", "componenten", "services"):
+        _open_project_tab(auth_page, app_server, tab)
+        markup += auth_page.evaluate("() => document.body.innerHTML")
 
     verwacht = [
         # Acties
@@ -257,7 +269,7 @@ def test_de_diensten_tonen_hun_naam_en_niet_hun_sleutel(app_server: str, auth_pa
     De eerste omzetting zette alleen de kale sleutel uit het projectbestand in een chip
     ('keycloak'), waarmee dezelfde dienst hier anders heette dan op elke andere pagina.
     """
-    _open_project_tab(auth_page, app_server)
+    _open_project_tab(auth_page, app_server, "services")
     markup = auth_page.evaluate("() => document.body.innerHTML")
 
     assert "Keycloak Authentication" in markup

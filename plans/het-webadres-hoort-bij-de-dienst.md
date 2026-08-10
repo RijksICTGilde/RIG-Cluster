@@ -20,6 +20,20 @@ deployments:
 
 Dat is niet één keer een uitschieter. Vijf velden in `$defs/deployment` beschrijven samen precies één ding, namelijk hoe publish-on-web een hostnaam samenstelt en met welk certificaat: `base-domain`, `subdomain`, `domain-mode`, `domain-format` en `issuer`. Daar komen `root-component` en `expose-component-on-bare-domain` bij, die alleen betekenis hebben binnen een gekozen `domain-format`. Zeven velden dus, allemaal eigendom van één dienst, allemaal buiten die dienst opgeslagen.
 
+## Drie lagen, drie doelen, en dat is geen rommel
+
+Aangescherpt tijdens de uitvoering, en het verandert wat er mis is. De configuratie van publish-on-web staat verdeeld over drie lagen, en dat hoort zo, want elke laag beantwoordt een andere vraag met andere velden:
+
+| Laag | De vraag die hij beantwoordt | Velden |
+|---|---|---|
+| Project | Welke domeinen mag dit project gebruiken, en zijn ze goedgekeurd | `domains/allowed-domains`, `domains/allowed-subdomains` |
+| Deployment | Hoe wordt het adres van deze deployment samengesteld | `domain-format`, `base-domain`, `subdomain`, `domain-mode`, `issuer`, `root-component`, `expose-component-on-bare-domain` |
+| Component | Dit component gebruikt de dienst, en zo wordt TLS afgehandeld | `tls`, `attachment` |
+
+Verdeling over lagen is dus niet het probleem en er valt niets te centraliseren. Het probleem is nauwkeuriger: **twee van de drie lagen gebruiken het dienstpad en de derde niet.** Dat is de hele omvang van deze wijziging.
+
+Eén gevolg dat het plan moet dekken. `PublishOnWebConfig` bediende twee lagen met alles optioneel, wat al een compromis was. Er een derde laag met zeven velden bij doen maakt er een zak van tien optionele velden van waarin geen combinatie meer te controleren valt: niets houdt tegen dat `tls` op de deployment belandt of `domain-format` op het component. Daarom splitst het model in drie, één per laag, gekoppeld via `Service.config_model_for(layer)` (`catalog/base.py:697`), een mechanisme dat al bestaat en al gebruikt wordt door attachments, persistent-storage, temp-storage en postgresql-database. Zonder die splitsing verplaatst fase 4 zeven velden naar een model dat er niets over zegt.
+
 ## Wat er al wel verhuisd is, en wat niet
 
 Wel verhuisd, in twee stappen:

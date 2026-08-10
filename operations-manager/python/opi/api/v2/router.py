@@ -118,6 +118,7 @@ from opi.utils.naming import (
     get_component_ingress_map,
     sanitize_kubernetes_name,
 )
+from opi.utils.project_names import ensure_unique_project_name
 from opi.utils.project_utils import ProjectApiKeyError, generate_base_project_file, validate_project_name
 from opi.utils.yaml_util import dump_yaml_to_string
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
@@ -977,8 +978,8 @@ async def list_projects_v2(request: Request, response: Response) -> ProjectListR
     status_code=202,
     responses={
         202: {"model": CreateProjectAcceptedResponse, "description": "Project accepted for creation"},
+        400: {"description": "The display name yields no usable technical name"},
         401: {"description": "No valid bearer token"},
-        409: {"description": "A project with this name already exists"},
     },
 )
 @validate_user_token
@@ -999,6 +1000,11 @@ async def create_project_v2(
     nothing is provisioned on the cluster yet. Add a deployment when there is
     something to deploy.
 
+    **You give a display name, not a technical name.** The technical name is derived
+    from it here, exactly as the portal does it, and comes back as ``project_name``.
+    It is what every later path and header uses, so read it from the response rather
+    than assuming it.
+
     The response carries the new project's API key. It is shown once, here, and
     is what every later call for this project must present as ``X-API-Key``.
 
@@ -1007,35 +1013,28 @@ async def create_project_v2(
     """
     user = get_current_user(request) or {}
     owner_email = str(user.get("email", ""))
-    project_name = project_data.name
 
-    logger.info("V2 create project '%s' requested by %s", project_name, owner_email)
-
-    if not validate_project_name(project_name):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, "
-                "numbers 0-9, dash -, maximum 20 characters"
-            ),
-        )
-
-    # Fail fast on a name that is taken. The task handler refuses it too -- that
-    # is the real gate, because another creation can land between this check and
-    # the commit -- but a caller deserves a 409 instead of a failed task.
-    project_file_path = f"projects/{project_name}.yaml"
+    # The technical name is generated here, not supplied: same function as the portal
+    # (``ensure_unique_project_name``), so both roads produce the same shape of name and
+    # uniqueness stays a property of the name instead of a race for short ones. The set of
+    # existing names comes from the store, which is what that helper avoids.
     store = get_project_store()
     await store.reconcile()
-    if await store.read_path(project_file_path) is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Project '{project_name}' bestaat al. Kies een andere projectnaam.",
-        )
+    existing_names = {summary.name for summary in store.get_all()}
+    try:
+        project_name, display_name = ensure_unique_project_name(project_data.display_name, existing_names)
+    except ValueError as exc:
+        # Raised when the display name yields nothing usable (no letters or digits), which
+        # is the caller's input. The same error covers running out of variants, but that
+        # needs ~100 taken names built from one display name.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    logger.info("V2 create project '%s' (from '%s') requested by %s", project_name, display_name, owner_email)
 
     try:
         project_dict, api_key = await generate_base_project_file(
             project_name=project_name,
-            display_name=project_data.display_name or project_name,
+            display_name=display_name,
             description=project_data.description,
             cluster=settings.CLUSTER_MANAGER,
             owner_email=owner_email,
