@@ -731,7 +731,7 @@ async def list_project_services_v2(request: Request, project_name: ProjectNamePa
             project=project_name,
             pending_rollout=await _pending_rollout(request, project_name),
             services=collect_project_services(project_data),
-        ).model_dump()
+        ).model_dump(mode="json")
     )
 
 
@@ -770,7 +770,7 @@ async def list_components_v2(request: Request, project_name: ProjectNamePath) ->
             project=project_name,
             pending_rollout=await _pending_rollout(request, project_name),
             components=await build_component_details(project_data, private_key),
-        ).model_dump()
+        ).model_dump(mode="json")
     )
 
 
@@ -812,7 +812,7 @@ async def get_project_v2(request: Request, project_name: ProjectNamePath) -> JSO
             services=collect_project_services(project_data),
             components=await build_component_details(project_data, private_key),
             deployments=await _deployment_details(project_name, project_data),
-        ).model_dump()
+        ).model_dump(mode="json")
     )
 
 
