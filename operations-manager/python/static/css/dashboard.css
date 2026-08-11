@@ -153,8 +153,8 @@
 }
 
 /* De zes kleuren waarmee projecten uit elkaar worden gehouden. Het sjabloon stelt de naam
-   samen (resource-color-{{ loop.index0 % 6 }}), dus deze klassen staan nergens voluit in
-   de markup - ze zijn NIET dood. */
+   samen (resource-color- plus het volgnummer modulo zes), dus deze klassen staan nergens
+   voluit in de markup - ze zijn NIET dood. */
 .resource-color-0, .resource-color-0.resource-segment { background-color: #007bc7; }
 .resource-color-1, .resource-color-1.resource-segment { background-color: #39870c; }
 .resource-color-2, .resource-color-2.resource-segment { background-color: #e17000; }
@@ -167,7 +167,8 @@
    GEEN component. <c-card> kent geen accentkleur op een rand, en de streep is hier het
    enige dat de toestand van een project van een afstand leesbaar maakt.
 
-   Ook deze namen worden in het sjabloon samengesteld (project-card-{{ health|lower }}). */
+   Ook deze namen worden in het sjabloon samengesteld: project-card- plus de toestand in
+   kleine letters. */
 .project-card-link {
     text-decoration: none;
     color: inherit;

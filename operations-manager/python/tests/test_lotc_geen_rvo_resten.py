@@ -90,7 +90,7 @@ NOG_MET_KLASSEN = {
 #: weghaalt zonder vervanging, verandert een kleur of een afstand.
 KLASSEN_UITZONDERINGEN = {ARCHITECTURE_OVERVIEW: 158, **NOG_MET_KLASSEN}
 VARIABELEN_UITZONDERINGEN = {
-    ARCHITECTURE_OVERVIEW: 81,
+    ARCHITECTURE_OVERVIEW: 79,
     "wizard/partials/backup_select_deployment.html.j2": 4,
 }
 

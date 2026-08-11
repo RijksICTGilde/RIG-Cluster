@@ -21,7 +21,9 @@
                    class="backup-option__radio" />
             <div class="backup-option__body">
                 <div class="backup-option__title-row">
-                    <code class="backup-option__id">{{ run.backup_run_id }}</code>
+                    {# Was een <code> met een eigen blauwe pil (--rvo-color-hemelblauw-200, bestaat
+                       niet). <c-code> geeft de code-opmaak die het thema ervoor heeft. #}
+                    <c-code>{{ run.backup_run_id }}</c-code>
                     <span class="backup-option__timestamp">{{ run.timestamp | dutch_date }}</span>
                 </div>
                 <div class="backup-option__meta-row">
@@ -34,8 +36,15 @@
                     </span>
                 </div>
                 <div class="backup-option__types">
+                    {# <c-tag> in plaats van drie eigen pillen. .backup-type--pvc/-database/
+                       -bucket verwezen naar --rvo-color-hemelblauw-200, -grasgroen-200/-800
+                       en -oranje-200/-800; geen van die namen staat in lotc-app.css, dus de
+                       pillen kwamen zonder achtergrond EN zonder tekstkleur op het scherm.
+                       Het type draagt de kleur nu, en een onbekend soort valt terug op
+                       default in plaats van op niets. #}
                     {% for rt in run.resource_types %}
-                    <span class="backup-type{% if rt in ('pvc', 'database', 'bucket') %} backup-type--{{ rt }}{% endif %}">{{ rt | upper }}</span>
+                    {% set soort = {'pvc': 'info', 'database': 'success', 'bucket': 'warning'}.get(rt, 'default') %}
+                    <c-tag type="{{ soort }}" label="{{ rt | upper }}"/>
                     {% endfor %}
                 </div>
             </div>

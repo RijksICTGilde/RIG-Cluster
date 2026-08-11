@@ -11,16 +11,10 @@
         Het formulier wordt gegenereerd vanuit een Pydantic model met FormMeta annotaties.
     </c-span>
 
-    {# Het formulier stond in een <div class="project-form-container"> die zelf een witte
-       achtergrond, padding, een hoekstraal en een schaduw meebracht. Dat is een kaart,
-       en daar is <c-card> voor. #}
-    <c-card padding="lg" background-color="wit" outline="true">
-        <form method="POST" action="/projects/form-demo" autocomplete="off">
-            {{ form_html | process_components }}
-        </form>
-    </c-card>
+    {% include "project-form-demo/_formulier.html.j2" %}
 
-    {% include "project-form-demo/_debug.html.j2" %}
+    {% include "project-form-demo/_velden.html.j2" %}
+
+    {% include "project-form-demo/_projectdata.html.j2" %}
 </c-layout-flow>
-
 {% endblock %}

@@ -172,35 +172,6 @@
             {% endblock %}
         </template>
 
-        {# DE PAGINACONTAINER. <c-simple-section> is wat het thema daarvoor levert: een
-           buitenmarge die met de breedte meegroeit, en een maximumbreedte voor de
-           tekstkolom.
-
-           Gemeten waarom dat nodig was, want in de markup zag het er goed uit. De inhoud
-           hing aan de 32px padding van de shell, en meer niet: op 1920 breed stond er een
-           kolom van 1584px met 32px lucht ernaast, en zo'n smalle rand leest niet meer
-           als een marge. Met dit component, dezelfde pagina, dezelfde vensters:
-
-               venster   was links/rechts   nu links/rechts   kolombreedte
-               1920      32 / 32            192 / 192         1280
-               1400      32 / 32            96 / 96           952
-               700       32 / 32            56 / 56           588
-
-           Bewust GEEN eigen getal: de maten komen uit het thema en groeien mee. Een
-           pagina die de volle breedte nodig heeft kan er width="full" op zetten; op de
-           vijf breedste pagina's (dashboard, projecten, projectdetail, wizard, diensten)
-           is gemeten dat er niets afgekapt wordt en dat er geen horizontale schuifbalk
-           bijkomt. Zie tests/e2e/test_lotc_paginamarge.py.
-
-           De kop en de eerste kaart beginnen op dezelfde x, en dat blijft zo: een
-           sectiekop hoort links uit te lijnen met wat eronder staat. De lucht ertussen
-           komt van de stack hieronder (gemeten 59px), niet van een inspringing.
-
-           Daarbinnen een enkele stack om de pagina-inhoud, zodat elke pagina hetzelfde
-           verticale ritme krijgt in plaats van de optelsom van marges die elk blok zelf
-           meebrengt. Paginas die zelf al een stack meebrengen, nesten gewoon; gap werkt
-           niet door in kinderen. #}
-        <c-simple-section>
         <c-stack gap="lg">
             {% block content %}
                 <c-stack gap="xs">
@@ -209,7 +180,6 @@
                 </c-stack>
             {% endblock %}
         </c-stack>
-        </c-simple-section>
 
         {% block additional_styles %}{% endblock %}
         {% block additional_scripts %}{% endblock %}
