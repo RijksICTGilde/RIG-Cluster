@@ -1,6 +1,11 @@
-{# De kaarten met totalen onder de tabel. #}
+{# De kaarten met totalen onder de tabel.
+
+   .summary-cards was een eigen grid met repeat(auto-fit, minmax(200px, 1fr)). Dat is
+   precies wat <c-auto-grid min="..."> doet: kolommen die zich naar de ruimte voegen,
+   zonder media query. De mediaregel op 768px die de kaarten op twee kolommen zette kon
+   daarmee ook weg - auto-fit doet dat vanzelf. #}
 {% if projects %}
-<div class="summary-cards">
+<c-auto-grid min="200px" gap="lg" class="summary-cards">
     <c-card class="summary-card" outline="true" padding="lg" background-color="wit">
         <c-layout-flow gap="sm">
             <div class="summary-number">{{ projects|length }}</div>
@@ -34,5 +39,5 @@
             <div class="summary-change">{{ user.email }}</div>
         </c-layout-flow>
     </c-card>
-</div>
+</c-auto-grid>
 {% endif %}
