@@ -1,65 +1,31 @@
 /* Vormgeving van het domeinbeheer.
-   Stond als <style>-blok in opi/templates/admin/approvals.html.j2. */
+   Stond als <style>-blok in opi/templates/admin/approvals.html.j2.
 
+   RC-74 heeft dit bestand langs de componenten gelegd. Weg zijn:
+
+   - .domains-table met zijn kopregel, celranden en hover - dat is <c-table> met
+     <c-table-head>/<c-th>/<c-table-row>/<c-td>.
+   - .col-type t/m .col-date - kolombreedtes gaan als columns= mee aan <c-table>. NLDD
+     maakt van een tabel een CSS-grid; zonder columns stapelen de cellen.
+   - .type-badge, .status-badge en hun zes kleurvarianten - dat is <c-tag>, waar het type
+     (info/success/warning/error) de kleur bepaalt in plaats van een eigen klasse.
+   - .domain-row.status-requested en de hover erop - een opvallende regel is het
+     selected-attribuut van <c-table-row>.
+   - .table-container - het scrollvenster om de tabel. <c-table> is geen native tabel
+     meer maar een grid die zich naar de breedte voegt, dus er valt niets te scrollen. */
+
+/* De kopband boven elke projecttabel: naam links, knop rechts.
+
+   GEEN component, en alleen nog voor de BAND. De flexregel die hier stond (titel links,
+   knop rechts) is <c-cluster justify="between"> geworden; wat overblijft is het vlak
+   eromheen. Daar is niets voor: <c-card> kent geen kopgebied, en <c-section-head> zet
+   een h4 met een aanhangsel neer zonder achtergrond of scheidingslijn. Komt er ooit een
+   kaart-met-kopregel in het thema, dan kan dit blok weg. */
+   De grijze achtergrond die hier stond is weg. Die verwees naar --rvo-color-grijs-25, en
+   die naam staat niet in de lijst in lotc-app.css - dus hij bestond in het oude thema
+   ook al niet en de regel leverde niets op. Een lege var() invullen zou de weergave
+   ANDERS maken dan het origineel, en dat is precies wat deze omzetting niet mag. */
 .project-group-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
     padding: var(--rvo-space-md) var(--rvo-space-lg);
     border-bottom: 1px solid var(--rvo-color-grijs-200);
-    background: var(--rvo-color-grijs-25);
 }
-
-.table-container { overflow-x: auto; }
-
-.domains-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.875rem;
-}
-
-.domains-table thead th {
-    background: var(--rvo-color-grijs-50);
-    padding: var(--rvo-space-sm) var(--rvo-space-md);
-    text-align: left;
-    font-weight: 600;
-    border-bottom: 2px solid var(--rvo-color-grijs-200);
-    color: var(--rvo-color-grijs-800);
-}
-
-.domains-table tbody td {
-    padding: var(--rvo-space-sm) var(--rvo-space-md);
-    border-bottom: 1px solid var(--rvo-color-grijs-200);
-    vertical-align: middle;
-}
-
-.domain-row:hover { background: var(--rvo-color-grijs-25); }
-.domain-row.status-requested { background: var(--rvo-color-geel-150); }
-.domain-row.status-requested:hover { background: var(--rvo-color-geel-300); }
-
-.col-type { width: 12%; }
-.col-domain { width: 25%; }
-.col-name { width: 20%; }
-.col-status { width: 18%; }
-.col-date { width: 25%; }
-
-.type-badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 600;
-}
-.type-subdomain { background: var(--rvo-color-hemelblauw-150); color: var(--rvo-color-hemelblauw-750); }
-.type-domain { background: var(--rvo-color-groen-150); color: var(--rvo-color-groen-750); }
-
-.status-badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 600;
-}
-.status-requested-badge { background: var(--rvo-color-geel-300); color: var(--rvo-color-geel-750); }
-.status-approved-badge { background: var(--rvo-color-groen-150); color: var(--rvo-color-groen-750); }
-.status-denied-badge { background: var(--rvo-color-rood-150); color: var(--rvo-color-rood-750); }

@@ -1,51 +1,53 @@
-{# De tabel met gebruikers. #}
+{# De tabel met gebruikers.
+
+   Was een kale <table class="users-table"> met een eigen kopregel-achtergrond, eigen
+   celranden, eigen kolombreedtes (.col-*) en een eigen hover-regel - bij elkaar de helft
+   van admin-users.css. Daar bestaat <c-table> voor, met <c-table-head>/<c-th> voor de
+   kop en <c-table-row>/<c-td> voor de regels. bg/users.html.j2 deed het al zo.
+
+   De kolombreedtes gaan als columns= mee en niet meer als .col-*-klassen: NLDD maakt van
+   een tabel een CSS-grid, en zonder columns valt alles in een kolom en stapelen de
+   cellen. De percentages van de oude klassen waren 30/30/20/20; de actiekolom staat hier
+   op 3fr in plaats van 2fr omdat de twee knoppen anders onder elkaar vallen - <c-cluster>
+   breekt af, de oude .actions-flexregel deed dat niet.
+
+   LET OP: <c-table-head> IS de kopregel, daar hoort geen <c-table-row> in.
+
+   De lege toestand staat nu NAAST de tabel in plaats van als <td colspan="4"> erin. Dat
+   moest wel - een grid-tabel kent geen colspan, dus een cel over de volle breedte
+   bestaat hier niet - maar het is ook gewoon wat het is: een mededeling, en daar is
+   <c-alert type="info"> voor. Het losse icoon met de tekst eronder is daarmee weg. #}
 <c-card outline="true" padding="none" background-color="wit">
-    <div class="table-container">
-        <table class="users-table">
-            <thead>
-                <tr>
-                    <th class="col-name">Naam</th>
-                    <th class="col-email">E-mailadres</th>
-                    <th class="col-created">Aangemaakt</th>
-                    <th class="col-actions">Acties</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% if users %}
-                    {% for user in users %}
-                    <tr class="user-row">
-                        <td class="col-name">
-                            <strong>{{ user.full_name }}</strong>
-                        </td>
-                        <td class="col-email">
-                            {{ user.email }}
-                        </td>
-                        <td class="col-created">
-                            {{ user.created_at|dutch_date(include_time=False) }}
-                        </td>
-                        <td class="col-actions">
-                            <div class="actions">
-                                {% set lotc_onclick_1 %}window.location.href='/admin/users/{{ user.id }}/edit'{% endset %}<c-button label="Bewerken" size="sm" show-icon="before" icon="pencil-on-square"/>
-                                <form method="post" action="/admin/users/{{ user.id }}/delete" class="inline-form"
-                                      onsubmit="return confirm('Weet u zeker dat u {{ user.full_name }} wilt verwijderen?');">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-                                    <c-button label="Verwijderen" size="sm" show-icon="before" icon="trash" type="submit"/>
-                                </form>
-                            </div>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                {% else %}
-                    <tr>
-                        <td colspan="4" class="table-empty-cell">
-                            <div class="empty-state-text">
-                                <c-icon icon="info" size="lg"/>
-                                <div>Geen gebruikers gevonden. Voeg een gebruiker toe om te beginnen.</div>
-                            </div>
-                        </td>
-                    </tr>
-                {% endif %}
-            </tbody>
-        </table>
-    </div>
+    {% if users %}
+        <c-table columns="3fr 3fr 2fr 3fr">
+            <c-table-head>
+                <c-th>Naam</c-th>
+                <c-th>E-mailadres</c-th>
+                <c-th>Aangemaakt</c-th>
+                <c-th>Acties</c-th>
+            </c-table-head>
+            {% for user in users %}
+                <c-table-row>
+                    <c-td><strong>{{ user.full_name }}</strong></c-td>
+                    <c-td>{{ user.email }}</c-td>
+                    <c-td>{{ user.created_at|dutch_date(include_time=False) }}</c-td>
+                    <c-td>
+                        {# .actions was display:flex met een gat ertussen: <c-cluster>.
+                           Het verwijderformulier hoefde daarvoor .inline-form te zijn;
+                           als kind van een cluster is het vanzelf al een flex-item. #}
+                        <c-cluster gap="xs">
+                            {% set lotc_onclick_1 %}window.location.href='/admin/users/{{ user.id }}/edit'{% endset %}<c-button label="Bewerken" size="sm" show-icon="before" icon="pencil-on-square"/>
+                            <form method="post" action="/admin/users/{{ user.id }}/delete"
+                                  onsubmit="return confirm('Weet u zeker dat u {{ user.full_name }} wilt verwijderen?');">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                                <c-button label="Verwijderen" size="sm" show-icon="before" icon="trash" type="submit"/>
+                            </form>
+                        </c-cluster>
+                    </c-td>
+                </c-table-row>
+            {% endfor %}
+        </c-table>
+    {% else %}
+        <c-alert type="info" heading="Geen gebruikers gevonden. Voeg een gebruiker toe om te beginnen."/>
+    {% endif %}
 </c-card>
