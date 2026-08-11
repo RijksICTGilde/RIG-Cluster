@@ -526,7 +526,7 @@ class TestDetailPageIsUnaffected:
 
     @staticmethod
     def _render(stored: Any) -> str:
-        from opi.core.templates import templates
+        from opi.core.templates_lotc import templates_lotc as templates
 
         project = {
             "name": PROJECT,

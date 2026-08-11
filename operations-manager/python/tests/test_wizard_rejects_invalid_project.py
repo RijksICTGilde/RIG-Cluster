@@ -348,7 +348,7 @@ def test_a_field_message_cannot_execute_in_the_second_render(payload: str) -> No
     special characters -- and several validators quote the rejected value in their
     message, so a value typed into the form would otherwise be executed server-side.
     """
-    from opi.core.templates import get_templates
+    from opi.core.templates_lotc import templates_lotc
     from opi.forms.visualizers.wizard_sections import COMPONENTS_SECTION
     from opi.web.router_wizard import _render_step_html
 
@@ -358,7 +358,7 @@ def test_a_field_message_cannot_execute_in_the_second_render(payload: str) -> No
         yaml_data={"components": [{"name": "web", "image": "nginx:1.25"}]},
         errors={"components[0]/command": [f"Ongeldige waarde: {payload}"]},
     )
-    processed = get_templates().env.filters["process_components"](html)
+    processed = templates_lotc.env.filters["process_components"](html)
 
     assert "{{" not in html
     assert "{%" not in html
@@ -375,7 +375,7 @@ async def test_a_rejected_save_marks_the_field_and_puts_the_text_where_it_is_saf
     """
     from unittest.mock import MagicMock
 
-    from opi.core.templates import get_templates
+    from opi.core.templates_lotc import templates_lotc
     from opi.forms.editables.processor import EditableFormProcessor
     from opi.web.router_wizard import SCHEMA_FIELD_MARKER, _do_submit
 
@@ -434,4 +434,4 @@ async def test_a_rejected_save_marks_the_field_and_puts_the_text_where_it_is_saf
 
     step_html = captured["step_html"]
     assert payload not in step_html
-    assert "49" not in get_templates().env.filters["process_components"](step_html)
+    assert "49" not in templates_lotc.env.filters["process_components"](step_html)

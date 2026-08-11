@@ -3,15 +3,12 @@ import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-import jinja_roos_components
 from authlib.integrations.starlette_client import OAuth  # type: ignore
 from fastapi import FastAPI, HTTPException
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -75,8 +72,6 @@ _NOT_FOUND_PAGE = """<!doctype html>
 </body>
 </html>
 """
-
-STATIC_DIR_ROOS = Path(jinja_roos_components.__file__).parent / "static" / "roos" / "dist"
 
 
 # todo(berry): move lifespan to own file
@@ -539,23 +534,6 @@ def create_app() -> FastAPI:
     app.include_router(prometheus_router, include_in_schema=False)  # Prometheus /metrics scrape endpoint
     app.include_router(invite_router, include_in_schema=False)  # Exclude from OpenAPI docs (public invite flow)
     app.include_router(web_router, include_in_schema=False)  # Exclude from OpenAPI docs
-
-    # Mount ROOS component assets - use a simpler approach
-    try:
-        from jinja_roos_components import get_static_files_path
-
-        roos_static_path = get_static_files_path()
-
-        # Just mount the entire static directory
-        if os.path.exists(roos_static_path):
-            app.mount("/static/roos/dist", StaticFiles(directory=STATIC_DIR_ROOS), name="roos")
-            logger.info(f"ROOS static files mounted at /static/roos from {roos_static_path}")
-        else:
-            logger.error(f"ROOS static path does not exist: {roos_static_path}")
-    except ImportError as e:
-        logger.warning(f"jinja-roos-components not available: {e}")
-    except Exception as e:
-        logger.error(f"Error mounting ROOS static files: {e}")
 
     # De assets van het componentensysteem liggen verspreid over meerdere geinstalleerde
     # pakketten (de kern plus elk design system), vandaar een route met meerdere wortels

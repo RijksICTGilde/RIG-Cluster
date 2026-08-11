@@ -74,7 +74,7 @@ def _verzamel_links(app_server: str, page: Page) -> dict[str, str]:
     """
     gevonden: dict[str, str] = {}
     for pad in PAGINAS:
-        antwoord = page.goto(f"{app_server}{pad}?layout=nldd", wait_until="networkidle")
+        antwoord = page.goto(f"{app_server}{pad}", wait_until="networkidle")
         assert antwoord is not None, f"{pad} leverde geen antwoord"
         assert antwoord.status == 200, f"{pad} zelf gaf HTTP {antwoord.status}"
         for link in page.evaluate(LINK_JS):

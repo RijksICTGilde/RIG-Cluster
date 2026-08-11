@@ -5,7 +5,7 @@ opende "Projectleden beheren" en keek naar de oude vormgeving in een nieuw venst
 poort staat onder de omzetting daarvan.
 
 Elk dialoogfragment wordt twee keer opgehaald bij dezelfde route - ?layout=roos en
-?layout=nldd - en het gedragsoppervlak wordt vergeleken: waar je heen kunt, wat htmx
+ - en het gedragsoppervlak wordt vergeleken: waar je heen kunt, wat htmx
 ophaalt, welke JavaScript-functies aangeroepen worden, welke velden er zijn en welke id's
 er staan waar htmx of het script aan hangt. Aan die velden en dat ene hx-post hangt het
 OPSLAAN; valt er een weg, dan bewaart de dialoog stilletjes minder dan je invulde.
@@ -124,7 +124,7 @@ def test_het_fragment_toont_geen_markup_als_tekst(client: httpx.Client, pad: str
     Zichtbaar werd dat pas bij een reeks MET items, dus in de bewerkdialoog van een
     bestaand project eerder dan in de lege aanmaakwizard.
     """
-    response = client.get(f"{pad}?layout=nldd")
+    response = client.get(f"{pad}")
     assert response.status_code == 200
 
     for verdacht in ("&lt;nldd-", "&lt;div", "&lt;c-", "&lt;button", "&lt;input"):

@@ -1,4 +1,0 @@
-{% from "widgets/_macros.html.j2" import html_attributes %}
-<div{% if div.css_class %} class="{{ div.css_class|e }}"{% endif %} {{ html_attributes(div.attributes) }}>
-    {{ children_content }}
-</div>

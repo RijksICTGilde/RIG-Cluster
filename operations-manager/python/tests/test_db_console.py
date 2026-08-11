@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 from opi.core.db_console_reaper import DbConsoleReaper
-from opi.core.templates import get_templates
+from opi.core.templates_lotc import templates_lotc
 from opi.generation.manifests import render_template
 from opi.manager.db_console_manager import (
     DbConsoleManager,
@@ -197,7 +197,7 @@ def _fake_request():
 
 
 def _render_modal_html(**ctx) -> str:
-    tmpl = get_templates().get_template("shared/_db-console-modal.html.j2")
+    tmpl = templates_lotc.get_template("shared/_db-console-modal.html.j2")
     return tmpl.render(request=_fake_request(), **ctx)
 
 

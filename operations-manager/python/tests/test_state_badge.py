@@ -13,7 +13,7 @@ takes the place of the green Healthy or stands next to it.
 
 from __future__ import annotations
 
-from opi.core.templates import templates
+from opi.core.templates_lotc import templates_lotc as templates
 from opi.services.catalog.base import DeploymentStateFact
 from opi.services.catalog.sleep_mode.state import STATE_SLEEPING, STATE_WAKING, SleepState, write
 from opi.services.deployment_state import DeploymentState, collect_deployment_state

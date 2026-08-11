@@ -206,7 +206,7 @@ async def backups_fragment(request: Request, project_name: str) -> HTMLResponse:
     # midden in een hertekende pagina een tabel in de oude vormgeving.
     return render(
         request,
-        template="shared/_backup-snapshots-lotc.html.j2",
+        template="shared/_backup-snapshots.html.j2",
         context={
             "deployments": deployments,
             "backups_by_deployment": backups_by_deployment,

@@ -1,51 +1,42 @@
-"""De blokken die de DIENSTEN op de projectpagina leveren, in beide vormgevingen (RC-64).
+"""De blokken die de DIENSTEN op de projectpagina en in hun dialogen leveren.
 
 Een dienst levert zijn eigen leesblok voor de projectdetailpagina
-(``UIEvent.PROJECT_SECTIONS``, zie opi/services/registry.py). Die sjablonen staan bij hun
-dienst en zijn in roos-componenten geschreven; de LOTC-pagina rendeerde ze daarom met
-``render_roos()`` en zette het resultaat als HTML neer.
+(``UIEvent.PROJECT_SECTIONS``, zie opi/services/registry.py) plus soms een dialoog. Die
+sjablonen staan bij hun dienst, en de pagina rendert ze zonder te weten welke dienst het
+is - dus een dienst die zijn sjabloon niet levert of niet rendert, valt hier op en niet
+pas op het scherm.
 
-Dat was verantwoord met "zo'n blok ziet er dan anders uit, en dat is zichtbaar onaf". Die
-redenering veronderstelt dat de rvo-klassen nog iets DOEN. Ze doen niets: de LOTC-omgeving
-laadt ``["lotc-layout", "nldd", "lotc-forms"]`` en ``lotc_rvo`` staat daar niet bij. Het
-resultaat was dus niet zichtbaar anders maar volledig onopgemaakt - kale HTML midden op de
-projectpagina.
+Hier stond de tegenhanger-poort. Zolang er twee bouwlijnen waren, lag naast elk
+dienstsjabloon een ``-lotc``-versie, en deze tests legden die twee naast elkaar: zelfde
+bestemmingen, zelfde htmx, zelfde JavaScript-aanroepen, zelfde id's. Dat was de meetlat
+die de omzetting mogelijk maakte, en hij is nu leeg: er is nog EEN sjabloon per dienst.
 
-Elke dienst levert nu naast zijn ``section-detail.html.j2`` een ``-lotc``-tegenhanger. Het
-bezwaar daartegen is echt: een tweede kopie loopt uit de pas zodra een dienst zijn sjabloon
-wijzigt, en diensten zijn juist het deel van dit platform dat blijft groeien. Deze test is
-het antwoord daarop en meet drie dingen:
+Wat ervoor in de plaats komt meet de sjablonen die er zijn:
 
-1. **Geen dienst vergeet zijn tegenhanger.** Een nieuw ``section-detail.html.j2`` zonder
-   ``-lotc``-buur faalt hier, zodat de kopie zichtbaar is in plaats van stil.
-2. **De twee doen hetzelfde.** Gemeten met dezelfde meetlat als
-   ``scripts/lotc_compare_behaviour.py``: elke bestemming, elk htmx-adres, elke aangeroepen
-   JavaScript-functie en elk id. Vormgeving telt niet mee. Zo valt een knop die zijn
-   aanroep kwijtraakt op voordat een gebruiker erop klikt.
-3. **Er komt geen roos-HTML meer uit.** Gemeten op het gerenderde blok, want dat is waar de
-   fout zat: in de bron van de LOTC-pagina was geen enkele rvo-klasse te vinden.
+1. **Elk dienstsjabloon rendert**, met gegevens in de vorm die de dienst zelf oplevert.
+   Een componenttag met een attribuut dat niet bestaat breekt hier, niet in de browser.
+2. **Er komt geen markup van het oude systeem uit** - geen ``rvo-``, geen
+   ``data-roos-component``, en geen onvervangen ``<c-``.
+3. **Elke dialoog kan zijn gegevens nog wegsturen.** Dat is de les die twee keer geld
+   kostte: een dode knop ziet er precies zo uit als een levende.
 """
 
 from __future__ import annotations
 
 import re
-import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from opi.core.templates import get_templates
-from opi.core.templates_lotc import LOTC_TEMPLATE_SUFFIX, lotc_counterpart, templates_lotc
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from lotc_compare_behaviour import meet, vergelijk
+from opi.core.templates_lotc import templates_lotc
 
 CATALOG_DIR = Path(__file__).resolve().parents[1] / "opi" / "services" / "catalog"
 
-#: Wat de roos-omgeving in elke component achterlaat. Op een LOTC-pagina is dit het bewijs
-#: dat er HTML uit de andere omgeving is binnengekomen; LOTC zet ``data-lotc-component``.
+#: Wat het OUDE componentensysteem in elke component achterliet. Het staat hier nog omdat
+#: het het enige spoor is dat overblijft als er ooit weer HTML uit een tweede
+#: renderomgeving binnenkomt; dit systeem zet ``data-lotc-component``.
 ROOS_MARKER = "data-roos-component"
 
 
@@ -164,10 +155,10 @@ DIALOGEN: list[tuple[str, str, dict[str, Any]]] = [
     ),
 ]
 
-#: Dienstsjablonen die niet hier maar in een andere test met hun tegenhanger vergeleken
-#: worden, met de test erbij. Zo blijft zichtbaar dat ze GEMETEN zijn en niet vergeten.
+#: Dienstsjablonen die niet hier maar in een andere test gerenderd worden, met de test
+#: erbij. Zo blijft zichtbaar dat ze GEMETEN zijn en niet vergeten.
 ELDERS_GEMETEN = {
-    # tests/test_lotc_fragmenten.py::test_het_backupblok_doet_in_beide_vormgevingen_hetzelfde
+    # tests/test_lotc_fragmenten.py::test_het_backupblok_rendert_met_zijn_snapshots
     "shared/_backup-snapshots.html.j2",
     # Wordt door _backup-snapshots.html.j2 ingesloten en gaat in dezelfde meting mee.
     "shared/_backup-snapshots-one.html.j2",
@@ -184,175 +175,86 @@ def _detail_sjablonen() -> list[str]:
 
 
 def _alle_dienstsjablonen() -> list[str]:
-    """ELK sjabloon in de catalogus dat zelf geen LOTC-tegenhanger is.
+    """ELK sjabloon in de catalogus.
 
     De poort keek hiervoor alleen naar ``*/section-detail.html.j2``, en dat was te smal:
     een dienst levert meer dan zijn projectblok. Het deploymentblok van metrics_scraper,
     het backupblok en de twee dialogen (job, databaseconsole) vielen er allemaal buiten, en
-    precies daar zaten de gaten - de jobdialoog en de consoledialoog rendeerden nog met de
-    ROOS-omgeving, dus ze kwamen op een NLDD-pagina onopgemaakt binnen.
-
-    Nu telt elk ``.html.j2`` in de catalogus mee. Een dienst die er een bijlegt zonder
-    tegenhanger faalt hier, ongeacht hoe het bestand heet.
+    precies daar zaten de gaten.
     """
-    return sorted(
-        f"{pad.parent.name}/{pad.name}"
-        for pad in CATALOG_DIR.glob("*/*.html.j2")
-        if not pad.name.endswith(LOTC_TEMPLATE_SUFFIX)
-    )
-
-
-def test_elk_dienstblok_heeft_een_lotc_tegenhanger() -> None:
-    """De poort uit de kop: een nieuwe dienst kan zijn tegenhanger niet vergeten.
-
-    Zonder deze test is het lege blok in bg/_deployment-service-sections.html.j2 een
-    uitnodiging: het blok verdwijnt dan stilletjes van de pagina, en niemand ziet het tot
-    iemand de pagina opent.
-    """
-    zonder = [naam for naam in _alle_dienstsjablonen() if lotc_counterpart(naam) is None]
-
-    assert zonder == [], (
-        f"deze dienstsjablonen hebben geen LOTC-tegenhanger: {zonder}. "
-        f"Leg er een <naam>-lotc.html.j2 naast in dezelfde dienstmap; zonder die tegenhanger "
-        f"staat het blok niet op de projectpagina."
-    )
+    return sorted(f"{pad.parent.name}/{pad.name}" for pad in CATALOG_DIR.glob("*/*.html.j2"))
 
 
 def test_de_meetlijst_dekt_elk_dienstblok() -> None:
-    """Een dienstblok dat hier niet in BLOKKEN staat wordt hieronder niet vergeleken."""
+    """Een dienstblok dat hier niet in BLOKKEN staat wordt hieronder niet gerenderd."""
     assert sorted(BLOKKEN) == _detail_sjablonen()
 
 
-def test_elk_dienstsjabloon_wordt_ergens_vergeleken() -> None:
-    """Geen dienstsjabloon glipt langs BEIDE vergelijkingen.
+def test_elk_dienstsjabloon_wordt_ergens_gerenderd() -> None:
+    """Geen dienstsjabloon glipt langs ALLE metingen.
 
-    De tegenhanger-poort hierboven zegt alleen dat het BESTAND er is. Of het hetzelfde
-    doet, meten ``test_het_lotc_blok_doet_hetzelfde_als_het_roos_blok`` hier en de
-    backup- en metricstests in ``tests/test_lotc_fragmenten.py``. Deze test houdt die twee
-    lijsten sluitend: een nieuw dienstsjabloon dat in geen van beide staat valt op.
+    Dat een sjabloon bestaat zegt niets; of het rendert wel. Deze test houdt de lijsten
+    sluitend, zodat een nieuw dienstsjabloon dat in geen enkele meting staat opvalt.
     """
     gemeten = set(BLOKKEN) | set(FRAGMENTEN) | {naam for _, naam, _ in DIALOGEN} | ELDERS_GEMETEN
     ongemeten = [naam for naam in _alle_dienstsjablonen() if naam not in gemeten]
 
     assert ongemeten == [], (
-        f"deze dienstsjablonen worden nergens met hun tegenhanger vergeleken: {ongemeten}. "
-        f"Zet ze in BLOKKEN/FRAGMENTEN hierboven, of - als ze elders gemeten worden - in "
-        f"ELDERS_GEMETEN met de test erbij."
+        f"deze dienstsjablonen worden nergens gerenderd: {ongemeten}. "
+        f"Zet ze in BLOKKEN/FRAGMENTEN/DIALOGEN hierboven, of - als ze elders gemeten "
+        f"worden - in ELDERS_GEMETEN met de test erbij."
     )
 
 
-@pytest.mark.parametrize("naam", sorted(BLOKKEN) + sorted(FRAGMENTEN))
-def test_het_lotc_blok_doet_hetzelfde_als_het_roos_blok(naam: str) -> None:
-    """Zelfde bestemmingen, zelfde htmx, zelfde JavaScript-aanroepen, zelfde id's."""
-    context = {**BLOKKEN, **FRAGMENTEN}[naam]
-    lotc_naam = lotc_counterpart(naam)
-    assert lotc_naam is not None, f"{naam} heeft geen LOTC-tegenhanger"
-
-    roos_html = get_templates().env.get_template(naam).render(**context)
-    lotc_html = templates_lotc.env.get_template(lotc_naam).render(**context)
-
-    verschillen = vergelijk(meet(roos_html), meet(lotc_html))
-
-    assert verschillen == [], f"{naam} en {lotc_naam} doen niet hetzelfde:\n" + "\n".join(verschillen)
+def _render(naam: str, context: dict[str, Any]) -> str:
+    return templates_lotc.env.get_template(naam).render(**context)
 
 
 @pytest.mark.parametrize("naam", sorted(BLOKKEN) + sorted(FRAGMENTEN))
-def test_het_lotc_blok_bevat_geen_roos_html(naam: str) -> None:
+def test_het_dienstblok_rendert_zonder_markup_van_het_oude_systeem(naam: str) -> None:
     """De meting die de bron niet kan geven: wat de gebruiker krijgt."""
-    context = {**BLOKKEN, **FRAGMENTEN}[naam]
-    lotc_naam = lotc_counterpart(naam)
-    assert lotc_naam is not None
+    html = _render(naam, {**BLOKKEN, **FRAGMENTEN}[naam])
 
-    lotc_html = templates_lotc.env.get_template(lotc_naam).render(**context)
-
-    assert ROOS_MARKER not in lotc_html
-    assert "rvo-" not in lotc_html
-    assert "<c-" not in lotc_html, "onvervangen componenttag: dit sjabloon rendert in de verkeerde omgeving"
-
-
-def test_een_blok_zonder_tegenhanger_valt_terug_in_plaats_van_om() -> None:
-    """De ondergrens blijft staan: lelijk is beter dan weg.
-
-    Een dienst die morgen een blok toevoegt en de tegenhanger nog niet heeft, mag de
-    projectpagina niet meenemen in zijn val.
-    """
-    assert lotc_counterpart("keycloak/bestaat-niet.html.j2") is None
-    assert lotc_counterpart("keycloak/section-detail.txt") is None
+    assert html.strip(), f"{naam} levert een leeg blok op"
+    assert ROOS_MARKER not in html
+    assert "rvo-" not in html
+    assert "<c-" not in html, "onvervangen componenttag: dit sjabloon rendert in de verkeerde omgeving"
 
 
 @pytest.mark.parametrize(("geval", "naam", "context"), DIALOGEN, ids=[g for g, _, _ in DIALOGEN])
-def test_de_dialoog_doet_in_beide_vormgevingen_hetzelfde(geval: str, naam: str, context: dict[str, Any]) -> None:
-    """De job- en consoledialoog, per toestand: zelfde adressen, aanroepen en id's.
+def test_de_dialoog_rendert_zonder_markup_van_het_oude_systeem(geval: str, naam: str, context: dict[str, Any]) -> None:
+    """Per toestand gemeten, want elke tak heeft zijn eigen knoppen."""
+    html = _render(naam, context)
 
-    Deze twee zijn tot nu toe alleen in roos gerenderd - jobs.py en db_console.py deden een
-    kale ``TemplateResponse`` op het roos-sjabloon, zonder schakelaar. Op een NLDD-pagina
-    kwam de dialoog daardoor in de oude vormgeving binnen, en die wordt daar door niets
-    opgemaakt. Per toestand gemeten, want elke tak heeft zijn eigen knoppen.
-    """
-    lotc_naam = lotc_counterpart(naam)
-    assert lotc_naam is not None, f"{naam} heeft geen LOTC-tegenhanger"
-
-    roos_html = get_templates().env.get_template(naam).render(**context)
-    lotc_html = templates_lotc.env.get_template(lotc_naam).render(**context)
-
-    verschillen = vergelijk(meet(roos_html), meet(lotc_html))
-
-    assert verschillen == [], f"{geval}: {naam} en {lotc_naam} doen niet hetzelfde:\n" + "\n".join(verschillen)
+    assert html.strip(), f"{geval}: {naam} levert een lege dialoog op"
+    assert ROOS_MARKER not in html
+    assert "rvo-" not in html
+    assert "<c-" not in html, "onvervangen componenttag: dit sjabloon rendert in de verkeerde omgeving"
 
 
-@pytest.mark.parametrize(("geval", "naam", "context"), DIALOGEN, ids=[g for g, _, _ in DIALOGEN])
-def test_de_dialoog_bevat_geen_roos_html(geval: str, naam: str, context: dict[str, Any]) -> None:
-    """Wat de gebruiker krijgt, niet wat er in de bron staat."""
-    lotc_naam = lotc_counterpart(naam)
-    assert lotc_naam is not None
+def test_de_dialoogroutes_gaan_langs_de_gedeelde_render() -> None:
+    """Twee sjablonen zijn niets waard als de route er langs rendert.
 
-    lotc_html = templates_lotc.env.get_template(lotc_naam).render(**context)
-
-    assert ROOS_MARKER not in lotc_html
-    assert "rvo-" not in lotc_html
-    assert "<c-" not in lotc_html, "onvervangen componenttag: dit sjabloon rendert in de verkeerde omgeving"
-
-
-def test_de_dialoogroutes_kiezen_de_vormgeving_van_het_verzoek() -> None:
-    """De poort onder de twee tests hierboven: het sjabloon moet ook GEKOZEN worden.
-
-    Twee gelijkwaardige sjablonen zijn niets waard als de route er altijd maar een van
-    rendert. Precies dat was het geval: beide modules riepen ``get_templates()`` aan en
-    noemden het roos-sjabloon, dus de tegenhanger werd nooit gebruikt. Gemeten op de
-    BRON van de module en niet op een gerenderd antwoord, want de route erachter heeft een
-    cluster nodig.
+    Precies dat was het geval: beide modules riepen ``templates_lotc`` rechtstreeks aan.
+    Gemeten op de BRON van de module en niet op een gerenderd antwoord, want de route
+    erachter heeft een cluster nodig.
     """
     for module in ("jobs", "db_console"):
         bron = (CATALOG_DIR / "shared" / f"{module}.py").read_text()
-        assert "get_templates()" not in bron, (
-            f"{module}.py rendert nog rechtstreeks in de roos-omgeving; ga via "
-            f"opi.web.lotc_switch.render() zodat het verzoek de vormgeving kiest"
-        )
-        assert "lotc=_MODAL_TEMPLATE_LOTC" in bron, f"{module}.py geeft geen LOTC-sjabloon mee aan render()"
+        assert "templates_lotc" not in bron, f"{module}.py rendert rechtstreeks; ga via opi.web.lotc_switch.render()"
+        assert "template=_MODAL_TEMPLATE" in bron, f"{module}.py geeft geen sjabloon mee aan render()"
 
 
-def test_de_lotc_omgeving_kan_niet_meer_in_de_roos_omgeving_renderen() -> None:
-    """``render_roos`` is weg en mag niet terugkomen.
-
-    Die functie rendeerde een dienstblok in de ANDERE componentomgeving en zette het
-    resultaat als HTML op een NLDD-pagina. Zolang hij bestaat is hij een uitnodiging: een
-    dienst die zijn tegenhanger niet schrijft komt er dan alsnog in, ongestileerd, en de
-    poort hierboven wordt vrijblijvend. Er is nu ook niets meer om op terug te vallen - de
-    roos-omgeving zelf gaat weg.
-    """
-    assert "render_roos" not in templates_lotc.env.globals
-
-    # De Jinja-COMMENTAAR eruit voordat we zoeken: verschillende sjablonen leggen in hun kop
-    # uit dat hier render_roos() stond en waarom het weg is. Die uitleg is de bedoeling, en
-    # een test die erop afgaat dwingt je hem te schrappen - dan verliest de volgende lezer
-    # precies de reden waarom het zo werkt.
-    sjablonen = Path(__file__).resolve().parents[1] / "opi" / "templates_lotc"
-    roepen_aan = [
-        pad.name
-        for pad in sjablonen.rglob("*.j2")
-        if "render_roos(" in re.sub(r"\{#.*?#\}", "", pad.read_text(), flags=re.DOTALL)
-    ]
-    assert roepen_aan == [], f"deze LOTC-sjablonen roepen render_roos() nog aan: {roepen_aan}"
+#: Welke dialoogtoestanden hun gegevens moeten kunnen WEGSTUREN, en welke niet. Als lijst
+#: en niet afgeleid uit een vergelijking met een tweede sjabloon: die tweede is er niet
+#: meer, en een verwachting die uit de meting zelf komt bewijst niets.
+KAN_VERSTUREN = {
+    "job/uit": False,
+    "console/uit": False,
+    "console/actief": True,
+    # De console is aan het STARTEN: er is nog niets om heen te sturen, alleen een wachtbeeld.
+    "console/start": False,
+}
 
 
 @pytest.mark.parametrize(("geval", "naam", "context"), DIALOGEN, ids=[g for g, _, _ in DIALOGEN])
@@ -370,23 +272,16 @@ def test_de_dialoog_kan_nog_versturen(geval: str, naam: str, context: dict[str, 
     uit, en er vertrok niets.
 
     Daarom wordt hier niet geteld hoe er verstuurd wordt maar OF dat kan: een element met
-    ``type="submit"``, of een element dat zelf een ``hx-post`` draagt. De vorm mag per
-    vormgeving verschillen - de jobdialoog gebruikt nu een knop met hx-post plus
-    hx-include, net als de consoledialoog ernaast - maar de mogelijkheid niet.
+    ``type="submit"``, of een element dat zelf een ``hx-post`` draagt.
     """
-    lotc_naam = lotc_counterpart(naam)
-    assert lotc_naam is not None
+    html = _render(naam, context)
+    kan = bool(re.search(r'type="submit"', html) or re.search(r"hx-post=", html))
 
-    roos_html = get_templates().env.get_template(naam).render(**context)
-    lotc_html = templates_lotc.env.get_template(lotc_naam).render(**context)
-
-    def kan_versturen(html: str) -> bool:
-        return bool(re.search(r'type="submit"', html) or re.search(r"hx-post=", html))
-
-    assert kan_versturen(lotc_html) == kan_versturen(roos_html), (
-        f"{geval}: het roos-blok kan {'wel' if kan_versturen(roos_html) else 'niet'} versturen "
-        f"en het LOTC-blok {'wel' if kan_versturen(lotc_html) else 'niet'}. "
-        f"Let op: op c-button is 'type' de vormgeving, en een <nldd-button> met "
-        f'html-type="submit" dient een omliggende <form> NIET in - geef de knop zelf een '
-        f"hx-post met hx-include, zoals de consoledialoog doet."
+    verwacht = KAN_VERSTUREN.get(geval, True)
+    assert kan is verwacht, (
+        f"{geval}: deze dialoog kan {'wel' if kan else 'niet'} versturen en dat hoort "
+        f"{'wel' if verwacht else 'niet'} te kunnen. Let op: op c-button is 'type' de "
+        f'vormgeving, en een <nldd-button> met html-type="submit" dient een omliggende '
+        f"<form> NIET in - geef de knop zelf een hx-post met hx-include, zoals de "
+        f"consoledialoog doet."
     )

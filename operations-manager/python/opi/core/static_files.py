@@ -25,9 +25,8 @@ class CacheControlledStaticFiles(StaticFiles):
     no-cache and is at worst suboptimal, never a file pinned for a year at everyone who
     already fetched it.
 
-    The ROOS mount (/static/roos/dist) is a separate StaticFiles mount and stays
-    untouched: ROOS emits those URLs itself, so we cannot put a hash in them, and a bare
-    ``immutable`` would pin exactly the files that are live-synced during development.
+    De assets van het componentensysteem lopen hier niet langs: die worden onder
+    /static/lotc/ door een eigen route geserveerd.
     """
 
     async def get_response(self, path: str, scope: Scope) -> Response:

@@ -21,12 +21,13 @@ import pathlib
 
 import opi
 import pytest
-from opi.core.templates import get_templates
+from opi.core.templates_lotc import templates_lotc
 from opi.services import ServiceType
-from opi.services.help_text import render_service_help
+from opi.services.help_text import markdown_to_components, read_help_markdown, render_service_help
 from opi.services.services import ServiceAdapter
+from opi.web.navigation_lotc import to_nldd_icon
 
-_TEMPLATE_ROOT = pathlib.Path(opi.__file__).parent / "templates"
+_TEMPLATE_ROOT = pathlib.Path(opi.__file__).parent / "templates_lotc"
 # A service's explanation lives in that service's own package (RC-36); the loader has
 # the catalog directory on its search path, so a help_template resolves against either.
 _CATALOG_ROOT = pathlib.Path(opi.__file__).parent / "services" / "catalog"
@@ -90,7 +91,7 @@ def test_service_block_users_do_not_render_their_own_service_icon(template_name:
 
 
 def test_the_macro_only_shows_the_help_button_when_there_is_help() -> None:
-    macro = get_templates().get_template("widgets/_macros.html.j2").module.service_block  # type: ignore[attr-defined]
+    macro = templates_lotc.get_template("widgets/_macros.html.j2").module.service_block  # type: ignore[attr-defined]
 
     with_help = str(macro("Naam", "Omschrijving", "sleutel", "groen", "keycloak/help.md"))
     without_help = str(macro("Naam", "Omschrijving", "sleutel", "groen", None))
@@ -101,7 +102,7 @@ def test_the_macro_only_shows_the_help_button_when_there_is_help() -> None:
     for rendered in (with_help, without_help):
         assert "Naam" in rendered
         assert "Omschrijving" in rendered
-        assert "rvo-icon-sleutel" in rendered
+        assert 'name="lock-closed"' in rendered
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +150,12 @@ def test_the_help_template_uses_the_icon_of_its_service(service: ServiceType) ->
     """
     definition = ServiceAdapter.get_service_definition(service)
     assert definition.help_template is not None
-    rendered = render_service_help(definition.help_template)
-    assert f"rvo-icon-{definition.icon}" in rendered, (
+    markup = markdown_to_components(
+        read_help_markdown(definition.help_template), icon=definition.icon, color=definition.color
+    )
+    # Op de MARKUP en niet op de gerenderde HTML: het componentensysteem lost zijn eigen
+    # aliassen op, dus daar staat niet altijd de naam die wij meegaven. Wat hier getoetst
+    # wordt is dat de uitleg de icoonnaam van ZIJN dienst krijgt, door de vertaling heen.
+    assert f'icon="{to_nldd_icon(definition.icon)}"' in markup, (
         f"{definition.help_template} does not show the service icon {definition.icon!r}"
     )

@@ -109,10 +109,10 @@ def test_the_wizard_progress_modal_shows_text_instead_of_executing_it() -> None:
     file ends up in it -- so running the rendered HTML through ``process_components``
     again executed that text as Jinja.
     """
-    from opi.core.templates import get_templates
+    from opi.core.templates_lotc import templates_lotc
 
-    rendered = (
-        get_templates().get_template("wizard/modal_wizard_progress_fragment.html.j2").render(_wizard_progress_context())
+    rendered = templates_lotc.get_template("wizard/modal_wizard_progress_fragment.html.j2").render(
+        _wizard_progress_context()
     )
 
     assert "49" not in rendered

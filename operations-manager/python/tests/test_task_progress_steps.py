@@ -259,7 +259,7 @@ async def test_out_of_scope_deployment_reports_that_it_did_nothing(
 
 def test_fragment_renders_every_step_of_a_long_running_task() -> None:
     """A busy project produces many steps; the polled fragment must show them all."""
-    from opi.core.templates import get_templates
+    from opi.core.templates_lotc import templates_lotc
     from opi.web.router import _build_task_hierarchy
 
     subtasks: list[dict] = []
@@ -279,7 +279,7 @@ def test_fragment_renders_every_step_of_a_long_running_task() -> None:
     assert len(hierarchy) == 20
     assert all(len(task["subtasks"]) == 1 for task in hierarchy)
 
-    templates = get_templates()
+    templates = templates_lotc
     rendered = templates.get_template("partials/task_progress_fragment.html.j2").render(
         {
             "task_id": "task-under-test",

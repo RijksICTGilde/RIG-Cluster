@@ -16,7 +16,7 @@ hoger getal dan de werkelijkheid, dan faalt de test met het verzoek het te verla
 
 import re
 
-from opi.core.templates import STATIC_DIR, TEMPLATES_DIR
+from opi.core.template_helpers import STATIC_DIR, TEMPLATES_DIR
 
 INLINE_STYLE = re.compile(r'\bstyle="')
 STYLE_BLOCK = re.compile(r"<style[\s>]")
@@ -40,17 +40,36 @@ WERKLIJST = "werklijst: nog op te schonen, mag alleen korter worden"
 MAX_CONTENT_BLOCK_LINES = 50
 
 # Templates die hun content-blok niet opdelen, met de reden.
+#
+# Deze lijst is met RC-67 opnieuw opgebouwd: de guard las opi/templates/, en die map is er
+# niet meer. Hij meet nu opi/templates_lotc/, en dat is een tweede generatie sjablonen die
+# nooit langs deze eis is gekomen. De hertekende bg-paginas staan er daarom als WERKLIJST
+# in - ze zijn niet goedgekeurd, ze zijn geteld, en de eis is dat het er niet meer worden.
 CONTENT_BLOCK_EXCEPTIONS: dict[str, str] = {
     "architecture-overview.html.j2": (
         "1.500 regels handgeschreven markup in een enkel blok. Dit is geen pagina om op te "
         "delen maar een om apart te beoordelen, en misschien te vervangen in plaats van te "
         "verbouwen. Bewust buiten het opdeelwerk gehouden."
     ),
+    "bg/project-tabs.html.j2": WERKLIJST,
+    "bg/projects.html.j2": WERKLIJST,
+    "bg/feedback.html.j2": WERKLIJST,
+    "bg/project-details.html.j2": WERKLIJST,
+    "bg/admin-approvals.html.j2": WERKLIJST,
+    "bg/dashboard.html.j2": WERKLIJST,
+    "bg/wizard-start.html.j2": WERKLIJST,
+    "bg/admin-users.html.j2": WERKLIJST,
+    "bg/metrics-explorer.html.j2": WERKLIJST,
+    "bg/permission-denied.html.j2": WERKLIJST,
+    "bg/admin-usage.html.j2": WERKLIJST,
+    "bg/actions.html.j2": WERKLIJST,
+    "bg/cli.html.j2": WERKLIJST,
 }
 
 # Templates die een eigen <style>-blok mogen houden, met de reden.
 STYLE_BLOCK_EXCEPTIONS: dict[str, str] = {
     "architecture-overview.html.j2": "Zie CONTENT_BLOCK_EXCEPTIONS: deze pagina wordt in zijn geheel apart beoordeeld.",
+    "bg/admin-usage.html.j2": WERKLIJST,
 }
 
 # Toegestane ``style=``-attributen per template, met de reden. Alles wat hier niet staat,
@@ -71,6 +90,15 @@ INLINE_STYLE_BUDGET: dict[str, tuple[int, str]] = {
         2,
         "De breedte van de CPU- en van de geheugenbalk is de waarde zelf.",
     ),
+    "bg/_task-progress.html.j2": (
+        1,
+        "De breedte van de voortgangsbalk is de waarde zelf; zelfde uitzondering als in widgets/_macros.html.j2.",
+    ),
+    "widgets/form_start.html.j2": (
+        1,
+        "De tussenruimte van de stapel wordt als custom property gezet omdat het "
+        "componentensysteem er geen klasse voor kent.",
+    ),
     "wizard/wizard_steps_indicator.html.j2": (
         1,
         "De breedte van de voortgangsbalk is het percentage voltooide stappen.",
@@ -84,11 +112,6 @@ INLINE_STYLE_BUDGET: dict[str, tuple[int, str]] = {
         1,
         "De kleur van het resourcetype-label komt uit de servicedefinitie; er is geen vaste "
         "lijst kleuren om klassen voor te maken.",
-    ),
-    "wizard/partials/attachments_list.html.j2": (
-        1,
-        "c-alert zet een meegegeven style= op twee elementen en een meegegeven class= op maar "
-        "een. Een klasse zou de marge verplaatsen in plaats van verhuizen.",
     ),
 }
 
@@ -122,7 +145,7 @@ def test_no_inline_style_attributes() -> None:
         if found > allowed:
             offenders.append(f"{name}: {found} style=-attributen, toegestaan zijn er {allowed}")
 
-    assert not offenders, "Zet de vormgeving in static/css/ of laat hem aan het ROOS-component over:\n" + "\n".join(
+    assert not offenders, "Zet de vormgeving in static/css/ of laat hem aan het component over:\n" + "\n".join(
         offenders
     )
 
