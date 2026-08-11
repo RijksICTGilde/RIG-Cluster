@@ -95,7 +95,7 @@ class TestTheBannerSentence:
     def test_no_healthy_projects_at_all_is_stated_plainly(self) -> None:
         banner = _dashboard_health_banner(_counts(Disabled=2))
 
-        assert banner["heading"] == "0 van de 2 projecten zijn gezond"
+        assert banner["heading"] == "Geen van je 2 projecten is gezond"
 
     def test_nothing_to_say_yields_no_banner(self) -> None:
         assert _dashboard_health_banner(_counts(Unknown=2)) is None
