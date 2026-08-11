@@ -445,15 +445,6 @@
     };
 
     /**
-     * Clear search input
-     */
-    window.clearSearch = function() {
-        searchInput.value = '';
-        filterLogs();
-        searchInput.focus();
-    };
-
-    /**
      * Toggle word wrap
      */
     window.toggleWordWrap = function() {
@@ -583,7 +574,7 @@
 
         // Focus search on Ctrl/Cmd + F. Geen .select() erachter: dat bestaat op een
         // <nldd-search-field> niet, en een aanroep die niet bestaat breekt de hele
-        // afhandeling - inclusief de Escape hierboven.
+        // toetsafhandeling.
         if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
             e.preventDefault();
             searchInput.focus();
