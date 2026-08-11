@@ -11,6 +11,7 @@ import pytest
 from tests.e2e.helpers.edit_modal import EditModalHelper
 from tests.e2e.helpers.tabs import open_tab
 from tests.e2e.helpers.tekst import kop, toon_tekst
+from tests.e2e.helpers.wizard import aanvinkvakjes
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -202,17 +203,17 @@ class TestBackupCreateModal:
     def test_resource_type_checkboxes_present(self, modal: EditModalHelper) -> None:
         """Resource type checkboxes should be present and pre-checked."""
         modal.open_edit_modal("modal-backup", "Backup aanmaken")
-        # De groep is een <div> met de veldattributen en een <span> als kop; de vakjes
-        # zelf zijn gewone <input type="checkbox">, met opzet (zie
-        # templates_lotc/widgets/checkbox_group.html.j2: een componentveld zet zijn
-        # invoerveld in een shadow root en dan ziet een <form> hem niet).
-        group = modal.page.locator("div:has(> span:text('Resource types'))").last
-        group.wait_for(state="visible", timeout=5000)
-        checkboxes = group.locator("input[type='checkbox']")
+        # Een groep aanvinkvakjes is sinds RC-71 dezelfde componentvorm als een enkel
+        # vakje, en elk vakje draagt zijn eigen id <pad>-<waarde>. Op ``input[type=...]``
+        # zoeken werkt niet: de echte <input> zit twee schaduwbomen diep, en de stand
+        # leest van het element zelf. Zie features/aanvinkvakje.md.
+        checkboxes = aanvinkvakjes(modal.page, "resource_types")
+        checkboxes.first.wait_for(state="visible", timeout=5000)
         assert checkboxes.count() >= 1, "Should have at least one resource type checkbox"
         # All should be checked by default
         for i in range(checkboxes.count()):
-            assert checkboxes.nth(i).is_checked(), f"Checkbox {i} should be checked by default"
+            aan = checkboxes.nth(i).evaluate("el => !!el.checked")
+            assert aan, f"Checkbox {i} should be checked by default"
 
     def test_submit_to_review(self, modal: EditModalHelper) -> None:
         """Submit backup selection, verify review step appears."""

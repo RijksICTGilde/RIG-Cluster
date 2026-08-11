@@ -7,34 +7,10 @@
  * bij het thema of bij een component thuishoort.
  */
 
-/*
- * Een aanvinkvakje met zijn label ernaast.
- *
- * Waarom dit hier staat en niet uit het thema komt: <c-checkbox> wordt onder NLDD een
- * webcomponent die zijn invoerveld in de schaduwboom zet. Alles wat het vakje moet
- * kunnen vinden kijkt daar niet - de JavaScript van de wizard zoekt met
- * querySelector('input[type="checkbox"]'), en het formulier serialiseert de lichte boom.
- * Gemeten gevolg: aanvinken deed niets en het formulier stuurde de verkeerde waarden.
- *
- * Dus staat er een gewoon <input>, en dan hoort daar deze paar regels opmaak bij. Zodra
- * het componentensysteem een native-stand voor het aanvinkvakje heeft (zoals de
- * keuzelijst die inmiddels heeft) kan dit weg.
- */
-.lotc-checkbox-regel {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.5rem;
-    cursor: pointer;
-}
-
-.lotc-checkbox-regel input[type="checkbox"] {
-    /* Uitlijnen op de eerste tekstregel in plaats van op het midden van het blok: bij een
-       label van twee regels zakt een gecentreerd vakje anders naar beneden weg. */
-    margin-top: 0.2em;
-    width: 1.15em;
-    height: 1.15em;
-    flex-shrink: 0;
-}
+/* De opmaak voor .lotc-checkbox-regel stond hier omdat de groep aanvinkvakjes kale
+ * <input>'s gebruikte. Die groep gebruikt nu <c-checkbox-field> met <c-checkbox>-kinderen
+ * en krijgt zijn opmaak van het thema, dus deze regels hadden geen gebruiker meer.
+ * Zie features/aanvinkvakje.md. */
 
 /*
  * Lucht tussen de pagina-inhoud en de voettekst.

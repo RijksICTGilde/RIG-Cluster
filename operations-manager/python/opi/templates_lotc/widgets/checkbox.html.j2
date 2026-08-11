@@ -1,27 +1,21 @@
 {#
-  Aanvinkvakje voor de LOTC-bouwlijn.
+  Eén aanvinkvakje voor de LOTC-bouwlijn.
 
-  c-checkbox-field draagt het label, de hulptekst en de foutmelding als een geheel en
-  bedraadt ze aan het invoerveld. Dat is precies de omlijsting die bij een themawissel
-  anders achterblijft, en de reden dat lotc-forms bestaat.
+  <c-checkbox-field> is de vorm van een aanvinkvakje, hier en in checkbox_group.html.j2:
+  onder NLDD wordt het een <nldd-checkbox-field>, een form-associated element dat zijn
+  waarde via ElementInternals levert en alleen als het aanstaat. In de lichte boom staat
+  geen invoerveld; de echte <input> zit twee schaduwbomen diep. Wat dat betekent voor
+  htmx, voor het terugvinden van het vakje en waarom hier geen kaal <input> staat:
+  features/aanvinkvakje.md. Dat is het enige verhaal over dit component - hier stonden er
+  twee, en die spraken elkaar tegen.
 
-  HIER STOND EEN KAAL <input>, met als reden: "nldd-checkbox-field zet het invoerveld in
-  de schaduwboom, dus formulierserialisatie krijgt het niet mee". Dat is opnieuw gemeten
-  en het klopt niet (meer):
+  De id gaat via de attribuutbundel mee zodat hij op het BESTURINGSELEMENT landt. Dat is
+  wat het vakje vindbaar maakt: de component zet de id verder alleen op zijn hulptekst en
+  foutmelding (``id="...-help"``), en zijn name draagt hij ook aan zijn schaduwelementen
+  door, dus ``[id='<pad>']`` is de enige selector die precies dit vakje oplevert.
 
-      <form><c-checkbox-field name="toegang" value="true" /></form>
-      voor de klik : FormData is leeg
-      na de klik   : [['toegang', 'true']]
-
-  Het element is form-associated - het gebruikt ElementInternals in plaats van een
-  verborgen <input> - en doet dus gewoon mee. Er IS zelfs helemaal geen input, ook niet in
-  de schaduwboom; een selector op input[type=checkbox] zal hem daarom nooit vinden. Dat is
-  waar de oude conclusie vandaan kwam: static/js/wizard.js zoekt zo naar het vakje van een
-  SERVICEKAART. Die kaart is een eigen widget en staat los van dit veld; hij houdt zijn
-  kale input.
-
-  Het verborgen veld blijft: een uitgeschakeld aanvinkvakje verstuurt zijn waarde niet, en
-  zonder dit veld zou opslaan de aangevinkte stand wissen.
+  Het verborgen veld bij readonly blijft: dat vakje wordt niet verstuurd omdat de
+  verwerker readonly-velden overslaat, en zonder deze regel zou opslaan de stand wissen.
 #}
 {% from "widgets/_macros.html.j2" import combined_helper, render_examples %}
 <c-checkbox-field
@@ -33,7 +27,7 @@
     :help="combined_helper(field)|trim or none"
     :required="field.required"
     :error="(field.errors[0] if field.errors else none)"
-    :attrs="field_attrs(field)" />
+    :attrs="dict(field_attrs(field), id=field.path)" />
 {% if field.readonly and field.value %}
 <input type="hidden" name="{{ field.path|e }}" value="true" />
 {% endif %}
