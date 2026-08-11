@@ -9,7 +9,68 @@ doen staat er per punt bij, en dat is met opzet zo klein mogelijk gehouden.
 
 ---
 
-## 1. `nldd-dropdown` tekent zijn label niet bij als het script opties toevoegt
+## 1. De foutmelding bij een formulierveld is onzichtbaar (lotc-forms)
+
+**Wat er gebeurt.** Een `<c-text-input-field error="...">` rendert een
+`<nldd-form-field-error-text ... invalid>` met de juiste tekst, en die is in de browser
+`display: none` met hoogte 0. Op elk soort veld. De gebruiker ziet een rood kader en
+niet wat er mis is; `aria-invalid` staat alleen binnen de schaduwboom, dus voor een
+schermlezer is er ook niets.
+
+**Waar het misgaat.** `nldd-form-field._syncErrorText()` bepaalt zelf welke foutregels
+zichtbaar zijn:
+
+    const i = veld.hasAttribute("invalid")
+    const o = (veld.getAttribute("error-message") ?? "").split(" ")
+    regel.toggleAttribute("invalid", i && o.includes(regel.id))
+
+Het leest dus `error-message` OP HET INVOERVELD, en het overschrijft de `invalid` die het
+sjabloon op de foutregel zet. `lotc-forms` schrijft daarentegen
+`error-message-ids="<id>-error"` op het veld - en dat is de ANDERE richting: die
+eigenschap zet `nldd-form-field` zelf, om `aria-describedby` te bedraden. Er komt dus
+nooit een id in de lijst die de zichtbaarheid bepaalt.
+
+**Gemeten in chromium, op dezelfde markup met alleen een ander attribuut:**
+
+| markup op het invoerveld | display | hoogte | aria-describedby |
+|---|---|---|---|
+| `invalid error-message-ids="a-error"` (wat lotc-forms doet) | none | 0 | (leeg) |
+| `invalid error-message="b-error"` | block | 18 | b-error |
+
+**Waarom dat pijn doet.** Alles ziet er goed uit: het element staat er, met de goede
+tekst, in de goede slot, met `invalid` erop in de bron. Alleen op het scherm staat het
+niet. Elke assertie op de HTML is groen.
+
+**Wat wij intussen doen.** Een eigen kopie van `components/_forms.j2` op de searchpath,
+waarin `nldd_field` de besturing bedraadt: `error-message-ids` eraf, `invalid`,
+`aria-invalid="true"` en `error-message="<id>-error"` erop. Zie
+`opi/forms/lotc_attrs.py` (`bedraad_foutmelding`) en
+`tests/test_lotc_foutmelding_veld.py`, dat onze kopie naast de geinstalleerde legt zodat
+een nieuwe versie van lotc-forms opvalt.
+
+**Voorstel.** In `lotc-forms` `error-message` schrijven in plaats van
+`error-message-ids`, en `aria-invalid` op de groepsvelden (radio, aankruisvakjes) zetten
+- die hebben geen invoerelement met een schaduwboom die het voor ze doet.
+
+---
+
+## 2. "Optioneel" staat op elk veld dat niet `required` is
+
+**Wat er gebeurt.** `lotc-forms` zet `optional` op elk NLDD-veld dat niet verplicht is
+(rijksconventie: markeer optioneel, niet verplicht). Voor een invoerveld klopt dat. Voor
+een KIEZER waar altijd iets geselecteerd staat - de deploymentkiezer op de projectpagina,
+de rolkeuze bij een uitnodiging - betekent "Optioneel" niets, en bij het enige veld van
+een herhaalbaar item ("URI Optioneel") leest het als ruis.
+
+**Wat wij intussen doen.** Een merk-attribuut `data-no-optional-badge` op de besturing,
+gelezen door onze kopie van `components/_forms.j2`. De vorige omweg was zulke velden
+`required` noemen: het label verdwijnt, maar de HTML zegt dan dat er iets ingevuld MOET
+worden - een andere onwaarheid, en een die formuliervalidatie ook echt leest.
+
+**Voorstel.** Een derde stand naast verplicht/optioneel: een veld dat geen van beide
+labels draagt. Bijvoorbeeld `optional-label=""` dat het merk weglaat, of een expliciet
+`no-optional-badge`.
+## 3. `nldd-dropdown` tekent zijn label niet bij als het script opties toevoegt
 
 **Wat er gebeurt.** `<nldd-dropdown>` tekent de gekozen tekst zelf, naast de geslotte
 `<select>`. Die tekst wordt bijgewerkt op `slotchange` en op een `change` van de select.
@@ -33,7 +94,7 @@ het bezwaar.
 
 ---
 
-## 2. `nldd-sheet` heeft geen publieke "staat hij open"
+## 4. `nldd-sheet` heeft geen publieke "staat hij open"
 
 **Wat er gebeurt.** `show()`, `hide()` en de events `open` en `close` zijn er, maar de
 `<dialog>` waar `open` aan af te lezen is, zit in de shadow root.
@@ -45,7 +106,7 @@ Dat werkt, maar twee plekken die dezelfde waarheid bewaren lopen ooit uit de pas
 
 ---
 
-## 3. Geen aanduiding voor "de verbinding leeft"
+## 5. Geen aanduiding voor "de verbinding leeft"
 
 **Wat er ontbreekt.** Een klein statuslampje met een betekenis: verbinden, stromend,
 gepauzeerd, fout. `nldd-activity-indicator` is een laadmolen (bezig / klaar) en
@@ -59,7 +120,7 @@ volgt licht en donker.
 
 ---
 
-## 4. Geen tekstbak waar je regels aan kunt TOEVOEGEN
+## 6. Geen tekstbak waar je regels aan kunt TOEVOEGEN
 
 **Wat er ontbreekt.** `nldd-code-viewer` toont een tekst die je in zijn geheel meegeeft.
 Voor een logstroom heb je iets anders nodig: regels die er tijdens het kijken bij komen,
@@ -72,7 +133,7 @@ het staat hier zodat de volgende niet opnieuw gaat zoeken.
 
 ---
 
-## 5. Iconen: de lijst en de bundel lopen uiteen
+## 7. Iconen: de lijst en de bundel lopen uiteen
 
 **Wat er gebeurt.** `icons.json` van `lord_of_the_components` noemt 327 namen; de
 `nldd.js` die de browser laadt bevat er 271. De 56 namen ertussen bestaan op papier en
@@ -91,7 +152,7 @@ klagen (console-waarschuwing) bij een naam die hij niet kent.
 
 ---
 
-## 6. Samenstellingen met alleen benoemde slots gooien kinderen weg
+## 8. Samenstellingen met alleen benoemde slots gooien kinderen weg
 
 **Wat er gebeurt.** `<c-toolbar>` en `<c-top-title-bar>` renderen alleen wat in een
 benoemde slot staat. Een kind zonder slot verdwijnt zonder melding - ook in de
@@ -106,7 +167,7 @@ kinderen.
 
 ---
 
-## 7. `nldd-list dividers="never"` tekent de lijnen toch
+## 9. `nldd-list dividers="never"` tekent de lijnen toch
 
 **Wat er gebeurt.** `<nldd-list variant="simple" dividers="never">` ziet er in een
 browser precies zo uit als `dividers="always"`: een lijn tussen elke twee regels. Ook
@@ -123,7 +184,7 @@ waarom.
 
 ---
 
-## 8. Geen stand voor "even hoge kaarten in een rij"
+## 10. Geen stand voor "even hoge kaarten in een rij"
 
 **Wat er gebeurt.** In een `<c-auto-grid>` met een `<c-card>` per cel zijn de CELLEN even
 hoog (een grid rekt ze uit) en de KAARTEN niet: die zijn zo hoog als hun inhoud. Een

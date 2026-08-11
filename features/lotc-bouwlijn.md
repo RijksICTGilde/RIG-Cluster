@@ -68,7 +68,8 @@ Draaiende applicatie:
 | `opi/web/lotc_router.py` | de routes onder `/lotc/` |
 | `opi/forms/widgets/lotc.py` | de widget-adapter die de LOTC-templates rendert |
 | `opi/forms/widgets/fields.py` | de gedeelde veldvoorbereiding waar die adapter van erft |
-| `opi/forms/lotc_attrs.py` | de attribuutbundel van een veld, voor LOTC's `:attrs` |
+| `opi/forms/lotc_attrs.py` | de attribuutbundel van een veld, voor LOTC's `:attrs`, plus de foutbedrading van een veld |
+| `opi/templates_lotc/components/_forms.j2` | onze kopie van de veldmacro's van `lotc-forms`; zie "Een sjabloon van een design system overschrijven" |
 
 ### Waarom er ooit twee omgevingen waren
 
@@ -121,6 +122,36 @@ template weg, geen paginawijziging - de aanroepvorm was al die van hen.
 Komt het opnieuw voor, dan is de weg: `merge_fragment` op de registry, plus de eigen
 templatemap op de `searchpath`. Twee regels, en twee regels om weer weg te halen.
 
+### Een sjabloon van een design system overschrijven
+
+`setup_components` APPENDT de sjabloonpaden van de design systems achter onze eigen
+`templates_lotc/`. Een bestand op dezelfde naam wint dus van dat van het pakket. Dat is de
+manier om een bug in het thema te overbruggen zonder hem op tien plekken na te bouwen.
+
+Er staat er nu één: `opi/templates_lotc/components/_forms.j2`, onze kopie van de gedeelde
+macro's van `lotc-forms`. Elk veldsjabloon importeert die, dus het is één plek voor alle
+veldsoorten. Twee wijzigingen zitten erin, allebei met een verzoek in
+`request_for_components.md`:
+
+1. **De foutmelding wordt bedraad.** `nldd-form-field` toont alleen foutregels waarvan het
+   id in `error-message` OP HET INVOERVELD staat; `lotc-forms` schrijft daar
+   `error-message-ids`, en dat is de andere richting (die eigenschap zet `nldd-form-field`
+   zelf om `aria-describedby` te bedraden). Zonder de bedrading staat de melding er wel en
+   is hij `display: none` met hoogte 0. `bedraad_foutmelding` in `opi/forms/lotc_attrs.py`
+   zet `invalid`, `aria-invalid` en `error-message` op de besturing; dat laatste is bij de
+   groepsvelden (radio, aankruisvakjes) het enige dat een schermlezer over de fout krijgt.
+2. **`data-no-optional-badge` laat "Optioneel" weg.** `lotc-forms` zet dat label op elk
+   veld dat niet `required` is (rijksconventie: markeer optioneel, niet verplicht). Voor
+   een kiezer met een vaste selectie of het enige veld van een herhaalbaar item betekent
+   het niets. Zet dan dit merk-attribuut op de besturing en géén `required`: dat haalt het
+   label ook weg, maar laat de HTML beweren dat er iets ingevuld moet worden, en
+   formuliervalidatie leest dat ook echt.
+
+Een kopie is een schuld: hij mist een verbetering van bovenstrooms in stilte. Daarom legt
+`tests/test_lotc_foutmelding_veld.py` hem naast de geïnstalleerde versie (modulo de
+bewuste regels), toetst hij dat onze kopie ook echt wint op de searchpath, en toetst hij
+dat het origineel de bug nog heeft - is die weg, dan kan de kopie weg.
+
 ## Testen
 
 | test | bewaakt |
@@ -132,6 +163,9 @@ templatemap op de `searchpath`. Twee regels, en twee regels om weer weg te halen
 | `tests/test_lotc_schrijfwijze.py` | dat teksten de lezer met "je" aanspreken |
 | `tests/e2e/test_gedragsoppervlak.py` | dat een pagina of dialoog niets verliest van wat er vastligt |
 | `tests/test_lotc_modal_fragmenten.py` | hetzelfde voor de dialoogfragmenten die zonder takendienst niet via HTTP te bereiken zijn |
+| `tests/test_lotc_foutmelding_veld.py` | dat de veldfout bedraad wordt, en dat onze kopie van `components/_forms.j2` alleen op de bedoelde punten van de geïnstalleerde afwijkt |
+| `tests/e2e/test_lotc_veldfout_zichtbaar.py` | dat die foutmelding in een browser HOOGTE heeft - "staat de tekst er" was jarenlang groen terwijl niemand hem zag |
+| `tests/test_lotc_optioneel_badge.py` / `tests/e2e/test_lotc_optioneel_label.py` | dat "Optioneel" weg is waar het niets betekent, zonder het veld verplicht te noemen |
 
 Compileren is een echte poort en geen telling: LOTC valideert bij het compileren al of
 elk component bestaat en of elk attribuut bij dat component hoort.
