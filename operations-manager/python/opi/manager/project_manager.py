@@ -2953,9 +2953,7 @@ class ProjectManager:
                 # bevinding 2). process_project records why it gave up in
                 # _processing_error; only when it did not is there nothing better to say
                 # than that this step failed.
-                critical_failures.append(
-                    self._processing_error or "Bijwerken van diensten en manifesten is mislukt"
-                )
+                critical_failures.append(self._processing_error or "Bijwerken van diensten en manifesten is mislukt")
                 self._end_step(
                     process_step,
                     self._processing_error or "Bijwerken van diensten en manifesten is mislukt",
@@ -8033,6 +8031,9 @@ class ProjectManager:
                 # write path: a value the storage form normalises would differ from what is
                 # stored on every read, so the no-op check below could never be true again.
                 validate_value_for_storage(key, value, storage)
+                # And the service's own rule on its values: an alias must point at a
+                # platform variable that exists (RC-66, bevinding 5).
+                service.validate_owned_value(key, value)
         except ComponentValuesError as e:
             return {"success": False, "error": str(e), "error_type": "invalid_values"}
 
