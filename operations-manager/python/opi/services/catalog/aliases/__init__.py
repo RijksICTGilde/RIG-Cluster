@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from opi.services.catalog.aliases.config_model import AliasesConfig
+from opi.services.catalog.aliases.references import is_reference, validate_alias_value
 from opi.services.catalog.base import ConfigLayer, Service, ValueStorage
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import ServiceBinding, ServiceKind, ServiceType
@@ -52,6 +53,15 @@ class AliasesService(Service):
     # Directly above user-env-vars, matching the order of the hand-authored "Variabelen"
     # fieldset this replaces.
     config_component_order = 5
+
+    def validate_owned_value(self, key: str, value: str) -> None:
+        # The promise in the description ("Een onbekende verwijzing is hier een harde
+        # fout") now holds at the moment of writing instead of only at deploy time.
+        validate_alias_value(key, value)
+
+    def owned_value_is_secret(self, key: str, value: str) -> bool:
+        # A reference is the coupling itself, not a secret; anything else may be one.
+        return not is_reference(value)
 
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
         # An open map (a RootModel keyed by alias name), so there is no fixed field list.

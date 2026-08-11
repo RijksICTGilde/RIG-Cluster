@@ -851,6 +851,31 @@ class Service(ABC):
         """
         return []
 
+    def validate_owned_value(self, key: str, value: str) -> None:  # noqa: B027 - opt-in hook, no default rule
+        """The rule this service puts on one of its own values, beyond the shared ones.
+
+        Called on every write through the ``/values/...`` endpoints and again on the
+        write path itself, before anything is stored. Raise ``ComponentValuesError`` to
+        refuse the value; the API turns that into a 422 naming the key.
+
+        Default: no rule. ``user-env-vars`` deliberately has none -- a dollar sign in a
+        password is not a typo -- while ``aliases`` requires its value to reference a
+        platform variable that exists (RC-66).
+        """
+
+    def owned_value_is_secret(self, key: str, value: str) -> bool:
+        """Whether a stored value must be masked when it is read back (RC-66).
+
+        Default: yes. A stored value is a secret until the service that owns it says
+        otherwise, and the only service that says otherwise is ``aliases``, whose values
+        are references: the value IS the coupling, so masking it hides exactly what the
+        reader asked about. Called with the DECRYPTED value, because that is the only
+        form in which the question can be answered -- everything in the file is
+        encrypted, which is why one shared storage-shape rule could not tell a secret
+        from a pointer.
+        """
+        return True
+
     def config_layers(self) -> list[ConfigLayer]:
         """The layers at which this service carries config, measured from its own hooks.
 
