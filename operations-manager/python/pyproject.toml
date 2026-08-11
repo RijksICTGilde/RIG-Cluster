@@ -42,7 +42,6 @@ dependencies = [
     "deepdiff>=8.0.1",
     "jsonpath-ng>=1.7.0",
     "tenacity>=9.1.2",
-    "jinja-roos-components @ git+https://github.com/RijksICTGilde/jinja-roos-components.git@table-and-more-conversion",
     # Lord of the Components: het componentensysteem waar de interface naartoe gaat. Een
     # gewone runtime-dependency en geen dev-extra, want de applicatie rendert er pagina's
     # mee - hij hoort dus in de image te zitten.

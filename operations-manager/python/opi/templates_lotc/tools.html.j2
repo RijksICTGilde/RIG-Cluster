@@ -1,13 +1,15 @@
 <c-page title="ZAD Tools" lang="nl">
-    {# additionalCss verwacht een URL en maakt er een link-element van in de head, na de
-       ROOS-stylesheets: dezelfde plek in de cascade als het style-blok dat halverwege deze
-       pagina stond. Deze pagina bouwt zijn eigen c-page en erft base.html.j2 dus niet.
+    {# Het eigen stijlblad van deze pagina. Het origineel gaf het mee als additionalCss op
+       c-page; die eigenschap kent dit componentensysteem niet, en de omzetter liet hem dus
+       vallen - waarmee de pagina stil zonder opmaak kwam te staan. Als link-element hier
+       doet het hetzelfde, en zo doen de andere pagina's het ook.
 
        Let op bij het aanpassen van dit commentaar: schrijf hier nooit een letterlijke
        style- of script-openingstag. De componentverwerking leest de bron als HTML voordat
        Jinja het commentaar weghaalt, en zo'n tag begint een blok ruwe tekst dat pas bij de
        sluittag eindigt. Staat die sluittag er niet, dan is de rest van het bestand tekst,
        wordt c-page niet meer herkend en komt de pagina onverwerkt in de uitvoer. #}
+    <link rel="stylesheet" href="{{ static_url('css/tools.css') }}">
     <c-header text="AGE Encryption Tools" subtitle="Encrypt and decrypt text using AGE public and private keys" link="/"/>
     <c-menu type="bar" size="md"/>
 

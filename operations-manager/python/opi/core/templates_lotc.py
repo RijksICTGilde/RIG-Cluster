@@ -1,15 +1,10 @@
-"""Tweede templateomgeving, op Lord of the Components in plaats van jinja-roos.
+"""De templateomgeving, op Lord of the Components.
 
-Dit is de POC-bouwlijn naast de release. Waarom een TWEEDE omgeving en niet een
-extra design system in de bestaande: beide systemen registreren een Jinja-extensie
-die de bron voorbewerkt en elke ``<c-*>``-tag opeist. Zet je ze in dezelfde
-``Environment``, dan claimt de eerst geregistreerde voorbewerker alle tags en breekt
-hard op de tags die hij niet kent. Er is geen doorlaatstand aan beide kanten. Gemeten
-in ``docs/lotc-samenleven-met-jinja-roos.md``.
-
-Twee losse omgevingen werken wel. De grens loopt daarbij niet per pagina maar per
-overervingsketen: een template dat ``base_lotc.html.j2`` uitbreidt wordt door deze
-omgeving gerenderd, een template dat ``base.html.j2`` uitbreidt door de roos-omgeving.
+Dit was de tweede omgeving, naast die van jinja-roos-components; sinds RC-67 is het de
+enige. Dat er twee moesten zijn zolang beide systemen bestonden, is gemeten in
+``docs/lotc-samenleven-met-jinja-roos.md``: allebei registreren ze een Jinja-extensie die
+de bron voorbewerkt en elke ``<c-*>``-tag opeist, en in EEN ``Environment`` claimt de
+eerst geregistreerde voorbewerker alle tags en breekt hard op de tags die hij niet kent.
 
 De activeringsvolgorde van de design systems ligt vast: ``lotc-forms`` moet als
 laatste, na het visuele thema, anders lossen de invoervelden niet op.
@@ -20,27 +15,27 @@ from pathlib import Path
 
 import markupsafe
 from fastapi.templating import Jinja2Templates
-from jinja2 import FileSystemLoader, TemplateNotFound
+from jinja2 import FileSystemLoader
 from lord_of_the_components import get_static_roots, setup_components
 
 from opi.core.config import BUILD_DATE, VERSION
-from opi.core.templates import (
+from opi.core.template_helpers import (
     CATALOG_DIR,
-    deployment_action_key,
     format_dutch_date,
     format_rrule_schedule,
     get_service_definition_for_entry,
     get_service_name,
-    get_version_info,
     static_url,
 )
+from opi.core.version import get_version_info
 from opi.forms.lotc_attrs import attr_escape, field_attrs
+from opi.services.registry import deployment_action_key
 
 logger = logging.getLogger(__name__)
 
 
 def _to_nldd_icon(naam: str) -> str:
-    """Vertaal een ROOS-iconnaam naar de NLDD-woordenschat.
+    """Vertaal een iconnaam uit de dienstdefinities naar de NLDD-woordenschat.
 
     De import staat binnenin om dezelfde kringloop te vermijden als elders in dit bestand:
     navigation_lotc leunt op de menu-opbouw, en die komt via de routes hier langs.
@@ -61,9 +56,9 @@ templates_lotc = Jinja2Templates(directory=str(TEMPLATES_LOTC_DIR))
 if not isinstance(templates_lotc.env.loader, FileSystemLoader):
     raise TypeError("templates_lotc env loader must be a FileSystemLoader for the LOTC search path")
 
-# De catalogusmap erbij, achteraan, net als bij de roos-omgeving. Een dienst draagt alles
+# De catalogusmap erbij, achteraan. Een dienst draagt alles
 # wat hij is in zijn eigen map (RC-36), dus ook zijn LOTC-sjablonen; zonder dit zoekpad
-# levert "<dienst>/section-detail-lotc.html.j2" hier TemplateNotFound. Achteraan zodat een
+# levert "<dienst>/section-detail.html.j2" hier TemplateNotFound. Achteraan zodat een
 # bestand in templates_lotc/ nooit overschaduwd kan worden door een gelijknamig
 # dienstsjabloon.
 templates_lotc.env.loader.searchpath.append(str(CATALOG_DIR))
@@ -80,9 +75,8 @@ setup_components(templates_lotc.env, design_systems=DESIGN_SYSTEMS, htmx=True)
 # De weg om zoiets opnieuw te doen staat beschreven in features/lotc-bouwlijn.md:
 # merge_fragment op de registry plus de eigen templatemap op de searchpath.
 
-# Dezelfde globals en filters als de roos-omgeving, zodat een omgezet template niet
-# ook nog zijn aanroepen naar version_info(), static_url() en de filters hoeft te
-# veranderen. De omzetting gaat over componenten, niet over de rest van het template.
+# De globals en filters die de sjablonen aanroepen: version_info(), static_url() en de
+# filters hieronder.
 templates_lotc.env.globals["version"] = VERSION
 templates_lotc.env.globals["build_date"] = BUILD_DATE
 templates_lotc.env.globals["version_info"] = get_version_info
@@ -93,59 +87,24 @@ templates_lotc.env.globals["static_url"] = static_url
 templates_lotc.env.globals["field_attrs"] = field_attrs
 
 
-# Hier stond render_roos(): een blok van een DIENST dat nog geen LOTC-tegenhanger had werd
-# in de ROOS-omgeving gerenderd en het resultaat werd hier als HTML neergezet. Dat was de
-# ondergrens onder "lelijk is beter dan weg".
+# Hier stonden twee overgangsdingen. render_roos() rendeerde een dienstblok zonder
+# tegenhanger in de ROOS-omgeving en zette het resultaat hier als HTML neer; daarna kwam
+# lotc_counterpart(), dat per dienstsjabloon zocht of er een ``-lotc``-versie naast lag en
+# het blok anders OVERSLOEG. Allebei waren ze er zolang er twee bouwlijnen waren.
 #
-# Weg, en niet omdat die regel niet meer geldt maar omdat er niets meer is om op terug te
-# vallen: de roos-omgeving zelf verdwijnt. Elke dienst levert nu zijn eigen
-# ``-lotc``-sjabloon (zie :func:`lotc_counterpart`), en tests/test_lotc_dienstblokken.py
-# toetst ELK sjabloon in de catalogus daarop - niet alleen de projectblokken, want juist
-# daarbuiten zaten de gaten. De pagina's slaan een blok zonder tegenhanger over in plaats
-# van om te vallen, zodat een dienst die morgen iets aankondigt de projectpagina niet
-# meeneemt in zijn val.
+# Er is er nog een. Elke dienst heeft nog EEN sjabloon, onder zijn eigen naam, en de
+# projectpagina rendert dat gewoon. Dat elke dienst dat sjabloon ook echt heeft, toetst
+# tests/test_lotc_dienstblokken.py.
 
-#: Achtervoegsel waarmee een dienst zijn LOTC-sjabloon naast het roos-sjabloon legt:
-#: ``keycloak/section-detail.html.j2`` hoort bij ``keycloak/section-detail-lotc.html.j2``.
-#: Een afspraak en geen tabel, zodat een nieuwe dienst niets hoeft bij te werken buiten
-#: zijn eigen map.
-LOTC_TEMPLATE_SUFFIX = "-lotc.html.j2"
-
-
-def lotc_counterpart(name: str) -> str | None:
-    """De LOTC-tegenhanger van een dienstsjabloon, of None als die er niet is.
-
-    De projectpagina gebruikt dit om te kiezen: is er een tegenhanger, dan rendert het blok
-    helemaal in deze omgeving. Is die er niet, dan slaat de pagina het blok OVER; hier
-    stond eerder een terugval op ``render_roos``, maar die kan niet blijven bestaan nu de
-    roos-omgeving zelf weggaat.
-
-    Overslaan is de ondergrens en geen bestemming: een blok dat niemand naschrijft mag niet
-    de hele projectpagina meenemen in zijn val, want diensten zijn het deel van dit platform
-    dat blijft groeien. ``tests/test_lotc_dienstblokken.py`` maakt die ondergrens
-    onbereikbaar door ELK sjabloon in de catalogus op zijn tegenhanger te toetsen.
-    """
-    if not name.endswith(".html.j2"):
-        return None
-
-    candidate = name.removesuffix(".html.j2") + LOTC_TEMPLATE_SUFFIX
-    try:
-        templates_lotc.env.get_template(candidate)
-    except TemplateNotFound:
-        return None
-    return candidate
-
-
-templates_lotc.env.globals["lotc_counterpart"] = lotc_counterpart
 
 # De widgettemplates delen macro's die een attribuutwaarde escapen (optional_attr,
-# bool_attr). Dat filter hoort bij de kale widget-omgeving van de roos-adapter; de
-# LOTC-adapter rendert dezelfde macro's in DEZE omgeving, dus hier hoort het ook te
+# bool_attr). De adapter rendert die macro's in DEZE omgeving, dus hier hoort het filter te
 # staan. Zonder valt de formulierlaag om op elk veld dat de macro's gebruikt.
 templates_lotc.env.filters["attr_escape"] = attr_escape
 
-# Onze ROOS-iconnamen naar de NLDD-woordenschat. Als FILTER en niet vooraf in de data,
-# omdat dezelfde gegevens ook de oude weergave voeden: die verwacht juist de ROOS-naam.
+# Onze eigen iconnamen (de woordenschat van het oude design system, die nog in de
+# dienstdefinities staat) naar de NLDD-woordenschat. Als FILTER en niet vooraf in de data,
+# omdat de dienstdefinities de bron zijn en die de eigen naam dragen.
 # Zonder deze vertaling rendert een icoon leeg - stil, want een onbekende naam levert geen
 # fout op. Zo misten de dienstkaarten in de wizard hun iconen, op PostgreSQL na: "database"
 # heet toevallig in beide woordenschatten hetzelfde.

@@ -24,9 +24,9 @@ _STEP = pathlib.Path(opi.__file__).parent / "templates/wizard/modal_wizard_step.
 # own help.md lives in its package, RC-36), or templates/help for the few
 # explanations that belong to no single service.
 _HELP_ROOTS = (
-    pathlib.Path(opi.__file__).parent / "templates",
+    pathlib.Path(opi.__file__).parent / "templates_lotc",
     pathlib.Path(opi.__file__).parent / "services" / "catalog",
-    pathlib.Path(opi.__file__).parent / "templates" / "help",
+    pathlib.Path(opi.__file__).parent / "templates_lotc" / "help",
 )
 
 _PROJECT_SECTIONS = [

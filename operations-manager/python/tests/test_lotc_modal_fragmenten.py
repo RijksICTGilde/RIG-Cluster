@@ -27,7 +27,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from opi.core.templates import get_templates
 from opi.core.templates_lotc import templates_lotc
 from opi.web.navigation_lotc import to_nldd_icon
 
@@ -355,7 +354,7 @@ STAP_GEVALLEN: list[tuple[str, str, str, dict[str, Any], bool]] = [
 
 
 def _render(roos: str, lotc: str, context: dict[str, Any], verwerk_roos: bool) -> tuple[Oppervlak, Oppervlak]:
-    env = get_templates().env
+    env = templates_lotc.env
     oud = env.get_template(roos).render(context)
     if verwerk_roos:
         oud = str(env.filters["process_components"](oud))

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from opi.core.templates import templates
+from opi.core.templates_lotc import templates_lotc as templates
 from opi.services.catalog.base import DetailPageSection
 from opi.services.registry import collect_detail_page_sections
 

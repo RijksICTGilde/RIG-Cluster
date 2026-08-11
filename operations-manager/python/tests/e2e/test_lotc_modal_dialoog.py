@@ -36,7 +36,7 @@ pytestmark = pytest.mark.e2e
 PROJECT = "test-project-detail"
 
 #: ?layout=... wint van de cookie, dus deze toetsen staan los van wat de browser onthoudt.
-NLDD_URL = f"/projects/details/{PROJECT}?tab=project&layout=nldd"
+NLDD_URL = f"/projects/details/{PROJECT}?tab=project"
 ROOS_URL = f"/projects/details/{PROJECT}?layout=roos"
 
 #: De knop op het tabblad Project die de dialoog opent, en de flow die erachter zit.

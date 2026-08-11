@@ -346,6 +346,7 @@ def render_preset_cards(
     kringloop te vermijden: de omgeving leunt via de dienstenregistry op deze pakketmap.
     """
     from opi.core.templates_lotc import templates_lotc
+
     if not presets:
         return ""
 

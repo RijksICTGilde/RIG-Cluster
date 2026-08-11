@@ -1,28 +1,36 @@
 """Bewaakt het gat tussen onze iconnamen en de NLDD-woordenschat.
 
-Onze templates dragen Nederlandse ROOS-iconnamen; NLDD heeft een eigen, Engelse
+Onze templates en dienstdefinities dragen Nederlandse iconnamen uit het oude design
+system; NLDD heeft een eigen, Engelse
 woordenschat. LOTC vertaalt een handvol namen zelf en geeft de rest ongewijzigd door,
 waarna NLDD ze niet herkent en er niets verschijnt. Dat faalt niet - het is stil, en
 dat is precies waarom het een test verdient: een leeg icoon ziet niemand in een
 foutmelding, alleen op een screenshot.
 
-De test toetst twee dingen:
+De test toetst drie dingen:
 
 1. Elke afbeelding in ROOS_TO_NLDD_ICONS wijst naar een naam die NLDD echt kent.
    Een gok naar een niet-bestaande naam levert hetzelfde lege icoon op als geen
    afbeelding, maar dan onzichtbaar in plaats van meetbaar.
-2. De lijst iconen zonder tegenhanger groeit niet. Nieuwe ROOS-iconen in templates
-   vallen daarmee meteen op, in plaats van pas als iemand de pagina bekijkt.
+2. De lijst iconen zonder tegenhanger groeit niet. Nieuwe iconen in templates vallen
+   daarmee meteen op, in plaats van pas als iemand de pagina bekijkt.
+3. Elk icoon in het HOOFDMENU komt na vertaling in die woordenschat uit. Dat stond in
+   tests/test_menu_icons_exist.py, dat de SVG-bestanden van jinja-roos-components telde;
+   die set is er niet meer, en de vraag is nu welke naam NLDD kent. Het menu apart, want
+   het is de enige plek waar de iconnamen uit Python komen en pas na een rollencontrole
+   compleet zijn - "Domeinen" droeg lange tijd een naam die niet bestond.
 """
 
 import json
 import re
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
+from opi.web.menu import get_menu_items
 from opi.web.navigation_lotc import ROOS_TO_NLDD_ICONS, to_nldd_icon
 
-TEMPLATES_DIR = Path(__file__).parent.parent / "opi" / "templates"
+TEMPLATES_DIR = Path(__file__).parent.parent / "opi" / "templates_lotc"
 
 # Iconen die wij gebruiken en waar NLDD geen tegenhanger voor heeft. Ze renderen leeg.
 # Uitgezet bij het LOTC-project; zodra NLDD ze levert horen ze in ROOS_TO_NLDD_ICONS
@@ -67,7 +75,10 @@ def _nldd_vocabulary() -> set[str]:
 def _icons_used_in_templates() -> set[str]:
     icons: set[str] = set()
     for template in TEMPLATES_DIR.rglob("*.j2"):
-        icons |= set(re.findall(r'icon="([a-z0-9-]+)"', template.read_text()))
+        # De negatieve terugblik houdt ``show-icon="before"`` buiten de vangst: dat is de
+        # PLAATS van het icoon en geen naam. Zonder hem meldde deze test "after", "before"
+        # en "sort" als iconen zonder afbeelding.
+        icons |= set(re.findall(r'(?<![-\w])icon="([a-z0-9-]+)"', template.read_text()))
     return icons
 
 
@@ -101,6 +112,39 @@ def test_icon_gap_does_not_grow() -> None:
     assert unmapped == KNOWN_GAPS, (
         f"nieuw zonder afbeelding: {sorted(unmapped - KNOWN_GAPS)}; "
         f"niet langer een gat (haal uit KNOWN_GAPS): {sorted(KNOWN_GAPS - unmapped)}"
+    )
+
+
+def _menu_icons() -> set[str]:
+    """De iconnamen uit elke variant van het hoofdmenu.
+
+    Beheerder-zijn wordt afgeleid uit het e-mailadres via ``get_user_service()`` en niet
+    meegegeven, dus de beheerregels (Domeinen erbij) bereik je alleen door die opzoeking
+    te vervangen. Een anonieme render alleen zou juist het item missen waar deze test voor
+    bestaat.
+    """
+    icons: set[str] = set()
+    for is_admin in (False, True):
+        service = MagicMock()
+        service.is_platform_admin.return_value = is_admin
+        with patch("opi.web.menu.get_user_service", return_value=service):
+            for user in (None, {"email": "someone@example.com"}):
+                icons.update(item["icon"] for item in get_menu_items(user=user) if item.get("icon"))
+    return icons
+
+
+def test_the_menu_actually_has_icons() -> None:
+    """Bewaak de bewaker: een leeg menu maakt de test hieronder gratis groen."""
+    assert len(_menu_icons()) > 3
+
+
+@pytest.mark.parametrize("icon", sorted(_menu_icons()))
+def test_every_menu_icon_lands_in_the_nldd_vocabulary(icon: str) -> None:
+    vertaald = to_nldd_icon(icon)
+    assert vertaald in _nldd_vocabulary(), (
+        f"menu-icoon {icon!r} wordt {vertaald!r} en dat kent NLDD niet; "
+        f"het rendert leeg zonder enige foutmelding. Kies een bestaande naam of leg de "
+        f"afbeelding in ROOS_TO_NLDD_ICONS."
     )
 
 

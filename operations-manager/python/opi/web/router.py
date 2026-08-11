@@ -460,7 +460,7 @@ async def keycloak_otp_code_web(request: Request, project_name: str, realm_name:
     return HTMLResponse(
         content=render_fragment(
             request,
-            template="keycloak/otp-code-lotc.html.j2",
+            template="keycloak/otp-code.html.j2",
             context={"code": code, "project_name": project_name, "realm": realm_name},
         )
     )

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from opi.web import router
 
-_TEMPLATES = Path(__file__).resolve().parents[1] / "opi" / "templates" / "project-details"
+_TEMPLATES = Path(__file__).resolve().parents[1] / "opi" / "templates_lotc" / "project-details"
 
 
 def test_it_is_a_single_lazy_request() -> None:
