@@ -119,7 +119,6 @@ RUN chmod +x /app/entrypoint.sh
 COPY operations-manager/python/opi ./opi
 COPY operations-manager/python/manifests ./manifests
 COPY operations-manager/python/extensions ./extensions
-COPY operations-manager/python/sources ./sources
 COPY operations-manager/python/static ./static
 
 RUN chown -R appuser:appuser /app && \
