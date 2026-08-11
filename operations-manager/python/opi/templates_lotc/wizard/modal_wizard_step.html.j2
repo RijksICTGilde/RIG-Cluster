@@ -79,14 +79,14 @@
             {{ step_html | safe }}
         </div>
 
-        <div class="wizard-step__actions" id="edit-section-actions">
+        <c-cluster justify="between" align="center" class="wizard-step__actions" id="edit-section-actions">
             {% if not steps.is_first %}
             <c-button label="Vorige" show-icon="before" icon="caret-left"/>
             {% else %}
             {% set lotc_onclick_2 %}closeEditModal(){% endset %}<c-button type="button" label="Annuleren"/>
             {% endif %}
 
-            <div class="wizard-step__actions-right">
+            <c-cluster gap="xs" align="center">
                 {% if steps.is_last %}
                 {% if not (flow_id is defined and flow_id in ('modal-backup', 'modal-restore')) %}
                 <span class="wizard-step__saving" aria-hidden="true">
@@ -97,7 +97,7 @@
                 {% else %}
                 <c-button type="submit" label="Volgende" show-icon="after" icon="caret-right"/>
                 {% endif %}
-            </div>
-        </div>
+            </c-cluster>
+        </c-cluster>
     </form>
 </div>

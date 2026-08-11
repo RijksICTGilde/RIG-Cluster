@@ -13,7 +13,10 @@
 <div>
     <span class="utrecht-form-label">{{ field.label|e }}</span>
     {{ helper_text(field) }}
-    <div class="service-cards-grid" id="{{ field.path|e }}-grid">
+    {# .service-cards-grid was repeat(auto-fill, minmax(300px, 1fr)): dat is
+       <c-auto-grid min="300px">. De KLASSE blijft erop staan, want hij is ook een haak -
+       static/js/wizard.js zoekt de rasters ermee op en een e2e-test ook. #}
+    <c-auto-grid min="300px" gap="md" class="service-cards-grid" id="{{ field.path|e }}-grid">
         {% for card in cards %}
         <div class="service-card{% if card.checked %} service-card--selected{% endif %}{% if card.is_locked %} service-card--locked-checked{% endif %}" data-service="{{ card.value|e }}"{% if card.data_requires %} data-requires='{{ card.data_requires }}'{% endif %}{% if card.server_locked %} data-locked="true"{% endif %}>
             {# EEN GEWOON <input>, EN DAT IS HIER GEEN LUIHEID.
@@ -76,6 +79,6 @@
             </div>
         </div>
         {% endfor %}
-    </div>
+    </c-auto-grid>
     {{ render_errors(field.errors) }}
 </div>

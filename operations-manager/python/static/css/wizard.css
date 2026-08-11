@@ -1,155 +1,34 @@
 /* Wizard CSS - extracted from wizard_page.html.j2 and roos.py */
 
 /* Helper text spacing - stack description + help_text vertically */
-.rvo-form-field__helper-group,
 .lotc-form-field__helper-group {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
 }
 
-/* Breadcrumb */
-.rvo-breadcrumb,
-.lotc-breadcrumb {
-    display: flex;
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    gap: 0.5rem;
-}
-.rvo-breadcrumb li:not(:last-child)::after,
-.lotc-breadcrumb li:not(:last-child)::after {
-    content: "/";
-    margin-left: 0.5rem;
-    color: #666;
-}
-.rvo-breadcrumb a,
-.lotc-breadcrumb a {
-    color: #007BC7;
-    text-decoration: none;
-}
-.rvo-breadcrumb a:hover,
-.lotc-breadcrumb a:hover {
-    text-decoration: underline;
-}
+/* Het KRUIMELPAD stond hier (.rvo-breadcrumb / .lotc-breadcrumb met een ::after-streepje
+   als scheidingsteken). Dat is <c-breadcrumbs> met <c-breadcrumbs-item>-kinderen; beide
+   aanroepers zijn om, dus deze regels hadden geen gebruiker meer.
 
-/* Wizard Steps Indicator */
-.wizard-steps {
-    margin-bottom: 1rem;
-}
-.wizard-steps__list {
-    display: flex;
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    gap: 0;
-}
-.wizard-steps__item {
-    flex: 1;
-    text-align: center;
-    position: relative;
-}
-.wizard-steps__item:not(:last-child)::after {
-    content: "";
-    position: absolute;
-    top: 1.25rem;
-    right: -50%;
-    width: 100%;
-    height: 2px;
-    background: #E0E0E0;
-    z-index: 0;
-}
-.wizard-steps__item--completed:not(:last-child)::after {
-    background: #39870C;
-}
-.wizard-steps__link {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-    text-decoration: none;
-    color: inherit;
-    position: relative;
-    z-index: 1;
-    cursor: default;
-}
-a.wizard-steps__link {
-    cursor: pointer;
-}
-a.wizard-steps__link:hover .wizard-steps__label {
-    text-decoration: underline;
-}
-.wizard-steps__link--disabled .wizard-steps__label {
-    opacity: 0.5;
-}
-.wizard-steps__number {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 2.5rem;
-    height: 2.5rem;
-    border-radius: 50%;
-    background: #E0E0E0;
-    color: #333;
-    font-weight: 600;
-    font-size: 0.875rem;
-}
-.wizard-steps__item--active .wizard-steps__number {
-    background: #007BC7;
-    color: white;
-}
-.wizard-steps__item--completed .wizard-steps__number {
-    background: #39870C;
-    color: white;
-}
-.wizard-steps__label {
-    font-size: 0.8125rem;
-    color: #333;
-    max-width: 120px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.wizard-steps__item--active .wizard-steps__label {
-    font-weight: 600;
-    color: #007BC7;
-}
-.wizard-steps__progress {
-    height: 4px;
-    background: #E0E0E0;
-    border-radius: 2px;
-    margin-top: 1rem;
-    overflow: hidden;
-}
-.wizard-steps__progress-bar {
-    height: 100%;
-    background: #007BC7;
-    border-radius: 2px;
-    transition: width 0.3s ease;
-}
+   De STAPPENBALK stond hier ook: vijftien selectors voor een genummerde bol per stap, een
+   streep ertussen en een handgetekende voortgangsbalk. Dat is <c-step-indicator> met
+   <c-step-indicator-item>-kinderen, en die kent past/current/future zelf. Zie
+   wizard/wizard_steps_indicator.html.j2. */
 
-/* Edit modal wizard steps override */
-.edit-wizard-steps {
-    margin: 0 0 1rem 0;
-    padding: 0 1.5rem;
-}
+/* De stappenbalk in de dialoog krijgt een lijn eronder. GEEN component: dit is de scheiding
+   tussen de balk en de inhoud van het venster, en <c-step-indicator> heeft daar geen stand
+   voor. */
 .edit-step-indicator {
     border-bottom: 1px solid #E0E0E0;
     padding-bottom: 0.5rem;
 }
-.edit-step-right-actions {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-}
 
 /* Wizard Step Content */
-.wizard-content {
-    background: white;
-    padding: 2rem;
-    border-radius: 4px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
+/* .wizard-content was een wit vlak met padding, hoekstraal en schaduw - dat is <c-card>,
+   en zo staat het nu in wizard/wizard_page.html.j2. De klasse blijft in de markup omdat
+   #wizard-step-content het doel is van elke htmx-swap; er hangt alleen geen opmaak meer
+   aan, dus er staat hier niets meer. */
 .wizard-step__header {
     margin-bottom: 1.5rem;
 }
@@ -160,18 +39,16 @@ a.wizard-steps__link:hover .wizard-steps__label {
 .wizard-step__fields {
     margin-bottom: 2rem;
 }
+/* De knoppenbalk onder een stap. De flexregel is <c-cluster justify="between">; wat hier
+   blijft is de lijn erboven en de lucht ernaartoe.
+
+   De KLASSE blijft, en op sommige plekken staat er ook id="edit-section-actions" op: dat
+   is de haak waarmee static/js/edit_modal.js de dialoog weer vrijgeeft. */
 .wizard-step__actions {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
     padding-top: 1.5rem;
     border-top: 1px solid #E0E0E0;
 }
-.wizard-step__actions-right {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-}
+/* .wizard-step__actions-right is <c-cluster gap="xs"> geworden. */
 
 /* Nested fieldsets (sub-sections) get a card-like border */
 c-fieldset c-fieldset {
@@ -182,18 +59,15 @@ c-fieldset c-fieldset {
 }
 
 /* Sequence items */
-.rvo-sequence__item--inline,
 .lotc-sequence__item--inline {
     display: flex;
     align-items: flex-start;
     gap: 0.5rem;
     margin-bottom: 0.25rem;
 }
-.rvo-sequence__item--inline > :first-child,
 .lotc-sequence__item--inline > :first-child {
     flex: 1;
 }
-.rvo-sequence__item--inline c-button,
 .lotc-sequence__item--inline c-button {
     flex-shrink: 0;
     margin-top: 0.25rem;
@@ -202,10 +76,6 @@ c-fieldset c-fieldset {
    in een zelfgebouwde blokkop. Dat is nu <c-section-head>, het component dat titel en
    actie als EEN geheel vormgeeft. De rvo-tegenhanger ging mee - die had sinds RC-67
    geen enkele gebruiker meer. */
-.rvo-sequence__actions,
-.lotc-sequence__actions {
-    margin-top: 0.5rem;
-}
 .rvo-sequence__items,
 .lotc-sequence__items {
     margin-bottom: 0.25rem;
@@ -259,9 +129,6 @@ c-fieldset c-fieldset {
 }
 
 /* Radio option descriptions */
-.rvo-radio-description {
-    margin: -0.25rem 0 0 1.75rem;
-}
 
 /* Wizard Review */
 .wizard-review__section-header {
@@ -289,10 +156,20 @@ c-fieldset c-fieldset {
 }
 
 /* Service cards (from roos.py) */
+/* Het raster van dienstkaarten is <c-auto-grid min="300px">; hier blijft alleen de marge
+   erboven staan.
+
+   De KLASSE blijft wel in de markup - hij is geen opmaak meer maar een HAAK.
+   static/js/wizard.js zoekt de rasters ermee op (regels 88 en 458) en
+   tests/e2e/test_locked_service_survives_submit.py ook.
+
+   Een verschil om te weten: de eigen regel gebruikte auto-FILL, de auto-grid van het thema
+   gebruikt auto-FIT. Dat scheelt alleen als er MINDER kaarten zijn dan er kolommen passen:
+   auto-fill houdt de lege kolommen aan en laat een enkele kaart 300px breed, auto-fit laat
+   hem de rij vullen. Op de dienstenpagina en in de wizard staan er altijd meer dan genoeg;
+   op de detailpagina kan een component een enkele dienst hebben, en die kaart is dan
+   breder dan eerst. */
 .service-cards-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 1rem;
     margin-top: 0.5rem;
 }
 .service-card {
@@ -366,7 +243,6 @@ c-fieldset c-fieldset {
 }
 
 /* Display field header (for display_card widget) */
-.rvo-display-field__header,
 .lotc-display-field__header {
     display: flex;
     align-items: center;

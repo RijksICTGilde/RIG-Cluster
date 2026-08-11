@@ -19,13 +19,19 @@
 
     <c-heading type="h1" label="{{ flow_title }}"/>
 
-    {# Step Indicator #}
-    {% include "wizard/wizard_steps_indicator.html.j2" %}
+    {# Step Indicator. De WIKKEL draagt het id: de stappenbalk wordt bij elke stap buiten
+       het doel om verwisseld (hx-swap-oob op #wizard-steps in wizard_step/wizard_review),
+       en die sjablonen zetten er zelf zo'n div omheen. De partial had het id ook, wat
+       twee elementen met hetzelfde id opleverde. Nu staat het op een plek. #}
+    <div id="wizard-steps">{% include "wizard/wizard_steps_indicator.html.j2" %}</div>
 
     {# Step Content Area - HTMX target #}
-    <div id="wizard-step-content" class="wizard-content">
+    {# .wizard-content was een wit vlak met padding, een hoekstraal en een schaduw: dat is
+       <c-card>. De KLASSE en het id blijven erop staan - #wizard-step-content is het doel
+       van elke htmx-swap in de stappen en in de stappenbalk. #}
+    <c-card id="wizard-step-content" class="wizard-content" padding="xl" background-color="wit" outline="true">
         {% with embedded=True %}{% include "wizard/wizard_step.html.j2" %}{% endwith %}
-    </div>
+    </c-card>
 </c-layout-flow>
 
 {% include "widgets/service_help_modal.html.j2" %}

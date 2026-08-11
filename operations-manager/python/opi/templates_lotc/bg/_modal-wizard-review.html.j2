@@ -120,7 +120,7 @@
             {% endcall %}
         {% endfor %}
 
-        <div class="wizard-step__actions">
+        <c-cluster justify="between" align="center" class="wizard-step__actions">
             <c-action-group align="between">
                 {% set annuleren_js %}closeEditModal(){% endset %}
                 <c-button
@@ -163,6 +163,6 @@
                         :attrs="bevestig_attrs" />
                 </c-cluster>
             </c-action-group>
-        </div>
+        </c-cluster>
     </c-stack>
 </div>
