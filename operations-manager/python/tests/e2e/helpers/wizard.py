@@ -52,6 +52,41 @@ def veldbesturing(page: Page, naam: str) -> Locator:
     return page.locator(", ".join(f"{tag}[id='{naam}']" for tag in FIELD_TAGS))
 
 
+def aanvinkvakje(page: Page, pad: str) -> Locator:
+    """Het aanvinkvakje met dit pad: precies een element, met een bruikbare ``.checked``.
+
+    Een aanvinkvakje is geen ``<input>`` maar het custom element zelf: dat draagt de stand
+    (``.checked``) en levert zijn waarde als form-associated element. ``veldbesturing()``
+    zoekt daarom naar het verkeerde ding.
+
+    Op het NAME zoeken kan hier niet. Playwright kijkt door schaduwbomen heen, en het
+    element geeft zijn name door aan zijn schaduwelementen; in de browser gemeten levert
+    ``[name='<pad>']`` er dan drie op:
+
+        NLDD-CHECKBOX-FIELD  (licht)
+        NLDD-CHECKBOX        (schaduw van NLDD-CHECKBOX-FIELD)
+        INPUT                (schaduw van NLDD-CHECKBOX)
+
+    De id gaat alleen naar het buitenste element (widgets/checkbox.html.j2 zet hem in de
+    attribuutbundel), dus ``[id='<pad>']`` is er precies een - en wel het vakje zelf.
+    Voor een groep is dat ``<pad>-<waarde>`` per keuze; gebruik daarvoor
+    :func:`aanvinkvakjes`, want op ``<pad>-`` matchen vindt ook de hulptekst
+    (``<pad>-help``).
+    """
+    return page.locator(f"[id='{pad}']")
+
+
+def aanvinkvakjes(page: Page, pad: str) -> Locator:
+    """Alle vakjes van de GROEP met dit pad, in de volgorde waarin ze staan.
+
+    Twee dingen worden hier bewust uitgesloten. De hulptekst en de foutmelding van het
+    veld dragen ``<pad>-help`` en ``<pad>-error``, dus een prefixselector op de id pikt
+    die mee (en telt dan een vakje te veel). De schaduwelementen dragen wel de name maar
+    geen id. Naam EN id samen laat precies de vakjes over.
+    """
+    return page.locator(f"[name='{pad}[]'][id]")
+
+
 def _unique_project_name(prefix: str = "e2e") -> str:
     """Generate a unique project name: e2e-{timestamp}-{random}."""
     ts = int(time.time()) % 100000
