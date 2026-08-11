@@ -153,7 +153,8 @@ Die is weg; de echte schil is `base_lotc.html.j2`.
 
 **`opi/templates/`, de ROOS-boom.** Daar staan 603 voorkomens en die horen daar: dat is het
 stijlsysteem dat die templates gebruiken. De schakelaar (`opi/web/lotc_switch.py`) houdt
-beide wegen open met `?layout=roos`, en zolang die terugvalweg bestaat blijft die boom
+beide wegen open met `?layout=roos`. (Sinds RC-67 bestaat die terugvalweg niet meer; de
+oude boom is weg.) Zolang die terugvalweg bestond bleef die boom
 staan zoals hij is.
 
 **Commentaar.** Dat een blok uitlegt waar het vandaan komt met het woord `rvo-` is nuttig.

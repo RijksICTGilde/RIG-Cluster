@@ -1,5 +1,11 @@
 # Geen roos-HTML in een LOTC-pagina
 
+> **RC-67: dit stuk beschrijft de tijd dat er TWEE componentsystemen waren.** Roos is weg,
+> en daarmee de `-lotc`-tegenhangers en `lotc_counterpart()`: elke dienst heeft nog EEN
+> sjabloon, onder zijn eigen naam. Wat hier staat is de weg ernaartoe en de reden dat het
+> zo gelopen is; de eindstand staat in `features/roos-eruit.md`.
+
+
 Wat er gebeurde als een LOTC-pagina HTML uit de andere bouwlijn binnenkreeg, waar dat
 vandaan kwam, en hoe het nu dichtgezet is. Gemeten en uitgevoerd in RC-64, boven op de
 klassenopruiming van RC-62 (`features/lotc-rvo-opruiming.md`).

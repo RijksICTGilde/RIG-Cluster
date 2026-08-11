@@ -15,7 +15,7 @@ The system uses a three-layer separation:
 ```
 Layer 1 - Field Definition:  Editable (YAML path + validators + converters + providers)
 Layer 2 - Layout:            LayoutElement tree (Fieldset / Row / Column / Sequence)
-Layer 3 - Rendering:         WidgetAdapter -> ROOSWidgetAdapter (concrete HTML)
+Layer 3 - Rendering:         WidgetAdapter -> FieldWidgetAdapter -> LOTCWidgetAdapter
 
 Composition:  FormSection groups editables + layout into a logical section
               FormFlow orders sections into a wizard; step sequence = sections list order
@@ -100,7 +100,7 @@ Add a `FormSection` to `opi/forms/visualizers/wizard_sections.py`:
 MY_SECTION = FormSection(
     section_id="my-section",
     title="My Section",
-    icon="document-blanco",  # Must be a valid ROOS icon
+    icon="document-blanco",  # Vertaald naar de NLDD-woordenschat; zie navigation_lotc.py
     description="What this section configures",
     editables=[MY_FIELD, OTHER_FIELD],
     layout=Fieldset(
@@ -214,7 +214,7 @@ See `features/wizard-samenvatting-weergave.md` for why it returns data.
 
 - **HTMX**: Client-side library for server-driven interactivity
 - **Starlette SessionMiddleware**: Server-side wizard state storage (already configured)
-- **ROOS web components**: `jinja-roos-components` for UI widgets and icons
+- **Web components**: `lord-of-the-components` (NLDD-thema) for UI widgets and icons
 - **EditableFormProcessor**: Existing form processing infrastructure for validation and YAML application
 
 ## Troubleshooting
