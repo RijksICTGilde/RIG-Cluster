@@ -109,7 +109,8 @@ class TestBuildPreflight:
 
 class TestTaskfileBuildTasks:
     def _cmds(self, taskfile: dict, name: str) -> str:
-        return yaml.safe_dump(taskfile["tasks"][name]["cmds"])
+        # width: geen regelafbreking, anders knipt safe_dump midden door een vlag heen
+        return yaml.safe_dump(taskfile["tasks"][name]["cmds"], width=10**6)
 
     def test_memory_limit_is_configured(self, taskfile: dict) -> None:
         assert "SANDBOX_BUILD_MEMORY" in taskfile["vars"]
