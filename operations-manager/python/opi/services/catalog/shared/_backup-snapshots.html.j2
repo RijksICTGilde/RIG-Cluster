@@ -1,23 +1,33 @@
-{# Backup snapshots for the WHOLE project, in one response.
+{#
+  De snapshots van het HELE project, in een antwoord - in de nieuwe vormgeving.
 
-   Fetched once by the first deployment block's lazy loader in section-backups.html.j2
-   (owned by the backupable services, RC-24). Listing snapshots
-   opens a Kopia repository over S3, so it stays off the page's own render -- but as
-   ONE request, not one per deployment. 'wies' has 18 deployments in one namespace;
-   per-deployment loading fired 18 parallel Kopia connects and OOM-killed the pod.
+  Overname van opi/services/catalog/shared/_backup-snapshots.html.j2. Dat sjabloon hoort
+  bij de diensten die iets kunnen backuppen en is in roos-componenten geschreven; dit is de
+  LOTC-tegenhanger, gevoed door dezelfde route met dezelfde gegevens.
 
-   Each deployment's table is swapped out-of-band into its own placeholder, and the
-   restore button is placed into the action row only where there is something to
-   restore. #}
+  WAT LETTERLIJK GELIJK MOET BLIJVEN, WANT ER HANGT GEDRAG AAN
+
+    - Het antwoord komt binnen op een verzoek met ``hx-swap="none"``: alleen wat een
+      ``hx-swap-oob`` draagt wordt geplaatst, de rest wordt weggegooid. Elk blok hier is
+      dus een TOP-LEVEL element met dat attribuut, en er kan geen stylesheet of script
+      omheen - dat zou stilzwijgend verdwijnen.
+    - ``id="backups-snapshots-<naam>"`` en ``id="restore-btn-<naam>"``: die twee id's zet
+      shared/section-backups.html.j2 neer en ze worden hier gevuld.
+    - De herstelknop verschijnt alleen waar er iets te herstellen is, en opent de gedeelde
+      dialoog met dezelfde flow-id en dezelfde meegegeven deployment.
+#}
 {% for deployment in deployments %}
 {% set backups = backups_by_deployment.get(deployment.name, []) %}
 <div id="backups-snapshots-{{ deployment.name }}" hx-swap-oob="true">
     {% include "shared/_backup-snapshots-one.html.j2" %}
 </div>
 {% if backups %}
+{# De aanroep staat BOVEN de tag: binnen een componenttag kan geen Jinja staan, en
+   <c-button> laat onclick alleen via de :attrs-spread door. #}
+{% set herstellen = "openEditModal('modal-restore', 'Backup herstellen', {deployment: '" ~ deployment.name ~ "'})" %}
 <span id="restore-btn-{{ deployment.name }}" hx-swap-oob="true">
-    <c-button kind="secondary" size="sm" label="Herstellen" showIcon="before" icon="terug"
-              @click="openEditModal('modal-restore', 'Backup herstellen', {deployment: '{{ deployment.name }}'})" />
+    <c-button type="secondary" size="sm" show-icon="before" icon="arrow-u-turn-backward"
+              label="Herstellen" :attrs="{'onclick': herstellen}" />
 </span>
 {% endif %}
 {% endfor %}

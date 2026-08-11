@@ -7,7 +7,7 @@ from opi.forms.i18n import get_default_nl_translator
 from opi.forms.renderer import FormRenderer
 from opi.forms.visualizers.project_registry import get_all_project_editables, get_project_form_layout
 from opi.forms.visualizers.visualizer import EditableVisualizer
-from opi.forms.widgets.roos import ROOSWidgetAdapter
+from opi.forms.widgets.lotc import LOTCWidgetAdapter
 
 SAMPLE_YAML = {
     "name": "test-project",
@@ -52,7 +52,7 @@ SAMPLE_YAML = {
 
 def _create_renderer() -> FormRenderer:
     return FormRenderer(
-        widget_adapter=ROOSWidgetAdapter(),
+        widget_adapter=LOTCWidgetAdapter(),
         translator=get_default_nl_translator(),
     )
 
@@ -497,7 +497,7 @@ class TestTextareaValueRendering:
         assert desc_field.value == "Mijn omschrijving", f"Expected 'Mijn omschrijving', got {desc_field.value!r}"
 
     def test_textarea_renders_value_in_tag_content(self):
-        """The c-textarea-field tag must contain the value as inner text."""
+        """Het tekstvlak moet de waarde dragen, anders is een bewerkdialoog leeg."""
         editable = EditableVisualizer(
             editable=Editable(yaml_path="description"),
             widget=WidgetType.TEXTAREA,
@@ -510,7 +510,7 @@ class TestTextareaValueRendering:
             yaml_data=yaml_data,
             layout=["description"],
         )
-        assert ">Hallo wereld</c-textarea-field>" in html, f"Expected value between textarea tags, got:\n{html}"
+        assert 'value="Hallo wereld"' in html, f"Expected the value on the textarea, got:\n{html}"
 
         """An editable whose dependency is satisfied should be included."""
         renderer = _create_renderer()

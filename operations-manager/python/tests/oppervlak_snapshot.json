@@ -1,0 +1,1437 @@
+{
+  "/about": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/services",
+      "/weergave?scheme=&terug=/about",
+      "/weergave?scheme=dark&terug=/about",
+      "/weergave?scheme=light&terug=/about"
+    ],
+    "functies": [],
+    "htmx": [],
+    "ids": [],
+    "velden": []
+  },
+  "/admin/approvals": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/services",
+      "/weergave?scheme=&terug=/admin/approvals",
+      "/weergave?scheme=dark&terug=/admin/approvals",
+      "/weergave?scheme=light&terug=/admin/approvals"
+    ],
+    "functies": [
+      "closeApprovalModal",
+      "handleEditBackdropClick"
+    ],
+    "htmx": [],
+    "ids": [
+      "approval-backdrop",
+      "approval-modal",
+      "approval-title",
+      "approval-title-text",
+      "edit-section-inner"
+    ],
+    "velden": []
+  },
+  "/admin/usage": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/services",
+      "/weergave?scheme=&terug=/admin/usage",
+      "/weergave?scheme=dark&terug=/admin/usage",
+      "/weergave?scheme=light&terug=/admin/usage"
+    ],
+    "functies": [],
+    "htmx": [],
+    "ids": [
+      "namespace",
+      "price",
+      "year"
+    ],
+    "velden": [
+      "namespace",
+      "price",
+      "year"
+    ]
+  },
+  "/admin/users": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/admin/users/<id>/delete",
+      "/admin/users/<id>/edit",
+      "/admin/users/create",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/services",
+      "/weergave?scheme=&terug=/admin/users",
+      "/weergave?scheme=dark&terug=/admin/users",
+      "/weergave?scheme=light&terug=/admin/users"
+    ],
+    "functies": [
+      "confirm"
+    ],
+    "htmx": [],
+    "ids": [],
+    "velden": [
+      "csrf_token"
+    ]
+  },
+  "/dashboard": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/services",
+      "/weergave?scheme=&terug=/dashboard",
+      "/weergave?scheme=dark&terug=/dashboard",
+      "/weergave?scheme=light&terug=/dashboard"
+    ],
+    "functies": [],
+    "htmx": [
+      "hx-get=/dashboard/resource-usage"
+    ],
+    "ids": [],
+    "velden": []
+  },
+  "/forms/wizard/start": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/create-project",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/services",
+      "/weergave?scheme=&terug=/forms/wizard/start",
+      "/weergave?scheme=dark&terug=/forms/wizard/start",
+      "/weergave?scheme=light&terug=/forms/wizard/start"
+    ],
+    "functies": [],
+    "htmx": [],
+    "ids": [],
+    "velden": []
+  },
+  "/metrics-explorer": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/services",
+      "/weergave?scheme=&terug=/metrics-explorer",
+      "/weergave?scheme=dark&terug=/metrics-explorer",
+      "/weergave?scheme=light&terug=/metrics-explorer"
+    ],
+    "functies": [
+      "filterMetrics"
+    ],
+    "htmx": [],
+    "ids": [
+      "error-msg",
+      "error-text",
+      "filter-container",
+      "loading",
+      "metric-count",
+      "metric-filter",
+      "metric-select",
+      "prometheus-direct-link",
+      "prometheus-frame",
+      "prometheus-frame-container",
+      "service-select",
+      "show-btn"
+    ],
+    "velden": [
+      "metric",
+      "service"
+    ]
+  },
+  "/projects": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/projects/details/test-project",
+      "/projects/details/test-project-detail",
+      "/projects/details/test-project-services",
+      "/projects?refresh=true",
+      "/projects?sort=deployments",
+      "/projects?sort=naam",
+      "/projects?sort=naam-af",
+      "/projects?sort=teamleden",
+      "/services",
+      "/weergave?scheme=&terug=/projects",
+      "/weergave?scheme=dark&terug=/projects",
+      "/weergave?scheme=light&terug=/projects"
+    ],
+    "functies": [],
+    "htmx": [
+      "hx-get=/projects",
+      "hx-get=/projects?sort=deployments",
+      "hx-get=/projects?sort=naam",
+      "hx-get=/projects?sort=naam-af",
+      "hx-get=/projects?sort=teamleden"
+    ],
+    "ids": [
+      "projects-lijst"
+    ],
+    "velden": [
+      "q",
+      "sort"
+    ]
+  },
+  "/projects/details/test-project-detail/backups": {
+    "bestemmingen": [],
+    "functies": [],
+    "htmx": [],
+    "ids": [
+      "backups-snapshots-default",
+      "backups-snapshots-tweede"
+    ],
+    "velden": []
+  },
+  "/projects/details/test-project-detail?tab=componenten": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/services",
+      "/weergave?scheme=&terug=/projects/details/test-project-detail%3Ftab%3Dcomponenten",
+      "/weergave?scheme=dark&terug=/projects/details/test-project-detail%3Ftab%3Dcomponenten",
+      "/weergave?scheme=light&terug=/projects/details/test-project-detail%3Ftab%3Dcomponenten",
+      "?tab=componenten",
+      "?tab=deployments",
+      "?tab=metrics",
+      "?tab=project",
+      "?tab=services",
+      "?tab=taken"
+    ],
+    "functies": [
+      "clearLogs",
+      "clearSearch",
+      "closeEditModal",
+      "closeLogViewer",
+      "closeServiceHelp",
+      "copyLogs",
+      "downloadLogs",
+      "filterLogs",
+      "handleEditBackdropClick",
+      "openEditModal",
+      "openServiceModal",
+      "switchLogComponent",
+      "toggleLogPause",
+      "toggleWordWrap"
+    ],
+    "htmx": [],
+    "ids": [
+      "edit-section-backdrop",
+      "edit-section-content",
+      "edit-section-inner",
+      "edit-section-modal",
+      "edit-section-title",
+      "edit-section-title-text",
+      "filter-debug",
+      "filter-info",
+      "filter-warn",
+      "log-component-selector",
+      "log-empty-state",
+      "log-line-count",
+      "log-pause-btn",
+      "log-pause-icon",
+      "log-search-clear",
+      "log-search-count",
+      "log-search-input",
+      "log-status-indicator",
+      "log-status-text",
+      "log-viewer-backdrop",
+      "log-viewer-content",
+      "log-viewer-deployment",
+      "log-viewer-heading",
+      "log-viewer-panel",
+      "log-viewer-status",
+      "log-word-wrap",
+      "service-help-backdrop",
+      "service-help-content",
+      "service-help-modal",
+      "tab-componenten"
+    ],
+    "velden": []
+  },
+  "/projects/details/test-project-detail?tab=deployments": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/services",
+      "/weergave?scheme=&terug=/projects/details/test-project-detail%3Ftab%3Ddeployments",
+      "/weergave?scheme=dark&terug=/projects/details/test-project-detail%3Ftab%3Ddeployments",
+      "/weergave?scheme=light&terug=/projects/details/test-project-detail%3Ftab%3Ddeployments",
+      "?tab=componenten",
+      "?tab=deployments",
+      "?tab=metrics",
+      "?tab=project",
+      "?tab=services",
+      "?tab=taken"
+    ],
+    "functies": [
+      "clearLogs",
+      "clearSearch",
+      "closeEditModal",
+      "closeLogViewer",
+      "closeServiceHelp",
+      "copyLogs",
+      "downloadLogs",
+      "filterLogs",
+      "handleEditBackdropClick",
+      "openEditModal",
+      "openServiceModal",
+      "switchDeployment",
+      "switchLogComponent",
+      "toggleLogPause",
+      "toggleWordWrap"
+    ],
+    "htmx": [
+      "hx-get=/projects/details/test-project-detail/backups"
+    ],
+    "ids": [
+      "backups-snapshots-default",
+      "backups-snapshots-tweede",
+      "deployment-actions-default",
+      "deployment-actions-tweede",
+      "deployment-default",
+      "deployment-tweede",
+      "edit-section-backdrop",
+      "edit-section-content",
+      "edit-section-inner",
+      "edit-section-modal",
+      "edit-section-title",
+      "edit-section-title-text",
+      "filter-debug",
+      "filter-info",
+      "filter-warn",
+      "global-deployment-selector",
+      "log-component-selector",
+      "log-empty-state",
+      "log-line-count",
+      "log-pause-btn",
+      "log-pause-icon",
+      "log-search-clear",
+      "log-search-count",
+      "log-search-input",
+      "log-status-indicator",
+      "log-status-text",
+      "log-viewer-backdrop",
+      "log-viewer-content",
+      "log-viewer-deployment",
+      "log-viewer-heading",
+      "log-viewer-panel",
+      "log-viewer-status",
+      "log-word-wrap",
+      "restore-btn-default",
+      "restore-btn-tweede",
+      "service-help-backdrop",
+      "service-help-content",
+      "service-help-modal",
+      "tab-deployments"
+    ],
+    "velden": [
+      "global-deployment-selector"
+    ]
+  },
+  "/projects/details/test-project-detail?tab=metrics": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/services",
+      "/weergave?scheme=&terug=/projects/details/test-project-detail%3Ftab%3Dmetrics",
+      "/weergave?scheme=dark&terug=/projects/details/test-project-detail%3Ftab%3Dmetrics",
+      "/weergave?scheme=light&terug=/projects/details/test-project-detail%3Ftab%3Dmetrics",
+      "?tab=componenten",
+      "?tab=deployments",
+      "?tab=metrics",
+      "?tab=project",
+      "?tab=services",
+      "?tab=taken"
+    ],
+    "functies": [
+      "clearLogs",
+      "clearSearch",
+      "closeEditModal",
+      "closeLogViewer",
+      "closeServiceHelp",
+      "copyLogs",
+      "downloadLogs",
+      "filterLogs",
+      "handleEditBackdropClick",
+      "openEditModal",
+      "switchLogComponent",
+      "toggleLogPause",
+      "toggleWordWrap"
+    ],
+    "htmx": [
+      "hx-get=/projects/details/test-project-detail/metrics/default",
+      "hx-get=/projects/details/test-project-detail/metrics/tweede",
+      "hx-get=/projects/details/test-project-detail/resource-usage"
+    ],
+    "ids": [
+      "edit-section-backdrop",
+      "edit-section-content",
+      "edit-section-inner",
+      "edit-section-modal",
+      "edit-section-title",
+      "edit-section-title-text",
+      "filter-debug",
+      "filter-info",
+      "filter-warn",
+      "log-component-selector",
+      "log-empty-state",
+      "log-line-count",
+      "log-pause-btn",
+      "log-pause-icon",
+      "log-search-clear",
+      "log-search-count",
+      "log-search-input",
+      "log-status-indicator",
+      "log-status-text",
+      "log-viewer-backdrop",
+      "log-viewer-content",
+      "log-viewer-deployment",
+      "log-viewer-heading",
+      "log-viewer-panel",
+      "log-viewer-status",
+      "log-word-wrap",
+      "metrics-content-default",
+      "metrics-content-tweede",
+      "service-help-backdrop",
+      "service-help-content",
+      "service-help-modal",
+      "tab-metrics"
+    ],
+    "velden": []
+  },
+  "/projects/details/test-project-detail?tab=project": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/services",
+      "/weergave?scheme=&terug=/projects/details/test-project-detail%3Ftab%3Dproject",
+      "/weergave?scheme=dark&terug=/projects/details/test-project-detail%3Ftab%3Dproject",
+      "/weergave?scheme=light&terug=/projects/details/test-project-detail%3Ftab%3Dproject",
+      "?tab=componenten",
+      "?tab=deployments",
+      "?tab=metrics",
+      "?tab=project",
+      "?tab=services",
+      "?tab=taken"
+    ],
+    "functies": [
+      "clearLogs",
+      "clearSearch",
+      "closeEditModal",
+      "closeLogViewer",
+      "closeServiceHelp",
+      "copyLogs",
+      "copyToClipboard",
+      "downloadLogs",
+      "filterLogs",
+      "handleEditBackdropClick",
+      "openEditModal",
+      "openServiceModal",
+      "switchLogComponent",
+      "toggleLogPause",
+      "toggleWordWrap"
+    ],
+    "htmx": [],
+    "ids": [
+      "edit-section-backdrop",
+      "edit-section-content",
+      "edit-section-inner",
+      "edit-section-modal",
+      "edit-section-title",
+      "edit-section-title-text",
+      "filter-debug",
+      "filter-info",
+      "filter-warn",
+      "log-component-selector",
+      "log-empty-state",
+      "log-line-count",
+      "log-pause-btn",
+      "log-pause-icon",
+      "log-search-clear",
+      "log-search-count",
+      "log-search-input",
+      "log-status-indicator",
+      "log-status-text",
+      "log-viewer-backdrop",
+      "log-viewer-content",
+      "log-viewer-deployment",
+      "log-viewer-heading",
+      "log-viewer-panel",
+      "log-viewer-status",
+      "log-word-wrap",
+      "service-help-backdrop",
+      "service-help-content",
+      "service-help-modal",
+      "tab-project"
+    ],
+    "velden": []
+  },
+  "/projects/details/test-project-detail?tab=services": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/services",
+      "/weergave?scheme=&terug=/projects/details/test-project-detail%3Ftab%3Dservices",
+      "/weergave?scheme=dark&terug=/projects/details/test-project-detail%3Ftab%3Dservices",
+      "/weergave?scheme=light&terug=/projects/details/test-project-detail%3Ftab%3Dservices",
+      "?tab=componenten",
+      "?tab=deployments",
+      "?tab=metrics",
+      "?tab=project",
+      "?tab=services",
+      "?tab=taken"
+    ],
+    "functies": [
+      "clearLogs",
+      "clearSearch",
+      "closeEditModal",
+      "closeLogViewer",
+      "closeServiceHelp",
+      "copyLogs",
+      "downloadLogs",
+      "filterLogs",
+      "handleEditBackdropClick",
+      "openEditModal",
+      "switchLogComponent",
+      "toggleLogPause",
+      "toggleWordWrap"
+    ],
+    "htmx": [],
+    "ids": [
+      "edit-section-backdrop",
+      "edit-section-content",
+      "edit-section-inner",
+      "edit-section-modal",
+      "edit-section-title",
+      "edit-section-title-text",
+      "filter-debug",
+      "filter-info",
+      "filter-warn",
+      "log-component-selector",
+      "log-empty-state",
+      "log-line-count",
+      "log-pause-btn",
+      "log-pause-icon",
+      "log-search-clear",
+      "log-search-count",
+      "log-search-input",
+      "log-status-indicator",
+      "log-status-text",
+      "log-viewer-backdrop",
+      "log-viewer-content",
+      "log-viewer-deployment",
+      "log-viewer-heading",
+      "log-viewer-panel",
+      "log-viewer-status",
+      "log-word-wrap",
+      "service-help-backdrop",
+      "service-help-content",
+      "service-help-modal",
+      "tab-services"
+    ],
+    "velden": []
+  },
+  "/projects/details/test-project-detail?tab=taken": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/services",
+      "/weergave?scheme=&terug=/projects/details/test-project-detail%3Ftab%3Dtaken",
+      "/weergave?scheme=dark&terug=/projects/details/test-project-detail%3Ftab%3Dtaken",
+      "/weergave?scheme=light&terug=/projects/details/test-project-detail%3Ftab%3Dtaken",
+      "?tab=componenten",
+      "?tab=deployments",
+      "?tab=metrics",
+      "?tab=project",
+      "?tab=services",
+      "?tab=taken"
+    ],
+    "functies": [
+      "clearLogs",
+      "clearSearch",
+      "closeEditModal",
+      "closeLogViewer",
+      "closeServiceHelp",
+      "copyLogs",
+      "downloadLogs",
+      "filterLogs",
+      "handleEditBackdropClick",
+      "openEditModal",
+      "switchLogComponent",
+      "toggleLogPause",
+      "toggleWordWrap"
+    ],
+    "htmx": [
+      "hx-get=/projects/test-project-detail/tasks"
+    ],
+    "ids": [
+      "edit-section-backdrop",
+      "edit-section-content",
+      "edit-section-inner",
+      "edit-section-modal",
+      "edit-section-title",
+      "edit-section-title-text",
+      "filter-debug",
+      "filter-info",
+      "filter-warn",
+      "log-component-selector",
+      "log-empty-state",
+      "log-line-count",
+      "log-pause-btn",
+      "log-pause-icon",
+      "log-search-clear",
+      "log-search-count",
+      "log-search-input",
+      "log-status-indicator",
+      "log-status-text",
+      "log-viewer-backdrop",
+      "log-viewer-content",
+      "log-viewer-deployment",
+      "log-viewer-heading",
+      "log-viewer-panel",
+      "log-viewer-status",
+      "log-word-wrap",
+      "service-help-backdrop",
+      "service-help-content",
+      "service-help-modal",
+      "tab-taken"
+    ],
+    "velden": []
+  },
+  "/projects/test-project-detail/actions/refresh-project/confirm": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/refresh"
+    ],
+    "ids": [],
+    "velden": []
+  },
+  "/projects/test-project-detail/modal-wizard/modal-add-deployment-1": {
+    "bestemmingen": [
+      "/projects/test-project-detail/modal-wizard/modal-add-deployment-2/step/domain-edit-2"
+    ],
+    "functies": [
+      "closeEditModal"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-add-deployment-2/step/add-deployment-info-2",
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-add-deployment-2/step/add-deployment-info-2?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "deployments[2]/clone-from",
+      "deployments[2]/name",
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner",
+      "modal-wizard-steps"
+    ],
+    "velden": [
+      "_wizard_token",
+      "deployments[2]/clone-from",
+      "deployments[2]/name"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-backup": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-backup/step/backup-select?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "deployment_name",
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner",
+      "resource_types-database",
+      "resource_types-minio",
+      "resource_types-pvc"
+    ],
+    "velden": [
+      "_wizard_token",
+      "deployment_name",
+      "resource_types[]"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-attachments": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "openServiceHelp"
+    ],
+    "htmx": [
+      "hx-get=/forms/wizard/create-project/attachments/list",
+      "hx-post=/forms/wizard/create-project/attachments/stage",
+      "hx-post=/forms/wizard/create-project/attachments/validate-id",
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-attachments/step/attachments?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner",
+      "wiz-att-feedback",
+      "wiz-att-file",
+      "wiz-att-id",
+      "wiz-att-id-field",
+      "wiz-att-list",
+      "wiz-att-token"
+    ],
+    "velden": [
+      "_wizard_token",
+      "attachment_id",
+      "file"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-auth-wall-config": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "openServiceHelp"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-auth-wall-config/step/auth-wall-config?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "_services-config/authorization-wall/config/banner",
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner"
+    ],
+    "velden": [
+      "_services-config/authorization-wall/config/banner",
+      "_wizard_token"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-backup-schedule-0": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-backup-schedule-0/step/backup-schedule-0?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "deployments[0]/backup/resource_types-pvc",
+      "deployments[0]/backup/schedule",
+      "deployments[0]/backup/schedule:time",
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner"
+    ],
+    "velden": [
+      "_wizard_token",
+      "deployments[0]/backup/resource_types[]",
+      "deployments[0]/backup/schedule",
+      "deployments[0]/backup/schedule:time"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-component-0": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "kvToggleFormat",
+      "openServiceHelp",
+      "sequenceAdd",
+      "sequenceRemove"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-component-0/step/component-edit-0?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "components[0]/aliases",
+      "components[0]/command",
+      "components[0]/image",
+      "components[0]/name",
+      "components[0]/path-container",
+      "components[0]/path-items",
+      "components[0]/path[0]/match",
+      "components[0]/path[0]/rewrite",
+      "components[0]/ports/inbound-container",
+      "components[0]/ports/inbound-items",
+      "components[0]/ports/inbound[0]",
+      "components[0]/resources/limits/memory",
+      "components[0]/resources/requests/memory",
+      "components[0]/services-keycloak",
+      "components[0]/services-postgresql-database",
+      "components[0]/services-publish-on-web",
+      "components[0]/user-env-vars",
+      "edit-section-actions",
+      "edit-section-content",
+      "kv-editor-components[0]/aliases",
+      "kv-editor-components[0]/user-env-vars",
+      "modal-wizard-form",
+      "modal-wizard-step-inner"
+    ],
+    "velden": [
+      "_wizard_token",
+      "components[0]/aliases",
+      "components[0]/command",
+      "components[0]/image",
+      "components[0]/name",
+      "components[0]/path[0]/match",
+      "components[0]/path[0]/rewrite",
+      "components[0]/ports/inbound[0]",
+      "components[0]/resources/limits/memory",
+      "components[0]/resources/requests/memory",
+      "components[0]/services[]",
+      "components[0]/user-env-vars"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-component-1": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "kvToggleFormat",
+      "openServiceHelp",
+      "sequenceAdd",
+      "sequenceRemove"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-component-1/step/component-edit-1?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "components[1]/aliases",
+      "components[1]/command",
+      "components[1]/image",
+      "components[1]/name",
+      "components[1]/path-container",
+      "components[1]/path-items",
+      "components[1]/path[0]/match",
+      "components[1]/path[0]/rewrite",
+      "components[1]/ports/inbound-container",
+      "components[1]/ports/inbound-items",
+      "components[1]/resources/limits/memory",
+      "components[1]/resources/requests/memory",
+      "components[1]/services-keycloak",
+      "components[1]/services-postgresql-database",
+      "components[1]/services-publish-on-web",
+      "components[1]/user-env-vars",
+      "edit-section-actions",
+      "edit-section-content",
+      "kv-editor-components[1]/aliases",
+      "kv-editor-components[1]/user-env-vars",
+      "modal-wizard-form",
+      "modal-wizard-step-inner"
+    ],
+    "velden": [
+      "_wizard_token",
+      "components[1]/aliases",
+      "components[1]/command",
+      "components[1]/image",
+      "components[1]/name",
+      "components[1]/path[0]/match",
+      "components[1]/path[0]/rewrite",
+      "components[1]/resources/limits/memory",
+      "components[1]/resources/requests/memory",
+      "components[1]/services[]",
+      "components[1]/user-env-vars"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-cross-domain-config": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "openServiceHelp"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-cross-domain-config/step/cross-domain-access-config?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner"
+    ],
+    "velden": [
+      "_wizard_token"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-deployment-0": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "kvToggleFormat",
+      "sequenceAdd",
+      "sequenceRemove"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-deployment-0/step/deployment-edit-0?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "deployments[0]/components-container",
+      "deployments[0]/components-items",
+      "deployments[0]/components[0]/image",
+      "deployments[0]/components[0]/reference",
+      "deployments[0]/components[0]/services/attachments/config-container",
+      "deployments[0]/components[0]/services/attachments/config-items",
+      "deployments[0]/components[0]/user-env-vars",
+      "deployments[0]/components[1]/image",
+      "deployments[0]/components[1]/reference",
+      "deployments[0]/components[1]/services/attachments/config-container",
+      "deployments[0]/components[1]/services/attachments/config-items",
+      "deployments[0]/components[1]/user-env-vars",
+      "edit-section-actions",
+      "edit-section-content",
+      "kv-editor-deployments[0]/components[0]/user-env-vars",
+      "kv-editor-deployments[0]/components[1]/user-env-vars",
+      "modal-wizard-form",
+      "modal-wizard-step-inner"
+    ],
+    "velden": [
+      "_wizard_token",
+      "deployments[0]/components[0]/image",
+      "deployments[0]/components[0]/reference",
+      "deployments[0]/components[0]/user-env-vars",
+      "deployments[0]/components[1]/image",
+      "deployments[0]/components[1]/reference",
+      "deployments[0]/components[1]/user-env-vars"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-domain-0": {
+    "bestemmingen": [
+      "/projects/test-project-detail/modal-wizard/modal-edit-domain-0/step/domain-cert-0"
+    ],
+    "functies": [
+      "closeEditModal"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-domain-0/step/domain-edit-0",
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-domain-0/step/domain-edit-0?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "display-url-preview",
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner",
+      "modal-wizard-steps"
+    ],
+    "velden": [
+      "_wizard_token"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-identity": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-identity/step/identity-edit?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "description",
+      "display-name",
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner"
+    ],
+    "velden": [
+      "_wizard_token",
+      "description",
+      "display-name"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-invite-config": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "openServiceHelp",
+      "sequenceRemove"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-invite-config/step/invite-config?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "_services-config/invite/config/active-container",
+      "_services-config/invite/config/active-items",
+      "_services-config/invite/config/active[0]/application-url",
+      "_services-config/invite/config/active[0]/contact-email",
+      "_services-config/invite/config/active[0]/key",
+      "_services-config/invite/config/active[0]/message/en",
+      "_services-config/invite/config/active[0]/message/nl",
+      "_services-config/invite/config/active[0]/realm-roles-container",
+      "_services-config/invite/config/active[0]/realm-roles-items",
+      "_services-config/invite/config/active[0]/realm-roles[0]",
+      "_services-config/invite/config/active[0]/success-button/en",
+      "_services-config/invite/config/active[0]/success-button/nl",
+      "_services-config/invite/config/active[0]/success-title/en",
+      "_services-config/invite/config/active[0]/success-title/nl",
+      "_services-config/invite/config/default-language",
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner"
+    ],
+    "velden": [
+      "_services-config/invite/config/active[0]/application-url",
+      "_services-config/invite/config/active[0]/contact-email",
+      "_services-config/invite/config/active[0]/key",
+      "_services-config/invite/config/active[0]/message/en",
+      "_services-config/invite/config/active[0]/message/nl",
+      "_services-config/invite/config/active[0]/realm-roles[0]",
+      "_services-config/invite/config/active[0]/success-button/en",
+      "_services-config/invite/config/active[0]/success-button/nl",
+      "_services-config/invite/config/active[0]/success-title/en",
+      "_services-config/invite/config/active[0]/success-title/nl",
+      "_services-config/invite/config/default-language",
+      "_wizard_token"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-keycloak-config": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "openServiceHelp",
+      "sequenceAdd"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-keycloak-config/step/keycloak-config?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "_services-config/keycloak/config/additional-clients-container",
+      "_services-config/keycloak/config/additional-clients-items",
+      "_services-config/keycloak/config/template",
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner"
+    ],
+    "velden": [
+      "_services-config/keycloak/config/restrict-access/enabled",
+      "_services-config/keycloak/config/template",
+      "_wizard_token"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-minio-config": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "openServiceHelp"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-minio-config/step/minio-config?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner"
+    ],
+    "velden": [
+      "_services-config/minio-storage/config/enable-versioning",
+      "_wizard_token"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-postgresql-config": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "openServiceHelp"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-postgresql-config/step/postgresql-config?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "_services-config/namespace-postgresql-database/config/instances",
+      "_services-config/namespace-postgresql-database/config/storage",
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner"
+    ],
+    "velden": [
+      "_services-config/namespace-postgresql-database/config/instances",
+      "_services-config/namespace-postgresql-database/config/storage",
+      "_wizard_token"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-postgresql-schemas": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "openServiceHelp",
+      "sequenceAdd"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-postgresql-schemas/step/postgresql-schemas-config?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "_services-config/postgresql-database/config/schemas-container",
+      "_services-config/postgresql-database/config/schemas-items",
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner"
+    ],
+    "velden": [
+      "_wizard_token"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-redis-config": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "openServiceHelp"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-redis-config/step/redis-config?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner"
+    ],
+    "velden": [
+      "_services-config/redis/config/acl-key-prefix",
+      "_wizard_token"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-services": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "openServiceHelp",
+      "stopPropagation"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-services/step/services-edit?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner",
+      "modal-wizard-steps",
+      "services-attachments",
+      "services-authorization-wall",
+      "services-cross-domain-access",
+      "services-grid",
+      "services-health-check",
+      "services-invite",
+      "services-keycloak",
+      "services-metrics-scraper",
+      "services-minio-storage",
+      "services-persistent-storage",
+      "services-postgresql-database",
+      "services-publish-on-web",
+      "services-redis",
+      "services-sleep-mode",
+      "services-temp-storage"
+    ],
+    "velden": [
+      "_wizard_token",
+      "services[]"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-sleep-mode-config": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "openServiceHelp"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-sleep-mode-config/step/sleep-mode-config?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "_services-config/sleep-mode/config/description",
+      "_services-config/sleep-mode/config/enabled",
+      "_services-config/sleep-mode/config/match",
+      "_services-config/sleep-mode/config/sleep-after-deploy",
+      "_services-config/sleep-mode/config/sleep-after-wake",
+      "_services-config/sleep-mode/config/title",
+      "_services-config/sleep-mode/config/wake-mode",
+      "_services-config/sleep-mode/config/waker",
+      "_services-config/sleep-mode/config/waker-component",
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner"
+    ],
+    "velden": [
+      "_services-config/sleep-mode/config/description",
+      "_services-config/sleep-mode/config/enabled",
+      "_services-config/sleep-mode/config/match",
+      "_services-config/sleep-mode/config/sleep-after-deploy",
+      "_services-config/sleep-mode/config/sleep-after-wake",
+      "_services-config/sleep-mode/config/title",
+      "_services-config/sleep-mode/config/wake-mode",
+      "_services-config/sleep-mode/config/waker",
+      "_services-config/sleep-mode/config/waker-component",
+      "_wizard_token"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-edit-team": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal",
+      "sequenceAdd",
+      "sequenceRemove"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-edit-team/step/team?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner",
+      "users-container",
+      "users-items",
+      "users[0]/email",
+      "users[0]/role",
+      "users[1]/email",
+      "users[1]/role"
+    ],
+    "velden": [
+      "_wizard_token",
+      "users[0]/email",
+      "users[0]/role",
+      "users[1]/email",
+      "users[1]/role"
+    ]
+  },
+  "/projects/test-project-detail/modal-wizard/modal-restore": {
+    "bestemmingen": [],
+    "functies": [
+      "closeEditModal"
+    ],
+    "htmx": [
+      "hx-post=/projects/test-project-detail/modal-wizard/modal-restore/step/restore-select?_wizard_token=<wisselend>"
+    ],
+    "ids": [
+      "edit-section-actions",
+      "edit-section-content",
+      "modal-wizard-form",
+      "modal-wizard-step-inner",
+      "modal-wizard-steps"
+    ],
+    "velden": [
+      "_wizard_token"
+    ]
+  },
+  "/projects/test-project-detail/tasks": {
+    "bestemmingen": [],
+    "functies": [],
+    "htmx": [
+      "hx-get=/projects/test-project-detail/tasks"
+    ],
+    "ids": [],
+    "velden": []
+  },
+  "/services": {
+    "bestemmingen": [
+      "/",
+      "/about",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/forms/wizard/restart",
+      "/metrics-explorer",
+      "/projects",
+      "/services",
+      "/weergave?scheme=&terug=/services",
+      "/weergave?scheme=dark&terug=/services",
+      "/weergave?scheme=light&terug=/services"
+    ],
+    "functies": [
+      "closeServiceHelp",
+      "openServiceHelp",
+      "stopPropagation"
+    ],
+    "htmx": [],
+    "ids": [
+      "service-help-backdrop",
+      "service-help-content",
+      "service-help-modal"
+    ],
+    "velden": []
+  }
+}

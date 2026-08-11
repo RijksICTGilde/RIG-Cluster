@@ -330,8 +330,7 @@ async def invite_landing(request: Request, key: str) -> Response:
     if not result:
         return render(
             request,
-            roos="invite-error.html.j2",
-            lotc="bg/invite-error.html.j2",
+            template="bg/invite-error.html.j2",
             context={
                 "request": request,
                 "error_title": "Uitnodiging niet gevonden",
@@ -368,8 +367,7 @@ async def invite_landing(request: Request, key: str) -> Response:
 
     return render(
         request,
-        roos="invite-landing.html.j2",
-        lotc="bg/invite-landing.html.j2",
+        template="bg/invite-landing.html.j2",
         context={
             "request": request,
             "project_name": project_name,
@@ -664,8 +662,7 @@ async def invite_register_form(request: Request, key: str) -> Response:
     if not result:
         return render(
             request,
-            roos="invite-error.html.j2",
-            lotc="bg/invite-error.html.j2",
+            template="bg/invite-error.html.j2",
             context={
                 "request": request,
                 "error_title": "Uitnodiging niet gevonden",
@@ -689,8 +686,7 @@ async def invite_register_form(request: Request, key: str) -> Response:
             auth_error_msg = "Account creation is not available for this invitation."
         return render(
             request,
-            roos="invite-error.html.j2",
-            lotc="bg/invite-error.html.j2",
+            template="bg/invite-error.html.j2",
             context={
                 "request": request,
                 "error_title": error_messages["auth_method_not_allowed"],
@@ -705,8 +701,7 @@ async def invite_register_form(request: Request, key: str) -> Response:
 
     return render(
         request,
-        roos="invite-register.html.j2",
-        lotc="bg/invite-register.html.j2",
+        template="bg/invite-register.html.j2",
         context={
             "request": request,
             "project_name": project_name,
@@ -739,8 +734,7 @@ async def invite_register_submit(request: Request, key: str) -> Response:
     if not result:
         return render(
             request,
-            roos="invite-error.html.j2",
-            lotc="bg/invite-error.html.j2",
+            template="bg/invite-error.html.j2",
             context={
                 "request": request,
                 "error_title": "Uitnodiging niet gevonden",
@@ -760,8 +754,7 @@ async def invite_register_submit(request: Request, key: str) -> Response:
     except InviteError as e:
         return render(
             request,
-            roos="invite-error.html.j2",
-            lotc="bg/invite-error.html.j2",
+            template="bg/invite-error.html.j2",
             context={
                 "request": request,
                 "error_title": error_messages.get(e.error_code, error_messages["generic_error"]),
@@ -826,8 +819,7 @@ async def invite_register_submit(request: Request, key: str) -> Response:
         message = invite_manager.project_file_handler.get_invite_message(invite, language)
         return render(
             request,
-            roos="invite-register.html.j2",
-            lotc="bg/invite-register.html.j2",
+            template="bg/invite-register.html.j2",
             context={
                 "request": request,
                 "project_name": project_name,
@@ -892,8 +884,7 @@ async def invite_register_submit(request: Request, key: str) -> Response:
         display_name = project_data.get("display-name", project_name)
         return render(
             request,
-            roos="invite-register.html.j2",
-            lotc="bg/invite-register.html.j2",
+            template="bg/invite-register.html.j2",
             context={
                 "request": request,
                 "project_name": project_name,
@@ -911,8 +902,7 @@ async def invite_register_submit(request: Request, key: str) -> Response:
         display_name = project_data.get("display-name", project_name)
         return render(
             request,
-            roos="invite-register.html.j2",
-            lotc="bg/invite-register.html.j2",
+            template="bg/invite-register.html.j2",
             context={
                 "request": request,
                 "project_name": project_name,
@@ -944,8 +934,7 @@ async def invite_success(request: Request, key: str) -> Response:
     if not result:
         return render(
             request,
-            roos="invite-error.html.j2",
-            lotc="bg/invite-error.html.j2",
+            template="bg/invite-error.html.j2",
             context={
                 "request": request,
                 "error_title": "Uitnodiging niet gevonden",
@@ -973,8 +962,7 @@ async def invite_success(request: Request, key: str) -> Response:
 
     return render(
         request,
-        roos="invite-success.html.j2",
-        lotc="bg/invite-success.html.j2",
+        template="bg/invite-success.html.j2",
         context={
             "request": request,
             "project_name": project_name,
@@ -1052,8 +1040,7 @@ async def invite_error(request: Request, key: str) -> Response:
 
     return render(
         request,
-        roos="invite-error.html.j2",
-        lotc="bg/invite-error.html.j2",
+        template="bg/invite-error.html.j2",
         context={
             "request": request,
             "error_title": error_title,

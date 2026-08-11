@@ -913,18 +913,18 @@ class FormRenderer:
 
         # Template partial
         if isinstance(element, TemplatePartial):
-            from opi.core.templates import get_templates
+            from opi.core.templates_lotc import templates_lotc
 
-            tmpl = get_templates().get_template(element.template)
+            tmpl = templates_lotc.env.get_template(element.template)
             ctx = {**(yaml_data or {}), **element.context}
             return tmpl.render(ctx)
 
         # Display block (server-rendered via HTMX)
         if isinstance(element, DisplayBlock):
-            from opi.core.templates import get_templates
+            from opi.core.templates_lotc import templates_lotc
 
             context = element.compute(yaml_data or {}, element.context)
-            tmpl = get_templates().get_template(element.template)
+            tmpl = templates_lotc.env.get_template(element.template)
             inner = tmpl.render(context)
             return f'<div id="display-{element.display_id}">{inner}</div>'
 

@@ -12,10 +12,12 @@ situation gets this behaviour without touching the template.
 from __future__ import annotations
 
 import pathlib
+import re
 
 import opi
 
-_CARD = pathlib.Path(opi.__file__).parent / "templates/project-details/_argocd-deployment-card.html.j2"
+# bg/_argocd-deployment-card.html.j2: dat is wat de route rendert (zie opi/web/router.py).
+_CARD = pathlib.Path(opi.__file__).parent / "templates_lotc/bg/_argocd-deployment-card.html.j2"
 
 
 def test_the_logs_button_depends_on_the_service_facts() -> None:
@@ -27,8 +29,14 @@ def test_the_logs_button_depends_on_the_service_facts() -> None:
 
 def test_the_card_names_no_service() -> None:
     """Generic on purpose: the card must not know that sleep-mode exists, or the next
-    service that parks a deployment needs a second condition here."""
-    source = _CARD.read_text(encoding="utf-8")
+    service that parks a deployment needs a second condition here.
+
+    Het Jinja-COMMENTAAR gaat er eerst uit. Het sjabloon legt in zijn kop uit welke
+    gevallen die generieke voorwaarde dekt, en daar hoort een dienstnaam gewoon in; een
+    test die daarop afgaat dwingt je die uitleg te schrappen. Wat hier getoetst wordt is
+    de MARKUP.
+    """
+    source = re.sub(r"\{#.*?#\}", "", _CARD.read_text(encoding="utf-8"), flags=re.DOTALL)
 
     for name in ("sleep-mode", "sleep_mode", "slaapstand", "waker"):
         assert name not in source, f"the card should not know about {name}"

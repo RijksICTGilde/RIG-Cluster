@@ -43,25 +43,25 @@ def _projectnamen(html: str) -> list[str]:
 
 
 def test_zonder_zoekterm_staan_alle_projecten_er(client: httpx.Client) -> None:
-    namen = _projectnamen(client.get("/projects?layout=nldd").text)
+    namen = _projectnamen(client.get("/projects").text)
     assert namen == ["test-project-detail", "test-project", "test-project-services"], namen
 
 
 def test_de_zoekterm_filtert_op_naam_en_omschrijving(client: httpx.Client) -> None:
-    assert _projectnamen(client.get("/projects?layout=nldd&q=services").text) == ["test-project-services"]
+    assert _projectnamen(client.get("/projects?q=services").text) == ["test-project-services"]
     # "detailpagina" komt alleen in de OMSCHRIJVING voor, niet in een naam.
-    assert _projectnamen(client.get("/projects?layout=nldd&q=detailpagina").text) == ["test-project-detail"]
+    assert _projectnamen(client.get("/projects?q=detailpagina").text) == ["test-project-detail"]
 
 
 def test_een_zoekterm_zonder_treffers_zegt_dat_ook(client: httpx.Client) -> None:
-    antwoord = client.get("/projects?layout=nldd&q=bestaatniet").text
+    antwoord = client.get("/projects?q=bestaatniet").text
     assert _projectnamen(antwoord) == []
     assert "Geen projecten gevonden voor" in antwoord
 
 
 def test_de_sortering_keert_de_volgorde_echt_om(client: httpx.Client) -> None:
-    oplopend = _projectnamen(client.get("/projects?layout=nldd&sort=naam").text)
-    aflopend = _projectnamen(client.get("/projects?layout=nldd&sort=naam-af").text)
+    oplopend = _projectnamen(client.get("/projects?sort=naam").text)
+    aflopend = _projectnamen(client.get("/projects?sort=naam-af").text)
     assert aflopend == list(reversed(oplopend)), (oplopend, aflopend)
 
 
@@ -73,7 +73,7 @@ def test_de_pagina_levert_zelf_het_stuk_dat_het_zoekveld_ververst(client: httpx.
     zonder navigatie of voettekst. Bovendien is een tweede adres met dezelfde gegevens
     een tweede plek die kan gaan afwijken.
     """
-    antwoord = client.get("/projects?layout=nldd&q=detail").text
+    antwoord = client.get("/projects?q=detail").text
 
     assert 'id="projects-lijst"' in antwoord, "het doel van hx-select staat niet in de pagina"
     assert 'hx-select="#projects-lijst"' in antwoord, "het formulier pakt niet het juiste stuk uit het antwoord"
@@ -86,7 +86,7 @@ def test_de_totalen_onderaan_volgen_de_zoekterm_niet(client: httpx.Client) -> No
 
     De telling BOVEN de tabel hoort dat wel te doen - die gaat over wat je ziet.
     """
-    antwoord = client.get("/projects?layout=nldd&q=services").text
+    antwoord = client.get("/projects?q=services").text
     assert "Totaal: 1 project van 3" in antwoord, "de telling boven de tabel volgt de zoekterm niet"
 
     # De tegel rendert als <span class="lotc-metric-value">3</span> gevolgd door zijn
@@ -107,7 +107,7 @@ def test_de_pagina_toont_de_kaarten_en_wat_daar_omheen_hoort(client: httpx.Clien
     Wat er wel bij hoort te blijven staan is alles dat bij het omzetten stilletjes wegviel
     zonder dat iemand daarom vroeg: de knop Vernieuwen, de telling, en de vier totalen.
     """
-    antwoord = client.get("/projects?layout=nldd").text
+    antwoord = client.get("/projects").text
 
     assert "Vernieuwen" in antwoord, "de knop Vernieuwen is weg"
     assert "Totaal: 3 projecten" in antwoord, "de telling boven de lijst is weg"
@@ -131,7 +131,7 @@ def test_zoeken_en_sorteren_staan_in_de_toolbar(client: httpx.Client) -> None:
     elk kind weg (het component heeft geen standaard-slot), dus het zoekveld verdween
     zonder foutmelding. Deze test slaat aan zodra dat weer gebeurt.
     """
-    antwoord = client.get("/projects?layout=nldd").text
+    antwoord = client.get("/projects").text
 
     assert "<nldd-toolbar" in antwoord, "de toolbar staat er niet"
     opgeslokt = "het zoekveld staat niet in de toolbar - opgeslokt door een component zonder slot?"

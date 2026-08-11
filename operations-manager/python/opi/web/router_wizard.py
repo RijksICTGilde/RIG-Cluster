@@ -13,10 +13,11 @@ from starlette.responses import Response
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
-from opi.core.templates import get_templates
-from opi.forms import FormRenderer, ROOSWidgetAdapter, get_default_nl_translator
+from opi.core.templates_lotc import templates_lotc
+from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.visualizers.flows import get_flow
+from opi.forms.widgets.lotc import LOTCWidgetAdapter
 from opi.forms.wizard.mutation import apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
@@ -34,7 +35,7 @@ from opi.services.catalog.cross_domain_access.context import build_cross_domain_
 from opi.services.help_text import is_markdown_help, render_service_help
 from opi.services.schema_migration import normalize_service_entries
 from opi.utils.csrf import reject_misfired_form_get
-from opi.web.lotc_switch import render, wants_lotc
+from opi.web.lotc_switch import render
 from opi.web.menu import get_menu_items
 from opi.web.navigation_lotc import get_navigation, to_nldd_icon
 
@@ -48,7 +49,7 @@ logger = logging.getLogger(__name__)
 wizard_router = APIRouter(prefix="/forms/wizard", tags=["wizard"])
 
 
-def _create_renderer(lotc: bool = False) -> FormRenderer:
+def _create_renderer() -> FormRenderer:
     """Create a configured FormRenderer for wizard forms.
 
     De VOORBEREIDING per veldtype is gedeeld - welke opties, welke waarde, hoe een reeks
@@ -59,31 +60,18 @@ def _create_renderer(lotc: bool = False) -> FormRenderer:
     dus in de release-image bestaat het pakket niet. Bovenaan importeren zou deze module
     daar onlaadbaar maken.
     """
-    if lotc:
-        from opi.forms.widgets.lotc import LOTCWidgetAdapter
-
-        return FormRenderer(
-            widget_adapter=LOTCWidgetAdapter(),
-            translator=get_default_nl_translator(),
-        )
     return FormRenderer(
-        widget_adapter=ROOSWidgetAdapter(),
+        widget_adapter=LOTCWidgetAdapter(),
         translator=get_default_nl_translator(),
     )
 
 
 def _lotc_page_context(request: Request, user: dict[str, Any] | None) -> dict[str, Any]:
-    """Wat een HELE wizardpagina extra nodig heeft in de LOTC-weergave: de navigatie.
-
-    Levert niets op als de LOTC-weergave niet gevraagd is; dan is dit werk voor niets en
-    hoeft de bestaande pagina er niet mee lastiggevallen te worden.
+    """Wat een HELE wizardpagina extra nodig heeft: de navigatie.
 
     Het pad is dat van "Nieuw project" in het menu, zodat dat item in de zijkolom
     oplicht zolang je in de wizard zit.
     """
-    if not wants_lotc(request):
-        return {}
-
     return {"navigation": get_navigation(user, current_path="/forms/wizard/restart")}
 
 
@@ -146,7 +134,7 @@ def _render_step_html(
     errors = _defuse_template_syntax(errors)
     warnings = _defuse_template_syntax(warnings)
 
-    renderer = _create_renderer(lotc=wants_lotc(request))
+    renderer = _create_renderer()
     if not section.layout:
         return ""
 
@@ -270,8 +258,7 @@ def _step_response(request: Request, context: dict[str, Any]) -> Response:
     """
     return render(
         request,
-        roos="wizard/wizard_step.html.j2",
-        lotc="bg/_wizard-step.html.j2",
+        template="bg/_wizard-step.html.j2",
         context=context,
     )
 
@@ -283,13 +270,9 @@ def _render_preset_html(
     yaml_data: dict[str, Any] | None = None,
     csrf_token: str = "",
 ) -> str:
-    """Render preset cards for a section, if any presets exist.
-
-    Dezelfde voorbereiding voor beide weergaven; alleen de Jinja-omgeving waarin het
-    kaarttemplate rendert wisselt mee met de pagina eromheen.
-    """
+    """Render preset cards for a section, if any presets exist."""
     from opi.forms.presets.loader import load_presets
-    from opi.forms.widgets.roos import render_preset_cards
+    from opi.forms.widgets.fields import render_preset_cards
 
     presets = load_presets(section_id)
     if not presets:
@@ -304,12 +287,6 @@ def _render_preset_html(
         # Detect which presets are locked by active services.
         locked_presets = _detect_locked_presets(presets, section.editables, yaml_data)
 
-    env = None
-    if wants_lotc(request):
-        from opi.core.templates_lotc import templates_lotc
-
-        env = templates_lotc.env
-
     return render_preset_cards(
         presets,
         flow_id,
@@ -317,7 +294,6 @@ def _render_preset_html(
         yaml_data=yaml_data,
         locked_presets=locked_presets,
         csrf_token=csrf_token,
-        env=env,
     )
 
 
@@ -400,8 +376,7 @@ async def wizard_start(request: Request) -> Response:
     user = get_current_user(request)
     return render(
         request,
-        roos="wizard/wizard_start.html.j2",
-        lotc="bg/wizard-start.html.j2",
+        template="bg/wizard-start.html.j2",
         context={
             "request": request,
             "menu_items": get_menu_items(user),
@@ -513,8 +488,7 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
 
     return render(
         request,
-        roos="wizard/wizard_page.html.j2",
-        lotc="bg/wizard-page.html.j2",
+        template="bg/wizard-page.html.j2",
         context={
             "request": request,
             "flow_title": flow.title,
@@ -599,8 +573,7 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
     display_name = project_data.get("display-name", project_name)
     return render(
         request,
-        roos="wizard/wizard_page.html.j2",
-        lotc="bg/wizard-page.html.j2",
+        template="bg/wizard-page.html.j2",
         context={
             "request": request,
             "flow_title": f"{flow.title} - {display_name}",
@@ -831,8 +804,7 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
 
     return render(
         request,
-        roos="wizard/wizard_page.html.j2",
-        lotc="bg/wizard-page.html.j2",
+        template="bg/wizard-page.html.j2",
         context={
             "request": request,
             "flow_title": flow.title,
@@ -1097,7 +1069,7 @@ async def toggle_preset(
 ) -> HTMLResponse | RedirectResponse:
     """Toggle a preset: apply if not active, remove if active."""
     from opi.forms.presets.loader import get_preset_by_id
-    from opi.forms.widgets.roos import _is_preset_applied
+    from opi.forms.widgets.fields import _is_preset_applied
 
     state = get_wizard_state(request)
     if not state or state.flow_id != flow_id:
@@ -1205,7 +1177,7 @@ async def service_help(request: Request, template_name: str) -> HTMLResponse:
 
     * ``<service-package>/help.md`` -- a service's own explanation. It is markdown, and
       it is the same file ``GET /api/v2/services/{name}`` returns, so the portal and an
-      API client read one source (RC-59). It is turned into the ROOS components the
+      API client read one source (RC-59). It is turned into the components the
       modal always showed, with the icon taken from the service definition.
     * ``<service-package>/help.html.j2`` -- the older Jinja form, still resolved by the
       Jinja loader for any help that has not been converted.
@@ -1227,9 +1199,8 @@ async def service_help(request: Request, template_name: str) -> HTMLResponse:
             raise HTTPException(status_code=404, detail="Help template not found") from None
 
     template_path = template_name if "/" in template_name else f"help/{template_name}"
-    templates = get_templates()
     try:
-        return templates.TemplateResponse(
+        return templates_lotc.TemplateResponse(
             template_path,
             {"request": request},
         )
@@ -1538,8 +1509,7 @@ async def _render_review(
 
     return render(
         request,
-        roos="wizard/wizard_review.html.j2",
-        lotc="bg/_wizard-review.html.j2",
+        template="bg/_wizard-review.html.j2",
         context={
             "request": request,
             "steps": steps,

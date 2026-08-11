@@ -1,11 +1,12 @@
-"""Tests for the content-hashed static URL helper (opi.core.templates.static_url)."""
+"""Tests for the content-hashed static URL helper (opi.core.template_helpers.static_url)."""
 
 import os
 import re
 from typing import TYPE_CHECKING
 
-from opi.core import templates as templates_module
-from opi.core.templates import static_url, templates
+from opi.core import template_helpers as templates_module
+from opi.core.template_helpers import static_url
+from opi.core.templates_lotc import templates_lotc as templates
 
 if TYPE_CHECKING:
     from pathlib import Path

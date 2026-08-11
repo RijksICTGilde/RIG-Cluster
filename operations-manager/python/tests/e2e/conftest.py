@@ -181,24 +181,11 @@ def authenticated_context(app_server: str, browser: BrowserContext) -> Generator
                 "domain": domein,
                 "path": "/",
             },
-            # De bestaande e2e-tests zijn op de ROOS-markup geschreven: ze klikken op
-            # .rvo-knoppen, roepen switchTab() aan en zoeken elementen die alleen daar
-            # bestaan. Sinds de nieuwe vormgeving de STANDAARD is, landden ze op de nieuwe
-            # pagina en faalden ze - niet omdat de applicatie stuk is, maar omdat ze een
-            # andere pagina meten dan ze denken.
-            #
-            # Deze cookie pint ze op de weergave die ze toetsen. Dat is bewust en het is
-            # geen doofpot: ?layout= in de URL wint van de cookie, dus een test die de
-            # NIEUWE weergave meet zet dat er zelf bij - zie test_lotc_parity.py,
-            # test_lotc_confirmations.py en test_lotc_pariteit.py, die dat doen. Zo blijft
-            # het vangnet onder de release liggen EN wordt de nieuwe vormgeving getoetst,
-            # in plaats van dat een van de twee stilletjes onbewaakt raakt.
-            {
-                "name": "zad_layout",
-                "value": __import__("os").environ.get("E2E_LAYOUT", "roos"),
-                "domain": domein,
-                "path": "/",
-            },
+            # Hier stond een tweede koekje, zad_layout=roos, dat de bestaande e2e-tests
+            # op de oude vormgeving pinde: ze klikken op .rvo-knoppen en roepen switchTab()
+            # aan, en die bestaan alleen daar. Er is nog een vormgeving, dus dat koekje
+            # doet niets meer en is weg; wat die tests toetsten meten ze nu op de pagina
+            # die de gebruiker ook krijgt.
         ]
     )
     yield context

@@ -1,6 +1,6 @@
 """One explanation per service, read by the portal and by the API (RC-59).
 
-The prose was written for a popup, in ROOS component markup. An agent asking the API what
+The prose was written for a popup, in de componentmarkup van het portaal. An agent asking the API what
 a service does would have got `utrecht-*` classes and sentences pointing at buttons -- so
 the prose is markdown now, and the portal renders it into the same components it always
 showed.
@@ -18,14 +18,15 @@ what is tested is the mapping, the escaping, and that no service is left behind.
 from __future__ import annotations
 
 import pathlib
+import re
 
 import opi
 import pytest
-from opi.core.templates import get_templates
+from opi.core.templates_lotc import templates_lotc
 from opi.services.help_text import (
     help_file,
     is_markdown_help,
-    markdown_to_roos,
+    markdown_to_components,
     render_service_help,
     service_help_markdown,
 )
@@ -37,7 +38,17 @@ _SERVICES = sorted(ServiceType, key=lambda s: s.value)
 
 
 def _render(markdown: str, **kwargs) -> str:
-    return get_templates().env.from_string(markdown_to_roos(markdown, **kwargs)).render()
+    return templates_lotc.env.from_string(markdown_to_components(markdown, **kwargs)).render()
+
+
+def _icoonnamen(html: str) -> list[str]:
+    """De iconnamen in gerenderde HTML.
+
+    Op het GERENDERDE element en niet op de naam die wij meegeven: het componenten-
+    systeem lost zijn eigen aliassen op (``database`` wordt ``cylinder-split``), dus een
+    vergelijking met onze naam zou daar vals alarm geven.
+    """
+    return re.findall(r'<nldd-icon[^>]*\bname="([^"]+)"', html)
 
 
 def _visible(html: str) -> str:
@@ -88,31 +99,31 @@ def test_the_api_and_the_portal_read_the_same_file(service: ServiceType) -> None
 def test_a_title_becomes_a_heading_with_the_service_icon() -> None:
     rendered = _render("# Redis Cache", icon="zandloper", color="rood")
 
-    assert "utrecht-heading-2" in rendered
-    assert "rvo-icon-zandloper" in rendered
+    assert 'data-lotc-component="heading" size="2"' in rendered
+    assert _icoonnamen(rendered) == ["timer"], "zandloper wordt in de NLDD-woordenschat timer"
     assert "Redis Cache" in rendered
 
 
 def test_a_section_becomes_a_subheading_without_an_icon() -> None:
     rendered = _render("# Titel\n\n## Wanneer gebruik je dit?", icon="klok", color="rood")
 
-    assert "utrecht-heading-3" in rendered
-    assert rendered.count("rvo-icon-klok") == 1, "only the title carries the icon"
+    assert 'data-lotc-component="heading" size="3"' in rendered
+    assert len(_icoonnamen(rendered)) == 1, "only the title carries the icon"
 
 
 def test_paragraphs_and_bullets_become_their_components() -> None:
     rendered = _render("Eerste regel\nvan een alinea.\n\n- een\n- twee\n\nEen tweede alinea.")
 
-    assert rendered.count('data-roos-component="paragraph"') == 2
-    assert "rvo-ul" in rendered
-    assert rendered.count('data-roos-component="li"') == 2
+    assert rendered.count('data-lotc-component="paragraph"') == 2
+    assert 'data-lotc-component="list"' in rendered
+    assert rendered.count('data-lotc-component="list-item"') == 2
     assert "Eerste regel van een alinea." in rendered, "wrapped lines are one paragraph"
 
 
 def test_bold_becomes_strong() -> None:
     rendered = _render("Zet **DATABASE_DB** in je omgeving.")
 
-    assert "rvo-text--bold" in rendered
+    assert 'data-lotc-component="b"' in rendered
     assert "DATABASE_DB" in rendered
 
 
@@ -121,7 +132,7 @@ def test_a_backslash_keeps_a_literal_asterisk_next_to_the_bold_markers() -> None
     rendered = _render(r"De **DATABASE_\***-variabelen.")
 
     assert "DATABASE_*" in rendered
-    assert "rvo-text--bold" in rendered
+    assert 'data-lotc-component="b"' in rendered
 
 
 def test_prose_can_never_become_a_template_expression() -> None:
@@ -157,8 +168,8 @@ def test_the_popup_renders_without_leaving_a_component_behind(service: ServiceTy
     rendered = render_service_help(definition.help_template)
 
     assert rendered.strip()
-    assert "<c-" not in rendered, "an unexpanded ROOS component means the markup is wrong"
-    assert f"rvo-icon-{definition.icon}" in rendered
+    assert "<c-" not in rendered, "an unexpanded component means the markup is wrong"
+    assert _icoonnamen(rendered), f"{definition.help_template} shows no icon at all"
 
 
 @pytest.mark.parametrize(

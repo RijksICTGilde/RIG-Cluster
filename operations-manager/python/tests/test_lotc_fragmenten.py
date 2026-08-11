@@ -1,36 +1,34 @@
-"""De twee blokken die via htmx binnenkomen, in beide vormgevingen naast elkaar.
+"""De twee blokken die via htmx binnenkomen: dragen ze nog waar het script aan hangt?
 
 Een pagina omzetten valt op zodra hij scheef staat. Een FRAGMENT niet: het komt pas na een
 klik of een scroll binnen, in het midden van een pagina die er verder goed uitziet, en wat
 eraan mist merk je pas als je het nodig hebt. Vandaar deze poort.
 
-Gemeten wordt hetzelfde als in ``scripts/lotc_compare_behaviour.py`` - dat script is de
-definitie van "klaar" en wordt hier geimporteerd zodat de twee niet uit elkaar kunnen
-lopen: elke bestemming, elk htmx-adres, elke aangeroepen JavaScript-functie, elk veld met
-een naam en elk id. Vormgeving telt niet mee.
+Hier stond een VERGELIJKING: hetzelfde fragment in beide vormgevingen, met de meetlat uit
+de gedragsmeting ernaast. Die tweede vormgeving is er niet meer, en
+een vergelijking van de ene helft van niets met de andere meet niets. Wat ervoor in de
+plaats komt is de LIJST: welke canvassen er horen te staan, waar de tijdvakknoppen op
+mikken, en welke id's het backupblok buiten de band binnenbrengt. Minder elegant, en het
+veroudert - maar het is eerlijk: nu is de hertekende pagina de norm.
 
-Het gebeurt hier op TEMPLATENIVEAU en niet tegen een draaiende server, want dat is precies
-wat een fragment moeilijk maakt: de backups vragen een Kopia-repository over S3 en de
-metingen een Prometheus, en geen van beide staat er in een testrun. Door beide sjablonen
-met DEZELFDE verzonnen gegevens te renderen is de vergelijking toch eerlijk - en dekt hij
+Het gebeurt op TEMPLATENIVEAU en niet tegen een draaiende server, want dat is precies wat
+een fragment moeilijk maakt: de backups vragen een Kopia-repository over S3 en de metingen
+een Prometheus, en geen van beide staat er in een testrun. Met verzonnen gegevens dekt dit
 ook de gevallen die je op een testomgeving nooit ziet (een Helm-deployment, een
 onbereikbare backupdienst, een PVC die vol loopt).
 
 Wat deze test NIET dekt: of de grafieken ook echt getekend worden. Een canvas met het
-juiste id waarop niets staat komt hier als "gelijk" uit. Dat is de reden dat
+juiste id waarop niets staat komt hier als "goed" uit. Dat is de reden dat
 tests/e2e/test_lotc_pariteit.py er met een browser op de pixels naar kijkt.
 """
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+import re
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from lotc_compare_behaviour import Oppervlak, meet
 
 
 class _Deployment:
@@ -158,95 +156,91 @@ BACKUP_GEVALLEN: list[tuple[str, dict[str, Any]]] = [
 ]
 
 
-def _render(roos: str, lotc: str, context: dict[str, Any]) -> tuple[Oppervlak, Oppervlak]:
-    pytest.importorskip("lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd")
-    from opi.core.templates import get_templates
+#: Welke canvassen het metingenblok per geval hoort neer te zetten. Als LIJST en niet als
+#: vergelijking met een tweede sjabloon: die tweede is er niet meer, en een verwachting
+#: die uit de meting zelf komt bewijst niets. ``initMetricsCharts()`` zoekt op
+#: ``.metrics-chart`` en leest de reeks uit data-timestamps/data-values; ontbreekt er een,
+#: dan staat er een lege plek die er precies zo uitziet als een deployment die niets doet.
+CANVASSEN: dict[str, list[str]] = {
+    "componenten": [
+        "cpu-chart-dep1-web",
+        "mem-chart-dep1-web",
+        "net-in-chart-dep1-web",
+        "net-out-chart-dep1-web",
+        "disk-read-chart-dep1-web",
+        "disk-write-chart-dep1-web",
+    ],
+    "componenten-zonder-metingen": [
+        "cpu-chart-dep1-web",
+        "mem-chart-dep1-web",
+        "net-in-chart-dep1-web",
+        "net-out-chart-dep1-web",
+        "disk-read-chart-dep1-web",
+        "disk-write-chart-dep1-web",
+    ],
+    # Een Helm-workload heeft geen PVC in deze opstelling, dus geen schijfgrafieken.
+    "helm-workloads": [
+        "cpu-chart-dep1-app-v1",
+        "mem-chart-dep1-app-v1",
+        "net-in-chart-dep1-app-v1",
+        "net-out-chart-dep1-app-v1",
+    ],
+    # Geen component, geen grafiek. Wel het blok eromheen; dat toetst de test hieronder.
+    "geen-componenten": [],
+    "pvc-opslag": [
+        "cpu-chart-dep1-web",
+        "mem-chart-dep1-web",
+        "net-in-chart-dep1-web",
+        "net-out-chart-dep1-web",
+        "disk-read-chart-dep1-web",
+        "disk-write-chart-dep1-web",
+        "pvc-chart-dep1-dep1-web-data",
+    ],
+}
+
+METRICS_TEMPLATE = "bg/_deployment-metrics.html.j2"
+BACKUP_TEMPLATE = "shared/_backup-snapshots.html.j2"
+
+
+def _render(naam: str, context: dict[str, Any]) -> str:
     from opi.core.templates_lotc import templates_lotc
 
-    oud = get_templates().env.get_template(roos).render(**context)
-    nieuw = templates_lotc.env.get_template(lotc).render(**context)
-    return meet(oud), meet(nieuw)
+    return templates_lotc.env.get_template(naam).render(**context)
 
 
-def _verdwenen(oud: Oppervlak, nieuw: Oppervlak) -> list[str]:
-    weg: list[str] = []
-    for label, a, b in (
-        ("bestemming", oud.bestemmingen, nieuw.bestemmingen),
-        ("htmx", oud.htmx, nieuw.htmx),
-        ("js-functie", oud.functies, nieuw.functies),
-        ("veld", oud.velden, nieuw.velden),
-        ("id", oud.ids, nieuw.ids),
-    ):
-        weg.extend(f"{label}: {item}" for item in sorted(a - b))
-    return weg
+def test_de_canvaslijst_dekt_elk_geval() -> None:
+    """Een geval dat hier niet in CANVASSEN staat, wordt hieronder niet gemeten."""
+    assert sorted(CANVASSEN) == sorted(naam for naam, _ in METRICS_GEVALLEN)
 
 
 @pytest.mark.parametrize(("naam", "context"), METRICS_GEVALLEN, ids=[naam for naam, _ in METRICS_GEVALLEN])
-def test_het_metingenblok_doet_in_beide_vormgevingen_hetzelfde(naam: str, context: dict[str, Any]) -> None:
-    oud, nieuw = _render(
-        "partials/deployment_metrics.html.j2",
-        "bg/_deployment-metrics.html.j2",
-        {"project_name": "proj", "duration": 60, **context},
-    )
-    weg = _verdwenen(oud, nieuw)
-    assert not weg, f"verdwenen gedrag in het metingenblok ({naam}):\n  " + "\n  ".join(weg)
+def test_het_metingenblok_zet_zijn_grafieken_neer(naam: str, context: dict[str, Any]) -> None:
+    """Zelfde id's, zelfde klasse, met de reeks in de data-attributen."""
+    html = _render(METRICS_TEMPLATE, {"project_name": "proj", "duration": 60, **context})
 
+    canvassen = {
+        match.group(2): dict(re.findall(r"([a-z-]+)=['\"]([^'\"]*)['\"]", match.group(1)))
+        for match in re.finditer(r"<canvas([^>]*\bid=\"([^\"]+)\"[^>]*)>", html)
+    }
+    assert sorted(canvassen) == sorted(CANVASSEN[naam]), f"andere grafieken dan verwacht bij {naam}"
 
-@pytest.mark.parametrize(("naam", "context"), METRICS_GEVALLEN, ids=[naam for naam, _ in METRICS_GEVALLEN])
-def test_de_grafieken_dragen_dezelfde_canvassen_met_dezelfde_gegevens(naam: str, context: dict[str, Any]) -> None:
-    """Zelfde id, zelfde klasse, zelfde reeks in de data-attributen.
-
-    Dat is wat de tekencode leest: ``initMetricsCharts()`` zoekt op ``.metrics-chart`` en
-    haalt de reeks uit ``data-timestamps``/``data-values``. Wijkt een van die drie af, dan
-    staat er een canvas zonder lijn - en dat ziet er precies zo uit als een deployment die
-    niets doet.
-    """
-    pytest.importorskip("lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd")
-    import re
-
-    from opi.core.templates import get_templates
-    from opi.core.templates_lotc import templates_lotc
-
-    volledig = {"project_name": "proj", "duration": 60, **context}
-
-    def canvassen(html: str) -> dict[str, dict[str, str]]:
-        gevonden: dict[str, dict[str, str]] = {}
-        for tag in re.finditer(r"<canvas([^>]*)>", html):
-            attrs = dict(re.findall(r"([a-z-]+)=['\"]([^'\"]*)['\"]", tag.group(1)))
-            gevonden[attrs.get("id", "")] = {
-                sleutel: waarde
-                for sleutel, waarde in attrs.items()
-                if sleutel.startswith("data-") or sleutel == "class"
-            }
-        return gevonden
-
-    oud = canvassen(get_templates().env.get_template("partials/deployment_metrics.html.j2").render(**volledig))
-    nieuw = canvassen(templates_lotc.env.get_template("bg/_deployment-metrics.html.j2").render(**volledig))
-
-    assert set(oud) == set(nieuw), f"andere canvassen ({naam}): {sorted(set(oud) ^ set(nieuw))}"
-    verschil = {sleutel: (oud[sleutel], nieuw[sleutel]) for sleutel in oud if oud[sleutel] != nieuw[sleutel]}
-    assert not verschil, f"canvassen met andere gegevens ({naam}): {verschil}"
+    for canvas_id, attrs in canvassen.items():
+        assert "metrics-chart" in attrs.get("class", ""), f"{canvas_id} draagt de klasse niet die het script zoekt"
+        assert "data-timestamps" in attrs, f"{canvas_id} draagt geen reeks"
+        assert "data-values" in attrs, f"{canvas_id} draagt geen waarden"
 
 
 def test_de_tijdvakknoppen_wijzen_naar_een_id_dat_bestaat() -> None:
     """Het doel is ``metrics-content-<naam>``, en zo heet het blok ook echt.
 
-    Beide fragmenten mikten op ``#metrics-content``, en dat id staat nergens: htmx vindt
-    zijn doel dan niet en de knop doet niets. De blokken die het fragment opnemen -
-    metrics_scraper/section-deployment.html.j2 en metrics_scraper/section-deployment-lotc.html.j2 -
-    zetten allebei ``metrics-content-<deployment>`` neer.
+    Het fragment mikte op ``#metrics-content``, en dat id staat nergens: htmx vindt zijn
+    doel dan niet en de knop doet niets. Het blok dat het fragment opneemt
+    (metrics_scraper/section-deployment.html.j2) zet ``metrics-content-<deployment>`` neer.
 
-    ``hx-target`` wordt hier RECHTSTREEKS uit de HTML gelezen en niet uit het
-    gedragsoppervlak: dat verzamelt alleen de htmx-ADRESSEN (hx-get en de mutaties), dus
-    een knop die naar een niet-bestaand doel wijst komt daar als "gelijk" uit. Precies zo
-    heeft deze fout jarenlang stilgestaan.
+    ``hx-target`` wordt hier RECHTSTREEKS uit de HTML gelezen: een gedragsmeting
+    verzamelt alleen de htmx-ADRESSEN, dus een knop die naar een niet-bestaand doel wijst
+    komt daar als goed uit. Precies zo heeft deze fout jarenlang stilgestaan.
     """
-    pytest.importorskip("lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd")
-    import re
-
-    from opi.core.templates import get_templates
-    from opi.core.templates_lotc import templates_lotc
-
     context = {
         "project_name": "proj",
         "duration": 60,
@@ -255,26 +249,28 @@ def test_de_tijdvakknoppen_wijzen_naar_een_id_dat_bestaat() -> None:
         "discovered_workloads": [],
         "pvc_storage": {},
     }
-    oud = get_templates().env.get_template("partials/deployment_metrics.html.j2").render(**context)
-    nieuw = templates_lotc.env.get_template("bg/_deployment-metrics.html.j2").render(**context)
+    html = _render(METRICS_TEMPLATE, context)
 
-    for html, vormgeving in ((oud, "roos"), (nieuw, "nldd")):
-        doelen = set(re.findall(r'hx-target="([^"]+)"', html))
-        assert doelen == {"#metrics-content-dep1"}, f"{vormgeving} mikt op {doelen}"
-        # Vijf tijdvakken, vijf knoppen: 1, 2, 6, 12 en 24 uur.
-        assert len(re.findall(r'hx-target="#metrics-content-dep1"', html)) == 5, vormgeving
+    doelen = set(re.findall(r'hx-target="([^"]+)"', html))
+    assert doelen == {"#metrics-content-dep1"}, f"het blok mikt op {doelen}"
+    # Vijf tijdvakken, vijf knoppen: 1, 2, 6, 12 en 24 uur.
+    assert len(re.findall(r'hx-target="#metrics-content-dep1"', html)) == 5
 
-    # En de rest van de htmx-bedrading is in beide gelijk.
-    for attribuut in ("hx-target", "hx-swap", "hx-trigger"):
-        patroon = re.compile(attribuut + r'="([^"]*)"')
-        assert sorted(patroon.findall(oud)) == sorted(patroon.findall(nieuw)), attribuut
+    # En het blok dat dat id neerzet, zet het ook echt neer.
+    opnemer = _render(
+        "metrics_scraper/section-deployment.html.j2",
+        {"section": SimpleNamespace(context={"available": True, "project_name": "proj", "deployment_name": "dep1"})},
+    )
+    assert 'id="metrics-content-dep1"' in opnemer
 
 
 @pytest.mark.parametrize(("naam", "context"), BACKUP_GEVALLEN, ids=[naam for naam, _ in BACKUP_GEVALLEN])
-def test_het_backupblok_doet_in_beide_vormgevingen_hetzelfde(naam: str, context: dict[str, Any]) -> None:
-    oud, nieuw = _render("shared/_backup-snapshots.html.j2", "shared/_backup-snapshots-lotc.html.j2", context)
-    weg = _verdwenen(oud, nieuw)
-    assert not weg, f"verdwenen gedrag in het backupblok ({naam}):\n  " + "\n  ".join(weg)
+def test_het_backupblok_rendert_met_zijn_snapshots(naam: str, context: dict[str, Any]) -> None:
+    """Het blok komt er, met de deploymentnaam erin, in elk van de vier gevallen."""
+    html = _render(BACKUP_TEMPLATE, context)
+
+    assert html.strip(), f"leeg backupblok bij {naam}"
+    assert "<c-" not in html, "onvervangen componenttag: dit sjabloon rendert in de verkeerde omgeving"
 
 
 def test_de_backupsnapshots_komen_buiten_de_band_binnen() -> None:
@@ -284,31 +280,18 @@ def test_de_backupsnapshots_komen_buiten_de_band_binnen() -> None:
     weggegooid. Verdwijnt zo'n markering, dan komt het antwoord binnen en gebeurt er niets
     - zonder foutmelding, en met de skeletweergave die blijft staan.
     """
-    pytest.importorskip("lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd")
-    import re
+    html = _render(BACKUP_TEMPLATE, BACKUP_GEVALLEN[0][1])
 
-    from opi.core.templates import get_templates
-    from opi.core.templates_lotc import templates_lotc
-
-    context = BACKUP_GEVALLEN[0][1]
-    oud = get_templates().env.get_template("shared/_backup-snapshots.html.j2").render(**context)
-    nieuw = templates_lotc.env.get_template("shared/_backup-snapshots-lotc.html.j2").render(**context)
-
-    patroon = re.compile(r'id="([^"]+)"\s+hx-swap-oob="true"')
-    assert patroon.findall(oud) == patroon.findall(nieuw)
-    assert "backups-snapshots-dep1" in patroon.findall(nieuw)
-    assert "restore-btn-dep1" in patroon.findall(nieuw)
+    oob = re.findall(r'id="([^"]+)"\s+hx-swap-oob="true"', html)
+    assert "backups-snapshots-dep1" in oob
+    assert "restore-btn-dep1" in oob
 
 
-def test_de_herstelknop_opent_dezelfde_dialoog() -> None:
+def test_de_herstelknop_opent_de_dialoog() -> None:
     """De knop verschijnt alleen waar er iets te herstellen valt, met dezelfde aanroep."""
-    pytest.importorskip("lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd")
-    from opi.core.templates_lotc import templates_lotc
+    met = _render(BACKUP_TEMPLATE, BACKUP_GEVALLEN[0][1])
+    zonder = _render(BACKUP_TEMPLATE, BACKUP_GEVALLEN[1][1])
 
-    met, zonder = (
-        templates_lotc.env.get_template("shared/_backup-snapshots-lotc.html.j2").render(**context)
-        for _, context in (BACKUP_GEVALLEN[0], BACKUP_GEVALLEN[1])
-    )
     aanroep = "openEditModal(&#39;modal-restore&#39;, &#39;Backup herstellen&#39;, {deployment: &#39;dep1&#39;})"
     assert aanroep in met
     assert "modal-restore" not in zonder
