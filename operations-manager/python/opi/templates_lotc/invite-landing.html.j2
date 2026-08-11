@@ -51,7 +51,7 @@
                                         {% for idp in identity_providers %}
                                         {% set idp_url = "/invite/" ~ invite_key ~ "/idp/" ~ idp.alias %}
                                         {% set idp_label = ("Inloggen met " if language == 'nl' else "Sign in with ") ~ idp.displayName %}
-                                        {% set lotc_onclick_1 %}window.location.href='{{ idp_url }}'{% endset %}<c-button label="{{ idp_label }}" show-icon="after" icon="pijl-naar-rechts"/>
+                                        {% set lotc_onclick_1 %}window.location.href='{{ idp_url }}'{% endset %}<c-button label="{{ idp_label }}" show-icon="after" icon="chevron-right"/>
                                         {% endfor %}
                                     </c-layout-flow>
                                 </c-layout-flow>
@@ -63,7 +63,7 @@
                                 <c-layout-flow gap="sm">
                                     <c-heading type="h3" label="{{ local_heading }}"/>
                                     <p class="rvo-paragraph">{{ local_description }}</p>
-                                    {% set lotc_onclick_2 %}window.location.href='{{ register_url }}'{% endset %}<c-button label="{{ local_button_label }}" show-icon="after" icon="pijl-naar-rechts"/>
+                                    {% set lotc_onclick_2 %}window.location.href='{{ register_url }}'{% endset %}<c-button label="{{ local_button_label }}" show-icon="after" icon="chevron-right"/>
                                 </c-layout-flow>
                             </c-card>
                             {% endif %}

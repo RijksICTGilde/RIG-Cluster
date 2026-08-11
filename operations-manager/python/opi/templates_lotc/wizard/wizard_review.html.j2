@@ -15,7 +15,7 @@
 <div class="wizard-review" id="wizard-step-inner">
     <div class="wizard-step__header">
         <c-heading type="h2">
-            <c-icon icon="vinkje" size="md"/>
+            <c-icon icon="check-mark-circle" size="md"/>
             Controleer je gegevens
         </c-heading>
         <p class="wizard-step__description">
@@ -32,7 +32,7 @@
                         {% if section.icon %}<c-icon icon="{{ section.icon }}" size="lg"/>{% endif %}
                         {{ section.title }}
                     </c-heading>
-                    <c-button size="sm" label="Bewerken" show-icon="before" icon="bewerken"/>
+                    <c-button size="sm" label="Bewerken" show-icon="before" icon="pencil-on-square"/>
                 </div>
                 <div class="wizard-review__section-content">
                     {{ section.summary_html | safe }}
@@ -43,12 +43,12 @@
     </c-layout-flow>
 
     <div class="wizard-step__actions">
-        <c-button label="Terug" show-icon="before" icon="terug"/>
+        <c-button label="Terug" show-icon="before" icon="arrow-u-turn-backward"/>
 
         <span id="wizard-review-submitting" class="wizard-review__submitting" aria-hidden="true">
             <c-icon icon="refresh" size="sm"/>Project wordt aangemaakt&hellip;
         </span>
 
-        <c-button label="Project aanmaken" show-icon="before" icon="publicatie"/>
+        <c-button label="Project aanmaken" show-icon="before" icon="file-text"/>
     </div>
 </div>

@@ -18,6 +18,48 @@
     'use strict';
 
     /**
+     * Is er op DEZE pagina een blok dat bij deze deployment hoort?
+     *
+     * Twee vormen, en allebei tellen ze: het tabblad Deployments zet de naam in de id
+     * (deployment-<naam>), de blokken van de diensten en het tabblad Metrics zeggen het
+     * met data-deployment. Alleen op de id kijken betekende dat de kiezer op Metrics
+     * meteen afhaakte, want daar bestaat geen enkele deployment-<naam>.
+     */
+    function heeftBlok(deploymentName) {
+        return !!(
+            document.getElementById('deployment-' + deploymentName) ||
+            document.querySelector('.deployment-section[data-deployment="' + CSS.escape(deploymentName) + '"]')
+        );
+    }
+
+    /**
+     * De gekozen deployment, onthouden zolang het browsertabblad open is.
+     *
+     * Elk tabblad van de projectpagina is een eigen URL (?tab=...), dus de keuze in de
+     * URL-hash overleeft het wisselen van tabblad niet. Zonder dit moest je op Metrics
+     * opnieuw kiezen wat je op Deployments net had gekozen. De sleutel is het pad, zodat
+     * twee projecten elkaars keuze niet overschrijven.
+     */
+    var BEWAARSLEUTEL = 'zad:deployment:' + location.pathname;
+
+    function bewaar(deploymentName) {
+        try {
+            sessionStorage.setItem(BEWAARSLEUTEL, deploymentName);
+        } catch (e) {
+            // Geen sessionStorage (privacystand, oude browser): de keuze wordt dan niet
+            // onthouden en verder werkt alles hetzelfde.
+        }
+    }
+
+    function bewaarde() {
+        try {
+            return sessionStorage.getItem(BEWAARSLEUTEL);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
      * Switch between deployment sections across all panels
      */
     window.switchDeployment = function (deploymentName) {
@@ -26,7 +68,7 @@
         // guard the code below hides every section and fires a metrics request for a
         // deployment that is not there, producing a page for something that is gone.
         // Fall back to the first available deployment, or the overview when there is none.
-        if (!document.getElementById('deployment-' + deploymentName)) {
+        if (!heeftBlok(deploymentName)) {
             var gsel = document.getElementById('global-deployment-selector');
             var alt = gsel && gsel.options.length ? gsel.options[0].value : null;
             if (alt && alt !== deploymentName) {
@@ -53,7 +95,13 @@
         // Sync global selector and URL hash
         const gs = document.getElementById('global-deployment-selector');
         if (gs) gs.value = deploymentName;
-        location.hash = 'deployments/' + deploymentName;
+        bewaar(deploymentName);
+        // De hash zegt 'deployments/<naam>' en dat klopt alleen op het tabblad
+        // Deployments. Op Metrics zou hij de lezer naar een ander tabblad wijzen; de
+        // keuze staat daar in de opslag hierboven.
+        if (document.getElementById('deployment-' + deploymentName)) {
+            location.hash = 'deployments/' + deploymentName;
+        }
     };
 
     // Restore tab and deployment state from URL hash on page load.
@@ -71,9 +119,16 @@
             var parts = hash.split('/');
             if (parts.length > 1) {
                 window.switchDeployment(parts[1]);
+                return;
             }
         } else if (hash === 'taken') {
             if (typeof switchTab === 'function') switchTab('taken');
+        }
+        // Geen deployment in de URL: pak de keuze van het vorige tabblad, als die er is
+        // en als hij op deze pagina bestaat. De hash wint, want die staat er expliciet.
+        var eerder = bewaarde();
+        if (eerder && heeftBlok(eerder)) {
+            window.switchDeployment(eerder);
         }
     }
 

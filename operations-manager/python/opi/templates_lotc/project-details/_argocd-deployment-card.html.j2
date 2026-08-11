@@ -41,7 +41,7 @@
     <c-layout-flow gap="md">
         {# Deployment Header #}
         <c-cluster gap="sm">
-            <c-icon icon="applicatie" size="md" color="donkerblauw"/>
+            <c-icon icon="rectangle-stack" size="md" color="donkerblauw"/>
             <c-heading type="h4" label="{{ deployment.name }}"/>
             <span class="argo-card__cluster">{{ deployment.cluster }}</span>
             {# A badge that does not replace the health verdict belongs here: something is
@@ -50,13 +50,13 @@
                below to carry it, or the same word would stand twice on one card. #}
             {% for badge in accompanying_badges %}
             <span class="argo-card__chip argo-card__chip--accompanying">
-                <c-icon icon="uit-aanknop" size="sm"/>{{ badge }}
+                <c-icon icon="moon" size="sm"/>{{ badge }}
             </span>
             {% endfor %}
             {% if not shows_argocd_status %}
             {% for badge in state_badges %}
             <span class="argo-card__chip argo-card__chip--state">
-                <c-icon icon="uit-aanknop" size="sm"/>{{ badge }}
+                <c-icon icon="moon" size="sm"/>{{ badge }}
             </span>
             {% endfor %}
             {% endif %}
@@ -119,7 +119,7 @@
                something off would hide a real failure. #}
             {% for badge in state_badges %}
             <span class="argo-badge argo-badge--state">
-                <c-icon icon="uit-aanknop" size="sm"/>
+                <c-icon icon="moon" size="sm"/>
                 {{ badge }}
             </span>
             {% endfor %}
@@ -129,13 +129,13 @@
             {% set health_modifier = 'healthy' if health == 'Healthy' else ('progressing' if health == 'Progressing' else ('degraded' if health == 'Degraded' else 'unhealthy')) %}
             <span class="argo-badge argo-badge--{{ health_modifier }}">
                 {% if health == 'Healthy' %}
-                <c-icon icon="vinkje" size="sm"/>
+                <c-icon icon="check-mark-circle" size="sm"/>
                 {% elif health == 'Progressing' %}
-                <c-icon icon="klok" size="sm"/>
+                <c-icon icon="timer" size="sm"/>
                 {% elif health == 'Degraded' %}
-                <c-icon icon="waarschuwing" size="sm"/>
+                <c-icon icon="exclamation-triangle" size="sm"/>
                 {% else %}
-                <c-icon icon="foutmelding" size="sm"/>
+                <c-icon icon="exclamation-triangle" size="sm"/>
                 {% endif %}
                 {{ health }}
             </span>
@@ -147,11 +147,11 @@
             {% set sync_modifier = 'synced' if sync == 'Synced' else ('outofsync' if sync == 'OutOfSync' else ('sync-unknown' if sync == 'Unknown' else 'neutral')) %}
             <span class="argo-badge argo-badge--{{ sync_modifier }}">
                 {% if sync == 'Synced' %}
-                <c-icon icon="vinkje" size="sm"/>
+                <c-icon icon="check-mark-circle" size="sm"/>
                 {% elif sync == 'OutOfSync' %}
-                <c-icon icon="waarschuwing" size="sm"/>
+                <c-icon icon="exclamation-triangle" size="sm"/>
                 {% elif sync == 'Unknown' %}
-                <c-icon icon="foutmelding" size="sm"/>
+                <c-icon icon="exclamation-triangle" size="sm"/>
                 {% else %}
                 <c-icon icon="info" size="sm"/>
                 {% endif %}
@@ -161,7 +161,7 @@
             {# Revision Badge (if available) #}
             {% if status.get('revision') %}
             <span class="argo-badge--revision">
-                <c-icon icon="document-blanco" size="sm"/>
+                <c-icon icon="file-text" size="sm"/>
                 {{ status.revision }}
             </span>
             {% endif %}
@@ -170,7 +170,7 @@
         {# Last Sync Time #}
         {% if status.get('last_sync') %}
         <c-cluster gap="xs">
-            <c-icon icon="klok" size="sm" color="grijs-600"/>
+            <c-icon icon="timer" size="sm" color="grijs-600"/>
             <span class="rvo-text--sm rvo-text--subtle">Laatste sync: {{ status.last_sync | dutch_date }}</span>
         </c-cluster>
         {% endif %}
@@ -180,13 +180,22 @@
            comes from the same service facts the badges do, so a second service that parks
            a deployment gets this for free. #}
         {% if deployment.components and not expects_no_pods %}
+        {# De knop is een <c-button>. Wat hier stond was een kale <button> met
+           .log-viewer-btn erop: een blauw vlak met witte tekst, uit project-details.css,
+           dus een met de hand nagebouwde knop. Die klasse bestaat niet meer; de knop in
+           bg/_argocd-deployment-card.html.j2 - degene die een gebruiker ziet - liet hem
+           al vallen. #}
         <div class="argo-card__logs">
-            <button type="button" class="log-viewer-btn"
-                    onclick='openLogViewer({{ project.name | tojson }}, {{ deployment.name | tojson }}, {{ deployment.components[0].reference | tojson }}, {{ deployment.components | tojson }})'
-                    title="Bekijk live logs voor deze deployment">
-                <c-icon icon="document-blanco" size="sm"/>
-                <span>View Logs</span>
-            </button>
+            {% set logs_js = ('openLogViewer('
+                ~ (project.name | tojson) ~ ', '
+                ~ (deployment.name | tojson) ~ ', '
+                ~ (deployment.components[0].reference | tojson) ~ ', '
+                ~ (deployment.components | tojson) ~ ')') | forceescape %}
+            <c-button type="secondary"
+                      size="sm"
+                      label="Logs bekijken"
+                      icon="file-text"
+                      :attrs="{'onclick': logs_js, 'title': 'Bekijk live logs voor deze deployment'}" />
         </div>
         {% endif %}
 
@@ -210,9 +219,9 @@
         <div>
             <button type="button" onclick="toggleArgoErrors('{{ _id_prefix }}')" aria-expanded="false"
                     class="argo-errors__toggle">
-                <c-icon icon="waarschuwing" size="sm" color="rood"/>
+                <c-icon icon="exclamation-triangle" size="sm" color="rood"/>
                 <span>{{ real_errors|length }} {% if real_errors|length == 1 %}probleem{% else %}problemen{% endif %} gevonden</span>
-                <c-icon icon="delta-omlaag" size="sm"/>
+                <c-icon icon="caret-down" size="sm"/>
             </button>
             <div id="argocd-errors-{{ _id_prefix }}" class="argo-errors__panel">
                 {% for error in real_errors %}
@@ -221,7 +230,7 @@
                         {% if error.get('severity') == 'informational' %}
                         <c-icon icon="info" size="sm" color="grijs-600"/>
                         {% else %}
-                        <c-icon icon="foutmelding" size="sm" color="rood"/>
+                        <c-icon icon="exclamation-triangle" size="sm" color="rood"/>
                         {% endif %}
                         <strong class="argo-errors__resource">{{ error.resource }}{% if error.get('count') and error.count|int > 1 %} <span class="rvo-text--xs rvo-text--subtle">({{ error.count }}x)</span>{% endif %}</strong>
                     </c-cluster>

@@ -157,7 +157,7 @@ dat het origineel de bug nog heeft - is die weg, dan kan de kopie weg.
 | test | bewaakt |
 |---|---|
 | `tests/test_lotc_component_names.py` | dat er nergens nog een `<c-p>` staat; die naam bestaat niet |
-| `tests/test_lotc_icon_mapping.py` | dat elke icoonvertaling naar een bestaande NLDD-naam wijst |
+| `tests/test_lotc_icon_mapping.py` | dat elke iconnaam een icoon OPLEVERT, gemeten tegen de geleverde NLDD-bundel |
 | `tests/e2e/test_lotc_visual.py` | dat pagina's in een browser kloppen, met screenshots |
 | `tests/test_lotc_layout_rules.py` | dat kaarten via `panel()` gebouwd worden en gaps uit de schaal komen |
 | `tests/test_lotc_schrijfwijze.py` | dat teksten de lezer met "je" aanspreken |
@@ -269,6 +269,20 @@ waar de tijdvakknoppen op mikken, welke id's buiten de band binnenkomen) en in
 `tests/e2e/test_lotc_pariteit.py` (pixels op de canvassen, en de herstelknop echt
 geklikt).
 
+## Iconen: meet de BUNDEL, niet de lijst
+
+`icons.json` van `lord_of_the_components` noemt 327 namen; de `nldd.js` die de browser
+laadt bevat er 271. De 56 namen ertussen bestaan op papier en renderen als niets. Dat is
+geen randgeval: het kostte 37 lege plekken in de interface, waaronder de bewerkknop en de
+verwijderknop, terwijl de test die erop bewaakte groen stond - want die las de lijst.
+
+De bron is nu `opi/web/nldd_iconen.py`, dat de namen uit de geleverde bestanden haalt.
+En let op het tweede gat dat daarbij hoorde: `ROOS_TO_NLDD_ICONS` wordt toegepast door het
+`nldd_icon`-FILTER. Een letterlijke `icon="verwijderen"` in een sjabloon komt daar nooit
+langs. In een sjabloon schrijf je dus een NLDD-naam; de tabel is voor namen die uit
+Python komen (het menu, de dienstdefinities). Zie
+`features/eigen-vormgeving-vervangen-door-componenten.md`.
+
 ## Stand en wat er open staat
 
 Alle templates compileren, en de omzetting is af: er is geen tweede vormgeving meer om op
@@ -282,7 +296,8 @@ en de logviewer.
 |---|---|
 | `architecture` - 1509 regels in een blok; verdient een eigen besluit, en staat op verzoek als laatste | ons |
 | Het percentage in de dashboardmeter vraagt een RVO-kleurvariabele die NLDD niet heeft; erft nu de tekstkleur | ons |
-| Iconen: de NLDD-woordenschat telt er 60, de RVO-set die roos meelevert 1163. Voorstel om die als losse implementatiemodule mee te nemen ligt bij LOTC | LOTC |
+| Iconen: de NLDD-bundel levert er 271, de RVO-set die roos meeleverde 1163. Voorstel om die als losse implementatiemodule mee te nemen ligt bij LOTC | LOTC |
+| De open verzoeken aan het thema staan sinds RC-70 gebundeld in `request_for_components.md` | LOTC |
 
 ### Een aandachtspunt voor de bouw
 
