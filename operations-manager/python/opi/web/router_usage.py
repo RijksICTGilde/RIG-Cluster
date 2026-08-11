@@ -187,8 +187,7 @@ async def usage_overview(request: Request) -> Response:
 
     return render(
         request,
-        roos="admin/usage.html.j2",
-        lotc="bg/admin-usage.html.j2",
+        template="bg/admin-usage.html.j2",
         context={
             "request": request,
             "menu_items": get_menu_items(user),
@@ -201,6 +200,6 @@ async def usage_overview(request: Request) -> Response:
             + [{"value": ns, "label": ns} for ns in available_namespaces],
             "price_per_gib": price_per_gib,
             "has_billing_datasource": datasource_uid is not None,
-            **build_lotc_admin(request, user=user, current_path="/admin/usage"),
+            **build_lotc_admin(user=user, current_path="/admin/usage"),
         },
     )

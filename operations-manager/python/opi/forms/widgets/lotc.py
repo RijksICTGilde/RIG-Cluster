@@ -1,36 +1,32 @@
-"""Formulierwidgets voor de LOTC-bouwlijn.
+"""Formulierwidgets, gerenderd met Lord of the Components.
 
-De tegenhanger van ``roos.py``, met een belangrijk verschil in de werkwijze.
+De widgets in ``templates_lotc/widgets/`` gebruiken ``:prop="expr"`` en
+``:attrs="<dict>"``, dus ze komen zonder bezwaar door de voorbewerker van de extensie.
+Ze worden hier daarom in de LOTC-omgeving zelf gerenderd: EEN stap, en fouten in een
+componentaanroep komen meteen naar boven in plaats van pas bij het napluizen van een
+string.
 
-De ROOS-adapter rendert een widget in een KALE Jinja-omgeving en levert een string met
-``<c-*>``-tags op; die tags worden pas later omgezet, door het ``process_components``-
-filter. Dat moest wel, want de roos-widgets schrijven Jinja-expressies op attribuut-
-positie en de voorbewerker zou daarop breken.
-
-Bij LOTC is dat niet nodig en ook niet wenselijk. De omgezette widgets in
-``templates_lotc/widgets/`` gebruiken ``:prop="expr"`` en ``:attrs="<dict>"``, dus ze
-komen zonder bezwaar door de voorbewerker. Ze worden hier daarom in de LOTC-omgeving
-zelf gerenderd: één stap, en fouten in een componentaanroep komen meteen naar boven in
-plaats van pas bij het napluizen van een string.
+Hier stond dat dit de tegenhanger was van ``roos.py``, dat een widget in een KALE
+Jinja-omgeving rendeerde en een string met ``<c-*>``-tags opleverde die daarna alsnog
+door het ``process_components``-filter moest. Die weg is er niet meer; wat van dat
+bestand overbleef is de gedeelde veldvoorbereiding in ``fields.py``.
 """
 
 import markupsafe
 
 from opi.core.templates_lotc import templates_lotc
-from opi.forms.widgets.roos import ROOSWidgetAdapter
+from opi.forms.widgets.fields import FieldWidgetAdapter
 
 
-class LOTCWidgetAdapter(ROOSWidgetAdapter):
+class LOTCWidgetAdapter(FieldWidgetAdapter):
     """Rendert formuliervelden met Lord of the Components in plaats van jinja-roos.
 
-    Erft van de ROOS-adapter zodat alle voorbereiding per veldtype (welke opties, welke
-    waarde, hoe een reeks wordt opgebouwd) gedeeld blijft: dat is bedrijfslogica en
-    verandert niet mee met het componentensysteem. Alleen WAAR de template vandaan komt
-    en in welke omgeving hij rendert, verandert.
+    Erft de voorbereiding per veldtype (welke opties, welke waarde, hoe een reeks wordt
+    opgebouwd): dat is bedrijfslogica en verandert niet mee met het componentensysteem.
+    Wat hier bij komt is WAAR de template vandaan komt en in welke omgeving hij rendert.
     """
 
     def __init__(self) -> None:
-        # Bewust niet super().__init__(): die zet een kale omgeving op templates/ .
         self._env = templates_lotc.env
 
     #: De contextsleutels die AL GERENDERDE HTML dragen in plaats van tekst: de kinderen
@@ -45,11 +41,10 @@ class LOTCWidgetAdapter(ROOSWidgetAdapter):
     def _markeer_html(cls, ctx: dict[str, object]) -> dict[str, object]:
         """Merk de al gerenderde HTML in ``ctx`` aan als veilig.
 
-        HIER LOOPT HET VERSCHIL MET DE ROOS-ADAPTER, en het is er maar een: die rendert
-        in een KALE omgeving met autoescape UIT, deze in de LOTC-omgeving met autoescape
-        AAN (dat is een eis van het componentensysteem). Een sjabloon dat de HTML van zijn
-        kinderen met ``{{ child_html }}`` invoegt levert daardoor hier geen kaart met
-        velden op maar de LETTERLIJKE tekst ``<nldd-button ...>`` op het scherm.
+        Nodig omdat deze omgeving autoescape AAN heeft (een eis van het componenten-
+        systeem). Een sjabloon dat de HTML van zijn kinderen met ``{{ child_html }}``
+        invoegt levert zonder dit geen kaart met velden op maar de LETTERLIJKE tekst
+        ``<nldd-button ...>`` op het scherm.
 
         Zichtbaar werd dat pas bij een reeks MET items - een leeg formulier heeft geen
         kinderen om te verliezen - en dus in de bewerkdialoog van een bestaand project
@@ -57,7 +52,7 @@ class LOTCWidgetAdapter(ROOSWidgetAdapter):
 
         Waarom hier en niet met ``| safe`` in elk sjabloon: het is een eigenschap van de
         OMGEVING, niet van een sjabloon. Een nieuw widgetsjabloon zou de vergissing anders
-        opnieuw maken, en de sjablonen zijn gedeeld met de roos-bouwlijn.
+        opnieuw maken.
 
         Veilig omdat deze waarden door de renderer zelf zijn opgebouwd uit de widgets
         hieronder; de GEGEVENS erin zijn daar al geescaped. Wat hier NIET gebeurt, en dat
