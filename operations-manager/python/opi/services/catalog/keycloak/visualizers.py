@@ -26,16 +26,10 @@ KEYCLOAK_TEMPLATE = EditableVisualizer(
     label="Keycloak template",
 )
 
-#: Geen "Optioneel" achter het label. Dit is het enige veld van een regel die je zelf
-#: hebt toegevoegd: "URI Optioneel" leest als ruis, en de keuze om die regel er te hebben
-#: heb je al gemaakt. Zie onze kopie van components/_forms.j2 voor wat dit attribuut doet.
-GEEN_OPTIONEEL_BADGE = {"data-no-optional-badge": "1"}
-
 KEYCLOAK_REDIRECT_URI_ITEM = EditableVisualizer(
     editable=KEYCLOAK_REDIRECT_URI_ITEM_EDITABLE,
     widget=WidgetType.TEXT,
     label="URI",
-    attributes=GEEN_OPTIONEEL_BADGE,
 )
 
 KEYCLOAK_REDIRECT_URIS = EditableVisualizer(
@@ -88,7 +82,6 @@ KEYCLOAK_CLIENT_REDIRECT_URI = EditableVisualizer(
     editable=KEYCLOAK_CLIENT_REDIRECT_URI_EDITABLE,
     widget=WidgetType.TEXT,
     label="URI",
-    attributes=GEEN_OPTIONEEL_BADGE,
 )
 
 KEYCLOAK_CLIENT_REDIRECT_URIS = EditableVisualizer(
