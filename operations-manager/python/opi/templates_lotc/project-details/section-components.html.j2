@@ -3,7 +3,7 @@
 <c-card outline="true" padding="xl" background-color="wit">
     <c-layout-flow gap="lg">
         <c-layout-flow row="true" justify-content="space-between" align-items="center">
-            <c-heading type="h2"><c-icon icon="puzzel" size="xl" color="donkerblauw"/>Components</c-heading>
+            <c-heading type="h2"><c-icon icon="puzzle-piece" size="xl" color="donkerblauw"/>Components</c-heading>
             {% if user_role in ["admin", "owner"] %}
             {% set lotc_onclick_1 %}openEditModal('modal-edit-component-{{ project.components|length if project.components else 0 }}', 'Component toevoegen'){% endset %}<c-button size="sm" label="Toevoegen" show-icon="before" icon="plus"/>
             {% endif %}
@@ -18,15 +18,15 @@
             <c-card class="component-card" padding="lg" background-color="wit" outline="true">
                 <c-layout-flow gap="md">
                     <div class="component-header">
-                        <c-icon icon="puzzel" size="lg" color="donkerblauw"/>
+                        <c-icon icon="puzzle-piece" size="lg" color="donkerblauw"/>
                         <div class="flex-1">
                             <c-heading type="h3" label="{{ component.name }}"/>
                             <div class="component-type">{{ component.type|title }}</div>
                         </div>
                         {% if user_role in ["admin", "owner"] %}
                         <c-layout-flow row="true" gap="xs">
-                            {% set lotc_onclick_2 %}openEditModal('modal-edit-component-{{ original_index }}', 'Component bewerken - {{ component.name }}'){% endset %}<c-button size="sm" label="Bewerken" show-icon="before" icon="bewerken"/>
-                            {% set lotc_onclick_3 %}openServiceModal('/projects/{{ project.name }}/actions/delete-component/confirm?target={{ component.name | urlencode }}', 'Component verwijderen'){% endset %}<c-button size="sm" label="Verwijderen" show-icon="before" icon="verwijderen"/>
+                            {% set lotc_onclick_2 %}openEditModal('modal-edit-component-{{ original_index }}', 'Component bewerken - {{ component.name }}'){% endset %}<c-button size="sm" label="Bewerken" show-icon="before" icon="pencil-on-square"/>
+                            {% set lotc_onclick_3 %}openServiceModal('/projects/{{ project.name }}/actions/delete-component/confirm?target={{ component.name | urlencode }}', 'Component verwijderen'){% endset %}<c-button size="sm" label="Verwijderen" show-icon="before" icon="trash"/>
                         </c-layout-flow>
                         {% endif %}
                     </div>
@@ -88,10 +88,10 @@
                     {# Public ingress links for this component #}
                     {% if component.ingress_links %}
                     <c-layout-flow gap="sm">
-                        <c-heading type="h5"><c-icon icon="externe-link" size="sm" color="hemelblauw"/>Publieke links</c-heading>
+                        <c-heading type="h5"><c-icon icon="link" size="sm" color="hemelblauw"/>Publieke links</c-heading>
                         <c-layout-flow gap="sm">
                             {% for link in component.ingress_links %}
-                            {% set lotc_onclick_4 %}window.open(this.dataset.url, '_blank'){% endset %}<c-button label="{{ link.deployment_name }} ({{ link.cluster }}){% if link.path and link.path != '/' %} {{ link.path }}{% endif %}" size="sm" show-icon="after" icon="externe-link"/>
+                            {% set lotc_onclick_4 %}window.open(this.dataset.url, '_blank'){% endset %}<c-button label="{{ link.deployment_name }} ({{ link.cluster }}){% if link.path and link.path != '/' %} {{ link.path }}{% endif %}" size="sm" show-icon="after" icon="link"/>
                             {% endfor %}
                         </c-layout-flow>
                     </c-layout-flow>
@@ -100,7 +100,7 @@
                     {# User Environment Variables indicator for this component #}
                     {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars']|length > 0 %}
                     <div class="env-vars-indicator">
-                        <c-icon icon="sleutel" size="sm" color="hemelblauw"/>
+                        <c-icon icon="lock-closed" size="sm" color="hemelblauw"/>
                         <span>{{ component['user-env-vars']|length }} omgevingsvariabele{% if component['user-env-vars']|length != 1 %}n{% endif %}</span>
                         <span>(zie Omgevingsvariabelen sectie)</span>
                     </div>
