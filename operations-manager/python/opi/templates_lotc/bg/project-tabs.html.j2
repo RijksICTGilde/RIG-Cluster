@@ -559,7 +559,10 @@
            De omgevingsvariabelen horen NIET bij een deployment - dat blok toont ze
            allemaal - en staat daarom buiten het wisselen, precies als in het origineel. #}
 
-        {% if user_role in ["admin", "owner"] %}
+        {# Alleen zonder deployments. Zodra er een is staat deze knop in de Acties-kaart,
+           naast "Images bewerken"; die kaart rendert niet op een leeg project, en dan zou
+           er geen enkele weg naar een eerste deployment zijn. #}
+        {% if user_role in ["admin", "owner"] and not project.deployments %}
             <c-action-group align="start">
                 <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" :attrs="{'onclick': deployment_toevoegen}" />
             </c-action-group>
@@ -581,11 +584,17 @@
                Geen class in :attrs: het component zet er zelf al een op, en twee
                class-attributen op een tag betekent dat de browser de tweede negeert. #}
             {% set kiezer_gedrag = {'onchange': 'switchDeployment(this.value)'} %}
+            {# required, niet omdat er iets ingevuld MOET worden maar omdat lotc-forms elk
+               niet-verplicht veld van het label "Optioneel" voorziet (rijksconventie: markeer
+               optioneel, niet verplicht). Dat klopt voor een invoerveld en niet voor deze
+               KIEZER: hij dient om tussen deployments te wisselen, er staat er altijd een
+               geselecteerd, en "optioneel" slaat daar nergens op. #}
             <c-select-field
                 native="true"
                 id="global-deployment-selector"
                 name="global-deployment-selector"
                 label="Deployment"
+                required="true"
                 :attrs="kiezer_gedrag">
                 {% for deployment in project.deployments | sort(attribute='name') %}
                     <option value="{{ deployment.name }}">{{ deployment.name }} ({{ deployment.cluster }})</option>
