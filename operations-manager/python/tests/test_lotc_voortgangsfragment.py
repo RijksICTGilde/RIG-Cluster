@@ -15,12 +15,11 @@ Twee dingen worden gemeten, en het tweede is de reden dat de eerste alleen niet 
    knop is geen vooruitgang op een lelijke werkende.
 """
 
-import json
 import re
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from opi.web.nldd_iconen import nldd_icon_names
 from opi.web.task_progress import render_progress_fragment
 
 #: Wat het OUDE componentensysteem in elke gerenderde component achterliet. Een enkel
@@ -67,17 +66,22 @@ def test_de_afsluitknop_voert_on_complete_uit(status: str) -> None:
 
 
 def test_de_iconen_van_de_takenlijst_bestaan_in_de_nldd_woordenschat() -> None:
-    """Een ROOS-iconnaam rendert in NLDD leeg, zonder fout. Zie test_lotc_icon_mapping."""
-    lotc = pytest.importorskip("lord_of_the_components")
-    icons = json.loads((Path(lotc.__file__).parent / "icons.json").read_text())
-    woordenschat = set(icons["sets"]["nldd"]) | set(icons["aliases"])
+    """Een ROOS-iconnaam rendert in NLDD leeg, zonder fout. Zie test_lotc_icon_mapping.
+
+    Gemeten tegen de BUNDEL die de browser laadt en niet tegen ``icons.json``: die twee
+    lopen uiteen (327 namen tegen 271), en deze poort stond hier eerder tegen de lijst.
+
+    De namen staan sinds de takenlijst op lijstcomponenten staat als ``icon=`` op een
+    ``nldd-icon-cell``; het pictogram zelf zit in de schaduwboom van dat component.
+    """
     rendered = render_progress_fragment(
         _request(),
         _context(tasks=[{"name": "a", "status": s, "subtasks": []} for s in ("completed", "failed", "running", "")]),
     )
 
-    namen = set(re.findall(r'<nldd-icon[^>]*name="([^"]+)"', rendered))
+    namen = set(re.findall(r'<nldd-icon-cell[^>]*\bicon="([^"]+)"', rendered))
     assert namen, "geen enkel icoon in de takenlijst"
+    woordenschat = nldd_icon_names()
     assert namen <= woordenschat, f"onbekende iconnamen: {sorted(namen - woordenschat)}"
 
 

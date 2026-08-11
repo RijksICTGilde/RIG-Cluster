@@ -66,7 +66,7 @@
         {# Deploymentniveau #}
         {% if ns.has_deployment_env_vars %}
         <c-cluster gap="sm" align="center">
-            <c-icon icon="server" size="lg" />
+            <c-icon icon="cylinder-split" size="lg" />
             <c-stack gap="xs">
                 <c-heading type="h3" size="5" label="Deployment niveau" />
                 <c-paragraph size="sm">Deployment-specifieke variabelen (overschrijven component niveau)</c-paragraph>
@@ -85,7 +85,7 @@
         <c-card outline padding="md">
             <c-stack gap="md">
                 <c-cluster gap="sm" align="center">
-                    <c-icon icon="server" size="md" />
+                    <c-icon icon="cylinder-split" size="md" />
                     <strong>{{ deployment.name }}</strong>
                     <c-tag type="default" label="{{ deployment.cluster|title }}" />
                 </c-cluster>

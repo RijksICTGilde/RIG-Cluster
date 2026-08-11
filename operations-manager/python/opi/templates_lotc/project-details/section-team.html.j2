@@ -2,9 +2,9 @@
 <c-card outline="true" padding="xl" background-color="wit">
     <c-layout-flow gap="lg">
         <c-layout-flow row="true" justify-content="space-between" align-items="center">
-            <c-heading type="h2"><c-icon icon="groep-3-personen" size="xl" color="hemelblauw"/>Team & Toegang</c-heading>
+            <c-heading type="h2"><c-icon icon="person-2" size="xl" color="hemelblauw"/>Team & Toegang</c-heading>
             {% if user_role in ["admin", "owner"] %}
-            {% set lotc_onclick_1 %}openEditModal('modal-edit-team', 'Projectleden beheren'){% endset %}<c-button size="sm" label="Bewerken" show-icon="before" icon="bewerken"/>
+            {% set lotc_onclick_1 %}openEditModal('modal-edit-team', 'Projectleden beheren'){% endset %}<c-button size="sm" label="Bewerken" show-icon="before" icon="pencil-on-square"/>
             {% endif %}
         </c-layout-flow>
         <p>Teamleden met toegang tot dit project</p>

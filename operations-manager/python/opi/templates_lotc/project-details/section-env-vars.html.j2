@@ -17,7 +17,7 @@
 
 <c-card outline="true" padding="xl" background-color="wit">
     <c-layout-flow gap="lg">
-        <c-heading type="h2" class="section-heading"><c-icon icon="sleutel" size="xl" color="hemelblauw"/>Omgevingsvariabelen</c-heading>
+        <c-heading type="h2" class="section-heading"><c-icon icon="lock-closed" size="xl" color="hemelblauw"/>Omgevingsvariabelen</c-heading>
         <p>Overzicht van alle gebruiker-gedefinieerde omgevingsvariabelen per scope</p>
 
         {% if ns.has_any_env_vars %}
@@ -28,7 +28,7 @@
             <div class="env-vars-scope-section">
                 <c-layout-flow gap="md">
                     <div class="env-vars-scope-header">
-                        <c-icon icon="puzzel" size="lg" color="donkerblauw"/>
+                        <c-icon icon="puzzle-piece" size="lg" color="donkerblauw"/>
                         <div>
                             <c-heading type="h3" label="Component niveau"/>
                             <p>Standaard variabelen per component (gelden voor alle deployments)</p>
@@ -40,7 +40,7 @@
                     <c-card padding="md" background-color="grijs-050" outline="true">
                         <c-layout-flow gap="sm">
                             <div class="env-vars-component-header">
-                                <c-icon icon="puzzel" size="md" color="donkerblauw"/>
+                                <c-icon icon="puzzle-piece" size="md" color="donkerblauw"/>
                                 <strong>{{ component.name }}</strong>
                                 <span class="env-vars-count-badge">{{ component['user-env-vars']|length }} variabele{% if component['user-env-vars']|length != 1 %}n{% endif %}</span>
                             </div>
@@ -49,7 +49,7 @@
                                 {% for key, value in component['user-env-vars'].items() %}
                                 <div class="env-var-item">
                                     <div class="env-var-key">
-                                        <c-icon icon="sleutel" size="sm" color="grijs-600"/>
+                                        <c-icon icon="lock-closed" size="sm" color="grijs-600"/>
                                         <code>{{ key }}</code>
                                     </div>
                                     <div class="env-var-value">
@@ -71,7 +71,7 @@
             <div class="env-vars-scope-section">
                 <c-layout-flow gap="md">
                     <div class="env-vars-scope-header">
-                        <c-icon icon="server" size="lg" color="oranje"/>
+                        <c-icon icon="cylinder-split" size="lg" color="oranje"/>
                         <div>
                             <c-heading type="h3" label="Deployment niveau"/>
                             <p>Deployment-specifieke variabelen (overschrijven component niveau)</p>
@@ -90,7 +90,7 @@
                     <c-card padding="md" background-color="grijs-050" outline="true">
                         <c-layout-flow gap="md">
                             <div class="env-vars-deployment-header">
-                                <c-icon icon="server" size="md" color="oranje"/>
+                                <c-icon icon="cylinder-split" size="md" color="oranje"/>
                                 <strong>{{ deployment.name }}</strong>
                                 <span class="cluster-badge">{{ deployment.cluster|title }}</span>
                             </div>
@@ -100,7 +100,7 @@
                             <c-card padding="sm" background-color="wit" outline="true">
                                 <c-layout-flow gap="sm">
                                     <div class="env-vars-component-header">
-                                        <c-icon icon="puzzel" size="sm" color="donkerblauw"/>
+                                        <c-icon icon="puzzle-piece" size="sm" color="donkerblauw"/>
                                         <span>{{ dep_component.reference }}</span>
                                         <span class="env-vars-count-badge">{{ dep_component['user-env-vars']|length }} variabele{% if dep_component['user-env-vars']|length != 1 %}n{% endif %}</span>
                                     </div>
@@ -109,7 +109,7 @@
                                         {% for key, value in dep_component['user-env-vars'].items() %}
                                         <div class="env-var-item">
                                             <div class="env-var-key">
-                                                <c-icon icon="sleutel" size="sm" color="grijs-600"/>
+                                                <c-icon icon="lock-closed" size="sm" color="grijs-600"/>
                                                 <code>{{ key }}</code>
                                             </div>
                                             <div class="env-var-value">

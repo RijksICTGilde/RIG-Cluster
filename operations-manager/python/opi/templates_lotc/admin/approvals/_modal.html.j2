@@ -5,10 +5,10 @@
 <div id="approval-modal" class="edit-section-modal" role="dialog" aria-modal="true">
     <div class="edit-section-header">
         <c-heading type="h2">
-            <c-icon icon="vinkje" size="lg" color="donkerblauw"/>
+            <c-icon icon="check-mark-circle" size="lg" color="donkerblauw"/>
             <span id="approval-title-text">Domeingoedkeuring</span>
         </c-heading>
-        {% set lotc_onclick_1 %}closeApprovalModal(){% endset %}<c-button size="sm" label="Sluiten" show-icon="before" icon="kruis" class="edit-modal-close-btn"/>
+        {% set lotc_onclick_1 %}closeApprovalModal(){% endset %}<c-button size="sm" label="Sluiten" show-icon="before" icon="dismiss" class="edit-modal-close-btn"/>
     </div>
     <div id="approval-error" class="edit-section-error is-hidden"></div>
     <div id="edit-section-inner">
