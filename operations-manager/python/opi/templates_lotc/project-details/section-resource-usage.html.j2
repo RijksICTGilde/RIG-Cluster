@@ -4,7 +4,7 @@
    absent Prometheus never holds up the page. #}
 <c-card outline="true" padding="lg" background-color="wit">
     <c-layout-flow gap="md">
-        <c-heading type="h3"><c-icon icon="grafiek" size="lg" color="donkerblauw"/>Resourcegebruik (heel project)</c-heading>
+        <c-heading type="h3"><c-icon icon="chart-x-y-axis-line" size="lg" color="donkerblauw"/>Resourcegebruik (heel project)</c-heading>
         <div hx-get="/projects/details/{{ project.name }}/resource-usage"
              hx-trigger="intersect once" hx-swap="innerHTML">
             <div class="argocd-skeleton" role="status" aria-label="Resourcegebruik wordt geladen">

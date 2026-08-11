@@ -89,7 +89,7 @@
             <c-heading type="h1" size="3" label="{{ project.display_name }}" />
             {% if user_role in ["admin", "owner"] %}
                 {% set identiteit_bewerken = "openEditModal('modal-edit-identity', 'Projectgegevens bewerken')" %}
-                <c-button type="secondary" size="sm" label="Bewerken" icon="bewerken" show-icon="before"
+                <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before"
                           :attrs="{'onclick': identiteit_bewerken}" />
             {% endif %}
         </c-cluster>
@@ -176,13 +176,19 @@
         {% endif %}
 
         {# ---- Team & Toegang (section-team.html.j2) --------------------------- #}
-        {% call panel("Team", "person-2", info_text="Een beheerder mag alles, inclusief het project verwijderen. Een ontwikkelaar mag wijzigen en uitrollen, maar het project niet opheffen.") %}
-            {% if user_role in ["admin", "owner"] %}
-                {% set team_bewerken = "openEditModal('modal-edit-team', 'Projectleden beheren')" %}
-                <c-action-group align="start">
-                    <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': team_bewerken}" />
-                </c-action-group>
-            {% endif %}
+        {# De bewerkknop staat IN de kopregel van het blok en niet los in de inhoud.
+           Hij stond onder de uitleg en boven de tabel, en dat las als een knop die
+           nergens bij hoort: geen kop ernaast, geen kader eromheen, alleen een knop in
+           de leegte. panel() geeft zijn kopregel door aan <c-section-head>, en dat
+           component IS "titel links, actie rechts" - de band tussen de twee komt daar
+           dus vandaan in plaats van uit de plek waar we hem toevallig neerzetten.
+
+           Het kopicoon vervalt daarmee vanzelf (zie panel()): dat is versiering die de
+           titel herhaalt, en helemaal rechts in de kopregel zag het eruit als nog een
+           knop. Een van de twee moet daar weg, en het is niet de knop. #}
+        {% set team_bewerken = "openEditModal('modal-edit-team', 'Projectleden beheren')" %}
+        {% set team_bewerken_knop %}{% if user_role in ["admin", "owner"] %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': team_bewerken}" />{% endif %}{% endset %}
+        {% call panel("Team", "person-2", aside=team_bewerken_knop, info_text="Een beheerder mag alles, inclusief het project verwijderen. Een ontwikkelaar mag wijzigen en uitrollen, maar het project niet opheffen.") %}
             <c-table columns="2fr 1fr">
                 <c-table-head>
                     <c-th>E-mailadres</c-th>
@@ -485,13 +491,19 @@
     {% elif active_tab == 'services' %}
 
         {# ---- Services & Integraties (section-services.html.j2) --------------- #}
-        {% call panel("Services & Integraties", "cylinder-split", info_text="Services en features worden door het platform geleverd en beheerd. Je hoeft ze voor gebruik alleen te activeren en eventueel configureren.") %}
-            {% if user_role in ["admin", "owner"] %}
-                {% set diensten_bewerken = "openEditModal('modal-edit-services', 'Services beheren')" %}
-                <c-action-group align="start">
-                    <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': diensten_bewerken}" />
-                </c-action-group>
-            {% endif %}
+        {# De bewerkknop staat IN de kopregel van het blok en niet los in de inhoud.
+           Hij stond onder de uitleg en boven de tabel, en dat las als een knop die
+           nergens bij hoort: geen kop ernaast, geen kader eromheen, alleen een knop in
+           de leegte. panel() geeft zijn kopregel door aan <c-section-head>, en dat
+           component IS "titel links, actie rechts" - de band tussen de twee komt daar
+           dus vandaan in plaats van uit de plek waar we hem toevallig neerzetten.
+
+           Het kopicoon vervalt daarmee vanzelf (zie panel()): dat is versiering die de
+           titel herhaalt, en helemaal rechts in de kopregel zag het eruit als nog een
+           knop. Een van de twee moet daar weg, en het is niet de knop. #}
+        {% set diensten_bewerken = "openEditModal('modal-edit-services', 'Services beheren')" %}
+        {% set diensten_bewerken_knop %}{% if user_role in ["admin", "owner"] %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': diensten_bewerken}" />{% endif %}{% endset %}
+        {% call panel("Services & Integraties", "cylinder-split", aside=diensten_bewerken_knop, info_text="Services en features worden door het platform geleverd en beheerd. Je hoeft ze voor gebruik alleen te activeren en eventueel configureren.") %}
             {% if project.services %}
                 <c-auto-grid min="280px" gap="md">
                     {% for service in project.services %}

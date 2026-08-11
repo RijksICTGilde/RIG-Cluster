@@ -22,17 +22,34 @@
 <div data-index="{{ index }}">
 <c-card outline padding="md">
     {% if not fixed_size and field.add_remove %}
-    <div class="lotc-sequence__item-header">
-        <span></span>
-        {# @click met Jinja erin werkt niet: de voorbewerker leest de waarde van een
+    {# KOP MET ACTIE, uit het thema, in plaats van met de hand rechts uitgelijnd.
+
+       Hier stond een eigen <div class="lotc-sequence__item-header"> met een LEGE <span>
+       ernaast, puur om de knop met justify-content: space-between naar rechts te duwen.
+       Dat is een blokkop-met-actie nabouwen, en het resultaat was ook precies wat je van
+       nabouwen krijgt: een verwijderknop die los rechtsboven het item zweefde, zonder
+       zichtbare band met waar hij bij hoorde.
+
+       <c-section-head> IS dat patroon: een titel links, de actie rechts, als een geheel.
+       De titel is niet alleen vormgeving maar het antwoord op de vraag die dit item
+       opriep: bij een reeks IN een reeks (extra Keycloak-clients, elk met hun eigen
+       redirect-URI's) stonden er twee verwijderknoppen onder elkaar met verschillende
+       betekenis, en niets zei welke welke was. Nu staat erbij WAT je verwijdert.
+
+       @click met Jinja erin werkt niet: de voorbewerker leest de waarde van een
        @-attribuut als kale tekst, dus {{ ... }} komt er letterlijk uit en de knop doet
        stilletjes niets. Via de :attrs-spread wordt het wel een expressie, en geescapet. #}
-        {% set verwijder_js = "sequenceRemove('" ~ field.path ~ "', " ~ index|string ~ ")" %}
+    {% set verwijder_js = "sequenceRemove('" ~ field.path ~ "', " ~ index|string ~ ")" %}
+    {% set item_titel = (field.attributes.get('item_label') or field.label or 'Item') ~ ' ' ~ (index + 1)|string %}
+    {# De tooltiptekst BOVEN de tag samenstellen: een ~ binnen :attrs laat de
+       uitdrukkingslezer struikelen ("Invalid expression in ':attrs'"). #}
+    {% set verwijder_titel = remove_label ~ ': ' ~ item_titel %}
+    <c-section-head title="{{ item_titel|e }}">
         <c-button label="{{ remove_label|e }}" type="warning-subtle" size="sm"
-                  show-icon="before" icon="verwijderen"
-                  :attrs="{'onclick': verwijder_js}"
+                  show-icon="before" icon="trash"
+                  :attrs="{'onclick': verwijder_js, 'title': verwijder_titel}"
                   :disabled="remove_disabled" />
-    </div>
+    </c-section-head>
     {% endif %}
     {# c-stack en geen c-layout-flow: die laatste wordt een <nldd-container> zonder gap,
        en dan plakken de velden binnen een item aan elkaar. #}

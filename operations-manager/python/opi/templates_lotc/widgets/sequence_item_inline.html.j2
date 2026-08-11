@@ -16,7 +16,7 @@
     {% set verwijder_js = "sequenceRemove('" ~ field.path ~ "', " ~ index|string ~ ")" %}
     <c-button type="warning-subtle" size="sm"
               label="Verwijderen"
-              show-icon="before" icon="verwijderen"
+              show-icon="before" icon="trash"
               :attrs="{'onclick': verwijder_js}"
               :disabled="remove_disabled" />
     {% endif %}

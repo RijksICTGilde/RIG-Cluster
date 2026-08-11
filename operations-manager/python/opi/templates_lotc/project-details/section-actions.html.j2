@@ -2,7 +2,7 @@
 {% if user_role in ["admin", "owner"] %}
 <c-card outline="true" padding="lg" background-color="wit">
     <c-layout-flow gap="md">
-        <c-heading type="h2" class="section-heading"><c-icon icon="instellingen" size="xl" color="hemelblauw"/>Acties</c-heading>
+        <c-heading type="h2" class="section-heading"><c-icon icon="gear" size="xl" color="hemelblauw"/>Acties</c-heading>
         <c-cluster gap="sm">
             {% set lotc_onclick_1 %}openEditModal('modal-add-deployment-{{ project.deployments|length if project.deployments else 0 }}', 'Deployment toevoegen'){% endset %}<c-button label="Deployment toevoegen" size="sm" show-icon="before" icon="plus"/>
         </c-cluster>
