@@ -22,11 +22,14 @@
   plek, maar de meetlat kijkt naar welke JS-functie een knop aanroept en dat hoort
   hetzelfde te blijven.
 
-  De statusiconen: NLDD heeft geen kruis en geen klok; exclamation-triangle en timer zijn
-  de tegenhangers die het dichtst in de buurt komen en die ECHT bestaan in de
-  woordenschat. Zie de KNOWN_GAPS in tests/test_lotc_icon_mapping.py.
+  DE TAKENLIJST STAAT IN EEN MACRO. Hier stond een eigen lijst (c-cluster + c-icon +
+  c-paragraph) met een eigen statusicoontabel, naast dezelfde lijst in
+  widgets/_macros.html.j2 en nog twee kopieen elders. Gemeten in een browser stond het
+  pictogram hier BOVEN de tekst: een <c-paragraph> is een blok en breekt in een cluster
+  naar de volgende regel. De macro doet het met de lijstcomponenten van het thema, en is
+  nu de enige plek waar deze lijst gebouwd wordt.
 #}
-{% macro taak_icoon(status) %}{{ 'check-mark-circle' if status == 'completed' else 'exclamation-triangle' if status == 'failed' else 'chevron-right' if status == 'running' else 'timer' }}{% endmacro %}
+{% from "widgets/_macros.html.j2" import progress_task_list %}
 <div id="modal-progress-container"
      {% if status not in ("completed", "failed") %}
      hx-get="/projects/{{ project_name }}/modal-wizard/progress/{{ task_id }}"
@@ -53,22 +56,7 @@
             <c-paragraph>{{ current_step }}</c-paragraph>
         {% endif %}
 
-        {% if tasks %}
-            <c-stack gap="xs">
-                {% for task in tasks %}
-                    <c-cluster gap="sm" align="center">
-                        <c-icon size="sm" icon="{{ taak_icoon(task.status) | trim }}" />
-                        <c-paragraph size="sm">{{ task.name }}</c-paragraph>
-                    </c-cluster>
-                    {% for subtask in task.subtasks or [] %}
-                        <c-cluster gap="sm" align="center">
-                            <c-icon size="sm" icon="{{ taak_icoon(subtask.status) | trim }}" />
-                            <c-paragraph size="sm">{{ subtask.name }}</c-paragraph>
-                        </c-cluster>
-                    {% endfor %}
-                {% endfor %}
-            </c-stack>
-        {% endif %}
+        {{ progress_task_list(tasks, show_errors=False) }}
 
         {% if status == "completed" %}
             <div class="edit-progress-actions">

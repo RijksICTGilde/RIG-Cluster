@@ -61,14 +61,14 @@
 
         <div class="wizard-step__actions">
             {% if not steps.is_first %}
-            <c-button label="Vorige" show-icon="before" icon="delta-naar-links"/>
+            <c-button label="Vorige" show-icon="before" icon="caret-left"/>
             {% else %}
             <span></span>
             {% endif %}
 
             <div class="wizard-step__actions-right">
                 {% if all_steps_completed and show_review and not steps.is_last %}
-                <c-button label="Naar samenvatting" show-icon="after" icon="delta-naar-rechts"/>
+                <c-button label="Naar samenvatting" show-icon="after" icon="caret-right"/>
                 {% endif %}
 
                 <span class="wizard-step__saving" aria-hidden="true">
@@ -77,12 +77,12 @@
 
                 {% if steps.is_last %}
                     {% if show_review %}
-                    <c-button type="submit" label="Controleren" show-icon="after" icon="delta-naar-rechts"/>
+                    <c-button type="submit" label="Controleren" show-icon="after" icon="caret-right"/>
                     {% else %}
-                    <c-button type="submit" label="Opslaan" show-icon="before" icon="publicatie"/>
+                    <c-button type="submit" label="Opslaan" show-icon="before" icon="file-text"/>
                     {% endif %}
                 {% else %}
-                <c-button type="submit" label="Volgende" show-icon="after" icon="delta-naar-rechts"/>
+                <c-button type="submit" label="Volgende" show-icon="after" icon="caret-right"/>
                 {% endif %}
             </div>
         </div>

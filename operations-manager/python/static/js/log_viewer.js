@@ -3,14 +3,35 @@
  *
  * Deze code stond in opi/templates/project-details.html.j2 en is daar weggehaald toen de
  * nieuwe vormgeving dezelfde viewer moest kunnen openen. Ze hoort niet bij een pagina
- * maar bij het paneel: beide vormgevingen zetten dezelfde markup neer (dezelfde id's -
- * daar zoekt deze code zijn elementen mee op) en laden dit bestand.
+ * maar bij het paneel: de markup staat in opi/templates_lotc/bg/_log-viewer.html.j2 en
+ * deze code zoekt zijn elementen daar op id op.
  *
  * LET OP: dit script pakt zijn elementen op het moment dat het draait, niet later. Het
  * moet dus NA de markup van het paneel geladen worden, onderaan de pagina. Laad je het in
  * de <head>, dan zijn alle verwijzingen null en doet de viewer stilzwijgend niets.
  *
- * De inhoud is ongewijzigd overgenomen.
+ * WAT ER VERANDERD IS TOEN HET PANEEL EEN THEMACOMPONENT WERD
+ *
+ * Het paneel is een <nldd-sheet>. Dat is geen kosmetische wissel voor deze code, want
+ * een sheet is een native <dialog>: hij gaat open en dicht met show() en hide() in plaats
+ * van met een klasse, hij tekent zijn eigen waas (de losse #log-viewer-backdrop is weg),
+ * hij houdt de pagina eronder vanzelf stil (document.body.style.overflow hoeft niet
+ * meer), en hij sluit zelf op Escape en op een klik ernaast.
+ *
+ * Dat laatste is de reden dat sluiten hier via het 'close'-event van de sheet loopt en
+ * niet alleen via closeLogViewer(). Er zijn nu VIER manieren om het paneel dicht te doen -
+ * de knop Sluiten, Escape, een klik naast het paneel, en closeLogViewer() zelf - en er is
+ * er maar een die de WebSocket mag opruimen. Hing die opruiming aan de knop, dan liet
+ * Escape een pod achter die blijft streamen.
+ *
+ * De besturingselementen zijn componenten geworden, en die dragen hun toestand op een
+ * eigen property in plaats van op een klasse of op .checked:
+ *
+ *   - het zoekveld is <nldd-search-field>: .value, net als een input
+ *   - de niveaufilters zijn <nldd-toggle-button>: .selected in plaats van .checked
+ *   - de regelterugloop is <nldd-switch-field>: .checked
+ *   - de pauzeknop is <nldd-toggle-button>: .selected in plaats van de klasse .is-active
+ *   - de componentkiezer is nog steeds een echte <select>, in een <nldd-dropdown>
  */
 /**
  * Log Viewer WebSocket Client
@@ -27,10 +48,8 @@
     const MAX_LOG_LINES = 10000;
 
     // DOM elements
-    const backdrop = document.getElementById('log-viewer-backdrop');
     const panel = document.getElementById('log-viewer-panel');
     const heading = document.getElementById('log-viewer-heading');
-    const deploymentLabel = document.getElementById('log-viewer-deployment');
     const componentSelector = document.getElementById('log-component-selector');
     const statusIndicator = document.getElementById('log-status-indicator');
     const statusText = document.getElementById('log-status-text');
@@ -42,12 +61,49 @@
     // Filter elements
     const searchInput = document.getElementById('log-search-input');
     const searchCount = document.getElementById('log-search-count');
-    const searchClear = document.getElementById('log-search-clear');
     const filterError = document.getElementById('filter-error');
     const filterWarn = document.getElementById('filter-warn');
     const filterInfo = document.getElementById('filter-info');
     const filterDebug = document.getElementById('filter-debug');
     const wordWrapToggle = document.getElementById('log-word-wrap');
+
+    /**
+     * Staat het paneel open?
+     *
+     * Bijgehouden in plaats van afgelezen: <nldd-sheet> heeft geen publieke open-property,
+     * en de <dialog> waar het aan af te lezen valt zit in zijn shadow root. Daar naar
+     * binnen grijpen zou deze code laten breken op een interne wijziging van het thema.
+     */
+    let panelOpen = false;
+
+    // Staat het paneel niet op deze pagina, dan houdt het hier op. Dat moet EXPLICIET:
+    // hieronder wordt meteen een luisteraar op het paneel gezet, en op null gooit dat een
+    // TypeError die de rest van dit bestand meesleurt - inclusief window.openLogViewer,
+    // dat dan nergens meer bestaat. Voorheen viel dat niet op omdat alle verwijzingen pas
+    // binnen een functie werden aangeraakt.
+    if (!panel) {
+        console.warn('log_viewer.js: het logpaneel staat niet op deze pagina');
+        return;
+    }
+
+    /**
+     * Ruim de stroom op. Loopt via het 'close'-event van de sheet, zodat het niet
+     * uitmaakt HOE hij dichtgaat: de knop, Escape en een klik ernaast komen hier
+     * allemaal langs, en closeLogViewer() ook.
+     */
+    panel.addEventListener('close', function() {
+        panelOpen = false;
+
+        if (logSocket) {
+            logSocket.close();
+            logSocket = null;
+        }
+
+        logPaused = false;
+        pauseBtn.selected = false;
+        pauseBtn.icon = 'pause';
+        pauseBtn.setAttribute('accessible-label', 'Pauzeren');
+    });
 
     /**
      * Open the log viewer panel
@@ -58,9 +114,10 @@
         currentComponent = component;
         components = comps || [];
 
-        // Update UI
-        heading.textContent = `Logs - ${deployment}`;
-        deploymentLabel.textContent = deployment;
+        // Update UI. De kop is een <nldd-top-title-bar>: die draagt zijn tekst op
+        // properties en niet in kindelementen, dus geen textContent maar .text/.supportingText.
+        heading.text = `Logs - ${deployment}`;
+        heading.supportingText = deployment;
 
         // Populate component selector
         componentSelector.innerHTML = '';
@@ -73,14 +130,20 @@
             }
             componentSelector.appendChild(option);
         });
+        // <nldd-dropdown> tekent de gekozen tekst zelf en werkt die alleen bij op
+        // 'slotchange' en op een 'change' van de select. Opties toevoegen aan een select
+        // die er al in zit doet geen van beide, dus zonder dit bericht blijft de lijst
+        // er LEEG uitzien terwijl er componenten in staan. switchLogComponent() kan hier
+        // geen kwaad: currentComponent staat hierboven al op dezelfde waarde en die
+        // functie keert dan meteen terug.
+        componentSelector.dispatchEvent(new Event('change', {bubbles: true}));
 
         // Clear previous logs
         clearLogs();
 
-        // Show panel
-        backdrop.classList.add('is-open');
-        panel.classList.add('is-open');
-        document.body.style.overflow = 'hidden';
+        // Show panel. De sheet tekent zijn eigen waas en houdt de pagina eronder stil.
+        panelOpen = true;
+        panel.show();
 
         // Connect WebSocket
         connectLogWebSocket();
@@ -88,22 +151,12 @@
 
     /**
      * Close the log viewer panel
+     *
+     * Alleen dichtdoen: het opruimen van de stroom hangt aan het 'close'-event hierboven,
+     * zodat Escape en een klik naast het paneel dezelfde opruiming krijgen.
      */
     window.closeLogViewer = function() {
-        // Disconnect WebSocket
-        if (logSocket) {
-            logSocket.close();
-            logSocket = null;
-        }
-
-        // Hide panel
-        backdrop.classList.remove('is-open');
-        panel.classList.remove('is-open');
-        document.body.style.overflow = '';
-
-        // Reset state
-        logPaused = false;
-        pauseBtn.classList.remove('is-active');
+        panel.hide();
     };
 
     /**
@@ -195,14 +248,14 @@
     function shouldShowLine(logData) {
         const level = logData.level || 'other';
 
-        // Check level filters
-        if (level === 'error' && !filterError.checked) return false;
-        if (level === 'warn' && !filterWarn.checked) return false;
-        if (level === 'info' && !filterInfo.checked) return false;
-        if (level === 'debug' && !filterDebug.checked) return false;
+        // Check level filters. .selected en niet .checked: dit zijn <nldd-toggle-button>'s.
+        if (level === 'error' && !filterError.selected) return false;
+        if (level === 'warn' && !filterWarn.selected) return false;
+        if (level === 'info' && !filterInfo.selected) return false;
+        if (level === 'debug' && !filterDebug.selected) return false;
 
         // Check search filter
-        const searchTerm = searchInput.value.toLowerCase().trim();
+        const searchTerm = (searchInput.value || '').toLowerCase().trim();
         if (searchTerm && !logData.line.toLowerCase().includes(searchTerm)) {
             return false;
         }
@@ -290,7 +343,7 @@
         }
 
         // Create log line element
-        const searchTerm = searchInput.value.trim();
+        const searchTerm = (searchInput.value || '').trim();
         const lineEl = createLogLineElement(data, searchTerm);
 
         // Append and auto-scroll
@@ -337,16 +390,12 @@
      * Filter logs based on search term and level filters
      */
     window.filterLogs = function() {
-        const searchTerm = searchInput.value.trim();
+        const searchTerm = (searchInput.value || '').trim();
         const logLineEls = content.querySelectorAll('.log-line');
         let matchCount = 0;
 
-        // Show/hide clear button
-        if (searchTerm) {
-            searchClear.classList.add('is-visible');
-        } else {
-            searchClear.classList.remove('is-visible');
-        }
+        // De wisknop is die van <nldd-search-field> zelf; het component toont hem zodra
+        // er iets in staat. De eigen .log-search-clear met .is-visible is daarmee weg.
 
         // Re-render all log lines to apply/remove highlighting and filters
         logLineEls.forEach((el, index) => {
@@ -396,15 +445,6 @@
     };
 
     /**
-     * Clear search input
-     */
-    window.clearSearch = function() {
-        searchInput.value = '';
-        filterLogs();
-        searchInput.focus();
-    };
-
-    /**
      * Toggle word wrap
      */
     window.toggleWordWrap = function() {
@@ -427,11 +467,15 @@
             }));
         }
 
+        // De pauzestand staat op het component zelf (aria-pressed), niet op een eigen
+        // klasse, en het icoon vertelt wat de knop NU doet.
+        pauseBtn.selected = logPaused;
+        pauseBtn.icon = logPaused ? 'play' : 'pause';
+        pauseBtn.setAttribute('accessible-label', logPaused ? 'Hervatten' : 'Pauzeren');
+
         if (logPaused) {
-            pauseBtn.classList.add('is-active');
             updateStatus('paused', 'Paused');
         } else {
-            pauseBtn.classList.remove('is-active');
             updateStatus('streaming', 'Streaming logs...');
             // Scroll to bottom when resuming
             content.scrollTop = content.scrollHeight;
@@ -452,7 +496,6 @@
         // Reset search
         searchInput.value = '';
         searchCount.textContent = '';
-        searchClear.classList.remove('is-visible');
     };
 
     /**
@@ -514,22 +557,27 @@
 
     // Keyboard shortcuts
     document.addEventListener('keydown', function(e) {
-        if (!panel.classList.contains('is-open')) return;
+        if (!panelOpen) return;
 
-        // Close on Escape (or clear search if search is active)
-        if (e.key === 'Escape') {
-            if (document.activeElement === searchInput && searchInput.value) {
-                clearSearch();
-            } else {
-                closeLogViewer();
-            }
-        }
+        // HIER STOND DE ESCAPE-AFHANDELING, EN DIE IS WEG OMDAT HIJ NIETS DEED.
+        //
+        // Eerst wiste Escape de zoekopdracht en sloot hij pas daarna het paneel; dat was
+        // eigen toetsafhandeling boven op een eigen invoerveld. Nu is het paneel een
+        // <dialog> en is het zoekveld een <nldd-search-field>, en die twee regelen
+        // allebei hun eigen kant: de dialog sluit op Escape, en het zoekveld is intern
+        // een <input type="search">, waar de browser Escape zelf op afhandelt door de
+        // inhoud te wissen - zonder dat de dialog dichtgaat.
+        //
+        // Gemeten en niet aangenomen: met deze regels erin bleven de twee toetsen in
+        // tests/e2e/test_logviewer_gedrag.py groen, en met de regels ERUIT ook. Code die
+        // je kunt weghalen zonder dat een meting het merkt, doet niets.
 
-        // Focus search on Ctrl/Cmd + F
+        // Focus search on Ctrl/Cmd + F. Geen .select() erachter: dat bestaat op een
+        // <nldd-search-field> niet, en een aanroep die niet bestaat breekt de hele
+        // toetsafhandeling.
         if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
             e.preventDefault();
             searchInput.focus();
-            searchInput.select();
         }
     });
 })();

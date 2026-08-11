@@ -20,7 +20,7 @@
     {# CPU #}
     <div>
         <c-layout-flow row="true" gap="sm" align-items="center" justify-content="space-between">
-            <span class="rvo-text--sm"><c-icon icon="server" size="sm" color="donkerblauw"/> CPU</span>
+            <span class="rvo-text--sm"><c-icon icon="cylinder-split" size="sm" color="donkerblauw"/> CPU</span>
             <span class="rvo-text--sm rvo-text--subtle">
                 <strong>{{ cores(usage.cpu_used) }}</strong>{% if usage.cpu_limit > 0 %} / {{ cores(usage.cpu_limit) }} cores ({{ usage.cpu_pct }}%){% else %} cores{% endif %}
             </span>
