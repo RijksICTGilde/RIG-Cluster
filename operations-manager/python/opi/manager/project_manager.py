@@ -63,15 +63,18 @@ from opi.generation.manifests import (
     ManifestGenerator,
 )
 from opi.handlers.project_file_handler import (
+    COMPONENT_USAGE_WEB_ADDRESS,
     USAGE_CERTIFICATE,
     ProjectFileHandler,
     attachment_usage_sites,
+    component_usage_sites,
     ensure_attachment_data_list,
     extract_attachment_catalog,
     extract_component_attachment_uses,
     extract_service_names_from_component,
     find_attachment_data_list,
     remove_attachment_references,
+    remove_component_references,
 )
 from opi.handlers.sops import SopsHandler
 from opi.manager.project_validation import validate_component_references, validate_project_structure
@@ -7347,13 +7350,26 @@ class ProjectManager:
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
-    async def delete_component(self, component_name: str) -> dict[str, Any]:
+    async def delete_component(self, component_name: str, *, confirm_in_use: bool = False) -> dict[str, Any]:
         """Remove a component definition from the project.
 
         Mirrors add_component's read-mutate-save-commit lifecycle so the deletion goes through
         the single ProjectManager path (fresh contents from Git, save, commit+push). It never
         builds the commit from the in-memory cache, which could lag behind Git and silently
         overwrite components added since the cache was last refreshed.
+
+        By default it refuses a component that is still referenced -- with ``used_by`` naming
+        every place -- so the caller can show what the deletion would break instead of only
+        hearing "no". ``confirm_in_use`` is the caller saying "I have seen that list and I
+        want it gone anyway": every deployment entry and every ``uses-components`` mention is
+        dropped together with the definition, in a single save, because a reference left
+        pointing at a component that no longer exists makes the project file invalid. Same
+        shape, same flag name and the same reasoning as ``remove_attachment`` (RC-52).
+
+        One case is refused even with the confirmation: a component a deployment's web address
+        is built around (``root-component`` or ``expose-component-on-bare-domain``). There is
+        no reference to remove there without also deciding how that site should be served
+        instead, and that is not a decision this call gets to make.
         """
         try:
             project_data = await self.get_contents()
@@ -7367,17 +7383,45 @@ class ProjectManager:
                     "error_type": "not_found",
                 }
 
+            sites = component_usage_sites(project_data).get(component_name, [])
+            web_addresses = [site for site in sites if site.kind == COMPONENT_USAGE_WEB_ADDRESS]
+            if sites and (not confirm_in_use or web_addresses):
+                if web_addresses:
+                    reason = (
+                        f"Component '{component_name}' bepaalt het webadres van: "
+                        f"{', '.join(site.label for site in web_addresses)}. Wijzig eerst het webadres daar; "
+                        "een component waar een adres omheen gebouwd is kan niet zomaar worden verwijderd."
+                    )
+                else:
+                    reason = (
+                        f"Component '{component_name}' is in gebruik door: "
+                        f"{', '.join(site.label for site in sites)} en kan niet worden verwijderd"
+                    )
+                return {
+                    "success": False,
+                    "error": reason,
+                    "error_type": "in_use",
+                    "used_by": [site.as_dict() for site in sites],
+                }
+
+            uncoupled = remove_component_references(project_data, component_name) if sites else []
             project_data["components"] = [
                 c for c in components if not (isinstance(c, dict) and c.get("name") == component_name)
             ]
 
+            where = f" and removed from {', '.join(site.label for site in uncoupled)}" if uncoupled else ""
             await self.save_and_commit_project(
-                project_data, f"Remove component '{component_name}' from project '{project_name}'"
+                project_data, f"Remove component '{component_name}' from project '{project_name}'{where}"
             )
 
-            logger.info(f"Successfully removed component '{component_name}' from project '{project_name}'")
-            return {"success": True}
+            logger.info(f"Successfully removed component '{component_name}' from project '{project_name}'{where}")
+            return {"success": True, "uncoupled_from": [site.as_dict() for site in uncoupled]}
 
+        except (ProjectSchemaError, ProjectIntegrityError) as e:
+            # The save is the check that a cleanup left no reference behind: a dangling
+            # reference is exactly what validate_component_references rejects here.
+            logger.warning("Component '%s' removal rejected by project validation: %s", component_name, e)
+            return {"success": False, "error": str(e), "error_type": "validation_error"}
         except Exception as e:
             error_msg = f"Error removing component '{component_name}': {e}"
             logger.exception(error_msg)
