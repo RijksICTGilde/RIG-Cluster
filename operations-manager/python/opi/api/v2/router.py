@@ -34,6 +34,7 @@ from opi.api.task_models import (
     CloneDatabaseResult,
     ConfigureServiceResult,
     ConfigureServiceValuesResult,
+    DeleteComponentResult,
     DeleteDeploymentResult,
     ManageDatabaseSchemasResult,
     RefreshDeploymentResult,
@@ -78,7 +79,11 @@ from opi.core.cluster_config import get_ingress_postfix, get_ingress_tls_enabled
 from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.core.task_rollout import NON_DEFERRABLE_REASONS
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.handlers.project_file_handler import (
+    COMPONENT_USAGE_WEB_ADDRESS,
+    ProjectFileHandler,
+    component_usage_sites,
+)
 from opi.services.catalog.actions import (
     ActionContext,
     ActionField,
@@ -1464,6 +1469,116 @@ async def update_component_v2(
         },
     )
     return _accepted_response(task, "update_component")
+
+
+ConfirmInUseQuery = Annotated[
+    bool,
+    Query(
+        description=(
+            "Delete the component even though deployments or other components still reference "
+            "it, and remove those references in the same change. Off by default: a component "
+            "that is in use is refused with 409 and the list of places using it, so this is set "
+            "by a caller who has seen that list. A component a deployment's web address is built "
+            "around (root component, or exposed on the bare domain) is refused even with this "
+            "set -- change the web address there first."
+        )
+    ),
+]
+
+
+@v2_router.delete(
+    "/projects/{project_name}/components/{component_name}",
+    tags=["components"],
+    responses={
+        200: {"model": TaskResponse[DeleteComponentResult], "description": "Task completed (when polled)"},
+        202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+        404: {"description": "No such project, or no such component in it"},
+        409: {"description": "The component is still in use; the body names every place"},
+    },
+)
+@validate_api_token
+async def delete_component_v2(
+    request: Request,
+    project_name: str,
+    component_name: str,
+    confirm_in_use: ConfirmInUseQuery = False,
+    rollout: NoDeferQuery = True,
+) -> JSONResponse:
+    """Remove a component from a project (async).
+
+    The counterpart the API never had: components could be added and patched but not
+    removed, so the only way back was the portal. Two answers, and which one you get is
+    decided by the project rather than by the request:
+
+    * nothing references it -- it goes, and that needs no confirmation;
+    * something does -- 409 with ``used_by``, naming every deployment that deploys it and
+      every component that declares it as a dependency, so the caller learns what the
+      deletion would break instead of only that it was refused. That is a state conflict,
+      not a malformed request, which is why it is a 409 and not a 422.
+
+    With ``confirm_in_use`` the caller states they have seen that list, and those references
+    are removed together with the definition in a single save -- half a deletion would leave
+    a deployment pointing at a component that no longer exists.
+
+    Returns 202 with a task id; poll /api/tasks/{task_id} for the result.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    _reject_deferred_rollout(rollout, "delete_component")
+
+    logger.info("V2 delete component '%s' from project: %s", component_name, project_name)
+
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+        )
+
+    # Answered here rather than by a task that fails later: a component that is not there,
+    # and a component that cannot go yet, are both facts the caller can act on right now.
+    # The guard in ProjectManager.delete_component is what actually decides -- this reads
+    # the same walk against the same project file, on the fresher of the two answers losing
+    # nothing: a task that gets past this and is refused there still fails loudly.
+    project_data = _project_data_or_404(project_name)
+    if not any(
+        isinstance(c, dict) and c.get("name") == component_name for c in project_data.get("components", []) or []
+    ):
+        raise HTTPException(
+            status_code=404, detail=f"Component '{component_name}' not found in project '{project_name}'"
+        )
+
+    sites = component_usage_sites(project_data).get(component_name, [])
+    web_addresses = [site for site in sites if site.kind == COMPONENT_USAGE_WEB_ADDRESS]
+    if sites and (not confirm_in_use or web_addresses):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": (
+                    f"Component '{component_name}' bepaalt het webadres van: "
+                    f"{', '.join(site.label for site in web_addresses)} en kan niet worden verwijderd"
+                    if web_addresses
+                    else (
+                        f"Component '{component_name}' is in gebruik door: "
+                        f"{', '.join(site.label for site in sites)}. Set confirm_in_use=true to remove those "
+                        "references along with it."
+                    )
+                ),
+                "used_by": [site.as_dict() for site in sites],
+            },
+        )
+
+    task = await create_async_task(
+        request=request,
+        task_type="delete_component",
+        project_name=project_name,
+        payload={
+            "project_name": project_name,
+            "component_name": component_name,
+            "confirm_in_use": confirm_in_use,
+        },
+    )
+    return _accepted_response(task, "delete_component")
 
 
 @v2_router.post(

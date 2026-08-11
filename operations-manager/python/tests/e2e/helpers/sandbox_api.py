@@ -161,6 +161,41 @@ def add_component(
         return _wait_for_task(client, base, task_id, headers, timeout=timeout)
 
 
+def delete_component(
+    base_url: str,
+    project_name: str,
+    api_key: str,
+    *,
+    component_name: str,
+    confirm_in_use: bool = False,
+    verify_ssl: bool = True,
+    timeout: float = 180.0,
+) -> tuple[int, dict]:
+    """Delete one component via the v2 async API.
+
+    Returns (status_code, body). On 202 the task is waited out and the terminal task
+    response is the body; on any other status the response body is returned unchanged --
+    a 409 (still in use) and a 404 (no such component) are answers this endpoint gives on
+    purpose, so the caller decides what they mean rather than this helper asserting.
+    """
+    base = base_url.rstrip("/")
+    headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
+    params = {"confirm_in_use": "true"} if confirm_in_use else None
+    with httpx.Client(verify=verify_ssl, timeout=30.0) as client:
+        response = client.delete(
+            f"{base}/api/v2/projects/{project_name}/components/{component_name}",
+            params=params,
+            headers=headers,
+        )
+        if response.status_code != 202:
+            return response.status_code, response.json()
+
+        location = response.headers.get("Location")
+        task_id = location.rsplit("/", 1)[-1] if location else response.json().get("task_id")
+        assert task_id, f"No task id returned from component-delete: {response.text}"
+        return 202, _wait_for_task(client, base, task_id, headers, timeout=timeout)
+
+
 def delete_project_via_api(
     base_url: str,
     project_name: str,

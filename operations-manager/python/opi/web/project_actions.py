@@ -17,7 +17,12 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
-from opi.handlers.project_file_handler import extract_attachment_catalog, extract_attachment_usage
+from opi.handlers.project_file_handler import (
+    COMPONENT_USAGE_WEB_ADDRESS,
+    component_usage_sites,
+    extract_attachment_catalog,
+    extract_attachment_usage,
+)
 
 #: Confirmation button appearance per kind of action.
 _DELETE_BUTTON = {"label": "Verwijderen", "icon": "verwijderen", "kind": "warning"}
@@ -121,10 +126,29 @@ def build_project_action(
     if action_key == "delete-component":
         if not target or target not in _names(project_data.get("components")):
             return None
+        sites = component_usage_sites(project_data).get(target, [])
+        web_addresses = [site for site in sites if site.kind == COMPONENT_USAGE_WEB_ADDRESS]
+        # A component a deployment's web address is built around is refused by the delete
+        # guard itself; say so here rather than offering a button that is going to be
+        # refused. Other uses are removed along with it, which the message names, because
+        # confirming a deletion means having seen what goes with it.
+        blocked = (
+            f"Dit component bepaalt het webadres van: {', '.join(site.label for site in web_addresses)}. "
+            "Wijzig eerst het webadres daar; zolang dat zo staat kan dit component niet verwijderd worden."
+            if web_addresses
+            else None
+        )
+        message = f'Weet u zeker dat u component "{target}" wilt verwijderen?'
+        if sites and not web_addresses:
+            message += (
+                f" Het wordt gebruikt door: {', '.join(site.label for site in sites)};"
+                " die verwijzingen worden mee verwijderd."
+            )
         return ProjectAction(
             key=action_key,
             endpoint=f"/projects/{project_path}/delete-component/{quote(target, safe='')}",
-            message=f'Weet u zeker dat u component "{target}" wilt verwijderen?',
+            message=message,
+            blocked_reason=blocked,
             **_DELETE_BUTTON,
         )
 
