@@ -17,9 +17,13 @@ de rolafhankelijkheid (welke items een beheerder wel ziet en een gebruiker niet)
 die logica mag niet verdubbelen. Dit bestand herschikt alleen wat daar uit komt.
 """
 
+import logging
 from typing import Any
 
 from opi.web.menu import get_menu_items
+from opi.web.nldd_iconen import nldd_icon_names
+
+logger = logging.getLogger(__name__)
 
 # Onze iconen dragen Nederlandse ROOS-namen; NLDD heeft een eigen, Engelse
 # woordenschat van ongeveer vijftig iconen. LOTC vertaalt een handvol namen zelf
@@ -43,7 +47,10 @@ ROOS_TO_NLDD_ICONS = {
     "delta-naar-links": "caret-left",
     "delta-naar-rechts": "caret-right",
     "delta-omlaag": "caret-down",
-    "downloaden": "square-arrow-down",
+    # square-and-arrow-down, niet square-arrow-down. Die tweede naam staat in de
+    # iconenlijst van LOTC maar zit NIET in de bundel die de browser laadt, dus hij
+    # rendeerde leeg. Gemeten in een browser, niet uit de lijst gelezen.
+    "downloaden": "square-and-arrow-down",
     # Uitloggen. Stond hier niet, dus het menu-item droeg een lege plek; zichtbaar werd
     # dat pas toen de icoontoets ook het MENU ging meten (RC-67).
     "uitgang": "arrow-right-out-bucket",
@@ -81,6 +88,11 @@ ROOS_TO_NLDD_ICONS = {
     "wereldbol": "globe",
     "zandloper": "timer",
     "zoek": "search",
+    # Geen letterlijke tegenhanger in NLDD, wel een die hetzelfde ZEGT:
+    # de slaapstand van een deployment (een maan), en de hulppagina over resources
+    # (een meter). Ze stonden hiervoor in KNOWN_GAPS en renderden dus als niets.
+    "uit-aanknop": "moon",
+    "weegschaal": "score-meter",
 }
 
 # De indeling van de zijkolom: een kopje met de links die eronder horen. Links die
@@ -96,10 +108,32 @@ GROUPS: list[tuple[str, list[str]]] = [
 def to_nldd_icon(roos_icon: str) -> str:
     """Vertaal een ROOS-iconnaam naar de NLDD-woordenschat.
 
-    Onbekende namen gaan ongewijzigd door: LOTC kent er zelf een paar, en voor de
-    rest is een lege plek eerlijker dan een willekeurig ander icoon.
+    Onbekende namen gaan ongewijzigd door - LOTC kent er zelf een aantal, en een naam die
+    NLDD wel kent moet hier gewoon doorheen kunnen - maar ze gaan niet langer STIL door.
+
+    Dat stille doorlaten was de fout. De redenering erachter klopte half: een verkeerd
+    icoon tonen is inderdaad erger dan een lege plek. Maar niets zeggen is de slechtste
+    van de drie, want dan houdt de knop ruimte vrij voor een icoon dat nooit komt en hoort
+    niemand er iets over. Zo stonden er maandenlang 37 lege plekken in de interface,
+    waaronder de bewerk- en verwijderknop, tot iemand toevallig goed keek.
+
+    De harde poort staat in tests/test_lotc_icon_mapping.py: die loopt elke iconnaam in
+    elk sjabloon en in elke dienstdefinitie langs en faalt op een naam die de geleverde
+    NLDD-bundel niet kent. Daar hoort hij, want daar breekt hij niets in productie en
+    valt het op voordat het uitgerold is. Deze logregel is de vangnet eronder, voor namen
+    die pas tijdens het draaien ontstaan (een dienst die zijn icoon uit gegevens haalt).
     """
-    return ROOS_TO_NLDD_ICONS.get(roos_icon, roos_icon)
+    vertaald = ROOS_TO_NLDD_ICONS.get(roos_icon, roos_icon)
+    bekend = nldd_icon_names()
+    if roos_icon and bekend and vertaald not in bekend:
+        logger.warning(
+            "Iconnaam %r levert geen icoon op (na vertaling: %r). Hij rendeert als een lege "
+            "plek zonder foutmelding. Kies een naam die NLDD levert of leg de afbeelding in "
+            "ROOS_TO_NLDD_ICONS.",
+            roos_icon,
+            vertaald,
+        )
+    return vertaald
 
 
 def get_navigation(user: dict[str, Any] | None, current_path: str = "") -> dict[str, Any]:

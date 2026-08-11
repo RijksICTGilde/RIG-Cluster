@@ -33,7 +33,7 @@
                             {% endif %}
 
                             {% if application_url %}
-                            {% set lotc_onclick_1 %}window.location.href='{{ application_url }}'{% endset %}<c-button :label="('Ga naar applicatie') if (language == 'nl') else ('Go to application')" show-icon="after" icon="pijl-naar-rechts"/>
+                            {% set lotc_onclick_1 %}window.location.href='{{ application_url }}'{% endset %}<c-button :label="('Ga naar applicatie') if (language == 'nl') else ('Go to application')" show-icon="after" icon="chevron-right"/>
                             {% endif %}
                         </c-layout-flow>
                     </c-card>

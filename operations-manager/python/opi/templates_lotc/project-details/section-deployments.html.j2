@@ -12,9 +12,9 @@
                 </div>
                 <div class="deployment-actions">
                     {% if user_role in ['admin', 'owner'] %}
-                    {% set lotc_onclick_1 %}openEditModal('modal-edit-deployment-{{ original_index }}', 'Deployment bewerken - {{ deployment.name }}'){% endset %}<c-button size="sm" label="Bewerken" show-icon="before" icon="bewerken"/>
-                    {% set lotc_onclick_2 %}openEditModal('modal-edit-domain-{{ original_index }}', 'Webadres bewerken - {{ deployment.name }}'){% endset %}<c-button size="sm" label="Webadres" show-icon="before" icon="wereldbol"/>
-                    {% set lotc_onclick_3 %}openServiceModal('/projects/{{ project.name }}/actions/delete-deployment/confirm?target={{ deployment.name | urlencode }}', 'Deployment verwijderen'){% endset %}<c-button size="sm" label="Verwijderen" show-icon="before" icon="verwijderen"/>
+                    {% set lotc_onclick_1 %}openEditModal('modal-edit-deployment-{{ original_index }}', 'Deployment bewerken - {{ deployment.name }}'){% endset %}<c-button size="sm" label="Bewerken" show-icon="before" icon="pencil-on-square"/>
+                    {% set lotc_onclick_2 %}openEditModal('modal-edit-domain-{{ original_index }}', 'Webadres bewerken - {{ deployment.name }}'){% endset %}<c-button size="sm" label="Webadres" show-icon="before" icon="globe"/>
+                    {% set lotc_onclick_3 %}openServiceModal('/projects/{{ project.name }}/actions/delete-deployment/confirm?target={{ deployment.name | urlencode }}', 'Deployment verwijderen'){% endset %}<c-button size="sm" label="Verwijderen" show-icon="before" icon="trash"/>
                     {% endif %}
                 </div>
             </div>
@@ -35,7 +35,7 @@
                 <div class="component-list">
                     {% for component in deployment.components | sort(attribute='reference') %}
                     <div class="component-item">
-                        <c-icon icon="puzzel" size="md" color="donkerblauw"/>
+                        <c-icon icon="puzzle-piece" size="md" color="donkerblauw"/>
                         <div class="component-details">
                             <div class="component-name">{{ component.reference }}</div>
                             {% if component.image %}
@@ -53,19 +53,19 @@
             {# Helm Charts in this deployment #}
             {% if deployment.get('helm-charts') %}
             <div class="deployment-helm-charts section-divider">
-                <c-heading type="h4"><c-icon icon="applicatie" size="md" color="groen"/>Helm Charts</c-heading>
+                <c-heading type="h4"><c-icon icon="rectangle-stack" size="md" color="groen"/>Helm Charts</c-heading>
                 <c-layout-flow gap="md">
                     {% for helm_chart in deployment.get('helm-charts', []) %}
                     <c-card padding="md" background-color="wit" outline="true">
                         <c-layout-flow gap="sm">
                             <c-layout-flow row="true" align-items="center" gap="sm">
-                                <c-icon icon="applicatie" size="sm" color="groen"/>
+                                <c-icon icon="rectangle-stack" size="sm" color="groen"/>
                                 <strong>{{ helm_chart.reference }}</strong>
                             </c-layout-flow>
                             {% if helm_chart.get('helm-values') and helm_chart['helm-values'] is mapping %}
                             <div class="helm-values-section">
                                 <c-layout-flow row="true" align-items="center" gap="sm" class="section-subheader">
-                                    <c-icon icon="sleutel" size="sm" color="hemelblauw"/>
+                                    <c-icon icon="lock-closed" size="sm" color="hemelblauw"/>
                                     <span class="text-strong">Helm Values</span>
                                     <span class="env-vars-count-badge">{{ helm_chart['helm-values']|length }} waarde{% if helm_chart['helm-values']|length != 1 %}n{% endif %}</span>
                                 </c-layout-flow>
@@ -82,19 +82,19 @@
             {# Helmfile in this deployment #}
             {% if deployment.get('helmfile') %}
             <div class="deployment-helmfile section-divider">
-                <c-heading type="h4"><c-icon icon="applicatie" size="md" color="oranje"/>Helmfile</c-heading>
+                <c-heading type="h4"><c-icon icon="rectangle-stack" size="md" color="oranje"/>Helmfile</c-heading>
                 <c-layout-flow gap="md">
                     {% for helmfile in deployment.get('helmfile', []) %}
                     <c-card padding="md" background-color="wit" outline="true">
                         <c-layout-flow gap="sm">
                             <c-layout-flow row="true" align-items="center" gap="sm">
-                                <c-icon icon="applicatie" size="sm" color="oranje"/>
+                                <c-icon icon="rectangle-stack" size="sm" color="oranje"/>
                                 <strong>{{ helmfile.reference }}</strong>
                             </c-layout-flow>
                             {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping %}
                             <div class="helm-values-section">
                                 <c-layout-flow row="true" align-items="center" gap="sm" class="section-subheader">
-                                    <c-icon icon="sleutel" size="sm" color="hemelblauw"/>
+                                    <c-icon icon="lock-closed" size="sm" color="hemelblauw"/>
                                     <span class="text-strong">Helm Values</span>
                                     <span class="env-vars-count-badge">{{ helmfile['helm-values']|length }} waarde{% if helmfile['helm-values']|length != 1 %}n{% endif %}</span>
                                 </c-layout-flow>
@@ -111,10 +111,10 @@
             {# Public ingress links for this deployment #}
             {% if deployment.ingress_links %}
             <c-layout-flow gap="sm">
-                <c-heading type="h4"><c-icon icon="externe-link" size="md" color="hemelblauw"/>Publieke links</c-heading>
+                <c-heading type="h4"><c-icon icon="link" size="md" color="hemelblauw"/>Publieke links</c-heading>
                 <c-layout-flow gap="sm">
                     {% for link in deployment.ingress_links %}
-                    {% set lotc_onclick_4 %}window.open(this.dataset.url, '_blank'){% endset %}<c-button label="{{ link.component_name }}{% if link.path and link.path != '/' %} {{ link.path }}{% endif %}" size="sm" show-icon="after" icon="externe-link"/>
+                    {% set lotc_onclick_4 %}window.open(this.dataset.url, '_blank'){% endset %}<c-button label="{{ link.component_name }}{% if link.path and link.path != '/' %} {{ link.path }}{% endif %}" size="sm" show-icon="after" icon="link"/>
                     {% endfor %}
                 </c-layout-flow>
             </c-layout-flow>
@@ -146,7 +146,7 @@
                     <c-card padding="sm" background-color="grijs-050" outline="true">
                         <c-layout-flow gap="md">
                             <c-cluster gap="sm">
-                                <c-icon icon="puzzel" size="sm" color="donkerblauw"/>
+                                <c-icon icon="puzzle-piece" size="sm" color="donkerblauw"/>
                                 <c-heading type="h5" label="Component: {{ component.reference }}"/>
                             </c-cluster>
 
@@ -155,7 +155,7 @@
                                 <c-card padding="sm" background-color="wit" outline="true">
                                     <c-layout-flow gap="xs">
                                         <c-layout-flow row="true" align-items="center" gap="sm">
-                                            <c-icon icon="sleutel" size="sm" color="grijs-600"/>
+                                            <c-icon icon="lock-closed" size="sm" color="grijs-600"/>
                                             <span class="text-strong">{{ key }}</span>
                                         </c-layout-flow>
                                         <div class="indent-lg">
