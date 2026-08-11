@@ -28,7 +28,7 @@ from opi.core.template_helpers import (
     static_url,
 )
 from opi.core.version import get_version_info
-from opi.forms.lotc_attrs import attr_escape, field_attrs
+from opi.forms.lotc_attrs import attr_escape, bedraad_foutmelding, field_attrs
 from opi.services.registry import deployment_action_key
 
 logger = logging.getLogger(__name__)
@@ -101,6 +101,11 @@ templates_lotc.env.globals["field_attrs"] = field_attrs
 # bool_attr). De adapter rendert die macro's in DEZE omgeving, dus hier hoort het filter te
 # staan. Zonder valt de formulierlaag om op elk veld dat de macro's gebruikt.
 templates_lotc.env.filters["attr_escape"] = attr_escape
+
+# De bedrading van een foutmelding bij een formulierveld, voor onze kopie van
+# components/_forms.j2. Zonder dit filter staat de foutregel wel in de DOM en is hij
+# display: none; zie opi/forms/lotc_attrs.py voor de meting.
+templates_lotc.env.filters["foutbedrading"] = bedraad_foutmelding
 
 # Onze eigen iconnamen (de woordenschat van het oude design system, die nog in de
 # dienstdefinities staat) naar de NLDD-woordenschat. Als FILTER en niet vooraf in de data,
