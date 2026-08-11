@@ -7094,8 +7094,11 @@ class ProjectManager:
                         logger.error(error_msg)
                         return {"success": False, "created": False, "error": error_msg, "error_type": "no_repositories"}
 
-                # Add the new deployment to the project data
-                project_data["deployments"].append(new_deployment)
+                # Add the new deployment to the project data. A project created through
+                # POST /api/v2/projects has no `deployments` key at all -- there is
+                # nothing to roll out yet -- so the first deployment added to it must
+                # create the list rather than assume one (RC-66).
+                project_data.setdefault("deployments", []).append(new_deployment)
 
                 # Validate domain config when this call sets domain settings.
                 if domain_format is not None or base_domain is not None or subdomain is not None:
