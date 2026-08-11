@@ -61,6 +61,10 @@ INVITE_REALM_ROLE_ITEM = EditableVisualizer(
         "De rol wordt automatisch toegekend aan de gebruiker. Is toegangsbeperking "
         "ingeschakeld, dan is de rol nodig om te kunnen inloggen."
     ),
+    # Geen "Optioneel"-badge: dit is een KIEZER waar altijd iets geselecteerd staat, en de
+    # lege stand heet hier "Geen rol toekennen". Dezelfde reden als bij de URI-velden van
+    # keycloak; zie GEEN_OPTIONEEL_BADGE daar.
+    attributes={"data-no-optional-badge": "1"},
 )
 
 #: De hulptekst staat op het veld zelf en niet hier: het is een keuze en geen lijst meer,
