@@ -2949,7 +2949,11 @@ class ProjectManager:
                 self._end_step(process_step, str(e))
                 raise
             if not process_success:
-                critical_failures.append("Project processing failed - check logs for details")
+                # The reason, not a pointer at logs the caller has no access to (RC-66,
+                # bevinding 2). process_project records why it gave up in
+                # _processing_error; only when it did not is there nothing better to say
+                # than that this step failed.
+                critical_failures.append(self._processing_error or "Bijwerken van diensten en manifesten is mislukt")
                 self._end_step(
                     process_step,
                     self._processing_error or "Bijwerken van diensten en manifesten is mislukt",
@@ -4831,10 +4835,19 @@ class ProjectManager:
             )
 
             if not await self.has_deployments_for_current_cluster():
+                # Nothing to reconcile is not a failure (RC-66, bevinding 2). A project
+                # created through POST /api/v2/projects has no deployments at all yet,
+                # and a project whose deployments all live on another cluster is simply
+                # not this operations manager's work. Reporting False made every refresh
+                # of such a project fail with "Project processing failed - check logs
+                # for details", pointing at logs the caller cannot read for a state that
+                # is entirely correct.
                 logger.info(
                     f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster"
                 )
-                return False
+                self._processing_error = None
+                self._component_failures = None
+                return True
 
             # Clear stale image-pull auto-disables so a component can deploy again:
             # when the image reference changed (any edit path), or -- on an explicit
@@ -7094,8 +7107,11 @@ class ProjectManager:
                         logger.error(error_msg)
                         return {"success": False, "created": False, "error": error_msg, "error_type": "no_repositories"}
 
-                # Add the new deployment to the project data
-                project_data["deployments"].append(new_deployment)
+                # Add the new deployment to the project data. A project created through
+                # POST /api/v2/projects has no `deployments` key at all -- there is
+                # nothing to roll out yet -- so the first deployment added to it must
+                # create the list rather than assume one (RC-66).
+                project_data.setdefault("deployments", []).append(new_deployment)
 
                 # Validate domain config when this call sets domain settings.
                 if domain_format is not None or base_domain is not None or subdomain is not None:
@@ -8015,6 +8031,9 @@ class ProjectManager:
                 # write path: a value the storage form normalises would differ from what is
                 # stored on every read, so the no-op check below could never be true again.
                 validate_value_for_storage(key, value, storage)
+                # And the service's own rule on its values: an alias must point at a
+                # platform variable that exists (RC-66, bevinding 5).
+                service.validate_owned_value(key, value)
         except ComponentValuesError as e:
             return {"success": False, "error": str(e), "error_type": "invalid_values"}
 
