@@ -8,6 +8,17 @@ vars:
   KIND_CLUSTER_NAME: '{{default "gitops-fluxcd" .KIND_CLUSTER_NAME}}'
   CLUSTER_TYPE: '{{default "local" .CLUSTER_TYPE}}'
   RIG_NAMESPACE: '{{default "rig-system" .RIG_NAMESPACE}}'
+  # Sandbox-builds draaien vaak op een gedeelde server naast andere sessies en het
+  # kind-cluster. Een aparte builder met een geheugengrens houdt de build binnen zijn
+  # eigen ruimte en houdt tegelijk de buildcache vast. Zie sandbox:build-builder.
+  SANDBOX_BUILDER_NAME: '{{default "rig-sandbox-builder" .SANDBOX_BUILDER_NAME}}'
+  # 4 GiB van de 16: ruim boven wat de zwaarste stap (uv sync) nodig heeft, en laat
+  # genoeg over voor het kind-cluster (~4-6 GB) en de andere sessies. Lager afstellen
+  # laat een build sneuvelen die het wel had gekund; hoger haalt de grens leeg.
+  SANDBOX_BUILD_MEMORY: '{{default "4g" .SANDBOX_BUILD_MEMORY}}'
+  # Optionele registry-cache, dezelfde vorm als publish-operations-manager. Leeg = alleen
+  # de cache van de builder zelf, wat op een dev-server het geval is.
+  SANDBOX_CACHE_IMAGE: '{{default "" .SANDBOX_CACHE_IMAGE}}'
 
 #set: ['e', 'x']  # equivalent to set -ex
 
@@ -3102,17 +3113,67 @@ tasks:
         task sandbox:build-operations-manager-image
     silent: true
 
+  sandbox:build-builder:
+    desc: "Zorg voor een buildx-builder met een geheugengrens (gedeelde server)"
+    summary: |
+      Een build zonder grens kan het hele werkgeheugen pakken en trekt dan de andere
+      sessies en het kind-cluster mee om. De standaard-builder (driver `docker`) draait
+      in de docker-daemon en kent geen grens; een `docker-container`-builder wel.
+
+      Die builder houdt daarnaast zijn eigen buildcache vast tussen builds door. Dat is
+      wat de drie apt-rondes uit operations-manager/Dockerfile na de eerste build
+      overslaat, ook wanneer de pakketspiegels slecht bereikbaar zijn.
+
+      SANDBOX_BUILD_MEMORY overschrijft de grens (standaard {{.SANDBOX_BUILD_MEMORY}}).
+    vars:
+      BUILDER_CONTAINER: 'buildx_buildkit_{{.SANDBOX_BUILDER_NAME}}0'
+    cmds:
+      - |
+        # numfmt wil hoofdletters (4G), docker accepteert beide - vandaar de tr.
+        WANT="$(echo "{{.SANDBOX_BUILD_MEMORY}}" | tr '[:lower:]' '[:upper:]' | numfmt --from=iec)"
+        HAVE="$(docker inspect {{.BUILDER_CONTAINER}} 2>/dev/null | jq -r '.[0].HostConfig.Memory' 2>/dev/null || echo "")"
+        if [ "$HAVE" != "$WANT" ]; then
+          # Bestaat hij met een andere (of geen) grens, dan is opnieuw aanmaken de enige
+          # manier: een draaiende buildkit-container krijgt geen nieuwe limiet.
+          if [ -n "$HAVE" ]; then
+            echo "Builder {{.SANDBOX_BUILDER_NAME}} heeft grens '$HAVE', gewenst '$WANT' - opnieuw aanmaken..."
+          fi
+          docker buildx rm {{.SANDBOX_BUILDER_NAME}} >/dev/null 2>&1 || true
+          docker buildx create \
+            --name {{.SANDBOX_BUILDER_NAME}} \
+            --driver docker-container \
+            --driver-opt memory={{.SANDBOX_BUILD_MEMORY}} \
+            --bootstrap >/dev/null
+          echo "Builder {{.SANDBOX_BUILDER_NAME}} aangemaakt met geheugengrens {{.SANDBOX_BUILD_MEMORY}}"
+        else
+          echo "Builder {{.SANDBOX_BUILDER_NAME}} staat klaar met geheugengrens {{.SANDBOX_BUILD_MEMORY}}"
+        fi
+    silent: true
+
   sandbox:build-operations-manager-image:
     desc: "Build operations-manager image and load into Kind (no deploy)"
     cmds:
+      # Niet beginnen als er te weinig vrij is: dat was vooraf te zien toen een build de
+      # server bijna omver trok. Zie docs/uitrol-op-de-dev-server.md.
+      - scripts/build-preflight.sh
       # Eerst de versie schrijven, anders bakt de build in wat er toevallig op schijf ligt:
       # opi/version.json staat in .gitignore en dus niet in `git status`, maar wel in de
       # buildcontext, en opi/core/version.py laat dat bestand voorgaan op de ingebakken
       # build-args. Een image kon zo een commit van dagen eerder over zichzelf melden.
       - task: version:generate
+      - task: sandbox:build-builder
       - |
         echo "Building operations-manager Docker image..."
+        # --cache-from: dezelfde vorm als publish-operations-manager (docker-build-and-push).
+        # Leeg gelaten pakt hij alleen de cache van de builder zelf; met SANDBOX_CACHE_IMAGE
+        # kun je er een registry-cache naast zetten.
+        CACHE_FLAGS=""
+        if [ -n "{{.SANDBOX_CACHE_IMAGE}}" ]; then
+          CACHE_FLAGS="--cache-from type=registry,ref={{.SANDBOX_CACHE_IMAGE}}"
+        fi
         docker buildx build \
+          --builder {{.SANDBOX_BUILDER_NAME}} \
+          $CACHE_FLAGS \
           --target application \
           --load \
           -t operations-manager \
@@ -3126,19 +3187,9 @@ tasks:
   sandbox:update-operations-manager:
     desc: "Build and deploy the operations-manager to the sandbox cluster"
     cmds:
-      # Zie sandbox:build-operations-manager-image: zonder dit bakt de build de
-      # version.json in die er toevallig lag, en meldt de pod een andere commit.
-      - task: version:generate
-      - |
-        echo "Building operations-manager Docker image..."
-        docker buildx build \
-          --target application \
-          --load \
-          -t operations-manager \
-          -f operations-manager/Dockerfile .
-      - |
-        echo "Loading image into kind cluster..."
-        kind load docker-image operations-manager:latest --name {{.KIND_CLUSTER_NAME}}
+      # Bouwen en in Kind laden staat in één taak, zodat de preflight, de geheugengrens
+      # en de cache hier niet uit de pas kunnen lopen met de bouwtaak.
+      - task: sandbox:build-operations-manager-image
       - |
         echo "Updating operations-manager deployment..."
         SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local --load-restrictor LoadRestrictionsNone | kubectl apply -f -
