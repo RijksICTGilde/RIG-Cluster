@@ -104,6 +104,33 @@ def _deployment_component(data: dict) -> dict:
     return data["deployments"][0]["components"][0]
 
 
+class TestTheServicesOwnRule:
+    """The write path is held to the alias rule too, not only the API (RC-66)."""
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_reference_is_refused_on_the_write_path(self, manager) -> None:
+        instance, commit = manager
+
+        result = await instance.set_component_values(
+            "aliases", "component", "add", component_name="backend", values={"KAPOT": "$BESTAAT_ECHT_NIET"}
+        )
+
+        assert not result["success"]
+        assert result["error_type"] == "invalid_values"
+        assert "BESTAAT_ECHT_NIET" in result["error"]
+        assert not commit.commits, "nothing may be committed for a refused value"
+
+    @pytest.mark.asyncio
+    async def test_an_own_env_var_with_a_dollar_is_still_stored(self, manager) -> None:
+        instance, _ = manager
+
+        result = await instance.set_component_values(
+            "user-env-vars", "component", "add", component_name="backend", values={"PASSWORD": "p$BESTAAT_NIET"}
+        )
+
+        assert result["success"], result
+
+
 class TestWritingOnTheComponent:
     @pytest.mark.asyncio
     async def test_add_stores_an_encrypted_block(self, manager) -> None:
@@ -317,13 +344,13 @@ class TestNoChurn:
         assert not refused["success"]
 
         stored = await instance.set_component_values(
-            "aliases", "component", "add", component_name="backend", values={"A": '"q"'}
+            "aliases", "component", "add", component_name="backend", values={"A": '"$DATABASE_SERVER_HOST"'}
         )
         assert stored["success"]
         assert stored["changed"]
 
         again = await instance.set_component_values(
-            "aliases", "component", "patch", component_name="backend", values={"A": '"q"'}
+            "aliases", "component", "patch", component_name="backend", values={"A": '"$DATABASE_SERVER_HOST"'}
         )
         assert again["changed"] is False, "PER_VALUE keeps the quotes, so re-writing it is a no-op"
         assert len(commit.commits) == 1

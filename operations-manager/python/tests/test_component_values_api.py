@@ -96,8 +96,8 @@ class TestTheRoutesExist:
             ("delete", ENV_DEPLOYMENT, None),
             ("delete", f"{ENV_DEPLOYMENT}/A", None),
             ("post", f"{ENV_DEPLOYMENT}/:delete", {"keys": ["A"]}),
-            ("post", ALIAS_COMPONENT, {"values": {"A": "$B"}}),
-            ("patch", ALIAS_COMPONENT, {"values": {"A": "$B"}}),
+            ("post", ALIAS_COMPONENT, {"values": {"A": "$DATABASE_SERVER_HOST"}}),
+            ("patch", ALIAS_COMPONENT, {"values": {"A": "$DATABASE_SERVER_HOST"}}),
             ("delete", ALIAS_COMPONENT, None),
             ("delete", f"{ALIAS_COMPONENT}/A", None),
             ("post", f"{ALIAS_COMPONENT}/:delete", {"keys": ["A"]}),
@@ -298,7 +298,7 @@ class TestInvalidPayloads:
         assert "TOKEN" in response.json()["detail"]
         created_task.assert_not_called()
 
-    @pytest.mark.parametrize("value", ['"quoted"', "'quoted'"])
+    @pytest.mark.parametrize("value", ['"$DATABASE_SERVER_HOST"', "'$DATABASE_SERVER_HOST'"])
     def test_surrounding_quotes_are_a_422_for_env_vars_but_fine_for_aliases(self, client, created_task, value) -> None:
         # Only the KEY=value block form removes them.
         assert client.post(ENV_COMPONENT, headers=HEADERS, json={"values": {"TOKEN": value}}).status_code == 422
@@ -332,13 +332,13 @@ class TestTheSpec:
 
     def test_every_path_and_method_is_documented(self, spec) -> None:
         expected = {
-            ENV_COMPONENT_TEMPLATE: {"post", "patch", "delete"},
+            ENV_COMPONENT_TEMPLATE: {"get", "post", "patch", "delete"},
             f"{ENV_COMPONENT_TEMPLATE}/{{value_key}}": {"delete"},
             f"{ENV_COMPONENT_TEMPLATE}/:delete": {"post"},
-            ENV_DEPLOYMENT_TEMPLATE: {"post", "patch", "delete"},
+            ENV_DEPLOYMENT_TEMPLATE: {"get", "post", "patch", "delete"},
             f"{ENV_DEPLOYMENT_TEMPLATE}/{{value_key}}": {"delete"},
             f"{ENV_DEPLOYMENT_TEMPLATE}/:delete": {"post"},
-            ALIAS_COMPONENT_TEMPLATE: {"post", "patch", "delete"},
+            ALIAS_COMPONENT_TEMPLATE: {"get", "post", "patch", "delete"},
             f"{ALIAS_COMPONENT_TEMPLATE}/{{value_key}}": {"delete"},
             f"{ALIAS_COMPONENT_TEMPLATE}/:delete": {"post"},
         }
@@ -349,17 +349,27 @@ class TestTheSpec:
     def test_the_spec_has_no_deployment_path_for_aliases(self, spec) -> None:
         assert not [path for path in spec["paths"] if "aliases" in path and "/deployment/" in path]
 
-    def test_every_values_route_documents_the_rollout_flag(self, spec) -> None:
+    def test_every_values_write_documents_the_rollout_flag(self, spec) -> None:
         values_paths = [path for path in spec["paths"] if "/values/" in path]
         assert values_paths
         for path in values_paths:
             for method, operation in spec["paths"][path].items():
                 names = {param["name"] for param in operation.get("parameters", [])}
+                if method == "get":
+                    # The read changes nothing, so a rollout switch on it would be a
+                    # promise it cannot keep (RC-66).
+                    assert "rollout" not in names, f"GET {path} takes rollout"
+                    continue
                 assert "rollout" in names, f"{method.upper()} {path} does not take rollout"
 
-    def test_every_values_route_documents_the_202(self, spec) -> None:
+    def test_every_values_write_documents_the_202(self, spec) -> None:
         for path in [p for p in spec["paths"] if "/values/" in p]:
             for method, operation in spec["paths"][path].items():
+                if method == "get":
+                    # Synchronous: it reads the project file, so there is no task.
+                    assert "202" not in operation["responses"], f"GET {path}"
+                    assert "200" in operation["responses"], f"GET {path}"
+                    continue
                 assert "202" in operation["responses"], f"{method.upper()} {path}"
 
     def test_the_bodies_carry_their_own_schema(self, spec) -> None:
