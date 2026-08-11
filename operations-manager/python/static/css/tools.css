@@ -1,6 +1,27 @@
 /* Vormgeving van de toolspagina.
-   Stond als <style>-blok in opi/templates/tools.html.j2. */
+   Stond als <style>-blok in opi/templates/tools.html.j2.
 
+   RC-74 heeft dit bestand langs de componenten gelegd. Wat wegkon:
+
+   - Het handgebouwde keuzeveld (.rvo-form-field / .rvo-label / .rvo-select in de markup)
+     is <c-select-field ... native>. Die rvo-klassen deden allang niets meer, dus dat veld
+     stond er ongestileerd bij.
+   - .tool-error-message - de foutmelding is <c-alert type="error"> en brengt haar eigen
+     witruimte mee. */
+
+/* Het blok met het resultaat.
+
+   GEEN component, en dat is gemeten en niet beredeneerd. De voor de hand liggende keuze
+   is <c-code-viewer>: een blok code met een kopieerknop erbij. Maar code-viewer is een
+   CodeMirror-weergave van EEN tekst die je in zijn geheel meegeeft bij het opbouwen, en
+   dit blok is bij het laden leeg en krijgt zijn inhoud pas van showSuccess(). Met
+   <c-code-viewer id="output-text"> en .textContent = '...' erop bleef de zichtbare tekst
+   LEEG - precies de stille storing die deze omzetting moet uitsluiten.
+
+   Om dezelfde reden houdt het logpaneel in bg/_log-viewer.html.j2 zijn eigen regelbak.
+
+   cursor:pointer hoort bij de klikafhandeling eronder in de pagina: klikken kopieert de
+   tekst. Dat is geen versiering maar de aanwijzing dat het blok iets doet. */
 .output-code-block {
     background-color: #f5f5f5;
     padding: 1rem;
@@ -13,15 +34,15 @@
 
 /* Deze pagina bouwt zijn eigen c-page en laadt base.css dus niet; .is-hidden staat
    daarom hier. Verborgen tot het script de klasse weghaalt. Zelfde regel als in
-   base.css, inclusief het !important en de reden erachter. */
+   base.css, inclusief het !important en de reden erachter.
+
+   GEEN component: dit is een schakelaar waar JavaScript aan hangt, geen opmaak. */
 .is-hidden {
     display: none !important;
 }
 
-.tool-error-message {
-    margin-bottom: 1rem;
-}
-
+/* De regel "Result (click to copy):" boven het blok. GEEN component - dit haalt alleen
+   de ondermarge van een <p> terug, en daar heeft <c-paragraph> geen eigenschap voor. */
 .tool-result-label {
     margin-bottom: 0.5rem;
 }
