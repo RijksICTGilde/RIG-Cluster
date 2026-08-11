@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
+from opi.core.templates_lotc import templates_lotc
 from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.service_path import smart_get_value, smart_set_value
