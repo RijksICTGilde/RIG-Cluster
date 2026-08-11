@@ -26,6 +26,7 @@ deployment/componentniveau /api/v2/projects/{project}/services/{svc}/values/depl
 
 | operatie | methode + pad | body |
 |---|---|---|
+| lezen | `GET .../values/...` | - |
 | toevoegen (1..n) | `POST .../values/...` | `{"values": {"NAAM": "waarde", ...}}` |
 | wijzigen (1..n) | `PATCH .../values/...` | `{"values": {...}}` |
 | verwijderen (1) | `DELETE .../values/.../{key}` | - |
@@ -40,9 +41,37 @@ aparte enkelvoudige variant. `POST .../:delete` volgt de bestaande actie-convent
 Anders overschrijft een typefout stil een waarde, en omdat de opgeslagen vorm versleuteld
 is, ziet niemand dat terug in de diff.
 
-**Waarden worden nooit teruggegeven.** Er is geen leesendpoint: een waarde teruglezen zou
-precies het geheim uitleveren dat deze endpoints versleuteld houden. Toevoegen, wijzigen
-en verwijderen op naam hoeven dat ook nergens voor.
+### Lezen: dezelfde vorm, met maskering waar dat moet
+
+Er was geen leesendpoint, met als argument dat een waarde teruglezen het geheim zou
+uitleveren dat deze endpoints versleuteld houden. Dat argument klopt voor een
+env-varwaarde en **niet** voor een alias: een alias is een verwijzing naar een
+platformvariabele, de waarde *is* de koppeling. Zonder leespad waren `zad env list` en
+`zad alias list` onmogelijk, terwijl de `explanation` van de dienst wél naar dit pad
+verwijst als de plek waar zijn variabelen staan (RC-66).
+
+`GET` op hetzelfde pad geeft daarom `{"service", "target", "component", "deployment",
+"values"}`, met `values` in dezelfde vorm als de `POST` erop schrijft:
+
+```jsonc
+// GET .../services/aliases/values/component/backend
+{"values": {"POSTGRES_HOST": "$DATABASE_SERVER_HOST", "LEGACY_LITERAL": "***"}}
+
+// GET .../services/user-env-vars/values/component/backend
+{"values": {"API_TOKEN": "***", "DEBUG": "***"}}
+```
+
+Wat getoond mag worden bepaalt **de dienst zelf**, per waarde
+(`Service.owned_value_is_secret`, `opi/services/catalog/base.py`): standaard is elke
+waarde een geheim, en alleen `aliases` zegt iets anders - voor een waarde die een
+verwijzing naar een bestaande platformvariabele is. Dat oordeel kan pas ná ontsleutelen
+vallen, want in het bestand is alles versleuteld; dat is precies waarom één regel op de
+opslagvorm elke alias als `***` teruggaf.
+
+Het lezen is **synchroon** (het leest het projectbestand, er valt niets in de wachtrij te
+zetten), kent dus geen `rollout`-parameter en geeft 200. Een component of deployment dat
+er niet is, is een 404; opgeslagen waarden die niet te ontsleutelen zijn een 422, want dat
+is iets anders dan "er zijn er geen".
 
 ### Aliassen hebben geen deploymentniveau
 
@@ -180,6 +209,14 @@ rechtstreeks YAML.
   als `KEY=value`-regels over de lijn.
 - **Waarden die de opslagvorm niet byte-voor-byte overleven worden geweigerd** (zie
   hieronder).
+- **Een aliaswaarde moet naar een bestaande platformvariabele verwijzen.** `$DATABASE_SERVER_HOST`
+  mag, `$BESTAAT_ECHT_NIET` niet, en een waarde zonder enige verwijzing ook niet. Die regel
+  bestond al (`_categorize_alias`) maar sloeg pas toe bij het uitrollen, zodat een typefout
+  pas zichtbaar werd als de container opkwam (RC-66). Voor een **eigen** env-var geldt hij
+  bewust niet: een dollarteken in een wachtwoord is geen typefout. De regel staat in
+  `opi/services/catalog/aliases/references.py` en hangt onder
+  `Service.validate_owned_value`, zodat de route en `set_component_values` dezelfde toets
+  doen.
 - Beide leveren een **422** op voordat er iets in de wachtrij komt. Een naam die in het
   *pad* staat (de enkelvoudige delete) wordt op dezelfde manier afgekeurd.
 - Een onbekend project, component of deployment is een **404** op het verzoek zelf, niet een
@@ -256,7 +293,9 @@ curl -X POST "https://.../api/v2/projects/mijnproject/:refresh" -H "X-API-Key: $
 | de routes (registry-gedreven) | `opi/api/v2/router.py` (`_register_service_values_routes`) |
 | de schrijfactie | `ProjectManager.set_component_values` |
 | de taak | `opi/core/task_handlers_components.py` (`handle_configure_service_values`) |
-| toetsen | `tests/test_component_values.py`, `tests/test_component_values_api.py`, `tests/test_component_values_manager.py` |
+| lezen (maskering per dienst) | `opi/api/v2/router.py` (`_make_values_read_endpoint`), `Service.owned_value_is_secret` |
+| aliasregel (verwijzing bestaat) | `opi/services/catalog/aliases/references.py` |
+| toetsen | `tests/test_component_values.py`, `tests/test_component_values_api.py`, `tests/test_component_values_manager.py`, `tests/test_component_values_read_api.py`, `tests/test_alias_reference_validation.py` |
 
 Een service die in de toekomst ook een sleutel/waarde-property bezit, krijgt zijn endpoints
 door `owned_values_storage` te declareren - er staat nergens een servicenaam in de router.
