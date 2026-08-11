@@ -176,3 +176,21 @@ kiezer met een vaste selectie een andere leugen dan de vorige.
 **Voorstel.** Een derde stand naast verplicht/optioneel: een veld dat geen van beide
 labels draagt. Bijvoorbeeld `optional-label=""` dat het merk weglaat, of een expliciet
 `no-optional-badge`.
+
+---
+
+## 10. Geen stand voor "even hoge kaarten in een rij"
+
+**Wat er gebeurt.** In een `<c-auto-grid>` met een `<c-card>` per cel zijn de CELLEN even
+hoog (een grid rekt ze uit) en de KAARTEN niet: die zijn zo hoog als hun inhoud. Een
+kaart met een foutmelding erin is dan twee keer zo hoog als zijn buurman, en die buurman
+hangt half in de lucht. Gemeten: cel 259px en 259px, kaart 259px en 71px.
+
+**Waarom dat pijn doet.** Het is precies het geval waarvoor je een grid pakt, en de
+oplossing (`height: 100%` op de kaart) is een regel CSS die je per plek opnieuw schrijft.
+
+**Wat wij intussen doen.** Een regel in `static/css/lotc-app.css`, gehangen aan de id die
+er toch al stond.
+
+**Voorstel.** Een `stretch`-stand op `c-auto-grid`/`c-grid` die zijn kaarten uitrekt, of
+een hoogte-attribuut op `c-card`.
