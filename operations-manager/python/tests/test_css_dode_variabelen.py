@@ -46,31 +46,26 @@ DEFINITIE = re.compile(r"(--rvo-[a-z0-9-]+)\s*:")
 
 #: Namen die in ONS CSS gebruikt worden en nergens bestaan - ook niet in het oude thema.
 #: Per naam het aantal verwijzingen. Het getal mag alleen omlaag.
-NOOIT_BESTAAN = {
-    "--rvo-border-radius-lg": 1,
-    "--rvo-color-error": 1,
-    "--rvo-color-geel-150": 1,
-    "--rvo-color-geel-300": 3,
-    "--rvo-color-geel-750": 2,
-    "--rvo-color-grasgroen-200": 1,
-    "--rvo-color-grasgroen-800": 1,
-    "--rvo-color-grijs-025": 1,
-    "--rvo-color-grijs-25": 5,
-    "--rvo-color-grijs-50": 4,
-    "--rvo-color-groen-50": 3,
-    "--rvo-color-hemelblauw-100": 4,
-    "--rvo-color-hemelblauw-200": 2,
-    "--rvo-color-hemelblauw-50": 4,
-    "--rvo-color-hemelblauw-700": 1,
-    "--rvo-color-oranje-200": 1,
-    "--rvo-color-oranje-50": 2,
-    "--rvo-color-oranje-800": 1,
-    "--rvo-color-paars": 2,
-    "--rvo-color-paars-50": 1,
-    "--rvo-color-rood-100": 1,
-    "--rvo-color-rood-50": 2,
-    "--rvo-color-rood-700": 1,
-    "--rvo-color-rood-800": 1,
+NOOIT_BESTAAN: dict[str, int] = {
+    # LEEG, en dat is het doel van deze lijst. RC-74 heeft de laatste vierentwintig namen
+    # opgeruimd door per blok de vraag te stellen waar deze test voor staat: is er een
+    # component voor?
+    #
+    #   - De statuspillen (geel-300/-750), de backup-soorten (hemelblauw-200,
+    #     grasgroen-200/-800, oranje-200/-800), de omgevings- en typebadges (groen-50,
+    #     rood-50, oranje-50, hemelblauw-50) en de argo-badges zijn <c-tag> geworden. Een
+    #     gekleurde pil IS een tag; de kleur hoort bij de betekenis en niet bij een eigen
+    #     klasse.
+    #   - grijs-25/-025/-50 zaten op kopbanden en hover-regels van tabellen die nu
+    #     <c-table> zijn.
+    #   - Wat geen pil of tabel was heeft een VASTE waarde gekregen in plaats van een lege
+    #     var(): de hoekstraal van de dialoog (border-radius-lg), de foutmelding erin
+    #     (rood-100/-700/-800), de gekozen hersteloptie en de geselecteerde dienstkaart
+    #     (hemelblauw-100) en de streep voor een component (paars).
+    #
+    # Blijft hij leeg, dan is dat goed nieuws. Komt er een naam bij, dan vangt
+    # test_geen_nieuwe_dode_variabele dat af en hoort de vraag opnieuw gesteld te worden:
+    # eerst het component, dan pas een kleur verzinnen.
 }
 
 
