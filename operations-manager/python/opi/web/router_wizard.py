@@ -1069,7 +1069,7 @@ async def toggle_preset(
 ) -> HTMLResponse | RedirectResponse:
     """Toggle a preset: apply if not active, remove if active."""
     from opi.forms.presets.loader import get_preset_by_id
-    from opi.forms.widgets.roos import _is_preset_applied
+    from opi.forms.widgets.fields import _is_preset_applied
 
     state = get_wizard_state(request)
     if not state or state.flow_id != flow_id:
