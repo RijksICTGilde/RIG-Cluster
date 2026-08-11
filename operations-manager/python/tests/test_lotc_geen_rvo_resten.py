@@ -41,12 +41,18 @@ VAR_RVO = re.compile(r"var\(\s*--rvo-")
 #: verspilde moeite, dus die staat hier tot dat besluit valt.
 ARCHITECTURE_OVERVIEW = "architecture-overview.html.j2"
 
-#: Bestanden die vanaf geen enkele route bereikbaar zijn. Daar de klassen uithalen is
-#: poetsen aan iets wat niemand rendert; of ze weg moeten is een eigen besluit over dode
-#: templates. De lijst staat in features/lotc-rvo-opruiming.md. Deze test houdt hem vast
-#: zodat een van deze bestanden niet stilletjes weer in gebruik genomen wordt MET zijn
-#: rvo-klassen erin.
-ONBEREIKBAAR_MET_KLASSEN = {
+#: Bestanden die hun rvo-klassen nog dragen, met het aantal. Ze stonden hier als
+#: "vanaf geen enkele route bereikbaar": zolang roos bestond rendeerde de wizard zijn
+#: TemplatePartials en zijn bijlagenfragmenten uit de roos-boom, en waren deze
+#: LOTC-kopieen dode letter.
+#:
+#: Sinds RC-67 is dat niet meer waar: de roos-boom is weg, dus de formulierlaag en de
+#: routes renderen DEZE bestanden. De klassen doen er nog steeds niets (het thema laadt
+#: ze niet), dus het blijft cosmetische rest en geen storing - maar het is nu opruimwerk
+#: aan iets wat WEL gerenderd wordt. Zie features/lotc-rvo-opruiming.md.
+#:
+#: Deze test houdt de lijst vast: het aantal mag alleen omlaag.
+NOG_MET_KLASSEN = {
     "example.html.j2": 2,
     "formulier-template.html.j2": 13,
     "invite-error.html.j2": 5,
@@ -60,7 +66,6 @@ ONBEREIKBAAR_MET_KLASSEN = {
     "project-creation-success.html.j2": 5,
     "project-details/_argocd-deployment-card.html.j2": 27,
     "project-details/_resource-usage.html.j2": 12,
-    "roos-form-improved.html.j2": 12,
     "tools.html.j2": 8,
     "wizard/modal_wizard_review.html.j2": 1,
     "wizard/partials/approval_items.html.j2": 13,
@@ -76,7 +81,7 @@ ONBEREIKBAAR_MET_KLASSEN = {
 #: Zelfde opzet voor de ontwerpvariabelen. Die zijn geen dode letter maar een LEVENDE
 #: verwijzing: het shimblok onderaan static/css/lotc-app.css vult ze in. Wie er een
 #: weghaalt zonder vervanging, verandert een kleur of een afstand.
-KLASSEN_UITZONDERINGEN = {ARCHITECTURE_OVERVIEW: 158, **ONBEREIKBAAR_MET_KLASSEN}
+KLASSEN_UITZONDERINGEN = {ARCHITECTURE_OVERVIEW: 158, **NOG_MET_KLASSEN}
 VARIABELEN_UITZONDERINGEN = {
     ARCHITECTURE_OVERVIEW: 81,
     "wizard/partials/backup_select_deployment.html.j2": 4,
