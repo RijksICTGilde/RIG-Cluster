@@ -832,9 +832,19 @@ def _dashboard_health_banner(health_counts: dict[str, int]) -> dict[str, Any] | 
             f"{'heeft' if inactive == 1 else 'hebben'} een deployment die tijdelijk niet actief is"
         )
     total = sum(health_counts.values())
+    # Vier gevallen, want "0 van de 1 projecten zijn gezond" is op drie manieren fout:
+    # het telwoord voor een enkelvoud, het meervoud "projecten", en het werkwoord.
+    if total == 1:
+        heading = "Het project is gezond" if healthy else "Het project is niet gezond"
+    elif not healthy:
+        heading = f"Geen van je {total} projecten is gezond"
+    elif healthy == 1:
+        heading = f"1 van de {total} projecten is gezond"
+    else:
+        heading = f"{healthy} van de {total} projecten zijn gezond"
     return {
         "kind": "info",
-        "heading": f"{healthy} van de {total} projecten {'is' if healthy == 1 else 'zijn'} gezond",
+        "heading": heading,
         "lines": lines,
     }
 
