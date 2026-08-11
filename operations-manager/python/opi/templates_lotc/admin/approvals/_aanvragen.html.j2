@@ -4,10 +4,10 @@
     <c-card outline="true" padding="none" background-color="wit">
         <div class="project-group-header">
             <c-heading type="h3">
-                <c-icon icon="applicatie" size="md"/>
+                <c-icon icon="rectangle-stack" size="md"/>
                 {{ project.project_name }}
             </c-heading>
-            {% set lotc_onclick_1 %}openApprovalModal('{{ project.project_name }}'){% endset %}<c-button label="Beheren" size="sm" show-icon="before" icon="bewerken"/>
+            {% set lotc_onclick_1 %}openApprovalModal('{{ project.project_name }}'){% endset %}<c-button label="Beheren" size="sm" show-icon="before" icon="pencil-on-square"/>
         </div>
         <div class="table-container">
             <table class="domains-table">

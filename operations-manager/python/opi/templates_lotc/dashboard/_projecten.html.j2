@@ -55,7 +55,7 @@
                     {% endif %}
                     <div class="project-metrics">
                         <div class="metric">
-                            <c-icon icon="server" size="sm"/>
+                            <c-icon icon="cylinder-split" size="sm"/>
                             <span>{{ project.deployment_count }} deployment{{ 's' if project.deployment_count != 1 }}</span>
                         </div>
                         <div class="metric">
@@ -65,7 +65,7 @@
                     </div>
                     {% if project.last_deployed %}
                     <div class="project-deploy-time">
-                        <c-icon icon="kalender" size="sm"/>
+                        <c-icon icon="calendar" size="sm"/>
                         <span data-deploy-time="{{ project.last_deployed }}">
                             {{ project.last_deployed[:16]|replace('T', ' ') }} UTC
                         </span>

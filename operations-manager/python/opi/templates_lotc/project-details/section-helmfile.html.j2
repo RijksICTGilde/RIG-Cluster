@@ -2,7 +2,7 @@
 {% if project.helmfile %}
 <c-card outline="true" padding="xl" background-color="wit">
     <c-layout-flow gap="lg">
-        <c-heading type="h2" class="section-heading"><c-icon icon="applicatie" size="xl" color="oranje"/>Helmfile</c-heading>
+        <c-heading type="h2" class="section-heading"><c-icon icon="rectangle-stack" size="xl" color="oranje"/>Helmfile</c-heading>
         <p>Helmfile definities op project niveau</p>
 
         <div class="helmfile-section">
@@ -10,7 +10,7 @@
             <c-card class="helmfile-card" padding="lg" background-color="grijs-050" outline="true">
                 <c-layout-flow gap="md">
                     <div class="helmfile-header">
-                        <c-icon icon="applicatie" size="lg" color="oranje"/>
+                        <c-icon icon="rectangle-stack" size="lg" color="oranje"/>
                         <div>
                             <c-heading type="h3" label="{{ helmfile.name }}"/>
                             {% if helmfile.get('repository') %}
@@ -31,7 +31,7 @@
                     {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping and helmfile['helm-values']|length > 0 %}
                     <div class="helm-values-section section-divider">
                         <div class="helm-values-header">
-                            <c-icon icon="sleutel" size="sm" color="hemelblauw"/>
+                            <c-icon icon="lock-closed" size="sm" color="hemelblauw"/>
                             <span class="text-strong">Helm Values (Base)</span>
                             <span class="env-vars-count-badge">{{ helmfile['helm-values']|length }} waarde{% if helmfile['helm-values']|length != 1 %}n{% endif %}</span>
                         </div>

@@ -15,7 +15,7 @@
        @-attribuut als kale tekst, dus {{ ... }} komt er letterlijk uit en de knop doet
        stilletjes niets. Via de :attrs-spread wordt het wel een expressie, en geescapet. #}
 {% set hulp_js = "openServiceHelp('" ~ field.help_template ~ "')" %}
-<c-icon icon="vraagteken" size="xl"
+<c-icon icon="question-mark-circle" size="xl"
         class="field-help-btn"
         :attrs="{'onclick': hulp_js}" />
 {% endif %}

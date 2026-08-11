@@ -5,7 +5,7 @@
             <c-layout-flow row="true" align-items="center" gap="sm">
                 <c-heading type="h1" label="{{ project.display_name }}"/>
                 {% if user_role in ["admin", "owner"] %}
-                {% set lotc_onclick_1 %}openEditModal('modal-edit-identity', 'Projectgegevens bewerken'){% endset %}<c-button size="sm" label="Bewerken" show-icon="before" icon="bewerken"/>
+                {% set lotc_onclick_1 %}openEditModal('modal-edit-identity', 'Projectgegevens bewerken'){% endset %}<c-button size="sm" label="Bewerken" show-icon="before" icon="pencil-on-square"/>
                 {% endif %}
             </c-layout-flow>
             {% if project.description %}
