@@ -134,12 +134,21 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
             )
 
         progress.complete_task(delete_task)
-        message = f"Deployment '{deployment_name}' in project '{project_name}' deleted successfully"
+        # Both outcomes are success, and the answer says which one it was: in a script
+        # "deleted" and "was not there" read the same otherwise (RC-66, bevinding 6).
+        already_absent = bool(deletion_results.get("already_absent")) if isinstance(deletion_results, dict) else False
+        message = (
+            f"Deployment '{deployment_name}' bestond niet (meer) in project '{project_name}'; er is niets verwijderd"
+            if already_absent
+            else f"Deployment '{deployment_name}' in project '{project_name}' deleted successfully"
+        )
         logger.info(f"Task: deployment deletion completed successfully for {project_name}/{deployment_name}")
 
         return {
             "status": "completed",
             "message": message,
+            "deleted": not already_absent,
+            "already_absent": already_absent,
             "project": project_name,
             "deployment": deployment_name,
             "deletion_results": deletion_results if isinstance(deletion_results, dict) else {},
