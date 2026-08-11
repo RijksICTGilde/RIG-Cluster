@@ -136,6 +136,62 @@ def test_add_component_via_api(
     )
 
 
+def test_delete_component_via_api(
+    lifecycle_project: CreatedProject,
+    sandbox_url: str,
+    forgejo: ForgejoClient,
+) -> None:
+    """The component added above goes again, and its deployment entry goes with it.
+
+    The API had no way to remove a component at all (RC-73), so the last thing added
+    could only be taken back through the portal. The component sits in a deployment,
+    which is the normal case and the one the endpoint refuses without confirmation --
+    so both answers are exercised here, against the real project file:
+
+    1. without the flag: 409, naming the deployment that deploys it;
+    2. with it: the component AND the deployment's reference to it disappear from the
+       file in Forgejo. A reference left behind would make the project invalid, and the
+       save is what would have rejected it.
+    """
+    component_name = "apiworker"
+
+    refused_status, refused_body = sandbox_api.delete_component(
+        sandbox_url,
+        lifecycle_project.name,
+        lifecycle_project.api_key,
+        component_name=component_name,
+        verify_ssl=_API_VERIFY_SSL,
+    )
+    assert refused_status == 409, f"Expected 409 for a component in use, got {refused_status}: {refused_body}"
+    used_by = refused_body["detail"]["used_by"]
+    assert [use["deployment"] for use in used_by] == [lifecycle_project.deployment_name], used_by
+
+    status, task = sandbox_api.delete_component(
+        sandbox_url,
+        lifecycle_project.name,
+        lifecycle_project.api_key,
+        component_name=component_name,
+        confirm_in_use=True,
+        verify_ssl=_API_VERIFY_SSL,
+        # Deleting reprocesses the whole project, same as adding: minutes on a busy Kind.
+        timeout=360.0,
+    )
+    assert status == 202, f"Expected 202 for a confirmed delete, got {status}: {task}"
+
+    def _gone(data: dict) -> bool:
+        components = [c.get("name") for c in data.get("components") or []]
+        references = [
+            ref.get("reference")
+            for deployment in data.get("deployments") or []
+            for ref in deployment.get("components") or []
+        ]
+        return component_name not in components and component_name not in references
+
+    assert forgejo.wait_for_condition(lifecycle_project.name, _gone, timeout=180) is not None, (
+        f"Component '{component_name}' or a reference to it is still in the Forgejo project file"
+    )
+
+
 def test_delete_project_via_ui(
     lifecycle_project: CreatedProject,
     sandbox_url: str,
