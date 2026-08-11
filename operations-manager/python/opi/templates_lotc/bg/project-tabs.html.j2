@@ -568,39 +568,7 @@
             </c-action-group>
         {% endif %}
 
-        {% if project.deployments | length > 1 %}
-            {# De kiezer als THEMAveld met een ECHTE <select> erin (native="true").
-
-               Hij stond hier als kale <select> met een los <label><strong> ervoor: dat
-               werkte wel maar stond er onopgemaakt bij, en de afstand tot het blok eronder
-               kwam van niets. c-select-field zet er de vormgeving en de label-opmaak van
-               het thema omheen en geeft nog steeds een echte <select> - nodig, want
-               switchDeployment() leest this.value en het is een gewone keuzelijst.
-
-               De OPTIES staan er als kale <option>. Dat is geen slordigheid: <c-option>
-               rendert binnen een native select een <nldd-menu-item>, en daar maakt een
-               <select> niets van - de lijst blijft dan leeg. Gemeten.
-
-               Geen class in :attrs: het component zet er zelf al een op, en twee
-               class-attributen op een tag betekent dat de browser de tweede negeert. #}
-            {% set kiezer_gedrag = {'onchange': 'switchDeployment(this.value)'} %}
-            {# required, niet omdat er iets ingevuld MOET worden maar omdat lotc-forms elk
-               niet-verplicht veld van het label "Optioneel" voorziet (rijksconventie: markeer
-               optioneel, niet verplicht). Dat klopt voor een invoerveld en niet voor deze
-               KIEZER: hij dient om tussen deployments te wisselen, er staat er altijd een
-               geselecteerd, en "optioneel" slaat daar nergens op. #}
-            <c-select-field
-                native="true"
-                id="global-deployment-selector"
-                name="global-deployment-selector"
-                label="Deployment"
-                required="true"
-                :attrs="kiezer_gedrag">
-                {% for deployment in project.deployments | sort(attribute='name') %}
-                    <option value="{{ deployment.name }}">{{ deployment.name }} ({{ deployment.cluster }})</option>
-                {% endfor %}
-            </c-select-field>
-        {% endif %}
+        {% include "bg/_deployment-selector.html.j2" %}
 
         <c-stack gap="md">
             {% include "bg/_deployment-state.html.j2" %}
@@ -676,18 +644,30 @@
            bij. Levert Prometheus niets, dan toont het fragment zelf "No data".
 
            intersect once, net als bij de dienst: elk blok is een reeks queries, en die
-           doe je pas als iemand kijkt. #}
+           doe je pas als iemand kijkt.
+
+           EEN DEPLOYMENT TEGELIJK, net als op het tabblad Deployments. Hier stonden ze
+           alle onder elkaar, terwijl je ook hier per deployment kijkt: bij vier
+           deployments scrolde je langs vier grafiekenblokken om er een te vinden.
+           Dezelfde kiezer (bg/_deployment-selector.html.j2) en dezelfde markup waar
+           switchDeployment() aan hangt: ``class="deployment-section"`` met
+           ``data-deployment``. De keuze loopt mee met het andere tabblad; dat onthoudt
+           het script per project. #}
         {% if project.deployments %}
+            {% include "bg/_deployment-selector.html.j2" %}
             {% for deployment in project.deployments | sort(attribute='name') %}
-                {% call panel("Metingen - " ~ deployment.name, "chart-x-y-axis-line",
-                              info_text="Verbruik per component over de tijd.") %}
-                    <div id="metrics-content-{{ deployment.name }}"
-                         hx-get="/projects/details/{{ project.name }}/metrics/{{ deployment.name }}"
-                         hx-trigger="intersect once"
-                         hx-swap="innerHTML">
-                        <c-paragraph>Metingen worden opgehaald...</c-paragraph>
-                    </div>
-                {% endcall %}
+                <div class="deployment-section{% if not loop.first %} is-hidden{% endif %}"
+                     data-deployment="{{ deployment.name }}">
+                    {% call panel("Metingen - " ~ deployment.name, "chart-x-y-axis-line",
+                                  info_text="Verbruik per component over de tijd.") %}
+                        <div id="metrics-content-{{ deployment.name }}"
+                             hx-get="/projects/details/{{ project.name }}/metrics/{{ deployment.name }}"
+                             hx-trigger="intersect once"
+                             hx-swap="innerHTML">
+                            <c-paragraph>Metingen worden opgehaald...</c-paragraph>
+                        </div>
+                    {% endcall %}
+                </div>
             {% endfor %}
         {% endif %}
 

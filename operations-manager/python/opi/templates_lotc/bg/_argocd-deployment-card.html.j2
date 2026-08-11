@@ -78,32 +78,62 @@
             {% endif %}
         </c-cluster>
 
-        {# Automatisch uitgeschakelde componenten: een foutmelding per component. De volledige
-           technische reden (een lange ImagePullBackOff-dump) zit in een uitklapper, zodat de
-           melding leesbaar blijft; de image-verwijzing is het stuk waar je iets mee kunt. #}
-        {% for comp in disabled_components %}
-            {% set reason = comp['disabled-reason'] | default('') %}
-            {% set is_image = 'ImagePull' in reason or 'InvalidImageName' in reason or 'manifest' in reason %}
-            {# De kop van de melding buiten de tag samenstellen: een voorwaarde binnen een
-               componenttag wordt als attribuutnaam gelezen. #}
-            {% set disabled_heading = comp.reference ~ ' is uitgeschakeld' ~ (': image ontbreekt' if is_image else '') %}
-            <c-alert type="error" heading="{{ disabled_heading }}">
-                <c-stack gap="sm">
-                    {% if comp.image %}
-                        <c-paragraph size="sm">De container image kon niet worden opgehaald:</c-paragraph>
-                        <c-code>{{ comp.image }}</c-code>
-                    {% endif %}
-                    <c-paragraph size="sm">Push een geldige image of deploy opnieuw met een bestaande tag om automatisch te heractiveren.</c-paragraph>
-                    {% if reason %}
-                        <c-accordion>
-                            <c-accordion-item title="Technische details">
-                                <c-paragraph size="sm">{{ reason }}</c-paragraph>
-                            </c-accordion-item>
-                        </c-accordion>
-                    {% endif %}
-                </c-stack>
-            </c-alert>
-        {% endfor %}
+        {# Automatisch uitgeschakelde componenten: EEN melding per oorzaak, niet een per
+           component.
+
+           Hier stond een <c-alert> per component, met per stuk vier regels uitleg en een
+           uitklapper "Technische details". Bij zes componenten stond dezelfde tekst zes
+           keer onder elkaar: een lange rode brij waarin het enige wat verschilt - welk
+           component, en welke image - ondersneeuwt. Wat gelijk is hoort een keer, wat
+           verschilt hoort in de lijst.
+
+           De oorzaak deelt de componenten in twee groepen: een image die niet op te halen
+           is, en al het andere. Die groepen krijgen elk een eigen melding, want ze hebben
+           een eigen antwoord op "en wat doe ik eraan".
+
+           De technische reden (een lange ImagePullBackOff-dump) is uit de melding. Bij de
+           image-groep zegt de image-verwijzing hetzelfde in een regel; bij de overige
+           groep is de reden juist WEL het verschil per component en staat hij daarom als
+           regel achter de naam. De volledige tekst blijft beschikbaar via de logs. #}
+        {% if disabled_components %}
+            {% set uit = namespace(image=[], overig=[]) %}
+            {% for comp in disabled_components %}
+                {% set reason = comp['disabled-reason'] | default('') %}
+                {% if 'ImagePull' in reason or 'InvalidImageName' in reason or 'manifest' in reason %}
+                    {% set uit.image = uit.image + [comp] %}
+                {% else %}
+                    {% set uit.overig = uit.overig + [comp] %}
+                {% endif %}
+            {% endfor %}
+
+            {% if uit.image %}
+                {% set kop = (uit.image | length | string)
+                             ~ (' component is uitgeschakeld' if uit.image | length == 1 else ' componenten zijn uitgeschakeld')
+                             ~ ': image ontbreekt' %}
+                <c-alert type="error" heading="{{ kop }}">
+                    <c-stack gap="xs">
+                        {% for comp in uit.image %}
+                            <c-paragraph size="sm">{{ comp.reference }}{% if comp.image %} - {{ comp.image }}{% endif %}</c-paragraph>
+                        {% endfor %}
+                        <c-paragraph size="sm">Push een geldige image of deploy opnieuw met een bestaande tag; dan gaan ze vanzelf weer aan.</c-paragraph>
+                    </c-stack>
+                </c-alert>
+            {% endif %}
+
+            {% if uit.overig %}
+                {% set kop_overig = (uit.overig | length | string)
+                                    ~ (' component is uitgeschakeld' if uit.overig | length == 1 else ' componenten zijn uitgeschakeld') %}
+                <c-alert type="error" heading="{{ kop_overig }}">
+                    <c-stack gap="xs">
+                        {% for comp in uit.overig %}
+                            {% set reden = comp['disabled-reason'] | default('') %}
+                            <c-paragraph size="sm">{{ comp.reference }}{% if reden %} - {{ reden[:120] }}{% if reden | length > 120 %}...{% endif %}{% endif %}</c-paragraph>
+                        {% endfor %}
+                        <c-paragraph size="sm">Deploy opnieuw om ze te heractiveren.</c-paragraph>
+                    </c-stack>
+                </c-alert>
+            {% endif %}
+        {% endif %}
 
         {% if not has_image %}
             {# Geen enkel component heeft een image - deze deployment heeft geen resources. #}
