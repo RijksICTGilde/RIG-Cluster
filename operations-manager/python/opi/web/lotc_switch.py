@@ -1,8 +1,8 @@
 """Hoe een route zijn pagina rendert, en wat de hertekende pagina's aan gegevens vragen.
 
 Hier stond een SCHAKELAAR. Zolang de omzetting per pagina liep, koos ``?layout=`` (of het
-koekje ``zad_layout``) tussen de bestaande roos-pagina en de hertekende LOTC-pagina, en
-noemde elke route allebei de sjablonen:
+koekje ``zad_layout``) tussen de bestaande pagina en de hertekende, en noemde elke route
+allebei de sjablonen:
 
     return render(request, roos="services-overview.html.j2", lotc="bg/services.html.j2", ...)
 
