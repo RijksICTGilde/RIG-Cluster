@@ -23,14 +23,24 @@
 
                     <c-text-input-field id="private_key" name="private_key" label="AGE Private Key" placeholder="AGE-SECRET-KEY-1..."/>
 
-                    <div class="rvo-form-field">
-                        <label class="rvo-label" for="operation">Operation</label>
-                        <select id="operation" name="operation" class="rvo-select">
-                            <option value="encrypt">Encrypt</option>
-                            <option value="decrypt">Decrypt</option>
-                        </select>
-                        <p class="rvo-text--sm rvo-text--subtle">Select whether to encrypt or decrypt</p>
-                    </div>
+                    {# Was een handgebouwd veld: een <div class="rvo-form-field"> met een
+                       <label class="rvo-label">, een kale <select class="rvo-select"> en
+                       een <p> als hulptekst. Die drie rvo-klassen deden allang niets meer
+                       (lotc_rvo staat niet in DESIGN_SYSTEMS), dus dit stond er als een
+                       ongestileerde keuzelijst met een losse regel eronder.
+
+                       <c-select-field> is het veld: label, hulptekst en keuzelijst horen
+                       bij elkaar en worden ook aan elkaar gekoppeld voor een schermlezer.
+
+                       native: het script leest operationSelect.value. De gewone vorm van
+                       dit veld is een <nldd-combo-box>; de native-variant staat er juist
+                       voor schermen waarvan de JS de lijst uitleest, en levert een echte
+                       <select> met <option>-kinderen. #}
+                    <c-select-field id="operation" name="operation" label="Operation"
+                                    help="Select whether to encrypt or decrypt" native>
+                        <option value="encrypt">Encrypt</option>
+                        <option value="decrypt">Decrypt</option>
+                    </c-select-field>
 
                     <c-textarea-field id="input_text" name="input_text" label="Input Text" rows="8" placeholder="Enter text here..."/>
 
@@ -49,11 +59,27 @@
            is. Ook dat id liet de omzetter vallen. #}
         <c-card id="output-card" padding="md" class="is-hidden">
             <c-heading type="h2">Output</c-heading>
-            <div id="error-message" class="rvo-alert rvo-alert--error tool-error-message is-hidden">
+            {# De foutmelding was een <div class="rvo-alert rvo-alert--error"> - klassen
+               van een thema dat er niet meer is, dus een kale regel tekst. Dat is
+               <c-alert type="error">. De eigen .tool-error-message-marge kon mee weg: de
+               melding brengt haar eigen witruimte mee. Het id blijft erop staan, want
+               showError()/showSuccess() zetten .is-hidden op precies dit element. #}
+            <c-alert type="error" id="error-message" class="is-hidden">
                 <span id="error-text"></span>
-            </div>
+            </c-alert>
             <div id="success-message">
-                <p class="rvo-text--sm tool-result-label">Result (click to copy):</p>
+                <p class="tool-result-label">Result (click to copy):</p>
+                {# BLIJFT een eigen <pre>, en niet <c-code-viewer>. Dat leek de voor de
+                   hand liggende keuze - een blok code met een kopieerknop - maar het
+                   werkt hier niet: code-viewer is een CodeMirror-weergave van EEN tekst
+                   die je in zijn geheel meegeeft bij het opbouwen. Deze bak is bij het
+                   laden leeg en krijgt zijn inhoud pas van showSuccess(), en dat is nu
+                   juist wat er niet aankomt.
+
+                   Gemeten, niet beredeneerd: met <c-code-viewer id="output-text"> en
+                   .textContent = '...' erop bleef de zichtbare tekst leeg. Dezelfde
+                   reden waarom het logpaneel in bg/_log-viewer.html.j2 zijn eigen regelbak
+                   houdt. #}
                 <pre id="output-text" class="output-code-block"></pre>
             </div>
         </c-card>
