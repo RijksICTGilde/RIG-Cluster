@@ -561,16 +561,24 @@ def test_het_gebruikersmenu_bevat_alles_en_zet_de_weergave_echt_om(app_server: s
     auth_page.goto(f"{app_server}/dashboard?layout=nldd")
     auth_page.wait_for_load_state("networkidle")
 
-    knop = auth_page.locator("[slot=utility] nldd-button[expandable]").first
-    assert knop.count() == 1, "de uitklapper met de gebruikersnaam staat niet in de header"
+    # De hulplinks zijn sinds de omzetting naar de menubalk van bg.rijks.app geen enkele
+    # knop meer maar losse items: Weergave, eventueel Beheer, en de gebruiker. Alles wat
+    # deze test bewaakt geldt nog steeds, alleen zit het achter twee uitklappers.
+    balk = auth_page.locator("nldd-menu-bar[slot=utility]")
+    assert balk.count() == 1, "de menubalk met de hulplinks staat niet in de header"
 
-    knop.click()
+    gebruiker = balk.locator("nldd-menu-bar-item[expandable]").last
+    gebruiker.click()
     auth_page.wait_for_timeout(500)
 
-    items = auth_page.locator("[slot=utility] nldd-menu[slot=popup] nldd-menu-item")
+    items = auth_page.locator("[slot=utility] nldd-menu nldd-menu-item")
     labels = [items.nth(i).get_attribute("text") for i in range(items.count())]
     for verwacht in ("Profiel", "Systeem", "Licht", "Donker", "Uitloggen"):
-        assert verwacht in labels, f"'{verwacht}' staat niet in het gebruikersmenu: {labels}"
+        assert verwacht in labels, f"'{verwacht}' staat niet in de hulplinks: {labels}"
+
+    # De weergave zit in zijn eigen uitklapper; die moet open voordat Donker klikbaar is.
+    balk.locator("nldd-menu-bar-item[text='Weergave']").first.click()
+    auth_page.wait_for_timeout(500)
 
     donker = auth_page.locator("[slot=utility] nldd-menu-item[text='Donker']").first
     assert donker.is_visible(), "het menu gaat niet open - de items staan er wel maar zijn onzichtbaar"
