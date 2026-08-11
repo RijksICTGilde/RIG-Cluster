@@ -36,8 +36,11 @@
     {# .metrics-grid uit dashboard.css was repeat(auto-fit, minmax(280px, 1fr)):
        <c-auto-grid min="280px">. Let op: dezelfde KLASSENAAM staat ook in
        metrics-charts.css, waar hij een flexkolom is. Door dit raster een component
-       te maken is die naamsbotsing hier weg. #}
-    <c-auto-grid min="280px" gap="lg">
+       te maken is die naamsbotsing hier weg.
+
+       De KLASSE blijft er wel op staan: tests/e2e/test_lotc_pariteit.py leest de meters
+       uit met locator(".metrics-grid"). Hij is dus geen opmaak meer maar een haak. #}
+    <c-auto-grid min="280px" gap="lg" class="metrics-grid">
         {% call panel("CPU Usage", "chart-x-y-axis-line") %}
             <div class="gauge-container">
                 <canvas id="cpu-gauge" class="gauge"></canvas>

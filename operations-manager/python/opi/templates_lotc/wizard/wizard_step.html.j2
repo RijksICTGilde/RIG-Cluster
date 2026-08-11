@@ -59,14 +59,14 @@
             {{ step_html | process_components }}
         </div>
 
-        <div class="wizard-step__actions">
+        <c-cluster justify="between" align="center" class="wizard-step__actions">
             {% if not steps.is_first %}
             <c-button label="Vorige" show-icon="before" icon="caret-left"/>
             {% else %}
             <span></span>
             {% endif %}
 
-            <div class="wizard-step__actions-right">
+            <c-cluster gap="xs" align="center">
                 {% if all_steps_completed and show_review and not steps.is_last %}
                 <c-button label="Naar samenvatting" show-icon="after" icon="caret-right"/>
                 {% endif %}
@@ -84,7 +84,7 @@
                 {% else %}
                 <c-button type="submit" label="Volgende" show-icon="after" icon="caret-right"/>
                 {% endif %}
-            </div>
-        </div>
+            </c-cluster>
+        </c-cluster>
     </form>
 </div>
