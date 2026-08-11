@@ -1,0 +1,86 @@
+{# ONZE KOPIE van components/_forms.j2 uit lotc-forms, met TWEE wijzigingen in nldd_field:
+
+   1. De foutmelding wordt bedraad, zodat je hem ook ZIET. Zie de macro onderaan en
+      opi/forms/lotc_attrs.py (bedraad_foutmelding) voor de meting en de reden.
+   2. Een veld dat ``data-no-optional-badge`` draagt krijgt geen "Optioneel" mee.
+      lotc-forms zet dat label op elk veld dat niet verplicht is (rijksconventie: markeer
+      optioneel, niet verplicht). Voor een invoerveld klopt dat; voor een KIEZER met een
+      vaste selectie, of voor het enige veld van een regel die je zelf toevoegde ("URI
+      Optioneel"), betekent het niets. De omweg was zulke velden ``required`` noemen, en
+      dan zegt de HTML dat er iets ingevuld MOET worden - een andere onwaarheid. Dit
+      attribuut zegt alleen wat het is: geen badge. Het derde standje hoort in het thema
+      te zitten en staat als verzoek in request_for_components.md.
+
+   Dit bestand ligt op de searchpath VOOR de sjablonen van de design systems (die zet
+   setup_components erachteraan), dus elk veldsjabloon van lotc-forms dat
+   ``components/_forms.j2`` importeert krijgt deze. Daarom is dit EEN plek en niet zeven.
+
+   De rest is met opzet letterlijk overgenomen; tests/test_lotc_foutmelding_veld.py legt
+   onze kopie naast de geinstalleerde en faalt zodra er nog iets anders verschilt.
+
+   Weghalen zodra lotc-forms zelf ``error-message`` op het invoerveld schrijft: dit
+   bestand weg, en de bedrading in lotc_attrs.py weg.
+
+   ---- vanaf hier de kopie ----
+
+   Shared helpers for the lotc-forms field wrappers.
+
+   Each field template branches on the active VISUAL theme (membership in
+   `lotc_design_systems`, robust regardless of declared order) and calls the
+   matching frame macro; the control — raw, theme-native markup — is the
+   {% call %} body. The frames guarantee the ARIA wiring identically across
+   themes: label for/id, help + error linked via id, aria-invalid on error
+   (RVO: explicit on our markup; NLDD: input-id + error-message-ids on the
+   native field, help/error text as its own child elements). #}
+
+{# Spread: emit a flat {name: value} dict (`:attrs="expr"`) as HTML attributes on
+   the control. None or '' means omit (same rule as :prop="expr or none"). One
+   attribute covers the whole hx-* / data-* / aria-* / generic bundle. #}
+{% macro render_attrs(c) -%}
+{%- for k, v in (c.get('attrs') or {}).items() -%}
+{%- if v is not none and v != '' %} {{ k }}="{{ v | e }}"{% endif -%}
+{%- endfor -%}
+{%- endmacro %}
+
+{# space-joined describedby target ids, only for the parts actually rendered #}
+{% macro describedby(id, help, error) -%}
+{%- if help and error -%}{{ id }}-help {{ id }}-error
+{%- elif help -%}{{ id }}-help
+{%- elif error -%}{{ id }}-error
+{%- endif -%}
+{%- endmacro %}
+
+{# RVO single-control frame: label(for) + help + error, then the control #}
+{% macro rvo_field(id, label, help, error, required, kind) -%}
+<div class="utrecht-form-field rvo-form-field{% if error %} rvo-form-field--error{% endif %}" data-lotc-component="{{ kind }}">
+  <div class="rvo-form-field__label">
+    <label class="rvo-label{% if required %} rvo-label--required{% endif %}" id="{{ id }}-label" for="{{ id }}">{{ label }}</label>
+    {% if help %}<div class="utrecht-form-field-description" id="{{ id }}-help">{{ help }}</div>{% endif %}
+    {% if error %}<div class="utrecht-form-field-description utrecht-form-field-description--invalid rvo-form-feedback rvo-form-feedback--error" id="{{ id }}-error">{{ error }}</div>{% endif %}
+  </div>
+  {{ caller() }}
+</div>
+{%- endmacro %}
+
+{# RVO group frame (radio/checkbox): role=group + aria-labelledby, no `for` #}
+{% macro rvo_group(id, label, help, error, required, kind) -%}
+<div role="group" aria-labelledby="{{ id }}-label" aria-describedby="{{ describedby(id, help, error) }}" class="utrecht-form-field rvo-form-field{% if error %} rvo-form-field--error{% endif %}" data-lotc-component="{{ kind }}">
+  <div class="rvo-form-field__label">
+    <span class="rvo-label{% if required %} rvo-label--required{% endif %}" id="{{ id }}-label">{{ label }}</span>
+    {% if help %}<div class="utrecht-form-field-description" id="{{ id }}-help">{{ help }}</div>{% endif %}
+    {% if error %}<div class="utrecht-form-field-description utrecht-form-field-description--invalid rvo-form-feedback rvo-form-feedback--error" id="{{ id }}-error">{{ error }}</div>{% endif %}
+  </div>
+  <div class="rvo-form-field__control">{{ caller() }}</div>
+</div>
+{%- endmacro %}
+
+{# NLDD frame: native nldd-form-field wrapping the control + help/error text.
+   Dutch-gov convention marks OPTIONAL, not required, so `optional` when not required. #}
+{% macro nldd_field(id, label, help, error, required, kind) -%}
+{% set besturing = caller() %}
+<nldd-form-field label="{{ label }}"{% if not required and 'data-no-optional-badge' not in besturing %} optional{% endif %} data-lotc-component="{{ kind }}">
+  {% if error %}{{ besturing | foutbedrading(id ~ '-error') }}{% else %}{{ besturing }}{% endif %}
+  {% if help %}<nldd-form-field-help-text id="{{ id }}-help">{{ help }}</nldd-form-field-help-text>{% endif %}
+  {% if error %}<nldd-form-field-error-text id="{{ id }}-error" invalid>{{ error }}</nldd-form-field-error-text>{% endif %}
+</nldd-form-field>
+{%- endmacro %}
