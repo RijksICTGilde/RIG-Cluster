@@ -228,7 +228,7 @@ class TestRenderStepHtmlWithRealSections:
 class TestTemplateProcessComponents:
     """Verify templates use process_components filter for form HTML."""
 
-    TEMPLATES_DIR = Path(__file__).parent.parent.parent / "opi" / "templates" / "wizard"
+    TEMPLATES_DIR = Path(__file__).parent.parent.parent / "opi" / "templates_lotc" / "wizard"
 
     def test_wizard_step_uses_process_components(self):
         content = (self.TEMPLATES_DIR / "wizard_step.html.j2").read_text()

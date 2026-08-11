@@ -260,7 +260,7 @@ def test_topleveL_sequence_renders_children_with_virtual_path() -> None:
     the selection list at ``services`` is not clobbered by config form data.
     """
     from opi.forms.renderer import FormRenderer
-    from opi.forms.widgets.roos import ROOSWidgetAdapter
+    from opi.forms.widgets.lotc import LOTCWidgetAdapter
 
     editables = _materialize_virt_editables(0)
     yaml_data: dict[str, Any] = {
@@ -274,7 +274,7 @@ def test_topleveL_sequence_renders_children_with_virtual_path() -> None:
             },
         ],
     }
-    renderer = FormRenderer(widget_adapter=ROOSWidgetAdapter())
+    renderer = FormRenderer(widget_adapter=LOTCWidgetAdapter())
     fields = renderer._build_fields_from_editables(  # type: ignore[attr-defined]
         editables=editables, yaml_data=yaml_data, errors=None, edit_mode=True
     )

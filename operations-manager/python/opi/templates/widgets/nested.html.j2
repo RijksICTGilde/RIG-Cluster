@@ -1,9 +1,0 @@
-{% from "widgets/_macros.html.j2" import helper_text, render_errors %}
-<div class="rvo-nested-fields" id="{{ field.path|e }}-group">
-    <span class="utrecht-form-label rvo-form-field__label-text">{{ field.label|e }}</span>
-    {{ helper_text(field) }}
-    <c-layout-row gap="md">
-        {% for child in children_html %}{{ child }}{% endfor %}
-    </c-layout-row>
-    {{ render_errors(field.errors) }}
-</div>

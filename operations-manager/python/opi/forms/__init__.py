@@ -15,7 +15,7 @@ Example usage:
     from pydantic import BaseModel, Field
     from typing import Annotated
     from opi.forms import FormMeta, Row, Column, Fieldset, FormRenderer
-    from opi.forms.widgets import ROOSWidgetAdapter
+    from opi.forms.widgets.lotc import LOTCWidgetAdapter
 
     class MyForm(BaseModel):
         name: Annotated[str, FormMeta(
@@ -33,7 +33,7 @@ Example usage:
         ]
     )
 
-    renderer = FormRenderer(ROOSWidgetAdapter())
+    renderer = FormRenderer(LOTCWidgetAdapter())
     html = renderer.render(MyForm, layout)
 """
 
@@ -109,7 +109,7 @@ from opi.forms.visualizers.providers import (
     get_all_providers,
     get_provider,
 )
-from opi.forms.widgets import ROOSWidgetAdapter, WidgetAdapter
+from opi.forms.widgets import FieldWidgetAdapter, WidgetAdapter
 
 __all__ = [
     "HTML",
@@ -129,6 +129,7 @@ __all__ = [
     "Div",
     "DomainModeOptionsProvider",
     "EnforcerHook",
+    "FieldWidgetAdapter",
     "Fieldset",
     # Field
     "FormField",
@@ -156,7 +157,6 @@ __all__ = [
     "PatternValidatorHook",
     # Models
     "ProjectFormModel",
-    "ROOSWidgetAdapter",
     "RangeValidatorHook",
     "RequiredValidatorHook",
     # Layout

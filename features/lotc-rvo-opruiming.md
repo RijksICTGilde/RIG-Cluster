@@ -141,9 +141,9 @@ stilletjes weer in gebruik genomen wordt met zijn rvo-klassen erin.
 
 De zwaarste zijn `project-details/_argocd-deployment-card.html.j2` (27),
 `wizard/partials/approval_items.html.j2` (13), `formulier-template.html.j2` (13),
-`wizard/partials/backup_select_deployment.html.j2` (12), `roos-form-improved.html.j2` (12)
+`wizard/partials/backup_select_deployment.html.j2` (12)
 en `project-details/_resource-usage.html.j2` (12). De volledige lijst met aantallen staat
-in `ONBEREIKBAAR_MET_KLASSEN` in de guard-test.
+in `NOG_MET_KLASSEN` in de guard-test.
 
 `templates_lotc/base.html.j2` stond ook in die lijst - een meegekopieerde ROOS-schil die
 niets uitbreidde en die niemand renderde, met `body-class="rvo-theme rvo-responsive"` erin.
@@ -153,7 +153,8 @@ Die is weg; de echte schil is `base_lotc.html.j2`.
 
 **`opi/templates/`, de ROOS-boom.** Daar staan 603 voorkomens en die horen daar: dat is het
 stijlsysteem dat die templates gebruiken. De schakelaar (`opi/web/lotc_switch.py`) houdt
-beide wegen open met `?layout=roos`, en zolang die terugvalweg bestaat blijft die boom
+beide wegen open met `?layout=roos`. (Sinds RC-67 bestaat die terugvalweg niet meer; de
+oude boom is weg.) Zolang die terugvalweg bestond bleef die boom
 staan zoals hij is.
 
 **Commentaar.** Dat een blok uitlegt waar het vandaan komt met het woord `rvo-` is nuttig.

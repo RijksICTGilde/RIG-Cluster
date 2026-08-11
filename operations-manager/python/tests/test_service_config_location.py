@@ -128,7 +128,7 @@ class TestTheCardsShowIt:
     def _render(self, selected: list[str]) -> str:
         from opi.forms.field import FormField
         from opi.forms.visualizers.providers import ServiceOptionsProvider
-        from opi.forms.widgets.roos import ROOSWidgetAdapter
+        from opi.forms.widgets.lotc import LOTCWidgetAdapter
 
         field = FormField(
             name="services",
@@ -139,7 +139,7 @@ class TestTheCardsShowIt:
             value=selected,
             options=ServiceOptionsProvider().get_options(),
         )
-        return ROOSWidgetAdapter().render_service_cards(field)
+        return LOTCWidgetAdapter().render_service_cards(field)
 
     def test_a_component_only_service_says_where_it_is_configured(self) -> None:
         html = self._render(["health-check"])
@@ -198,7 +198,7 @@ class TestEenVergrendeldeDienstOverleeftHetVersturen:
     def _render(self, selected: list[str]) -> str:
         from opi.forms.field import FormField
         from opi.forms.visualizers.providers import ServiceOptionsProvider
-        from opi.forms.widgets.roos import ROOSWidgetAdapter
+        from opi.forms.widgets.lotc import LOTCWidgetAdapter
 
         field = FormField(
             name="services",
@@ -209,7 +209,7 @@ class TestEenVergrendeldeDienstOverleeftHetVersturen:
             value=selected,
             options=ServiceOptionsProvider().get_options(),
         )
-        return ROOSWidgetAdapter().render_service_cards(field)
+        return LOTCWidgetAdapter().render_service_cards(field)
 
     def _card(self, html: str, service: str) -> str:
         """De HTML van één kaart, tot aan het begin van de volgende."""

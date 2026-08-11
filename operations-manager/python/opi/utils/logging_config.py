@@ -58,9 +58,6 @@ def setup_logging(
     opi_logger = logging.getLogger("opi")
     opi_logger.setLevel(logging.DEBUG)
 
-    # Configure specific module log levels for known noisy modules
-    logging.getLogger("jinja_roos_components.extension").setLevel(logging.INFO)
-
     # Filter out health endpoint requests from uvicorn access logs
     uvicorn_access_logger = logging.getLogger("uvicorn.access")
     uvicorn_access_logger.addFilter(HealthEndpointFilter())

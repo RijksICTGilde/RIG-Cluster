@@ -236,17 +236,17 @@ is a *decision*, not a default you inherit. If a user is supposed to enable your
 `hidden` must stay `False` and you owe the user a configuration screen as well.
 
 The card itself is rendered by the `service_block` macro in
-`opi/templates/widgets/_macros.html.j2` - icon, name, description and help button - and the
+`opi/templates_lotc/widgets/_macros.html.j2` - icon, name, description and help button - and the
 services overview page (`services-overview.html.j2`) renders the same macro, so both places
 show the same thing. Do not build a second service block; `tests/test_service_help.py`
 fails if either template starts rendering its own.
 
 Every definition carries a `help_template`: `"<package>/help.md"`, the markdown file in
 the service's own package with the long explanation shown when the user clicks the question
-mark. It is markdown, and it is the ONE source: the portal renders it into ROOS components
+mark. It is markdown, and it is the ONE source: the portal renders it into components
 and `GET /api/v2/services/{name}` returns it as-is in `explanation`, so an API client and a
 user read the same text (RC-59; `opi/services/help_text.py`). Do not add a `help.html.j2`
-next to it. (`opi/templates/help/` still holds the few explanations that belong to no single
+next to it. (`opi/templates_lotc/help/` still holds the few explanations that belong to no single
 service, such as the container-image note; those are still Jinja templates.) The one-line `description` is
 too short to choose on, so the long text is where a user actually decides. The same test
 fails when a service has no `help_template` or points at a file that does not exist - both of

@@ -28,8 +28,8 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.e2e
 
 PROJECT = "test-project-detail"
-# ?layout=nldd wint van de cookie, dus deze test staat los van wat de browser onthoudt.
-DETAIL_URL = f"/projects/details/{PROJECT}?layout=nldd"
+#  wint van de cookie, dus deze test staat los van wat de browser onthoudt.
+DETAIL_URL = f"/projects/details/{PROJECT}"
 
 
 def _intercept_posts(page: Page, recorded: list[tuple[str, str]]) -> None:
@@ -54,7 +54,7 @@ def _wait_for_request(recorded: list[tuple[str, str]], timeout: float = 10.0) ->
 
 def _open(page: Page, app_server: str, trigger: str, *, tab: str = "project") -> None:
     """Klik een gevaarlijke actie aan en wacht tot de dialoog zijn bevestiging draagt."""
-    page.goto(f"{app_server}/projects/details/{PROJECT}?tab={tab}&layout=nldd")
+    page.goto(f"{app_server}/projects/details/{PROJECT}?tab={tab}")
     page.wait_for_load_state("networkidle")
 
     page.locator(f"nldd-button:has-text('{trigger}')").first.click()

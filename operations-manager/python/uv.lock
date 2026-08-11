@@ -906,16 +906,6 @@ wheels = [
 ]
 
 [[package]]
-name = "jinja-roos-components"
-version = "0.1"
-source = { git = "https://github.com/RijksICTGilde/jinja-roos-components.git?rev=table-and-more-conversion#d6ef4eb1d45327c683ff9e8b1db9cf8a49344eb2" }
-dependencies = [
-    { name = "beautifulsoup4" },
-    { name = "jinja2" },
-    { name = "pydantic" },
-]
-
-[[package]]
 name = "jinja2"
 version = "3.1.6"
 source = { registry = "https://pypi.org/simple" }
@@ -2791,7 +2781,6 @@ dependencies = [
     { name = "fastapi-csrf-protect" },
     { name = "gitpython" },
     { name = "httpx" },
-    { name = "jinja-roos-components" },
     { name = "jinja2" },
     { name = "jinja2-base64-filters" },
     { name = "jsonpath-ng" },
@@ -2874,7 +2863,6 @@ requires-dist = [
     { name = "fastapi-csrf-protect", specifier = ">=1.0.3" },
     { name = "gitpython", specifier = ">=3.1.50" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "jinja-roos-components", git = "https://github.com/RijksICTGilde/jinja-roos-components.git?rev=table-and-more-conversion" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "jinja2-base64-filters", specifier = ">=0.1.4" },
     { name = "jsonpath-ng", specifier = ">=1.7.0" },

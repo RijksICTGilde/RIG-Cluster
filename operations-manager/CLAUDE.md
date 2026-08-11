@@ -159,7 +159,7 @@ Always specify the correct namespace when debugging. Do not assume `rig-system` 
 - **Type annotations**: Always on function parameters and return types
 - **Error handling**: Specific exceptions, no generic `except Exception`. In new methods, let exceptions bubble up.
 - **No emojis** in code, comments, or log messages
-- **Frontend**: Jinja2 + jinja-roos-components. Check `references/jinja_roos_copied.md`
+- **Frontend**: Jinja2 + lord-of-the-components (NLDD-thema). Zie `features/lotc-bouwlijn.md`
 
 ## Utility Scripts
 
@@ -175,7 +175,7 @@ a few shell utilities only.)
 - **Framework**: FastAPI, Uvicorn, Starlette
 - **Database**: SQLAlchemy 2.0, AsyncPG, Alembic
 - **Auth**: python-keycloak, authlib
-- **UI**: Jinja2, jinja-roos-components (private package)
+- **UI**: Jinja2, lord-of-the-components + lotc-nldd/lotc-layout/lotc-forms (git-dependency)
 - **Async**: aiohttp, httpx, async-lru
 - **Monitoring**: OpenTelemetry, Prometheus
 - **Testing**: pytest, pytest-asyncio, playwright (E2E), vcrpy, freezegun
@@ -189,4 +189,4 @@ uv run pytest tests/forms/ -q              # Form tests only
 uv run pytest tests/ -k "test_name" -q     # Specific test
 ```
 
-Note: Some test collection errors are pre-existing due to jinja-roos-components import chain issues in non-form tests.
+Note: templates live in `opi/templates_lotc/`; `opi/templates/` (jinja-roos) is gone since RC-67.
