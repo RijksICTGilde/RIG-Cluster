@@ -79,9 +79,16 @@ def test_elk_veld_heeft_zijn_eigen_bundel() -> None:
 
 
 def test_de_deploymentkiezer_gebruikt_het_merk_en_geen_required() -> None:
-    """De kiezer stond even op required="true" om het label kwijt te raken."""
-    bron = (WORTEL / "opi" / "templates_lotc" / "bg" / "project-tabs.html.j2").read_text()
+    """Het merk, niet de omweg: required zou tegen een schermlezer liegen.
+
+    Gemeten dat het merk nog NIET werkt op een c-select-field: het landt op de omhullende
+    nldd-form-field, terwijl nldd_field het in de BESTURING zoekt. Het label "Optioneel"
+    staat dus nog op de kiezer. Dat is opgeschreven in request_for_components.md; de
+    omweg (required="true") is bewust niet teruggezet, want die zegt dat er iets ingevuld
+    MOET worden en dat is onwaar.
+    """
+    bron = (WORTEL / "opi" / "templates_lotc" / "bg" / "_deployment-selector.html.j2").read_text()
     kiezer = bron.partition("global-deployment-selector")[2].partition("</c-select-field>")[0]
-    assert kiezer, "de deploymentkiezer staat niet meer in project-tabs.html.j2"
-    assert 'required="true"' not in kiezer
-    assert "data-no-optional-badge" in bron.partition("global-deployment-selector")[0][-800:]
+    assert kiezer, "de deploymentkiezer staat niet meer in _deployment-selector.html.j2"
+    assert 'required="true"' not in kiezer, "required liegt tegen een schermlezer"
+    assert "data-no-optional-badge" in kiezer
