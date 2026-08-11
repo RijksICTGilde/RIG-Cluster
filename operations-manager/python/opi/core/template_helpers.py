@@ -1,8 +1,14 @@
-"""
-Template system configuration for Operations Manager.
+"""De helpers die de templateomgeving aan zijn sjablonen aanbiedt.
 
-This module sets up Jinja2 templates with ROOS components for the operations-manager UI.
-Includes Babel i18n integration for multi-language support.
+Filters (Nederlandse datums, een RRULE in woorden, de naam en de definitie achter een
+services-regel), de paden waar sjablonen en statische bestanden staan, en de
+inhoudsgehashte URL voor een eigen statisch bestand.
+
+Dit bestand heette ``templates.py`` en zette daarnaast de roos-omgeving op. Die is met de
+roos-bouwlijn verdwenen; wat overbleef is dit, en het wordt gebruikt door
+``opi/core/templates_lotc.py``. Apart van die module omdat het geen omgeving is maar
+gewone functies: de omgeving leunt via de dienstenregistry op de rest van de applicatie,
+en deze helpers hoeven dat niet mee te slepen.
 """
 
 import hashlib
@@ -10,21 +16,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import markupsafe
-from fastapi.templating import Jinja2Templates
-from jinja2 import FileSystemLoader
-from jinja_roos_components import setup_components
-from jinja_roos_components.extension import ComponentExtension
-
-from opi.core.config import BUILD_DATE, VERSION
-from opi.core.i18n import get_current_translation, get_requested_language
 from opi.core.rrule_utils import format_rrule
-from opi.core.version import get_version_info
-from opi.services.registry import deployment_action_key
 
 if TYPE_CHECKING:
-    from starlette.requests import Request
-
     from opi.services.services import ServiceDefinition
 
 # Dutch month names
@@ -157,7 +151,7 @@ def get_service_definition_for_entry(service: str | dict[str, Any]) -> ServiceDe
 
 # Get the opi package directory (operations-manager/python/opi)
 OPI_DIR = Path(__file__).parent.parent
-TEMPLATES_DIR = OPI_DIR / "templates"
+TEMPLATES_DIR = OPI_DIR / "templates_lotc"
 # Service-owned templates live next to their service under services/catalog/<svc>/ and
 # are addressed as "<svc>/<file>". Putting the catalog dir on the search path lets a
 # service deliver its own detail-page section (WP2) instead of the general template
@@ -181,10 +175,8 @@ def static_url(path: str) -> str:
     replaced file - it is a different URL. The ``?v=`` parameter is also what earns the
     long cache lifetime; see CacheControlledStaticFiles in opi/core/static_files.py.
 
-    ROOS assets are deliberately NOT routed through here: they live under the separate
-    /static/roos/dist mount and ROOS emits those URLs itself, so we do not control them.
-    Adding a hash there is not possible without patching ROOS, and pinning them long-term
-    without a hash would be wrong.
+    De assets van het componentensysteem lopen hier NIET langs: die worden onder
+    /static/lotc/ geserveerd door het pakket zelf, dus we bepalen die URL's niet.
 
     A file that does not exist gets an unversioned URL, which falls back to no-cache
     rather than being pinned for a year.
@@ -204,101 +196,3 @@ def static_url(path: str) -> str:
     else:
         digest = cached[1]
     return f"/static/{relative_path}?v={digest}"
-
-
-# Create templates instance
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-# Add service-owned catalog templates to the SAME FileSystemLoader search path, so a
-# service can deliver its own detail-page section. It must stay a FileSystemLoader:
-# setup_components (below) registers the ROOS component templates by appending to
-# loader.searchpath, which only a FileSystemLoader has.
-if not isinstance(templates.env.loader, FileSystemLoader):
-    raise TypeError("templates env loader must be a FileSystemLoader for catalog + ROOS search paths")
-templates.env.loader.searchpath.append(str(CATALOG_DIR))
-
-# Setup ROOS components immediately on the global templates instance
-# Enable strict validation in development/debug mode
-
-# strict_mode = os.getenv("DEBUG", "false").lower() == "true" or os.getenv("ENVIRONMENT", "development") == "development"
-strict_mode = True  # always!
-setup_components(
-    templates.env,
-    htmx=True,
-    static_url_prefix="/static/roos/",
-    user_css_files=["/static/operations.css"],
-    strict_validation=strict_mode,
-)
-
-# Add global variables that components might need
-templates.env.globals["roos_assets_base_url"] = "/static/roos/dist/"
-templates.env.globals["version"] = VERSION
-templates.env.globals["build_date"] = BUILD_DATE
-# Live version metadata (reads opi/version.json each call, so hot-synced dev builds
-# are reflected without a restart). See opi/core/version.py.
-templates.env.globals["version_info"] = get_version_info
-# Content-hashed URLs for own static files; see static_url above.
-templates.env.globals["static_url"] = static_url
-
-# Register custom filters
-templates.env.filters["service_name"] = get_service_name
-templates.env.filters["service_definition"] = get_service_definition_for_entry
-templates.env.filters["dutch_date"] = format_dutch_date
-templates.env.filters["rrule_schedule"] = format_rrule_schedule
-# The URL-safe id of a service-contributed deployment action; the confirmation dialog
-# addresses an action by this key instead of by its endpoint (see registry).
-templates.env.filters["deployment_action_key"] = deployment_action_key
-
-# Register process_components filter for runtime-generated HTML that contains
-# component tags (e.g. form_html from render_from_editables). The extension's
-# preprocess only runs at template compile time, so runtime strings need this filter.
-_component_ext = templates.env.extensions.get("jinja_roos_components.extension.ComponentExtension")
-if not isinstance(_component_ext, ComponentExtension):
-    raise TypeError("ComponentExtension not registered - setup_components must run first")
-
-
-def _process_components(html: str) -> markupsafe.Markup:
-    preprocessed = _component_ext.preprocess(html, name="process_components_filter", filename=None)
-    rendered = templates.env.from_string(preprocessed).render()
-    return markupsafe.Markup(rendered)  # noqa: S704
-
-
-templates.env.filters["process_components"] = _process_components
-
-# Enable i18n extension for {% trans %} blocks in templates
-templates.env.add_extension("jinja2.ext.i18n")
-
-
-def setup_templates() -> Jinja2Templates:
-    """
-    Get the configured templates instance.
-
-    Note: Setup is already done during module initialization.
-
-    Returns:
-        Configured Jinja2Templates instance with ROOS components
-    """
-    return templates
-
-
-def get_templates() -> Jinja2Templates:
-    """
-    Get configured templates instance.
-
-    Returns:
-        Jinja2Templates instance with ROOS components
-    """
-    return templates
-
-
-def install_translations_for_request(request: Request) -> str:
-    """Install Babel translations into the Jinja2 environment for the current request.
-
-    Call this before rendering templates that use {% trans %} blocks.
-
-    Returns:
-        The resolved language code (e.g., "nl" or "en").
-    """
-    lang = get_requested_language(request)
-    translation = get_current_translation(request)
-    templates.env.install_gettext_translations(translation, newstyle=True)  # type: ignore[attr-defined]
-    return lang

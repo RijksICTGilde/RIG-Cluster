@@ -1,7 +1,7 @@
 """De omzetting mag de pagina anders laten OGEN, niet anders laten WERKEN.
 
 Dit is de poort onder die eis. Voor elke omgezette route wordt dezelfde pagina twee keer
-opgehaald - ?layout=roos en ?layout=nldd - en wordt het gedragsoppervlak vergeleken:
+opgehaald - ?layout=roos en  - en wordt het gedragsoppervlak vergeleken:
 waar je heen kunt (href, action), wat htmx ophaalt, welke JavaScript-functies aangeroepen
 worden, welke invoervelden er zijn, en welke id's er staan waar JavaScript of htmx aan
 hangt.

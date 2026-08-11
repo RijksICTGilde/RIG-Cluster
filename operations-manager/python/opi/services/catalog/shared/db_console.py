@@ -38,7 +38,6 @@ logger = logging.getLogger(__name__)
 db_console_router = APIRouter(prefix="/projects", tags=["db-console"])
 
 _MODAL_TEMPLATE = "shared/_db-console-modal.html.j2"
-_MODAL_TEMPLATE_LOTC = "shared/_db-console-modal-lotc.html.j2"
 
 
 async def _render(
@@ -83,7 +82,7 @@ async def _render(
     # DESIGN_SYSTEMS.
     return render(
         request,
-        template=_MODAL_TEMPLATE_LOTC,
+        template=_MODAL_TEMPLATE,
         context={
             "request": request,
             "project_name": project_name,

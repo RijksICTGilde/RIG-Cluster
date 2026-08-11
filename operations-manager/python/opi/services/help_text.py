@@ -7,7 +7,8 @@ reader RC-59 is about -- a client or an agent asking the API what a service does
 markup full of classes and sentences that point at buttons.
 
 The prose is now markdown, and that is the single source. The portal renders it (this
-module turns it into the components the popup is built from) and ``GET /api/v2/services/{name}`` returns it as-is. Two renderings, one file: the
+module turns it into the components the popup is built from) and
+``GET /api/v2/services/{name}`` returns it as-is. Two renderings, one file: the
 alternative -- a ``help.md`` next to a ``help.html.j2`` -- is drift with extra steps.
 
 **The supported markdown is deliberately small**, exactly the shapes the 21 explanations
@@ -19,7 +20,7 @@ text in one of the two readers is worse than a syntax that does not exist.
     ## Section          -> <c-heading type="h3">
     A paragraph.        -> <c-paragraph>
     - a bullet          -> <c-list><c-list-item>
-    **bold**            -> <c-strong>
+    **bold**            -> <c-b>
 
 The icon is not in the markdown. It is on the service definition, where it already is for
 the card and the picker, so the popup and the card cannot show different icons.
@@ -33,6 +34,7 @@ from typing import TYPE_CHECKING
 
 import opi
 from opi.services.services import ServiceAdapter
+from opi.web.navigation_lotc import to_nldd_icon
 
 if TYPE_CHECKING:
     from opi.services.services_enums import ServiceType
@@ -99,7 +101,7 @@ def _text(raw: str) -> str:
 
 
 def _inline(raw: str) -> str:
-    """One line of prose: bold becomes ``c-strong``, the rest is text.
+    """One line of prose: bold becomes ``c-b``, the rest is text.
 
     A backslash escapes the character after it, as it does in markdown. It earns its
     place on the one line that ends a bold run with a literal asterisk
@@ -114,7 +116,7 @@ def _inline(raw: str) -> str:
         return token
 
     rendered = _BOLD.sub(
-        lambda match: f"<c-strong>{_text(match.group(1))}</c-strong>",
+        lambda match: f"<c-b>{_text(match.group(1))}</c-b>",
         _text(_ESCAPE.sub(hide, raw)),
     )
     for token, character in protected.items():
@@ -157,7 +159,12 @@ def markdown_to_components(source: str, *, icon: str | None = None, color: str |
             # Only the first title carries the icon: a second one would be a second
             # service block on one page.
             if icon and not title_done:
-                title = f'<c-icon icon="{icon}" size="xl" color="{color or ""}"/>{title}'
+                # Door de vertaling heen: de dienstdefinities dragen onze eigen iconnamen
+                # en het design system kent zijn eigen woordenschat. In een sjabloon doet
+                # het nldd_icon-filter dit; hier wordt de markup zelf opgebouwd, en zonder
+                # deze regel kreeg elke uitleg een LEEG icoon boven zijn titel - stil, want
+                # een onbekende naam levert geen fout op.
+                title = f'<c-icon icon="{to_nldd_icon(icon)}" size="xl" color="{color or ""}"/>{title}'
             title_done = True
             out.append(f'<c-heading type="h2">{title}</c-heading>')
         elif stripped.startswith("- "):

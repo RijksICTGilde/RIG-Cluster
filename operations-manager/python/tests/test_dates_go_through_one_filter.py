@@ -17,9 +17,9 @@ import pathlib
 import re
 
 import opi
-from opi.core.templates import format_dutch_date
+from opi.core.template_helpers import format_dutch_date
 
-_TEMPLATES = pathlib.Path(opi.__file__).parent / "templates"
+_TEMPLATES = pathlib.Path(opi.__file__).parent / "templates_lotc"
 
 
 def test_the_filter_converts_to_our_own_timezone() -> None:

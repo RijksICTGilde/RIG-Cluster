@@ -397,9 +397,9 @@ class TestBackupWizardTemplate:
 
     @pytest.fixture
     def templates(self):
-        from opi.core.templates import get_templates
+        from opi.core.templates_lotc import templates_lotc
 
-        return get_templates()
+        return templates_lotc
 
     def _render(self, templates, context: dict) -> str:
         template = templates.get_template("wizard/partials/backup_select_deployment.html.j2")
@@ -748,9 +748,9 @@ class TestRestoreTargetTemplate:
 
     @pytest.fixture
     def templates(self):
-        from opi.core.templates import get_templates
+        from opi.core.templates_lotc import templates_lotc
 
-        return get_templates()
+        return templates_lotc
 
     def _render(self, templates, context: dict) -> str:
         template = templates.get_template("wizard/partials/restore_select_target.html.j2")

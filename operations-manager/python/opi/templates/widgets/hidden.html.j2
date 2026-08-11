@@ -1,7 +1,0 @@
-{% from "widgets/_macros.html.j2" import format_value %}
-<input
-    type="hidden"
-    id="{{ field.path|e }}"
-    name="{{ field.path|e }}"
-    value="{{ format_value(field.value)|e }}"
-/>

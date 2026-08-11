@@ -7,7 +7,7 @@ visible right away instead of in six months.
 
 import re
 
-from opi.core.templates import TEMPLATES_DIR
+from opi.core.template_helpers import TEMPLATES_DIR
 
 # src="/static/... or href="/static/... without a Jinja expression in it.
 BARE_STATIC_REFERENCE = re.compile(r'(?:src|href)="/static/')

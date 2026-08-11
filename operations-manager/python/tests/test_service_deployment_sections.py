@@ -16,7 +16,7 @@ import re
 from typing import Any
 
 import pytest
-from opi.core.templates import templates
+from opi.core.templates_lotc import templates_lotc as templates
 from opi.services.catalog.base import DeploymentPageContext
 from opi.services.registry import collect_deployment_page_sections
 from opi.services.services_enums import ServiceType
@@ -77,7 +77,7 @@ class TestMetricsScraper:
 
     def test_template_renders_through_the_app_env(self) -> None:
         """The service-owned template resolves via the catalog search path and renders
-        with the ROOS components (guards the loader wiring in opi/core/templates.py)."""
+        with the components (guards the loader wiring in opi/core/templates_lotc.py)."""
         section = collect_deployment_page_sections(_ctx([{"name": "metrics-scraper"}]))[0]
         html = templates.env.get_template(section.template).render(section=section)
         assert "/projects/details/proj/metrics/dep-1" in html
@@ -200,7 +200,7 @@ def test_the_general_templates_name_no_service() -> None:
 
     service_names = [service_type.value for service_type in ServiceType]
     offenders: list[str] = []
-    for path in (Path(opi.__file__).parent / "templates" / "project-details").glob("*.j2"):
+    for path in (Path(opi.__file__).parent / "templates_lotc" / "project-details").glob("*.j2"):
         source = re.sub(r"\{#.*?#\}", "", path.read_text(), flags=re.DOTALL)
         for name in service_names:
             if f"'{name}'" not in source and f'"{name}"' not in source:
@@ -220,7 +220,7 @@ def test_the_debt_list_has_no_stale_entries() -> None:
 
     stale = []
     for template_name, service_name in _SYSTEM_SERVICE_DEBT:
-        path = Path(opi.__file__).parent / "templates" / "project-details" / template_name
+        path = Path(opi.__file__).parent / "templates_lotc" / "project-details" / template_name
         source = re.sub(r"\{#.*?#\}", "", path.read_text(), flags=re.DOTALL) if path.exists() else ""
         if f"'{service_name}'" not in source and f'"{service_name}"' not in source:
             stale.append(f"{template_name}: {service_name}")

@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.e2e
 
 PROJECT = "test-project-detail"
-NLDD_URL = f"/projects/details/{PROJECT}?tab=project&layout=nldd"
+NLDD_URL = f"/projects/details/{PROJECT}?tab=project"
 ROOS_URL = f"/projects/details/{PROJECT}?layout=roos"
 
 # De aanroepen die bij de WIDGET horen en niet bij de pagina: het geheimveld van ROOS
@@ -75,7 +75,7 @@ def _open_project_tab(page: Page, app_server: str, tab: str = "project") -> None
     Componenten en Services stonden op het tabblad Project en hebben sinds de opdeling
     een eigen tabblad; wie hun inhoud meet, moet daar dus naartoe.
     """
-    page.goto(f"{app_server}/projects/details/{PROJECT}?tab={tab}&layout=nldd")
+    page.goto(f"{app_server}/projects/details/{PROJECT}?tab={tab}")
     page.wait_for_load_state("networkidle")
 
 

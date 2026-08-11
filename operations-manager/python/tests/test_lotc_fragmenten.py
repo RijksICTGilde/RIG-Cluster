@@ -160,10 +160,9 @@ BACKUP_GEVALLEN: list[tuple[str, dict[str, Any]]] = [
 
 def _render(roos: str, lotc: str, context: dict[str, Any]) -> tuple[Oppervlak, Oppervlak]:
     pytest.importorskip("lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd")
-    from opi.core.templates import get_templates
     from opi.core.templates_lotc import templates_lotc
 
-    oud = get_templates().env.get_template(roos).render(**context)
+    oud = templates_lotc.env.get_template(roos).render(**context)
     nieuw = templates_lotc.env.get_template(lotc).render(**context)
     return meet(oud), meet(nieuw)
 
@@ -204,7 +203,6 @@ def test_de_grafieken_dragen_dezelfde_canvassen_met_dezelfde_gegevens(naam: str,
     pytest.importorskip("lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd")
     import re
 
-    from opi.core.templates import get_templates
     from opi.core.templates_lotc import templates_lotc
 
     volledig = {"project_name": "proj", "duration": 60, **context}
@@ -220,7 +218,7 @@ def test_de_grafieken_dragen_dezelfde_canvassen_met_dezelfde_gegevens(naam: str,
             }
         return gevonden
 
-    oud = canvassen(get_templates().env.get_template("partials/deployment_metrics.html.j2").render(**volledig))
+    oud = canvassen(templates_lotc.env.get_template("partials/deployment_metrics.html.j2").render(**volledig))
     nieuw = canvassen(templates_lotc.env.get_template("bg/_deployment-metrics.html.j2").render(**volledig))
 
     assert set(oud) == set(nieuw), f"andere canvassen ({naam}): {sorted(set(oud) ^ set(nieuw))}"
@@ -244,7 +242,6 @@ def test_de_tijdvakknoppen_wijzen_naar_een_id_dat_bestaat() -> None:
     pytest.importorskip("lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd")
     import re
 
-    from opi.core.templates import get_templates
     from opi.core.templates_lotc import templates_lotc
 
     context = {
@@ -255,7 +252,7 @@ def test_de_tijdvakknoppen_wijzen_naar_een_id_dat_bestaat() -> None:
         "discovered_workloads": [],
         "pvc_storage": {},
     }
-    oud = get_templates().env.get_template("partials/deployment_metrics.html.j2").render(**context)
+    oud = templates_lotc.env.get_template("partials/deployment_metrics.html.j2").render(**context)
     nieuw = templates_lotc.env.get_template("bg/_deployment-metrics.html.j2").render(**context)
 
     for html, vormgeving in ((oud, "roos"), (nieuw, "nldd")):
@@ -287,11 +284,10 @@ def test_de_backupsnapshots_komen_buiten_de_band_binnen() -> None:
     pytest.importorskip("lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd")
     import re
 
-    from opi.core.templates import get_templates
     from opi.core.templates_lotc import templates_lotc
 
     context = BACKUP_GEVALLEN[0][1]
-    oud = get_templates().env.get_template("shared/_backup-snapshots.html.j2").render(**context)
+    oud = templates_lotc.env.get_template("shared/_backup-snapshots.html.j2").render(**context)
     nieuw = templates_lotc.env.get_template("shared/_backup-snapshots-lotc.html.j2").render(**context)
 
     patroon = re.compile(r'id="([^"]+)"\s+hx-swap-oob="true"')
