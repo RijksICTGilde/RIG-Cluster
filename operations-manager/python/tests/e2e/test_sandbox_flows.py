@@ -18,6 +18,7 @@ or:
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 import httpx
@@ -155,13 +156,24 @@ def test_delete_component_via_api(
     """
     component_name = "apiworker"
 
-    refused_status, refused_body = sandbox_api.delete_component(
-        sandbox_url,
-        lifecycle_project.name,
-        lifecycle_project.api_key,
-        component_name=component_name,
-        verify_ssl=_API_VERIFY_SSL,
-    )
+    # The endpoint answers from the same read cache the delete guard itself uses, and that
+    # cache trails the commit by a moment: right after the add-component task the file in
+    # Forgejo already has the component while this instance has not picked it up yet, and
+    # the honest answer then is 404. Wait for the API's own view instead of racing it.
+    refused_status, refused_body = 404, {}
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        refused_status, refused_body = sandbox_api.delete_component(
+            sandbox_url,
+            lifecycle_project.name,
+            lifecycle_project.api_key,
+            component_name=component_name,
+            verify_ssl=_API_VERIFY_SSL,
+        )
+        if refused_status != 404:
+            break
+        time.sleep(5)
+
     assert refused_status == 409, f"Expected 409 for a component in use, got {refused_status}: {refused_body}"
     used_by = refused_body["detail"]["used_by"]
     assert [use["deployment"] for use in used_by] == [lifecycle_project.deployment_name], used_by
