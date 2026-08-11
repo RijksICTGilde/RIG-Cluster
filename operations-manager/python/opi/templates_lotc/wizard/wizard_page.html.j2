@@ -33,10 +33,11 @@
 
 {% block additional_styles %}
 <link rel="stylesheet" href="{{ static_url('css/wizard.css') }}">
-{# modal.css om de voortgangsweergave: .edit-progress-task-item is display:flex, en zonder
-   dit stijlblad valt het pictogram boven de tekst in plaats van ernaast. Het heet modal.css
-   omdat het uit de dialoog komt, maar de voortgang staat ook op deze pagina. #}
-<link rel="stylesheet" href="{{ static_url('css/modal.css') }}">
+{# Hier stond css/modal.css bij, omdat de takenlijst van de voortgang zijn display:flex
+   daarvandaan haalde en het pictogram anders boven de tekst viel. Dat was een pleister
+   per pagina: vier sjablonen tonen die lijst en de andere drie laden dit stijlblad niet.
+   De lijst staat nu op componenten (widgets/_macros.html.j2, progress_task_list) en
+   heeft geen stijlblad meer nodig. #}
 {% endblock %}
 
 {% block additional_scripts %}

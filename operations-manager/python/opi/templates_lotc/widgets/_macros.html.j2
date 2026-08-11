@@ -118,45 +118,63 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
   NLDD-woordenschat en renderen daar leeg - stil, want een onbekende naam levert geen
   fout op. De kleuren zijn weg: dat is de ROOS-woordenschat (groen, hemelblauw) en NLDD
   doet er niets mee. Zie tests/test_lotc_icon_mapping.py voor de vertaaltabel.
+
+  Dit levert de NAAM en niet een <c-icon>: de naam gaat als attribuut een cel in.
 #}
-{% macro task_status_icon(status) %}
-{%- if status == "completed" -%}
-<c-icon icon="{{ 'vinkje' | nldd_icon }}" size="sm"/>
-{%- elif status == "failed" -%}
-<c-icon icon="{{ 'kruis' | nldd_icon }}" size="sm"/>
-{%- elif status == "running" -%}
-<c-icon icon="{{ 'pijl-naar-rechts' | nldd_icon }}" size="sm"/>
-{%- else -%}
-<c-icon icon="{{ 'klok' | nldd_icon }}" size="sm"/>
+{% macro task_status_icon_name(status) %}
+{%- if status == "completed" -%}{{ 'vinkje' | nldd_icon }}
+{%- elif status == "failed" -%}{{ 'kruis' | nldd_icon }}
+{%- elif status == "running" -%}{{ 'pijl-naar-rechts' | nldd_icon }}
+{%- else -%}{{ 'klok' | nldd_icon }}
 {%- endif -%}
 {% endmacro %}
 
 {#
   De takenlijst met per taak een icoon en per taak zijn subtaken. ``show_errors`` staat
   uit voor de wizardmodal, die de foutregels van een taak bewust niet toont.
+
+  DIT IS EEN LIJST MET EEN STATUS PER REGEL, en het thema heeft daar componenten voor:
+  ``c-list`` met per regel een ``c-list-item``, daarin een ``c-icon-cell`` en een
+  ``c-text-cell``. Een cel is wat een regel naast elkaar zet; dat hoeft geen stijlblad
+  meer te doen.
+
+  Hier stond het met de hand: een ``div.edit-progress-task-item`` waarvan de
+  ``display: flex`` in static/css/modal.css stond. Gemeten in een browser: op elke pagina
+  die dat stijlblad NIET laadt viel het pictogram boven de tekst, en dat waren de
+  voortgangspagina en de wizardmodal. Er stond ook een tweede, met de hand gemaakte versie
+  van dezelfde lijst in de bg-fragmenten (``c-cluster`` + ``c-paragraph``); die viel om
+  omdat een ``<c-paragraph>`` een blok is en in een cluster op de volgende regel breekt.
+  Alle vier de sjablonen roepen nu deze macro aan.
+
+  De inspringing van een subtaak en de ruimte tussen het pictogram en de naam zijn allebei
+  een ``c-spacer-cell``: het thema levert die juist om binnen een regel ruimte te maken.
+  Een lijstregel zet zijn cellen tegen elkaar aan, dus zonder die van 8 raakt de naam het
+  pictogram. De foutregel van een taak is de ``supporting-text`` van de cel - de tweede
+  regel onder de naam, waar hij hoort.
+
+  ``dividers`` staat er NIET bij. Gemeten: ``dividers="never"`` tekent dezelfde lijnen
+  tussen de regels als ``always``, dus het attribuut zou hier iets beloven wat niet
+  gebeurt. Staat als bevinding in request_for_components.md.
 #}
 {% macro progress_task_list(tasks, show_errors=True) %}
 {% if tasks %}
-<div class="edit-progress-tasks">
+<c-list variant="simple" accessible-label="Voortgang per taak">
     {% for task in tasks %}
-    <div class="edit-progress-task-item">
-        {{ task_status_icon(task.status) }}
-        <span>{{ task.name }}</span>
-    </div>
-    {% if show_errors and task.error %}
-    <div class="edit-progress-task-error">{{ task.error }}</div>
-    {% endif %}
+    <c-list-item size="sm">
+        <c-icon-cell size="20" icon="{{ task_status_icon_name(task.status) | trim }}"/>
+        <c-spacer-cell size="8"/>
+        <c-text-cell size="sm" supporting-text="{{ task.error if show_errors and task.error else '' }}">{{ task.name }}</c-text-cell>
+    </c-list-item>
     {% for subtask in task.subtasks or [] %}
-    <div class="edit-progress-task-item edit-progress-subtask">
-        {{ task_status_icon(subtask.status) }}
-        <span>{{ subtask.name }}</span>
-    </div>
-    {% if show_errors and subtask.error %}
-    <div class="edit-progress-task-error edit-progress-subtask">{{ subtask.error }}</div>
-    {% endif %}
+    <c-list-item size="sm">
+        <c-spacer-cell size="24"/>
+        <c-icon-cell size="20" icon="{{ task_status_icon_name(subtask.status) | trim }}"/>
+        <c-spacer-cell size="8"/>
+        <c-text-cell size="sm" supporting-text="{{ subtask.error if show_errors and subtask.error else '' }}">{{ subtask.name }}</c-text-cell>
+    </c-list-item>
     {% endfor %}
     {% endfor %}
-</div>
+</c-list>
 {% endif %}
 {% endmacro %}
 
