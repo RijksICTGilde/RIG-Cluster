@@ -9,79 +9,75 @@
     </c-cluster>
 
     {% if projects %}
-    <div class="projects-grid">
+    {# .projects-grid was repeat(auto-fit, minmax(320px, 1fr)): <c-auto-grid min="320px">.
+       Daarmee vervalt ook de mediaregel die dit raster onder 768px op een kolom zette -
+       auto-fit doet dat vanzelf. #}
+    <c-auto-grid min="320px" gap="lg">
         {% for project in projects %}
         <a href="/projects/details/{{ project.name }}" class="project-card-link">
             <c-card class="project-card project-card-{{ project.health | default('Unknown') | lower }}" outline="true" padding="lg" background-color="wit">
                 <c-layout-flow gap="md">
-                    <div class="project-header">
+                    {# .project-header was flex + space-between + align-items:center:
+                       <c-cluster justify="between">. #}
+                    <c-cluster justify="between" align="center">
                         <c-heading type="h3" label="{{ project.display_name }}"/>
+                        {# De gekleurde pil met de toestand is <c-tag>: het type bepaalt de
+                           kleur, dus .project-status en de zes .status-*-kleurregels
+                           konden weg. Het BOLLETJE gaat als inhoud mee in de tag - dat
+                           werkt, gemeten in de browser - en houdt zijn eigen klasse: een
+                           stip die pulseert bij Progressing en Degraded is geen opmaak
+                           maar een teken dat er iets loopt, en daar heeft het thema niets
+                           voor.
+
+                           Uitgeschakeld en Niet actief houden hun eigen tekst (RC-31): de
+                           eerste blijft uit tot iemand hem aanzet, de tweede komt vanzelf
+                           terug. Ze samenvegen zou een andere onwaarheid zijn. #}
                         {% set health = project.health | default('Unknown') %}
-                        {% if health == 'Healthy' %}
-                        <div class="project-status status-healthy">
-                            <span class="status-dot status-dot-healthy"></span>
-                            Healthy
-                        </div>
-                        {% elif health == 'Progressing' %}
-                        <div class="project-status status-progressing">
-                            <span class="status-dot status-dot-progressing"></span>
-                            Progressing
-                        </div>
-                        {% elif health == 'Degraded' %}
-                        <div class="project-status status-degraded">
-                            <span class="status-dot status-dot-degraded"></span>
-                            Degraded
-                        </div>
-                        {# Switched off and parked get their own label, not a shared grey
-                           "niet actief" (RC-31): the first stays off until someone turns
-                           it back on, the second returns by itself. Without the labels
-                           both fell through to "Unknown", which is a different untruth. #}
-                        {% elif health == 'Disabled' %}
-                        <div class="project-status status-disabled">
-                            <span class="status-dot status-dot-disabled"></span>
-                            Uitgeschakeld
-                        </div>
-                        {% elif health == 'Inactive' %}
-                        <div class="project-status status-inactive">
-                            <span class="status-dot status-dot-inactive"></span>
-                            Niet actief
-                        </div>
-                        {% else %}
-                        <div class="project-status status-unknown">
-                            <span class="status-dot status-dot-unknown"></span>
-                            Unknown
-                        </div>
-                        {% endif %}
-                    </div>
+                        {% set toestanden = {
+                            'Healthy': ('success', 'Healthy'),
+                            'Progressing': ('warning', 'Progressing'),
+                            'Degraded': ('error', 'Degraded'),
+                            'Disabled': ('default', 'Uitgeschakeld'),
+                            'Inactive': ('info', 'Niet actief'),
+                        } %}
+                        {% set soort, opschrift = toestanden.get(health, ('default', 'Unknown')) %}
+                        <c-tag type="{{ soort }}">
+                            <span class="status-dot status-dot-{{ health | lower }}"></span>
+                            {{ opschrift }}
+                        </c-tag>
+                    </c-cluster>
                     {% if project.description %}
                     <p>{{ project.description }}</p>
                     {% endif %}
-                    <div class="project-metrics">
-                        <div class="metric">
+                    {# .project-metrics was flex + gap + wrap, en .metric was flex +
+                       align-items:center + gap om icoon en tekst naast elkaar te zetten.
+                       Allebei <c-cluster>; alleen de kleur en de tekstgrootte van .metric
+                       staan nog in het stijlblad. #}
+                    <c-cluster gap="md">
+                        <c-cluster gap="xs" align="center" class="metric">
                             <c-icon icon="cylinder-split" size="sm"/>
                             <span>{{ project.deployment_count }} deployment{{ 's' if project.deployment_count != 1 }}</span>
-                        </div>
-                        <div class="metric">
+                        </c-cluster>
+                        <c-cluster gap="xs" align="center" class="metric">
                             <c-icon icon="user" size="sm"/>
                             <span>{{ project.user_count }} gebruiker{{ 's' if project.user_count != 1 }}</span>
-                        </div>
-                    </div>
+                        </c-cluster>
+                    </c-cluster>
                     {% if project.last_deployed %}
-                    <div class="project-deploy-time">
+                    {# Ook een cluster; de lijn erboven en de kleur blijven eigen opmaak. #}
+                    <c-cluster gap="xs" align="center" class="project-deploy-time">
                         <c-icon icon="calendar" size="sm"/>
                         <span data-deploy-time="{{ project.last_deployed }}">
                             {{ project.last_deployed[:16]|replace('T', ' ') }} UTC
                         </span>
-                    </div>
+                    </c-cluster>
                     {% endif %}
                 </c-layout-flow>
             </c-card>
         </a>
         {% endfor %}
-    </div>
+    </c-auto-grid>
     {% else %}
-    <c-card outline="true" padding="lg" background-color="wit">
-        <p>Geen projecten gevonden.</p>
-    </c-card>
+    <c-alert type="info" heading="Geen projecten gevonden."/>
     {% endif %}
 </c-layout-flow>
