@@ -14,9 +14,9 @@
             <c-layout-flow gap="md">
                 <p>Controleer de status van je project via het projectoverzicht.</p>
                 <div>
-                    <c-button>
-                        Naar projectoverzicht
-                    </c-button>
+                    {# label= en niet als inhoud: nldd-button toont alleen zijn
+                       text-attribuut, dus met de tekst ertussen bleef de knop leeg. #}
+                    <c-button label="Naar projectoverzicht"/>
                 </div>
             </c-layout-flow>
         </c-card>
