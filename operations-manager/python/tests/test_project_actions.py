@@ -108,6 +108,53 @@ def test_attachment_in_use_is_refused_up_front() -> None:
     assert "web" in action.blocked_reason
 
 
+def test_a_component_in_use_says_what_goes_with_it() -> None:
+    """The portal deletes with the confirmation, so the dialog is where the user learns
+    which deployments and components change along with it (RC-73)."""
+    project = {
+        "name": "demo",
+        "components": [{"name": "web"}, {"name": "worker", "uses-components": ["web"]}],
+        "deployments": [{"name": "prod", "components": [{"reference": "web"}]}],
+    }
+
+    action = build_project_action("demo", project, "delete-component", "web")
+
+    assert action is not None
+    assert action.blocked_reason is None
+    assert "deployment 'prod'" in action.message
+    assert "component 'worker'" in action.message
+
+
+def test_a_component_a_web_address_is_built_around_is_refused_up_front() -> None:
+    """That one is refused by the delete guard itself, so offering the button would offer a
+    deletion that cannot happen."""
+    project = {
+        "name": "demo",
+        "components": [{"name": "web"}],
+        "deployments": [
+            {
+                "name": "prod",
+                "components": [{"reference": "web"}],
+                "services": [{"reference": "publish-on-web", "config": {"root-component": "web"}}],
+            }
+        ],
+    }
+
+    action = build_project_action("demo", project, "delete-component", "web")
+
+    assert action is not None
+    assert action.blocked_reason is not None
+    assert "webadres" in action.blocked_reason
+
+
+def test_a_free_component_is_confirmed_without_a_list() -> None:
+    action = build_project_action("demo", PROJECT, "delete-component", "worker")
+
+    assert action is not None
+    assert action.blocked_reason is None
+    assert "gebruikt door" not in action.message
+
+
 def test_free_attachment_has_no_blocked_reason() -> None:
     action = build_project_action("demo", PROJECT, "delete-attachment", "unused")
 
