@@ -112,8 +112,8 @@
         </c-dropdown>
 
         {# Het zoekveld van het thema, inclusief zijn eigen vergrootglas en wisknop. Dat
-           laatste verving .log-search-clear met zijn .is-visible; window.clearSearch()
-           bestaat nog, want de Escape-afhandeling roept hem aan. #}
+           laatste verving .log-search-clear met zijn .is-visible; het wissen loopt nu via
+           het 'search'-event van het veld, dus de eigen clearSearch() is weg. #}
         <c-search-field id="log-search-input"
                         placeholder="Zoek in logs"
                         accessible-label="Zoek in logs"
