@@ -1,9 +1,9 @@
-{# De melding na een geslaagde handeling. #}
+{# De melding na een geslaagde handeling.
+
+   Dit was een <c-card> met daarin een <div class="flash-success"> die zelf een vinkje,
+   een groene kleur en een flexregel meebracht (base.css). Dat is precies wat <c-alert>
+   is: het icoon, de uitlijning en de kleur horen bij het TYPE van de melding en niet bij
+   deze pagina. De kaart eromheen kan mee weg - de melding brengt haar eigen vlak mee. #}
 {% if success_message %}
-<c-card padding="md" background-color="wit" outline="true">
-    <div class="flash-success">
-        <c-icon icon="check-mark-circle" size="md"/>
-        <span>{{ success_message }}</span>
-    </div>
-</c-card>
+<c-alert type="success" heading="{{ success_message }}"/>
 {% endif %}
