@@ -903,12 +903,16 @@ async def handle_delete_component(payload: dict, progress: Any) -> dict:
     Expected payload keys:
         project_name: Name of the project
         component_name: Name of the component to remove
+        confirm_in_use: Optional; remove the deployment entries and dependency declarations
+            naming this component along with it. Absent means no, and a component that is
+            still referenced then fails the task instead of being deleted.
     """
     from opi.core.task_handlers_operations import handle_refresh_project
     from opi.manager.project_manager import ProjectManager
 
     project_name: str = payload["project_name"]
     component_name: str = payload["component_name"]
+    confirm_in_use: bool = bool(payload.get("confirm_in_use", False))
 
     logger.info(f"Task: deleting component {component_name} from {project_name}")
 
@@ -917,7 +921,7 @@ async def handle_delete_component(payload: dict, progress: Any) -> dict:
     # then saves and commits, so a lagging read cache can never overwrite newer Git state.
     project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
     try:
-        result = await project_manager.delete_component(component_name)
+        result = await project_manager.delete_component(component_name, confirm_in_use=confirm_in_use)
     finally:
         await project_manager.close()
 
@@ -945,5 +949,8 @@ async def handle_delete_component(payload: dict, progress: Any) -> dict:
         ),
         "project": project_name,
         "component": component_name,
+        # What went with it, so a caller who confirmed the deletion learns which deployments
+        # and dependency declarations were changed instead of only that the component is gone.
+        "uncoupled_from": result.get("uncoupled_from", []),
         "processing": refresh_result.get("processing") if isinstance(refresh_result, dict) else None,
     }
