@@ -198,13 +198,10 @@ c-fieldset c-fieldset {
     flex-shrink: 0;
     margin-top: 0.25rem;
 }
-.rvo-sequence__item-header,
-.lotc-sequence__item-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.75rem;
-}
+/* .lotc-sequence__item-header is weg: die regel duwde met de hand een knop naar rechts
+   in een zelfgebouwde blokkop. Dat is nu <c-section-head>, het component dat titel en
+   actie als EEN geheel vormgeeft. De rvo-tegenhanger ging mee - die had sinds RC-67
+   geen enkele gebruiker meer. */
 .rvo-sequence__actions,
 .lotc-sequence__actions {
     margin-top: 0.5rem;

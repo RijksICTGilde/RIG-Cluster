@@ -21,7 +21,7 @@ De test toetst drie dingen:
    compleet zijn - "Domeinen" droeg lange tijd een naam die niet bestond.
 """
 
-import json
+import logging
 import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -29,24 +29,24 @@ from unittest.mock import MagicMock, patch
 import pytest
 from opi.web.menu import get_menu_items
 from opi.web.navigation_lotc import ROOS_TO_NLDD_ICONS, to_nldd_icon
+from opi.web.nldd_iconen import nldd_icon_names
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "opi" / "templates_lotc"
 
 # Iconen die wij gebruiken en waar NLDD geen tegenhanger voor heeft. Ze renderen leeg.
 # Uitgezet bij het LOTC-project; zodra NLDD ze levert horen ze in ROOS_TO_NLDD_ICONS
-# en hier weg. Groeit deze lijst, dan is er een icoon bijgekomen zonder dat iemand de
-# afbeelding heeft gelegd.
-KNOWN_GAPS = {
-    # Geen tegenhanger in de NLDD-woordenschat van 271 iconen. De RVO-set die
-    # jinja-roos-components meelevert heeft er 1163; of die als losse module in LOTC kan
-    # ligt daar als vraag.
-    #
-    # Deze lijst was lang elf namen langer. Dat kwam niet doordat NLDD ze miste maar
-    # doordat deze test de verkeerde lijst las (zie _nldd_vocabulary): trash,
-    # question-mark-circle, dismiss en de caret-driehoekjes bestaan gewoon.
-    "uit-aanknop",
-    "weegschaal",
-}
+# en hier weg.
+#
+# DEZE LIJST IS LEEG, EN DAT HOORT ZO. Een naam hier zetten is zeggen "deze plek blijft
+# leeg en dat vinden we goed", en dat is precies de toestand die deze test hoort te
+# verhinderen. Staat er iets in, dan hoort erbij te staan waarom er geen enkele
+# NLDD-naam de lading dekt - niet dat het even niet uitkwam.
+#
+# De twee namen die hier stonden, uit-aanknop en weegschaal, hadden inderdaad geen
+# letterlijke tegenhanger, maar wel een die hetzelfde zegt: moon voor een slapende
+# deployment en score-meter voor de hulppagina over resources. Ze staan nu in
+# ROOS_TO_NLDD_ICONS.
+KNOWN_GAPS: set[str] = set()
 
 
 def _nldd_vocabulary() -> set[str]:
@@ -61,15 +61,25 @@ def _nldd_vocabulary() -> set[str]:
 
     Uit het pakket gelezen en niet overgeschreven: een handgeschreven kopie zou
     stilzwijgend verouderen bij een versiebump, en juist daarvoor is deze test bedoeld.
+
+    HIER STOND DE VERKEERDE BRON, EN DAAR KWAM DE HELE ELLENDE VANDAAN.
+
+    Deze functie las ``icons.json`` van lord_of_the_components: de BEDOELDE woordenschat,
+    327 namen. De bundel die de browser laadt bevat er 271. De 56 namen ertussen bestaan
+    dus op papier en renderen als niets, en deze test keurde ze goed.
+
+    Gemeten in een browser, met een echte <nldd-icon> en <nldd-button> per naam en de
+    vraag of er een pad in het SVG zat: van de 79 iconnamen in de sjablonen renderden er
+    37 als een lege plek - waaronder de bewerkknop en de verwijderknop. Deze test was al
+    die tijd groen.
+
+    De bron is nu opi/web/nldd_iconen.py: de namen uit de GELEVERDE bestanden, dezelfde
+    plek waar de browser ze vandaan haalt.
     """
-    lotc = pytest.importorskip(
-        "lord_of_the_components", reason="LOTC-bouwlijn niet geinstalleerd (dependency-group lotc)"
-    )
-    icons = json.loads((Path(lotc.__file__).parent / "icons.json").read_text())
-    # De aliassen tellen mee: dat zijn de vriendelijke namen (``database``, ``search``,
-    # ``calendar``) die LOTC zelf naar een icoon uit de set vertaalt. Ze renderen dus
-    # gewoon, en ze staan al jaren in onze templates.
-    return set(icons["sets"]["nldd"]) | set(icons["aliases"])
+    namen = nldd_icon_names()
+    if not namen:
+        pytest.skip("LOTC-thema niet geinstalleerd (dependency-group lotc)")
+    return set(namen)
 
 
 def _icons_used_in_templates() -> set[str]:
@@ -105,13 +115,19 @@ def test_every_mapping_points_at_a_real_nldd_icon() -> None:
     assert not invalid, f"afbeelding naar onbekende NLDD-iconen: {invalid}"
 
 
-def test_icon_gap_does_not_grow() -> None:
-    """De iconen zonder tegenhanger zijn precies de bekende gaten, niet meer."""
+def test_elk_dienstpictogram_levert_een_icoon_op() -> None:
+    """Elke dienstdefinitie komt NA vertaling in de geleverde woordenschat uit.
+
+    Deze kant mag wel door ROOS_TO_NLDD_ICONS: de dienstdefinities staan in Python en de
+    sjablonen halen hun icoon door het ``nldd_icon``-filter. Bij een sjabloon met een
+    letterlijke naam gebeurt dat NIET - zie de test daaronder, en dat verschil is precies
+    waar 37 lege plekken vandaan kwamen.
+    """
     vocabulary = _nldd_vocabulary()
-    unmapped = {icon for icon in _all_icons_in_use() if icon not in ROOS_TO_NLDD_ICONS and icon not in vocabulary}
-    assert unmapped == KNOWN_GAPS, (
-        f"nieuw zonder afbeelding: {sorted(unmapped - KNOWN_GAPS)}; "
-        f"niet langer een gat (haal uit KNOWN_GAPS): {sorted(KNOWN_GAPS - unmapped)}"
+    leeg = {icon: to_nldd_icon(icon) for icon in _icons_used_by_services() if to_nldd_icon(icon) not in vocabulary}
+    assert not leeg, (
+        "dienstpictogrammen die als een lege plek renderen (naam -> na vertaling): "
+        f"{leeg}. Kies een naam die NLDD levert of leg de afbeelding in ROOS_TO_NLDD_ICONS."
     )
 
 
@@ -154,9 +170,36 @@ def test_unknown_icon_passes_through_unchanged() -> None:
     assert to_nldd_icon("sleutel") == "lock-closed"
 
 
+def test_een_onbekende_naam_gaat_niet_stil_door(caplog: pytest.LogCaptureFixture) -> None:
+    """Doorlaten mag, zwijgen niet.
+
+    Ongewijzigd doorlaten blijft juist - een verkeerd icoon tonen is erger dan een lege
+    plek - maar het moet wel ergens langskomen. Zonder deze regel is de uitkomst dat een
+    knop ruimte vrijhoudt voor niets en dat niemand er iets over hoort; zo hebben 37 lege
+    plekken het maanden volgehouden.
+    """
+    with caplog.at_level(logging.WARNING, logger="opi.web.navigation_lotc"):
+        to_nldd_icon("bestaat-echt-niet")
+    assert any("bestaat-echt-niet" in bericht for bericht in caplog.messages), (
+        "een iconnaam die geen icoon oplevert ging stil door"
+    )
+
+
+def test_een_naam_die_wel_bestaat_klaagt_niet(caplog: pytest.LogCaptureFixture) -> None:
+    """Bewaak de bewaker: een waarschuwing bij elke naam is net zo nutteloos als geen."""
+    with caplog.at_level(logging.WARNING, logger="opi.web.navigation_lotc"):
+        to_nldd_icon("sleutel")
+        to_nldd_icon("file-text")
+    assert not caplog.messages, f"onterechte waarschuwing: {caplog.messages}"
+
+
 # --------------------------------------------------------------- de andere kant op
 
 TEMPLATES_LOTC_DIR = Path(__file__).parent.parent / "opi" / "templates_lotc"
+
+#: De diensten leveren hun eigen sjablonen en die renderen op dezelfde pagina's. Ze
+#: stonden hier niet in, en een lege plek in een dienstblok is net zo leeg.
+CATALOG_DIR = Path(__file__).parent.parent / "opi" / "services" / "catalog"
 
 
 def _iconen_in_lotc_templates() -> dict[str, set[str]]:
@@ -166,7 +209,7 @@ def _iconen_in_lotc_templates() -> dict[str, set[str]]:
     niet beoordeeld worden.
     """
     gevonden: dict[str, set[str]] = {}
-    for template in TEMPLATES_LOTC_DIR.rglob("*.j2"):
+    for template in [*TEMPLATES_LOTC_DIR.rglob("*.j2"), *CATALOG_DIR.rglob("*.j2")]:
         # (?<![-\w]) zodat show-icon="before" en start-icon="sort" NIET meetellen: dat zijn
         # andere attributen met een eigen woordenschat.
         for naam in re.findall(r'(?<![-\w])icon="([a-z0-9-]+)"', template.read_text()):
@@ -185,12 +228,25 @@ def test_elke_iconnaam_in_een_lotc_sjabloon_bestaat_in_nldd() -> None:
     "stethoscoop" op de servicekaarten, "document" op de logsknop en in het logpaneel,
     "question-circle" op de infoknop van de wizardkaarten (het heet question-mark-circle),
     en de hele set dienstkaarten in de wizard, waar ROOS-namen ongwijzigd doorliepen.
+
+    EN TOCH BLEEF HIJ LEKKEN, op twee manieren tegelijk:
+
+    1. Hij las de bedoelde woordenschat in plaats van de geleverde (zie
+       _nldd_vocabulary), dus namen die alleen op papier bestaan kwamen er doorheen.
+    2. Hij liet elke naam door die in ROOS_TO_NLDD_ICONS staat. Die uitzondering leek
+       logisch en was fout: die tabel wordt toegepast door het ``nldd_icon``-FILTER, en
+       een letterlijke ``icon="verwijderen"`` in een sjabloon komt daar nooit langs. De
+       naam staat in de tabel, hij wordt niet vertaald, en hij rendeert als niets.
+       Die uitzondering is weg; de sjablonen dragen nu NLDD-namen.
+
+    Gemeten in een browser: dit greep 37 van de 79 iconnamen, waaronder de bewerkknop
+    naast de projecttitel en de verwijderknop bij een herhaalbaar item.
     """
     vocabulaire = _nldd_vocabulary()
     onbekend = {
         naam: sorted(bestanden)
         for naam, bestanden in _iconen_in_lotc_templates().items()
-        if naam not in vocabulaire and naam not in ROOS_TO_NLDD_ICONS and naam not in KNOWN_GAPS
+        if naam not in vocabulaire and naam not in KNOWN_GAPS
     }
     assert not onbekend, "iconnamen die NLDD niet kent (ze renderen leeg, zonder foutmelding):\n" + "\n".join(
         f"  {naam}: {', '.join(bestanden)}" for naam, bestanden in sorted(onbekend.items())

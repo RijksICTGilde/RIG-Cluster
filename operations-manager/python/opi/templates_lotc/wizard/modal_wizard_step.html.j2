@@ -32,7 +32,7 @@
                where someone has to decide something, so it is the place that needed it
                most and was the only surface without it. #}
             {% if section.help_template %}
-            {% set lotc_onclick_1 %}openServiceHelp('{{ section.help_template|e }}'){% endset %}<c-icon icon="vraagteken" size="xl" color="hemelblauw" class="service-card__help-btn"/>
+            {% set lotc_onclick_1 %}openServiceHelp('{{ section.help_template|e }}'){% endset %}<c-icon icon="question-mark-circle" size="xl" color="hemelblauw" class="service-card__help-btn"/>
             {% endif %}
         </c-heading>
         {% if section.description %}
@@ -81,7 +81,7 @@
 
         <div class="wizard-step__actions" id="edit-section-actions">
             {% if not steps.is_first %}
-            <c-button label="Vorige" show-icon="before" icon="delta-naar-links"/>
+            <c-button label="Vorige" show-icon="before" icon="caret-left"/>
             {% else %}
             {% set lotc_onclick_2 %}closeEditModal(){% endset %}<c-button type="button" label="Annuleren"/>
             {% endif %}
@@ -93,9 +93,9 @@
                     <c-icon icon="refresh" size="sm"/>Bezig met opslaan&hellip;
                 </span>
                 {% endif %}
-                <c-button type="submit" show-icon="before" icon="publicatie" :label="('Verder') if (flow_id is defined and flow_id in ('modal-backup', 'modal-restore')) else ('Opslaan')"/>
+                <c-button type="submit" show-icon="before" icon="file-text" :label="('Verder') if (flow_id is defined and flow_id in ('modal-backup', 'modal-restore')) else ('Opslaan')"/>
                 {% else %}
-                <c-button type="submit" label="Volgende" show-icon="after" icon="delta-naar-rechts"/>
+                <c-button type="submit" label="Volgende" show-icon="after" icon="caret-right"/>
                 {% endif %}
             </div>
         </div>
