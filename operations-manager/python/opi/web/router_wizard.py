@@ -16,6 +16,12 @@ from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, v
 from opi.core.templates_lotc import templates_lotc
 from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
+from opi.forms.editables.service_path import (
+    find_service_in_list,
+    parse_service_path,
+    smart_get_value,
+    smart_set_value,
+)
 from opi.forms.visualizers.flows import get_flow
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
 from opi.forms.wizard.mutation import apply_services_mutation
@@ -1552,6 +1558,9 @@ def _extract_section_data(
     section_keys: set[str] = set()
     indexed_fields: dict[str, set[str]] = {}  # top_key -> set of owned field names
     owned_services: dict[str, set[str]] = {}  # top_key -> service names this section configures
+    # De config-velden die deze sectie zelf schrijft, als volledige yaml_paths. Die krijgen
+    # een grafsteen als de inzending ze niet draagt - zie _tombstone_service_config.
+    service_config_leaves: list[str] = []
     # top_key -> field name -> service names, for a service list INSIDE an indexed item
     indexed_services: dict[str, dict[str, set[str]]] = {}
     # real_key -> virtual_key for virtualized editables
@@ -1580,6 +1589,15 @@ def _extract_section_data(
             # copy of the keycloak template and won over the keycloak step itself.
             if is_service_config_path(ed.yaml_path):
                 owned_services.setdefault(top_key, set()).add(parse_service_path(ed.yaml_path)[0])
+                # Alleen losse velden. Een SEQUENCE draagt zijn eigen items en beslist
+                # zelf wat leeg betekent; die een grafsteen geven zou een lijst wissen die
+                # deze stap alleen maar niet toonde.
+                if (
+                    parse_service_path(ed.yaml_path)[1] is not None
+                    and "[*]" not in ed.yaml_path
+                    and str(vis.widget) != "sequence"
+                ):
+                    service_config_leaves.append(ed.yaml_path)
 
             if "[" in top and len(parts) >= 2:
                 # e.g. deployments[0]/base-domain -> owns "base-domain"
@@ -1654,7 +1672,83 @@ def _extract_section_data(
         else:
             result[store_key] = copy.deepcopy(value)
 
+    _tombstone_service_config(result, submitted_yaml, service_config_leaves, virt_mapping)
     return result
+
+
+def _tombstone_service_config(
+    result: dict[str, Any],
+    submitted_yaml: dict[str, Any],
+    leaves: list[str],
+    virt_mapping: dict[str, str],
+) -> None:
+    """Markeer config-velden die deze sectie schrijft maar die de inzending niet draagt.
+
+    Dezelfde regel als bij de indexlijsten hierboven, voor de tak die hem miste. De
+    stapfragmenten worden ADDITIEF over de basis gemerget (``get_merged_data``, en voor
+    diensten met ``merge_service_lists`` die de config deep-merget), dus een sleutel die
+    er simpelweg NIET is kan de oude waarde niet verwijderen. Hij komt gewoon terug.
+
+    Dat is de tweede helft van "aanvinken lukt, uitvinken niet": zodra de browser bij het
+    uitvinken niets meer meestuurt (RC-71, static/js/form-associated.js), haalt de
+    verwerker het veld netjes uit zijn resultaat - en daarna zette de merge het uit de
+    basis terug. Een grafsteen zegt wel wat afwezigheid betekent: ``get_merged_data``
+    haalt de sleutel na het mergen weg, en bij het opslaan verwijdert
+    ``apply_write_paths`` hem uit het projectbestand.
+
+    Alleen velden die de verwerker ECHT heeft leeggemaakt krijgen er een. Wat hij oversloeg
+    (readonly, of verborgen door ``show_when``) staat nog gewoon in ``submitted_yaml``,
+    want dat is een kopie van de projectgegevens - dus daar gebeurt hier niets.
+
+    De grafsteen gaat op het DIEPSTE niveau dat er nog is, niet blind op het veldpad. Een
+    veldpad dat een tussenlaag mist (``restrict-access`` is met zijn laatste sleutel
+    meegeprund, of stond er nooit) zou anders die tussenlaag aanmaken, en dan levert
+    opslaan een leeg ``restrict-access: {}`` in het projectbestand op - een wijziging die
+    de gebruiker niet maakte. Ontbreekt de tussenlaag, dan is DIE de grafsteen: het hele
+    onderdeel is weg, en een sleutel die er nooit was verdwijnt bij het strippen zonder
+    iets achter te laten.
+    """
+    for yaml_path in leaves:
+        if smart_get_value(submitted_yaml, yaml_path) is not None:
+            continue
+        top_key = yaml_path.split("/")[0]
+        store_key = virt_mapping.get(top_key, top_key)
+        entries = result.get(store_key)
+        if not isinstance(entries, list):
+            continue
+        # Alleen voor een dienst die deze sectie ook echt draagt: een grafsteen mag geen
+        # dienstvermelding aanmaken die er niet was.
+        if find_service_in_list(entries, parse_service_path(yaml_path)[0])[0] == -1:
+            continue
+        doelpad = _diepste_bestaande_pad(result, store_key + yaml_path[len(top_key) :])
+        if doelpad is not None:
+            smart_set_value(result, doelpad, CLEARED_FIELD)
+
+
+def _diepste_bestaande_pad(result: dict[str, Any], pad: str) -> str | None:
+    """Het pad waarop de grafsteen mag: het eerste stuk dat in *result* ontbreekt.
+
+    Nooit boven ``<dienst>/config``: dat is de config van de dienst als geheel, en die
+    weggooien is een andere beslissing dan een veld leegmaken. Ontbreekt ``config`` zelf,
+    dan valt er niets te wissen en geeft dit None terug.
+    """
+    segments = pad.split("/")
+    try:
+        eerste = segments.index("config") + 1
+    except ValueError:
+        return None
+    if smart_get_value(result, "/".join(segments[:eerste])) is None:
+        return None
+    for i in range(eerste, len(segments)):
+        deelpad = "/".join(segments[: i + 1])
+        waarde = smart_get_value(result, deelpad)
+        if waarde == CLEARED_FIELD:
+            # Een veld hoger is al als geheel weggestreept; er dieper in schrijven zou die
+            # grafsteen juist weer overschrijven met een gedeeltelijke.
+            return None
+        if waarde is None:
+            return deelpad
+    return pad
 
 
 def _summary_text(text: Any) -> str:
