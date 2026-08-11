@@ -104,27 +104,15 @@ class TestSubdomainRestrictionValidation:
                 f"Page text: {page_text[:500]}"
             )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Een NIET aangevinkt aanvinkvakje wordt door htmx toch als 'true' meegestuurd, "
-            "dus deze stap komt door de verplicht-controle heen. Gemeten op de POST van de "
-            "domeinstap: {'_request-subdomain': 'true'} terwijl het vakje leeg is. "
-            "OORZAAK: <nldd-checkbox-field> is een form-associated webcomponent zonder "
-            "type-eigenschap. new FormData(form) laat hem terecht weg - dat is de meting die "
-            "in templates_lotc/widgets/checkbox.html.j2 staat - maar htmx serialiseert niet "
-            "met FormData: het loopt form.elements langs en leest .value, en die is 'true' "
-            "ongeacht de stand. templates_lotc/widgets/checkbox_group.html.j2 gebruikt om "
-            "dezelfde reden een kaal <input type=checkbox>. "
-            "DIT IS NIET NIEUW IN RC-67: de hertekende weergave was al de standaard, dus dit "
-            "gaat vandaag ook zo in productie. Deze test zag het niet omdat hij tot RC-67 op "
-            "de oude weergave gepind stond. Repareren betekent dit veld terugbrengen naar een "
-            "kaal invoerveld, en dat verandert het uiterlijk van elk aanvinkvakje in de "
-            "wizard - een eigen wijziging, geen onderdeel van het weghalen van roos."
-        ),
-    )
     def test_submit_without_checkbox_shows_error(self, app_server: str, auth_page: Page) -> None:
-        """Submitting without checking the request checkbox shows an error."""
+        """Submitting without checking the request checkbox shows an error.
+
+        Stond op ``xfail(strict=True)`` met precies de meting die RC-71 heeft opgelost:
+        htmx stuurde een NIET aangevinkt vakje als ``'true'`` mee, dus deze stap kwam door
+        de verplicht-controle heen. De reden dat de vlag hier weg kan is dat de oorzaak weg
+        is (static/js/form-associated.js corrigeert de parameters uit FormData), niet dat
+        de test soepeler is geworden.
+        """
         wizard = WizardHelper(auth_page, app_server)
         wizard.open_create_wizard()
         _navigate_to_domain_step(wizard)
