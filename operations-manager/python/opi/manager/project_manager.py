@@ -2949,7 +2949,13 @@ class ProjectManager:
                 self._end_step(process_step, str(e))
                 raise
             if not process_success:
-                critical_failures.append("Project processing failed - check logs for details")
+                # The reason, not a pointer at logs the caller has no access to (RC-66,
+                # bevinding 2). process_project records why it gave up in
+                # _processing_error; only when it did not is there nothing better to say
+                # than that this step failed.
+                critical_failures.append(
+                    self._processing_error or "Bijwerken van diensten en manifesten is mislukt"
+                )
                 self._end_step(
                     process_step,
                     self._processing_error or "Bijwerken van diensten en manifesten is mislukt",
@@ -4831,10 +4837,19 @@ class ProjectManager:
             )
 
             if not await self.has_deployments_for_current_cluster():
+                # Nothing to reconcile is not a failure (RC-66, bevinding 2). A project
+                # created through POST /api/v2/projects has no deployments at all yet,
+                # and a project whose deployments all live on another cluster is simply
+                # not this operations manager's work. Reporting False made every refresh
+                # of such a project fail with "Project processing failed - check logs
+                # for details", pointing at logs the caller cannot read for a state that
+                # is entirely correct.
                 logger.info(
                     f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster"
                 )
-                return False
+                self._processing_error = None
+                self._component_failures = None
+                return True
 
             # Clear stale image-pull auto-disables so a component can deploy again:
             # when the image reference changed (any edit path), or -- on an explicit
