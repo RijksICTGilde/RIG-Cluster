@@ -1177,7 +1177,7 @@ async def service_help(request: Request, template_name: str) -> HTMLResponse:
 
     * ``<service-package>/help.md`` -- a service's own explanation. It is markdown, and
       it is the same file ``GET /api/v2/services/{name}`` returns, so the portal and an
-      API client read one source (RC-59). It is turned into the ROOS components the
+      API client read one source (RC-59). It is turned into the components the
       modal always showed, with the icon taken from the service definition.
     * ``<service-package>/help.html.j2`` -- the older Jinja form, still resolved by the
       Jinja loader for any help that has not been converted.
