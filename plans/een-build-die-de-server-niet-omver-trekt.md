@@ -28,6 +28,8 @@ Dit ontstond mede door een verkeerde aanname. Een `orch ship` doorloopt bouwen, 
 
 Die uitwijk werkt niet. Een gedetachte sessie meldt bij het starten `Task registered: <naam>`, en de orkestrator zet daar een reviewronde op; hier leverde dat een reviewsessie op PR #57 op, die met de hand gestopt moest worden. Het verschil dat de uitwijk moest maken bestaat dus niet.
 
+En hij is niet zomaar weg te halen. De sessie killen helpt niet: de taak blijft staan en er staat een PR open (hier #57), dus de orkestrator zet er telkens een nieuwe review op. Dat moet met `orch stop <taaknaam>`, en dat sluit de PR meteen mee.
+
 Zoek uit wat er WEL is voor een handeling zonder cyclus, of maak het. Zolang dat er niet is, is de eerlijke conclusie dat een uitrol met de hand hoort te gebeuren en niet door een sessie.
 
 ## De vraag die er echt onder ligt
