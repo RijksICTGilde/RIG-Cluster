@@ -12,35 +12,41 @@
         {% if not items %}
         <c-paragraph>Er zijn nog geen taken uitgevoerd voor dit project.</c-paragraph>
         {% else %}
-        <table class="backup-table tasks-table">
-            <thead>
-                <tr>
-                    <th>Soort</th>
-                    <th>Deployment</th>
-                    <th>Status</th>
-                    <th>Door</th>
-                    <th>Gestart</th>
-                    <th>Beëindigd</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in items %}
-                <tr>
-                    <td>{{ item.soort }}</td>
-                    <td>{{ item.deployment or "-" }}</td>
-                    <td>
-                        {{ item.status }}
+        {# Was een kale <table class="backup-table tasks-table"> met eigen randen en
+           kopregelopmaak. Dat is <c-table>; onder NLDD is dat een CSS-grid, dus de
+           kolombreedtes moeten mee - de ruimte gaat naar soort en deployment, waar de
+           langste teksten staan. bg/_tasks.html.j2 deed het al zo.
+
+           De status is een <c-tag>: de kleur volgt de betekenis in plaats van gewone
+           tekst te zijn. #}
+        <c-table columns="2fr 2fr 1fr 2fr 1fr 1fr">
+            <c-table-head>
+                <c-th>Soort</c-th>
+                <c-th>Deployment</c-th>
+                <c-th>Status</c-th>
+                <c-th>Door</c-th>
+                <c-th>Gestart</c-th>
+                <c-th>Be&euml;indigd</c-th>
+            </c-table-head>
+            {% for item in items %}
+            <c-table-row>
+                <c-td>{{ item.soort }}</c-td>
+                <c-td>{{ item.deployment or "-" }}</c-td>
+                <c-td>
+                    <c-stack gap="xs">
+                        <c-tag label="{{ item.status }}"
+                               type="{{ 'success' if item.status in ('Succeeded', 'completed') else 'error' if item.status in ('Failed', 'failed') else 'warning' if item.status in ('Running', 'running') else 'default' }}"/>
                         {% if item.active and item.step %}
-                        <br><small class="task-step">{{ item.step }}{% if item.progress %} ({{ item.progress }}%){% endif %}</small>
+                        <c-paragraph size="sm">{{ item.step }}{% if item.progress %} ({{ item.progress }}%){% endif %}</c-paragraph>
                         {% endif %}
-                    </td>
-                    <td>{{ item.door or "-" }}</td>
-                    <td>{{ (item.gestart or "")[:16] | replace("T", " ") }}</td>
-                    <td>{{ ((item.beeindigd or "")[:16] | replace("T", " ")) if item.beeindigd else "-" }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+                    </c-stack>
+                </c-td>
+                <c-td>{{ item.door or "-" }}</c-td>
+                <c-td>{{ (item.gestart or "")[:16] | replace("T", " ") }}</c-td>
+                <c-td>{{ ((item.beeindigd or "")[:16] | replace("T", " ")) if item.beeindigd else "-" }}</c-td>
+            </c-table-row>
+            {% endfor %}
+        </c-table>
         {% endif %}
     </c-layout-flow>
 </c-card>

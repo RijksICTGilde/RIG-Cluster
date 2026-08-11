@@ -27,13 +27,13 @@
             {% if ns.has_component_env_vars %}
             <div class="env-vars-scope-section">
                 <c-layout-flow gap="md">
-                    <div class="env-vars-scope-header">
+                    <c-cluster gap="xs" align="center" class="env-vars-scope-header">
                         <c-icon icon="puzzle-piece" size="lg" color="donkerblauw"/>
                         <div>
                             <c-heading type="h3" label="Component niveau"/>
                             <p>Standaard variabelen per component (gelden voor alle deployments)</p>
                         </div>
-                    </div>
+                    </c-cluster>
 
                     {% for component in project.components | sort(attribute='name') %}
                     {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars']|length > 0 %}
@@ -70,13 +70,13 @@
             {% if ns.has_deployment_env_vars %}
             <div class="env-vars-scope-section">
                 <c-layout-flow gap="md">
-                    <div class="env-vars-scope-header">
+                    <c-cluster gap="xs" align="center" class="env-vars-scope-header">
                         <c-icon icon="cylinder-split" size="lg" color="oranje"/>
                         <div>
                             <c-heading type="h3" label="Deployment niveau"/>
                             <p>Deployment-specifieke variabelen (overschrijven component niveau)</p>
                         </div>
-                    </div>
+                    </c-cluster>
 
                     {% for deployment in project.deployments | sort(attribute='name') %}
                     {% set dep_ns = namespace(has_env_vars=false) %}
@@ -89,11 +89,11 @@
                     {% if dep_ns.has_env_vars %}
                     <c-card padding="md" background-color="grijs-050" outline="true">
                         <c-layout-flow gap="md">
-                            <div class="env-vars-deployment-header">
+                            <c-cluster gap="xs" align="center" class="env-vars-deployment-header">
                                 <c-icon icon="cylinder-split" size="md" color="oranje"/>
                                 <strong>{{ deployment.name }}</strong>
                                 <span class="cluster-badge">{{ deployment.cluster|title }}</span>
-                            </div>
+                            </c-cluster>
 
                             {% for dep_component in deployment.components | sort(attribute='reference') %}
                             {% if dep_component.get('user-env-vars') and dep_component['user-env-vars'] is mapping and dep_component['user-env-vars']|length > 0 %}
