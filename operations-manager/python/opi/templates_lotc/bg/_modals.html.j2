@@ -29,7 +29,10 @@
      aria-modal="true"
      aria-labelledby="edit-section-title"
      data-project-name="{{ project.name }}">
-    <div class="edit-section-header">
+    {# .edit-section-header was flex + space-between + align-items + gap: dat is
+       <c-cluster justify="between">. De lijn eronder en de marge blijven in
+       modal.css - daar heeft het thema niets voor. #}
+    <c-cluster justify="between" align="center" class="edit-section-header">
         <c-heading type="h2" size="4" id="edit-section-title">
             <c-icon icon="pencil" size="lg" />
             <span id="edit-section-title-text"></span>
@@ -40,7 +43,7 @@
                   icon="dismiss"
                   class="edit-modal-close-btn"
                   :attrs="{'onclick': 'closeEditModal()'}" />
-    </div>
+    </c-cluster>
     <div id="edit-section-error" class="edit-section-error is-hidden"></div>
     <div id="edit-section-inner">
         <div id="edit-section-content" class="edit-section-content">

@@ -3,13 +3,16 @@
    die negeert de klik zolang er een taak loopt en waarschuwt bij niet-opgeslagen werk. #}
 <div id="approval-backdrop" class="edit-section-backdrop" onclick="handleEditBackdropClick()"></div>
 <div id="approval-modal" class="edit-section-modal" role="dialog" aria-modal="true">
-    <div class="edit-section-header">
+    {# .edit-section-header was flex + space-between + align-items + gap: dat is
+       <c-cluster justify="between">. De lijn eronder en de marge blijven in
+       modal.css - daar heeft het thema niets voor. #}
+    <c-cluster justify="between" align="center" class="edit-section-header">
         <c-heading type="h2">
             <c-icon icon="check-mark-circle" size="lg" color="donkerblauw"/>
             <span id="approval-title-text">Domeingoedkeuring</span>
         </c-heading>
         {% set lotc_onclick_1 %}closeApprovalModal(){% endset %}<c-button size="sm" label="Sluiten" show-icon="before" icon="dismiss" class="edit-modal-close-btn"/>
-    </div>
+    </c-cluster>
     <div id="approval-error" class="edit-section-error is-hidden"></div>
     <div id="edit-section-inner">
         <div class="edit-section-content">
