@@ -81,19 +81,17 @@ def test_de_pagina_levert_zelf_het_stuk_dat_het_zoekveld_ververst(client: httpx.
     assert _projectnamen(antwoord) == ["test-project-detail"]
 
 
-def test_de_totalen_onderaan_volgen_de_zoekterm_niet(client: httpx.Client) -> None:
-    """ "Je projecten: 3" hoort niet te dalen omdat je iets in het zoekveld typt.
+def test_de_telling_boven_de_lijst_volgt_de_zoekterm(client: httpx.Client) -> None:
+    """De telling gaat over wat je ZIET, dus die daalt mee met het zoekveld.
 
-    De telling BOVEN de tabel hoort dat wel te doen - die gaat over wat je ziet.
+    Hier stond er een tweede meting bij: de tegel "Je projecten: 3" onderaan hoorde NIET
+    mee te dalen. Die vier samenvattingstegels zijn er sinds 4262bf2d uit ("voegden niets
+    toe"), dus er valt niets meer te vergelijken. Wat overblijft is de telling zelf, en
+    die hoort de zoekterm wel te volgen - dat was het punt van de oorspronkelijke toets.
     """
     antwoord = client.get("/projects?q=services").text
     assert "Totaal: 1 project van 3" in antwoord, "de telling boven de tabel volgt de zoekterm niet"
-
-    # De tegel rendert als <span class="lotc-metric-value">3</span> gevolgd door zijn
-    # label; op die volgorde wordt gemeten, want het getal alleen komt overal voor.
-    tegel = re.search(r'lotc-metric-value">(\d+)</span></div>\s*<div class="lotc-metric-label">Je projecten', antwoord)
-    assert tegel, "de tegel 'Je projecten' staat er niet meer"
-    assert tegel.group(1) == "3", f"het totaal onderaan is meegefilterd met de zoekterm: {tegel.group(1)}"
+    assert "Totaal: 3 projecten" not in antwoord, "de telling toont het ongefilterde totaal"
 
 
 def test_de_pagina_toont_de_kaarten_en_wat_daar_omheen_hoort(client: httpx.Client) -> None:
@@ -105,15 +103,16 @@ def test_de_pagina_toont_de_kaarten_en_wat_daar_omheen_hoort(client: httpx.Clien
     van beide beelden, en dus toetst deze test hem nu.
 
     Wat er wel bij hoort te blijven staan is alles dat bij het omzetten stilletjes wegviel
-    zonder dat iemand daarom vroeg: de knop Vernieuwen, de telling, en de vier totalen.
+    zonder dat iemand daarom vroeg: de knop Vernieuwen en de telling.
+
+    De vier samenvattingstegels stonden hier ook in. Die zijn er sinds 4262bf2d BEWUST uit
+    ("voegden niets toe"), en dat is iets anders dan stilletjes wegvallen - dus die toets
+    is weg in plaats van rood.
     """
     antwoord = client.get("/projects").text
 
     assert "Vernieuwen" in antwoord, "de knop Vernieuwen is weg"
     assert "Totaal: 3 projecten" in antwoord, "de telling boven de lijst is weg"
-
-    for totaal in ("Je projecten", "Teamleden totaal", "Services actief", "Je rol"):
-        assert totaal in antwoord, f"het totaal '{totaal}' onderaan is weg"
 
     # Per project een kaart met de naam en de omschrijving, en verder niets.
     assert "Detail Test Project" in antwoord, "de weergavenaam staat niet op de kaart"
