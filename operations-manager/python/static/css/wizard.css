@@ -389,6 +389,11 @@ c-fieldset c-fieldset {
     font-size: 0.75rem;
     font-weight: 600;
 }
+/* --rvo-color-geel-300/-750 staan niet in de shim van lotc-app.css, en met opzet: het
+   oude thema had ze ook niet. "Aangevraagd" kreeg dus ook DAAR geen achtergrond, terwijl
+   goedgekeurd en afgewezen die wel hebben. Dat ziet er scheef uit, maar het invullen zou
+   de weergave anders maken dan het origineel en dit is een omzetting. Aantekening voor
+   een volgende taak; de telling staat vast in tests/test_css_dode_variabelen.py. */
 .approval-status-requested { background: var(--rvo-color-geel-300); color: var(--rvo-color-geel-750); }
 .approval-status-approved { background: var(--rvo-color-groen-150); color: var(--rvo-color-groen-750); }
 .approval-status-denied { background: var(--rvo-color-rood-150); color: var(--rvo-color-rood-750); }

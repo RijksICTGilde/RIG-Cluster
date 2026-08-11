@@ -202,7 +202,7 @@ een hoogte-attribuut op `c-card`.
 
 ---
 
-## 9. `c-bar` zet zijn end-slot in de MIDDELSTE kolom
+## 11. `c-bar` zet zijn end-slot in de MIDDELSTE kolom
 
 **Wat er gebeurt.** `.lotc-bar` is een grid met `grid-template-columns: 1fr auto 1fr` en
 `justify-self: start/center/end` op de drie regio's. Maar het sjabloon rendert de
@@ -227,7 +227,7 @@ grid teruggeven op `1fr auto` als er geen center-slot is.
 
 ---
 
-## 10. `c-avatar-group` rendert een element dat NLDD niet kent
+## 12. `c-avatar-group` rendert een element dat NLDD niet kent
 
 **Wat er gebeurt.** `<c-avatar-group>` rendert `<nldd-avatar-group>`, en dat custom
 element wordt door de meegeleverde `nldd.js` niet gedefinieerd. Gemeten in de browser:
@@ -251,7 +251,7 @@ opvalt in plaats van stil niets te doen.
 
 ---
 
-## 11. `c-code-viewer` toont geen tekst die er later in gezet wordt
+## 13. `c-code-viewer` toont geen tekst die er later in gezet wordt
 
 **Wat er gebeurt.** `<c-code-viewer>` is een CodeMirror-weergave die zijn inhoud
 overneemt bij het opbouwen. Zet je de tekst er daarna in met `.textContent`, dan gebeurt
