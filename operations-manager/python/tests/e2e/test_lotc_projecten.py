@@ -81,17 +81,17 @@ def test_de_pagina_levert_zelf_het_stuk_dat_het_zoekveld_ververst(client: httpx.
     assert _projectnamen(antwoord) == ["test-project-detail"]
 
 
-def test_de_telling_boven_de_lijst_volgt_de_zoekterm(client: httpx.Client) -> None:
-    """De telling gaat over wat je ZIET, dus die daalt mee met het zoekveld.
+def test_de_telling_boven_de_lijst_zegt_hoeveel_er_zijn_en_hoeveel_je_ziet(client: httpx.Client) -> None:
+    """Zoeken filtert de LIJST, en de telling zegt allebei de getallen.
 
-    Hier stond er een tweede meting bij: de tegel "Je projecten: 3" onderaan hoorde NIET
-    mee te dalen. Die vier samenvattingstegels zijn er sinds 4262bf2d uit ("voegden niets
-    toe"), dus er valt niets meer te vergelijken. Wat overblijft is de telling zelf, en
-    die hoort de zoekterm wel te volgen - dat was het punt van de oorspronkelijke toets.
+    Hier stond een toets op de tegel "Je projecten", die niet mocht dalen als je iets
+    intypte. Die vier tegels zijn op verzoek weggehaald, dus wat overblijft is de telling -
+    en die hoort juist wel te zeggen wat je zoekterm overlaat, zonder te verzwijgen hoeveel
+    er in totaal zijn.
     """
-    antwoord = client.get("/projects?q=services").text
-    assert "Totaal: 1 project van 3" in antwoord, "de telling boven de tabel volgt de zoekterm niet"
-    assert "Totaal: 3 projecten" not in antwoord, "de telling toont het ongefilterde totaal"
+    antwoord = client.get("/projects?q=detail").text
+
+    assert "Totaal: 1 project van 3" in antwoord, "de telling noemt niet allebei de getallen"
 
 
 def test_de_pagina_toont_de_kaarten_en_wat_daar_omheen_hoort(client: httpx.Client) -> None:
@@ -103,16 +103,18 @@ def test_de_pagina_toont_de_kaarten_en_wat_daar_omheen_hoort(client: httpx.Clien
     van beide beelden, en dus toetst deze test hem nu.
 
     Wat er wel bij hoort te blijven staan is alles dat bij het omzetten stilletjes wegviel
-    zonder dat iemand daarom vroeg: de knop Vernieuwen en de telling.
-
-    De vier samenvattingstegels stonden hier ook in. Die zijn er sinds 4262bf2d BEWUST uit
-    ("voegden niets toe"), en dat is iets anders dan stilletjes wegvallen - dus die toets
-    is weg in plaats van rood.
+    zonder dat iemand daarom vroeg: de knop Vernieuwen en de telling. De vier totalen zijn
+    later op verzoek weggehaald - stil verdwijnen en bewust weghalen zijn niet hetzelfde.
     """
     antwoord = client.get("/projects").text
 
     assert "Vernieuwen" in antwoord, "de knop Vernieuwen is weg"
     assert "Totaal: 3 projecten" in antwoord, "de telling boven de lijst is weg"
+
+    # De vier totalen onderaan zijn op verzoek WEGGEHAALD: de aantallen staan in de lijst
+    # eronder en je eigen rol is geen kerncijfer. Ze horen dus niet terug te komen.
+    for totaal in ("Je projecten", "Teamleden totaal", "Services actief", "Je rol"):
+        assert totaal not in antwoord, f"het weggehaalde totaal '{totaal}' staat er weer"
 
     # Per project een kaart met de naam en de omschrijving, en verder niets.
     assert "Detail Test Project" in antwoord, "de weergavenaam staat niet op de kaart"
