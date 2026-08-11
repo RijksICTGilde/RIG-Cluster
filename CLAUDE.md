@@ -167,7 +167,7 @@ When introducing a new feature, create a markdown document in `features/` with: 
 - **Modern type hints**: `dict`, `list`, `tuple` (lowercase), `str | None` (not `Optional`)
 - **Type annotations**: Always for function parameters and return types
 - **Error handling**: Specific exception types, avoid generic `except Exception`
-- **Frontend**: Jinja2 + jinja-roos-components. Check `references/jinja_roos_copied.md` for component usage
+- **Frontend**: Jinja2 + lord-of-the-components (NLDD-thema). Zie `features/lotc-bouwlijn.md` en `features/roos-eruit.md`
 
 ## Post-Development Validation
 
