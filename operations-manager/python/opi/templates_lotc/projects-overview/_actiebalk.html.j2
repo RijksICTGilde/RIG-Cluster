@@ -14,7 +14,8 @@
         {% set lotc_onclick_2 %}window.location.href='/projects?refresh=true'{% endset %}<c-button label="Vernieuwen" size="md" show-icon="before" icon="refresh"/>
     </c-cluster>
 
-    <div class="filter-row">
+    {# .filter-row was flex + gap + align-items:center, oftewel <c-cluster>. #}
+    <c-cluster gap="sm" align="center">
         <span>Totaal: <strong>{{ projects|length }} project{% if projects|length != 1 %}en{% endif %}</strong></span>
-    </div>
+    </c-cluster>
 </c-cluster>
