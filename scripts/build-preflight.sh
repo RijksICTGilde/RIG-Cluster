@@ -2,15 +2,27 @@
 #
 # build-preflight.sh - weiger een image-build te starten als er te weinig geheugen vrij is.
 #
-# Aanleiding: een build op de gedeelde dev-server trok de machine bijna om (load 34,8,
-# nog 1 GB van de 15 vrij) terwijl er twee andere sessies draaiden. Dat was vooraf te
-# zien. Deze controle kijkt naar het beschikbare geheugen en meldt wat er draait, zodat
-# je weet wie je omver zou duwen.
+# Aanleiding: een build op de gedeelde dev-server trok de machine bijna om (load 34,8)
+# terwijl er twee andere sessies draaiden. Dat was vooraf te zien. Deze controle kijkt
+# naar het beschikbare geheugen en meldt wat er draait, zodat je weet wie je omver zou
+# duwen.
 #
-# Geheugen is de grens, niet de schijf: bij dat incident was de schijf 10% vol.
+# LET OP - MemFree is niet het getal dat je wilt. Het incidentverslag noemde "nog 1 GB
+# van de 15 vrij"; dat was MemFree, en die staat op deze machine ALTIJD rond de 0,2-0,9
+# GB omdat de paginacache (Cached, ~4 GB) hem opvult. Die cache is direct opvraagbaar.
+# MemAvailable telt hem mee en is daarom het enige bruikbare signaal; dit script leest
+# dus MemAvailable.
+#
+# De drempel is gemeten, niet geschat. Een koude build (alle drie de apt-rondes, uv
+# sync, skopeo, tarball-export) piekt op 427 MB, een warme op 108 MB, en MemAvailable
+# zakte tijdens de koude build van 4600 naar 4130 MB. 1536 MB is dus ruim drie keer wat
+# een koude build kost. De eerdere 6144 kwam uit een schatting (de 4 GiB-cgroupgrens plus
+# marge) en blokkeerde daardoor elke build op een machine die nooit boven de 5,5 GB komt.
+#
+# Geheugen is niet de schijf: bij dat incident was de schijf 10% vol.
 #
 # Omgevingsvariabelen:
-#   BUILD_MIN_AVAILABLE_MB   minimaal vrij geheugen in MB (standaard 6144)
+#   BUILD_MIN_AVAILABLE_MB   minimaal vrij geheugen in MB (standaard 1536)
 #   BUILD_PREFLIGHT_SKIP=1   controle overslaan (bewuste keuze, wordt gemeld)
 #   BUILD_PREFLIGHT_MEMINFO  pad naar meminfo (standaard /proc/meminfo, voor tests)
 #   BUILD_PREFLIGHT_LOADAVG  pad naar loadavg (standaard /proc/loadavg, voor tests)
@@ -19,7 +31,7 @@
 
 set -uo pipefail
 
-MIN_AVAILABLE_MB="${BUILD_MIN_AVAILABLE_MB:-6144}"
+MIN_AVAILABLE_MB="${BUILD_MIN_AVAILABLE_MB:-1536}"
 MEMINFO="${BUILD_PREFLIGHT_MEMINFO:-/proc/meminfo}"
 LOADAVG="${BUILD_PREFLIGHT_LOADAVG:-/proc/loadavg}"
 

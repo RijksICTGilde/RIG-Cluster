@@ -40,6 +40,8 @@ def _run_preflight(tmp_path: Path, available_kb: int | None, **env_extra: str) -
         "BUILD_MIN_AVAILABLE_MB": "6144",
         **env_extra,
     }
+    if env.get("BUILD_MIN_AVAILABLE_MB") == "":
+        del env["BUILD_MIN_AVAILABLE_MB"]
     return subprocess.run(
         ["bash", str(PREFLIGHT)],
         capture_output=True,
@@ -103,6 +105,25 @@ class TestBuildPreflight:
 
         assert result.returncode == 0
 
+    def test_default_threshold_is_reachable_on_the_shared_server(self, tmp_path: Path) -> None:
+        """The default must clear on a machine that never has much MemAvailable.
+
+        The shared dev server sits between 3 and 5.5 GB available all day, so a default of
+        6144 MB refused every build - while a cold build was measured to peak at 427 MB and
+        to pull MemAvailable down by less than 500 MB. A threshold nobody can ever meet is
+        not a guard, it is an outage: it pushes people to BUILD_PREFLIGHT_SKIP=1 by habit.
+        """
+        result = _run_preflight(tmp_path, available_kb=3 * 1024 * 1024, BUILD_MIN_AVAILABLE_MB="")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_default_threshold_still_refuses_a_genuinely_empty_machine(self, tmp_path: Path) -> None:
+        """Lowering the default must not turn the guard off altogether."""
+        result = _run_preflight(tmp_path, available_kb=512 * 1024, BUILD_MIN_AVAILABLE_MB="")
+
+        assert result.returncode == 1
+        assert "TE WEINIG VRIJ GEHEUGEN" in result.stderr
+
     def test_script_is_executable(self) -> None:
         assert PREFLIGHT.stat().st_mode & 0o111
 
@@ -114,7 +135,7 @@ class TestTaskfileBuildTasks:
 
     def test_memory_limit_is_configured(self, taskfile: dict) -> None:
         assert "SANDBOX_BUILD_MEMORY" in taskfile["vars"]
-        assert "4g" in taskfile["vars"]["SANDBOX_BUILD_MEMORY"]
+        assert "2g" in taskfile["vars"]["SANDBOX_BUILD_MEMORY"]
 
     def test_builder_task_sets_a_memory_limit(self, taskfile: dict) -> None:
         cmds = self._cmds(taskfile, BUILDER_TASK)
