@@ -1,5 +1,11 @@
 # De diensten in het nieuwe thema (RC-65)
 
+> **RC-67: dit stuk beschrijft de tijd dat er TWEE componentsystemen waren.** Roos is weg,
+> en daarmee de `-lotc`-tegenhangers en `lotc_counterpart()`: elke dienst heeft nog EEN
+> sjabloon, onder zijn eigen naam. Wat hier staat is de weg ernaartoe en de reden dat het
+> zo gelopen is; de eindstand staat in `features/roos-eruit.md`.
+
+
 De nieuwe vormgeving is de standaard (`DEFAULT_LAYOUT = LAYOUT_LOTC`), maar de blokken die
 een **dienst** levert vielen nog terug op de oude. Dat is nu voor elk dienstsjabloon
 opgelost, en de brug ertussen (`render_roos()`) is weg.

@@ -349,7 +349,6 @@ def page_data(slug: str) -> dict[str, Any]:
             "form_html": _render_form_html(
                 data={"email": "voorbeeldbeheerder@rijksoverheid.nl", "full_name": "Voorbeeldbeheerder"},
                 edit_mode=True,
-                lotc=True,
             ),
             "csrf_token": "",
         }

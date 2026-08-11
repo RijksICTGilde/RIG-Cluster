@@ -1,32 +1,31 @@
 # LOTC-bouwlijn: OPI op Lord of the Components
 
-De omzetting van de webinterface naar **Lord of the Components** (LOTC) met het
-NLDD-thema, ter vervanging van `jinja-roos-components`. De nieuwe vormgeving is inmiddels
-de STANDAARD; de oude is er nog als terugvaloptie.
+De webinterface draait op **Lord of the Components** (LOTC) met het NLDD-thema. Sinds
+RC-67 is dat het ENIGE componentensysteem: `jinja-roos-components` is weg, en daarmee de
+schakelaar tussen de twee weergaven. Wat er precies uit is en wat de pariteitspoort
+vervangt staat in `features/roos-eruit.md`.
 
-Achtergrond en fasering: `plans/naar-het-nieuwe-componentensysteem.md`.
-De samenleefmeting: `docs/lotc-samenleven-met-jinja-roos.md`.
+Achtergrond en fasering: `plans/naar-het-nieuwe-componentensysteem.md` en
+`plans/roos-eruit.md`. De samenleefmeting (historisch, uit de tijd dat beide systemen
+naast elkaar stonden): `docs/lotc-samenleven-met-jinja-roos.md`.
 
 ## Wat het is
 
-- **Echte routes** die hun pagina al door LOTC kunnen renderen: `/services`,
+- **Elke route** rendert zijn pagina door LOTC: `/services`,
   `/dashboard`, `/projects` en `/projects/details/<naam>` (met het resourcegebruik-
   fragment dat htmx apart inlaadt), plus de beheerpagina's `/admin/users` (inclusief het
   formulier op `/admin/users/create` en `/admin/users/<id>/edit`), `/admin/approvals` en
   `/admin/usage`, en **de wizard** (`/forms/wizard/start`, `/forms/wizard/<flow>`,
-  `/forms/wizard/<flow>/edit/<project>`, elke htmx-stap en de samenvatting). Zet er
-  `?layout=roos` achter voor de oude weergave.
+  `/forms/wizard/<flow>/edit/<project>`, elke htmx-stap en de samenvatting).
 - Daarnaast een **proefopstelling** onder `/lotc/`, met voorbeeldprojecten. Die is er om
   vorm te kiezen zonder een cluster nodig te hebben, niet als eindbestemming.
 - De navigatie volgt de opzet van [bg.rijks.app](https://bg.rijks.app/): hoofdnavigatie
   in een zijkolom met groepen, alleen hulplinks (account, in- en uitloggen) in de header.
 - De formulierlaag is te bekijken op `/lotc/formulier`.
 
-**Welke weergave je krijgt** bepaalt `opi/web/lotc_switch.py`, in deze volgorde:
-
-1. `?layout=nldd` of `?layout=roos` in de URL,
-2. anders de cookie `zad_layout`, die alleen gezet wordt als je expliciet gekozen hebt,
-3. anders de standaard, en dat is **nldd**.
+Er valt niets meer te kiezen: `opi/web/lotc_switch.py` rendert het sjabloon, en de
+`?layout=`-parameter en het koekje `zad_layout` bestaan niet meer. Wat er wel nog gekozen
+wordt is licht/donker, via `/weergave` en het koekje `zad_scheme`.
 
 Lord of the Components is een gewone runtime-dependency: de applicatie rendert er
 pagina's mee, dus hij hoort in de image.
@@ -36,8 +35,7 @@ pagina's mee, dus hij hoort in de image.
 ```bash
 cd operations-manager/python
 uv sync
-uv run python scripts/lotc_convert_templates.py     # templates opnieuw omzetten
-uv run pytest tests/test_lotc_conversion.py tests/test_lotc_icon_mapping.py -q
+uv run pytest tests/test_lotc_icon_mapping.py tests/test_lotc_layout_rules.py -q
 uv run pytest tests/e2e/test_lotc_visual.py -m "e2e and not sandbox" -q
 ```
 
@@ -58,43 +56,38 @@ Draaiende applicatie:
 | bestand | rol |
 |---|---|
 | `opi/core/templates_lotc.py` | de tweede Jinja-omgeving, met design systems, globals en filters |
-| `opi/templates_lotc/` | de omgezette templates - **gegenereerd**, niet met de hand bewerken |
+| `opi/templates_lotc/` | alle templates. De eerste generatie is ooit gegenereerd; de omzetter is met zijn invoer verdwenen, dus dit is nu handwerk |
 | `opi/templates_lotc/base_lotc.html.j2` | de schil in bg-opzet - **wel** met de hand |
 | `opi/templates_lotc/widgets/` | de formulierwidgets - **wel** met de hand |
 | `opi/templates_lotc/bg/` | de hertekende pagina's - **wel** met de hand |
 | `opi/templates_lotc/bg/_patterns.html.j2` | gedeelde patronen: `panel()`, `page_head()`, `info()`, `service_card()` |
 | `opi/templates_lotc/bg/wizard-page.html.j2`, `wizard-start.html.j2`, `_wizard-step.html.j2`, `_wizard-steps.html.j2`, `_wizard-review.html.j2` | de wizard: de hele pagina, de startpagina, en de drie fragmenten die htmx wisselt |
-| `opi/web/lotc_switch.py` | de schakelaar waarmee een echte route zijn weergave kiest |
+| `opi/web/lotc_switch.py` | `render()`/`render_fragment()`, plus de vorm waarin een route zijn gegevens aanlevert |
 | `opi/web/lotc_fixtures/` | voorbeeldprojecten voor de proefopstelling |
 | `opi/web/navigation_lotc.py` | de indeling van de navigatie en de icoonvertaling |
 | `opi/web/lotc_router.py` | de routes onder `/lotc/` |
 | `opi/forms/widgets/lotc.py` | de widget-adapter die de LOTC-templates rendert |
+| `opi/forms/widgets/fields.py` | de gedeelde veldvoorbereiding waar die adapter van erft |
 | `opi/forms/lotc_attrs.py` | de attribuutbundel van een veld, voor LOTC's `:attrs` |
-| `scripts/lotc_convert_templates.py` | de omzetter |
 
-### Twee omgevingen, geen twee design systems
+### Waarom er ooit twee omgevingen waren
 
 Beide componentsystemen registreren een Jinja-extensie die de bron voorbewerkt en **elke**
 `<c-*>`-tag opeist. In één `Environment` claimt de eerst geregistreerde voorbewerker alles
 en breekt op de tags die hij niet kent; een doorlaatstand bestaat aan geen van beide
-kanten. Twee losse omgevingen werken wel.
+kanten. Twee losse omgevingen werkten wel, met de grens per overervingsketen. Dat is
+gemeten in `docs/lotc-samenleven-met-jinja-roos.md` en het is de reden dat de omzetting
+per pagina kon. Er is er nu nog één.
 
-De grens loopt daarbij niet per pagina maar **per overervingsketen**: een template dat
-`base_lotc.html.j2` uitbreidt wordt door de LOTC-omgeving gerenderd, een template dat
-`base.html.j2` uitbreidt door de roos-omgeving. Mengen binnen een keten kan niet.
+### De omzetter is weg
 
-### Een omzetter, geen handwerk
+De eerste generatie van `opi/templates_lotc/` is gegenereerd uit `opi/templates/`: een met
+de hand overgetypte kopie van 152 bestanden is vanaf dag twee verouderd zonder dat iemand
+ziet waar. Die invoer bestaat niet meer, dus de omzetter ook niet.
 
-De release blijft aan diezelfde templates werken. Een met de hand overgetypte kopie van
-152 bestanden is vanaf dag twee verouderd zonder dat iemand ziet waar. Daarom genereert
-`scripts/lotc_convert_templates.py` de inhoud van `opi/templates_lotc/`, en zit het
-handwerk in de vertaalregels.
-
-Twee soorten templates vallen daarbuiten en staan er met de hand, omdat er een keuze aan
-te pas komt die een script niet kan maken: de schil (de indeling verandert, niet alleen
-de namen) en de formulierwidgets (welk attribuut waar hoort, per widget).
-
-Wijzig je iets in `opi/templates/`, draai dan de omzetter opnieuw.
+Let op wat daarvan is blijven liggen: naast de handgeschreven `bg/`-pagina's staat nog de
+eerste automatische omzetting van de oude boom. Die hangt aan `/lotc/pagina/<naam>` en aan
+een paar tests, en is NIET wat een gebruiker ziet.
 
 ### Wat er anders is aan LOTC
 
@@ -132,13 +125,13 @@ templatemap op de `searchpath`. Twee regels, en twee regels om weer weg te halen
 
 | test | bewaakt |
 |---|---|
-| `tests/test_lotc_conversion.py` | dat elk template compileert, en dat de lijst uitzonderingen niet groeit |
+| `tests/test_lotc_component_names.py` | dat er nergens nog een `<c-p>` staat; die naam bestaat niet |
 | `tests/test_lotc_icon_mapping.py` | dat elke icoonvertaling naar een bestaande NLDD-naam wijst |
 | `tests/e2e/test_lotc_visual.py` | dat pagina's in een browser kloppen, met screenshots |
 | `tests/test_lotc_layout_rules.py` | dat kaarten via `panel()` gebouwd worden en gaps uit de schaal komen |
 | `tests/test_lotc_schrijfwijze.py` | dat teksten de lezer met "je" aanspreken |
-| `tests/test_lotc_switch.py` | dat de volgorde URL > cookie > standaard klopt |
-| `tests/e2e/test_lotc_parity.py` | dat de nieuwe pagina alles KAN wat de oude kon |
+| `tests/e2e/test_gedragsoppervlak.py` | dat een pagina of dialoog niets verliest van wat er vastligt |
+| `tests/test_lotc_modal_fragmenten.py` | hetzelfde voor de dialoogfragmenten die zonder takendienst niet via HTTP te bereiken zijn |
 
 Compileren is een echte poort en geen telling: LOTC valideert bij het compileren al of
 elk component bestaat en of elk attribuut bij dat component hoort.
@@ -164,8 +157,7 @@ die iets anders aanroept, een invoerveld dat wegvalt - de pagina rendert gewoon,
 geen foutmelding, en je ontdekt het pas als je het nodig hebt.
 
 In deze omzetting is dat meermalen gebeurd, en het is er niet uitgekomen door goed kijken
-maar door meten. `scripts/lotc_compare_behaviour.py` haalt elke omgezette route twee keer
-op - `?layout=roos` en `?layout=nldd` - en legt het gedragsoppervlak naast elkaar:
+maar door meten. De meetlat staat in `tests/oppervlak.py`:
 
 - waar je heen kunt: `href`, elk attribuut op `-href`, `action`
 - wat htmx ophaalt: elke `hx-get`/`hx-post`/...
@@ -174,24 +166,16 @@ op - `?layout=roos` en `?layout=nldd` - en legt het gedragsoppervlak naast elkaa
 
 Tagnamen, klassen, teksten en stylesheets tellen niet mee: dat IS de vormgeving.
 
-```bash
-uv run python scripts/lotc_compare_behaviour.py \
-  --base https://zad.sandbox.rijksapp.dev \
-  --secret "<SECRET_KEY van de draaiende applicatie>" \
-  --email <adres dat toegang heeft> --project <projectnaam>
-```
-
-`tests/e2e/test_lotc_parity.py` is dezelfde meting als poort, tegen de testserver. De lijst
-aanvaarde verschillen staat in het SCRIPT en wordt door de test geimporteerd - twee kopieen
-zouden uit de pas lopen, en dan zegt de een schoon waar de ander kapot zegt.
+Zolang beide vormgevingen bestonden werd die meting TWEE keer gedaan - `?layout=roos`
+tegen `?layout=nldd` - en was de oude pagina de norm. Sinds RC-67 is de norm een
+vastgelegde lijst; zie `features/roos-eruit.md` voor hoe je die bijwerkt en waarom je die
+diff moet lezen.
 
 Twee dingen om te weten voor je die poort vertrouwt:
 
 - Hij meet wat er in de HTML staat, en dus alleen gedrag dat met de GEGEVENS van de
-  testserver zichtbaar is. Die heeft geen Prometheus en geen ArgoCD. Voor die blokken is
-  het script tegen een echte sandbox de meting, niet de test.
-- Elk aanvaard verschil draagt een reden, en er is een test die dat afdwingt. Een
-  uitzondering zonder reden is geen besluit maar een schuld.
+  testserver zichtbaar is. Die heeft geen Prometheus en geen ArgoCD.
+- Hij faalt alleen op wat WEG is. Iets erbij is nieuw werk.
 
 De meetlat heeft zichzelf twee keer op vals alarm betrapt: hij keek alleen naar `href`
 terwijl NLDD op sommige componenten `website-href` schrijft, en hij volgde de blokken niet
@@ -211,24 +195,20 @@ de blokvorm rendert de Jinja die in zo'n aanroep zit gewoon mee.
 
 ## Blokken die diensten zelf leveren
 
-Diensten leveren hun eigen sjablonen (`opi/services/catalog/<dienst>/`). Die zijn in
-roos-componenten geschreven en renderen niet in de LOTC-omgeving: de map staat niet op dat
-zoekpad, en twee componentsystemen kunnen sowieso niet in een Jinja-omgeving samen.
+Diensten leveren hun eigen sjablonen (`opi/services/catalog/<dienst>/`), en de projectpagina
+rendert die zonder te weten welke dienst het is. De catalogusmap staat sinds RC-64 op het
+zoekpad van de omgeving.
 
-Er waren drie mogelijkheden, en twee ervan zijn fout. Weglaten laat functionaliteit
-ongemerkt verdwijnen. In de andere omgeving renderen en de HTML inplakken (`render_roos()`)
-leverde een blok op dat rvo-klassen draagt, en die worden op een LOTC-pagina door niets
-opgemaakt: `lotc_rvo` staat niet in `DESIGN_SYSTEMS`. Het resultaat was dus niet "zichtbaar
-onaf" maar kale, ongestileerde HTML - een derde uitkomst die niemand koos.
+Zolang beide systemen bestonden lag naast elk roos-sjabloon een `-lotc`-tegenhanger, en
+zocht `lotc_counterpart()` die op. Daarvoor was er `render_roos()`, dat een blok in de
+andere omgeving rendeerde en de HTML inplakte - wat een blok opleverde met rvo-klassen die
+op een LOTC-pagina door niets opgemaakt worden (`lotc_rvo` staat niet in `DESIGN_SYSTEMS`),
+dus niet "zichtbaar onaf" maar kaal.
 
-Blijft over: elke dienst schrijft zijn eigen LOTC-sjabloon, naast het roos-sjabloon en in
-dezelfde map. Het bezwaar daartegen is echt - een tweede kopie loopt uit de pas zodra een
-dienst zijn sjabloon wijzigt - en het antwoord daarop is
-`tests/test_lotc_dienstblokken.py`: die toetst per sjabloon dat de tegenhanger BESTAAT en
-dat hij hetzelfde DOET (dezelfde bestemmingen, htmx-adressen, JavaScript-aanroepen en
-id's). De catalogusmap staat sinds RC-64 op het zoekpad van beide omgevingen.
-
-Sinds RC-65 is `render_roos()` weg en heeft elk sjabloon in de catalogus zijn tegenhanger.
+Sinds RC-67 heeft elke dienst nog EEN sjabloon, onder zijn eigen naam.
+`tests/test_lotc_dienstblokken.py` toetst dat elk sjabloon in de catalogus rendert, dat er
+geen markup van het oude systeem uit komt, en dat elke dialoog zijn gegevens kan
+wegsturen.
 
 ### En de fragmenten die zo'n blok NALAADT
 
@@ -237,8 +217,8 @@ het blok staat er in de nieuwe vormgeving, en na een scroll of een klik komt er 
 in de oude in. Twee daarvan waren zo:
 
 - **De snapshotlijst** (`GET /projects/details/<project>/backups`). De route rendert nu via
-  `render()` uit `opi/web/lotc_switch.py`, met `bg/_backup-snapshots.html.j2` +
-  `bg/_backup-snapshots-one.html.j2` als tegenhanger. De id's met `hx-swap-oob` zijn
+  `render()` uit `opi/web/lotc_switch.py`, met `shared/_backup-snapshots.html.j2` +
+  `shared/_backup-snapshots-one.html.j2`. De id's met `hx-swap-oob` zijn
   letterlijk gelijk gebleven - het verzoek staat op `hx-swap="none"`, dus alles zonder die
   markering wordt weggegooid, en een stylesheet of script kan er daarom niet omheen.
 - **De metingen per deployment** (`GET /projects/details/<project>/metrics/<deployment>`).
@@ -250,28 +230,15 @@ in de oude in. Twee daarvan waren zo:
   (`static/css/metrics-charts.css`) zelf op, precies een keer per document: de hertekende
   projectpagina laadt ze niet, want die weet niet dat dit blok bestaat.
 
-Beide zijn gemeten in `tests/test_lotc_fragmenten.py` (gedragsoppervlak, sjabloon tegen
-sjabloon) en in `tests/e2e/test_lotc_pariteit.py` (pixels op de canvassen, en de
-herstelknop echt geklikt).
-
-## Testen in twee vormgevingen
-
-De bestaande e2e-tests zijn op de roos-markup geschreven. Toen nldd de standaard werd,
-landden ze op de nieuwe pagina en faalden ze - niet omdat de applicatie stuk was, maar
-omdat ze iets anders maten dan ze dachten.
-
-`tests/e2e/conftest.py` zet daarom een `zad_layout=roos`-cookie in de
-browsercontext. Dat is geen doofpot: `?layout=` in de URL wint van de cookie, en de tests
-die de NIEUWE weergave meten zetten dat er zelf bij (`test_lotc_parity.py`,
-`test_lotc_confirmations.py`, `test_lotc_project_tab.py`, `test_lotc_deployments_tab.py`).
-Zo blijft het vangnet onder de release liggen en wordt de nieuwe vormgeving ook echt
-getoetst, in plaats van dat een van de twee stilletjes onbewaakt raakt.
+Beide zijn gemeten in `tests/test_lotc_fragmenten.py` (welke canvassen er horen te staan,
+waar de tijdvakknoppen op mikken, welke id's buiten de band binnenkomen) en in
+`tests/e2e/test_lotc_pariteit.py` (pixels op de canvassen, en de herstelknop echt
+geklikt).
 
 ## Stand en wat er open staat
 
-Alle templates compileren. De nieuwe vormgeving is de standaard, en op de sandbox staat de
-meting op **nul verdwenen gedrag** over alle omgezette routes - met echte projecten, dus
-inclusief ArgoCD en Prometheus.
+Alle templates compileren, en de omzetting is af: er is geen tweede vormgeving meer om op
+terug te vallen.
 
 Om: dashboard, projecten, projectdetails (vier tabbladen), diensten, about, voortgang,
 uitnodigingen, metrics-explorer, de beheerpagina's en de wizard, plus de gedeelde dialoog
@@ -280,12 +247,12 @@ en de logviewer.
 | open punt | bij wie |
 |---|---|
 | `architecture` - 1509 regels in een blok; verdient een eigen besluit, en staat op verzoek als laatste | ons |
-| De blokken die diensten leveren dragen nog de oude opmaak (zie hierboven) | ons, per dienst |
 | Het percentage in de dashboardmeter vraagt een RVO-kleurvariabele die NLDD niet heeft; erft nu de tekstkleur | ons |
 | Iconen: de NLDD-woordenschat telt er 60, de RVO-set die roos meelevert 1163. Voorstel om die als losse implementatiemodule mee te nemen ligt bij LOTC | LOTC |
 
 ### Een aandachtspunt voor de bouw
 
 LOTC komt van `git.claude.robbertuittenbroek.nl`. Dat werkt hier, maar een image die in
-een andere omgeving gebouwd wordt moet die host kunnen bereiken. `jinja-roos-components`
-komt van GitHub, dus een git-dependency is niet nieuw; deze host is dat wel.
+een andere omgeving gebouwd wordt moet die host kunnen bereiken. Dat was al zo toen
+`jinja-roos-components` er nog naast stond; sinds die weg is, is het de enige
+git-dependency van de interface.

@@ -400,13 +400,13 @@ async def test_a_rejected_save_marks_the_field_and_puts_the_text_where_it_is_saf
 
     captured: dict[str, Any] = {}
 
-    def _capture(_request: Any, *, roos: str, lotc: str, context: dict[str, Any]) -> Any:
+    def _capture(_request: Any, *, template: str, context: dict[str, Any]) -> Any:
         captured.update(context)
-        return SimpleNamespace(template_name=roos)
+        return SimpleNamespace(template_name=template)
 
     request = SimpleNamespace(
         state=SimpleNamespace(user={"email": OWNER_EMAIL}, csrf_token="t"),
-        query_params={"layout": "roos"},
+        query_params={},
         cookies={},
     )
 
