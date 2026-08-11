@@ -25,13 +25,19 @@
                         <span class="rvo-text--subtle">.{{ item.domain }}</span>
                     {% endif %}
                 </div>
+                {# De statuspil is <c-tag>: het type bepaalt de kleur. De eigen klassen
+                   verwezen naar --rvo-color-geel-300/-750, namen die in lotc-app.css niet
+                   staan en dus nergens meer bestaan - de pil kwam zonder achtergrond EN
+                   zonder tekstkleur op het scherm. Dezelfde afbeelding als in
+                   admin/approvals: aangevraagd warning, goedgekeurd success, afgewezen
+                   error. #}
                 <div>
                     {% if item.current_status == 'requested' %}
-                        <span class="approval-status-badge approval-status-requested">Aangevraagd</span>
+                        <c-tag type="warning" label="Aangevraagd"/>
                     {% elif item.current_status == 'approved' %}
-                        <span class="approval-status-badge approval-status-approved">Goedgekeurd</span>
+                        <c-tag type="success" label="Goedgekeurd"/>
                     {% elif item.current_status == 'denied' %}
-                        <span class="approval-status-badge approval-status-denied">Afgewezen</span>
+                        <c-tag type="error" label="Afgewezen"/>
                     {% endif %}
                 </div>
             </div>
@@ -44,9 +50,9 @@
                     {% for entry in item.history | reverse %}
                     <div class="approval-history-entry">
                         <span class="approval-history-date">{{ entry.date | dutch_date(include_time=False) }}</span>
-                        <span class="approval-status-badge approval-status-{{ entry.status }}">
-                            {% if entry.status == 'requested' %}Aangevraagd{% elif entry.status == 'approved' %}Goedgekeurd{% elif entry.status == 'denied' %}Afgewezen{% endif %}
-                        </span>
+                        {% set soort = {'requested': 'warning', 'approved': 'success', 'denied': 'error'}.get(entry.status, 'default') %}
+                        {% set opschrift = {'requested': 'Aangevraagd', 'approved': 'Goedgekeurd', 'denied': 'Afgewezen'}.get(entry.status, entry.status) %}
+                        <c-tag type="{{ soort }}" label="{{ opschrift }}"/>
                         {% if entry.by %}<span class="rvo-text--sm rvo-text--subtle">door {{ entry.by }}</span>{% endif %}
                         {% if entry.message %}<span class="rvo-text--sm"> — {{ entry.message }}</span>{% endif %}
                     </div>
