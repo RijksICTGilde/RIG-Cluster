@@ -29,7 +29,13 @@
   - De foutmelding per component toont de titel en de suggestie, maar niet de link naar
     de logs. Die link roept openLogViewer() aan, en dat is een roos-modal die op deze
     pagina niet staat. Een link die niets doet is erger dan geen link.
+
+  DE TAKENLIJST STAAT IN EEN MACRO. Hier stond een eigen kopie (c-cluster + c-icon +
+  c-paragraph) met een eigen statusicoontabel; gemeten viel het pictogram daar boven de
+  tekst, want een <c-paragraph> is een blok en breekt in een cluster naar de volgende
+  regel. Zie widgets/_macros.html.j2, progress_task_list.
 #}
+{% from "widgets/_macros.html.j2" import progress_task_list %}
 {% set _container_id = container_id | default("task-progress-" ~ task_id) %}
 {% set _success_msg = success_message | default("Wijzigingen succesvol verwerkt!") %}
 <div id="{{ _container_id }}"
@@ -63,30 +69,7 @@
             <c-paragraph>{{ current_step }} {{ progress }}%</c-paragraph>
         {% endif %}
 
-        {% if tasks %}
-            <c-stack gap="xs">
-                {% for task in tasks %}
-                    <c-cluster gap="sm" align="center">
-                        <c-icon size="sm"
-                                icon="{{ 'check-mark-circle' if task.status == 'completed' else 'dismiss-circle' if task.status == 'failed' else 'chevron-right' if task.status == 'running' else 'clock' }}" />
-                        <c-paragraph size="sm">{{ task.name }}</c-paragraph>
-                    </c-cluster>
-                    {% if task.error %}
-                        <c-paragraph size="sm">{{ task.error }}</c-paragraph>
-                    {% endif %}
-                    {% for subtask in task.subtasks or [] %}
-                        <c-cluster gap="sm" align="center">
-                            <c-icon size="sm"
-                                    icon="{{ 'check-mark-circle' if subtask.status == 'completed' else 'dismiss-circle' if subtask.status == 'failed' else 'chevron-right' if subtask.status == 'running' else 'clock' }}" />
-                            <c-paragraph size="sm">{{ subtask.name }}</c-paragraph>
-                        </c-cluster>
-                        {% if subtask.error %}
-                            <c-paragraph size="sm">{{ subtask.error }}</c-paragraph>
-                        {% endif %}
-                    {% endfor %}
-                {% endfor %}
-            </c-stack>
-        {% endif %}
+        {{ progress_task_list(tasks) }}
 
         {% if status in ("completed", "failed") and on_complete is defined and on_complete and project_name %}
             <c-action-group align="end">

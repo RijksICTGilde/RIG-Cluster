@@ -134,35 +134,12 @@
     color: var(--rvo-color-rood-700);
 }
 
-.edit-progress-tasks {
-    display: flex;
-    flex-direction: column;
-    gap: var(--rvo-space-xs);
-    margin-bottom: var(--rvo-space-lg);
-}
-
-.edit-progress-task-item {
-    display: flex;
-    align-items: center;
-    gap: var(--rvo-space-sm);
-    font-size: 0.875rem;
-    color: var(--rvo-color-grijs-700);
-}
-
-/* A subtask is one level in from the step it belongs to. */
-.edit-progress-subtask {
-    padding-left: var(--rvo-space-lg);
-}
-
-.edit-progress-task-error {
-    font-size: 0.8125rem;
-    color: var(--rvo-color-rood-700);
-    padding-left: var(--rvo-space-lg);
-}
-
-.edit-progress-task-error.edit-progress-subtask {
-    padding-left: var(--rvo-space-xl);
-}
+/* Hier stond de takenlijst: .edit-progress-tasks, -task-item, -subtask en -task-error.
+   Die lijst is een lijst met een status per regel, en het thema levert daar componenten
+   voor; ze staat nu in widgets/_macros.html.j2 (progress_task_list) op c-list met een
+   cel per onderdeel. Dat de opmaak HIER stond was het probleem: vier sjablonen tonen die
+   lijst en de meeste laden dit stijlblad niet, dus daar viel het pictogram boven de
+   tekst. Componenten dragen hun eigen opmaak mee en hebben geen stijlblad nodig. */
 
 /* The percentage next to the current step: readable, but not louder than the step. */
 .edit-progress-percentage {
