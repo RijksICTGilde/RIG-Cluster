@@ -1,5 +1,49 @@
 /* Shared modal styles for the edit-section wizard modal.
-   Used by project-details and admin pages. */
+   Used by project-details and admin pages.
+
+   RC-74 heeft dit bestand langs de componenten gelegd. De uitkomst is bijzonder genoeg om
+   op te schrijven, want de eerste indruk klopt niet: het THEMA HEEFT een dialoog
+   (<c-modal-dialog>, en <c-sheet> voor het zijpaneel), en toch blijft die hier
+   ongebruikt.
+
+   WAAROM DE DIALOOG ZELF BLIJFT
+
+   Deze dialoog wordt niet door zijn markup bestuurd maar door static/js/edit_modal.js.
+   Het openen, de blokkade zolang er een taak loopt, de waarschuwing bij niet-opgeslagen
+   werk, Escape en de klik naast het venster hangen allemaal aan #edit-section-modal,
+   #edit-section-backdrop en .is-open. En <c-modal-dialog> laat een eigen class niet door
+   - gemeten in RC-70: die valt uit de uitvoer. Omzetten zou dus al dat gedrag stilzwijgend
+   uitzetten, en stil is hier het gevaarlijke woord: de dialoog zou nog steeds OPENGAAN.
+
+   Overstappen op <c-modal-dialog> is daarmee geen opmaakklus maar een verhuizing van
+   edit_modal.js naar de show()/hide()-API van het component, over de tien sjablonen die
+   deze dialoog gebruiken. Dat is een taak op zich en geen onderdeel van deze sweep.
+
+   WAT WEL IS OMGEZET
+
+   - .edit-section-header (flex + space-between + gap) is <c-cluster justify="between">.
+     De lijn eronder en de marge staan hieronder; daar heeft het thema niets voor.
+   - De REGELS van .edit-modal-close-btn zijn weg. Die haalden de achtergrond en de rand
+     van een KALE <button>, en die knop is allang een <c-button type="tertiary">. Een
+     component tekent zichzelf in zijn shadow root, dus er was niets meer om beet te
+     pakken.
+
+     De KLASSE blijft wel in de sjablonen staan, en dat is met opzet: hij is geen opmaak
+     meer maar een HAAK. tests/e2e/test_lotc_confirmations.py zoekt de sluitknop op als
+     `nldd-button.edit-modal-close-btn`. Weggehaald liep die test in een timeout - en dat
+     is precies de les die in de opdracht staat: grep de lezers voordat een klasse
+     verdwijnt, en tests zijn ook lezers.
+
+   WAT MET OPZET BLIJFT, EN WAAROM
+
+   .edit-section-actions en .edit-progress-actions ZIEN eruit als opmaak en zijn het niet.
+   static/js/edit_modal.js leest ze: de aanwezigheid van .edit-progress-actions is hoe hij
+   bepaalt of een taak nog loopt (regel 84), en .edit-section-actions is waarmee hij de
+   dialoog weer vrijgeeft. Ze vervangen door een <c-cluster> zou die knopen weghalen.
+
+   .edit-section-error wordt door edit_modal.js als HTML-STRING opgebouwd
+   (innerHTML = '<div class="edit-section-error">' + ...). Een <c-alert> daaruit maken kan
+   niet: de componentlaag draait bij het compileren van een sjabloon, niet in de browser. */
 
 .edit-section-backdrop {
     position: fixed;
@@ -44,29 +88,14 @@
     transform: translate(-50%, -50%) scale(1);
 }
 
+/* Alleen nog de lijn en de lucht eronder; de flexregel is <c-cluster justify="between">. */
 .edit-section-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--rvo-space-md);
     margin-bottom: var(--rvo-space-xl);
     padding-bottom: var(--rvo-space-md);
     border-bottom: 1px solid var(--rvo-color-grijs-200);
 }
 
-.edit-modal-close-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: var(--rvo-space-xs);
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-}
 
-.edit-modal-close-btn:hover {
-    background: var(--rvo-color-grijs-100);
-}
 
 .edit-section-content {
     margin-bottom: var(--rvo-space-lg);
