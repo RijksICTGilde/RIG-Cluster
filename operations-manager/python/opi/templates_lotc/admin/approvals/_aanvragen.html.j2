@@ -1,69 +1,83 @@
-{# De aanvragen per project, of de melding dat er geen zijn. #}
+{# De aanvragen per project, of de melding dat er geen zijn.
+
+   De tabel is <c-table> geworden. Wat admin-approvals.css eraan gaf - kopregelkleur,
+   celranden, kolombreedtes (.col-*) en de hover-regel - levert het component zelf. De
+   percentages van de oude .col-klassen staan nu als columns= (12/25/20/18/25).
+
+   De twee soorten label zijn <c-tag>. .type-badge en .status-badge waren twee keer
+   dezelfde pil (inline-block, padding, radius, 0.75rem, vet) met alleen een andere
+   kleurcombinatie eronder, en zo'n gekleurd label IS een tag. De kleur volgt nu de
+   BETEKENIS via het type: aangevraagd is warning, goedgekeurd success, afgewezen error.
+   Dat is ook waarom de laatste tak default is en niet een eigen kleurloze .status-badge.
+
+   De gele regel voor een aanvraag die nog open staat is het selected-attribuut van
+   <c-table-row> - het thema kleurt zo'n regel zelf, dus .domain-row.status-requested en
+   zijn hover-variant konden weg.
+
+   Wat BLEEF is .project-group-header, en alleen nog voor de band eromheen (padding, lijn
+   eronder, grijze achtergrond). De flexregel erin - titel links, knop rechts - is
+   <c-cluster justify="between">. Voor de band zelf is er geen component: <c-card> heeft
+   geen kopgebied, en <c-section-head> zet alleen een h4 met een aanhangsel neer zonder
+   vlak eromheen. #}
 {% if projects_data %}
     {% for project in projects_data %}
     <c-card outline="true" padding="none" background-color="wit">
         <div class="project-group-header">
-            <c-heading type="h3">
-                <c-icon icon="rectangle-stack" size="md"/>
-                {{ project.project_name }}
-            </c-heading>
-            {% set lotc_onclick_1 %}openApprovalModal('{{ project.project_name }}'){% endset %}<c-button label="Beheren" size="sm" show-icon="before" icon="pencil-on-square"/>
+            <c-cluster justify="between" align="center">
+                <c-heading type="h3">
+                    <c-icon icon="rectangle-stack" size="md"/>
+                    {{ project.project_name }}
+                </c-heading>
+                {% set lotc_onclick_1 %}openApprovalModal('{{ project.project_name }}'){% endset %}<c-button label="Beheren" size="sm" show-icon="before" icon="pencil-on-square"/>
+            </c-cluster>
         </div>
-        <div class="table-container">
-            <table class="domains-table">
-                <thead>
-                    <tr>
-                        <th class="col-type">Type</th>
-                        <th class="col-domain">Domein</th>
-                        <th class="col-name">Naam</th>
-                        <th class="col-status">Status</th>
-                        <th class="col-date">Laatste wijziging</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for item in project.approval_items %}
-                    <tr class="domain-row {% if item.current_status == 'requested' %}status-requested{% elif item.current_status == 'denied' %}status-denied{% endif %}">
-                        <td class="col-type">
-                            {% if item.type == 'subdomain' %}
-                                <span class="type-badge type-subdomain">Subdomein</span>
-                            {% else %}
-                                <span class="type-badge type-domain">Domein</span>
-                            {% endif %}
-                        </td>
-                        <td class="col-domain">{{ item.domain }}</td>
-                        <td class="col-name"><strong>{{ item.name }}</strong></td>
-                        <td class="col-status">
-                            {% if item.current_status == 'requested' %}
-                                <span class="status-badge status-requested-badge">Aangevraagd</span>
-                            {% elif item.current_status == 'approved' %}
-                                <span class="status-badge status-approved-badge">Goedgekeurd</span>
-                            {% elif item.current_status == 'denied' %}
-                                <span class="status-badge status-denied-badge">Afgewezen</span>
-                            {% else %}
-                                <span class="status-badge">{{ item.current_status }}</span>
-                            {% endif %}
-                        </td>
-                        <td class="col-date">
-                            {% if item.history %}
-                                {% set last = item.history[-1] %}
-                                {{ last.date | dutch_date(include_time=False) }}
-                                {% if last.by %}<br><span>door {{ last.by }}</span>{% endif %}
-                            {% else %}
-                                -
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+        <c-table columns="1.2fr 2.5fr 2fr 1.8fr 2.5fr">
+            <c-table-head>
+                <c-th>Type</c-th>
+                <c-th>Domein</c-th>
+                <c-th>Naam</c-th>
+                <c-th>Status</c-th>
+                <c-th>Laatste wijziging</c-th>
+            </c-table-head>
+            {% for item in project.approval_items %}
+            {# :selected= en geen {% if %} rond het attribuut: de componentlaag leest de
+               tag als HTML en een Jinja-blok binnen een tag is voor haar een onbekend
+               attribuut (ComponentError). De dubbele punt geeft een EXPRESSIE mee. #}
+            <c-table-row :selected="item.current_status == 'requested'">
+                <c-td>
+                    {% if item.type == 'subdomain' %}
+                        <c-tag type="info" label="Subdomein"/>
+                    {% else %}
+                        <c-tag type="success" label="Domein"/>
+                    {% endif %}
+                </c-td>
+                <c-td>{{ item.domain }}</c-td>
+                <c-td><strong>{{ item.name }}</strong></c-td>
+                <c-td>
+                    {% if item.current_status == 'requested' %}
+                        <c-tag type="warning" label="Aangevraagd"/>
+                    {% elif item.current_status == 'approved' %}
+                        <c-tag type="success" label="Goedgekeurd"/>
+                    {% elif item.current_status == 'denied' %}
+                        <c-tag type="error" label="Afgewezen"/>
+                    {% else %}
+                        <c-tag type="default" label="{{ item.current_status }}"/>
+                    {% endif %}
+                </c-td>
+                <c-td>
+                    {% if item.history %}
+                        {% set last = item.history[-1] %}
+                        {{ last.date | dutch_date(include_time=False) }}
+                        {% if last.by %}<br><span>door {{ last.by }}</span>{% endif %}
+                    {% else %}
+                        -
+                    {% endif %}
+                </c-td>
+            </c-table-row>
+            {% endfor %}
+        </c-table>
     </c-card>
     {% endfor %}
 {% else %}
-    <c-card padding="xl" background-color="wit" outline="true">
-        <div class="text-center empty-state-text">
-            <c-icon icon="info" size="lg"/>
-            <div>Geen domein- of subdomeinaanvragen gevonden.</div>
-        </div>
-    </c-card>
+    <c-alert type="info" heading="Geen domein- of subdomeinaanvragen gevonden."/>
 {% endif %}
