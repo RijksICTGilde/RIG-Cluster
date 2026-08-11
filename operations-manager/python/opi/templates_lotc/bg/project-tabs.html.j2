@@ -547,7 +547,10 @@
            De omgevingsvariabelen horen NIET bij een deployment - dat blok toont ze
            allemaal - en staat daarom buiten het wisselen, precies als in het origineel. #}
 
-        {% if user_role in ["admin", "owner"] %}
+        {# Alleen zonder deployments. Zodra er een is staat deze knop in de Acties-kaart,
+           naast "Images bewerken"; die kaart rendert niet op een leeg project, en dan zou
+           er geen enkele weg naar een eerste deployment zijn. #}
+        {% if user_role in ["admin", "owner"] and not project.deployments %}
             <c-action-group align="start">
                 <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" :attrs="{'onclick': deployment_toevoegen}" />
             </c-action-group>
